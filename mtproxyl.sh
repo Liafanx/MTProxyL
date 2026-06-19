@@ -76,7 +76,6 @@ cli_main() {
 
     case "$cmd" in
         "")
-            set +eo pipefail
             if [ -f "$SETTINGS_FILE" ]; then
                 load_settings
                 load_secrets
