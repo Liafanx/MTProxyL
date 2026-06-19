@@ -274,8 +274,8 @@ secret_list() {
     echo ""
     draw_header "СЕКРЕТЫ"
     echo ""
-    printf "  ${BOLD}%-4s %-16s %-10s %-10s${NC}\n" "#" "МЕТКА" "СТАТУС" "СОЗДАН"
-    echo -e "  ${DIM}$(_repeat '─' 50)${NC}"
+    printf "  ${BOLD}%-4s %-16s %-10s %-10s %-12s %-12s${NC}\n" "#" "МЕТКА" "СТАТУС" "СОЗДАН" "СКАЧАНО" "ОТПРАВЛЕНО"
+    echo -e "  ${DIM}$(_repeat '─' 70)${NC}"
 
     local i
     for i in "${!SECRETS_LABELS[@]}"; do
@@ -284,22 +284,25 @@ secret_list() {
         local created="${SECRETS_CREATED[$i]}"
 
         local status_text
-        if [ "$enabled" = "true" ]; then
-            status_text="${GREEN}активен${NC}"
-        else
-            status_text="${RED}выключен${NC}"
-        fi
+        [ "$enabled" = "true" ] && status_text="${GREEN}активен${NC}" || status_text="${RED}выключен${NC}"
 
         local created_fmt
         created_fmt=$(printf '%(%Y-%m-%d)T' "$created" 2>/dev/null) || \
             created_fmt=$(date -d "@${created}" '+%Y-%m-%d' 2>/dev/null || echo "?")
 
-        printf "  %-4s %-16s %-18b %-10s\n" "$((i+1))" "$label" "$status_text" "$created_fmt"
+        local u_in=0 u_out=0 u_conns=0
+        if is_proxy_running 2>/dev/null; then
+            read -r u_in u_out u_conns <<< "$(get_user_stats "$label" 2>/dev/null)" || true
+        fi
+
+        printf "  %-4s %-16s %-18b %-10s %-12s %-12s\n" \
+            "$((i+1))" "$label" "$status_text" "$created_fmt" \
+            "$(format_bytes "${u_in:-0}")" "$(format_bytes "${u_out:-0}")"
+
         [ -n "${SECRETS_NOTES[$i]:-}" ] && echo -e "       ${DIM}📝 ${SECRETS_NOTES[$i]}${NC}"
     done
     echo ""
 }
-
 # Ссылка для секрета
 get_proxy_link() {
     local label="${1:-}"
