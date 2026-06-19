@@ -257,22 +257,29 @@ tui_settings_menu() {
         draw_header "НАСТРОЙКИ"
         echo ""
         echo -e "  ${BOLD}Порт:${NC}        ${PROXY_PORT}"
-        echo -e "  ${BOLD}IP:${NC}          ${CUSTOM_IP:-$(get_public_ip) ${DIM}(авто)${NC}}"
+        echo -e "  ${BOLD}IP:${NC}          ${CUSTOM_IP:-$(get_public_ip 2>/dev/null) ${DIM}(авто)${NC}}"
         echo -e "  ${BOLD}Домен:${NC}       ${PROXY_DOMAIN}"
         echo -e "  ${BOLD}CPU:${NC}         ${PROXY_CPUS:-без ограничений}"
         echo -e "  ${BOLD}Память:${NC}      ${PROXY_MEMORY:-без ограничений}"
-        echo -e "  ${BOLD}Маскировка:${NC}  ${MASKING_ENABLED}"
+        echo -e "  ${BOLD}Маскировка:${NC}  ${MASKING_ENABLED}$([ "$MASKING_ENABLED" = "true" ] && echo " → ${MASKING_HOST:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}")"
         echo -e "  ${BOLD}Рекл. метка:${NC} ${AD_TAG:-${DIM}не задана${NC}}"
+        echo -e "  ${BOLD}SNI-полит.:${NC}  ${UNKNOWN_SNI_ACTION}"
+        echo -e "  ${BOLD}PROXY proto:${NC} ${PROXY_PROTOCOL}"
+        echo -e "  ${BOLD}Движок:${NC}      telemt v$(get_telemt_version)"
         echo ""
         echo -e "  ${DIM}[1]${NC} Изменить порт"
         echo -e "  ${DIM}[2]${NC} Изменить IP"
         echo -e "  ${DIM}[3]${NC} Изменить домен"
         echo -e "  ${DIM}[4]${NC} Ресурсы (CPU/RAM)"
-        echo -e "  ${DIM}[5]${NC} Маскировка"
-        echo -e "  ${DIM}[6]${NC} Mask backend"
-        echo -e "  ${DIM}[7]${NC} Рекламная метка"
-        echo -e "  ${DIM}[8]${NC} SNI-политика [${UNKNOWN_SNI_ACTION}]"
-        echo -e "  ${DIM}[9]${NC} Просмотр конфига"
+        echo -e "  ${DIM}[5]${NC} Маскировка вкл/выкл"
+        echo -e "  ${DIM}[m]${NC} Mask backend (хост:порт)"
+        echo -e "  ${DIM}[6]${NC} Рекламная метка"
+        echo -e "  ${DIM}[7]${NC} SNI-политика [${UNKNOWN_SNI_ACTION}]"
+        echo -e "  ${DIM}[8]${NC} PROXY protocol вкл/выкл"
+        echo -e "  ${DIM}[9]${NC} Управление движком"
+        echo -e "  ${DIM}[v]${NC} Просмотр конфига"
+        echo -e "  ${DIM}[t]${NC} Тюнинг движка (tune)"
+        echo -e "  ${DIM}[u]${NC} Пользовательские URL Telegram"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
@@ -281,15 +288,15 @@ tui_settings_menu() {
                 if validate_port "$p"; then
                     PROXY_PORT="$p"; save_settings; log_success "Порт: ${p}"
                     is_proxy_running && { load_secrets; restart_proxy_container || true; }
-                else [ -n "$p" ] && log_error "Некорректный порт"; fi
+                elif [ -n "$p" ]; then log_error "Некорректный порт"; fi
                 press_any_key ;;
             2)
                 echo -en "  ${BOLD}IP [${CUSTOM_IP:-авто}]:${NC} "; local ip; read -r ip
-                if [ "$ip" = "auto" ] || [ "$ip" = "clear" ]; then
-                    CUSTOM_IP=""; save_settings; log_success "IP сброшен (авто)"
-                elif [ -n "$ip" ]; then
-                    CUSTOM_IP="$ip"; save_settings; log_success "IP: ${ip}"
-                fi
+                case "$ip" in
+                    auto|clear) CUSTOM_IP=""; save_settings; log_success "IP: авто" ;;
+                    "") ;;
+                    *) CUSTOM_IP="$ip"; save_settings; log_success "IP: ${ip}" ;;
+                esac
                 press_any_key ;;
             3)
                 echo -e "  ${DIM}[1] cloudflare.com  [2] google.com  [3] microsoft.com  [4] Свой${NC}"
@@ -316,7 +323,7 @@ tui_settings_menu() {
                 save_settings; log_success "Маскировка: ${MASKING_ENABLED}"
                 is_proxy_running && { load_secrets; restart_proxy_container || true; }
                 press_any_key ;;
-            6)
+            m|M)
                 echo -e "  ${DIM}Текущий: ${MASKING_HOST:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}${NC}"
                 echo -en "  ${BOLD}Хост:${NC} "; local mh; read -r mh
                 echo -en "  ${BOLD}Порт [${MASKING_PORT:-443}]:${NC} "; local mp; read -r mp
@@ -325,24 +332,73 @@ tui_settings_menu() {
                 save_settings; log_success "Mask backend: ${MASKING_HOST:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}"
                 is_proxy_running && { load_secrets; restart_proxy_container || true; }
                 press_any_key ;;
-            7)
+            6)
                 echo -en "  ${BOLD}Рекл. метка (32 hex, 'remove'):${NC} "; local at; read -r at
                 if [ "$at" = "remove" ]; then AD_TAG=""; log_success "Метка удалена"
                 elif [[ "$at" =~ ^[0-9a-fA-F]{32}$ ]]; then AD_TAG="$at"; log_success "Метка установлена"
-                elif [ -n "$at" ]; then log_error "32 hex-символа"; fi
+                elif [ -n "$at" ]; then log_error "Нужно 32 hex-символа"; fi
                 save_settings; load_secrets; reload_proxy_config 2>/dev/null || true
                 press_any_key ;;
-            8)
+            7)
                 echo -e "  ${DIM}[1] Mask (перенаправлять)  [2] Drop (закрывать)${NC}"
                 local sc; sc=$(read_choice "выбор" "1")
-                case "$sc" in
-                    2) UNKNOWN_SNI_ACTION="drop" ;;
-                    *) UNKNOWN_SNI_ACTION="mask" ;;
-                esac
+                case "$sc" in 2) UNKNOWN_SNI_ACTION="drop" ;; *) UNKNOWN_SNI_ACTION="mask" ;; esac
                 save_settings; reload_proxy_config 2>/dev/null || true
                 log_success "SNI-политика: ${UNKNOWN_SNI_ACTION}"
                 press_any_key ;;
-            9) show_config; press_any_key ;;
+            8)
+                [ "$PROXY_PROTOCOL" = "true" ] && PROXY_PROTOCOL="false" || PROXY_PROTOCOL="true"
+                if [ "$PROXY_PROTOCOL" = "true" ]; then
+                    echo -en "  ${BOLD}Доверенные CIDR (через запятую):${NC} "; local cidrs; read -r cidrs
+                    PROXY_PROTOCOL_TRUSTED_CIDRS="$cidrs"
+                else PROXY_PROTOCOL_TRUSTED_CIDRS=""; fi
+                save_settings; log_success "PROXY protocol: ${PROXY_PROTOCOL}"
+                is_proxy_running && { load_secrets; restart_proxy_container || true; }
+                press_any_key ;;
+            9) tui_engine_menu ;;
+            v|V) show_config; press_any_key ;;
+            t|T)
+                handle_tune_command list
+                echo -e "  ${DIM}[1] Установить  [2] Очистить  [3] Очистить все  [0] Назад${NC}"
+                local tc; tc=$(read_choice "выбор" "0")
+                case "$tc" in
+                    1) echo -en "  ${BOLD}Параметр:${NC} "; local tp; read -r tp
+                       echo -en "  ${BOLD}Значение:${NC} "; local tv; read -r tv
+                       [ -n "$tp" ] && [ -n "$tv" ] && handle_tune_command set "$tp" "$tv" ;;
+                    2) echo -en "  ${BOLD}Параметр:${NC} "; local tp; read -r tp
+                       [ -n "$tp" ] && handle_tune_command clear "$tp" ;;
+                    3) handle_tune_command clear all ;;
+                esac
+                press_any_key ;;
+            u|U)
+                echo -e "  ${BOLD}Пользовательские URL Telegram${NC}"
+                echo -e "  ${DIM}Для регионов где core.telegram.org заблокирован${NC}"
+                echo ""
+                echo -e "  proxy_secret_url:    ${PROXY_SECRET_URL:-${DIM}(по умолчанию)${NC}}"
+                echo -e "  proxy_config_v4_url: ${PROXY_CONFIG_V4_URL:-${DIM}(по умолчанию)${NC}}"
+                echo -e "  proxy_config_v6_url: ${PROXY_CONFIG_V6_URL:-${DIM}(по умолчанию)${NC}}"
+                echo ""
+                echo -e "  ${DIM}[1] Установить  [2] Очистить все  [0] Назад${NC}"
+                local uc; uc=$(read_choice "выбор" "0")
+                case "$uc" in
+                    1)
+                        echo -e "  ${DIM}[1] secret  [2] config-v4  [3] config-v6${NC}"
+                        local uf; uf=$(read_choice "выбор" "1")
+                        echo -en "  ${BOLD}URL:${NC} "; local uv; read -r uv
+                        if [ -n "$uv" ] && [[ "$uv" =~ ^https?:// ]]; then
+                            case "$uf" in
+                                1) PROXY_SECRET_URL="$uv" ;;
+                                2) PROXY_CONFIG_V4_URL="$uv" ;;
+                                3) PROXY_CONFIG_V6_URL="$uv" ;;
+                            esac
+                            save_settings; log_success "URL установлен"
+                            is_proxy_running && { load_secrets; restart_proxy_container || true; }
+                        elif [ -n "$uv" ]; then log_error "URL должен начинаться с http:// или https://"; fi ;;
+                    2) PROXY_SECRET_URL=""; PROXY_CONFIG_V4_URL=""; PROXY_CONFIG_V6_URL=""
+                       save_settings; log_success "URL сброшены"
+                       is_proxy_running && { load_secrets; restart_proxy_container || true; } ;;
+                esac
+                press_any_key ;;
             0|"") return ;;
         esac
     done
