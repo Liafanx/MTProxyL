@@ -49,14 +49,40 @@ restore_backup() {
     local confirm; read -r confirm
     [[ "$confirm" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
+    # Бэкап текущего состояния перед восстановлением
     log_info "Сохранение текущего состояния..."
     create_backup &>/dev/null
 
+    # Распаковка
     tar xzf "$backup_file" -C "$INSTALL_DIR" --exclude='backup_meta.txt' 2>/dev/null
+    chmod 600 "${SETTINGS_FILE}" 2>/dev/null
     chmod 600 "${SECRETS_FILE}" 2>/dev/null
 
-    log_success "Восстановлено из: ${backup_file}"
-    log_info "Выполните 'mtproxyl restart' для применения"
+    # Перезагрузка настроек в память
+    load_settings
+    load_secrets
+    load_nft_settings 2>/dev/null
+
+    log_success "Восстановлено из: $(basename "$backup_file")"
+    echo ""
+    echo -e "  ${BOLD}Восстановленные параметры:${NC}"
+    echo -e "    Порт:   ${PROXY_PORT}"
+    echo -e "    Домен:  ${PROXY_DOMAIN}"
+    echo -e "    Секретов: ${#SECRETS_LABELS[@]}"
+    echo ""
+
+    # Предложение перезапуска
+    if is_proxy_running; then
+        echo -en "  ${BOLD}Перезапустить прокси для применения? [Y/n]:${NC} "
+        local yn; read -r yn
+        if [[ ! "$yn" =~ ^[nN]$ ]]; then
+            restart_proxy_container || true
+        else
+            log_info "Выполните 'mtproxyl restart' для применения"
+        fi
+    else
+        log_info "Прокси не запущен. Выполните 'mtproxyl start' для запуска с новыми настройками"
+    fi
 }
 
 list_backups() {
