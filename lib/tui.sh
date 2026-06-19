@@ -126,13 +126,15 @@ tui_secrets_menu() {
     while true; do
         clear_screen
         secret_list
-        echo -e "  ${DIM}[1]${NC} Добавить"
-        echo -e "  ${DIM}[2]${NC} Удалить"
-        echo -e "  ${DIM}[3]${NC} Обновить ключ"
+        echo -e "  ${DIM}[1]${NC} Добавить секрет"
+        echo -e "  ${DIM}[2]${NC} Удалить секрет"
+        echo -e "  ${DIM}[3]${NC} Обновить ключ (ротация)"
         echo -e "  ${DIM}[4]${NC} Включить/выключить"
-        echo -e "  ${DIM}[5]${NC} Лимиты"
+        echo -e "  ${DIM}[5]${NC} Установить лимиты"
         echo -e "  ${DIM}[6]${NC} Клонировать"
         echo -e "  ${DIM}[7]${NC} Переименовать"
+        echo -e "  ${DIM}[8]${NC} Полная информация о секрете"
+        echo -e "  ${DIM}[9]${NC} Ссылка / QR-код"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
@@ -141,37 +143,78 @@ tui_secrets_menu() {
                 [ -n "$l" ] && { secret_add "$l" || true; }
                 press_any_key ;;
             2)
-                echo -en "  ${BOLD}Метка:${NC} "; local l; read -r l
+                echo -en "  ${BOLD}Метка или #:${NC} "; local l; read -r l
+                if [[ "$l" =~ ^[0-9]+$ ]] && [ "$l" -ge 1 ] && [ "$l" -le "${#SECRETS_LABELS[@]}" ]; then
+                    l="${SECRETS_LABELS[$((l - 1))]}"
+                fi
                 [ -n "$l" ] && { secret_remove "$l" || true; }
                 press_any_key ;;
             3)
-                echo -en "  ${BOLD}Метка:${NC} "; local l; read -r l
+                echo -en "  ${BOLD}Метка или #:${NC} "; local l; read -r l
+                if [[ "$l" =~ ^[0-9]+$ ]] && [ "$l" -ge 1 ] && [ "$l" -le "${#SECRETS_LABELS[@]}" ]; then
+                    l="${SECRETS_LABELS[$((l - 1))]}"
+                fi
                 [ -n "$l" ] && { secret_rotate "$l" || true; }
                 press_any_key ;;
             4)
-                echo -en "  ${BOLD}Метка:${NC} "; local l; read -r l
+                echo -en "  ${BOLD}Метка или #:${NC} "; local l; read -r l
+                if [[ "$l" =~ ^[0-9]+$ ]] && [ "$l" -ge 1 ] && [ "$l" -le "${#SECRETS_LABELS[@]}" ]; then
+                    l="${SECRETS_LABELS[$((l - 1))]}"
+                fi
                 [ -n "$l" ] && { secret_toggle "$l" || true; }
                 press_any_key ;;
             5)
                 secret_show_limits
-                echo -en "  ${BOLD}Метка для лимитов:${NC} "; local l; read -r l
+                echo ""
+                echo -en "  ${BOLD}Метка или #:${NC} "; local l; read -r l
+                if [[ "$l" =~ ^[0-9]+$ ]] && [ "$l" -ge 1 ] && [ "$l" -le "${#SECRETS_LABELS[@]}" ]; then
+                    l="${SECRETS_LABELS[$((l - 1))]}"
+                fi
                 if [ -n "$l" ]; then
-                    echo -en "  ${BOLD}Макс. соединений (0=∞):${NC} "; local mc; read -r mc
-                    echo -en "  ${BOLD}Макс. IP (0=∞):${NC} "; local mi; read -r mi
-                    echo -en "  ${BOLD}Квота (напр. 5G, 0=∞):${NC} "; local dq; read -r dq
-                    echo -en "  ${BOLD}Срок (YYYY-MM-DD, 0=нет):${NC} "; local ex; read -r ex
+                    echo -en "  ${BOLD}Макс. TCP соединений (0=∞):${NC} "; local mc; read -r mc
+                    echo -en "  ${BOLD}Макс. уникальных IP (0=∞):${NC} "; local mi; read -r mi
+                    echo -en "  ${BOLD}Квота трафика (напр. 5G, 500M, 0=∞):${NC} "; local dq; read -r dq
+                    echo -en "  ${BOLD}Срок действия (YYYY-MM-DD, 0=бессрочно):${NC} "; local ex; read -r ex
                     secret_set_limits "$l" "${mc:-0}" "${mi:-0}" "${dq:-0}" "${ex:-0}" || true
                 fi
                 press_any_key ;;
             6)
                 echo -en "  ${BOLD}Источник:${NC} "; local s; read -r s
+                if [[ "$s" =~ ^[0-9]+$ ]] && [ "$s" -ge 1 ] && [ "$s" -le "${#SECRETS_LABELS[@]}" ]; then
+                    s="${SECRETS_LABELS[$((s - 1))]}"
+                fi
                 echo -en "  ${BOLD}Новая метка:${NC} "; local n; read -r n
                 [ -n "$s" ] && [ -n "$n" ] && { secret_clone "$s" "$n" || true; }
                 press_any_key ;;
             7)
-                echo -en "  ${BOLD}Старая метка:${NC} "; local o; read -r o
-                echo -en "  ${BOLD}Новая метка:${NC} "; local n; read -r n
+                echo -en "  ${BOLD}Старая:${NC} "; local o; read -r o
+                if [[ "$o" =~ ^[0-9]+$ ]] && [ "$o" -ge 1 ] && [ "$o" -le "${#SECRETS_LABELS[@]}" ]; then
+                    o="${SECRETS_LABELS[$((o - 1))]}"
+                fi
+                echo -en "  ${BOLD}Новая:${NC} "; local n; read -r n
                 [ -n "$o" ] && [ -n "$n" ] && { secret_rename "$o" "$n" || true; }
+                press_any_key ;;
+            8)
+                echo -en "  ${BOLD}Метка или #:${NC} "; local l; read -r l
+                if [[ "$l" =~ ^[0-9]+$ ]] && [ "$l" -ge 1 ] && [ "$l" -le "${#SECRETS_LABELS[@]}" ]; then
+                    l="${SECRETS_LABELS[$((l - 1))]}"
+                fi
+                [ -n "$l" ] && { secret_show_limits "$l" || true; }
+                press_any_key ;;
+            9)
+                echo -en "  ${BOLD}Метка или #:${NC} "; local l; read -r l
+                if [[ "$l" =~ ^[0-9]+$ ]] && [ "$l" -ge 1 ] && [ "$l" -le "${#SECRETS_LABELS[@]}" ]; then
+                    l="${SECRETS_LABELS[$((l - 1))]}"
+                fi
+                if [ -n "$l" ]; then
+                    local link; link=$(get_proxy_link "$l") || true
+                    if [ -n "$link" ]; then
+                        echo -e "  ${CYAN}${link}${NC}"
+                        if command -v qrencode &>/dev/null; then
+                            echo ""; qrencode -t ANSIUTF8 "$link" | sed 's/^/  /'
+                        fi
+                    fi
+                fi
                 press_any_key ;;
             0|"") return ;;
         esac
@@ -576,33 +619,41 @@ tui_engine_menu() {
 tui_backup_menu() {
     while true; do
         clear_screen
-        draw_header "БЭКАПЫ"
+        draw_header "БЭКАПЫ И ОБНОВЛЕНИЯ"
         echo ""
-        echo -e "  ${DIM}[1]${NC} Создать бэкап"
-        echo -e "  ${DIM}[2]${NC} Восстановить"
-        echo -e "  ${DIM}[3]${NC} Список"
-        echo -e "  ${DIM}[4]${NC} Зашифрованный бэкап"
-        echo -e "  ${DIM}[5]${NC} Восстановить зашифрованный"
-        echo -e "  ${DIM}[6]${NC} Экспорт (миграция)"
-        echo -e "  ${DIM}[7]${NC} Импорт (миграция)"
+        echo -e "  ${DIM}[1]${NC} Проверить обновления"
+        echo -e "  ${DIM}[2]${NC} Создать бэкап"
+        echo -e "  ${DIM}[3]${NC} Восстановить бэкап"
+        echo -e "  ${DIM}[4]${NC} Список бэкапов"
+        echo -e "  ${DIM}[5]${NC} Зашифрованный бэкап"
+        echo -e "  ${DIM}[6]${NC} Восстановить зашифрованный"
+        echo -e "  ${DIM}[7]${NC} Экспорт (миграция на другой сервер)"
+        echo -e "  ${DIM}[8]${NC} Импорт (миграция с другого сервера)"
+        echo -e "  ${DIM}[9]${NC} Автоочистка старых бэкапов"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
-            1) create_backup || true; press_any_key ;;
-            2) list_backups; echo -en "  ${BOLD}Файл:${NC} "; local f; read -r f
+            1) self_update || true; press_any_key ;;
+            2) create_backup || true; press_any_key ;;
+            3) list_backups; echo -en "  ${BOLD}Файл:${NC} "; local f; read -r f
                [ -n "$f" ] && restore_backup "$f" || true; press_any_key ;;
-            3) list_backups; press_any_key ;;
-            4) backup_create_encrypted || true; press_any_key ;;
-            5) echo -en "  ${BOLD}Файл:${NC} "; local f; read -r f
+            4) list_backups; press_any_key ;;
+            5) backup_create_encrypted || true; press_any_key ;;
+            6) echo -en "  ${BOLD}Файл:${NC} "; local f; read -r f
                [ -n "$f" ] && backup_restore_encrypted "$f" || true; press_any_key ;;
-            6) migrate_export; press_any_key ;;
-            7) echo -en "  ${BOLD}Файл:${NC} "; local f; read -r f
+            7) migrate_export || true; press_any_key ;;
+            8) echo -en "  ${BOLD}Файл:${NC} "; local f; read -r f
                [ -n "$f" ] && migrate_import "$f" || true; press_any_key ;;
+            9)
+                echo -e "  ${DIM}Текущая политика: ${BACKUP_RETENTION_DAYS:-30} дней${NC}"
+                echo -en "  ${BOLD}Удалить старше N дней [${BACKUP_RETENTION_DAYS:-30}]:${NC} "
+                local d; read -r d; d="${d:-${BACKUP_RETENTION_DAYS:-30}}"
+                backup_autoclean "$d" || true
+                press_any_key ;;
             0|"") return ;;
         esac
     done
 }
-
 # ── Подменю: Режим эксперта ──────────────────────────────────
 tui_expert_menu() {
     while true; do
@@ -719,28 +770,54 @@ check_for_update() {
 self_update() {
     log_info "Скачивание обновления..."
 
+    # Скачиваем главный скрипт
     local _tmp="/tmp/mtproxyl-update-$$.sh"
-    if curl -fsS --max-time 30 "${GITHUB_RAW}/mtproxyl.sh" -o "$_tmp" 2>/dev/null; then
-        if ! bash -n "$_tmp" 2>/dev/null; then
-            log_error "Ошибка синтаксиса — обновление отменено"
-            rm -f "$_tmp"; return 1
-        fi
-        cp "${INSTALL_DIR}/mtproxyl.sh" "${INSTALL_DIR}/mtproxyl.sh.backup-$(date +%s)" 2>/dev/null || true
-        mv "$_tmp" "${INSTALL_DIR}/mtproxyl.sh"
-        chmod +x "${INSTALL_DIR}/mtproxyl.sh"
-
-        # Обновляем библиотеки
-        for lib in colors utils settings secrets config docker engine traffic geoblock upstream backup nft tui install; do
-            curl -fsS --max-time 15 "${GITHUB_RAW}/lib/${lib}.sh" -o "${LIB_DIR}/${lib}.sh" 2>/dev/null || true
-        done
-
-        log_success "Обновлено"
-        log_info "Перезапуск..."
-        exec "${INSTALL_DIR}/mtproxyl.sh"
-    else
+    if ! curl -fsS --max-time 30 "${GITHUB_RAW}/mtproxyl.sh" -o "$_tmp" 2>/dev/null; then
         log_error "Не удалось скачать обновление"
-        rm -f "$_tmp"
+        rm -f "$_tmp"; return 1
     fi
+
+    # Проверяем синтаксис
+    if ! bash -n "$_tmp" 2>/dev/null; then
+        log_error "Ошибка синтаксиса — обновление отменено"
+        rm -f "$_tmp"; return 1
+    fi
+
+    # Проверяем что новая версия действительно новее
+    local _new_ver
+    _new_ver=$(grep -m1 '^VERSION="' "$_tmp" | cut -d'"' -f2)
+    if [ -z "$_new_ver" ]; then
+        log_error "Не удалось определить версию в скачанном файле"
+        rm -f "$_tmp"; return 1
+    fi
+    if [ "$_new_ver" = "$VERSION" ]; then
+        log_info "Версия уже актуальна (v${VERSION})"
+        rm -f "$_tmp"; return 0
+    fi
+
+    # Бэкап
+    cp "${INSTALL_DIR}/mtproxyl.sh" "${INSTALL_DIR}/mtproxyl.sh.backup-$(date +%s)" 2>/dev/null || true
+    mv "$_tmp" "${INSTALL_DIR}/mtproxyl.sh"
+    chmod +x "${INSTALL_DIR}/mtproxyl.sh"
+
+    # Обновляем библиотеки
+    log_info "Обновление библиотек..."
+    local _lib_ok=true
+    for lib in colors utils settings secrets config docker engine traffic geoblock upstream backup nft tui install; do
+        if ! curl -fsS --max-time 15 "${GITHUB_RAW}/lib/${lib}.sh" -o "${LIB_DIR}/${lib}.sh" 2>/dev/null; then
+            log_warn "Не удалось обновить lib/${lib}.sh"
+            _lib_ok=false
+        fi
+    done
+
+    if [ "$_lib_ok" = "true" ]; then
+        log_success "Обновлено до v${_new_ver}"
+    else
+        log_warn "Обновлено до v${_new_ver}, но некоторые библиотеки не обновились"
+    fi
+
+    log_info "Перезапуск..."
+    exec "${INSTALL_DIR}/mtproxyl.sh"
 }
 
 show_cli_help() {
