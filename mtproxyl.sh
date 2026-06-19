@@ -23,8 +23,8 @@ GITHUB_REPO="Liafanx/MTProxyL"
 GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
 REGISTRY_IMAGE="ghcr.io/liafanx/mtproxyl-telemt"
 TELEMT_GITHUB="telemt/telemt"
-TELEMT_MIN_VERSION="3.4.15"
-TELEMT_COMMIT="504cafb"
+TELEMT_MIN_VERSION="3.4.18"
+TELEMT_COMMIT="9dc6772"
 
 # Bash version check
 if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
