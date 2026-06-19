@@ -71,6 +71,7 @@ show_main_menu() {
         echo -e "  ${BRIGHT_CYAN}[e]${NC}  Режим эксперта"
         echo -e "  ${BRIGHT_CYAN}[i]${NC}  Информация"
         echo ""
+        echo -e "  ${BRIGHT_CYAN}[r]${NC}  Переустановить"        
         echo -e "  ${RED}[u]${NC}  Удаление"
         echo -e "  ${BRIGHT_CYAN}[0]${NC}  Выход"
         echo ""
@@ -88,6 +89,7 @@ show_main_menu() {
             9) tui_backup_menu ;;
             e|E) tui_expert_menu ;;
             i|I) show_server_info; press_any_key ;;
+            r|R) run_installer ;;
             u|U) uninstall; exit 0 ;;
             0|q|Q) exit 0 ;;
         esac
