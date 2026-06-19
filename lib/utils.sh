@@ -217,3 +217,64 @@ clear_screen() {
     echo -e "${BRIGHT_CYAN}${BOLD}  MTProxyL${NC} ${DIM}v${VERSION}${NC} ${DIM}by LiafanX${NC}"
     echo -e "  ${DIM}$(_repeat '─' 30)${NC}"
 }
+
+# ── Проверка обновлений ───────────────────────────────────────
+_UPDATE_AVAILABLE=""
+
+check_for_update() {
+    local _remote_ver
+    _remote_ver=$(curl -fsS --max-time 5 "${GITHUB_RAW}/version" 2>/dev/null | tr -d '[:space:]')
+    [ -z "$_remote_ver" ] && return 0
+    if [ "$_remote_ver" != "$VERSION" ]; then
+        _UPDATE_AVAILABLE="$_remote_ver"
+    else
+        _UPDATE_AVAILABLE=""
+    fi
+}
+
+self_update() {
+    log_info "Скачивание обновления..."
+    local _tmp="/tmp/mtproxyl-update-$$.sh"
+    if ! curl -fsS --max-time 30 "${GITHUB_RAW}/mtproxyl.sh" -o "$_tmp" 2>/dev/null; then
+        log_error "Не удалось скачать обновление"; rm -f "$_tmp"; return 1
+    fi
+    if ! bash -n "$_tmp" 2>/dev/null; then
+        log_error "Ошибка синтаксиса — отменено"; rm -f "$_tmp"; return 1
+    fi
+    local _new_ver
+    _new_ver=$(grep -m1 '^VERSION="' "$_tmp" | cut -d'"' -f2)
+    if [ -z "$_new_ver" ]; then
+        log_error "Не удалось определить версию"; rm -f "$_tmp"; return 1
+    fi
+    if [ "$_new_ver" = "$VERSION" ]; then
+        log_info "Версия актуальна (v${VERSION})"; rm -f "$_tmp"; return 0
+    fi
+    cp "${INSTALL_DIR}/mtproxyl.sh" "${INSTALL_DIR}/mtproxyl.sh.backup-$(date +%s)" 2>/dev/null || true
+    mv "$_tmp" "${INSTALL_DIR}/mtproxyl.sh"; chmod +x "${INSTALL_DIR}/mtproxyl.sh"
+    log_info "Обновление библиотек..."
+    for lib in colors utils settings secrets config docker engine traffic geoblock upstream backup nft tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft install; do
+        curl -fsS --max-time 15 "${GITHUB_RAW}/lib/${lib}.sh" -o "${LIB_DIR}/${lib}.sh" 2>/dev/null || true
+    done
+    log_success "Обновлено до v${_new_ver}"
+    log_info "Перезапуск..."
+    exec "${INSTALL_DIR}/mtproxyl.sh"
+}
+
+show_cli_help() {
+    echo ""
+    echo -e "  ${BRIGHT_CYAN}${BOLD}MTProxyL${NC} ${DIM}v${VERSION}${NC} — Менеджер Telegram MTProto прокси"
+    echo ""
+    echo -e "  ${BOLD}Использование:${NC} mtproxyl <команда> [параметры]"
+    echo ""
+    echo -e "  ${BOLD}Прокси:${NC}         start | stop | restart | status [--json]"
+    echo -e "  ${BOLD}Секреты:${NC}        secret add|remove|list|rotate|enable|disable|limits|link|qr|clone|rename"
+    echo -e "  ${BOLD}Настройки:${NC}      port | ip | domain | mask-backend | config"
+    echo -e "  ${BOLD}Движок:${NC}         engine status|list|update|rollback|rebuild"
+    echo -e "  ${BOLD}Эксперт:${NC}        expert list|set|clear|edit"
+    echo -e "  ${BOLD}NFT:${NC}            nft apply|remove|service|drop|preset|ios1|ios2"
+    echo -e "  ${BOLD}Безопасность:${NC}   geoblock add|remove|list | upstream list|add|remove | sni-policy"
+    echo -e "  ${BOLD}Мониторинг:${NC}     traffic | connections | metrics [live] | logs | health | info"
+    echo -e "  ${BOLD}Бэкапы:${NC}         backup [--encrypt] | restore <файл>"
+    echo -e "  ${BOLD}Система:${NC}        install | menu | update | uninstall | version | help"
+    echo ""
+}
