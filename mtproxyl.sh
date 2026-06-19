@@ -9,7 +9,7 @@ if [[ ! -t 0 ]] && [[ -e /dev/tty ]]; then
     exec < /dev/tty
 fi
 
-set -eo pipefail
+set -o pipefail
 export LC_NUMERIC=C
 
 VERSION="1.0.0"
