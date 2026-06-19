@@ -185,3 +185,134 @@ handle_metrics_command() {
         show_traffic
     fi
 }
+
+# ── Диагностика ──────────────────────────────────────────────
+health_check() {
+    echo ""; draw_header "ДИАГНОСТИКА"; echo ""
+    command -v docker &>/dev/null && echo -e "  ${GREEN}${SYM_CHECK}${NC} Docker установлен" || echo -e "  ${RED}${SYM_CROSS}${NC} Docker не установлен"
+    is_proxy_running && echo -e "  ${GREEN}${SYM_CHECK}${NC} Контейнер запущен" || echo -e "  ${RED}${SYM_CROSS}${NC} Контейнер не запущен"
+    curl -s --max-time 2 "http://127.0.0.1:${PROXY_METRICS_PORT}/metrics" &>/dev/null && echo -e "  ${GREEN}${SYM_CHECK}${NC} Метрики доступны" || echo -e "  ${RED}${SYM_CROSS}${NC} Метрики недоступны"
+    [ -f "${CONFIG_DIR}/config.toml" ] && echo -e "  ${GREEN}${SYM_CHECK}${NC} Конфиг существует" || echo -e "  ${RED}${SYM_CROSS}${NC} Конфиг не найден"
+    local active=0 i; for i in "${!SECRETS_ENABLED[@]}"; do [ "${SECRETS_ENABLED[$i]}" = "true" ] && active=$((active+1)); done
+    [ $active -gt 0 ] && echo -e "  ${GREEN}${SYM_CHECK}${NC} ${active} активных секретов" || echo -e "  ${RED}${SYM_CROSS}${NC} Нет активных секретов"
+    echo ""
+}
+
+show_server_info() {
+    echo ""; draw_header "ИНФОРМАЦИЯ О СЕРВЕРЕ"; echo ""
+    local os_name="?" kernel arch
+    [ -f /etc/os-release ] && os_name=$(. /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-$ID}")
+    kernel=$(uname -r 2>/dev/null || echo "?"); arch=$(uname -m 2>/dev/null || echo "?")
+    echo -e "  ${BOLD}Система${NC}"
+    echo -e "    ОС:           ${os_name}"
+    echo -e "    Ядро:         ${kernel}"
+    echo -e "    Архитектура:  ${arch}"
+    echo ""
+    echo -e "  ${BOLD}Прокси${NC}"
+    echo -e "    Скрипт:       v${VERSION}"
+    echo -e "    Движок:       telemt v$(get_telemt_version)"
+    echo -e "    Домен:        ${PROXY_DOMAIN}"
+    echo -e "    Порт:         ${PROXY_PORT}"
+    echo -e "    Маскировка:   ${MASKING_ENABLED}"
+    echo ""
+}
+
+show_metrics() {
+    local m
+    m=$(_fetch_metrics 2>/dev/null) || { log_error "Эндпоинт метрик недоступен"; return 1; }
+
+    local parsed
+    parsed=$(echo "$m" | awk '
+        function lbl(s, k,    p, q) {
+            p = index(s, k "=\""); if (!p) return ""
+            s = substr(s, p + length(k) + 2)
+            q = index(s, "\""); return q ? substr(s, 1, q-1) : ""
+        }
+        /^telemt_uptime_seconds /                           { uptime = $NF }
+        /^telemt_connections_total /                        { c_tot  = $NF }
+        /^telemt_connections_bad_total /                    { c_bad  = $NF }
+        /^telemt_connections_current /                      { c_cur  = $NF }
+        /^telemt_connections_me_current /                   { c_me   = $NF }
+        /^telemt_connections_direct_current /               { c_dir  = $NF }
+        /^telemt_upstream_connect_attempt_total /           { up_att = $NF }
+        /^telemt_upstream_connect_success_total /           { up_ok  = $NF }
+        /^telemt_upstream_connect_fail_total /              { up_fail= $NF }
+        /^telemt_me_reconnect_attempts_total /              { me_att = $NF }
+        /^telemt_me_reconnect_success_total /               { me_ok  = $NF }
+        /^telemt_me_writers_active_current /                { me_wa  = $NF }
+        /^telemt_me_writers_warm_current /                  { me_ww  = $NF }
+        /^telemt_upstream_connect_duration_success_total\{/ { b=lbl($0,"bucket"); if(b) ds[b]+=$NF }
+        /^telemt_upstream_connect_duration_fail_total\{/    { b=lbl($0,"bucket"); if(b) df[b]+=$NF }
+        /^telemt_user_connections_current\{/ { u=lbl($0,"user"); if(u) uc[u]+=$NF }
+        /^telemt_user_connections_total\{/   { u=lbl($0,"user"); if(u) ut[u]+=$NF }
+        /^telemt_user_octets_from_client\{/  { u=lbl($0,"user"); if(u) rx[u]+=$NF }
+        /^telemt_user_octets_to_client\{/    { u=lbl($0,"user"); if(u) tx[u]+=$NF }
+        /^telemt_user_unique_ips_current\{/  { u=lbl($0,"user"); if(u) ui[u]+=$NF }
+        END {
+            printf "S|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f\n",
+                uptime+0,c_tot+0,c_bad+0,c_cur+0,c_me+0,c_dir+0,
+                up_att+0,up_ok+0,up_fail+0,me_att+0,me_ok+0,me_wa+0,me_ww+0
+            bkeys[1]="le_100ms";   bnames[1]="<=100мс"
+            bkeys[2]="101_500ms";  bnames[2]="101-500мс"
+            bkeys[3]="501_1000ms"; bnames[3]="501мс-1с"
+            bkeys[4]="gt_1000ms";  bnames[4]=">1с"
+            for (i=1;i<=4;i++) {
+                b=bkeys[i]; ok=ds[b]+0; fail=df[b]+0; tot=ok+fail
+                printf "D|%s|%s|%.0f|%.0f|%.1f\n", b, bnames[i], ok, fail, (tot>0 ? ok/tot*100 : -1)
+            }
+            for (u in uc) users[u]=1
+            for (u in rx) users[u]=1
+            for (u in ui) users[u]=1
+            for (u in users)
+                printf "U|%s|%.0f|%.0f|%.0f|%.0f|%.0f\n", u, uc[u]+0, ut[u]+0, rx[u]+0, tx[u]+0, ui[u]+0
+        }
+    ')
+
+    local uptime c_tot c_bad c_cur c_me c_dir up_att up_ok up_fail me_att me_ok me_wa me_ww
+    IFS='|' read -r _ uptime c_tot c_bad c_cur c_me c_dir up_att up_ok up_fail me_att me_ok me_wa me_ww \
+        <<< "$(echo "$parsed" | grep '^S|')"
+
+    local c_good=$(( ${c_tot:-0} - ${c_bad:-0} ))
+    local up_rate=0 me_rate=0
+    [ "${up_att:-0}" -gt 0 ] && up_rate=$(awk -v a="$up_att" -v b="$up_ok" 'BEGIN{printf "%.1f", b/a*100}')
+    [ "${me_att:-0}" -gt 0 ] && me_rate=$(awk -v a="$me_att" -v b="$me_ok" 'BEGIN{printf "%.1f", b/a*100}')
+
+    local up_status
+    if [ "${up_att:-0}" -eq 0 ]; then up_status="${DIM}—${NC}"
+    elif awk -v r="$up_rate" 'BEGIN{exit !(r+0 >= 95)}'; then up_status="${BRIGHT_GREEN}OK${NC} ${up_rate}%"
+    elif awk -v r="$up_rate" 'BEGIN{exit !(r+0 >= 80)}'; then up_status="${YELLOW}WARN${NC} ${up_rate}%"
+    else up_status="${BRIGHT_RED}CRIT${NC} ${up_rate}%"; fi
+
+    draw_header "МЕТРИКИ"
+    echo -e "  ${DIM}аптайм:${NC} $(format_duration "${uptime:-0}")   ${DIM}upstream:${NC} ${up_status}   ${DIM}активных:${NC} ${c_cur:-0}   ${DIM}writers:${NC} ${me_wa:-0}/${me_ww:-0}"
+    echo ""
+
+    echo -e "  ${BOLD}Соединения${NC}"
+    echo -e "  ${DIM}всего:${NC} ${c_tot:-0}   ${DIM}авториз.:${NC} ${BRIGHT_GREEN}${c_good}${NC}   ${DIM}отклонено:${NC} ${BRIGHT_RED}${c_bad:-0}${NC}"
+    echo -e "  ${DIM}активных:${NC} ${c_cur:-0}  (ME: ${c_me:-0}  direct: ${c_dir:-0})"
+    echo ""
+
+    echo -e "  ${BOLD}Upstream${NC}"
+    echo -e "  ${DIM}попыток:${NC} ${up_att:-0}   ${DIM}успех:${NC} ${BRIGHT_GREEN}${up_ok:-0}${NC}   ${DIM}ошибок:${NC} ${BRIGHT_RED}${up_fail:-0}${NC}   ${DIM}rate:${NC} ${up_status}"
+    while IFS='|' read -r _ bk bn ok fail pct; do
+        local ppct
+        ppct=$(awk -v p="$pct" 'BEGIN{if(p+0<0) print "—"; else printf "%.0f%%", p}')
+        printf "    %-12s  %6s ок  %6s ош  (%s)\n" "$bn" "$ok" "$fail" "$ppct"
+    done < <(echo "$parsed" | grep '^D|')
+    echo ""
+
+    local user_lines
+    user_lines=$(echo "$parsed" | grep '^U|' | sort -t'|' -k3 -rn)
+    if [ -n "$user_lines" ]; then
+        echo -e "  ${BOLD}Пользователи${NC}"
+        while IFS='|' read -r _ uname ucur utot urx utx uips; do
+            echo -e "  ${GREEN}${SYM_OK}${NC} ${BOLD}${uname}${NC}  активных: ${ucur}  всего: ${utot}  ${SYM_DOWN} $(format_bytes "$urx")  ${SYM_UP} $(format_bytes "$utx")  IP: ${uips}"
+        done <<< "$user_lines"
+        echo ""
+    fi
+
+    local me_rate_disp; [ "${me_att:-0}" -gt 0 ] && me_rate_disp="${me_rate}%" || me_rate_disp="—"
+    echo -e "  ${BOLD}ME Health${NC}"
+    echo -e "  ${DIM}переподкл.:${NC} ${me_ok:-0}/${me_att:-0} (${me_rate_disp})   ${DIM}writers:${NC} ${me_wa:-0} активных / ${me_ww:-0} warm"
+    echo ""
+}
