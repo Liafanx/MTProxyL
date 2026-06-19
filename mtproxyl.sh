@@ -44,7 +44,7 @@ fi
 
 # Загрузка библиотек
 LIB_DIR="${INSTALL_DIR}/lib"
-for _lib in colors utils settings secrets config docker engine traffic geoblock upstream backup tui install; do
+for _lib in colors utils settings secrets config docker engine traffic geoblock upstream backup nft tui install; do
     if [ -f "${LIB_DIR}/${_lib}.sh" ]; then
         # shellcheck source=/dev/null
         source "${LIB_DIR}/${_lib}.sh"
