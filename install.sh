@@ -1,11 +1,10 @@
 #!/bin/bash
 # MTProxyL — быстрая установка
-# curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/main/install.sh | sudo bash
-
-# Защита stdin при curl | bash — ДОЛЖНА БЫТЬ ПЕРВОЙ
-if [[ ! -t 0 ]] && [[ -e /dev/tty ]]; then
-    exec < /dev/tty
-fi
+# Использование:
+#   wget -qO /tmp/mtproxyl-install.sh https://raw.githubusercontent.com/Liafanx/MTProxyL/main/install.sh && sudo bash /tmp/mtproxyl-install.sh
+#
+# Или одной строкой:
+#   bash <(curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/main/install.sh)
 
 set -e
 
@@ -14,7 +13,8 @@ INSTALL_DIR="/opt/mtproxyl"
 SCRIPT_URL="https://raw.githubusercontent.com/${REPO}/main"
 
 if [ "$(id -u)" -ne 0 ]; then
-    echo "Запустите от root: curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | sudo bash" >&2
+    echo "Запустите от root:" >&2
+    echo "  wget -qO /tmp/mtproxyl-install.sh https://raw.githubusercontent.com/${REPO}/main/install.sh && sudo bash /tmp/mtproxyl-install.sh" >&2
     exit 1
 fi
 
@@ -23,14 +23,15 @@ echo "  MTProxyL — установка"
 echo "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 
-# Создаём структуру директорий
 mkdir -p "${INSTALL_DIR}/lib" "${INSTALL_DIR}/mtproxy" "${INSTALL_DIR}/backups"
 
 echo "  Скачивание файлов..."
 
 # Главный скрипт
+echo "  → mtproxyl.sh"
 if ! curl -fsSL --max-time 30 "${SCRIPT_URL}/mtproxyl.sh" -o "${INSTALL_DIR}/mtproxyl.sh"; then
     echo "  ОШИБКА: Не удалось скачать mtproxyl.sh" >&2
+    echo "  Проверьте интернет и доступность github.com" >&2
     exit 1
 fi
 chmod +x "${INSTALL_DIR}/mtproxyl.sh"
@@ -50,6 +51,5 @@ ln -sf "${INSTALL_DIR}/mtproxyl.sh" /usr/local/bin/mtproxyl
 echo ""
 echo "  ✓ MTProxyL установлен"
 echo ""
-
-# Запуск главного скрипта
-exec "${INSTALL_DIR}/mtproxyl.sh"
+echo "  Запустите: mtproxyl"
+echo ""
