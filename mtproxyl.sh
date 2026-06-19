@@ -1,0 +1,261 @@
+#!/bin/bash
+# ═══════════════════════════════════════════════════════════════
+#  MTProxyL v1.0.0 — Telegram MTProto Proxy Manager
+#  https://github.com/Liafanx/MTProxyL
+#  by LiafanX
+# ═══════════════════════════════════════════════════════════════
+set -eo pipefail
+export LC_NUMERIC=C
+
+VERSION="1.0.0"
+SCRIPT_NAME="mtproxyl"
+INSTALL_DIR="/opt/mtproxyl"
+CONFIG_DIR="${INSTALL_DIR}/mtproxy"
+SETTINGS_FILE="${INSTALL_DIR}/settings.conf"
+SECRETS_FILE="${INSTALL_DIR}/secrets.conf"
+UPSTREAMS_FILE="${INSTALL_DIR}/upstreams.conf"
+BACKUP_DIR="${INSTALL_DIR}/backups"
+STATS_DIR="${INSTALL_DIR}/relay_stats"
+CONNECTION_LOG="${INSTALL_DIR}/connection.log"
+CONTAINER_NAME="mtproxyl"
+DOCKER_IMAGE_BASE="mtproxyl-telemt"
+GITHUB_REPO="Liafanx/MTProxyL"
+GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
+REGISTRY_IMAGE="ghcr.io/liafanx/mtproxyl-telemt"
+TELEMT_GITHUB="telemt/telemt"
+TELEMT_MIN_VERSION="3.4.15"
+TELEMT_COMMIT="504cafb"
+
+# Bash version check
+if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
+    echo "ОШИБКА: MTProxyL требует bash 4.2+. Текущая: ${BASH_VERSION:-unknown}" >&2
+    exit 1
+fi
+
+# Защита stdin при curl | bash
+if [[ ! -t 0 ]] && [[ -e /dev/tty ]]; then
+    exec < /dev/tty
+fi
+
+# Загрузка библиотек
+LIB_DIR="${INSTALL_DIR}/lib"
+for _lib in colors utils settings secrets config docker engine traffic geoblock upstream backup tui install; do
+    if [ -f "${LIB_DIR}/${_lib}.sh" ]; then
+        # shellcheck source=/dev/null
+        source "${LIB_DIR}/${_lib}.sh"
+    else
+        echo "ОШИБКА: Библиотека не найдена: ${LIB_DIR}/${_lib}.sh" >&2
+        echo "Переустановите: curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPO}/main/install.sh | sudo bash" >&2
+        exit 1
+    fi
+done
+
+# Temp file tracking
+declare -a _TEMP_FILES=()
+_cleanup() {
+    for f in "${_TEMP_FILES[@]}"; do
+        rm -f "$f" 2>/dev/null
+    done
+}
+trap _cleanup EXIT
+
+_mktemp() {
+    local dir="${1:-${TMPDIR:-/tmp}}"
+    local tmp
+    tmp=$(mktemp "${dir}/.mtproxyl.XXXXXX") || return 1
+    chmod 600 "$tmp"
+    _TEMP_FILES+=("$tmp")
+    echo "$tmp"
+}
+
+# ── CLI Dispatcher ────────────────────────────────────────────
+cli_main() {
+    local cmd="${1:-}"
+    shift 2>/dev/null || true
+
+    case "$cmd" in
+        "")
+            set +eo pipefail
+            if [ -f "$SETTINGS_FILE" ]; then
+                load_settings
+                load_secrets
+                check_for_update
+                show_main_menu
+            else
+                run_installer
+            fi
+            ;;
+
+        start)
+            check_root
+            load_settings; load_secrets
+            start_proxy_container
+            ;;
+        stop)
+            check_root
+            load_settings
+            stop_proxy_container
+            ;;
+        restart)
+            check_root
+            load_settings; load_secrets
+            restart_proxy_container
+            ;;
+        status)
+            load_settings; load_secrets
+            if [ "$1" = "--json" ]; then
+                show_status_json
+            else
+                show_status
+            fi
+            ;;
+
+        secret)
+            load_settings; load_secrets
+            handle_secret_command "$@"
+            ;;
+
+        upstream)
+            load_settings; load_secrets
+            handle_upstream_command "$@"
+            ;;
+
+        port)
+            load_settings
+            handle_port_command "$@"
+            ;;
+
+        ip)
+            load_settings
+            handle_ip_command "$@"
+            ;;
+
+        domain)
+            load_settings; load_secrets
+            handle_domain_command "$@"
+            ;;
+
+        mask-backend)
+            load_settings; load_secrets
+            handle_mask_backend "$@"
+            ;;
+
+        traffic)
+            load_settings; load_secrets
+            show_traffic
+            ;;
+
+        connections)
+            load_settings; load_secrets
+            show_connections
+            ;;
+
+        config)
+            load_settings
+            show_config
+            ;;
+
+        expert)
+            load_settings; load_secrets
+            handle_expert_command "$@"
+            ;;
+
+        engine)
+            load_settings
+            handle_engine_command "$@"
+            ;;
+
+        tune)
+            load_settings
+            handle_tune_command "$@"
+            ;;
+
+        geoblock)
+            load_settings
+            handle_geoblock_command "$@"
+            ;;
+
+        sni-policy)
+            load_settings; load_secrets
+            handle_sni_policy "$@"
+            ;;
+
+        backup)
+            check_root; load_settings; load_secrets
+            handle_backup_command "$@"
+            ;;
+
+        restore)
+            check_root; load_settings
+            handle_restore_command "$@"
+            ;;
+
+        health)
+            load_settings; load_secrets
+            health_check
+            ;;
+
+        doctor)
+            load_settings; load_secrets
+            run_doctor
+            ;;
+
+        info)
+            load_settings; load_secrets
+            show_server_info
+            ;;
+
+        logs)
+            load_settings
+            echo -e "  ${DIM}Потоковые логи (Ctrl+C для остановки)...${NC}"
+            docker logs -f --tail 50 "$CONTAINER_NAME" 2>&1
+            ;;
+
+        metrics)
+            load_settings
+            handle_metrics_command "$@"
+            ;;
+
+        update)
+            check_root; load_settings
+            self_update
+            ;;
+
+        install)
+            run_installer
+            ;;
+
+        menu)
+            load_settings; load_secrets
+            show_main_menu
+            ;;
+
+        uninstall)
+            check_root; load_settings; load_secrets
+            uninstall
+            ;;
+
+        version)
+            echo -e "  ${BOLD}MTProxyL${NC} v${VERSION}"
+            echo -e "  ${DIM}Движок: telemt v$(get_telemt_version) (Rust)${NC}"
+            echo -e "  ${DIM}by LiafanX${NC}"
+            ;;
+
+        help|--help|-h)
+            show_cli_help
+            ;;
+
+        *)
+            log_error "Неизвестная команда: ${cmd}"
+            show_cli_help
+            return 1
+            ;;
+    esac
+}
+
+# ── Main ──────────────────────────────────────────────────────
+main() {
+    cli_main "$@"
+}
+
+main "$@"
