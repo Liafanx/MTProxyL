@@ -79,6 +79,7 @@ cli_main() {
             if [ -f "$SETTINGS_FILE" ]; then
                 load_settings
                 load_secrets
+                load_nft_settings
                 check_for_update
                 show_main_menu
             else
