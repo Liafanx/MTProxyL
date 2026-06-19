@@ -37,7 +37,7 @@ fi
 chmod +x "${INSTALL_DIR}/mtproxyl.sh"
 
 # Библиотеки
-for lib in colors utils settings secrets config docker engine traffic geoblock upstream backup nft tui install; do
+for lib in colors utils settings secrets config docker engine traffic geoblock upstream backup nft tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft install; do
     echo "  → lib/${lib}.sh"
     if ! curl -fsSL --max-time 30 "${SCRIPT_URL}/lib/${lib}.sh" -o "${INSTALL_DIR}/lib/${lib}.sh"; then
         echo "  ОШИБКА: Не удалось скачать lib/${lib}.sh" >&2
