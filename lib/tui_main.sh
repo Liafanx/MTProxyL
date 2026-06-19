@@ -1,19 +1,6 @@
 #!/bin/bash
 # MTProxyL — главное меню
 
-_UPDATE_AVAILABLE=""
-
-check_for_update() {
-    local _remote_ver
-    _remote_ver=$(curl -fsS --max-time 5 "${GITHUB_RAW}/version" 2>/dev/null | tr -d '[:space:]')
-    [ -z "$_remote_ver" ] && return 0
-    if [ "$_remote_ver" != "$VERSION" ]; then
-        _UPDATE_AVAILABLE="$_remote_ver"
-    else
-        _UPDATE_AVAILABLE=""
-    fi
-}
-
 show_banner() {
     echo -e "${BRIGHT_CYAN}"
     cat << 'BANNER'
@@ -102,7 +89,7 @@ show_main_menu() {
             8) tui_engine_menu ;;
             9) tui_backup_menu ;;
             e|E) tui_expert_menu ;;
-            i|I) show_server_info; press_any_key ;;
+            i|I) ; press_any_key ;;
             r|R) run_installer ;;
             u|U) uninstall; exit 0 ;;
             0|q|Q) exit 0 ;;
