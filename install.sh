@@ -12,7 +12,6 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# Защита stdin при curl | bash
 if [[ ! -t 0 ]] && [[ -e /dev/tty ]]; then
     exec < /dev/tty
 fi
@@ -21,18 +20,15 @@ mkdir -p "${INSTALL_DIR}/lib" "${INSTALL_DIR}/mtproxy" "${INSTALL_DIR}/backups"
 
 echo "Скачивание MTProxyL..."
 
-# Главный скрипт
 curl -fsSL "${SCRIPT_URL}/mtproxyl.sh" -o "${INSTALL_DIR}/mtproxyl.sh"
 chmod +x "${INSTALL_DIR}/mtproxyl.sh"
 
-# Библиотеки
-for lib in colors utils settings secrets config docker engine traffic geoblock upstream backup tui install; do
+for lib in colors utils settings secrets config docker engine traffic geoblock upstream backup nft tui install; do
     curl -fsSL "${SCRIPT_URL}/lib/${lib}.sh" -o "${INSTALL_DIR}/lib/${lib}.sh"
 done
 
-# Симлинк
 ln -sf "${INSTALL_DIR}/mtproxyl.sh" /usr/local/bin/mtproxyl
 
 echo ""
-echo "MTProxyL установлен. Запуск: mtproxyl"
+echo "MTProxyL установлен."
 exec "${INSTALL_DIR}/mtproxyl.sh"
