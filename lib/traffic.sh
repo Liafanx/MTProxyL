@@ -222,6 +222,7 @@ show_metrics() {
     m=$(_fetch_metrics 2>/dev/null) || { log_error "Эндпоинт метрик недоступен"; return 1; }
 
     local parsed
+    local parsed
     parsed=$(echo "$m" | awk '
         function lbl(s, k,    p, q) {
             p = index(s, k "=\""); if (!p) return ""
@@ -243,7 +244,9 @@ show_metrics() {
         /^telemt_me_writers_warm_current /                  { me_ww  = $NF }
         /^telemt_me_endpoint_quarantine_total /             { me_quar= $NF }
         /^telemt_me_crc_mismatch_total /                    { me_crc = $NF }
+        /^telemt_pool_drain_active /                        { pool   = $NF }
         /^telemt_desync_total /                             { desync = $NF }
+        /^telemt_secure_padding_invalid_total /             { padinv = $NF }
         /^telemt_upstream_connect_duration_success_total\{/ { b=lbl($0,"bucket"); if(b) ds[b]+=$NF }
         /^telemt_upstream_connect_duration_fail_total\{/    { b=lbl($0,"bucket"); if(b) df[b]+=$NF }
         /^telemt_user_connections_current\{/  { u=lbl($0,"user"); if(u) uc[u]+=$NF }
@@ -252,10 +255,10 @@ show_metrics() {
         /^telemt_user_octets_to_client\{/     { u=lbl($0,"user"); if(u) tx[u]+=$NF }
         /^telemt_user_unique_ips_current\{/   { u=lbl($0,"user"); if(u) ui[u]+=$NF }
         END {
-            printf "S|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f\n",
+            printf "S|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f\n",
                 uptime+0,c_tot+0,c_bad+0,c_cur+0,c_me+0,c_dir+0,
                 up_att+0,up_ok+0,up_fail+0,me_att+0,me_ok+0,
-                me_wa+0,me_ww+0,me_quar+0,me_crc+0,desync+0
+                me_wa+0,me_ww+0,me_quar+0,me_crc+0,pool+0,desync+0,padinv+0
             bkeys[1]="le_100ms";   bnames[1]="<=100мс"
             bkeys[2]="101_500ms";  bnames[2]="101-500мс"
             bkeys[3]="501_1000ms"; bnames[3]="501мс-1с"
@@ -266,15 +269,16 @@ show_metrics() {
             }
             for (u in uc) users[u]=1
             for (u in rx) users[u]=1
+            for (u in tx) users[u]=1
             for (u in ui) users[u]=1
             for (u in users)
                 printf "U|%s|%.0f|%.0f|%.0f|%.0f|%.0f\n", u, uc[u]+0, ut[u]+0, rx[u]+0, tx[u]+0, ui[u]+0
         }
     ')
 
-    local uptime c_tot c_bad c_cur c_me c_dir up_att up_ok up_fail me_att me_ok me_wa me_ww me_quar me_crc desync
+    local uptime c_tot c_bad c_cur c_me c_dir up_att up_ok up_fail me_att me_ok me_wa me_ww me_quar me_crc pool desync padinv
     IFS='|' read -r _ uptime c_tot c_bad c_cur c_me c_dir up_att up_ok up_fail \
-                       me_att me_ok me_wa me_ww me_quar me_crc desync \
+                       me_att me_ok me_wa me_ww me_quar me_crc pool desync padinv \
         <<< "$(echo "$parsed" | grep '^S|')"
 
     local c_good=$(( ${c_tot:-0} - ${c_bad:-0} ))
@@ -323,6 +327,16 @@ show_metrics() {
     [ "${me_quar:-0}" -gt 0 ] && echo -e "  ${DIM}карантин endpoint:${NC} ${YELLOW}${me_quar}${NC}"
     [ "${me_crc:-0}"  -gt 0 ] && echo -e "  ${DIM}CRC несовпадений:${NC} ${YELLOW}${me_crc}${NC}"
     echo ""
+
+    [ "${pool:-0}"    -gt 0 ] && echo -e "  ${DIM}writers draining:${NC}     ${pool}"
+
+    if [ "${desync:-0}" -gt 0 ] || [ "${padinv:-0}" -gt 0 ]; then
+        echo ""
+        echo -e "  ${BOLD}Безопасность${NC}"
+        [ "${desync:-0}"  -gt 0 ] && echo -e "  ${DIM}desync событий:${NC}   ${YELLOW}${desync}${NC}"
+        [ "${padinv:-0}"  -gt 0 ] && echo -e "  ${DIM}невалидный padding:${NC} ${YELLOW}${padinv}${NC}"
+        echo ""
+    fi    
 
     if [ "${desync:-0}" -gt 0 ]; then
         echo -e "  ${BOLD}Безопасность${NC}"
