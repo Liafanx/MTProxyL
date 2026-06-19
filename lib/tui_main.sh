@@ -89,7 +89,7 @@ show_main_menu() {
             8) tui_engine_menu ;;
             9) tui_backup_menu ;;
             e|E) tui_expert_menu ;;
-            i|I) ; press_any_key ;;
+            i|I) show_server_info; press_any_key ;;
             r|R) run_installer ;;
             u|U) uninstall; exit 0 ;;
             0|q|Q) exit 0 ;;
