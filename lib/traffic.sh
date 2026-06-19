@@ -222,7 +222,6 @@ show_metrics() {
     m=$(_fetch_metrics 2>/dev/null) || { log_error "Эндпоинт метрик недоступен"; return 1; }
 
     local parsed
-    local parsed
     parsed=$(echo "$m" | awk '
         function lbl(s, k,    p, q) {
             p = index(s, k "=\""); if (!p) return ""
@@ -338,9 +337,4 @@ show_metrics() {
         echo ""
     fi    
 
-    if [ "${desync:-0}" -gt 0 ]; then
-        echo -e "  ${BOLD}Безопасность${NC}"
-        echo -e "  ${DIM}desync событий:${NC} ${YELLOW}${desync}${NC}"
-        echo ""
-    fi
 }
