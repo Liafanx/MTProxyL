@@ -102,7 +102,7 @@ run_installer() {
     echo ""
     draw_header "СЕКРЕТ"
     echo ""
-    echo -en "  ${DIM}Метка [default]:${NC} "
+    echo -en "  ${DIM}Метка (имя пользователя) [default]:${NC} "
     local first_label; read -r first_label
     [ -z "$first_label" ] && first_label="default"
     [[ "$first_label" =~ ^[a-zA-Z0-9_-]+$ ]] || first_label="default"
