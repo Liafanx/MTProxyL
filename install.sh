@@ -50,6 +50,8 @@ ln -sf "${INSTALL_DIR}/mtproxyl.sh" /usr/local/bin/mtproxyl
 
 echo ""
 echo "  ✓ MTProxyL установлен"
+echo "  Запуск: mtproxyl"
 echo ""
-echo "  Запустите: mtproxyl"
-echo ""
+
+# Автозапуск
+exec /usr/local/bin/mtproxyl
