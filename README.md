@@ -7,7 +7,7 @@
 ## Установка
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/main/install.sh | sudo bash
+wget -qO /tmp/mtproxyl-install.sh https://raw.githubusercontent.com/Liafanx/MTProxyL/main/install.sh && sudo bash /tmp/mtproxyl-install.sh
 ```
 
 После установки запускается мастер настройки.
