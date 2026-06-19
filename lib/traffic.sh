@@ -241,17 +241,21 @@ show_metrics() {
         /^telemt_me_reconnect_success_total /               { me_ok  = $NF }
         /^telemt_me_writers_active_current /                { me_wa  = $NF }
         /^telemt_me_writers_warm_current /                  { me_ww  = $NF }
+        /^telemt_me_endpoint_quarantine_total /             { me_quar= $NF }
+        /^telemt_me_crc_mismatch_total /                    { me_crc = $NF }
+        /^telemt_desync_total /                             { desync = $NF }
         /^telemt_upstream_connect_duration_success_total\{/ { b=lbl($0,"bucket"); if(b) ds[b]+=$NF }
         /^telemt_upstream_connect_duration_fail_total\{/    { b=lbl($0,"bucket"); if(b) df[b]+=$NF }
-        /^telemt_user_connections_current\{/ { u=lbl($0,"user"); if(u) uc[u]+=$NF }
-        /^telemt_user_connections_total\{/   { u=lbl($0,"user"); if(u) ut[u]+=$NF }
-        /^telemt_user_octets_from_client\{/  { u=lbl($0,"user"); if(u) rx[u]+=$NF }
-        /^telemt_user_octets_to_client\{/    { u=lbl($0,"user"); if(u) tx[u]+=$NF }
-        /^telemt_user_unique_ips_current\{/  { u=lbl($0,"user"); if(u) ui[u]+=$NF }
+        /^telemt_user_connections_current\{/  { u=lbl($0,"user"); if(u) uc[u]+=$NF }
+        /^telemt_user_connections_total\{/    { u=lbl($0,"user"); if(u) ut[u]+=$NF }
+        /^telemt_user_octets_from_client\{/   { u=lbl($0,"user"); if(u) rx[u]+=$NF }
+        /^telemt_user_octets_to_client\{/     { u=lbl($0,"user"); if(u) tx[u]+=$NF }
+        /^telemt_user_unique_ips_current\{/   { u=lbl($0,"user"); if(u) ui[u]+=$NF }
         END {
-            printf "S|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f\n",
+            printf "S|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f\n",
                 uptime+0,c_tot+0,c_bad+0,c_cur+0,c_me+0,c_dir+0,
-                up_att+0,up_ok+0,up_fail+0,me_att+0,me_ok+0,me_wa+0,me_ww+0
+                up_att+0,up_ok+0,up_fail+0,me_att+0,me_ok+0,
+                me_wa+0,me_ww+0,me_quar+0,me_crc+0,desync+0
             bkeys[1]="le_100ms";   bnames[1]="<=100мс"
             bkeys[2]="101_500ms";  bnames[2]="101-500мс"
             bkeys[3]="501_1000ms"; bnames[3]="501мс-1с"
@@ -268,8 +272,9 @@ show_metrics() {
         }
     ')
 
-    local uptime c_tot c_bad c_cur c_me c_dir up_att up_ok up_fail me_att me_ok me_wa me_ww
-    IFS='|' read -r _ uptime c_tot c_bad c_cur c_me c_dir up_att up_ok up_fail me_att me_ok me_wa me_ww \
+    local uptime c_tot c_bad c_cur c_me c_dir up_att up_ok up_fail me_att me_ok me_wa me_ww me_quar me_crc desync
+    IFS='|' read -r _ uptime c_tot c_bad c_cur c_me c_dir up_att up_ok up_fail \
+                       me_att me_ok me_wa me_ww me_quar me_crc desync \
         <<< "$(echo "$parsed" | grep '^S|')"
 
     local c_good=$(( ${c_tot:-0} - ${c_bad:-0} ))
@@ -278,10 +283,12 @@ show_metrics() {
     [ "${me_att:-0}" -gt 0 ] && me_rate=$(awk -v a="$me_att" -v b="$me_ok" 'BEGIN{printf "%.1f", b/a*100}')
 
     local up_status
-    if [ "${up_att:-0}" -eq 0 ]; then up_status="${DIM}—${NC}"
+    if   [ "${up_att:-0}" -eq 0 ]; then up_status="${DIM}—${NC}"
     elif awk -v r="$up_rate" 'BEGIN{exit !(r+0 >= 95)}'; then up_status="${BRIGHT_GREEN}OK${NC} ${up_rate}%"
     elif awk -v r="$up_rate" 'BEGIN{exit !(r+0 >= 80)}'; then up_status="${YELLOW}WARN${NC} ${up_rate}%"
     else up_status="${BRIGHT_RED}CRIT${NC} ${up_rate}%"; fi
+
+    local me_rate_disp; [ "${me_att:-0}" -gt 0 ] && me_rate_disp="${me_rate}%" || me_rate_disp="—"
 
     draw_header "МЕТРИКИ"
     echo -e "  ${DIM}аптайм:${NC} $(format_duration "${uptime:-0}")   ${DIM}upstream:${NC} ${up_status}   ${DIM}активных:${NC} ${c_cur:-0}   ${DIM}writers:${NC} ${me_wa:-0}/${me_ww:-0}"
@@ -311,8 +318,15 @@ show_metrics() {
         echo ""
     fi
 
-    local me_rate_disp; [ "${me_att:-0}" -gt 0 ] && me_rate_disp="${me_rate}%" || me_rate_disp="—"
     echo -e "  ${BOLD}ME Health${NC}"
     echo -e "  ${DIM}переподкл.:${NC} ${me_ok:-0}/${me_att:-0} (${me_rate_disp})   ${DIM}writers:${NC} ${me_wa:-0} активных / ${me_ww:-0} warm"
+    [ "${me_quar:-0}" -gt 0 ] && echo -e "  ${DIM}карантин endpoint:${NC} ${YELLOW}${me_quar}${NC}"
+    [ "${me_crc:-0}"  -gt 0 ] && echo -e "  ${DIM}CRC несовпадений:${NC} ${YELLOW}${me_crc}${NC}"
     echo ""
+
+    if [ "${desync:-0}" -gt 0 ]; then
+        echo -e "  ${BOLD}Безопасность${NC}"
+        echo -e "  ${DIM}desync событий:${NC} ${YELLOW}${desync}${NC}"
+        echo ""
+    fi
 }
