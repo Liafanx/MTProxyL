@@ -217,6 +217,39 @@ cli_main() {
             handle_metrics_command "$@"
             ;;
 
+        nft)
+            load_settings; load_nft_settings
+            case "${1:-}" in
+                apply)    check_root; apply_nft_rules ;;
+                remove)   check_root; remove_nft_rules ;;
+                service)  check_root; install_nft_service ;;
+                drop)     show_nft_drop_counter ;;
+                preset)   check_root; apply_nft_preset "${2:-hard}" ;;
+                ios1)     check_root; ios_fix_apply ;;
+                ios1-off) check_root; ios_fix_remove ;;
+                ios2)     check_root; ios2_fix_apply ;;
+                ios2-off) check_root; ios2_fix_remove ;;
+                extra-add)
+                    check_root; nft_extra_add "$2" "$3" "$4" "$5" ;;
+                extra-rm)
+                    check_root; nft_extra_remove "$2" ;;
+                *)
+                    echo -e "  ${BOLD}NFT SYN Limiter:${NC}"
+                    echo -e "    ${GREEN}nft apply${NC}        Применить правила"
+                    echo -e "    ${GREEN}nft remove${NC}       Удалить правила"
+                    echo -e "    ${GREEN}nft service${NC}      Установить службу"
+                    echo -e "    ${GREEN}nft drop${NC}         Счётчик дропов"
+                    echo -e "    ${GREEN}nft preset${NC} X     Пресет (hard/medium/soft)"
+                    echo -e "    ${GREEN}nft ios1${NC}         iOS Fix v1 (keepalive)"
+                    echo -e "    ${GREEN}nft ios1-off${NC}     Откатить iOS Fix v1"
+                    echo -e "    ${GREEN}nft ios2${NC}         iOS Fix v2 (MSS+redirect)"
+                    echo -e "    ${GREEN}nft ios2-off${NC}     Откатить iOS Fix v2"
+                    echo -e "    ${GREEN}nft extra-add${NC}    Доп. правило"
+                    echo -e "    ${GREEN}nft extra-rm${NC} N   Удалить доп. правило"
+                    ;;
+            esac
+            ;;
+
         update)
             check_root; load_settings
             self_update
