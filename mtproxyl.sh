@@ -4,6 +4,11 @@
 #  https://github.com/Liafanx/MTProxyL
 #  by LiafanX
 # ═══════════════════════════════════════════════════════════════
+# Защита stdin при curl | bash
+if [[ ! -t 0 ]] && [[ -e /dev/tty ]]; then
+    exec < /dev/tty
+fi
+
 set -eo pipefail
 export LC_NUMERIC=C
 
