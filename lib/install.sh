@@ -122,11 +122,7 @@ run_installer() {
     save_secrets
 
     # Копирование скрипта
-    local script_source="${BASH_SOURCE[0]}"
-    if [ -f "$script_source" ]; then
-        cp "$script_source" "${INSTALL_DIR}/mtproxyl.sh"
-        chmod +x "${INSTALL_DIR}/mtproxyl.sh"
-    fi
+    # Главный скрипт уже скачан корневым install.sh, здесь только обновляем симлинк
     ln -sf "${INSTALL_DIR}/mtproxyl.sh" /usr/local/bin/mtproxyl
 
     # Запуск
