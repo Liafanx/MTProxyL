@@ -256,7 +256,3 @@ MIT
 ---
 
 MTProxyL by LiafanX · [GitHub](https://github.com/Liafanx/MTProxyL)
-
-1. Дать **LICENSE** файл (MIT)
-2. Дать **чеклист тестирования перед первым релизом**
-3. Или сразу начать дорабатывать конкретные части
