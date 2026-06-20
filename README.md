@@ -17,6 +17,8 @@ wget -qO /tmp/mtproxyl-install.sh https://raw.githubusercontent.com/Liafanx/MTPr
 mtproxyl
 ```
 
+На текущий момент для работоспособности включите NFT правила, иначе прокси не работает в 90% случаев.
+
 ## Что умеет
 
 ### Управление прокси
