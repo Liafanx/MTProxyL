@@ -193,6 +193,28 @@ TAILEOF
 
 # ── Применение / удаление NFT правил ─────────────────────────
 apply_nft_rules() {
+    if ! command -v nft &>/dev/null; then
+        log_info "nftables не установлен, устанавливаем..."
+        _wait_apt 2>/dev/null || true
+        if command -v apt-get &>/dev/null; then
+            apt-get update -qq && apt-get install -y -qq nftables
+        elif command -v yum &>/dev/null; then
+            yum install -y -q nftables
+        elif command -v dnf &>/dev/null; then
+            dnf install -y -q nftables
+        elif command -v apk &>/dev/null; then
+            apk add --no-cache nftables
+        else
+            log_error "Не удалось установить nftables — установите вручную: apt install nftables"
+            return 1
+        fi
+        if ! command -v nft &>/dev/null; then
+            log_error "nftables не установлен после попытки установки"
+            return 1
+        fi
+        log_success "nftables установлен"
+    fi
+
     generate_nft_script
     if /bin/sh "$NFT_SCRIPT_FILE"; then
         log_success "NFT правила применены"
