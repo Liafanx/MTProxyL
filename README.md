@@ -19,6 +19,14 @@ mtproxyl
 
 На текущий момент для работоспособности включите NFT правила, иначе прокси не работает в 90% случаев.
 
++ после установки добавьте параметры командой:
+```bash
+mtproxyl tune set tg_connect 30
+mtproxyl tune set client_handshake 90
+mtproxyl tune set client_keepalive 120
+mtproxyl restart
+```
+
 ## Что умеет
 
 ### Управление прокси
