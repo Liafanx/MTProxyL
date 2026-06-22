@@ -8,7 +8,7 @@ _TUNE_FILE="${INSTALL_DIR}/tunings.conf"
 _TUNE_WHITELIST=(
     "fake_cert_len:censorship:^[0-9]+$"
     "client_handshake:timeouts:^[0-9]+$"
-    "tg_connect:timeouts:^[0-9]+$"
+    "tg_connect:general:^[0-9]+$"
     "client_keepalive:timeouts:^[0-9]+$"
     "client_ack:timeouts:^[0-9]+$"
     "replay_check_len:access:^[0-9]+$"
@@ -174,6 +174,7 @@ generate_telemt_config() {
 
 [general]
 prefer_ipv6 = false
+tg_connect = 10
 fast_mode = true
 use_middle_proxy = true
 log_level = "normal"
@@ -200,7 +201,6 @@ metrics_whitelist = ["127.0.0.1", "::1"]
 
 [timeouts]
 client_handshake = 30
-tg_connect = 10
 client_keepalive = 15
 client_ack = 90
 
