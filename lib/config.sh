@@ -174,7 +174,7 @@ generate_telemt_config() {
 
 [general]
 prefer_ipv6 = false
-tg_connect = 10
+tg_connect = 30
 fast_mode = true
 use_middle_proxy = true
 log_level = "normal"
@@ -200,8 +200,8 @@ metrics_listen = "127.0.0.1:${metrics_port}"
 metrics_whitelist = ["127.0.0.1", "::1"]
 
 [timeouts]
-client_handshake = 30
-client_keepalive = 15
+client_handshake = 90
+client_keepalive = 120
 client_ack = 90
 
 [censorship]
