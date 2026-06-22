@@ -209,52 +209,67 @@ uninstall() {
     echo -e "  ${BRIGHT_RED}${BOLD}УДАЛЕНИЕ MTPROXYL${NC}"
     echo ""
     echo -e "  ${YELLOW}Будет удалено:${NC}"
-    echo -e "  ${DIM}- Контейнер и Docker-образ${NC}"
+    echo -e "  ${DIM}- Контейнер и Docker-образ MTProxyL${NC}"
     echo -e "  ${DIM}- Конфигурация и секреты${NC}"
-    echo -e "  ${DIM}- Systemd-сервисы${NC}"
+    echo -e "  ${DIM}- Systemd-сервисы MTProxyL${NC}"
     echo -e "  ${DIM}- NFT правила и iOS фиксы${NC}"
     echo -e "  ${DIM}- /usr/local/bin/mtproxyl${NC}"
     echo ""
-    echo -e "  ${RED}Docker НЕ будет удалён.${NC}"
+    echo -e "  ${GREEN}НЕ будет удалено:${NC}"
+    echo -e "  ${DIM}- Docker (сам движок)${NC}"
+    echo -e "  ${DIM}- Другие Docker-образы и контейнеры${NC}"
+    echo -e "  ${DIM}- Глобальный Docker build cache${NC}"
     echo ""
 
-    echo -en "  ${BOLD}Введите 'yes':${NC} "
+    echo -en "  ${BOLD}Введите 'yes' для подтверждения:${NC} "
     local confirm; read -r confirm
     [ "$confirm" != "yes" ] && { log_info "Отменено"; return; }
 
     # Экспорт секретов
-    echo -en "  ${BOLD}Сохранить секреты? [y/N]:${NC} "
+    echo -en "  ${BOLD}Сохранить секреты перед удалением? [y/N]:${NC} "
     local export_choice; read -r export_choice
     if [[ "$export_choice" =~ ^[yY] ]]; then
         local export_file="${HOME}/mtproxyl-secrets-backup.txt"
-        cp "$SECRETS_FILE" "$export_file" 2>/dev/null
-        chmod 600 "$export_file" 2>/dev/null
+        cp "$SECRETS_FILE" "$export_file" 2>/dev/null || true
+        chmod 600 "$export_file" 2>/dev/null || true
         log_success "Секреты сохранены: ${export_file}"
     fi
 
     # NFT очистка
-    load_nft_settings 2>/dev/null
+    log_info "Удаление NFT правил..."
+    load_nft_settings 2>/dev/null || true
     nft_full_cleanup 2>/dev/null || true
 
-    # Сервисы
+    # Systemd сервисы
     log_info "Удаление сервисов..."
-    systemctl stop mtproxyl.service 2>/dev/null || true
-    systemctl disable mtproxyl.service 2>/dev/null || true
+    systemctl stop mtproxyl.service >/dev/null 2>&1 || true
+    systemctl disable mtproxyl.service >/dev/null 2>&1 || true
     rm -f /etc/systemd/system/mtproxyl.service
-    systemctl daemon-reload 2>/dev/null || true
+    systemctl daemon-reload >/dev/null 2>&1 || true
 
     # Гео-блокировка
-    geoblock_remove_all 2>/dev/null || true
+    log_info "Удаление гео-блокировки..."
+    geoblock_remove_all >/dev/null 2>&1 || true
 
-    # Контейнер
+    # Docker контейнер
     log_info "Удаление контейнера..."
-    docker stop "$CONTAINER_NAME" 2>/dev/null || true
-    docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+    docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 
-    # Образы
-    log_info "Удаление образов..."
-    docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep "^${DOCKER_IMAGE_BASE}:" | xargs -r docker rmi 2>/dev/null || true
-    docker builder prune -f 2>/dev/null || true
+    # Docker образы — только MTProxyL
+    log_info "Удаление образов MTProxyL..."
+    docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+        | grep "^${DOCKER_IMAGE_BASE}:" \
+        | while IFS= read -r _img; do
+            docker rmi "$_img" >/dev/null 2>&1 || true
+        done
+
+    # Образы из реестра (если были скачаны)
+    docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+        | grep "^${REGISTRY_IMAGE}:" \
+        | while IFS= read -r _img; do
+            docker rmi "$_img" >/dev/null 2>&1 || true
+        done
 
     # Файлы
     log_info "Удаление файлов..."
