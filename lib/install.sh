@@ -76,8 +76,8 @@ run_installer() {
     echo -e "  ${DIM}[1] cloudflare.com  [2] google.com  [3] microsoft.com  [4] Свой${NC}"
     local d; d=$(read_choice "выбор" "1")
     case "$d" in
-        2) PROXY_DOMAIN="www.google.com" ;;
-        3) PROXY_DOMAIN="www.microsoft.com" ;;
+        2) PROXY_DOMAIN="google.com" ;;
+        3) PROXY_DOMAIN="microsoft.com" ;;
         4) echo -en "  Домен: "; local cd; read -r cd
            [ -n "$cd" ] && validate_domain "$cd" && PROXY_DOMAIN="$cd" ;;
         *) PROXY_DOMAIN="cloudflare.com" ;;
@@ -93,16 +93,16 @@ run_installer() {
     # Ресурсы
     echo ""
     echo -e "  ${BOLD}Ресурсы${NC}"
-    echo -en "  ${DIM}CPU [без ограничений]:${NC} "; local cpu; read -r cpu
+    echo -en "  ${DIM}CPU (напр. 1 (1 ядро)) [Enter без ограничений]:${NC} "; local cpu; read -r cpu
     [ -n "$cpu" ] && PROXY_CPUS="$cpu"
-    echo -en "  ${DIM}RAM (напр. 256m, 1g) [без ограничений]:${NC} "; local mem; read -r mem
+    echo -en "  ${DIM}RAM (напр. 256m, 1g) [Enter без ограничений]:${NC} "; local mem; read -r mem
     [ -n "$mem" ] && PROXY_MEMORY="$mem"
 
     # Первый секрет
     echo ""
     draw_header "СЕКРЕТ"
     echo ""
-    echo -en "  ${DIM}Метка (имя пользователя) [default]:${NC} "
+    echo -en "  ${DIM}Метка (имя пользователя) [по умолчанию default]:${NC} "
     local first_label; read -r first_label
     [ -z "$first_label" ] && first_label="default"
     [[ "$first_label" =~ ^[a-zA-Z0-9_-]+$ ]] || first_label="default"
@@ -199,7 +199,7 @@ show_install_summary() {
     echo -e "  ${GREEN}mtproxyl secret add${NC}   Добавить пользователя"
     echo -e "  ${GREEN}mtproxyl help${NC}         Справка"
     echo ""
-    echo -e "  ${YELLOW}Фаервол: откройте TCP порт ${PROXY_PORT}${NC}"
+    echo -e "  ${YELLOW}Фаервол: откройте TCP порт, если закрыт ${PROXY_PORT}${NC}"
     echo ""
 }
 
