@@ -8,7 +8,7 @@
 set -o pipefail
 export LC_NUMERIC=C
 
-VERSION="1.0.1"
+VERSION="1.0.2"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
