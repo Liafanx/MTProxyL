@@ -62,6 +62,27 @@ run_installer() {
     local port_input; read -r port_input
     [ -n "$port_input" ] && validate_port "$port_input" && PROXY_PORT="$port_input"
 
+    # Metrics port — выбираем автоматически свободный
+    local _metrics_default
+    _metrics_default=$(find_free_metrics_port 9090 9199) || _metrics_default=9090
+    PROXY_METRICS_PORT="${_metrics_default}"
+    echo ""
+    echo -e "  ${BOLD}Порт метрик${NC} ${DIM}(Prometheus endpoint, localhost only)${NC}"
+    echo -e "  ${DIM}Автоматически выбран свободный порт: ${PROXY_METRICS_PORT}${NC}"
+    echo -en "  ${DIM}Оставить его? [Y/n]:${NC} "
+    local metrics_keep; read -r metrics_keep
+    if [[ "$metrics_keep" =~ ^[nN]$ ]]; then
+        echo -en "  ${BOLD}Введите порт метрик [${PROXY_METRICS_PORT}]:${NC} "
+        local metrics_input; read -r metrics_input
+        if [ -n "$metrics_input" ] && validate_port "$metrics_input"; then
+            if is_port_available "$metrics_input"; then
+                PROXY_METRICS_PORT="$metrics_input"
+            else
+                log_warn "Порт ${metrics_input} уже занят, оставляем ${PROXY_METRICS_PORT}"
+            fi
+        fi
+    fi
+
     # IP
     echo ""
     local _det_ip; _det_ip=$(CUSTOM_IP="" get_public_ip)
