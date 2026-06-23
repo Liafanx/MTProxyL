@@ -252,7 +252,7 @@ self_update() {
     cp "${INSTALL_DIR}/mtproxyl.sh" "${INSTALL_DIR}/mtproxyl.sh.backup-$(date +%s)" 2>/dev/null || true
     mv "$_tmp" "${INSTALL_DIR}/mtproxyl.sh"; chmod +x "${INSTALL_DIR}/mtproxyl.sh"
     log_info "Обновление библиотек..."
-    for lib in colors utils settings secrets config docker engine traffic geoblock upstream backup nft tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft install; do
+    for lib in colors utils settings secrets config docker engine traffic geoblock upstream backup nft tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft expert_catalog expert_mode install; do
         curl -fsS --max-time 15 "${GITHUB_RAW}/lib/${lib}.sh" -o "${LIB_DIR}/${lib}.sh" 2>/dev/null || true
     done
     log_success "Обновлено до v${_new_ver}"
@@ -277,4 +277,29 @@ show_cli_help() {
     echo -e "  ${BOLD}Бэкапы:${NC}         backup [--encrypt] | restore <файл>"
     echo -e "  ${BOLD}Система:${NC}        install | menu | update | uninstall | version | help"
     echo ""
+}
+
+# ── Проверка доступности порта ────────────────────────────────
+is_port_available() {
+    local port="$1"
+    if command -v ss &>/dev/null; then
+        ! ss -tln 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${port}$"
+    elif command -v netstat &>/dev/null; then
+        ! netstat -tln 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${port}$"
+    else
+        return 0
+    fi
+}
+
+find_free_metrics_port() {
+    local start="${1:-9090}"
+    local end="${2:-9199}"
+    local p
+    for ((p=start; p<=end; p++)); do
+        if is_port_available "$p"; then
+            echo "$p"
+            return 0
+        fi
+    done
+    return 1
 }
