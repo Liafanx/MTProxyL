@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-#  MTProxyL v1.0.0 — Telegram MTProto Proxy Manager
+#  MTProxyL v1.0.4 — Telegram MTProto Proxy Manager
 #  https://github.com/Liafanx/MTProxyL
 #  by LiafanX
 # ═══════════════════════════════════════════════════════════════
@@ -8,7 +8,7 @@
 set -o pipefail
 export LC_NUMERIC=C
 
-VERSION="1.0.3"
+VERSION="1.0.4"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -21,7 +21,7 @@ CONNECTION_LOG="${INSTALL_DIR}/connection.log"
 CONTAINER_NAME="mtproxyl"
 DOCKER_IMAGE_BASE="mtproxyl-telemt"
 GITHUB_REPO="Liafanx/MTProxyL"
-GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/dev"
+GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
 REGISTRY_IMAGE="ghcr.io/liafanx/mtproxyl-telemt"
 TELEMT_GITHUB="telemt/telemt"
 TELEMT_MIN_VERSION="3.4.18"
