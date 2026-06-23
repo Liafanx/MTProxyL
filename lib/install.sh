@@ -62,25 +62,40 @@ run_installer() {
     local port_input; read -r port_input
     [ -n "$port_input" ] && validate_port "$port_input" && PROXY_PORT="$port_input"
 
-    # Metrics port — выбираем автоматически свободный
+    # Metrics port — автоматически выбираем свободный
+    echo ""
     local _metrics_default
     _metrics_default=$(find_free_metrics_port 9090 9199) || _metrics_default=9090
     PROXY_METRICS_PORT="${_metrics_default}"
-    echo ""
-    echo -e "  ${BOLD}Порт метрик${NC} ${DIM}(Prometheus endpoint, localhost only)${NC}"
-    echo -e "  ${DIM}Автоматически выбран свободный порт: ${PROXY_METRICS_PORT}${NC}"
-    echo -en "  ${DIM}Оставить его? [Y/n]:${NC} "
+    if ! is_port_available "$PROXY_METRICS_PORT" 2>/dev/null; then
+        _metrics_default=9090
+        PROXY_METRICS_PORT=9090
+    fi
+    echo -e "  ${BOLD}Порт метрик (Prometheus endpoint, только localhost)${NC}"
+    if is_port_available "$PROXY_METRICS_PORT" 2>/dev/null; then
+        echo -e "  ${DIM}Автоматически выбран свободный порт: ${PROXY_METRICS_PORT}${NC}"
+    else
+        echo -e "  ${YELLOW}Порт ${PROXY_METRICS_PORT} занят, рекомендуем выбрать другой${NC}"
+    fi
+    echo -en "  ${BOLD}Оставить порт метрик ${PROXY_METRICS_PORT}? [Y/n]:${NC} "
     local metrics_keep; read -r metrics_keep
     if [[ "$metrics_keep" =~ ^[nN]$ ]]; then
-        echo -en "  ${BOLD}Введите порт метрик [${PROXY_METRICS_PORT}]:${NC} "
-        local metrics_input; read -r metrics_input
-        if [ -n "$metrics_input" ] && validate_port "$metrics_input"; then
-            if is_port_available "$metrics_input"; then
-                PROXY_METRICS_PORT="$metrics_input"
+        while true; do
+            echo -en "  ${BOLD}Введите порт метрик [${PROXY_METRICS_PORT}]:${NC} "
+            local metrics_input; read -r metrics_input
+            [ -z "$metrics_input" ] && break
+            if validate_port "$metrics_input"; then
+                if is_port_available "$metrics_input"; then
+                    PROXY_METRICS_PORT="$metrics_input"
+                    log_success "Порт метрик: ${PROXY_METRICS_PORT}"
+                    break
+                else
+                    log_error "Порт ${metrics_input} уже занят, попробуйте другой"
+                fi
             else
-                log_warn "Порт ${metrics_input} уже занят, оставляем ${PROXY_METRICS_PORT}"
+                log_error "Некорректный порт"
             fi
-        fi
+        done
     fi
 
     # IP
