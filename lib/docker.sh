@@ -142,10 +142,28 @@ get_proxy_uptime() {
 run_proxy_container() {
     build_telemt_image || { log_error "Не удалось собрать образ"; return 1; }
 
+    # Ensure we have at least one secret
     if [ ${#SECRETS_LABELS[@]} -eq 0 ]; then
-        log_info "Нет секретов, генерируем по умолчанию..."
+        log_info "Нет секретов, создаём default..."
         secret_add "default" "" "true"
     fi
+
+    # Проверка metrics port — если занят, подбираем свободный
+    if ! is_port_available "${PROXY_METRICS_PORT:-9090}"; then
+        local _new_metrics
+        _new_metrics=$(find_free_metrics_port 9090 9199) || _new_metrics=""
+        if [ -n "$_new_metrics" ] && [ "$_new_metrics" != "${PROXY_METRICS_PORT:-9090}" ]; then
+            log_warn "Порт метрик ${PROXY_METRICS_PORT} занят, переключаемся на ${_new_metrics}"
+            PROXY_METRICS_PORT="$_new_metrics"
+            save_settings
+        else
+            log_error "Не удалось найти свободный порт для метрик"
+            return 1
+        fi
+    fi
+
+    # Generate config
+    generate_telemt_config
 
     generate_telemt_config || { log_error "Ошибка генерации конфига"; return 1; }
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
