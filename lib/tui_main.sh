@@ -69,7 +69,7 @@ show_main_menu() {
         echo -e "  ${BRIGHT_CYAN}[7]${NC}  NFT лимитер и iOS фиксы"
         echo -e "  ${BRIGHT_CYAN}[8]${NC}  Движок Telemt"
         echo -e "  ${BRIGHT_CYAN}[9]${NC}  Обновление и бэкапы"
-        echo -e "  ${BRIGHT_CYAN}[e]${NC}  Режим эксперта (свои значения в config.toml)"
+        echo -e "  ${BRIGHT_CYAN}[e]${NC}  Режим эксперта (override поверх config.toml)"
         echo -e "  ${BRIGHT_CYAN}[i]${NC}  Информация"
         echo ""
         echo -e "  ${BRIGHT_CYAN}[r]${NC}  Переустановить"
