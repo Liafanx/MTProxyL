@@ -278,3 +278,27 @@ show_cli_help() {
     echo -e "  ${BOLD}Система:${NC}        install | menu | update | uninstall | version | help"
     echo ""
 }
+
+is_port_available() {
+    local port="$1"
+    if command -v ss &>/dev/null; then
+        ! ss -tln 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${port}$"
+    elif command -v netstat &>/dev/null; then
+        ! netstat -tln 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${port}$"
+    else
+        return 0
+    fi
+}
+
+find_free_metrics_port() {
+    local start="${1:-9090}"
+    local end="${2:-9199}"
+    local p
+    for ((p=start; p<=end; p++)); do
+        if is_port_available "$p"; then
+            echo "$p"
+            return 0
+        fi
+    done
+    return 1
+}
