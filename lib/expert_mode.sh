@@ -273,7 +273,7 @@ tui_expert_key_menu() {
             local _marker=""
             [ -n "$_cv" ] && _marker=" ${GREEN}= ${_cv}${NC}"
 
-            printf "  ${CYAN}[%2s]${NC}  %-40s %s %s\n" \
+            printf "  ${CYAN}[%2s]${NC}  %-40s %b %b\n" \
                 "$_idx" "${_k}" "${DIM}(${EXPERT_P_DEFAULT:-—})${NC}" "$_marker"
         done
 
