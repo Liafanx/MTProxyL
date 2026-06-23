@@ -12,6 +12,7 @@ tui_settings_menu() {
         echo -e "  ${BOLD}CPU:${NC}         ${PROXY_CPUS:-без ограничений}"
         echo -e "  ${BOLD}Память:${NC}      ${PROXY_MEMORY:-без ограничений}"
         echo -e "  ${BOLD}Маскировка:${NC}  ${MASKING_ENABLED}$([ "$MASKING_ENABLED" = "true" ] && echo " → ${MASKING_HOST:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}")"
+        echo -e "  ${BOLD}Метрики:${NC}     127.0.0.1:${PROXY_METRICS_PORT}"
         echo -e "  ${BOLD}Рекл. метка:${NC} ${AD_TAG:-${DIM}не задана${NC}}"
         echo -e "  ${BOLD}SNI-полит.:${NC}  ${UNKNOWN_SNI_ACTION}"
         echo -e "  ${BOLD}PROXY proto:${NC} ${PROXY_PROTOCOL}"
@@ -27,8 +28,9 @@ tui_settings_menu() {
         echo -e "  ${DIM}[7]${NC} SNI-политика [${UNKNOWN_SNI_ACTION}]"
         echo -e "  ${DIM}[8]${NC} PROXY protocol вкл/выкл"
         echo -e "  ${DIM}[9]${NC} Управление движком"
-        echo -e "  ${DIM}[v]${NC} Просмотр конфига"
-        echo -e "  ${DIM}[t]${NC} Тюнинг движка (tune)"
+        echo -e "  ${DIM}[g]${NC} Изменить порт метрик"        
+        echo -e "  ${DIM}[v]${NC} Просмотр текущего конфига"
+        echo -e "  ${DIM}[t]${NC} Тюнинг движка (tune) Telemt"
         echo -e "  ${DIM}[u]${NC} Пользовательские URL Telegram"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
@@ -106,6 +108,22 @@ tui_settings_menu() {
                 is_proxy_running && { load_secrets; restart_proxy_container || true; }
                 press_any_key ;;
             9) tui_engine_menu ;;
+            g|G)
+                echo -en "  ${BOLD}Новый порт метрик [${PROXY_METRICS_PORT}]:${NC} "
+                local mp; read -r mp
+                if [ -n "$mp" ] && validate_port "$mp"; then
+                    if is_port_available "$mp"; then
+                        PROXY_METRICS_PORT="$mp"
+                        save_settings
+                        log_success "Порт метрик: ${PROXY_METRICS_PORT}"
+                        is_proxy_running && { load_secrets; restart_proxy_container || true; }
+                    else
+                        log_error "Порт ${mp} уже занят"
+                    fi
+                elif [ -n "$mp" ]; then
+                    log_error "Некорректный порт"
+                fi
+                press_any_key ;;
             v|V) show_config; press_any_key ;;
             t|T)
                 handle_tune_command list
