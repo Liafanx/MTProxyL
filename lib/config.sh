@@ -1,7 +1,6 @@
 #!/bin/bash
 # MTProxyL — генерация config.toml + режим эксперта
 
-EXPERT_FILE="${INSTALL_DIR}/expert.conf"
 _TUNE_FILE="${INSTALL_DIR}/tunings.conf"
 
 # ── Tune whitelist ────────────────────────────────────────────
@@ -90,68 +89,6 @@ handle_tune_command() {
                 log_success "${param} очищен"
             fi ;;
     esac
-}
-
-# ── Expert overrides ──────────────────────────────────────────
-load_expert_overrides() { [ -f "$EXPERT_FILE" ] || return 0; }
-
-expert_set() {
-    local section="$1" key="$2" value="$3"
-    [ -z "$section" ] || [ -z "$key" ] || [ -z "$value" ] && { log_error "Использование: expert set <секция> <ключ> <значение>"; return 1; }
-    mkdir -p "$INSTALL_DIR"; touch "$EXPERT_FILE"; chmod 600 "$EXPERT_FILE"
-    local tmp; tmp=$(_mktemp) || return 1
-    grep -v "^${section}|${key}|" "$EXPERT_FILE" > "$tmp" 2>/dev/null || true
-    echo "${section}|${key}|${value}" >> "$tmp"
-    mv "$tmp" "$EXPERT_FILE"; chmod 600 "$EXPERT_FILE"
-    log_success "[${section}] ${key} = ${value}"
-}
-
-expert_clear() {
-    local key="$1"
-    [ -z "$key" ] && { log_error "Укажите ключ или 'all'"; return 1; }
-    [ ! -f "$EXPERT_FILE" ] && { log_info "Нет параметров"; return 0; }
-    if [ "$key" = "all" ]; then rm -f "$EXPERT_FILE"; log_success "Все параметры удалены"
-    else
-        local tmp; tmp=$(_mktemp) || return 1
-        grep -v "|${key}|" "$EXPERT_FILE" > "$tmp" 2>/dev/null || true
-        mv "$tmp" "$EXPERT_FILE"; log_success "${key} удалён"
-    fi
-}
-
-expert_list() {
-    if [ ! -f "$EXPERT_FILE" ] || [ ! -s "$EXPERT_FILE" ]; then
-        log_info "Нет параметров (режим эксперта)"
-        echo -e "  ${DIM}Используйте: mtproxyl expert set <секция> <ключ> <значение>${NC}"
-        return
-    fi
-    echo ""; draw_header "РЕЖИМ ЭКСПЕРТА"; echo ""
-    printf "  ${BOLD}%-20s %-30s %s${NC}\n" "СЕКЦИЯ" "КЛЮЧ" "ЗНАЧЕНИЕ"
-    echo -e "  ${DIM}$(_repeat '─' 65)${NC}"
-    while IFS='|' read -r section key value; do
-        [ -z "$section" ] && continue
-        printf "  %-20s %-30s %s\n" "[$section]" "$key" "$value"
-    done < "$EXPERT_FILE"
-    echo ""
-}
-
-_apply_expert_overrides() {
-    local config_file="$1"
-    [ -f "$EXPERT_FILE" ] || return 0
-    [ -f "$config_file" ] || return 0
-    while IFS='|' read -r section key value; do
-        [ -z "$section" ] || [ -z "$key" ] && continue
-        local fv
-        if [[ "$value" =~ ^(true|false|[0-9]+(\.[0-9]+)?)$ ]]; then fv="$value"; else fv="\"$value\""; fi
-        if grep -qE "^${key}[[:space:]]*=" "$config_file"; then
-            sed -i "s/^${key}[[:space:]]*=.*/${key} = ${fv}/" "$config_file"
-        elif grep -qE "^\\[${section}\\]" "$config_file"; then
-            sed -i "/^\\[${section}\\]/a ${key} = ${fv}" "$config_file"
-        else
-            echo "" >> "$config_file"
-            echo "[${section}]" >> "$config_file"
-            echo "${key} = ${fv}" >> "$config_file"
-        fi
-    done < "$EXPERT_FILE"
 }
 
 # ── Генерация config.toml ────────────────────────────────────
