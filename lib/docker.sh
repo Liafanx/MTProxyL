@@ -148,16 +148,17 @@ run_proxy_container() {
         secret_add "default" "" "true"
     fi
 
-    # Проверка metrics port — если занят, подбираем свободный
+    # Проверяем metrics port — если занят, выбираем свободный
     if ! is_port_available "${PROXY_METRICS_PORT:-9090}"; then
+        local _current_metrics="${PROXY_METRICS_PORT:-9090}"
         local _new_metrics
         _new_metrics=$(find_free_metrics_port 9090 9199) || _new_metrics=""
-        if [ -n "$_new_metrics" ] && [ "$_new_metrics" != "${PROXY_METRICS_PORT:-9090}" ]; then
-            log_warn "Порт метрик ${PROXY_METRICS_PORT} занят, переключаемся на ${_new_metrics}"
+        if [ -n "$_new_metrics" ] && [ "$_new_metrics" != "$_current_metrics" ]; then
+            log_warn "Порт метрик ${_current_metrics} занят — переключаемся на ${_new_metrics}"
             PROXY_METRICS_PORT="$_new_metrics"
             save_settings
-        else
-            log_error "Не удалось найти свободный порт для метрик"
+        elif [ -z "$_new_metrics" ]; then
+            log_error "Не удалось найти свободный порт для метрик в диапазоне 9090..9199"
             return 1
         fi
     fi
