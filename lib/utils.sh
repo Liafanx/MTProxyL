@@ -279,6 +279,7 @@ show_cli_help() {
     echo ""
 }
 
+# ── Проверка доступности порта ────────────────────────────────
 is_port_available() {
     local port="$1"
     if command -v ss &>/dev/null; then
