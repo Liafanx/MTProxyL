@@ -109,20 +109,28 @@ tui_settings_menu() {
                 press_any_key ;;
             9) tui_engine_menu ;;
             g|G)
-                echo -en "  ${BOLD}Новый порт метрик [${PROXY_METRICS_PORT}]:${NC} "
-                local mp; read -r mp
-                if [ -n "$mp" ] && validate_port "$mp"; then
-                    if is_port_available "$mp"; then
-                        PROXY_METRICS_PORT="$mp"
-                        save_settings
-                        log_success "Порт метрик: ${PROXY_METRICS_PORT}"
-                        is_proxy_running && { load_secrets; restart_proxy_container || true; }
+                echo ""
+                echo -e "  ${DIM}Порт Prometheus endpoint метрик (только localhost).${NC}"
+                echo -e "  ${DIM}Текущий: 127.0.0.1:${PROXY_METRICS_PORT:-9090}${NC}"
+                echo ""
+                while true; do
+                    echo -en "  ${BOLD}Новый порт метрик [${PROXY_METRICS_PORT:-9090}]:${NC} "
+                    local _mp; read -r _mp
+                    [ -z "$_mp" ] && break
+                    if validate_port "$_mp"; then
+                        if is_port_available "$_mp"; then
+                            PROXY_METRICS_PORT="$_mp"
+                            save_settings
+                            log_success "Порт метрик установлен: ${PROXY_METRICS_PORT}"
+                            is_proxy_running && { load_secrets; restart_proxy_container || true; }
+                            break
+                        else
+                            log_error "Порт ${_mp} уже занят, попробуйте другой"
+                        fi
                     else
-                        log_error "Порт ${mp} уже занят"
+                        log_error "Некорректный порт"
                     fi
-                elif [ -n "$mp" ]; then
-                    log_error "Некорректный порт"
-                fi
+                done
                 press_any_key ;;
             v|V) show_config; press_any_key ;;
             t|T)
