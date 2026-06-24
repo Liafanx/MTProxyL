@@ -89,6 +89,8 @@ except: print('?')
         TELEMT_COMMIT="${commit_hash}"
         TELEMT_MIN_VERSION="${target_tag#v}"
 
+
+        docker rmi "${DOCKER_IMAGE_BASE}:${version_tag}" >/dev/null 2>&1 || true
         if build_telemt_image source; then
             log_success "Движок собран: v${version_tag}"
         else
