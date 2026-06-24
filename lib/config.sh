@@ -235,11 +235,18 @@ TOML_EOF
 
             # Форматируем значение
             local _tv_out
-            if [[ "$_tv" =~ ^(true|false|[0-9]+(\.[0-9]+)?)$ ]]; then
-                _tv_out="$_tv"
-            else
-                _tv_out="\"$_tv\""
-            fi
+            case "$_tp" in
+                client_mss|client_mss_bulk)
+                    _tv_out="\"$_tv\""
+                    ;;
+                *)
+                    if [[ "$_tv" =~ ^(true|false|[0-9]+(\.[0-9]+)?)$ ]]; then
+                        _tv_out="$_tv"
+                    else
+                        _tv_out="\"$_tv\""
+                    fi
+                    ;;
+            esac
 
             # Если ключ уже есть где-то в файле — удалим все его вхождения
             # и потом вставим в ПРАВИЛЬНУЮ секцию
