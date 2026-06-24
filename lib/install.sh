@@ -108,7 +108,7 @@ run_installer() {
 
     # Домен
     echo ""
-    echo -e "  ${BOLD}FakeTLS домен${NC}"
+    echo -e "  ${BOLD}FakeTLS домен (потом можно будет изменить)${NC}"
     echo -e "  ${DIM}[1] cloudflare.com  [2] google.com  [3] microsoft.com  [4] Свой${NC}"
     local d; d=$(read_choice "выбор" "1")
     case "$d" in
@@ -160,6 +160,35 @@ run_installer() {
     # Копирование скрипта
     # Главный скрипт уже скачан корневым install.sh, здесь только обновляем симлинк
     ln -sf "${INSTALL_DIR}/mtproxyl.sh" /usr/local/bin/mtproxyl
+
+    # NFT SYN limiter
+    echo ""
+    echo -e "  ${BOLD}NFT SYN Limiter${NC}"
+    echo -e "  ${DIM}Ограничение входящих SYN-пакетов клиента.${NC}"
+    echo -e "  ${DIM}Без этого прокси нестабилен в ~90% случаев.${NC}"
+    echo ""
+    echo -e "  ${DIM}Пресеты:${NC}"
+    echo -e "    ${RED}[1]${NC} Жёсткий  — 1/sec burst 1  ${DIM}(рекомендуется)${NC}"
+    echo -e "    ${YELLOW}[2]${NC} Средний  — 1/sec burst 3"
+    echo -e "    ${GREEN}[3]${NC} Мягкий   — 2/sec burst 5"
+    echo -e "    ${DIM}[n]${NC} Не применять"
+    echo ""
+    echo -en "  ${BOLD}Применить NFT limiter? [1 по умолчанию]:${NC} "
+    local _nft_choice; read -r _nft_choice
+
+    case "$_nft_choice" in
+        2) apply_nft_preset medium ;;
+        3) apply_nft_preset soft ;;
+        n|N) log_info "NFT limiter не применён" ;;
+        *) apply_nft_preset hard ;;
+    esac
+
+    if [ "$_nft_choice" != "n" ] && [ "$_nft_choice" != "N" ]; then
+        apply_nft_rules || log_warn "Не удалось применить NFT правила"
+        install_nft_service || log_warn "Не удалось установить службу NFT"
+    fi
+
+    echo ""
 
     # Запуск
     echo ""
