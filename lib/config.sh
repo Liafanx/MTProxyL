@@ -22,6 +22,7 @@ _TUNE_WHITELIST=(
     "mask_relay_timeout_ms:censorship:^[0-9]+$"
     "mask_relay_idle_timeout_ms:censorship:^[0-9]+$"
     "client_mss:server:^(extreme-low|tspu|2in8|[0-9]+)$"
+    "client_mss_bulk:server:^(extreme-low|tspu|2in8|[0-9]+)$"
 )
 
 _tune_lookup() {
