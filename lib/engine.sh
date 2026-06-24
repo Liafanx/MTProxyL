@@ -41,57 +41,72 @@ engine_update_to() {
 
     log_info "Получение информации о версии ${target_tag}..."
 
-    # Получить commit hash для этой версии
+    # Получить commit hash
     local release_info commit_hash
     release_info=$(curl -fsS --max-time 10 "https://api.github.com/repos/${TELEMT_GITHUB}/releases/tags/${target_tag}" 2>/dev/null)
-    if [ -z "$release_info" ]; then
-        # Если нет release — пробуем как tag
-        commit_hash=$(curl -fsS --max-time 10 "https://api.github.com/repos/${TELEMT_GITHUB}/git/ref/tags/${target_tag}" 2>/dev/null | \
-            python3 -c "import json,sys; print(json.load(sys.stdin)['object']['sha'][:7])" 2>/dev/null)
-    else
+    if [ -n "$release_info" ]; then
         commit_hash=$(echo "$release_info" | python3 -c "
 import json, sys
-r = json.load(sys.stdin)
-sha = r.get('target_commitish', '')[:7]
-print(sha if sha else '?')
+try:
+    r = json.load(sys.stdin)
+    sha = r.get('target_commitish', '')[:7]
+    print(sha if sha else '?')
+except: print('?')
 " 2>/dev/null)
     fi
 
+    if [ -z "$commit_hash" ] || [ "$commit_hash" = "?" ]; then
+        commit_hash=$(curl -fsS --max-time 10 "https://api.github.com/repos/${TELEMT_GITHUB}/git/ref/tags/${target_tag}" 2>/dev/null | \
+            python3 -c "import json,sys; print(json.load(sys.stdin)['object']['sha'][:7])" 2>/dev/null) || true
+    fi
+
     [ -z "$commit_hash" ] || [ "$commit_hash" = "?" ] && {
-        log_warn "Не удалось определить commit hash, используем tag как есть"
-        commit_hash="${target_tag}"
+        log_warn "Не удалось определить commit hash, используем tag"
+        commit_hash="${target_tag#v}"
     }
 
     local version_tag="${target_tag#v}-${commit_hash}"
     log_info "Сборка образа: ${version_tag}"
 
-    # Бэкап текущей версии
     local current_ver
     current_ver=$(engine_current_version)
     log_info "Текущая версия: ${current_ver}"
 
-    # Сборка нового образа
-    local old_commit="${TELEMT_COMMIT}"
-    local old_version="${TELEMT_MIN_VERSION}"
-    TELEMT_COMMIT="${commit_hash}"
-    TELEMT_MIN_VERSION="${target_tag#v}"
-
-    if build_telemt_image true; then
-        log_success "Движок обновлён до ${version_tag}"
-
-        if is_proxy_running; then
-            echo -en "  ${BOLD}Перезапустить прокси? [Y/n]:${NC} "
-            local yn; read -r yn
-            if [[ ! "$yn" =~ ^[nN]$ ]]; then
-                load_secrets
-                restart_proxy_container
-            fi
-        fi
+    # Стратегия 1: Pull exact tag
+    log_info "Поиск готового образа ${version_tag}..."
+    if docker pull "${REGISTRY_IMAGE}:${version_tag}" 2>/dev/null; then
+        docker tag "${REGISTRY_IMAGE}:${version_tag}" "${DOCKER_IMAGE_BASE}:${version_tag}"
+        docker tag "${DOCKER_IMAGE_BASE}:${version_tag}" "${DOCKER_IMAGE_BASE}:latest" 2>/dev/null || true
+        echo "$version_tag" > "${INSTALL_DIR}/.telemt_version"
+        log_success "Загружен telemt v${version_tag}"
     else
-        log_error "Сборка не удалась"
-        TELEMT_COMMIT="$old_commit"
-        TELEMT_MIN_VERSION="$old_version"
-        return 1
+        # Стратегия 2: Source build (без fallback на latest)
+        log_warn "Готовый образ не найден — сборка из исходников..."
+        log_info "Это может занять несколько минут..."
+
+        local old_commit="${TELEMT_COMMIT}"
+        local old_version="${TELEMT_MIN_VERSION}"
+        TELEMT_COMMIT="${commit_hash}"
+        TELEMT_MIN_VERSION="${target_tag#v}"
+
+        if build_telemt_image source; then
+            log_success "Движок собран: v${version_tag}"
+        else
+            log_error "Сборка не удалась"
+            TELEMT_COMMIT="$old_commit"
+            TELEMT_MIN_VERSION="$old_version"
+            return 1
+        fi
+    fi
+
+    # Предложить перезапуск
+    if is_proxy_running; then
+        echo -en "  ${BOLD}Перезапустить прокси? [Y/n]:${NC} "
+        local yn; read -r yn
+        if [[ ! "$yn" =~ ^[nN]$ ]]; then
+            load_secrets
+            restart_proxy_container
+        fi
     fi
 }
 
