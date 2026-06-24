@@ -1,6 +1,5 @@
 #!/bin/bash
 # MTProxyL — NFT SYN limiter + iOS фиксы + доп. правила
-# Портировано из MTproxy-reanimation
 
 NFT_CONF="${INSTALL_DIR}/nft-rules.conf"
 NFT_SCRIPT_FILE="/usr/local/sbin/mtproxyl-syn-limit.sh"
@@ -8,7 +7,7 @@ NFT_SYSTEMD_UNIT="mtproxyl-syn-limit.service"
 IOS_SYSCTL_FILE="/etc/sysctl.d/99-mtproxyl-keepalive.conf"
 IOS2_NFT_TABLE="mtproxyl_ios2"
 
-# ── Значения по умолчанию NFT ─────────────────────────────────
+# ── Значения по умолчанию ─────────────────────────────────────
 NFT_ENABLED="false"
 NFT_RATE="1/second"
 NFT_BURST="1"
@@ -38,8 +37,9 @@ declare -A NFT_EXTRA_RATE
 declare -A NFT_EXTRA_BURST
 NFT_EXTRA_COUNT=0
 
-# ── Сохранение / загрузка NFT настроек ────────────────────────
+# ── Сохранение / загрузка настроек ────────────────────────────
 save_nft_settings() {
+    mkdir -p "$INSTALL_DIR"
     cat > "$NFT_CONF" << EOF
 # MTProxyL NFT — настройки
 NFT_ENABLED='${NFT_ENABLED}'
@@ -104,6 +104,17 @@ load_nft_settings() {
         fi
     done < "$NFT_CONF"
     [[ "$NFT_EXTRA_COUNT" =~ ^[0-9]+$ ]] || NFT_EXTRA_COUNT=0
+}
+
+# ── Применить NFT правила после изменения настроек ────────────
+prompt_apply_nft_rules() {
+    echo ""
+    echo -en "  ${BOLD}Применить новые NFT-правила сейчас? [Y/n]:${NC} "
+    local _yn; read -r _yn
+    if [[ ! "$_yn" =~ ^[nN]$ ]]; then
+        apply_nft_rules || true
+        [ "${NFT_ENABLED:-false}" = "true" ] && install_nft_service || true
+    fi
 }
 
 # ── Генерация NFT скрипта ─────────────────────────────────────
@@ -191,7 +202,7 @@ TAILEOF
     chmod +x "$NFT_SCRIPT_FILE"
 }
 
-# ── Применение / удаление NFT правил ─────────────────────────
+# ── Применение / удаление правил ──────────────────────────────
 apply_nft_rules() {
     if ! command -v nft &>/dev/null; then
         log_info "nftables не установлен, устанавливаем..."
@@ -208,10 +219,7 @@ apply_nft_rules() {
             log_error "Не удалось установить nftables — установите вручную: apt install nftables"
             return 1
         fi
-        if ! command -v nft &>/dev/null; then
-            log_error "nftables не установлен после попытки установки"
-            return 1
-        fi
+        command -v nft &>/dev/null || { log_error "nftables не установлен после попытки установки"; return 1; }
         log_success "nftables установлен"
     fi
 
@@ -230,7 +238,7 @@ remove_nft_rules() {
     log_success "NFT правила удалены"
 }
 
-# ── Systemd сервис для NFT ────────────────────────────────────
+# ── Systemd сервис ────────────────────────────────────────────
 install_nft_service() {
     generate_nft_script
     local _table="${NFT_TABLE:-mtproxyl_limit}"
@@ -270,7 +278,7 @@ remove_nft_service() {
     log_success "Служба NFT limiter удалена"
 }
 
-# ── Пресеты NFT ──────────────────────────────────────────────
+# ── Пресеты ───────────────────────────────────────────────────
 apply_nft_preset() {
     case "$1" in
         hard)   NFT_RATE="1/second"; NFT_BURST="1" ;;
@@ -284,11 +292,49 @@ apply_nft_preset() {
 
 # ── iOS Fix v1 — TCP keepalive ────────────────────────────────
 ios_fix_apply() {
-    # Сохраняем оригиналы
+    echo ""
+    echo -e "  ${BOLD}Фикс для iOS (вариант 1) — TCP keepalive${NC}"; echo ""
+    echo -e "  ${DIM}Ускоряет обнаружение мёртвых сокетов через sysctl.${NC}"
+    echo -e "  ${DIM}Подходит если iOS-клиенты после фона не могут переподключиться.${NC}"; echo ""
+
+    local _cur_time _cur_intvl _cur_probes
+    _cur_time=$(sysctl -n net.ipv4.tcp_keepalive_time 2>/dev/null)
+    _cur_intvl=$(sysctl -n net.ipv4.tcp_keepalive_intvl 2>/dev/null)
+    _cur_probes=$(sysctl -n net.ipv4.tcp_keepalive_probes 2>/dev/null)
+
+    echo -e "  ${BOLD}Текущие значения ядра:${NC}"
+    echo -e "    tcp_keepalive_time   = ${_cur_time:-?}  ${DIM}(дефолт: 7200)${NC}"
+    echo -e "    tcp_keepalive_intvl  = ${_cur_intvl:-?}  ${DIM}(дефолт: 75)${NC}"
+    echo -e "    tcp_keepalive_probes = ${_cur_probes:-?}  ${DIM}(дефолт: 9)${NC}"; echo ""
+
+    echo -e "  ${BOLD}Параметры фикса (Enter = оставить текущее):${NC}"
+    echo -en "    tcp_keepalive_time   [${IOS_KA_TIME}]: "
+    local _t; read -r _t; [[ "$_t" =~ ^[0-9]+$ ]] && IOS_KA_TIME="$_t"
+    echo -en "    tcp_keepalive_intvl  [${IOS_KA_INTVL}]: "
+    local _i; read -r _i; [[ "$_i" =~ ^[0-9]+$ ]] && IOS_KA_INTVL="$_i"
+    echo -en "    tcp_keepalive_probes [${IOS_KA_PROBES}]: "
+    local _p; read -r _p; [[ "$_p" =~ ^[0-9]+$ ]] && IOS_KA_PROBES="$_p"
+
+    local _detect=$(( IOS_KA_TIME + IOS_KA_INTVL * IOS_KA_PROBES ))
+    echo ""
+    echo -e "  ${DIM}Мёртвый коннект будет рваться за ~${_detect} сек${NC}"
+    echo -e "  ${DIM}  ${IOS_KA_TIME}с тишины → проба каждые ${IOS_KA_INTVL}с × ${IOS_KA_PROBES} попыток → RST${NC}"; echo ""
+
+    if [ -f "$IOS_SYSCTL_FILE" ]; then
+        echo -e "  ${YELLOW}Файл ${IOS_SYSCTL_FILE} уже существует.${NC}"
+        echo -en "  ${BOLD}Перезаписать? [Y/n]:${NC} "
+    else
+        echo -en "  ${BOLD}Применить фикс? [Y/n]:${NC} "
+    fi
+    local _confirm; read -r _confirm
+    [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
+
+    # Сохраняем оригиналы если ещё не сохранены
     if [ -z "$IOS_ORIG_TIME" ]; then
         IOS_ORIG_TIME=$(sysctl -n net.ipv4.tcp_keepalive_time 2>/dev/null || echo "7200")
         IOS_ORIG_INTVL=$(sysctl -n net.ipv4.tcp_keepalive_intvl 2>/dev/null || echo "75")
         IOS_ORIG_PROBES=$(sysctl -n net.ipv4.tcp_keepalive_probes 2>/dev/null || echo "9")
+        log_info "Сохранены оригинальные значения: time=${IOS_ORIG_TIME} intvl=${IOS_ORIG_INTVL} probes=${IOS_ORIG_PROBES}"
     fi
 
     cat > "$IOS_SYSCTL_FILE" << SYSEOF
@@ -301,47 +347,151 @@ SYSEOF
     if sysctl --system &>/dev/null; then
         log_success "sysctl применён"
     else
+        log_warn "sysctl --system вернул ошибку, применяем вручную"
         sysctl -w "net.ipv4.tcp_keepalive_time=${IOS_KA_TIME}" 2>/dev/null || true
         sysctl -w "net.ipv4.tcp_keepalive_intvl=${IOS_KA_INTVL}" 2>/dev/null || true
         sysctl -w "net.ipv4.tcp_keepalive_probes=${IOS_KA_PROBES}" 2>/dev/null || true
     fi
 
+    local _new_time _new_intvl _new_probes
+    _new_time=$(sysctl -n net.ipv4.tcp_keepalive_time 2>/dev/null)
+    _new_intvl=$(sysctl -n net.ipv4.tcp_keepalive_intvl 2>/dev/null)
+    _new_probes=$(sysctl -n net.ipv4.tcp_keepalive_probes 2>/dev/null)
+    echo ""
+    echo -e "  ${BOLD}Новые значения ядра:${NC}"
+    echo -e "    tcp_keepalive_time   = ${_new_time}"
+    echo -e "    tcp_keepalive_intvl  = ${_new_intvl}"
+    echo -e "    tcp_keepalive_probes = ${_new_probes}"
+
+    if [ "${_new_time}" = "${IOS_KA_TIME}" ] && [ "${_new_intvl}" = "${IOS_KA_INTVL}" ] && [ "${_new_probes}" = "${IOS_KA_PROBES}" ]; then
+        log_success "iOS Fix v1 применён"
+    else
+        log_warn "Значения не совпадают с ожидаемыми — проверьте вручную"
+    fi
+
     IOS_FIX_ENABLED="true"
     save_nft_settings
-    local _detect=$(( IOS_KA_TIME + IOS_KA_INTVL * IOS_KA_PROBES ))
-    log_success "iOS Fix v1 применён (обнаружение мёртвого коннекта: ~${_detect}с)"
 }
 
 ios_fix_remove() {
-    [ ! -f "$IOS_SYSCTL_FILE" ] && { log_info "iOS Fix v1 не установлен"; return 0; }
+    echo ""
+    if [ ! -f "$IOS_SYSCTL_FILE" ]; then
+        log_info "iOS Fix v1 не установлен"
+        IOS_FIX_ENABLED="false"
+        save_nft_settings
+        return 0
+    fi
+
+    echo -e "  ${BOLD}Откат фикса для iOS (вариант 1)${NC}"; echo ""
+    echo -e "  ${DIM}Будет удалён: ${IOS_SYSCTL_FILE}${NC}"
+    echo -e "  ${DIM}Значения ядра будут восстановлены к тем, которые были до применения фикса.${NC}"; echo ""
+    echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
+    local _confirm; read -r _confirm
+    [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     rm -f "$IOS_SYSCTL_FILE"
-    local _rt="${IOS_ORIG_TIME:-7200}" _ri="${IOS_ORIG_INTVL:-75}" _rp="${IOS_ORIG_PROBES:-9}"
+
+    local _rt="${IOS_ORIG_TIME:-7200}"
+    local _ri="${IOS_ORIG_INTVL:-75}"
+    local _rp="${IOS_ORIG_PROBES:-9}"
+
+    log_info "Восстановление значений: time=${_rt} intvl=${_ri} probes=${_rp}"
     sysctl -w "net.ipv4.tcp_keepalive_time=${_rt}" &>/dev/null || true
     sysctl -w "net.ipv4.tcp_keepalive_intvl=${_ri}" &>/dev/null || true
     sysctl -w "net.ipv4.tcp_keepalive_probes=${_rp}" &>/dev/null || true
     sysctl --system &>/dev/null || true
 
+    local _time _intvl _probes
+    _time=$(sysctl -n net.ipv4.tcp_keepalive_time 2>/dev/null)
+    _intvl=$(sysctl -n net.ipv4.tcp_keepalive_intvl 2>/dev/null)
+    _probes=$(sysctl -n net.ipv4.tcp_keepalive_probes 2>/dev/null)
+    echo ""
+    echo -e "  ${BOLD}Текущие значения ядра:${NC}"
+    echo -e "    tcp_keepalive_time   = ${_time}"
+    echo -e "    tcp_keepalive_intvl  = ${_intvl}"
+    echo -e "    tcp_keepalive_probes = ${_probes}"
+
+    log_success "iOS Fix v1 откачен (восстановлены: time=${_rt} intvl=${_ri} probes=${_rp})"
     IOS_FIX_ENABLED="false"
     IOS_ORIG_TIME=""; IOS_ORIG_INTVL=""; IOS_ORIG_PROBES=""
     save_nft_settings
-    log_success "iOS Fix v1 откачен (восстановлены: time=${_rt} intvl=${_ri} probes=${_rp})"
 }
 
 # ── iOS Fix v2 — MSS + redirect ──────────────────────────────
+_ios2_check_client_mss() {
+    local _cfg="${CONFIG_DIR}/config.toml"
+    if [ -f "$_cfg" ] && grep -qE '^client_mss[[:space:]]*=' "$_cfg" 2>/dev/null; then
+        echo ""
+        echo -e "  ${RED}${BOLD}⚠ ВНИМАНИЕ!${NC}"
+        echo -e "  ${RED}В конфиге обнаружен параметр client_mss${NC}"
+        echo -e "  ${YELLOW}Fix v2 использует MSS через nftables.${NC}"
+        echo -e "  ${YELLOW}client_mss в конфиге задаёт MSS на ВСЕ соединения — конфликт!${NC}"
+        echo ""
+        echo -e "  ${BOLD}Решение:${NC} уберите client_mss из конфига через:"
+        echo -e "  ${CYAN}mtproxyl expert clear client_mss${NC}"
+        echo -e "  ${CYAN}mtproxyl restart${NC}"
+        echo ""
+        echo -en "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
+        local _proceed; read -r _proceed
+        [[ "$_proceed" =~ ^[yY] ]] || return 1
+    fi
+    return 0
+}
+
 ios2_fix_apply() {
     local _target="${IOS2_TARGET_PORT:-${PROXY_PORT:-443}}"
+    [ -z "${PROXY_PORT:-}" ] && { log_error "Порт прокси не определён — запустите прокси хотя бы раз"; return 1; }
+    [[ "${IOS2_EXTERNAL_PORT}" =~ ^[0-9]+$ ]] && [ "${IOS2_EXTERNAL_PORT}" -ge 1 ] && [ "${IOS2_EXTERNAL_PORT}" -le 65535 ] || { log_error "Некорректный iOS-порт"; return 1; }
     [ "${IOS2_EXTERNAL_PORT}" = "${_target}" ] && { log_error "iOS-порт не должен совпадать с основным"; return 1; }
+    [[ "${IOS2_MSS}" =~ ^[0-9]+$ ]] && [ "${IOS2_MSS}" -ge 88 ] && [ "${IOS2_MSS}" -le 4096 ] || { log_error "MSS должен быть в диапазоне 88..4096"; return 1; }
+
+    echo ""
+    echo -e "  ${BOLD}Фикс для iOS вариант 2 (MSS + redirect)${NC}"; echo ""
+    echo -e "  ${DIM}Создаёт отдельный порт для iOS-клиентов.${NC}"
+    echo -e "  ${DIM}Входящий SYN получает MSS=${IOS2_MSS},${NC}"
+    echo -e "  ${DIM}затем трафик редиректится на основной порт.${NC}"; echo ""
+    echo -e "    Внешний порт iOS: ${BOLD}${IOS2_EXTERNAL_PORT}${NC}"
+    echo -e "    Основной порт:    ${_target}"
+    echo -e "    MSS:              ${IOS2_MSS}"; echo ""
+
+    _ios2_check_client_mss || return 0
+
+    echo -en "  ${BOLD}Применить? [Y/n]:${NC} "
+    local _confirm; read -r _confirm
+    [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     IOS2_FIX_ENABLED="true"
     IOS2_TARGET_PORT="${_target}"
     save_nft_settings
     apply_nft_rules || return 1
     [ "${NFT_ENABLED:-false}" = "true" ] && install_nft_service
-    log_success "iOS Fix v2: порт ${IOS2_EXTERNAL_PORT} → ${_target} (MSS=${IOS2_MSS})"
+
+    log_success "iOS Fix v2 применён: порт ${IOS2_EXTERNAL_PORT} → ${_target} (MSS=${IOS2_MSS})"
+    echo ""
+    echo -e "  ${BOLD}═══════════════════════════════════════════${NC}"
+    echo -e "  ${BOLD}Инструкция для пользователей iOS:${NC}"
+    echo -e "  ${DIM}───────────────────────────────────────────${NC}"
+    echo -e "  Замените порт ${_target} на ${IOS2_EXTERNAL_PORT} в ссылке:"
+    echo ""
+    echo -e "  ${DIM}Было:${NC}  tg://proxy?server=IP&${RED}port=${_target}${NC}&secret=..."
+    echo -e "  ${DIM}Стало:${NC} tg://proxy?server=IP&${GREEN}port=${IOS2_EXTERNAL_PORT}${NC}&secret=..."
+    echo ""
+    echo -e "  ${DIM}Secret и IP остаются прежними.${NC}"
+    echo -e "  ${DIM}Android и Desktop — основной порт ${_target}.${NC}"
+    echo -e "  ${BOLD}═══════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "  ${YELLOW}${BOLD}⚠ Откройте порт ${IOS2_EXTERNAL_PORT} в фаерволе!${NC}"
 }
 
 ios2_fix_remove() {
+    echo ""
+    if [ "${IOS2_FIX_ENABLED:-false}" != "true" ]; then
+        log_info "iOS Fix v2 не установлен"; return 0; fi
+    echo -e "  ${BOLD}Отключение iOS Fix v2${NC}"; echo ""
+    echo -e "  ${DIM}Редирект ${IOS2_EXTERNAL_PORT} → ${IOS2_TARGET_PORT:-${PROXY_PORT:-443}} будет удалён.${NC}"; echo ""
+    echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
+    local _confirm; read -r _confirm
+    [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
     IOS2_FIX_ENABLED="false"
     save_nft_settings
     apply_nft_rules || true
@@ -362,7 +512,7 @@ nft_extra_add() {
     NFT_EXTRA_RATE[$_idx]="$_rate"
     NFT_EXTRA_BURST[$_idx]="$_burst"
     save_nft_settings
-    log_success "Доп. правило #${_idx}: порт=${_port}"
+    log_success "Доп. правило #${_idx}: порт=${_port}$([ -n "$_ip" ] && echo " ip=${_ip}") rate=${_rate} burst=${_burst}"
 }
 
 nft_extra_remove() {
@@ -384,7 +534,7 @@ nft_extra_remove() {
     log_success "Доп. правило удалено"
 }
 
-# ── Полная очистка NFT при удалении ───────────────────────────
+# ── Полная очистка при удалении MTProxyL ──────────────────────
 nft_full_cleanup() {
     remove_nft_rules 2>/dev/null || true
     remove_nft_service 2>/dev/null || true
@@ -400,15 +550,18 @@ show_nft_drop_counter() {
         return 1
     fi
     echo ""
-    echo -e "  ${BOLD}Счётчик дропов (Ctrl+C для выхода):${NC}"
-    echo ""
+    echo -e "  ${BOLD}Счётчик дропов (Ctrl+C для выхода):${NC}"; echo ""
     watch -n 2 "nft list chain inet $_table input 2>/dev/null | grep -E 'counter|comment'"
 }
 
 # ── Статусы для шапки ─────────────────────────────────────────
 nft_status_line() {
     if nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null; then
-        echo -e "${GREEN}активно${NC} (${NFT_RATE} burst ${NFT_BURST})"
+        if [ -n "${NFT_SERVER_IP:-}" ]; then
+            echo -e "${GREEN}активно${NC} (${NFT_RATE} burst ${NFT_BURST} ip=${NFT_SERVER_IP})"
+        else
+            echo -e "${GREEN}активно${NC} (${NFT_RATE} burst ${NFT_BURST} все IP)"
+        fi
     else
         echo -e "${DIM}неактивно${NC}"
     fi
