@@ -48,7 +48,7 @@ build_telemt_image() {
     local commit="${TELEMT_COMMIT}"
     local version="${TELEMT_MIN_VERSION}-${commit}"
 
-    if [ "$force" != "true" ] && docker image inspect "${DOCKER_IMAGE_BASE}:${version}" &>/dev/null; then
+    if [ "$force" = "false" ] && docker image inspect "${DOCKER_IMAGE_BASE}:${version}" &>/dev/null; then
         return 0
     fi
 
