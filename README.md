@@ -61,20 +61,15 @@ mtproxyl
    wget -qO /tmp/mtproxyl-install.sh https://raw.githubusercontent.com/Liafanx/MTProxyL/main/install.sh && sudo bash /tmp/mtproxyl-install.sh
    ```
 
-2. Следуйте мастеру настройки — выберите порт, домен, IP
+2. Следуйте мастеру настройки — выберите порт, домен, IP, правила NFT
 
-3. После установки включите NFT limiter:
-   ```bash
-   mtproxyl nft apply
-   mtproxyl nft service
-   ```
 
-4. Получите ссылку на прокси:
+3. Получите ссылку на прокси (выводится после установки) или:
    ```bash
    mtproxyl secret link
    ```
 
-5. Откройте ссылку в Telegram — готово!
+4. Откройте ссылку в Telegram — готово!
 
 ---
 
