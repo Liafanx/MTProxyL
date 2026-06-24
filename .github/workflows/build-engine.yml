@@ -11,6 +11,14 @@ on:
         description: 'Version tag (e.g. 3.4.18-9dc6772)'
         required: true
         default: '3.4.18-9dc6772'
+      push_latest:
+        description: 'Also update latest tag?'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 env:
   REGISTRY: ghcr.io
@@ -61,6 +69,19 @@ jobs:
         id: owner
         run: echo "name=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
+      - name: Prepare tags
+        id: prep_tags
+        shell: bash
+        run: |
+          {
+            echo 'tags<<EOF'
+            echo "${{ env.REGISTRY }}/${{ steps.owner.outputs.name }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.version_tag }}"
+            if [ "${{ github.event.inputs.push_latest }}" = "true" ]; then
+              echo "${{ env.REGISTRY }}/${{ steps.owner.outputs.name }}/${{ env.IMAGE_NAME }}:latest"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and push multi-arch image
         uses: docker/build-push-action@v6
         with:
@@ -69,8 +90,6 @@ jobs:
           push: true
           build-args: |
             TELEMT_COMMIT=${{ github.event.inputs.telemt_commit }}
-          tags: |
-            ${{ env.REGISTRY }}/${{ steps.owner.outputs.name }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.version_tag }}
-            ${{ env.REGISTRY }}/${{ steps.owner.outputs.name }}/${{ env.IMAGE_NAME }}:latest
+          tags: ${{ steps.prep_tags.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
