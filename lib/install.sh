@@ -109,14 +109,14 @@ run_installer() {
     # Домен
     echo ""
     echo -e "  ${BOLD}FakeTLS домен (потом можно будет изменить)${NC}"
-    echo -e "  ${DIM}[1] cloudflare.com  [2] google.com  [3] microsoft.com  [4] Свой${NC}"
+    echo -e "  ${DIM}[1] rutube.ru  [2] google.com  [3] cloudflare.com  [4] Свой${NC}"
     local d; d=$(read_choice "выбор" "1")
     case "$d" in
         2) PROXY_DOMAIN="google.com" ;;
-        3) PROXY_DOMAIN="microsoft.com" ;;
+        3) PROXY_DOMAIN="cloudflare.com" ;;
         4) echo -en "  Домен: "; local cd; read -r cd
            [ -n "$cd" ] && validate_domain "$cd" && PROXY_DOMAIN="$cd" ;;
-        *) PROXY_DOMAIN="cloudflare.com" ;;
+        *) PROXY_DOMAIN="rutube.ru" ;;
     esac
 
     # Маскировка
