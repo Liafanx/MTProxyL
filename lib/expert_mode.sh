@@ -67,40 +67,109 @@ _apply_expert_overrides() {
     [ -f "$EXPERT_OVERRIDES_FILE" ] || return 0
     [ -f "$config_file" ] || return 0
 
+    local work_file="${config_file}.expert.$$"
+    cp "$config_file" "$work_file" || return 1
+
     while IFS='|' read -r section key value; do
         [[ "$section" =~ ^[[:space:]]*# ]] && continue
         [[ "$section" =~ ^[[:space:]]*$ ]] && continue
         [ -z "$key" ] && continue
 
-        # Форматирование значения
+        # Форматирование значения по типу из каталога
         local fv
-        if [[ "$value" =~ ^(true|false)$ ]]; then
-            fv="$value"
-        elif [[ "$value" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
-            fv="$value"
+        local _entry=""
+        if _entry=$(_expert_find "$section" "$key" 2>/dev/null); then
+            _expert_parse "$_entry"
+            case "$EXPERT_P_TYPE" in
+                bool|u8|u16|u32|u64|usize|f32)
+                    fv="$value"
+                    ;;
+                string)
+                    fv="\"$value\""
+                    ;;
+                "string[]")
+                    local oldIFS="$IFS"
+                    IFS=','
+                    read -ra _vals <<< "$value"
+                    IFS="$oldIFS"
+
+                    local _out="" _v
+                    for _v in "${_vals[@]}"; do
+                        _v="${_v#"${_v%%[![:space:]]*}"}"
+                        _v="${_v%"${_v##*[![:space:]]}"}"
+                        [ -z "$_v" ] && continue
+                        [ -n "$_out" ] && _out+=", "
+                        _out+="\"$_v\""
+                    done
+                    fv="[${_out}]"
+                    ;;
+                *)
+                    if [[ "$value" =~ ^(true|false)$ ]]; then
+                        fv="$value"
+                    elif [[ "$value" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
+                        fv="$value"
+                    else
+                        fv="\"$value\""
+                    fi
+                    ;;
+            esac
         else
-            fv="\"$value\""
+            # fallback для неизвестных параметров
+            if [[ "$value" =~ ^(true|false)$ ]]; then
+                fv="$value"
+            elif [[ "$value" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
+                fv="$value"
+            else
+                fv="\"$value\""
+            fi
         fi
 
-        # Escaping для sed
-        local _esc_k _esc_v
-        _esc_k=$(printf '%s' "$key" | sed 's/[][\/.*^$]/\\&/g')
-        _esc_v=$(printf '%s' "$fv" | sed 's/[\/&]/\\&/g')
+        local section_header="[$section]"
 
-        # Секция в TOML
-        local toml_section="[$section]"
+        # Заменить/добавить ключ строго внутри нужной секции
+        awk -v sec="$section_header" -v key="$key" -v val="$fv" '
+            BEGIN {
+                insec = 0
+                done = 0
+            }
 
-        # Заменить существующий ключ
-        if grep -qE "^${_esc_k}[[:space:]]*=" "$config_file"; then
-            sed -i "s/^${_esc_k}[[:space:]]*=.*/${key} = ${_esc_v}/" "$config_file"
-        elif grep -qF "$toml_section" "$config_file"; then
-            sed -i "/^\[${section//./\\.}\]/a ${key} = ${fv}" "$config_file"
-        else
-            echo "" >> "$config_file"
-            echo "$toml_section" >> "$config_file"
-            echo "${key} = ${fv}" >> "$config_file"
-        fi
+            /^\[/ {
+                # если выходим из нужной секции и ключ ещё не вставлен — вставляем перед новой секцией
+                if (insec && !done) {
+                    print key " = " val
+                    done = 1
+                }
+                insec = ($0 == sec)
+                print
+                next
+            }
+
+            {
+                # если мы внутри нужной секции и нашли старый ключ — заменяем его
+                if (insec && $1 == key && $2 == "=") {
+                    if (!done) {
+                        print key " = " val
+                        done = 1
+                    }
+                    next
+                }
+                print
+            }
+
+            END {
+                # если секции вообще не было или ключ не был вставлен
+                if (!done) {
+                    if (!insec) {
+                        print ""
+                        print sec
+                    }
+                    print key " = " val
+                }
+            }
+        ' "$work_file" > "${work_file}.new" && mv "${work_file}.new" "$work_file"
     done < "$EXPERT_OVERRIDES_FILE"
+
+    mv "$work_file" "$config_file"
 }
 
 # ── Показ карточки параметра ──────────────────────────────────

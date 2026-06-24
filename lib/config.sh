@@ -22,6 +22,7 @@ _TUNE_WHITELIST=(
     "mask_relay_timeout_ms:censorship:^[0-9]+$"
     "mask_relay_idle_timeout_ms:censorship:^[0-9]+$"
     "client_mss:server:^(extreme-low|tspu|2in8|[0-9]+)$"
+    "client_mss_bulk:server:^(extreme-low|tspu|2in8|[0-9]+)$"
 )
 
 _tune_lookup() {
@@ -225,16 +226,53 @@ TOML_EOF
     if [ -f "${_TUNE_FILE:-/dev/null}" ] && [ -s "${_TUNE_FILE}" ]; then
         while IFS='|' read -r _tp _tv; do
             [ -z "$_tp" ] && continue
-            _tune_lookup "$_tp" >/dev/null 2>&1 || continue
+
+            local _entry
+            _entry=$(_tune_lookup "$_tp" 2>/dev/null) || continue
+
+            local _p _sect _regex
+            IFS=':' read -r _p _sect _regex <<< "$_entry"
+
+            # Форматируем значение
             local _tv_out
-            if [[ "$_tv" =~ ^(true|false|[0-9]+)$ ]]; then _tv_out="$_tv"; else _tv_out="\"$_tv\""; fi
-            if grep -qE "^${_tp} *=" "$tmp"; then
-                sed -i "s/^${_tp} *=.*/${_tp} = ${_tv_out}/" "$tmp"
-            else
-                awk -v p="$_tp" -v v="$_tv_out" '
-                    BEGIN{ins=0} {print}
-                    /^\[general\]$/ && !ins {print p " = " v; ins=1}
+            case "$_tp" in
+                client_mss|client_mss_bulk)
+                    _tv_out="\"$_tv\""
+                    ;;
+                *)
+                    if [[ "$_tv" =~ ^(true|false|[0-9]+(\.[0-9]+)?)$ ]]; then
+                        _tv_out="$_tv"
+                    else
+                        _tv_out="\"$_tv\""
+                    fi
+                    ;;
+            esac
+
+            # Если ключ уже есть где-то в файле — удалим все его вхождения
+            # и потом вставим в ПРАВИЛЬНУЮ секцию
+            local _esc_tp
+            _esc_tp=$(printf '%s' "$_tp" | sed 's/[][\/.*^$]/\\&/g')
+            sed -i "/^${_esc_tp}[[:space:]]*=/d" "$tmp"
+
+            # Если секция есть — вставляем в неё
+            if grep -qE "^\[${_sect//./\\.}\]$" "$tmp"; then
+                awk -v sec="[$_sect]" -v key="$_tp" -v val="$_tv_out" '
+                    BEGIN{inserted=0}
+                    {
+                        print
+                        if ($0 == sec && !inserted) {
+                            print key " = " val
+                            inserted=1
+                        }
+                    }
                 ' "$tmp" > "${tmp}.new" && mv "${tmp}.new" "$tmp"
+            else
+                # Если секции нет — создаём её в конце файла
+                {
+                    echo ""
+                    echo "[$_sect]"
+                    echo "${_tp} = ${_tv_out}"
+                } >> "$tmp"
             fi
         done < "$_TUNE_FILE"
     fi

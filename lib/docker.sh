@@ -48,7 +48,7 @@ build_telemt_image() {
     local commit="${TELEMT_COMMIT}"
     local version="${TELEMT_MIN_VERSION}-${commit}"
 
-    if [ "$force" != "true" ] && docker image inspect "${DOCKER_IMAGE_BASE}:${version}" &>/dev/null; then
+    if [ "$force" = "false" ] && docker image inspect "${DOCKER_IMAGE_BASE}:${version}" &>/dev/null; then
         return 0
     fi
 
@@ -62,8 +62,8 @@ build_telemt_image() {
         return 0
     fi
 
-    # Стратегия 2: latest из реестра
-    if [ "$force" != "source" ]; then
+    # Стратегия 2: Pull latest — ТОЛЬКО при обычной установке, не при явном выборе версии
+    if [ "$force" != "source" ] && [ "$force" != "true" ]; then
         log_info "Точная версия не найдена, пробуем latest..."
         if docker pull "${REGISTRY_IMAGE}:latest" 2>/dev/null; then
             docker tag "${REGISTRY_IMAGE}:latest" "${DOCKER_IMAGE_BASE}:${version}"
