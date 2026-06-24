@@ -84,6 +84,9 @@ _apply_expert_overrides() {
                 bool|u8|u16|u32|u64|usize|f32)
                     fv="$value"
                     ;;
+                string)
+                    fv="\"$value\""
+                    ;;
                 "string[]")
                     local oldIFS="$IFS"
                     IFS=','
