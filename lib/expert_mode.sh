@@ -74,12 +74,51 @@ _apply_expert_overrides() {
 
         # Форматирование значения
         local fv
-        if [[ "$value" =~ ^(true|false)$ ]]; then
-            fv="$value"
-        elif [[ "$value" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
-            fv="$value"
+        local _entry=""
+        if _entry=$(_expert_find "$section" "$key" 2>/dev/null); then
+            _expert_parse "$_entry"
+            case "$EXPERT_P_TYPE" in
+                bool)
+                    fv="$value"
+                    ;;
+                u8|u16|u32|u64|usize|f32)
+                    fv="$value"
+                    ;;
+                "string[]")
+                    local oldIFS="$IFS"
+                    IFS=','
+                    read -ra _vals <<< "$value"
+                    IFS="$oldIFS"
+
+                    local _out="" _v
+                    for _v in "${_vals[@]}"; do
+                        _v="${_v#"${_v%%[![:space:]]*}"}"
+                        _v="${_v%"${_v##*[![:space:]]}"}"
+                        [ -z "$_v" ] && continue
+                        [ -n "$_out" ] && _out+=", "
+                        _out+="\"$_v\""
+                    done
+                    fv="[${_out}]"
+                    ;;
+                *)
+                    if [[ "$value" =~ ^(true|false)$ ]]; then
+                        fv="$value"
+                    elif [[ "$value" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
+                        fv="$value"
+                    else
+                        fv="\"$value\""
+                    fi
+                    ;;
+            esac
         else
-            fv="\"$value\""
+            # fallback для неизвестных параметров
+            if [[ "$value" =~ ^(true|false)$ ]]; then
+                fv="$value"
+            elif [[ "$value" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
+                fv="$value"
+            else
+                fv="\"$value\""
+            fi
         fi
 
         # Escaping для sed
