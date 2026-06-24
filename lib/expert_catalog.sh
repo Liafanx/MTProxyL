@@ -120,6 +120,7 @@ _catalog "server" "listen_unix_sock"             "string" ""      "✘" "any"   
 _catalog "server" "listen_unix_sock_perm"        "string" ""      "✘" "custom:_validate_octal_perm"           "0666/0777/0600 и т.д."              "Права доступа для Unix-сокета (восьмеричная строка)"
 _catalog "server" "listen_tcp"                   "bool"   ""      "✘" "bool"                                  "true/false (или пусто = авто)"      "Явное включение/отключение TCP-прослушивания"
 _catalog "server" "client_mss"                   "string" ""      "✘" "custom:_validate_client_mss"           "extreme-low/tspu/2in8/88..4096"     "MSS для входящих TCP-клиентов"
+_catalog "server" "client_mss_bulk"              "string" ""      "✘" "custom:_validate_client_mss"           "extreme-low/tspu/2in8/88..4096"     "MSS для bulk-фазы после handshake; handshake остаётся на client_mss"
 _catalog "server" "proxy_protocol"               "bool"   "false" "✘" "bool"                                  "true/false"                         "Включить PROXY protocol от HAProxy"
 _catalog "server" "proxy_protocol_header_timeout_ms" "u64" "500"  "✘" "range:1:60000"                         "миллисекунды > 0"                   "Таймаут чтения PROXY-заголовка"
 _catalog "server" "metrics_port"                 "u16"    ""      "✘" "range:1:65535"                         "1..65535"                           "Порт endpoint метрик Prometheus"
@@ -212,6 +213,14 @@ _catalog "access" "replay_check_len"                 "usize" "65536"          "�
 _catalog "access" "replay_window_secs"               "u64"   "120"            "✘" "range:0:86400"              "секунды"                    "Окно памяти replay-защиты"
 _catalog "access" "ignore_time_skew"                 "bool"  "false"          "✘" "bool"                       "true/false"                 "Отключить проверку временного смещения для replay"
 
+# ── logging ───────────────────────────────────────────────────
+_catalog "logging" "destination"      "enum"   "stderr" "✘" "enum:stderr,syslog,file"      "stderr/syslog/file"         "Назначение runtime-логов"
+_catalog "logging" "path"             "string" ""       "✘" "nonempty"                     "путь к файлу"               "Путь к лог-файлу (обязателен при destination=file)"
+_catalog "logging" "rotation"         "enum"   "never"  "✘" "enum:never,minutely,hourly,daily,weekly" "never/minutely/hourly/daily/weekly" "Интервал time-based rotation"
+_catalog "logging" "max_size_bytes"   "u64"    "0"      "✘" "range:0:1099511627776"       "0 = отключено"              "Ротация по размеру"
+_catalog "logging" "max_files"        "usize"  "0"      "✘" "range:0:1000000"             "0 = отключено"              "Максимум файлов логов"
+_catalog "logging" "max_age_secs"     "u64"    "0"      "✘" "range:0:315360000"           "0 = отключено"              "Максимальный возраст файлов логов"
+
 # ── upstreams ─────────────────────────────────────────────────
 # Upstreams — только через nano, это массив таблиц TOML
 # Для меню не предназначено
@@ -230,6 +239,7 @@ _EXPERT_SECTIONS=(
     "censorship"
     "censorship.tls_fetch"
     "access"
+    "logging"
 )
 
 # ── Валидаторы ────────────────────────────────────────────────
