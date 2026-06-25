@@ -116,10 +116,6 @@ tg_connect = 30
 fast_mode = true
 use_middle_proxy = true
 log_level = "normal"
-$([ -n "$ad_tag" ] && echo "ad_tag = \"$ad_tag\"")
-$([ -n "${PROXY_SECRET_URL:-}" ] && echo "proxy_secret_url = \"${PROXY_SECRET_URL}\"")
-$([ -n "${PROXY_CONFIG_V4_URL:-}" ] && echo "proxy_config_v4_url = \"${PROXY_CONFIG_V4_URL}\"")
-$([ -n "${PROXY_CONFIG_V6_URL:-}" ] && echo "proxy_config_v6_url = \"${PROXY_CONFIG_V6_URL}\"")
 
 [general.modes]
 classic = false
@@ -147,8 +143,6 @@ tls_domain = "${domain}"
 unknown_sni_action = "${UNKNOWN_SNI_ACTION:-mask}"
 mask = ${mask_enabled}
 mask_port = ${mask_port}
-$([ "$mask_enabled" = "true" ] && [ -n "$mask_host" ] && echo "mask_host = \"${mask_host}\"")
-$([ -n "${MASKING_RELAY_MAX_BYTES:-}" ] && echo "mask_relay_max_bytes = ${MASKING_RELAY_MAX_BYTES}")
 fake_cert_len = ${FAKE_CERT_LEN:-2048}
 
 [access]
@@ -158,6 +152,20 @@ ignore_time_skew = false
 
 [access.users]
 TOML_EOF
+
+    # Условные параметры — добавляем только если заданы
+    [ -n "$ad_tag" ] && \
+        sed -i "/^\[general\]$/a ad_tag = \"${ad_tag}\"" "$tmp"
+    [ -n "${PROXY_SECRET_URL:-}" ] && \
+        sed -i "/^\[general\]$/a proxy_secret_url = \"${PROXY_SECRET_URL}\"" "$tmp"
+    [ -n "${PROXY_CONFIG_V4_URL:-}" ] && \
+        sed -i "/^\[general\]$/a proxy_config_v4_url = \"${PROXY_CONFIG_V4_URL}\"" "$tmp"
+    [ -n "${PROXY_CONFIG_V6_URL:-}" ] && \
+        sed -i "/^\[general\]$/a proxy_config_v6_url = \"${PROXY_CONFIG_V6_URL}\"" "$tmp"
+    [ "$mask_enabled" = "true" ] && [ -n "$mask_host" ] && \
+        sed -i "/^\[censorship\]$/a mask_host = \"${mask_host}\"" "$tmp"
+    [ -n "${MASKING_RELAY_MAX_BYTES:-}" ] && \
+        sed -i "/^\[censorship\]$/a mask_relay_max_bytes = ${MASKING_RELAY_MAX_BYTES}" "$tmp"
 
     # Секреты
     local i
