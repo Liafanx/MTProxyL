@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-#  MTProxyL v1.0.7 — Telegram MTProto Proxy Manager
+#  MTProxyL v1.0.8 — Telegram MTProto Proxy Manager
 #  https://github.com/Liafanx/MTProxyL
 #  by LiafanX
 # ═══════════════════════════════════════════════════════════════
@@ -8,7 +8,7 @@
 set -o pipefail
 export LC_NUMERIC=C
 
-VERSION="1.0.7"
+VERSION="1.0.8"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -221,6 +221,7 @@ cli_main() {
                 service)  check_root; install_nft_service ;;
                 drop)     show_nft_drop_counter ;;
                 preset)   check_root; apply_nft_preset "${2:-hard}" ;;
+                smart)    check_root; enable_smart_mode ;;
                 ios1)     check_root; ios_fix_apply ;;
                 ios1-off) check_root; ios_fix_remove ;;
                 ios2)     check_root; ios2_fix_apply ;;
@@ -233,9 +234,10 @@ cli_main() {
                     echo -e "  ${BOLD}NFT SYN Limiter:${NC}"
                     echo -e "    ${GREEN}nft apply${NC}        Применить правила"
                     echo -e "    ${GREEN}nft remove${NC}       Удалить правила"
+                    echo -e "    ${GREEN}nft smart${NC}        Smart By-MEKO (рекомендуется)"
+                    echo -e "    ${GREEN}nft preset${NC} X     Пресет (hard/medium/soft/smart)"
                     echo -e "    ${GREEN}nft service${NC}      Установить службу"
-                    echo -e "    ${GREEN}nft drop${NC}         Счётчик дропов"
-                    echo -e "    ${GREEN}nft preset${NC} X     Пресет (hard/medium/soft)"
+                    echo -e "    ${GREEN}nft drop${NC}         Счётчик правил"
                     echo -e "    ${GREEN}nft ios1${NC}         iOS Fix v1 (keepalive)"
                     echo -e "    ${GREEN}nft ios1-off${NC}     Откатить iOS Fix v1"
                     echo -e "    ${GREEN}nft ios2${NC}         iOS Fix v2 (MSS+redirect)"

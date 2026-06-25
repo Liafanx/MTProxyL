@@ -167,24 +167,22 @@ run_installer() {
     echo -e "  ${DIM}Ограничение входящих SYN-пакетов клиента.${NC}"
     echo -e "  ${DIM}Без этого прокси нестабилен в ~90% случаев.${NC}"
     echo ""
-    echo -e "  ${DIM}По умолчанию правило будет привязано к IP сервера.${NC}"
-    echo -e "  ${DIM}Если позже убрать IP в настройках NFT, правило будет работать${NC}"
-    echo -e "  ${DIM}для всех IP сервера на выбранном порту.${NC}"
-    echo ""
     echo -e "  ${DIM}Пресеты:${NC}"
-    echo -e "    ${RED}[1]${NC} Жёсткий  — 1/sec burst 1  ${DIM}(рекомендуется)${NC}"
-    echo -e "    ${YELLOW}[2]${NC} Средний  — 1/sec burst 3"
-    echo -e "    ${GREEN}[3]${NC} Мягкий   — 2/sec burst 5"
+    echo -e "    ${BRIGHT_GREEN}[s]${NC} ★ Smart By-MEKO ${DIM}(рекомендуется — iOS/Android авторазделение + REJECT)${NC}"
+    echo -e "    ${RED}[1]${NC} Жёсткий  — 1/sec burst 1  ${DIM}(Classic)${NC}"
+    echo -e "    ${YELLOW}[2]${NC} Средний  — 1/sec burst 3  ${DIM}(Classic)${NC}"
+    echo -e "    ${GREEN}[3]${NC} Мягкий   — 2/sec burst 5  ${DIM}(Classic)${NC}"
     echo -e "    ${DIM}[n]${NC} Не применять"
     echo ""
-    echo -en "  ${BOLD}Применить NFT limiter? [1 по умолчанию]:${NC} "
+    echo -en "  ${BOLD}Применить NFT limiter? [s по умолчанию]:${NC} "
     local _nft_choice; read -r _nft_choice
 
     case "$_nft_choice" in
+        1) apply_nft_preset hard ;;
         2) apply_nft_preset medium ;;
         3) apply_nft_preset soft ;;
         n|N) log_info "NFT limiter не применён" ;;
-        *) apply_nft_preset hard ;;
+        *) apply_nft_preset smart ;;
     esac
 
     if [ "$_nft_choice" != "n" ] && [ "$_nft_choice" != "N" ]; then
