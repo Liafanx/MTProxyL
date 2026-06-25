@@ -67,8 +67,6 @@ load_secrets() {
         SECRETS_EXPIRES+=("$_ex")
         SECRETS_NOTES+=("${notes:-}")
     done < "$SECRETS_FILE"
-
-    load_upstreams 2>/dev/null || true
 }
 
 # Добавить секрет
