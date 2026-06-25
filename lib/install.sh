@@ -312,9 +312,13 @@ uninstall() {
     local export_choice; read -r export_choice
     if [[ "$export_choice" =~ ^[yY] ]]; then
         local export_file="${HOME}/mtproxyl-secrets-backup.txt"
-        cp "$SECRETS_FILE" "$export_file" 2>/dev/null || true
-        chmod 600 "$export_file" 2>/dev/null || true
-        log_success "Секреты сохранены: ${export_file}"
+        if [ -f "$SECRETS_FILE" ]; then
+            cp "$SECRETS_FILE" "$export_file" 2>/dev/null || true
+            chmod 600 "$export_file" 2>/dev/null || true
+            log_success "Секреты сохранены: ${export_file}"
+        else
+            log_warn "Файл секретов не найден — нечего сохранять"
+        fi
     fi
 
     # NFT очистка
@@ -344,14 +348,13 @@ uninstall() {
         | grep "^${DOCKER_IMAGE_BASE}:" \
         | while IFS= read -r _img; do
             docker rmi "$_img" >/dev/null 2>&1 || true
-        done
+        done || true
 
-    # Образы из реестра (если были скачаны)
     docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
         | grep "^${REGISTRY_IMAGE}:" \
         | while IFS= read -r _img; do
             docker rmi "$_img" >/dev/null 2>&1 || true
-        done
+        done || true
 
     # Файлы
     log_info "Удаление файлов..."
