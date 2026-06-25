@@ -163,9 +163,7 @@ run_proxy_container() {
         fi
     fi
 
-    # Generate config
-    generate_telemt_config
-
+    # Generate config (один вызов с обработкой ошибки)
     generate_telemt_config || { log_error "Ошибка генерации конфига"; return 1; }
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
