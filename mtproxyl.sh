@@ -79,6 +79,7 @@ cli_main() {
             if [ -f "$SETTINGS_FILE" ]; then
                 load_settings
                 load_secrets
+                load_upstreams
                 load_nft_settings
                 check_for_update
                 show_main_menu
@@ -89,7 +90,7 @@ cli_main() {
 
         start)
             check_root
-            load_settings; load_secrets
+            load_settings; load_secrets; load_upstreams
             start_proxy_container
             ;;
         stop)
@@ -99,7 +100,7 @@ cli_main() {
             ;;
         restart)
             check_root
-            load_settings; load_secrets
+            load_settings; load_secrets; load_upstreams
             restart_proxy_container
             ;;
         status)
@@ -117,12 +118,12 @@ cli_main() {
             ;;
 
         upstream)
-            load_settings; load_secrets
+            load_settings; load_secrets; load_upstreams
             handle_upstream_command "$@"
             ;;
 
         port)
-            load_settings
+            load_settings; load_secrets
             handle_port_command "$@"
             ;;
 
@@ -132,12 +133,12 @@ cli_main() {
             ;;
 
         domain)
-            load_settings; load_secrets
+            load_settings; load_secrets; load_upstreams
             handle_domain_command "$@"
             ;;
 
         mask-backend)
-            load_settings; load_secrets
+            load_settings; load_secrets; load_upstreams
             handle_mask_backend "$@"
             ;;
 
@@ -157,7 +158,7 @@ cli_main() {
             ;;
 
         expert)
-            load_settings; load_secrets
+            load_settings; load_secrets; load_upstreams
             handle_expert_command "$@"
             ;;
 
@@ -182,7 +183,7 @@ cli_main() {
             ;;
 
         backup)
-            check_root; load_settings; load_secrets
+            check_root; load_settings; load_secrets; load_upstreams
             handle_backup_command "$@"
             ;;
 
@@ -194,11 +195,6 @@ cli_main() {
         health)
             load_settings; load_secrets
             health_check
-            ;;
-
-        doctor)
-            load_settings; load_secrets
-            run_doctor
             ;;
 
         info)
@@ -260,7 +256,7 @@ cli_main() {
             ;;
 
         menu)
-            load_settings; load_secrets
+            load_settings; load_secrets; load_upstreams
             show_main_menu
             ;;
 
