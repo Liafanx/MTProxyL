@@ -260,6 +260,137 @@ self_update() {
     exec "${INSTALL_DIR}/mtproxyl.sh"
 }
 
+# ── CLI-обработчики для быстрых команд ────────────────────────
+handle_port_command() {
+    local new_port="${1:-}"
+    if [ -z "$new_port" ]; then
+        echo -e "  ${BOLD}Порт:${NC} ${PROXY_PORT}"
+        return 0
+    fi
+    check_root
+    if validate_port "$new_port"; then
+        PROXY_PORT="$new_port"
+        save_settings
+        log_success "Порт: ${PROXY_PORT}"
+        if is_proxy_running; then
+            load_secrets
+            restart_proxy_container || true
+        fi
+    else
+        log_error "Некорректный порт: ${new_port} (допустимо 1..65535)"
+        return 1
+    fi
+}
+
+handle_ip_command() {
+    local new_ip="${1:-}"
+    if [ -z "$new_ip" ]; then
+        local current="${CUSTOM_IP:-$(get_public_ip 2>/dev/null)}"
+        echo -e "  ${BOLD}IP:${NC} ${current}$([ -z "$CUSTOM_IP" ] && echo " ${DIM}(авто)${NC}")"
+        return 0
+    fi
+    check_root
+    case "$new_ip" in
+        auto|clear|reset)
+            CUSTOM_IP=""
+            save_settings
+            log_success "IP: авто ($(get_public_ip 2>/dev/null || echo '?'))"
+            ;;
+        *)
+            CUSTOM_IP="$new_ip"
+            save_settings
+            log_success "IP: ${CUSTOM_IP}"
+            ;;
+    esac
+}
+
+handle_domain_command() {
+    local new_domain="${1:-}"
+    if [ -z "$new_domain" ]; then
+        echo -e "  ${BOLD}Домен:${NC} ${PROXY_DOMAIN}"
+        return 0
+    fi
+    check_root
+    if validate_domain "$new_domain"; then
+        PROXY_DOMAIN="$new_domain"
+        save_settings
+        log_success "Домен: ${PROXY_DOMAIN}"
+        if is_proxy_running; then
+            load_secrets
+            restart_proxy_container || true
+        fi
+    else
+        log_error "Некорректный домен: ${new_domain}"
+        return 1
+    fi
+}
+
+handle_mask_backend() {
+    local input="${1:-}"
+    if [ -z "$input" ]; then
+        echo -e "  ${BOLD}Mask backend:${NC} ${MASKING_HOST:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}"
+        return 0
+    fi
+    check_root
+    # Парсим host:port или только host
+    local new_host new_port
+    if [[ "$input" =~ ^(.+):([0-9]+)$ ]]; then
+        new_host="${BASH_REMATCH[1]}"
+        new_port="${BASH_REMATCH[2]}"
+    else
+        new_host="$input"
+        new_port=""
+    fi
+    [ -n "$new_host" ] && MASKING_HOST="$new_host"
+    if [ -n "$new_port" ]; then
+        if validate_port "$new_port"; then
+            MASKING_PORT="$new_port"
+        else
+            log_error "Некорректный порт: ${new_port}"
+            return 1
+        fi
+    fi
+    save_settings
+    log_success "Mask backend: ${MASKING_HOST:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}"
+    if is_proxy_running; then
+        load_secrets
+        restart_proxy_container || true
+    fi
+}
+
+handle_sni_policy() {
+    local new_policy="${1:-}"
+    if [ -z "$new_policy" ]; then
+        echo -e "  ${BOLD}SNI-политика:${NC} ${UNKNOWN_SNI_ACTION}"
+        return 0
+    fi
+    check_root
+    case "$new_policy" in
+        mask|drop|accept|reject_handshake)
+            UNKNOWN_SNI_ACTION="$new_policy"
+            save_settings
+            reload_proxy_config 2>/dev/null || true
+            log_success "SNI-политика: ${UNKNOWN_SNI_ACTION}"
+            ;;
+        *)
+            log_error "Допустимые значения: mask, drop, accept, reject_handshake"
+            return 1
+            ;;
+    esac
+}
+
+validate_ip_literal() {
+    local ip="$1"
+    [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+    local IFS='.'
+    local -a octets=($ip)
+    local o
+    for o in "${octets[@]}"; do
+        [ "$o" -ge 0 ] && [ "$o" -le 255 ] 2>/dev/null || return 1
+    done
+    return 0
+}
+
 show_cli_help() {
     echo ""
     echo -e "  ${BRIGHT_CYAN}${BOLD}MTProxyL${NC} ${DIM}v${VERSION}${NC} — Менеджер Telegram MTProto прокси"
