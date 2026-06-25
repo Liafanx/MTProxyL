@@ -228,24 +228,24 @@ show_metrics() {
             s = substr(s, p + length(k) + 2)
             q = index(s, "\""); return q ? substr(s, 1, q-1) : ""
         }
-        /^telemt_uptime_seconds /                           { uptime = $NF }
-        /^telemt_connections_total /                        { c_tot  = $NF }
-        /^telemt_connections_bad_total /                    { c_bad  = $NF }
-        /^telemt_connections_current /                      { c_cur  = $NF }
-        /^telemt_connections_me_current /                   { c_me   = $NF }
-        /^telemt_connections_direct_current /               { c_dir  = $NF }
-        /^telemt_upstream_connect_attempt_total /           { up_att = $NF }
-        /^telemt_upstream_connect_success_total /           { up_ok  = $NF }
-        /^telemt_upstream_connect_fail_total /              { up_fail= $NF }
-        /^telemt_me_reconnect_attempts_total /              { me_att = $NF }
-        /^telemt_me_reconnect_success_total /               { me_ok  = $NF }
-        /^telemt_me_writers_active_current /                { me_wa  = $NF }
-        /^telemt_me_writers_warm_current /                  { me_ww  = $NF }
-        /^telemt_me_endpoint_quarantine_total /             { me_quar= $NF }
-        /^telemt_me_crc_mismatch_total /                    { me_crc = $NF }
-        /^telemt_pool_drain_active /                        { pool   = $NF }
-        /^telemt_desync_total /                             { desync = $NF }
-        /^telemt_secure_padding_invalid_total /             { padinv = $NF }
+        /^telemt_uptime_seconds[{ ]/                       { uptime = $NF }
+        /^telemt_connections_total[{ ]/                     { c_tot  = $NF }
+        /^telemt_connections_bad_total[{ ]/                 { c_bad  = $NF }
+        /^telemt_connections_current[{ ]/                   { c_cur  = $NF }
+        /^telemt_connections_me_current[{ ]/                { c_me   = $NF }
+        /^telemt_connections_direct_current[{ ]/            { c_dir  = $NF }
+        /^telemt_upstream_connect_attempt_total[{ ]/        { up_att = $NF }
+        /^telemt_upstream_connect_success_total[{ ]/        { up_ok  = $NF }
+        /^telemt_upstream_connect_fail_total[{ ]/           { up_fail= $NF }
+        /^telemt_me_reconnect_attempts_total[{ ]/           { me_att = $NF }
+        /^telemt_me_reconnect_success_total[{ ]/            { me_ok  = $NF }
+        /^telemt_me_writers_active_current[{ ]/             { me_wa  = $NF }
+        /^telemt_me_writers_warm_current[{ ]/               { me_ww  = $NF }
+        /^telemt_me_endpoint_quarantine_total[{ ]/          { me_quar= $NF }
+        /^telemt_me_crc_mismatch_total[{ ]/                 { me_crc = $NF }
+        /^telemt_pool_drain_active[{ ]/                     { pool   = $NF }
+        /^telemt_desync_total[{ ]/                          { desync = $NF }
+        /^telemt_secure_padding_invalid_total[{ ]/          { padinv = $NF }
         /^telemt_upstream_connect_duration_success_total\{/ { b=lbl($0,"bucket"); if(b) ds[b]+=$NF }
         /^telemt_upstream_connect_duration_fail_total\{/    { b=lbl($0,"bucket"); if(b) df[b]+=$NF }
         /^telemt_user_connections_current\{/  { u=lbl($0,"user"); if(u) uc[u]+=$NF }
@@ -258,10 +258,10 @@ show_metrics() {
                 uptime+0,c_tot+0,c_bad+0,c_cur+0,c_me+0,c_dir+0,
                 up_att+0,up_ok+0,up_fail+0,me_att+0,me_ok+0,
                 me_wa+0,me_ww+0,me_quar+0,me_crc+0,pool+0,desync+0,padinv+0
-            bkeys[1]="le_100ms";   bnames[1]="<=100мс"
-            bkeys[2]="101_500ms";  bnames[2]="101-500мс"
-            bkeys[3]="501_1000ms"; bnames[3]="501мс-1с"
-            bkeys[4]="gt_1000ms";  bnames[4]=">1с"
+            bkeys[1]="le_100ms";   bnames[1]="<=100ms"
+            bkeys[2]="101_500ms";  bnames[2]="101-500ms"
+            bkeys[3]="501_1000ms"; bnames[3]="501ms-1s"
+            bkeys[4]="gt_1000ms";  bnames[4]=">1s"
             for (i=1;i<=4;i++) {
                 b=bkeys[i]; ok=ds[b]+0; fail=df[b]+0; tot=ok+fail
                 printf "D|%s|%s|%.0f|%.0f|%.1f\n", b, bnames[i], ok, fail, (tot>0 ? ok/tot*100 : -1)
@@ -285,56 +285,68 @@ show_metrics() {
     [ "${up_att:-0}" -gt 0 ] && up_rate=$(awk -v a="$up_att" -v b="$up_ok" 'BEGIN{printf "%.1f", b/a*100}')
     [ "${me_att:-0}" -gt 0 ] && me_rate=$(awk -v a="$me_att" -v b="$me_ok" 'BEGIN{printf "%.1f", b/a*100}')
 
-    local up_status
-    if   [ "${up_att:-0}" -eq 0 ]; then up_status="${DIM}—${NC}"
-    elif awk -v r="$up_rate" 'BEGIN{exit !(r+0 >= 95)}'; then up_status="${BRIGHT_GREEN}OK${NC} ${up_rate}%"
-    elif awk -v r="$up_rate" 'BEGIN{exit !(r+0 >= 80)}'; then up_status="${YELLOW}WARN${NC} ${up_rate}%"
-    else up_status="${BRIGHT_RED}CRIT${NC} ${up_rate}%"; fi
+    local up_color up_label
+    if   [ "${up_att:-0}" -eq 0 ]; then up_color="$DIM"; up_label="—"
+    elif awk -v r="$up_rate" 'BEGIN{exit !(r+0 >= 95)}'; then up_color="$BRIGHT_GREEN"; up_label="OK ${up_rate}%"
+    elif awk -v r="$up_rate" 'BEGIN{exit !(r+0 >= 80)}'; then up_color="$YELLOW"; up_label="WARN ${up_rate}%"
+    else up_color="$BRIGHT_RED"; up_label="CRIT ${up_rate}%"; fi
 
     local me_rate_disp; [ "${me_att:-0}" -gt 0 ] && me_rate_disp="${me_rate}%" || me_rate_disp="—"
 
-    draw_header "МЕТРИКИ"
-    echo -e "  ${DIM}аптайм:${NC} $(format_duration "${uptime:-0}")   ${DIM}upstream:${NC} ${up_status}   ${DIM}активных:${NC} ${c_cur:-0}   ${DIM}writers:${NC} ${me_wa:-0}/${me_ww:-0}"
-    echo ""
+    local W=72
 
-    echo -e "  ${BOLD}Соединения${NC}"
-    echo -e "  ${DIM}всего:${NC} ${c_tot:-0}   ${DIM}авториз.:${NC} ${BRIGHT_GREEN}${c_good}${NC}   ${DIM}отклонено:${NC} ${BRIGHT_RED}${c_bad:-0}${NC}"
-    echo -e "  ${DIM}активных:${NC} ${c_cur:-0}  (ME: ${c_me:-0}  direct: ${c_dir:-0})"
     echo ""
+    echo -e "  ${BRIGHT_CYAN}${BOX_TL}$(_repeat "$BOX_H" $W)${BOX_TR}${NC}"
+    echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}  ${BOLD}МЕТРИКИ ДВИЖКА${NC}$(printf '%*s' $((W - 16)))${BRIGHT_CYAN}${BOX_V}${NC}"
+    echo -e "  ${BRIGHT_CYAN}${BOX_LT}$(_repeat "$BOX_H" $W)${BOX_RT}${NC}"
 
-    echo -e "  ${BOLD}Upstream${NC}"
-    echo -e "  ${DIM}попыток:${NC} ${up_att:-0}   ${DIM}успех:${NC} ${BRIGHT_GREEN}${up_ok:-0}${NC}   ${DIM}ошибок:${NC} ${BRIGHT_RED}${up_fail:-0}${NC}   ${DIM}rate:${NC} ${up_status}"
+    # Шапка
+    echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}  ${DIM}Аптайм:${NC} $(format_duration "${uptime:-0}")   ${DIM}Upstream:${NC} ${up_color}${up_label}${NC}   ${DIM}Активных:${NC} ${c_cur:-0}   ${DIM}Writers:${NC} ${me_wa:-0}/${me_ww:-0}$(printf '%*s' 1)${BRIGHT_CYAN}${BOX_V}${NC}"
+    echo -e "  ${BRIGHT_CYAN}${BOX_LT}$(_repeat "$BOX_H" $W)${BOX_RT}${NC}"
+
+    # Соединения
+    echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}  ${BOLD}Соединения${NC}$(printf '%*s' $((W - 12)))${BRIGHT_CYAN}${BOX_V}${NC}"
+    echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}    ${DIM}Всего:${NC} ${c_tot:-0}   ${DIM}Авториз.:${NC} ${BRIGHT_GREEN}${c_good}${NC}   ${DIM}Отклонено:${NC} ${BRIGHT_RED}${c_bad:-0}${NC}$(printf '%*s' 1)${BRIGHT_CYAN}${BOX_V}${NC}"
+    echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}    ${DIM}Активных:${NC} ${c_cur:-0}  (ME: ${c_me:-0}  Direct: ${c_dir:-0})$(printf '%*s' 1)${BRIGHT_CYAN}${BOX_V}${NC}"
+    echo -e "  ${BRIGHT_CYAN}${BOX_LT}$(_repeat "$BOX_H" $W)${BOX_RT}${NC}"
+
+    # Upstream
+    echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}  ${BOLD}Upstream${NC}$(printf '%*s' $((W - 10)))${BRIGHT_CYAN}${BOX_V}${NC}"
+    echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}    ${DIM}Попыток:${NC} ${up_att:-0}   ${DIM}Успех:${NC} ${BRIGHT_GREEN}${up_ok:-0}${NC}   ${DIM}Ошибок:${NC} ${BRIGHT_RED}${up_fail:-0}${NC}$(printf '%*s' 1)${BRIGHT_CYAN}${BOX_V}${NC}"
+
     while IFS='|' read -r _ bk bn ok fail pct; do
         local ppct
         ppct=$(awk -v p="$pct" 'BEGIN{if(p+0<0) print "—"; else printf "%.0f%%", p}')
-        printf "    %-12s  %6s ок  %6s ош  (%s)\n" "$bn" "$ok" "$fail" "$ppct"
+        echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}      ${DIM}${bn}${NC}  ${ok} ок  ${fail} ош  (${ppct})$(printf '%*s' 1)${BRIGHT_CYAN}${BOX_V}${NC}"
     done < <(echo "$parsed" | grep '^D|')
-    echo ""
+    echo -e "  ${BRIGHT_CYAN}${BOX_LT}$(_repeat "$BOX_H" $W)${BOX_RT}${NC}"
 
+    # Пользователи
     local user_lines
     user_lines=$(echo "$parsed" | grep '^U|' | sort -t'|' -k3 -rn)
     if [ -n "$user_lines" ]; then
-        echo -e "  ${BOLD}Пользователи${NC}"
+        echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}  ${BOLD}Пользователи${NC}$(printf '%*s' $((W - 14)))${BRIGHT_CYAN}${BOX_V}${NC}"
         while IFS='|' read -r _ uname ucur utot urx utx uips; do
-            echo -e "  ${GREEN}${SYM_OK}${NC} ${BOLD}${uname}${NC}  активных: ${ucur}  всего: ${utot}  ${SYM_DOWN} $(format_bytes "$urx")  ${SYM_UP} $(format_bytes "$utx")  IP: ${uips}"
+            echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}    ${GREEN}${SYM_OK}${NC} ${BOLD}${uname}${NC}  акт: ${ucur}  всего: ${utot}  ${SYM_DOWN} $(format_bytes "$urx")  ${SYM_UP} $(format_bytes "$utx")  IP: ${uips}$(printf '%*s' 1)${BRIGHT_CYAN}${BOX_V}${NC}"
         done <<< "$user_lines"
-        echo ""
+        echo -e "  ${BRIGHT_CYAN}${BOX_LT}$(_repeat "$BOX_H" $W)${BOX_RT}${NC}"
     fi
 
-    echo -e "  ${BOLD}ME Health${NC}"
-    echo -e "  ${DIM}переподкл.:${NC} ${me_ok:-0}/${me_att:-0} (${me_rate_disp})   ${DIM}writers:${NC} ${me_wa:-0} активных / ${me_ww:-0} warm"
-    [ "${me_quar:-0}" -gt 0 ] && echo -e "  ${DIM}карантин endpoint:${NC} ${YELLOW}${me_quar}${NC}"
-    [ "${me_crc:-0}"  -gt 0 ] && echo -e "  ${DIM}CRC несовпадений:${NC} ${YELLOW}${me_crc}${NC}"
-    echo ""
+    # ME Health
+    echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}  ${BOLD}ME Health${NC}$(printf '%*s' $((W - 11)))${BRIGHT_CYAN}${BOX_V}${NC}"
+    echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}    ${DIM}Переподкл.:${NC} ${me_ok:-0}/${me_att:-0} (${me_rate_disp})   ${DIM}Writers:${NC} ${me_wa:-0} акт. / ${me_ww:-0} warm$(printf '%*s' 1)${BRIGHT_CYAN}${BOX_V}${NC}"
+    [ "${me_quar:-0}" -gt 0 ] && echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}    ${DIM}Карантин endpoint:${NC} ${YELLOW}${me_quar}${NC}$(printf '%*s' 1)${BRIGHT_CYAN}${BOX_V}${NC}"
+    [ "${me_crc:-0}"  -gt 0 ] && echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}    ${DIM}CRC несовпадений:${NC} ${YELLOW}${me_crc}${NC}$(printf '%*s' 1)${BRIGHT_CYAN}${BOX_V}${NC}"
+    [ "${pool:-0}"    -gt 0 ] && echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}    ${DIM}Writers draining:${NC} ${pool}$(printf '%*s' 1)${BRIGHT_CYAN}${BOX_V}${NC}"
 
-    [ "${pool:-0}"    -gt 0 ] && echo -e "  ${DIM}writers draining:${NC}     ${pool}"
-
+    # Безопасность (если есть проблемы)
     if [ "${desync:-0}" -gt 0 ] || [ "${padinv:-0}" -gt 0 ]; then
-        echo ""
-        echo -e "  ${BOLD}Безопасность${NC}"
-        [ "${desync:-0}"  -gt 0 ] && echo -e "  ${DIM}desync событий:${NC}   ${YELLOW}${desync}${NC}"
-        [ "${padinv:-0}"  -gt 0 ] && echo -e "  ${DIM}невалидный padding:${NC} ${YELLOW}${padinv}${NC}"
-        echo ""
-    fi    
+        echo -e "  ${BRIGHT_CYAN}${BOX_LT}$(_repeat "$BOX_H" $W)${BOX_RT}${NC}"
+        echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}  ${BOLD}Безопасность${NC}$(printf '%*s' $((W - 14)))${BRIGHT_CYAN}${BOX_V}${NC}"
+        [ "${desync:-0}"  -gt 0 ] && echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}    ${DIM}Desync событий:${NC}   ${YELLOW}${desync}${NC}$(printf '%*s' 1)${BRIGHT_CYAN}${BOX_V}${NC}"
+        [ "${padinv:-0}"  -gt 0 ] && echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}    ${DIM}Невалидный padding:${NC} ${YELLOW}${padinv}${NC}$(printf '%*s' 1)${BRIGHT_CYAN}${BOX_V}${NC}"
+    fi
 
+    echo -e "  ${BRIGHT_CYAN}${BOX_BL}$(_repeat "$BOX_H" $W)${BOX_BR}${NC}"
+    echo ""
 }

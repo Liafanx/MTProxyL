@@ -107,12 +107,19 @@ tui_secrets_menu() {
                 if [ -f "$f" ]; then
                     local added=0 skipped=0
                     while IFS='|' read -r _l _k _e _mc _mi _q _ex _n; do
-                        [[ "$_l" =~ ^# ]] || [ -z "$_l" ] && continue
-                        local exists=false ii
-                        for ii in "${!SECRETS_LABELS[@]}"; do [ "${SECRETS_LABELS[$ii]}" = "$_l" ] && { exists=true; break; }; done
-                        if $exists; then skipped=$((skipped+1)); continue; fi
+                        # Пропуск комментариев и пустых строк
+                        [[ "$_l" =~ ^[[:space:]]*# ]] && continue
+                        [[ "$_l" =~ ^[[:space:]]*$ ]] && continue
+                        # Валидация метки и ключа
                         [[ "$_l" =~ ^[a-zA-Z0-9_-]+$ ]] || continue
                         [[ "$_k" =~ ^[a-fA-F0-9]{32}$ ]] || continue
+                        # Проверка дубликатов
+                        local exists=false ii
+                        for ii in "${!SECRETS_LABELS[@]}"; do
+                            [ "${SECRETS_LABELS[$ii]}" = "$_l" ] && { exists=true; break; }
+                        done
+                        if $exists; then skipped=$((skipped+1)); continue; fi
+                        # Добавление
                         SECRETS_LABELS+=("$_l"); SECRETS_KEYS+=("$_k")
                         SECRETS_CREATED+=("$(date +%s)"); SECRETS_ENABLED+=("${_e:-true}")
                         SECRETS_MAX_CONNS+=("${_mc:-0}"); SECRETS_MAX_IPS+=("${_mi:-0}")

@@ -124,15 +124,13 @@ backup_create_encrypted() {
     command -v openssl &>/dev/null || { log_error "Требуется openssl"; return 1; }
 
     mkdir -p "$BACKUP_DIR"
-    local ts; ts=$(date +%Y%m%d-%H%M%S)
-    local plain="${BACKUP_DIR}/mtproxyl-${ts}.tar.gz"
-    local enc="${plain}.enc"
 
-    create_backup > /dev/null || { log_error "Ошибка создания бэкапа"; return 1; }
-    # create_backup сохраняет файл и выводит путь — берём последний
-    plain=$(ls -1t "${BACKUP_DIR}"/mtproxyl-*.tar.gz 2>/dev/null | head -1)
-    [ -z "$plain" ] && { log_error "Бэкап не найден"; return 1; }
-    enc="${plain}.enc"
+    # Создаём бэкап и ловим путь напрямую из вывода
+    local plain
+    plain=$(create_backup 2>/dev/null | tail -1)
+    [ -z "$plain" ] || [ ! -f "$plain" ] && { log_error "Ошибка создания бэкапа"; return 1; }
+
+    local enc="${plain}.enc"
 
     local pw1 pw2
     echo -en "  ${BOLD}Пароль шифрования:${NC} "; read -rs pw1; echo ""
