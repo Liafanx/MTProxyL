@@ -374,6 +374,8 @@ SYSEOF
 }
 
 ios_fix_remove() {
+    local force="${1:-false}"
+
     echo ""
     if [ ! -f "$IOS_SYSCTL_FILE" ]; then
         log_info "iOS Fix v1 не установлен"
@@ -382,12 +384,14 @@ ios_fix_remove() {
         return 0
     fi
 
-    echo -e "  ${BOLD}Откат фикса для iOS (вариант 1)${NC}"; echo ""
-    echo -e "  ${DIM}Будет удалён: ${IOS_SYSCTL_FILE}${NC}"
-    echo -e "  ${DIM}Значения ядра будут восстановлены к тем, которые были до применения фикса.${NC}"; echo ""
-    echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-    local _confirm; read -r _confirm
-    [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
+    if [ "$force" != "true" ]; then
+        echo -e "  ${BOLD}Откат фикса для iOS (вариант 1)${NC}"; echo ""
+        echo -e "  ${DIM}Будет удалён: ${IOS_SYSCTL_FILE}${NC}"
+        echo -e "  ${DIM}Значения ядра будут восстановлены к тем, которые были до применения фикса.${NC}"; echo ""
+        echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
+        local _confirm; read -r _confirm
+        [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
+    fi
 
     rm -f "$IOS_SYSCTL_FILE"
 
@@ -401,15 +405,17 @@ ios_fix_remove() {
     sysctl -w "net.ipv4.tcp_keepalive_probes=${_rp}" &>/dev/null || true
     sysctl --system &>/dev/null || true
 
-    local _time _intvl _probes
-    _time=$(sysctl -n net.ipv4.tcp_keepalive_time 2>/dev/null)
-    _intvl=$(sysctl -n net.ipv4.tcp_keepalive_intvl 2>/dev/null)
-    _probes=$(sysctl -n net.ipv4.tcp_keepalive_probes 2>/dev/null)
-    echo ""
-    echo -e "  ${BOLD}Текущие значения ядра:${NC}"
-    echo -e "    tcp_keepalive_time   = ${_time}"
-    echo -e "    tcp_keepalive_intvl  = ${_intvl}"
-    echo -e "    tcp_keepalive_probes = ${_probes}"
+    if [ "$force" != "true" ]; then
+        local _time _intvl _probes
+        _time=$(sysctl -n net.ipv4.tcp_keepalive_time 2>/dev/null)
+        _intvl=$(sysctl -n net.ipv4.tcp_keepalive_intvl 2>/dev/null)
+        _probes=$(sysctl -n net.ipv4.tcp_keepalive_probes 2>/dev/null)
+        echo ""
+        echo -e "  ${BOLD}Текущие значения ядра:${NC}"
+        echo -e "    tcp_keepalive_time   = ${_time}"
+        echo -e "    tcp_keepalive_intvl  = ${_intvl}"
+        echo -e "    tcp_keepalive_probes = ${_probes}"
+    fi
 
     log_success "iOS Fix v1 откачен (восстановлены: time=${_rt} intvl=${_ri} probes=${_rp})"
     IOS_FIX_ENABLED="false"
