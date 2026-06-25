@@ -262,9 +262,10 @@ cli_main() {
             show_main_menu
             ;;
 
-        uninstall)
+.       uninstall)
             check_root; load_settings; load_secrets
             uninstall
+            exit 0
             ;;
 
         version)
