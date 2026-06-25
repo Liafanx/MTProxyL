@@ -119,5 +119,8 @@ load_settings() {
     [[ "$PROXY_CONCURRENCY" =~ ^[0-9]+$ ]] || PROXY_CONCURRENCY=8192
     [[ "$PROXY_PROTOCOL" == "true" ]] || PROXY_PROTOCOL="false"
     [[ "$GEOBLOCK_MODE" == "whitelist" ]] || GEOBLOCK_MODE="blacklist"
-    [[ "$UNKNOWN_SNI_ACTION" == "drop" ]] || UNKNOWN_SNI_ACTION="mask"
+    case "$UNKNOWN_SNI_ACTION" in
+        mask|drop|accept|reject_handshake) ;;
+        *) UNKNOWN_SNI_ACTION="mask" ;;
+    esac
 }
