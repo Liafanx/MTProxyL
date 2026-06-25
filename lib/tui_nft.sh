@@ -1,5 +1,5 @@
 #!/bin/bash
-# MTProxyL — подменю: NFT лимитер + iOS фиксы
+# MTProxyL — подменю: NFT лимитер + iOS фиксы + Smart режим
 
 tui_nft_menu() {
     while true; do
@@ -15,25 +15,33 @@ tui_nft_menu() {
         echo ""
 
         # Текущие параметры
-        echo -e "  ${DIM}Параметры:${NC}"
-        echo -e "    Rate:    ${NFT_RATE}"
-        echo -e "    Burst:   ${NFT_BURST}"
-        echo -e "    Timeout: ${NFT_METER_TIMEOUT}"
-        if [ -n "${NFT_SERVER_IP:-}" ]; then
-            echo -e "    IP:      ${NFT_SERVER_IP}"
+        echo -e "  ${DIM}Режим:   ${BOLD}${NFT_MODE}${NC}"
+        if [ "$NFT_MODE" = "smart" ]; then
+            echo -e "  ${DIM}iOS:     ${NFT_IOS_RATE} burst ${NFT_IOS_BURST}${NC}"
+            echo -e "  ${DIM}Other:   ${NFT_OTHER_RATE} burst ${NFT_OTHER_BURST}${NC}"
+            echo -e "  ${DIM}Reject:  tcp-reset (мгновенный ответ клиенту)${NC}"
         else
-            echo -e "    IP:      ${DIM}все IP сервера${NC}"
+            echo -e "  ${DIM}Rate:    ${NFT_RATE}${NC}"
+            echo -e "  ${DIM}Burst:   ${NFT_BURST}${NC}"
+        fi
+        echo -e "  ${DIM}Timeout: ${NFT_METER_TIMEOUT}${NC}"
+        if [ -n "${NFT_SERVER_IP:-}" ]; then
+            echo -e "  ${DIM}IP:      ${NFT_SERVER_IP}${NC}"
+        else
+            echo -e "  ${DIM}IP:      ${DIM}все IP сервера${NC}"
         fi
         if [ "$NFT_EXTRA_COUNT" -gt 0 ]; then
-            echo -e "    Доп. правила: ${NFT_EXTRA_COUNT}"
+            echo -e "  ${DIM}Доп. правила: ${NFT_EXTRA_COUNT}${NC}"
         fi
         echo ""
 
+        echo -e "  ${BRIGHT_GREEN}[s]${NC}  ${BOLD}★ Smart By-MEKO${NC} ${DIM}(iOS/Android авторазделение + REJECT)${NC}"
+        echo ""
         echo -e "  ${CYAN}[1]${NC}  Применить NFT правила"
         echo -e "  ${CYAN}[2]${NC}  Удалить NFT правила"
-        echo -e "  ${CYAN}[3]${NC}  Пресеты (жёсткий / средний / мягкий)"
+        echo -e "  ${CYAN}[3]${NC}  Пресеты (жёсткий / средний / мягкий / smart)"
         echo -e "  ${CYAN}[4]${NC}  Настройки NFT (rate / burst / timeout / IP)"
-        echo -e "  ${CYAN}[5]${NC}  Счётчик дропов"
+        echo -e "  ${CYAN}[5]${NC}  Счётчик правил"
         echo -e "  ${CYAN}[6]${NC}  Установить службу автозапуска"
         echo -e "  ${CYAN}[7]${NC}  Удалить службу"
         echo -e "  ${CYAN}[8]${NC}  Дополнительные правила"
@@ -46,6 +54,7 @@ tui_nft_menu() {
         local choice; choice=$(read_choice "выбор" "0")
 
         case "$choice" in
+            s|S) enable_smart_mode; press_any_key ;;
             1)
                 if [ -z "${PROXY_PORT:-}" ]; then
                     log_error "Порт прокси не задан — запустите прокси"
@@ -79,21 +88,26 @@ tui_nft_presets() {
     draw_header "ПРЕСЕТЫ NFT"
     echo ""
     echo -e "  ${BOLD}Выберите пресет ограничения:${NC}"; echo ""
-    echo -e "  ${RED}[1]${NC} Жёсткий  — 1/second burst 1"
-    echo -e "      ${DIM}Рекомендуется. Каждый IP — не более 1 SYN/сек.${NC}"
+    echo -e "  ${BRIGHT_GREEN}[s]${NC} ${BOLD}★ Smart By-MEKO${NC}"
+    echo -e "      ${DIM}iOS/Android авторазделение по TTL + REJECT вместо DROP.${NC}"
+    echo -e "      ${DIM}Подключение 3-8 сек. Один порт для всех клиентов.${NC}"
     echo ""
-    echo -e "  ${YELLOW}[2]${NC} Средний  — 1/second burst 3"
-    echo -e "      ${DIM}Если жёсткий слишком строг. Разрешает кратковременный burst.${NC}"
+    echo -e "  ${RED}[1]${NC} Жёсткий (Classic)  — 1/second burst 1"
+    echo -e "      ${DIM}Каждый IP — не более 1 SYN/сек. DROP при превышении.${NC}"
     echo ""
-    echo -e "  ${GREEN}[3]${NC} Мягкий   — 2/second burst 5"
+    echo -e "  ${YELLOW}[2]${NC} Средний (Classic)  — 1/second burst 3"
+    echo -e "      ${DIM}Разрешает кратковременный burst.${NC}"
+    echo ""
+    echo -e "  ${GREEN}[3]${NC} Мягкий (Classic)   — 2/second burst 5"
     echo -e "      ${DIM}Для серверов с большим числом клиентов или за CGNAT.${NC}"
     echo ""
-    echo -e "  ${DIM}[4]${NC} Свой вариант"
+    echo -e "  ${DIM}[4]${NC} Свой вариант (Classic)"
     echo -e "  ${DIM}[0]${NC} Назад"
     echo ""
     local choice; choice=$(read_choice "выбор" "0")
 
     case "$choice" in
+        s|S) enable_smart_mode ;;
         1) apply_nft_preset hard ;;
         2) apply_nft_preset medium ;;
         3) apply_nft_preset soft ;;
@@ -102,13 +116,14 @@ tui_nft_presets() {
             local r; read -r r; [ -n "$r" ] && NFT_RATE="$r"
             echo -en "  ${BOLD}Burst [${NFT_BURST}]:${NC} "
             local b; read -r b; [[ "$b" =~ ^[0-9]+$ ]] && NFT_BURST="$b"
+            NFT_MODE="classic"
             save_nft_settings
             log_success "Свой вариант: rate=$NFT_RATE burst=$NFT_BURST"
             ;;
         0|"") return ;;
     esac
 
-    if [ "$choice" != "0" ] && [ -n "$choice" ]; then
+    if [ "$choice" != "0" ] && [ -n "$choice" ] && [ "$choice" != "s" ] && [ "$choice" != "S" ]; then
         echo ""
         echo -en "  ${BOLD}Применить NFT правила сейчас? [Y/n]:${NC} "
         local yn; read -r yn
@@ -125,53 +140,84 @@ tui_nft_settings() {
     clear_screen
     draw_header "НАСТРОЙКИ NFT"
     echo ""
-    echo -e "  ${BOLD}Текущие параметры:${NC}"
-    echo -e "    Rate:    ${NFT_RATE}"
-    echo -e "    Burst:   ${NFT_BURST}"
-    echo -e "    Timeout: ${NFT_METER_TIMEOUT}"
-    echo -e "    IP:      ${NFT_SERVER_IP:-${DIM}все IP сервера${NC}}"
-    echo ""
-    echo -e "  ${DIM}[1]${NC} Изменить Rate    [${NFT_RATE}]"
-    echo -e "  ${DIM}[2]${NC} Изменить Burst   [${NFT_BURST}]"
-    echo -e "  ${DIM}[3]${NC} Изменить Timeout [${NFT_METER_TIMEOUT}]"
-    echo -e "  ${DIM}[4]${NC} Изменить IP привязку"
-    echo -e "  ${DIM}[0]${NC} Назад"
-    echo ""
-    local choice; choice=$(read_choice "выбор" "0")
 
-    case "$choice" in
-        1)
-            echo -en "  ${BOLD}Новый Rate (напр. 1/second, 2/second) [${NFT_RATE}]:${NC} "
-            local r; read -r r
-            if [ -n "$r" ]; then
-                NFT_RATE="$r"
-                save_nft_settings
-                log_success "Rate: ${NFT_RATE}"
-                prompt_apply_nft_rules
-            fi ;;
-        2)
-            echo -en "  ${BOLD}Новый Burst [${NFT_BURST}]:${NC} "
-            local b; read -r b
-            if [[ "$b" =~ ^[0-9]+$ ]]; then
-                NFT_BURST="$b"
-                save_nft_settings
-                log_success "Burst: ${NFT_BURST}"
-                prompt_apply_nft_rules
-            elif [ -n "$b" ]; then
-                log_error "Burst должен быть числом"
-            fi ;;
-        3)
-            echo -en "  ${BOLD}Новый Timeout (напр. 30s, 60s, 120s) [${NFT_METER_TIMEOUT}]:${NC} "
-            local t; read -r t
-            if [ -n "$t" ]; then
-                NFT_METER_TIMEOUT="$t"
-                save_nft_settings
-                log_success "Timeout: ${NFT_METER_TIMEOUT}"
-                prompt_apply_nft_rules
-            fi ;;
-        4) tui_nft_ip_settings ;;
-        0|"") return ;;
-    esac
+    if [ "$NFT_MODE" = "smart" ]; then
+        echo -e "  ${BOLD}Режим: Smart By-MEKO${NC}"
+        echo ""
+        echo -e "  ${BOLD}Текущие параметры:${NC}"
+        echo -e "    iOS Rate:    ${NFT_IOS_RATE}"
+        echo -e "    iOS Burst:   ${NFT_IOS_BURST}"
+        echo -e "    Other Rate:  ${NFT_OTHER_RATE}"
+        echo -e "    Other Burst: ${NFT_OTHER_BURST}"
+        echo -e "    Timeout:     ${NFT_METER_TIMEOUT}"
+        echo -e "    IP:          ${NFT_SERVER_IP:-${DIM}все IP сервера${NC}}"
+        echo ""
+        echo -e "  ${DIM}[1]${NC} iOS Rate    [${NFT_IOS_RATE}]"
+        echo -e "  ${DIM}[2]${NC} iOS Burst   [${NFT_IOS_BURST}]"
+        echo -e "  ${DIM}[3]${NC} Other Rate  [${NFT_OTHER_RATE}]"
+        echo -e "  ${DIM}[4]${NC} Other Burst [${NFT_OTHER_BURST}]"
+        echo -e "  ${DIM}[5]${NC} Timeout     [${NFT_METER_TIMEOUT}]"
+        echo -e "  ${DIM}[6]${NC} IP привязку"
+        echo -e "  ${DIM}[7]${NC} Переключить на Classic режим"
+        echo -e "  ${DIM}[0]${NC} Назад"
+        echo ""
+        local choice; choice=$(read_choice "выбор" "0")
+        case "$choice" in
+            1) echo -en "  ${BOLD}iOS Rate [${NFT_IOS_RATE}]:${NC} "; local v; read -r v
+               [ -n "$v" ] && { NFT_IOS_RATE="$v"; save_nft_settings; log_success "iOS Rate: ${v}"; prompt_apply_nft_rules; } ;;
+            2) echo -en "  ${BOLD}iOS Burst [${NFT_IOS_BURST}]:${NC} "; local v; read -r v
+               [[ "$v" =~ ^[0-9]+$ ]] && { NFT_IOS_BURST="$v"; save_nft_settings; log_success "iOS Burst: ${v}"; prompt_apply_nft_rules; } ;;
+            3) echo -en "  ${BOLD}Other Rate [${NFT_OTHER_RATE}]:${NC} "; local v; read -r v
+               [ -n "$v" ] && { NFT_OTHER_RATE="$v"; save_nft_settings; log_success "Other Rate: ${v}"; prompt_apply_nft_rules; } ;;
+            4) echo -en "  ${BOLD}Other Burst [${NFT_OTHER_BURST}]:${NC} "; local v; read -r v
+               [[ "$v" =~ ^[0-9]+$ ]] && { NFT_OTHER_BURST="$v"; save_nft_settings; log_success "Other Burst: ${v}"; prompt_apply_nft_rules; } ;;
+            5) echo -en "  ${BOLD}Timeout [${NFT_METER_TIMEOUT}]:${NC} "; local v; read -r v
+               [ -n "$v" ] && { NFT_METER_TIMEOUT="$v"; save_nft_settings; log_success "Timeout: ${v}"; prompt_apply_nft_rules; } ;;
+            6) tui_nft_ip_settings ;;
+            7) NFT_MODE="classic"; save_nft_settings; log_success "Переключено на Classic"; prompt_apply_nft_rules ;;
+            0|"") ;;
+        esac
+    else
+        echo -e "  ${BOLD}Режим: Classic${NC}"
+        echo ""
+        echo -e "  ${BOLD}Текущие параметры:${NC}"
+        echo -e "    Rate:    ${NFT_RATE}"
+        echo -e "    Burst:   ${NFT_BURST}"
+        echo -e "    Timeout: ${NFT_METER_TIMEOUT}"
+        echo -e "    IP:      ${NFT_SERVER_IP:-${DIM}все IP сервера${NC}}"
+        echo ""
+        echo -e "  ${DIM}[1]${NC} Изменить Rate    [${NFT_RATE}]"
+        echo -e "  ${DIM}[2]${NC} Изменить Burst   [${NFT_BURST}]"
+        echo -e "  ${DIM}[3]${NC} Изменить Timeout [${NFT_METER_TIMEOUT}]"
+        echo -e "  ${DIM}[4]${NC} Изменить IP привязку"
+        echo -e "  ${DIM}[5]${NC} Переключить на Smart By-MEKO"
+        echo -e "  ${DIM}[0]${NC} Назад"
+        echo ""
+        local choice; choice=$(read_choice "выбор" "0")
+        case "$choice" in
+            1)
+                echo -en "  ${BOLD}Новый Rate (напр. 1/second, 2/second) [${NFT_RATE}]:${NC} "
+                local r; read -r r
+                if [ -n "$r" ]; then
+                    NFT_RATE="$r"; save_nft_settings; log_success "Rate: ${NFT_RATE}"; prompt_apply_nft_rules
+                fi ;;
+            2)
+                echo -en "  ${BOLD}Новый Burst [${NFT_BURST}]:${NC} "
+                local b; read -r b
+                if [[ "$b" =~ ^[0-9]+$ ]]; then
+                    NFT_BURST="$b"; save_nft_settings; log_success "Burst: ${NFT_BURST}"; prompt_apply_nft_rules
+                elif [ -n "$b" ]; then log_error "Burst должен быть числом"; fi ;;
+            3)
+                echo -en "  ${BOLD}Новый Timeout (напр. 30s, 60s, 120s) [${NFT_METER_TIMEOUT}]:${NC} "
+                local t; read -r t
+                if [ -n "$t" ]; then
+                    NFT_METER_TIMEOUT="$t"; save_nft_settings; log_success "Timeout: ${NFT_METER_TIMEOUT}"; prompt_apply_nft_rules
+                fi ;;
+            4) tui_nft_ip_settings ;;
+            5) enable_smart_mode ;;
+            0|"") ;;
+        esac
+    fi
     press_any_key
 }
 
@@ -315,7 +361,6 @@ tui_ios1_menu() {
         echo ""
         echo -e "  Статус: $(ios_fix_status_line)"; echo ""
 
-        # Текущие значения ядра
         local _t _i _p
         _t=$(sysctl -n net.ipv4.tcp_keepalive_time 2>/dev/null)
         _i=$(sysctl -n net.ipv4.tcp_keepalive_intvl 2>/dev/null)
@@ -378,6 +423,14 @@ tui_ios2_menu() {
         clear_screen
         draw_header "iOS FIX v2 — MSS + REDIRECT"
         echo ""
+
+        # Предупреждение если Smart режим
+        if [ "$NFT_MODE" = "smart" ]; then
+            echo -e "  ${YELLOW}⚠ Smart By-MEKO активен — iOS Fix v2 не нужен.${NC}"
+            echo -e "  ${DIM}  Smart автоматически разделяет iOS/Android на одном порту.${NC}"
+            echo ""
+        fi
+
         echo -e "  Статус: $(ios2_fix_status_line)"; echo ""
 
         local _target="${IOS2_TARGET_PORT:-${PROXY_PORT:-443}}"
