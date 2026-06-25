@@ -98,7 +98,17 @@ ENTRYPOINT ["telemt"]
 DOCKERFILE_EOF
 
     log_info "Компиляция (первая сборка может занять несколько минут)..."
-    if docker build --build-arg "TELEMT_COMMIT=${commit}" -t "${DOCKER_IMAGE_BASE}:${version}" "$build_dir"; then
+    local _platform=""
+    case "$(uname -m)" in
+        x86_64|amd64) _platform="linux/amd64" ;;
+        aarch64|arm64) _platform="linux/arm64" ;;
+    esac
+
+    local _build_cmd=(docker build --build-arg "TELEMT_COMMIT=${commit}" -t "${DOCKER_IMAGE_BASE}:${version}")
+    [ -n "$_platform" ] && _build_cmd+=(--platform "$_platform")
+    _build_cmd+=("$build_dir")
+
+    if "${_build_cmd[@]}"; then
         docker tag "${DOCKER_IMAGE_BASE}:${version}" "${DOCKER_IMAGE_BASE}:latest" 2>/dev/null || true
         log_success "Собран telemt v${version}"
         echo "$version" > "${INSTALL_DIR}/.telemt_version"
