@@ -1,5 +1,5 @@
 #!/bin/bash
-# MTProxyL — NFT SYN limiter + iOS фиксы + доп. правила
+# MTProxyL — NFT SYN limiter + iOS фиксы + Smart режим + доп. правила
 
 NFT_CONF="${INSTALL_DIR}/nft-rules.conf"
 NFT_SCRIPT_FILE="/usr/local/sbin/mtproxyl-syn-limit.sh"
@@ -9,11 +9,19 @@ IOS2_NFT_TABLE="mtproxyl_ios2"
 
 # ── Значения по умолчанию ─────────────────────────────────────
 NFT_ENABLED="false"
+NFT_MODE="classic"
 NFT_RATE="1/second"
 NFT_BURST="1"
 NFT_METER_TIMEOUT="60s"
 NFT_TABLE="mtproxyl_limit"
 NFT_SERVER_IP=""
+
+# Smart режим (By-MEKO)
+NFT_REJECT_MODE="reset"
+NFT_IOS_RATE="15/second"
+NFT_IOS_BURST="30"
+NFT_OTHER_RATE="54/minute"
+NFT_OTHER_BURST="1"
 
 # iOS Fix v1
 IOS_FIX_ENABLED="false"
@@ -43,11 +51,17 @@ save_nft_settings() {
     cat > "$NFT_CONF" << EOF
 # MTProxyL NFT — настройки
 NFT_ENABLED='${NFT_ENABLED}'
+NFT_MODE='${NFT_MODE}'
 NFT_RATE='${NFT_RATE}'
 NFT_BURST='${NFT_BURST}'
 NFT_METER_TIMEOUT='${NFT_METER_TIMEOUT}'
 NFT_TABLE='${NFT_TABLE}'
 NFT_SERVER_IP='${NFT_SERVER_IP}'
+NFT_REJECT_MODE='${NFT_REJECT_MODE}'
+NFT_IOS_RATE='${NFT_IOS_RATE}'
+NFT_IOS_BURST='${NFT_IOS_BURST}'
+NFT_OTHER_RATE='${NFT_OTHER_RATE}'
+NFT_OTHER_BURST='${NFT_OTHER_BURST}'
 IOS_FIX_ENABLED='${IOS_FIX_ENABLED}'
 IOS_KA_TIME='${IOS_KA_TIME}'
 IOS_KA_INTVL='${IOS_KA_INTVL}'
@@ -81,8 +95,10 @@ load_nft_settings() {
         if [[ "$_line" =~ ^([A-Z_][A-Z0-9_]*)=\'([^\']*)\'$ ]]; then
             local _key="${BASH_REMATCH[1]}" _val="${BASH_REMATCH[2]}"
             case "$_key" in
-                NFT_ENABLED|NFT_RATE|NFT_BURST|NFT_METER_TIMEOUT|\
+                NFT_ENABLED|NFT_MODE|NFT_RATE|NFT_BURST|NFT_METER_TIMEOUT|\
                 NFT_TABLE|NFT_SERVER_IP|\
+                NFT_REJECT_MODE|NFT_IOS_RATE|NFT_IOS_BURST|\
+                NFT_OTHER_RATE|NFT_OTHER_BURST|\
                 IOS_FIX_ENABLED|IOS_KA_TIME|IOS_KA_INTVL|IOS_KA_PROBES|\
                 IOS_ORIG_TIME|IOS_ORIG_INTVL|IOS_ORIG_PROBES|\
                 IOS2_FIX_ENABLED|IOS2_EXTERNAL_PORT|IOS2_TARGET_PORT|IOS2_MSS|\
@@ -104,6 +120,9 @@ load_nft_settings() {
         fi
     done < "$NFT_CONF"
     [[ "$NFT_EXTRA_COUNT" =~ ^[0-9]+$ ]] || NFT_EXTRA_COUNT=0
+    # Совместимость со старыми конфигами без NFT_MODE
+    [ "$NFT_MODE" != "classic" ] && [ "$NFT_MODE" != "smart" ] && NFT_MODE="classic"
+    [ "$NFT_REJECT_MODE" != "reset" ] && [ "$NFT_REJECT_MODE" != "drop" ] && NFT_REJECT_MODE="reset"
 }
 
 # ── Применить NFT правила после изменения настроек ────────────
@@ -121,14 +140,16 @@ prompt_apply_nft_rules() {
 generate_nft_script() {
     local _ip="${NFT_SERVER_IP:-}"
     local _port="${PROXY_PORT:-443}"
-    local _rate="${NFT_RATE:-1/second}"
-    local _burst="${NFT_BURST:-1}"
     local _timeout="${NFT_METER_TIMEOUT:-60s}"
     local _table="${NFT_TABLE:-mtproxyl_limit}"
     local _ios2_table="${IOS2_NFT_TABLE}"
     local _ios2_ext="${IOS2_EXTERNAL_PORT:-4443}"
     local _ios2_target="${IOS2_TARGET_PORT:-${PROXY_PORT:-443}}"
     local _ios2_mss="${IOS2_MSS:-92}"
+
+    # IP match fragment
+    local _ip_match=""
+    [ -n "$_ip" ] && _ip_match="ip daddr ${_ip} "
 
     # Заголовок
     cat > "$NFT_SCRIPT_FILE" << NFTEOF
@@ -142,18 +163,13 @@ nft add table inet "\$TABLE"
 nft "add chain inet \$TABLE input { type filter hook input priority 0; policy accept; }"
 NFTEOF
 
-    # Основное правило
-    if [ -n "$_ip" ]; then
-        cat >> "$NFT_SCRIPT_FILE" << MAINIPEOF
-nft "add rule inet \$TABLE input ip daddr ${_ip} tcp dport ${_port} tcp flags & (syn | ack) == syn meter mtproxyl_syn_main { ip saddr timeout ${_timeout} limit rate over ${_rate} burst ${_burst} packets } counter drop comment \\"mtproxyl_main\\""
-MAINIPEOF
+    if [ "$NFT_MODE" = "smart" ]; then
+        _generate_smart_rules "$_ip_match" "$_port" "$_timeout"
     else
-        cat >> "$NFT_SCRIPT_FILE" << MAINNIPEOF
-nft "add rule inet \$TABLE input tcp dport ${_port} tcp flags & (syn | ack) == syn meter mtproxyl_syn_main { ip saddr timeout ${_timeout} limit rate over ${_rate} burst ${_burst} packets } counter drop comment \\"mtproxyl_main\\""
-MAINNIPEOF
+        _generate_classic_rules "$_ip_match" "$_port" "$_timeout"
     fi
 
-    # Доп. правила
+    # Доп. правила (работают в обоих режимах)
     local _i
     for _i in $(seq 1 "$NFT_EXTRA_COUNT"); do
         local _eport="${NFT_EXTRA_PORT[$_i]:-}"
@@ -162,24 +178,25 @@ MAINNIPEOF
         local _eburst="${NFT_EXTRA_BURST[$_i]:-1}"
         [ -z "$_eport" ] && continue
 
-        if [ -n "$_eip" ]; then
-            cat >> "$NFT_SCRIPT_FILE" << EXTRAIPEOF
-nft "add rule inet \$TABLE input ip daddr ${_eip} tcp dport ${_eport} tcp flags & (syn | ack) == syn meter mtproxyl_syn_extra_${_i} { ip saddr timeout ${_timeout} limit rate over ${_erate} burst ${_eburst} packets } counter drop comment \\"mtproxyl_extra_${_i}\\""
-EXTRAIPEOF
-        else
-            cat >> "$NFT_SCRIPT_FILE" << EXTRANIPEOF
-nft "add rule inet \$TABLE input tcp dport ${_eport} tcp flags & (syn | ack) == syn meter mtproxyl_syn_extra_${_i} { ip saddr timeout ${_timeout} limit rate over ${_erate} burst ${_eburst} packets } counter drop comment \\"mtproxyl_extra_${_i}\\""
-EXTRANIPEOF
-        fi
+        local _extra_ip_match=""
+        [ -n "$_eip" ] && _extra_ip_match="ip daddr ${_eip} "
+
+        local _extra_action="drop"
+        [ "$NFT_MODE" = "smart" ] && _extra_action="reject with tcp reset"
+
+        cat >> "$NFT_SCRIPT_FILE" << EXTRAEOF
+nft "add rule inet \$TABLE input ${_extra_ip_match}tcp dport ${_eport} tcp flags & (syn | ack) == syn meter mtproxyl_syn_extra_${_i} { ip saddr timeout ${_timeout} limit rate over ${_erate} burst ${_eburst} packets } counter ${_extra_action} comment \\"mtproxyl_extra_${_i}\\""
+EXTRAEOF
     done
 
-    # iOS Fix v2
-    if [ "${IOS2_FIX_ENABLED:-false}" = "true" ]; then
+    # iOS Fix v2 (только в classic режиме, smart не нуждается)
+    if [ "${IOS2_FIX_ENABLED:-false}" = "true" ] && [ "$NFT_MODE" = "classic" ]; then
         cat >> "$NFT_SCRIPT_FILE" << IOS2EOF
 nft add table inet "\$IOS2_TABLE"
 nft "add chain inet \$IOS2_TABLE mangle_pre { type filter hook prerouting priority mangle; policy accept; }"
 nft "add chain inet \$IOS2_TABLE nat_pre { type nat hook prerouting priority dstnat; policy accept; }"
 IOS2EOF
+
         if [ -n "$_ip" ]; then
             cat >> "$NFT_SCRIPT_FILE" << IOS2IPEOF
 nft "add rule inet \$IOS2_TABLE mangle_pre ip daddr ${_ip} tcp dport ${_ios2_ext} tcp flags & (syn | rst) == syn tcp option maxseg size set ${_ios2_mss} counter comment \\"mtproxyl_ios2_mss\\""
@@ -200,6 +217,46 @@ nft list table inet "$IOS2_TABLE" 2>/dev/null || true
 TAILEOF
 
     chmod +x "$NFT_SCRIPT_FILE"
+}
+
+# ── Генерация Classic правил ──────────────────────────────────
+_generate_classic_rules() {
+    local _ip_match="$1" _port="$2" _timeout="$3"
+    local _rate="${NFT_RATE:-1/second}"
+    local _burst="${NFT_BURST:-1}"
+
+    cat >> "$NFT_SCRIPT_FILE" << CLASSICEOF
+nft "add rule inet \$TABLE input ${_ip_match}tcp dport ${_port} tcp flags & (syn | ack) == syn meter mtproxyl_syn_main { ip saddr timeout ${_timeout} limit rate over ${_rate} burst ${_burst} packets } counter drop comment \\"mtproxyl_main\\""
+CLASSICEOF
+}
+
+# ── Генерация Smart правил (By-MEKO) ─────────────────────────
+_generate_smart_rules() {
+    local _ip_match="$1" _port="$2" _timeout="$3"
+    local _ios_rate="${NFT_IOS_RATE:-15/second}"
+    local _ios_burst="${NFT_IOS_BURST:-30}"
+    local _other_rate="${NFT_OTHER_RATE:-54/minute}"
+    local _other_burst="${NFT_OTHER_BURST:-1}"
+
+    # Правило 1: iOS SYN (TTL < 65, length 64) → мягкий лимит → accept
+    cat >> "$NFT_SCRIPT_FILE" << SMART1EOF
+nft "add rule inet \$TABLE input ${_ip_match}tcp dport ${_port} tcp flags & (syn | ack) == syn ip ttl < 65 meta length 64 meter mtproxyl_ios { ip saddr timeout ${_timeout} limit rate ${_ios_rate} burst ${_ios_burst} packets } accept comment \\"mtproxyl_smart_ios_accept\\""
+SMART1EOF
+
+    # Правило 2: iOS SYN сверх лимита → REJECT
+    cat >> "$NFT_SCRIPT_FILE" << SMART2EOF
+nft "add rule inet \$TABLE input ${_ip_match}tcp dport ${_port} tcp flags & (syn | ack) == syn ip ttl < 65 meta length 64 counter reject with tcp reset comment \\"mtproxyl_smart_ios_reject\\""
+SMART2EOF
+
+    # Правило 3: Остальные SYN → строгий лимит → accept
+    cat >> "$NFT_SCRIPT_FILE" << SMART3EOF
+nft "add rule inet \$TABLE input ${_ip_match}tcp dport ${_port} tcp flags & (syn | ack) == syn meter mtproxyl_other { ip saddr timeout ${_timeout} limit rate ${_other_rate} burst ${_other_burst} packets } accept comment \\"mtproxyl_smart_other_accept\\""
+SMART3EOF
+
+    # Правило 4: Остальные SYN сверх лимита → REJECT
+    cat >> "$NFT_SCRIPT_FILE" << SMART4EOF
+nft "add rule inet \$TABLE input ${_ip_match}tcp dport ${_port} tcp flags & (syn | ack) == syn counter reject with tcp reset comment \\"mtproxyl_smart_other_reject\\""
+SMART4EOF
 }
 
 # ── Применение / удаление правил ──────────────────────────────
@@ -225,7 +282,7 @@ apply_nft_rules() {
 
     generate_nft_script
     if /bin/sh "$NFT_SCRIPT_FILE"; then
-        log_success "NFT правила применены"
+        log_success "NFT правила применены (режим: ${NFT_MODE})"
     else
         log_error "Не удалось применить NFT правила"
         return 1
@@ -265,7 +322,7 @@ SVCEOF
     systemctl restart "$NFT_SYSTEMD_UNIT" 2>/dev/null
     NFT_ENABLED="true"
     save_nft_settings
-    log_success "Служба NFT limiter установлена и запущена"
+    log_success "Служба NFT limiter установлена и запущена (режим: ${NFT_MODE})"
 }
 
 remove_nft_service() {
@@ -281,13 +338,74 @@ remove_nft_service() {
 # ── Пресеты ───────────────────────────────────────────────────
 apply_nft_preset() {
     case "$1" in
-        hard)   NFT_RATE="1/second"; NFT_BURST="1" ;;
-        medium) NFT_RATE="1/second"; NFT_BURST="3" ;;
-        soft)   NFT_RATE="2/second"; NFT_BURST="5" ;;
+        hard)   NFT_MODE="classic"; NFT_RATE="1/second"; NFT_BURST="1" ;;
+        medium) NFT_MODE="classic"; NFT_RATE="1/second"; NFT_BURST="3" ;;
+        soft)   NFT_MODE="classic"; NFT_RATE="2/second"; NFT_BURST="5" ;;
+        smart)
+            NFT_MODE="smart"
+            NFT_REJECT_MODE="reset"
+            NFT_IOS_RATE="15/second"
+            NFT_IOS_BURST="30"
+            NFT_OTHER_RATE="54/minute"
+            NFT_OTHER_BURST="1"
+            ;;
         *) log_error "Неизвестный пресет: $1"; return 1 ;;
     esac
     save_nft_settings
-    log_success "Пресет: $1 (rate=$NFT_RATE burst=$NFT_BURST)"
+    if [ "$1" = "smart" ]; then
+        log_success "Пресет: Smart By-MEKO (iOS: ${NFT_IOS_RATE} burst ${NFT_IOS_BURST} / Other: ${NFT_OTHER_RATE} burst ${NFT_OTHER_BURST})"
+    else
+        log_success "Пресет: $1 (rate=$NFT_RATE burst=$NFT_BURST)"
+    fi
+}
+
+# ── Smart режим: включение ────────────────────────────────────
+enable_smart_mode() {
+    echo ""
+    echo -e "  ${BOLD}NFT Smart By-MEKO${NC}"
+    echo ""
+    echo -e "  ${DIM}Как работает:${NC}"
+    echo -e "  ${DIM}  • iOS и Android/Desktop разделяются автоматически по TTL${NC}"
+    echo -e "  ${DIM}  • iOS (TTL<65): мягкий лимит ${NFT_IOS_RATE} burst ${NFT_IOS_BURST}${NC}"
+    echo -e "  ${DIM}  • Остальные:    строгий лимит ${NFT_OTHER_RATE} burst ${NFT_OTHER_BURST}${NC}"
+    echo -e "  ${DIM}  • REJECT вместо DROP — клиент получает RST и${NC}"
+    echo -e "  ${DIM}    переподключается мгновенно (3-8 сек вместо 10-20)${NC}"
+    echo -e "  ${DIM}  • Один порт для всех клиентов — iOS Fix v2 не нужен${NC}"
+    echo -e "  ${DIM}  • MSS (client_mss) не нужен${NC}"
+    echo ""
+
+    # Предупреждение если iOS Fix v2 активен
+    if [ "${IOS2_FIX_ENABLED:-false}" = "true" ]; then
+        echo -e "  ${YELLOW}⚠ iOS Fix v2 сейчас активен (порт ${IOS2_EXTERNAL_PORT}).${NC}"
+        echo -e "  ${YELLOW}  Smart режим заменяет его — iOS Fix v2 будет отключён.${NC}"
+        echo ""
+    fi
+
+    echo -en "  ${BOLD}Включить Smart режим? [Y/n]:${NC} "
+    local _yn; read -r _yn
+    [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Отменено"; return 0; }
+
+    # Отключаем iOS Fix v2 если был
+    if [ "${IOS2_FIX_ENABLED:-false}" = "true" ]; then
+        IOS2_FIX_ENABLED="false"
+        nft delete table inet "${IOS2_NFT_TABLE}" 2>/dev/null || true
+        log_info "iOS Fix v2 отключён (Smart режим его заменяет)"
+    fi
+
+    apply_nft_preset smart
+    save_nft_settings
+    apply_nft_rules || { log_error "Не удалось применить правила"; return 1; }
+    install_nft_service || true
+
+    echo ""
+    log_success "Smart режим активирован"
+    echo ""
+    echo -e "  ${BOLD}Что изменилось:${NC}"
+    echo -e "    ${GREEN}${SYM_CHECK}${NC} iOS и Android на одном порту ${PROXY_PORT}"
+    echo -e "    ${GREEN}${SYM_CHECK}${NC} REJECT вместо DROP — быстрый reconnect"
+    echo -e "    ${GREEN}${SYM_CHECK}${NC} iOS Fix v2 / отдельный порт не нужен"
+    echo -e "    ${GREEN}${SYM_CHECK}${NC} client_mss в конфиге не нужен"
+    echo ""
 }
 
 # ── iOS Fix v1 — TCP keepalive ────────────────────────────────
@@ -445,6 +563,17 @@ _ios2_check_client_mss() {
 }
 
 ios2_fix_apply() {
+    # Предупреждение если Smart режим
+    if [ "$NFT_MODE" = "smart" ]; then
+        echo ""
+        echo -e "  ${YELLOW}⚠ Smart режим активен — iOS Fix v2 не нужен.${NC}"
+        echo -e "  ${DIM}Smart режим автоматически разделяет iOS и Android на одном порту.${NC}"
+        echo ""
+        echo -en "  ${BOLD}Всё равно включить iOS Fix v2? [y/N]:${NC} "
+        local _force; read -r _force
+        [[ "$_force" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
+    fi
+
     local _target="${IOS2_TARGET_PORT:-${PROXY_PORT:-443}}"
     [ -z "${PROXY_PORT:-}" ] && { log_error "Порт прокси не определён — запустите прокси хотя бы раз"; return 1; }
     [[ "${IOS2_EXTERNAL_PORT}" =~ ^[0-9]+$ ]] && [ "${IOS2_EXTERNAL_PORT}" -ge 1 ] && [ "${IOS2_EXTERNAL_PORT}" -le 65535 ] || { log_error "Некорректный iOS-порт"; return 1; }
@@ -490,14 +619,20 @@ ios2_fix_apply() {
 }
 
 ios2_fix_remove() {
+    local force="${1:-false}"
+
     echo ""
     if [ "${IOS2_FIX_ENABLED:-false}" != "true" ]; then
         log_info "iOS Fix v2 не установлен"; return 0; fi
-    echo -e "  ${BOLD}Отключение iOS Fix v2${NC}"; echo ""
-    echo -e "  ${DIM}Редирект ${IOS2_EXTERNAL_PORT} → ${IOS2_TARGET_PORT:-${PROXY_PORT:-443}} будет удалён.${NC}"; echo ""
-    echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-    local _confirm; read -r _confirm
-    [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
+
+    if [ "$force" != "true" ]; then
+        echo -e "  ${BOLD}Отключение iOS Fix v2${NC}"; echo ""
+        echo -e "  ${DIM}Редирект ${IOS2_EXTERNAL_PORT} → ${IOS2_TARGET_PORT:-${PROXY_PORT:-443}} будет удалён.${NC}"; echo ""
+        echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
+        local _confirm; read -r _confirm
+        [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
+    fi
+
     IOS2_FIX_ENABLED="false"
     save_nft_settings
     apply_nft_rules || true
@@ -544,7 +679,8 @@ nft_extra_remove() {
 nft_full_cleanup() {
     remove_nft_rules 2>/dev/null || true
     remove_nft_service 2>/dev/null || true
-    ios_fix_remove 2>/dev/null || true
+    ios_fix_remove true 2>/dev/null || true
+    ios2_fix_remove true 2>/dev/null || true
     rm -f "$NFT_CONF"
 }
 
@@ -556,17 +692,23 @@ show_nft_drop_counter() {
         return 1
     fi
     echo ""
-    echo -e "  ${BOLD}Счётчик дропов (Ctrl+C для выхода):${NC}"; echo ""
+    echo -e "  ${BOLD}Счётчик правил (Ctrl+C для выхода):${NC}"; echo ""
     watch -n 2 "nft list chain inet $_table input 2>/dev/null | grep -E 'counter|comment'"
 }
 
 # ── Статусы для шапки ─────────────────────────────────────────
 nft_status_line() {
     if nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null; then
-        if [ -n "${NFT_SERVER_IP:-}" ]; then
-            echo -e "${GREEN}активно${NC} (${NFT_RATE} burst ${NFT_BURST} ip=${NFT_SERVER_IP})"
+        if [ "$NFT_MODE" = "smart" ]; then
+            local _ip_info=""
+            [ -n "${NFT_SERVER_IP:-}" ] && _ip_info=" ip=${NFT_SERVER_IP}"
+            echo -e "${GREEN}Smart By-MEKO${NC} (iOS: ${NFT_IOS_RATE}/${NFT_IOS_BURST} Other: ${NFT_OTHER_RATE}/${NFT_OTHER_BURST}${_ip_info})"
         else
-            echo -e "${GREEN}активно${NC} (${NFT_RATE} burst ${NFT_BURST} все IP)"
+            if [ -n "${NFT_SERVER_IP:-}" ]; then
+                echo -e "${GREEN}Classic${NC} (${NFT_RATE} burst ${NFT_BURST} ip=${NFT_SERVER_IP})"
+            else
+                echo -e "${GREEN}Classic${NC} (${NFT_RATE} burst ${NFT_BURST} все IP)"
+            fi
         fi
     else
         echo -e "${DIM}неактивно${NC}"
@@ -587,8 +729,16 @@ ios_fix_status_line() {
 
 ios2_fix_status_line() {
     if [ "${IOS2_FIX_ENABLED:-false}" = "true" ]; then
-        echo -e "${GREEN}v2 активен${NC} (${IOS2_EXTERNAL_PORT}→${IOS2_TARGET_PORT:-${PROXY_PORT:-443}} mss=${IOS2_MSS})"
+        if [ "$NFT_MODE" = "smart" ]; then
+            echo -e "${YELLOW}v2 активен${NC} (${IOS2_EXTERNAL_PORT}→${IOS2_TARGET_PORT:-${PROXY_PORT:-443}}) ${DIM}[Smart делает это ненужным]${NC}"
+        else
+            echo -e "${GREEN}v2 активен${NC} (${IOS2_EXTERNAL_PORT}→${IOS2_TARGET_PORT:-${PROXY_PORT:-443}} mss=${IOS2_MSS})"
+        fi
     else
-        echo -e "${DIM}не применён${NC}"
+        if [ "$NFT_MODE" = "smart" ]; then
+            echo -e "${DIM}не нужен (Smart режим)${NC}"
+        else
+            echo -e "${DIM}не применён${NC}"
+        fi
     fi
 }
