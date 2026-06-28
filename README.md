@@ -652,7 +652,7 @@ Docker **не удаляется**. Глобальный Docker build cache **н
 
 ## Благодарности
 
-- **[MTPROTO-FIX-By-MEKO](https://github.com/Mekotofeuka/MTPR-FIX-By-MEKO)** — идея Smart режима NFT: разделение iOS/Android по TTL и REJECT вместо DROP
+- **[MTPROTO-FIX-By-MEKO](https://github.com/Mekotofeuka/MTPR-FIX-By-MEKO)** — идея Smart режима NFT: разделение iOS/Android по TTL+Length и REJECT вместо DROP
 
 ---
 
