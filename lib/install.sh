@@ -185,6 +185,26 @@ run_installer() {
         *) apply_nft_preset smart ;;
     esac
 
+    # Выбор Other Action для Smart режима
+    if [ "$NFT_MODE" = "smart" ]; then
+        echo ""
+        echo -e "  ${BOLD}Действие для non-iOS устройств (Android / Desktop):${NC}"
+        echo ""
+        echo -e "    ${GREEN}[1]${NC} ${BOLD}icmp-host-unreachable${NC} ${DIM}(рекомендуется)${NC}"
+        echo -e "         ${DIM}Мгновенное переключение Telegram, медиа без задержек.${NC}"
+        echo -e "    ${CYAN}[2]${NC} reject (tcp reset)  ${DIM}(оригинал By-MEKO)${NC}"
+        echo -e "    ${YELLOW}[3]${NC} drop  ${DIM}(не рекомендуется)${NC}"
+        echo ""
+        local _action_choice; read -rp "  Выбор [1]: " _action_choice
+        case "${_action_choice:-1}" in
+            2) NFT_OTHER_ACTION="reject" ;;
+            3) NFT_OTHER_ACTION="drop" ;;
+            *) NFT_OTHER_ACTION="icmp-host-unreachable" ;;
+        esac
+        save_nft_settings
+        log_success "Other Action: ${NFT_OTHER_ACTION}"
+    fi
+
     if [ "$_nft_choice" != "n" ] && [ "$_nft_choice" != "N" ]; then
         # По умолчанию ограничиваем по IP сервера
         if [ -n "${CUSTOM_IP:-}" ]; then
@@ -206,7 +226,19 @@ run_installer() {
         install_nft_service || log_warn "Не удалось установить службу NFT"
     fi
 
-    
+    # Оптимизация By-MEKO
+    echo ""
+    echo -e "  ${BOLD}Оптимизация системы By-MEKO${NC}"
+    echo -e "  ${DIM}TCP keepalive 45s, BBR, расширенные очереди.${NC}"
+    echo -e "  ${DIM}Текущие значения ядра будут сохранены для отката.${NC}"
+    echo ""
+    echo -en "  ${BOLD}Применить оптимизацию By-MEKO? [y/N]:${NC} "
+    local _meko_choice; read -r _meko_choice
+    if [[ "$_meko_choice" =~ ^[yY]$ ]]; then
+        load_nft_settings 2>/dev/null || true
+        meko_opt_apply || log_warn "Не удалось применить оптимизацию By-MEKO"
+    fi
+
     # Запуск
     echo ""
     draw_header "ЗАПУСК ПРОКСИ"
