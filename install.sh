@@ -14,7 +14,7 @@ SCRIPT_URL="https://raw.githubusercontent.com/${REPO}/main"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Запустите от root:" >&2
-    echo "  wget -qO /tmp/mtproxyl-install.sh https://raw.githubusercontent.com/${REPO}/dev/install.sh && sudo bash /tmp/mtproxyl-install.sh" >&2
+    echo "  wget -qO /tmp/mtproxyl-install.sh https://raw.githubusercontent.com/${REPO}/main/install.sh && sudo bash /tmp/mtproxyl-install.sh" >&2
     exit 1
 fi
 
