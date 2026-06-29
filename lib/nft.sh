@@ -311,7 +311,7 @@ SMART3EOF
     esac
 
     cat >> "$NFT_SCRIPT_FILE" << SMART4EOF
-nft "add rule inet \$TABLE \$CHAIN ${_ip_match}tcp dport ${_port} tcp flags & (syn | ack) == syn counter ${_other_action_cmd} comment \\"mtproxyl_smart_other_reject\\""
+nft "add rule inet \$TABLE input ${_ip_match}tcp dport ${_port} tcp flags & (syn | ack) == syn counter ${_other_action_cmd} comment \\"mtproxyl_smart_other_reject\\""
 SMART4EOF
 }
 
