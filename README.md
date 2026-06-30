@@ -99,10 +99,12 @@ mtproxyl
 
 ### Режим эксперта
 - Каталог **всех** параметров telemt config.toml с описаниями, default и диапазонами
+- Поддержка секций: general, general.modes, general.links, general.telemetry, network, server, server.listeners, server.conntrack_control, server.api, timeouts, censorship, censorship.tls_fetch, access, logging
 - Параметры применяются поверх сгенерированного конфига с максимальным приоритетом
 - Не теряются при обновлении, перезапуске или переустановке
 - Валидация значений перед применением
 - Можно открыть override-файл в nano
+
 
 ### NFT SYN Limiter
 
@@ -110,9 +112,14 @@ mtproxyl
 
 **★ Smart By-MEKO** *(рекомендуется)* — интеллектуальное разделение клиентов:
 - iOS и Android/Desktop разделяются **автоматически по TTL** на одном порту
-- REJECT с tcp-reset вместо DROP — подключение за **3-8 сек** вместо 10-20
+- Выбор действия для non-iOS: `icmp-host-unreachable` *(рекомендуется)* / `reject` / `drop`
+- `icmp-host-unreachable` — Telegram мгновенно переключается на основное соединение, медиа без задержек
 - Один порт для всех клиентов, iOS Fix v2 и client_mss не нужны
 - Вдохновлён проектом [MTPROTO-FIX-By-MEKO](https://github.com/Mekotofeuka/MTPR-FIX-By-MEKO)
+
+**Оптимизация By-MEKO** — системные sysctl-параметры из проекта MTPROTO-FIX-By-MEKO:
+- TCP keepalive 45s/15s×3, BBR, расширенные очереди (somaxconn, backlog = 65535)
+- Полный откат к исходным значениям ядра при отключении
 
 **Classic** — традиционный SYN limiter:
 - Пресеты: жёсткий (`1/s burst 1`) / средний (`1/s burst 3`) / мягкий (`2/s burst 5`)
@@ -137,7 +144,8 @@ mtproxyl
 - Автоочистка старых бэкапов
 
 ### Мониторинг
-- Трафик по пользователям (Prometheus)
+- Персистентный трафик по пользователям — накапливается между перезагрузками прокси
+- Отображается раздельно: всего за всё время и текущая сессия
 - Детальные метрики движка в рамках (соединения, upstream, ME health, users, security)
 - Метрики в реальном времени (live refresh)
 - Активные соединения
@@ -382,9 +390,11 @@ tcp dport PORT tcp flags syn ip ttl < 65 meta length 64
 tcp dport PORT tcp flags syn
   meter other { ip saddr limit rate 54/minute burst 1 } accept
 
-# 4. Остальные SYN сверх лимита → мгновенный RST
+# 4. Остальные SYN сверх лимита → настраиваемое действие
 tcp dport PORT tcp flags syn
-  reject with tcp reset
+  reject with icmp type host-unreachable  # по умолчанию
+  # или: reject with tcp reset
+  # или: drop
 ```
 
 ### Три ключевых отличия от Classic
@@ -440,6 +450,7 @@ mtproxyl nft preset smart
 | iOS Burst | 30 | Burst для iOS |
 | Other Rate | 54/minute | Лимит SYN для Android/Desktop |
 | Other Burst | 1 | Burst для Android/Desktop |
+| Other Action | icmp-host-unreachable | Действие при превышении лимита non-iOS |
 | Timeout | 60s | Время жизни записи в meter |
 
 ### Systemd-служба
@@ -493,6 +504,27 @@ iOS-пользователям нужно заменить **только пор
 было:  tg://proxy?server=IP&port=443&secret=...
 стало: tg://proxy?server=IP&port=4443&secret=...
 ```
+
+---
+
+### Оптимизация системы By-MEKO
+
+Набор sysctl-параметров из проекта [MTPROTO-FIX-By-MEKO](https://github.com/Mekotofeuka/MTPR-FIX-By-MEKO). Доступен в меню `[7] → [m]`.
+
+| Параметр | Значение | Эффект |
+|----------|---------|--------|
+| `tcp_keepalive_time` | 45 | Обнаружение мёртвых сокетов за ~90 сек |
+| `tcp_keepalive_intvl` | 15 | Интервал keepalive-проб |
+| `tcp_keepalive_probes` | 3 | Количество проб |
+| `net.core.somaxconn` | 65535 | Очередь accept |
+| `tcp_max_syn_backlog` | 65535 | Очередь SYN |
+| `netdev_max_backlog` | 65535 | Очередь netdev |
+| `tcp_fastopen` | 3 | TCP Fast Open |
+| `fs.file-max` | 2097152 | Лимит файловых дескрипторов |
+| `default_qdisc` | fq | Планировщик очереди |
+| `tcp_congestion_control` | bbr | Алгоритм управления перегрузкой |
+
+Все текущие значения ядра сохраняются перед применением и полностью восстанавливаются при откате или удалении MTProxyL.
 
 ---
 
@@ -652,7 +684,7 @@ Docker **не удаляется**. Глобальный Docker build cache **н
 
 ## Благодарности
 
-- **[MTPROTO-FIX-By-MEKO](https://github.com/Mekotofeuka/MTPR-FIX-By-MEKO)** — идея Smart режима NFT: разделение iOS/Android по TTL+Length и REJECT вместо DROP
+- **[MTPROTO-FIX-By-MEKO](https://github.com/Mekotofeuka/MTPR-FIX-By-MEKO)** — идея Smart режима NFT: разделение iOS/Android по TTL+Length, REJECT вместо DROP, оптимизация системных параметров sysctl
 
 ---
 
