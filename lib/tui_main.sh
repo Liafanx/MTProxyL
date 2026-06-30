@@ -29,7 +29,8 @@ show_main_menu() {
             status_str=$(draw_status running)
             local up_secs; up_secs=$(get_proxy_uptime)
             uptime_str=$(format_duration "$up_secs")
-            read -r t_in t_out conns <<< "$(get_proxy_stats)"
+            flush_traffic_to_disk 2>/dev/null || true
+            read -r t_in t_out conns <<< "$(get_persistent_stats)"
         else
             status_str=$(draw_status stopped)
             uptime_str="—"; t_in=0; t_out=0; conns=0
