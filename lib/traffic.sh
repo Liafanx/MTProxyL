@@ -43,26 +43,234 @@ get_user_stats() {
     fi
 }
 
+# ── Персистентная база трафика ────────────────────────────────
+_TRAFFIC_DB="${INSTALL_DIR}/relay_stats/traffic_db"
+
+# Загрузить накопленный трафик из базы
+_load_traffic_db() {
+    local _db="$_TRAFFIC_DB"
+    [ -f "$_db" ] || return 0
+    # Формат файла:
+    # TOTAL|in_bytes|out_bytes
+    # USER|label|in_bytes|out_bytes
+    while IFS='|' read -r _type _a _b _c; do
+        case "$_type" in
+            TOTAL) _DB_TOTAL_IN="${_a:-0}"; _DB_TOTAL_OUT="${_b:-0}" ;;
+            USER)  _DB_USER_IN["$_a"]="${_b:-0}"; _DB_USER_OUT["$_a"]="${_c:-0}" ;;
+        esac
+    done < "$_db"
+}
+
+# Сохранить трафик в базу
+_save_traffic_db() {
+    local _db="$_TRAFFIC_DB"
+    local _stats_dir="${INSTALL_DIR}/relay_stats"
+    mkdir -p "$_stats_dir" 2>/dev/null
+    local _tmp="${_db}.tmp.$$"
+    {
+        echo "TOTAL|${_DB_TOTAL_IN:-0}|${_DB_TOTAL_OUT:-0}"
+        local _u
+        for _u in "${!_DB_USER_IN[@]}"; do
+            echo "USER|${_u}|${_DB_USER_IN[$_u]:-0}|${_DB_USER_OUT[$_u]:-0}"
+        done
+    } > "$_tmp" 2>/dev/null
+    mv "$_tmp" "$_db" 2>/dev/null
+    chmod 600 "$_db" 2>/dev/null
+}
+
+# Снимок текущих метрик Prometheus → сохранение дельты в базу
 flush_traffic_to_disk() {
     local _stats_dir="${INSTALL_DIR}/relay_stats"
     mkdir -p "$_stats_dir" 2>/dev/null
-    # Упрощённая версия — сохраняем текущие метрики
+
     local m
     m=$(curl -s --max-time 2 "http://127.0.0.1:${PROXY_METRICS_PORT:-9090}/metrics" 2>/dev/null) || return 0
 
-    local gi go
-    gi=$(echo "$m" | awk '/^telemt_user_octets_from_client\{/{s+=$NF}END{printf "%.0f",s}')
-    go=$(echo "$m" | awk '/^telemt_user_octets_to_client\{/{s+=$NF}END{printf "%.0f",s}')
-    echo "${gi:-0}|${go:-0}" > "${_stats_dir}/cumulative_traffic" 2>/dev/null || true
+    # Текущие значения из Prometheus (сессионные — сбрасываются при рестарте)
+    local _cur_in _cur_out
+    _cur_in=$(echo "$m" | awk '/^telemt_user_octets_from_client\{/{s+=$NF}END{printf "%.0f",s}')
+    _cur_out=$(echo "$m" | awk '/^telemt_user_octets_to_client\{/{s+=$NF}END{printf "%.0f",s}')
+
+    # Загружаем предыдущий снимок сессии (чтобы считать дельту)
+    local _snap_file="${_stats_dir}/session_snapshot"
+    local _prev_in=0 _prev_out=0
+    if [ -f "$_snap_file" ]; then
+        IFS='|' read -r _prev_in _prev_out < "$_snap_file" 2>/dev/null || true
+    fi
+    [[ "$_prev_in" =~ ^[0-9]+$ ]] || _prev_in=0
+    [[ "$_prev_out" =~ ^[0-9]+$ ]] || _prev_out=0
+
+    # Дельта (если текущие < предыдущих — был рестарт, дельта = текущие)
+    local _delta_in _delta_out
+    if [ "${_cur_in:-0}" -ge "$_prev_in" ] 2>/dev/null; then
+        _delta_in=$(( ${_cur_in:-0} - _prev_in ))
+    else
+        _delta_in="${_cur_in:-0}"
+    fi
+    if [ "${_cur_out:-0}" -ge "$_prev_out" ] 2>/dev/null; then
+        _delta_out=$(( ${_cur_out:-0} - _prev_out ))
+    else
+        _delta_out="${_cur_out:-0}"
+    fi
+
+    # Сохраняем текущий снимок сессии
+    echo "${_cur_in:-0}|${_cur_out:-0}" > "$_snap_file" 2>/dev/null || true
+
+    # Загружаем базу и прибавляем дельту
+    declare -A _DB_USER_IN _DB_USER_OUT
+    _DB_TOTAL_IN=0; _DB_TOTAL_OUT=0
+    _load_traffic_db
+
+    _DB_TOTAL_IN=$(( ${_DB_TOTAL_IN:-0} + _delta_in ))
+    _DB_TOTAL_OUT=$(( ${_DB_TOTAL_OUT:-0} + _delta_out ))
+
+    # Per-user дельты
+    local _parsed_users
+    _parsed_users=$(echo "$m" | awk '
+        function lbl(s, k,    p, q) {
+            p = index(s, k "=\""); if (!p) return ""
+            s = substr(s, p + length(k) + 2)
+            q = index(s, "\""); return q ? substr(s, 1, q-1) : ""
+        }
+        /^telemt_user_octets_from_client\{/ { u=lbl($0,"user"); if(u) rx[u]+=$NF }
+        /^telemt_user_octets_to_client\{/   { u=lbl($0,"user"); if(u) tx[u]+=$NF }
+        END { for (u in rx) printf "%s|%.0f|%.0f\n", u, rx[u]+0, tx[u]+0 }
+    ')
+
+    local _user_snap_file="${_stats_dir}/user_session_snapshot"
+    declare -A _prev_user_in _prev_user_out
+    if [ -f "$_user_snap_file" ]; then
+        while IFS='|' read -r _pu _pi _po; do
+            [ -z "$_pu" ] && continue
+            _prev_user_in["$_pu"]="${_pi:-0}"
+            _prev_user_out["$_pu"]="${_po:-0}"
+        done < "$_user_snap_file"
+    fi
+
+    # Сохраняем снимок пользователей
+    echo "$_parsed_users" > "$_user_snap_file" 2>/dev/null || true
+
+    while IFS='|' read -r _pu _pi _po; do
+        [ -z "$_pu" ] && continue
+        local _pui="${_prev_user_in[$_pu]:-0}" _puo="${_prev_user_out[$_pu]:-0}"
+        [[ "$_pui" =~ ^[0-9]+$ ]] || _pui=0
+        [[ "$_puo" =~ ^[0-9]+$ ]] || _puo=0
+
+        local _dui _duo
+        if [ "${_pi:-0}" -ge "$_pui" ] 2>/dev/null; then
+            _dui=$(( ${_pi:-0} - _pui ))
+        else
+            _dui="${_pi:-0}"
+        fi
+        if [ "${_po:-0}" -ge "$_puo" ] 2>/dev/null; then
+            _duo=$(( ${_po:-0} - _puo ))
+        else
+            _duo="${_po:-0}"
+        fi
+
+        _DB_USER_IN["$_pu"]=$(( ${_DB_USER_IN[$_pu]:-0} + _dui ))
+        _DB_USER_OUT["$_pu"]=$(( ${_DB_USER_OUT[$_pu]:-0} + _duo ))
+    done <<< "$_parsed_users"
+
+    _save_traffic_db
+}
+
+# Получить накопленный трафик (база + текущая сессия)
+get_persistent_stats() {
+    declare -A _DB_USER_IN _DB_USER_OUT
+    _DB_TOTAL_IN=0; _DB_TOTAL_OUT=0
+    _load_traffic_db
+
+    local _cur_in=0 _cur_out=0 _cur_conns=0
+    if is_proxy_running 2>/dev/null; then
+        read -r _cur_in _cur_out _cur_conns <<< "$(get_proxy_stats)"
+    fi
+
+    local _snap_file="${INSTALL_DIR}/relay_stats/session_snapshot"
+    local _snap_in=0 _snap_out=0
+    if [ -f "$_snap_file" ]; then
+        IFS='|' read -r _snap_in _snap_out < "$_snap_file" 2>/dev/null || true
+    fi
+    [[ "$_snap_in" =~ ^[0-9]+$ ]] || _snap_in=0
+    [[ "$_snap_out" =~ ^[0-9]+$ ]] || _snap_out=0
+
+    # unsaved delta = текущие метрики - последний снимок (если не было рестарта)
+    local _unsaved_in=0 _unsaved_out=0
+    if [ "${_cur_in:-0}" -ge "$_snap_in" ] 2>/dev/null; then
+        _unsaved_in=$(( ${_cur_in:-0} - _snap_in ))
+    else
+        _unsaved_in="${_cur_in:-0}"
+    fi
+    if [ "${_cur_out:-0}" -ge "$_snap_out" ] 2>/dev/null; then
+        _unsaved_out=$(( ${_cur_out:-0} - _snap_out ))
+    else
+        _unsaved_out="${_cur_out:-0}"
+    fi
+
+    local _total_in=$(( ${_DB_TOTAL_IN:-0} + _unsaved_in ))
+    local _total_out=$(( ${_DB_TOTAL_OUT:-0} + _unsaved_out ))
+
+    echo "${_total_in} ${_total_out} ${_cur_conns:-0}"
+}
+
+get_persistent_user_stats() {
+    local user="$1"
+    declare -A _DB_USER_IN _DB_USER_OUT
+    _DB_TOTAL_IN=0; _DB_TOTAL_OUT=0
+    _load_traffic_db
+
+    local _cur_in=0 _cur_out=0 _cur_conns=0
+    if is_proxy_running 2>/dev/null; then
+        read -r _cur_in _cur_out _cur_conns <<< "$(get_user_stats "$user")"
+    fi
+
+    local _user_snap_file="${INSTALL_DIR}/relay_stats/user_session_snapshot"
+    local _snap_in=0 _snap_out=0
+    if [ -f "$_user_snap_file" ]; then
+        while IFS='|' read -r _pu _pi _po; do
+            [ "$_pu" = "$user" ] && { _snap_in="${_pi:-0}"; _snap_out="${_po:-0}"; break; }
+        done < "$_user_snap_file"
+    fi
+    [[ "$_snap_in" =~ ^[0-9]+$ ]] || _snap_in=0
+    [[ "$_snap_out" =~ ^[0-9]+$ ]] || _snap_out=0
+
+    local _unsaved_in=0 _unsaved_out=0
+    if [ "${_cur_in:-0}" -ge "$_snap_in" ] 2>/dev/null; then
+        _unsaved_in=$(( ${_cur_in:-0} - _snap_in ))
+    else
+        _unsaved_in="${_cur_in:-0}"
+    fi
+    if [ "${_cur_out:-0}" -ge "$_snap_out" ] 2>/dev/null; then
+        _unsaved_out=$(( ${_cur_out:-0} - _snap_out ))
+    else
+        _unsaved_out="${_cur_out:-0}"
+    fi
+
+    local _total_in=$(( ${_DB_USER_IN[$user]:-0} + _unsaved_in ))
+    local _total_out=$(( ${_DB_USER_OUT[$user]:-0} + _unsaved_out ))
+
+    echo "${_total_in} ${_total_out} ${_cur_conns:-0}"
 }
 
 show_traffic() {
     echo ""
     draw_header "ТРАФИК"
+
+    # Сохраняем текущую дельту в базу
+    flush_traffic_to_disk 2>/dev/null || true
+
     local t_in t_out conns
-    read -r t_in t_out conns <<< "$(get_proxy_stats)"
+    read -r t_in t_out conns <<< "$(get_persistent_stats)"
+
+    local s_in s_out s_conns
+    read -r s_in s_out s_conns <<< "$(get_proxy_stats)"
+
     echo ""
-    echo -e "  ${BOLD}Всего:${NC} ${SYM_DOWN} $(format_bytes "$t_in")  ${SYM_UP} $(format_bytes "$t_out")  ${BOLD}Соединений:${NC} ${conns}"
+    echo -e "  ${BOLD}Всего (с учётом перезагрузок):${NC}"
+    echo -e "    ${SYM_DOWN} $(format_bytes "$t_in")  ${SYM_UP} $(format_bytes "$t_out")"
+    echo ""
+    echo -e "  ${BOLD}Текущая сессия:${NC}"
+    echo -e "    ${SYM_DOWN} $(format_bytes "$s_in")  ${SYM_UP} $(format_bytes "$s_out")  ${BOLD}Соед.:${NC} ${conns}"
     echo ""
 
     local i
@@ -70,8 +278,10 @@ show_traffic() {
         [ "${SECRETS_ENABLED[$i]}" = "true" ] || continue
         local label="${SECRETS_LABELS[$i]}"
         local u_in u_out u_conns
-        read -r u_in u_out u_conns <<< "$(get_user_stats "$label")"
-        echo -e "  ${GREEN}${SYM_OK}${NC} ${BOLD}${label}${NC}: ${SYM_DOWN} $(format_bytes "$u_in")  ${SYM_UP} $(format_bytes "$u_out")  соед: ${u_conns}"
+        read -r u_in u_out u_conns <<< "$(get_persistent_user_stats "$label")"
+        local su_in su_out su_conns
+        read -r su_in su_out su_conns <<< "$(get_user_stats "$label")"
+        echo -e "  ${GREEN}${SYM_OK}${NC} ${BOLD}${label}${NC}: ${SYM_DOWN} $(format_bytes "$u_in")  ${SYM_UP} $(format_bytes "$u_out")  соед: ${su_conns}"
     done
     echo ""
 }
@@ -130,7 +340,8 @@ show_status() {
         status_str=$(draw_status running)
         local up_secs; up_secs=$(get_proxy_uptime)
         uptime_str=$(format_duration "$up_secs")
-        read -r traffic_in traffic_out connections <<< "$(get_proxy_stats)"
+        flush_traffic_to_disk 2>/dev/null || true
+        read -r traffic_in traffic_out connections <<< "$(get_persistent_stats)"
     else
         status_str=$(draw_status stopped)
         uptime_str="—"; traffic_in=0; traffic_out=0; connections=0
