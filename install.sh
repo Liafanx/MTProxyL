@@ -10,7 +10,7 @@ set -e
 
 REPO="Liafanx/MTProxyL"
 INSTALL_DIR="/opt/mtproxyl"
-SCRIPT_URL="https://raw.githubusercontent.com/${REPO}/dev"
+SCRIPT_URL="https://raw.githubusercontent.com/${REPO}/main"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Запустите от root:" >&2
