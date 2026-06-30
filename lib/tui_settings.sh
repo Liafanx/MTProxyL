@@ -51,6 +51,7 @@ tui_settings_menu() {
                 esac
                 press_any_key ;;
             3)
+                local _old_domain="$PROXY_DOMAIN"
                 echo -e "  ${DIM}[1] cloudflare.com  [2] google.com  [3] microsoft.com  [4] Свой${NC}"
                 local d; d=$(read_choice "выбор" "1")
                 case "$d" in
@@ -61,6 +62,21 @@ tui_settings_menu() {
                     *) PROXY_DOMAIN="cloudflare.com" ;;
                 esac
                 save_settings; log_success "Домен: ${PROXY_DOMAIN}"
+                # Предложить обновить mask backend
+                if [ "$MASKING_ENABLED" = "true" ] && [ "$PROXY_DOMAIN" != "$_old_domain" ]; then
+                    local _cur_mask="${MASKING_HOST:-$_old_domain}"
+                    if [ "$_cur_mask" = "$_old_domain" ] || [ -z "$MASKING_HOST" ]; then
+                        echo ""
+                        echo -e "  ${YELLOW}Маскировка включена. Mask backend сейчас: ${_cur_mask}:${MASKING_PORT:-443}${NC}"
+                        echo -en "  ${BOLD}Обновить mask backend на ${PROXY_DOMAIN}? [Y/n]:${NC} "
+                        local _mask_yn; read -r _mask_yn
+                        if [[ ! "$_mask_yn" =~ ^[nN]$ ]]; then
+                            MASKING_HOST="$PROXY_DOMAIN"
+                            save_settings
+                            log_success "Mask backend обновлён: ${MASKING_HOST}:${MASKING_PORT:-443}"
+                        fi
+                    fi
+                fi
                 is_proxy_running && { load_secrets; restart_proxy_container || true; }
                 press_any_key ;;
             4)
