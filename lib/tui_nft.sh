@@ -321,29 +321,44 @@ tui_nft_extra_menu() {
         case "$choice" in
             a|A)
                 echo ""
+                if [ "$NFT_MODE" = "smart" ]; then
+                    echo -e "  ${YELLOW}Smart режим активен.${NC}"
+                    echo -e "  ${DIM}Доп. правило унаследует Other Action: ${NFT_OTHER_ACTION:-icmp-host-unreachable}${NC}"
+                    echo ""
+                fi
+                local _p=""
                 echo -en "  ${BOLD}Порт:${NC} "
-                local _p; read -r _p
+                read -r _p
                 if ! [[ "$_p" =~ ^[0-9]+$ ]] || [ "$_p" -lt 1 ] || [ "$_p" -gt 65535 ]; then
                     log_error "Некорректный порт"
                     press_any_key; continue
                 fi
+                local _eip=""
                 echo -en "  ${BOLD}IP (пусто = все):${NC} "
-                local _eip; read -r _eip
+                read -r _eip
                 if [ -n "$_eip" ] && ! validate_ip_literal "$_eip"; then
                     log_error "Некорректный IPv4"
                     press_any_key; continue
                 fi
+                local _r=""
                 echo -en "  ${BOLD}Rate [1/second]:${NC} "
-                local _r; read -r _r; [ -z "$_r" ] && _r="1/second"
+                read -r _r
+                [ -z "$_r" ] && _r="1/second"
+                local _b=""
                 echo -en "  ${BOLD}Burst [1]:${NC} "
-                local _b; read -r _b; [ -z "$_b" ] && _b="1"
-                nft_extra_add "$_p" "$_eip" "$_r" "$_b" || true
-                echo ""
-                echo -en "  ${BOLD}Применить правила сейчас? [Y/n]:${NC} "
-                local _yn; read -r _yn
-                if [[ ! "$_yn" =~ ^[nN]$ ]]; then
-                    apply_nft_rules || true
-                    [ "${NFT_ENABLED:-false}" = "true" ] && install_nft_service || true
+                read -r _b
+                [ -z "$_b" ] && _b="1"
+                nft_extra_add "$_p" "$_eip" "$_r" "$_b"
+                local _add_rc=$?
+                if [ "$_add_rc" -eq 0 ]; then
+                    echo ""
+                    echo -en "  ${BOLD}Применить правила сейчас? [Y/n]:${NC} "
+                    local _yn=""
+                    read -r _yn
+                    if [[ ! "$_yn" =~ ^[nN]$ ]]; then
+                        apply_nft_rules || true
+                        [ "${NFT_ENABLED:-false}" = "true" ] && install_nft_service || true
+                    fi
                 fi
                 press_any_key ;;
             d|D)
