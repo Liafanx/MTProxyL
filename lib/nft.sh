@@ -236,7 +236,7 @@ EXTRAEOF
     done
 
     # iOS Fix v2 (только в classic режиме, smart не нуждается)
-    if [ "${IOS2_FIX_ENABLED:-false}" = "true" ] && [ "$NFT_MODE" = "classic" ]; then
+    if [ "${IOS2_FIX_ENABLED:-false}" = "true" ]; then
         cat >> "$NFT_SCRIPT_FILE" << IOS2EOF
 nft add table inet "\$IOS2_TABLE"
 nft "add chain inet \$IOS2_TABLE mangle_pre { type filter hook prerouting priority mangle; policy accept; }"
