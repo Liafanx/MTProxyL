@@ -312,9 +312,23 @@ handle_domain_command() {
     fi
     check_root
     if validate_domain "$new_domain"; then
+        local _old_domain="$PROXY_DOMAIN"
         PROXY_DOMAIN="$new_domain"
         save_settings
         log_success "Домен: ${PROXY_DOMAIN}"
+        # Предложить обновить mask backend
+        if [ "$MASKING_ENABLED" = "true" ] && [ "$PROXY_DOMAIN" != "$_old_domain" ]; then
+            local _cur_mask="${MASKING_HOST:-$_old_domain}"
+            if [ "$_cur_mask" = "$_old_domain" ] || [ -z "$MASKING_HOST" ]; then
+                echo -en "  ${BOLD}Обновить mask backend на ${PROXY_DOMAIN}? [Y/n]:${NC} "
+                local _mask_yn; read -r _mask_yn
+                if [[ ! "$_mask_yn" =~ ^[nN]$ ]]; then
+                    MASKING_HOST="$PROXY_DOMAIN"
+                    save_settings
+                    log_success "Mask backend: ${MASKING_HOST}:${MASKING_PORT:-443}"
+                fi
+            fi
+        fi
         if is_proxy_running; then
             load_secrets
             restart_proxy_container || true
