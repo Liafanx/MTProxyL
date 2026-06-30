@@ -52,14 +52,14 @@ tui_settings_menu() {
                 press_any_key ;;
             3)
                 local _old_domain="$PROXY_DOMAIN"
-                echo -e "  ${DIM}[1] cloudflare.com  [2] google.com  [3] microsoft.com  [4] Свой${NC}"
+                echo -e "  ${DIM}[1] rutube.ru  [2] google.com  [3] microsoft.com  [4] Свой${NC}"
                 local d; d=$(read_choice "выбор" "1")
                 case "$d" in
-                    2) PROXY_DOMAIN="www.google.com" ;;
-                    3) PROXY_DOMAIN="www.microsoft.com" ;;
+                    2) PROXY_DOMAIN="google.com" ;;
+                    3) PROXY_DOMAIN="microsoft.com" ;;
                     4) echo -en "  Домен: "; local cd; read -r cd
                        [ -n "$cd" ] && validate_domain "$cd" && PROXY_DOMAIN="$cd" || log_error "Некорректный домен" ;;
-                    *) PROXY_DOMAIN="cloudflare.com" ;;
+                    *) PROXY_DOMAIN="rutube.ru" ;;
                 esac
                 save_settings; log_success "Домен: ${PROXY_DOMAIN}"
                 # Предложить обновить mask backend
