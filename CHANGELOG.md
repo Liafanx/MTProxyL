@@ -4,6 +4,58 @@
 
 ---
 
+## v1.0.9 — 01.07.2026
+
+### Новое
+
+- **NFT Smart By-MEKO — Other Action** — выбор действия для non-iOS устройств (Android / Desktop)
+  - `icmp-host-unreachable` — новый режим по умолчанию: сервер притворяется недоступным узлом сети, Telegram мгновенно переключается на основное соединение, медиа начинает отправляться без задержек
+  - `reject (tcp reset)` — классический сброс соединения (оригинал By-MEKO), сохранён для совместимости
+  - `drop` — тихое уничтожение пакета (не рекомендуется)
+  - Выбор действия предлагается при первой установке Smart режима
+  - Изменить действие можно в любое время: меню `[7] → [4] → [5] Other Action`
+  - Доп. правила (Extra Rules) в Smart режиме автоматически наследуют выбранный тип действия
+  - Текущий тип действия отображается в статусной строке NFT главного меню
+
+- **Оптимизация системы By-MEKO** — новый пункт `[m]` в меню NFT, адаптирован из проекта MTPROTO-FIX-By-MEKO
+  - TCP keepalive: `time=45 / intvl=15 / probes=3` — обнаружение мёртвых сокетов за ~90 сек вместо ~2 часов
+  - Расширенные сетевые очереди: `somaxconn`, `tcp_max_syn_backlog`, `netdev_max_backlog` = 65535
+  - `tcp_fastopen = 3`, `fs.file-max = 2097152`
+  - Алгоритм управления перегрузкой: BBR + планировщик очереди fq
+  - Полный откат к значениям до применения — все оригинальные значения ядра сохраняются
+  - Автоматический откат при удалении MTProxyL (`mtproxyl uninstall`)
+  - Предлагается при первой установке
+
+- **Каталог эксперта — секция `server.listeners`** — добавлены все параметры `[[server.listeners]]` telemt
+  - `ip`, `port`, `client_mss`, `announce`, `announce_ip`, `proxy_protocol`, `reuse_allow`
+  - `synlimit` (false / iptables / nftables) — per-listener встроенный SYN limiter telemt
+  - `synlimit_seconds`, `synlimit_hitcount`, `synlimit_burst` — generic bucket параметры
+  - `synlimit_ios_seconds`, `synlimit_ios_hitcount`, `synlimit_ios_burst` — iOS-classifier bucket
+  - `synlimit_hashlimit_expire_ms`, `synlimit_hashlimit_size` — параметры iptables hashlimit
+  - Поддержка `[[server.listeners]]` (массив таблиц TOML) в `_apply_expert_overrides`
+
+- **Персистентная база трафика** — трафик больше не сбрасывается при перезагрузке прокси
+  - Данные накапливаются в `relay_stats/traffic_db` — дельта между сессиями суммируется
+  - Отображается раздельно: «Всего с учётом перезагрузок» и «Текущая сессия»
+  - Работает для общего трафика и по каждому пользователю отдельно
+  - База трафика включена в бэкапы (уже покрыта директорией `relay_stats/`)
+
+### Исправления
+
+- **nft.sh**: исправлена ошибка `CHAIN: parameter not set` в правиле 4 Smart режима — `\$CHAIN` заменён на `input`
+- **nft.sh**: iOS Fix v2 теперь применяется независимо от режима NFT (было: только в Classic)
+- **nft.sh**: исправлено добавление доп. правил через TUI — разделены `local` и `read` на отдельные строки, убран `|| true` после `nft_extra_add` для корректной обработки ошибок
+- **nft.sh**: счётчик правил (`[5]`) теперь показывает обе таблицы — `mtproxyl_limit` и `mtproxyl_ios2` через временный скрипт для `watch`
+
+### Улучшения
+
+- **tui_settings.sh**, **utils.sh**: при смене FakeTLS домена предлагается обновить mask backend если маскировка включена и backend совпадал со старым доменом
+- **tui_nft.sh**: в меню доп. правил при Smart режиме отображается информация об унаследованном Other Action
+- **tui_nft.sh**: статус MEKO оптимизации добавлен в шапку меню NFT и главного меню
+- **tui_nft.sh**: настройки Smart режима расширены пунктом `[5] Other Action`
+
+---
+
 ## v1.0.8 — 25.06.2026
 
 ### Новое
