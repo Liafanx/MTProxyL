@@ -920,16 +920,47 @@ nft_full_cleanup() {
     rm -f "$NFT_CONF"
 }
 
-# ── Счётчик дропов ────────────────────────────────────────────
+# ── Счётчик правил ────────────────────────────────────────────
 show_nft_drop_counter() {
     local _table="${NFT_TABLE:-mtproxyl_limit}"
+    local _ios2_table="${IOS2_NFT_TABLE:-mtproxyl_ios2}"
+
     if ! nft list table inet "$_table" &>/dev/null; then
         log_warn "Активных NFT правил не найдено"
         return 1
     fi
+
     echo ""
-    echo -e "  ${BOLD}Счётчик правил (Ctrl+C для выхода):${NC}"; echo ""
-    watch -n 2 "nft list chain inet $_table input 2>/dev/null | grep -E 'counter|comment'"
+    if [ "$NFT_MODE" = "smart" ]; then
+        echo -e "  ${BOLD}Счётчик правил Smart By-MEKO (Ctrl+C для выхода):${NC}"
+    else
+        echo -e "  ${BOLD}Счётчик правил Classic (Ctrl+C для выхода):${NC}"
+    fi
+    echo ""
+
+    # Генерируем временный скрипт для watch чтобы передать переменные
+    local _watch_script
+    _watch_script=$(mktemp /tmp/mtproxyl-watch.XXXXXX.sh)
+    chmod +x "$_watch_script"
+
+    cat > "$_watch_script" << WATCHEOF
+#!/bin/sh
+TABLE="${_table}"
+IOS2_TABLE="${_ios2_table}"
+IOS2_ENABLED="${IOS2_FIX_ENABLED:-false}"
+
+echo "=== \${TABLE} (chain input) ==="
+nft list chain inet "\$TABLE" input 2>/dev/null | grep -E 'counter|comment' | sed 's/^/  /'
+
+if [ "\$IOS2_ENABLED" = "true" ]; then
+    echo ""
+    echo "=== \${IOS2_TABLE} ==="
+    nft list table inet "\$IOS2_TABLE" 2>/dev/null | grep -E 'counter|comment' | sed 's/^/  /'
+fi
+WATCHEOF
+
+    watch -n 2 "/bin/sh $_watch_script"
+    rm -f "$_watch_script"
 }
 
 # ── Статусы для шапки ─────────────────────────────────────────
