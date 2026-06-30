@@ -289,9 +289,7 @@ secret_list() {
             created_fmt=$(date -d "@${created}" '+%Y-%m-%d' 2>/dev/null || echo "?")
 
         local u_in=0 u_out=0 u_conns=0
-        if is_proxy_running 2>/dev/null; then
-            read -r u_in u_out u_conns <<< "$(get_user_stats "$label" 2>/dev/null)" || true
-        fi
+        read -r u_in u_out u_conns <<< "$(get_persistent_user_stats "$label" 2>/dev/null)" || true
 
         printf "  %-4s %-16s %-18b %-10s %-12s %-12s\n" \
             "$((i+1))" "$label" "$status_text" "$created_fmt" \

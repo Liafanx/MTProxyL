@@ -15,6 +15,21 @@ NFT_BURST="1"
 NFT_METER_TIMEOUT="60s"
 NFT_TABLE="mtproxyl_limit"
 NFT_SERVER_IP=""
+NFT_OTHER_ACTION="icmp-host-unreachable"
+
+# Оптимизация By-MEKO
+MEKO_OPT_FILE="/etc/sysctl.d/99-mtproxyl-meko-opt.conf"
+MEKO_OPT_APPLIED="false"
+MEKO_ORIG_KEEPALIVE_TIME=""
+MEKO_ORIG_KEEPALIVE_INTVL=""
+MEKO_ORIG_KEEPALIVE_PROBES=""
+MEKO_ORIG_SOMAXCONN=""
+MEKO_ORIG_TCP_MAX_SYN_BACKLOG=""
+MEKO_ORIG_NETDEV_MAX_BACKLOG=""
+MEKO_ORIG_TCP_FASTOPEN=""
+MEKO_ORIG_FILE_MAX=""
+MEKO_ORIG_DEFAULT_QDISC=""
+MEKO_ORIG_TCP_CONGESTION=""
 
 # Smart режим (By-MEKO)
 NFT_REJECT_MODE="reset"
@@ -73,6 +88,18 @@ IOS2_FIX_ENABLED='${IOS2_FIX_ENABLED}'
 IOS2_EXTERNAL_PORT='${IOS2_EXTERNAL_PORT}'
 IOS2_TARGET_PORT='${IOS2_TARGET_PORT}'
 IOS2_MSS='${IOS2_MSS}'
+NFT_OTHER_ACTION='${NFT_OTHER_ACTION}'
+MEKO_OPT_APPLIED='${MEKO_OPT_APPLIED}'
+MEKO_ORIG_KEEPALIVE_TIME='${MEKO_ORIG_KEEPALIVE_TIME}'
+MEKO_ORIG_KEEPALIVE_INTVL='${MEKO_ORIG_KEEPALIVE_INTVL}'
+MEKO_ORIG_KEEPALIVE_PROBES='${MEKO_ORIG_KEEPALIVE_PROBES}'
+MEKO_ORIG_SOMAXCONN='${MEKO_ORIG_SOMAXCONN}'
+MEKO_ORIG_TCP_MAX_SYN_BACKLOG='${MEKO_ORIG_TCP_MAX_SYN_BACKLOG}'
+MEKO_ORIG_NETDEV_MAX_BACKLOG='${MEKO_ORIG_NETDEV_MAX_BACKLOG}'
+MEKO_ORIG_TCP_FASTOPEN='${MEKO_ORIG_TCP_FASTOPEN}'
+MEKO_ORIG_FILE_MAX='${MEKO_ORIG_FILE_MAX}'
+MEKO_ORIG_DEFAULT_QDISC='${MEKO_ORIG_DEFAULT_QDISC}'
+MEKO_ORIG_TCP_CONGESTION='${MEKO_ORIG_TCP_CONGESTION}'
 NFT_EXTRA_COUNT='${NFT_EXTRA_COUNT}'
 EOF
     local _i
@@ -102,6 +129,12 @@ load_nft_settings() {
                 IOS_FIX_ENABLED|IOS_KA_TIME|IOS_KA_INTVL|IOS_KA_PROBES|\
                 IOS_ORIG_TIME|IOS_ORIG_INTVL|IOS_ORIG_PROBES|\
                 IOS2_FIX_ENABLED|IOS2_EXTERNAL_PORT|IOS2_TARGET_PORT|IOS2_MSS|\
+                NFT_OTHER_ACTION|\
+                MEKO_OPT_APPLIED|\
+                MEKO_ORIG_KEEPALIVE_TIME|MEKO_ORIG_KEEPALIVE_INTVL|MEKO_ORIG_KEEPALIVE_PROBES|\
+                MEKO_ORIG_SOMAXCONN|MEKO_ORIG_TCP_MAX_SYN_BACKLOG|MEKO_ORIG_NETDEV_MAX_BACKLOG|\
+                MEKO_ORIG_TCP_FASTOPEN|MEKO_ORIG_FILE_MAX|\
+                MEKO_ORIG_DEFAULT_QDISC|MEKO_ORIG_TCP_CONGESTION|\
                 NFT_EXTRA_COUNT)
                     printf -v "$_key" '%s' "$_val" ;;
                 NFT_EXTRA_*_PORT)
@@ -123,6 +156,10 @@ load_nft_settings() {
     # Совместимость со старыми конфигами без NFT_MODE
     [ "$NFT_MODE" != "classic" ] && [ "$NFT_MODE" != "smart" ] && NFT_MODE="classic"
     [ "$NFT_REJECT_MODE" != "reset" ] && [ "$NFT_REJECT_MODE" != "drop" ] && NFT_REJECT_MODE="reset"
+    case "$NFT_OTHER_ACTION" in
+        reject|drop|icmp-host-unreachable) ;;
+        *) NFT_OTHER_ACTION="icmp-host-unreachable" ;;
+    esac
 }
 
 # ── Применить NFT правила после изменения настроек ────────────
@@ -182,7 +219,16 @@ NFTEOF
         [ -n "$_eip" ] && _extra_ip_match="ip daddr ${_eip} "
 
         local _extra_action="drop"
-        [ "$NFT_MODE" = "smart" ] && _extra_action="reject with tcp reset"
+        if [ "$NFT_MODE" = "smart" ]; then
+            case "${NFT_OTHER_ACTION:-icmp-host-unreachable}" in
+                drop)
+                    _extra_action="drop" ;;
+                icmp-host-unreachable)
+                    _extra_action="reject with icmp type host-unreachable" ;;
+                *)
+                    _extra_action="reject with tcp reset" ;;
+            esac
+        fi
 
         cat >> "$NFT_SCRIPT_FILE" << EXTRAEOF
 nft "add rule inet \$TABLE input ${_extra_ip_match}tcp dport ${_eport} tcp flags & (syn | ack) == syn meter mtproxyl_syn_extra_${_i} { ip saddr timeout ${_timeout} limit rate over ${_erate} burst ${_eburst} packets } counter ${_extra_action} comment \\"mtproxyl_extra_${_i}\\""
@@ -190,7 +236,7 @@ EXTRAEOF
     done
 
     # iOS Fix v2 (только в classic режиме, smart не нуждается)
-    if [ "${IOS2_FIX_ENABLED:-false}" = "true" ] && [ "$NFT_MODE" = "classic" ]; then
+    if [ "${IOS2_FIX_ENABLED:-false}" = "true" ]; then
         cat >> "$NFT_SCRIPT_FILE" << IOS2EOF
 nft add table inet "\$IOS2_TABLE"
 nft "add chain inet \$IOS2_TABLE mangle_pre { type filter hook prerouting priority mangle; policy accept; }"
@@ -253,9 +299,19 @@ SMART2EOF
 nft "add rule inet \$TABLE input ${_ip_match}tcp dport ${_port} tcp flags & (syn | ack) == syn meter mtproxyl_other { ip saddr timeout ${_timeout} limit rate ${_other_rate} burst ${_other_burst} packets } accept comment \\"mtproxyl_smart_other_accept\\""
 SMART3EOF
 
-    # Правило 4: Остальные SYN сверх лимита → REJECT
+    # Правило 4: Остальные SYN сверх лимита → действие по настройке
+    local _other_action_cmd
+    case "${NFT_OTHER_ACTION:-icmp-host-unreachable}" in
+        drop)
+            _other_action_cmd="drop" ;;
+        icmp-host-unreachable)
+            _other_action_cmd="reject with icmp type host-unreachable" ;;
+        *)
+            _other_action_cmd="reject with tcp reset" ;;
+    esac
+
     cat >> "$NFT_SCRIPT_FILE" << SMART4EOF
-nft "add rule inet \$TABLE input ${_ip_match}tcp dport ${_port} tcp flags & (syn | ack) == syn counter reject with tcp reset comment \\"mtproxyl_smart_other_reject\\""
+nft "add rule inet \$TABLE input ${_ip_match}tcp dport ${_port} tcp flags & (syn | ack) == syn counter ${_other_action_cmd} comment \\"mtproxyl_smart_other_reject\\""
 SMART4EOF
 }
 
@@ -675,25 +731,236 @@ nft_extra_remove() {
     log_success "Доп. правило удалено"
 }
 
+# ── Оптимизация By-MEKO ───────────────────────────────────────
+meko_opt_status() {
+    if [ -f "$MEKO_OPT_FILE" ]; then
+        local _ka _ki _kp
+        _ka=$(sysctl -n net.ipv4.tcp_keepalive_time 2>/dev/null)
+        _ki=$(sysctl -n net.ipv4.tcp_keepalive_intvl 2>/dev/null)
+        _kp=$(sysctl -n net.ipv4.tcp_keepalive_probes 2>/dev/null)
+        echo -e "${GREEN}применена${NC} (keepalive: ${_ka}s/${_ki}s×${_kp}, BBR)"
+    else
+        echo -e "${DIM}не применена${NC}"
+    fi
+}
+
+meko_opt_apply() {
+    echo ""
+    echo -e "  ${BRIGHT_CYAN}${BOLD}Оптимизация системы By-MEKO${NC}"
+    echo ""
+    echo -e "  ${DIM}Применяет набор sysctl-параметров из проекта MTPROTO-FIX-By-MEKO:${NC}"
+    echo ""
+    echo -e "  ${BOLD}TCP keepalive${NC} — ускоряет обнаружение мёртвых сокетов:"
+    echo -e "    tcp_keepalive_time   = ${YELLOW}45${NC}      ${DIM}(текущее: $(sysctl -n net.ipv4.tcp_keepalive_time 2>/dev/null), дефолт: 7200)${NC}"
+    echo -e "    tcp_keepalive_intvl  = ${YELLOW}15${NC}      ${DIM}(текущее: $(sysctl -n net.ipv4.tcp_keepalive_intvl 2>/dev/null), дефолт: 75)${NC}"
+    echo -e "    tcp_keepalive_probes = ${YELLOW}3${NC}       ${DIM}(текущее: $(sysctl -n net.ipv4.tcp_keepalive_probes 2>/dev/null), дефолт: 9)${NC}"
+    echo ""
+    echo -e "  ${BOLD}Сетевые очереди:${NC}"
+    echo -e "    net.core.somaxconn           = ${YELLOW}65535${NC}   ${DIM}(текущее: $(sysctl -n net.core.somaxconn 2>/dev/null))${NC}"
+    echo -e "    net.ipv4.tcp_max_syn_backlog  = ${YELLOW}65535${NC}   ${DIM}(текущее: $(sysctl -n net.ipv4.tcp_max_syn_backlog 2>/dev/null))${NC}"
+    echo -e "    net.core.netdev_max_backlog   = ${YELLOW}65535${NC}   ${DIM}(текущее: $(sysctl -n net.core.netdev_max_backlog 2>/dev/null))${NC}"
+    echo ""
+    echo -e "  ${BOLD}Производительность:${NC}"
+    echo -e "    net.ipv4.tcp_fastopen           = ${YELLOW}3${NC}       ${DIM}(текущее: $(sysctl -n net.ipv4.tcp_fastopen 2>/dev/null))${NC}"
+    echo -e "    fs.file-max                     = ${YELLOW}2097152${NC} ${DIM}(текущее: $(sysctl -n fs.file-max 2>/dev/null))${NC}"
+    echo -e "    net.core.default_qdisc          = ${YELLOW}fq${NC}      ${DIM}(текущее: $(sysctl -n net.core.default_qdisc 2>/dev/null))${NC}"
+    echo -e "    net.ipv4.tcp_congestion_control = ${YELLOW}bbr${NC}     ${DIM}(текущее: $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null))${NC}"
+    echo ""
+    echo -e "  ${DIM}Все текущие значения будут сохранены для полного отката.${NC}"
+    echo ""
+
+    if [ -f "$MEKO_OPT_FILE" ]; then
+        echo -e "  ${YELLOW}Оптимизация уже применена. Применить заново?${NC}"
+        echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
+    else
+        echo -en "  ${BOLD}Применить оптимизацию? [Y/n]:${NC} "
+    fi
+    local _confirm; read -r _confirm
+    [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
+
+    if [ -z "$MEKO_ORIG_KEEPALIVE_TIME" ]; then
+        MEKO_ORIG_KEEPALIVE_TIME=$(sysctl -n net.ipv4.tcp_keepalive_time 2>/dev/null || echo "7200")
+        MEKO_ORIG_KEEPALIVE_INTVL=$(sysctl -n net.ipv4.tcp_keepalive_intvl 2>/dev/null || echo "75")
+        MEKO_ORIG_KEEPALIVE_PROBES=$(sysctl -n net.ipv4.tcp_keepalive_probes 2>/dev/null || echo "9")
+        MEKO_ORIG_SOMAXCONN=$(sysctl -n net.core.somaxconn 2>/dev/null || echo "4096")
+        MEKO_ORIG_TCP_MAX_SYN_BACKLOG=$(sysctl -n net.ipv4.tcp_max_syn_backlog 2>/dev/null || echo "512")
+        MEKO_ORIG_NETDEV_MAX_BACKLOG=$(sysctl -n net.core.netdev_max_backlog 2>/dev/null || echo "1000")
+        MEKO_ORIG_TCP_FASTOPEN=$(sysctl -n net.ipv4.tcp_fastopen 2>/dev/null || echo "1")
+        MEKO_ORIG_FILE_MAX=$(sysctl -n fs.file-max 2>/dev/null || echo "65536")
+        MEKO_ORIG_DEFAULT_QDISC=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "pfifo_fast")
+        MEKO_ORIG_TCP_CONGESTION=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "cubic")
+        log_info "Сохранены оригинальные значения для отката"
+    fi
+
+    cat > "$MEKO_OPT_FILE" << 'SYSEOF'
+# MTProxyL: оптимизация By-MEKO
+# Источник: github.com/Mekotofeuka/MTPR-FIX-By-MEKO
+net.ipv4.tcp_keepalive_time = 45
+net.ipv4.tcp_keepalive_intvl = 15
+net.ipv4.tcp_keepalive_probes = 3
+net.core.somaxconn = 65535
+net.ipv4.tcp_max_syn_backlog = 65535
+net.core.netdev_max_backlog = 65535
+net.ipv4.tcp_fastopen = 3
+fs.file-max = 2097152
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+SYSEOF
+
+    if sysctl --system &>/dev/null; then
+        log_success "sysctl применён"
+    else
+        log_warn "sysctl --system вернул ошибку, применяем вручную"
+        sysctl -w net.ipv4.tcp_keepalive_time=45 2>/dev/null || true
+        sysctl -w net.ipv4.tcp_keepalive_intvl=15 2>/dev/null || true
+        sysctl -w net.ipv4.tcp_keepalive_probes=3 2>/dev/null || true
+        sysctl -w net.core.somaxconn=65535 2>/dev/null || true
+        sysctl -w net.ipv4.tcp_max_syn_backlog=65535 2>/dev/null || true
+        sysctl -w net.core.netdev_max_backlog=65535 2>/dev/null || true
+        sysctl -w net.ipv4.tcp_fastopen=3 2>/dev/null || true
+        sysctl -w fs.file-max=2097152 2>/dev/null || true
+        sysctl -w net.core.default_qdisc=fq 2>/dev/null || true
+        sysctl -w net.ipv4.tcp_congestion_control=bbr 2>/dev/null || true
+    fi
+
+    echo ""
+    echo -e "  ${BOLD}Применённые значения:${NC}"
+    echo -e "    tcp_keepalive_time   = $(sysctl -n net.ipv4.tcp_keepalive_time 2>/dev/null)"
+    echo -e "    tcp_keepalive_intvl  = $(sysctl -n net.ipv4.tcp_keepalive_intvl 2>/dev/null)"
+    echo -e "    tcp_keepalive_probes = $(sysctl -n net.ipv4.tcp_keepalive_probes 2>/dev/null)"
+    echo -e "    somaxconn            = $(sysctl -n net.core.somaxconn 2>/dev/null)"
+    echo -e "    congestion_control   = $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)"
+
+    MEKO_OPT_APPLIED="true"
+    save_nft_settings
+    echo ""
+    log_success "Оптимизация By-MEKO применена"
+    echo -e "  ${DIM}Для отката: меню NFT → [m] Оптимизация By-MEKO → Откатить${NC}"
+}
+
+meko_opt_remove() {
+    echo ""
+    if [ ! -f "$MEKO_OPT_FILE" ]; then
+        log_info "Оптимизация By-MEKO не установлена"
+        MEKO_OPT_APPLIED="false"
+        save_nft_settings
+        return 0
+    fi
+
+    echo -e "  ${BOLD}Откат оптимизации By-MEKO${NC}"; echo ""
+    echo -e "  ${DIM}Будет удалён: ${MEKO_OPT_FILE}${NC}"
+    echo -e "  ${DIM}Значения будут восстановлены к тем, что были до применения:${NC}"
+    echo ""
+    echo -e "    tcp_keepalive_time   → ${MEKO_ORIG_KEEPALIVE_TIME:-7200}"
+    echo -e "    tcp_keepalive_intvl  → ${MEKO_ORIG_KEEPALIVE_INTVL:-75}"
+    echo -e "    tcp_keepalive_probes → ${MEKO_ORIG_KEEPALIVE_PROBES:-9}"
+    echo -e "    somaxconn            → ${MEKO_ORIG_SOMAXCONN:-4096}"
+    echo -e "    tcp_max_syn_backlog  → ${MEKO_ORIG_TCP_MAX_SYN_BACKLOG:-512}"
+    echo -e "    netdev_max_backlog   → ${MEKO_ORIG_NETDEV_MAX_BACKLOG:-1000}"
+    echo -e "    tcp_fastopen         → ${MEKO_ORIG_TCP_FASTOPEN:-1}"
+    echo -e "    file-max             → ${MEKO_ORIG_FILE_MAX:-65536}"
+    echo -e "    default_qdisc        → ${MEKO_ORIG_DEFAULT_QDISC:-pfifo_fast}"
+    echo -e "    congestion_control   → ${MEKO_ORIG_TCP_CONGESTION:-cubic}"
+    echo ""
+    echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
+    local _confirm; read -r _confirm
+    [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
+
+    rm -f "$MEKO_OPT_FILE"
+    sysctl -w "net.ipv4.tcp_keepalive_time=${MEKO_ORIG_KEEPALIVE_TIME:-7200}" &>/dev/null || true
+    sysctl -w "net.ipv4.tcp_keepalive_intvl=${MEKO_ORIG_KEEPALIVE_INTVL:-75}" &>/dev/null || true
+    sysctl -w "net.ipv4.tcp_keepalive_probes=${MEKO_ORIG_KEEPALIVE_PROBES:-9}" &>/dev/null || true
+    sysctl -w "net.core.somaxconn=${MEKO_ORIG_SOMAXCONN:-4096}" &>/dev/null || true
+    sysctl -w "net.ipv4.tcp_max_syn_backlog=${MEKO_ORIG_TCP_MAX_SYN_BACKLOG:-512}" &>/dev/null || true
+    sysctl -w "net.core.netdev_max_backlog=${MEKO_ORIG_NETDEV_MAX_BACKLOG:-1000}" &>/dev/null || true
+    sysctl -w "net.ipv4.tcp_fastopen=${MEKO_ORIG_TCP_FASTOPEN:-1}" &>/dev/null || true
+    sysctl -w "fs.file-max=${MEKO_ORIG_FILE_MAX:-65536}" &>/dev/null || true
+    sysctl -w "net.core.default_qdisc=${MEKO_ORIG_DEFAULT_QDISC:-pfifo_fast}" &>/dev/null || true
+    sysctl -w "net.ipv4.tcp_congestion_control=${MEKO_ORIG_TCP_CONGESTION:-cubic}" &>/dev/null || true
+    sysctl --system &>/dev/null || true
+
+    MEKO_ORIG_KEEPALIVE_TIME=""; MEKO_ORIG_KEEPALIVE_INTVL=""; MEKO_ORIG_KEEPALIVE_PROBES=""
+    MEKO_ORIG_SOMAXCONN=""; MEKO_ORIG_TCP_MAX_SYN_BACKLOG=""; MEKO_ORIG_NETDEV_MAX_BACKLOG=""
+    MEKO_ORIG_TCP_FASTOPEN=""; MEKO_ORIG_FILE_MAX=""
+    MEKO_ORIG_DEFAULT_QDISC=""; MEKO_ORIG_TCP_CONGESTION=""
+    MEKO_OPT_APPLIED="false"
+    save_nft_settings
+
+    echo ""
+    echo -e "  ${BOLD}Текущие значения после отката:${NC}"
+    echo -e "    tcp_keepalive_time   = $(sysctl -n net.ipv4.tcp_keepalive_time 2>/dev/null)"
+    echo -e "    tcp_keepalive_intvl  = $(sysctl -n net.ipv4.tcp_keepalive_intvl 2>/dev/null)"
+    echo -e "    congestion_control   = $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)"
+    echo ""
+    log_success "Оптимизация By-MEKO откачена"
+}
+
 # ── Полная очистка при удалении MTProxyL ──────────────────────
 nft_full_cleanup() {
     remove_nft_rules 2>/dev/null || true
     remove_nft_service 2>/dev/null || true
     ios_fix_remove true 2>/dev/null || true
     ios2_fix_remove true 2>/dev/null || true
+    # Откат оптимизации By-MEKO при удалении
+    if [ -f "${MEKO_OPT_FILE}" ]; then
+        rm -f "$MEKO_OPT_FILE"
+        sysctl -w "net.ipv4.tcp_keepalive_time=${MEKO_ORIG_KEEPALIVE_TIME:-7200}" &>/dev/null || true
+        sysctl -w "net.ipv4.tcp_keepalive_intvl=${MEKO_ORIG_KEEPALIVE_INTVL:-75}" &>/dev/null || true
+        sysctl -w "net.ipv4.tcp_keepalive_probes=${MEKO_ORIG_KEEPALIVE_PROBES:-9}" &>/dev/null || true
+        sysctl -w "net.core.somaxconn=${MEKO_ORIG_SOMAXCONN:-4096}" &>/dev/null || true
+        sysctl -w "net.ipv4.tcp_max_syn_backlog=${MEKO_ORIG_TCP_MAX_SYN_BACKLOG:-512}" &>/dev/null || true
+        sysctl -w "net.core.netdev_max_backlog=${MEKO_ORIG_NETDEV_MAX_BACKLOG:-1000}" &>/dev/null || true
+        sysctl -w "net.ipv4.tcp_fastopen=${MEKO_ORIG_TCP_FASTOPEN:-1}" &>/dev/null || true
+        sysctl -w "fs.file-max=${MEKO_ORIG_FILE_MAX:-65536}" &>/dev/null || true
+        sysctl -w "net.core.default_qdisc=${MEKO_ORIG_DEFAULT_QDISC:-pfifo_fast}" &>/dev/null || true
+        sysctl -w "net.ipv4.tcp_congestion_control=${MEKO_ORIG_TCP_CONGESTION:-cubic}" &>/dev/null || true
+        sysctl --system &>/dev/null || true
+        log_info "Оптимизация By-MEKO откачена"
+    fi
     rm -f "$NFT_CONF"
 }
 
-# ── Счётчик дропов ────────────────────────────────────────────
+# ── Счётчик правил ────────────────────────────────────────────
 show_nft_drop_counter() {
     local _table="${NFT_TABLE:-mtproxyl_limit}"
+    local _ios2_table="${IOS2_NFT_TABLE:-mtproxyl_ios2}"
+
     if ! nft list table inet "$_table" &>/dev/null; then
         log_warn "Активных NFT правил не найдено"
         return 1
     fi
+
     echo ""
-    echo -e "  ${BOLD}Счётчик правил (Ctrl+C для выхода):${NC}"; echo ""
-    watch -n 2 "nft list chain inet $_table input 2>/dev/null | grep -E 'counter|comment'"
+    if [ "$NFT_MODE" = "smart" ]; then
+        echo -e "  ${BOLD}Счётчик правил Smart By-MEKO (Ctrl+C для выхода):${NC}"
+    else
+        echo -e "  ${BOLD}Счётчик правил Classic (Ctrl+C для выхода):${NC}"
+    fi
+    echo ""
+
+    # Генерируем временный скрипт для watch чтобы передать переменные
+    local _watch_script
+    _watch_script=$(mktemp /tmp/mtproxyl-watch.XXXXXX.sh)
+    chmod +x "$_watch_script"
+
+    cat > "$_watch_script" << WATCHEOF
+#!/bin/sh
+TABLE="${_table}"
+IOS2_TABLE="${_ios2_table}"
+IOS2_ENABLED="${IOS2_FIX_ENABLED:-false}"
+
+echo "=== \${TABLE} (chain input) ==="
+nft list chain inet "\$TABLE" input 2>/dev/null | grep -E 'counter|comment' | sed 's/^/  /'
+
+if [ "\$IOS2_ENABLED" = "true" ]; then
+    echo ""
+    echo "=== \${IOS2_TABLE} ==="
+    nft list table inet "\$IOS2_TABLE" 2>/dev/null | grep -E 'counter|comment' | sed 's/^/  /'
+fi
+WATCHEOF
+
+    watch -n 2 "/bin/sh $_watch_script"
+    rm -f "$_watch_script"
 }
 
 # ── Статусы для шапки ─────────────────────────────────────────
@@ -702,7 +969,13 @@ nft_status_line() {
         if [ "$NFT_MODE" = "smart" ]; then
             local _ip_info=""
             [ -n "${NFT_SERVER_IP:-}" ] && _ip_info=" ip=${NFT_SERVER_IP}"
-            echo -e "${GREEN}Smart By-MEKO${NC} (iOS: ${NFT_IOS_RATE}/${NFT_IOS_BURST} Other: ${NFT_OTHER_RATE}/${NFT_OTHER_BURST}${_ip_info})"
+            local _action_short
+            case "${NFT_OTHER_ACTION:-icmp-host-unreachable}" in
+                icmp-host-unreachable) _action_short="icmp" ;;
+                drop) _action_short="drop" ;;
+                *) _action_short="rst" ;;
+            esac
+            echo -e "${GREEN}Smart By-MEKO${NC} (iOS: ${NFT_IOS_RATE}/${NFT_IOS_BURST} Other: ${NFT_OTHER_RATE}/${NFT_OTHER_BURST} action:${_action_short}${_ip_info})"
         else
             if [ -n "${NFT_SERVER_IP:-}" ]; then
                 echo -e "${GREEN}Classic${NC} (${NFT_RATE} burst ${NFT_BURST} ip=${NFT_SERVER_IP})"

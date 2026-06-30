@@ -12,6 +12,7 @@ tui_nft_menu() {
         echo -e "  ${BOLD}NFT лимитер:${NC} $(nft_status_line)"
         echo -e "  ${BOLD}iOS фикс v1:${NC} $(ios_fix_status_line)"
         echo -e "  ${BOLD}iOS фикс v2:${NC} $(ios2_fix_status_line)"
+        echo -e "  ${BOLD}MEKO оптим.:${NC} $(meko_opt_status)"
         echo ""
 
         # Текущие параметры
@@ -19,7 +20,13 @@ tui_nft_menu() {
         if [ "$NFT_MODE" = "smart" ]; then
             echo -e "  ${DIM}iOS:     ${NFT_IOS_RATE} burst ${NFT_IOS_BURST}${NC}"
             echo -e "  ${DIM}Other:   ${NFT_OTHER_RATE} burst ${NFT_OTHER_BURST}${NC}"
-            echo -e "  ${DIM}Reject:  tcp-reset (мгновенный ответ клиенту)${NC}"
+            local _action_display
+            case "${NFT_OTHER_ACTION:-icmp-host-unreachable}" in
+                icmp-host-unreachable) _action_display="${GREEN}icmp-host-unreachable${NC} ${DIM}(рекомендуется)${NC}" ;;
+                drop)                  _action_display="${YELLOW}drop${NC}" ;;
+                *)                     _action_display="${DIM}reject (tcp reset)${NC}" ;;
+            esac
+            echo -e "  ${DIM}Action:  ${NC}${_action_display}"
         else
             echo -e "  ${DIM}Rate:    ${NFT_RATE}${NC}"
             echo -e "  ${DIM}Burst:   ${NFT_BURST}${NC}"
@@ -48,6 +55,7 @@ tui_nft_menu() {
         echo ""
         echo -e "  ${CYAN}[a]${NC}  iOS Fix v1 — TCP keepalive"
         echo -e "  ${CYAN}[b]${NC}  iOS Fix v2 — MSS + redirect"
+        echo -e "  ${CYAN}[m]${NC}  Оптимизация By-MEKO (BBR, очереди, keepalive)"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -77,6 +85,7 @@ tui_nft_menu() {
             8) tui_nft_extra_menu ;;
             a|A) tui_ios1_menu ;;
             b|B) tui_ios2_menu ;;
+            m|M) tui_meko_opt_menu ;;
             0|"") return ;;
         esac
     done
@@ -156,9 +165,10 @@ tui_nft_settings() {
         echo -e "  ${DIM}[2]${NC} iOS Burst   [${NFT_IOS_BURST}]"
         echo -e "  ${DIM}[3]${NC} Other Rate  [${NFT_OTHER_RATE}]"
         echo -e "  ${DIM}[4]${NC} Other Burst [${NFT_OTHER_BURST}]"
-        echo -e "  ${DIM}[5]${NC} Timeout     [${NFT_METER_TIMEOUT}]"
-        echo -e "  ${DIM}[6]${NC} IP привязку"
-        echo -e "  ${DIM}[7]${NC} Переключить на Classic режим"
+        echo -e "  ${DIM}[5]${NC} Other Action [${NFT_OTHER_ACTION:-icmp-host-unreachable}]"
+        echo -e "  ${DIM}[6]${NC} Timeout     [${NFT_METER_TIMEOUT}]"
+        echo -e "  ${DIM}[7]${NC} Изменить/убрать IP привязку"
+        echo -e "  ${DIM}[8]${NC} Переключить на Classic режим"
         echo -e "  ${DIM}[0]${NC} Назад"
         echo ""
         local choice; choice=$(read_choice "выбор" "0")
@@ -171,10 +181,11 @@ tui_nft_settings() {
                [ -n "$v" ] && { NFT_OTHER_RATE="$v"; save_nft_settings; log_success "Other Rate: ${v}"; prompt_apply_nft_rules; } ;;
             4) echo -en "  ${BOLD}Other Burst [${NFT_OTHER_BURST}]:${NC} "; local v; read -r v
                [[ "$v" =~ ^[0-9]+$ ]] && { NFT_OTHER_BURST="$v"; save_nft_settings; log_success "Other Burst: ${v}"; prompt_apply_nft_rules; } ;;
-            5) echo -en "  ${BOLD}Timeout [${NFT_METER_TIMEOUT}]:${NC} "; local v; read -r v
+            5) tui_nft_other_action_menu ;;
+            6) echo -en "  ${BOLD}Timeout [${NFT_METER_TIMEOUT}]:${NC} "; local v; read -r v
                [ -n "$v" ] && { NFT_METER_TIMEOUT="$v"; save_nft_settings; log_success "Timeout: ${v}"; prompt_apply_nft_rules; } ;;
-            6) tui_nft_ip_settings ;;
-            7) NFT_MODE="classic"; save_nft_settings; log_success "Переключено на Classic"; prompt_apply_nft_rules ;;
+            7) tui_nft_ip_settings ;;
+            8) NFT_MODE="classic"; save_nft_settings; log_success "Переключено на Classic"; prompt_apply_nft_rules ;;
             0|"") ;;
         esac
     else
@@ -189,7 +200,7 @@ tui_nft_settings() {
         echo -e "  ${DIM}[1]${NC} Изменить Rate    [${NFT_RATE}]"
         echo -e "  ${DIM}[2]${NC} Изменить Burst   [${NFT_BURST}]"
         echo -e "  ${DIM}[3]${NC} Изменить Timeout [${NFT_METER_TIMEOUT}]"
-        echo -e "  ${DIM}[4]${NC} Изменить IP привязку"
+        echo -e "  ${DIM}[4]${NC} Изменить/убрать IP привязку"
         echo -e "  ${DIM}[5]${NC} Переключить на Smart By-MEKO"
         echo -e "  ${DIM}[0]${NC} Назад"
         echo ""
@@ -310,29 +321,44 @@ tui_nft_extra_menu() {
         case "$choice" in
             a|A)
                 echo ""
+                if [ "$NFT_MODE" = "smart" ]; then
+                    echo -e "  ${YELLOW}Smart режим активен.${NC}"
+                    echo -e "  ${DIM}Доп. правило унаследует Other Action: ${NFT_OTHER_ACTION:-icmp-host-unreachable}${NC}"
+                    echo ""
+                fi
+                local _p=""
                 echo -en "  ${BOLD}Порт:${NC} "
-                local _p; read -r _p
+                read -r _p
                 if ! [[ "$_p" =~ ^[0-9]+$ ]] || [ "$_p" -lt 1 ] || [ "$_p" -gt 65535 ]; then
                     log_error "Некорректный порт"
                     press_any_key; continue
                 fi
+                local _eip=""
                 echo -en "  ${BOLD}IP (пусто = все):${NC} "
-                local _eip; read -r _eip
+                read -r _eip
                 if [ -n "$_eip" ] && ! validate_ip_literal "$_eip"; then
                     log_error "Некорректный IPv4"
                     press_any_key; continue
                 fi
+                local _r=""
                 echo -en "  ${BOLD}Rate [1/second]:${NC} "
-                local _r; read -r _r; [ -z "$_r" ] && _r="1/second"
+                read -r _r
+                [ -z "$_r" ] && _r="1/second"
+                local _b=""
                 echo -en "  ${BOLD}Burst [1]:${NC} "
-                local _b; read -r _b; [ -z "$_b" ] && _b="1"
-                nft_extra_add "$_p" "$_eip" "$_r" "$_b" || true
-                echo ""
-                echo -en "  ${BOLD}Применить правила сейчас? [Y/n]:${NC} "
-                local _yn; read -r _yn
-                if [[ ! "$_yn" =~ ^[nN]$ ]]; then
-                    apply_nft_rules || true
-                    [ "${NFT_ENABLED:-false}" = "true" ] && install_nft_service || true
+                read -r _b
+                [ -z "$_b" ] && _b="1"
+                nft_extra_add "$_p" "$_eip" "$_r" "$_b"
+                local _add_rc=$?
+                if [ "$_add_rc" -eq 0 ]; then
+                    echo ""
+                    echo -en "  ${BOLD}Применить правила сейчас? [Y/n]:${NC} "
+                    local _yn=""
+                    read -r _yn
+                    if [[ ! "$_yn" =~ ^[nN]$ ]]; then
+                        apply_nft_rules || true
+                        [ "${NFT_ENABLED:-false}" = "true" ] && install_nft_service || true
+                    fi
                 fi
                 press_any_key ;;
             d|D)
@@ -348,6 +374,74 @@ tui_nft_extra_menu() {
                     [ "${NFT_ENABLED:-false}" = "true" ] && install_nft_service || true
                 fi
                 press_any_key ;;
+            0|"") return ;;
+        esac
+    done
+}
+
+# ── Other Action меню (Smart режим) ──────────────────────────
+tui_nft_other_action_menu() {
+    clear_screen
+    draw_header "OTHER ACTION — SMART РЕЖИМ"
+    echo ""
+    echo -e "  ${BOLD}Действие для non-iOS устройств (Android / Desktop / macOS):${NC}"
+    echo ""
+    echo -e "  ${GREEN}[1]${NC} ${BOLD}icmp-host-unreachable${NC} ${DIM}(рекомендуется)${NC}"
+    echo -e "      ${DIM}Сервер притворяется недоступным узлом сети.${NC}"
+    echo -e "      ${DIM}Telegram мгновенно понимает: «этот путь закрыт» —${NC}"
+    echo -e "      ${DIM}и сразу переключается на основное соединение.${NC}"
+    echo -e "      ${DIM}Медиа начинает отправляться без задержек.${NC}"
+    echo ""
+    echo -e "  ${CYAN}[2]${NC} reject (tcp reset) ${DIM}(оригинал By-MEKO)${NC}"
+    echo -e "      ${DIM}Жёсткий TCP сброс. Быстрый reconnect,${NC}"
+    echo -e "      ${DIM}но небольшая задержка при старте отправки медиа.${NC}"
+    echo ""
+    echo -e "  ${YELLOW}[3]${NC} drop ${DIM}(не рекомендуется)${NC}"
+    echo -e "      ${DIM}Тихое уничтожение пакета. Telegram ждёт таймаута —${NC}"
+    echo -e "      ${DIM}отправка медиа может полностью зависать.${NC}"
+    echo ""
+    echo -e "  ${BOLD}Текущее:${NC} ${NFT_OTHER_ACTION:-icmp-host-unreachable}"
+    echo ""
+    echo -e "  ${DIM}[0]${NC}  Назад без изменений"
+    echo ""
+    local choice; choice=$(read_choice "выбор" "0")
+    case "$choice" in
+        1) NFT_OTHER_ACTION="icmp-host-unreachable" ;;
+        2) NFT_OTHER_ACTION="reject" ;;
+        3) NFT_OTHER_ACTION="drop" ;;
+        0|"") return ;;
+        *) log_error "Некорректный выбор"; press_any_key; return ;;
+    esac
+    save_nft_settings
+    log_success "Other Action: ${NFT_OTHER_ACTION}"
+    prompt_apply_nft_rules
+    press_any_key
+}
+
+# ── Оптимизация By-MEKO меню ──────────────────────────────────
+tui_meko_opt_menu() {
+    while true; do
+        clear_screen
+        draw_header "ОПТИМИЗАЦИЯ СИСТЕМЫ BY-MEKO"
+        echo ""
+        echo -e "  Статус: $(meko_opt_status)"
+        echo ""
+
+        if [ -n "$MEKO_ORIG_KEEPALIVE_TIME" ]; then
+            echo -e "  ${DIM}Значения до применения:${NC}"
+            echo -e "    keepalive: ${MEKO_ORIG_KEEPALIVE_TIME}s / ${MEKO_ORIG_KEEPALIVE_INTVL}s × ${MEKO_ORIG_KEEPALIVE_PROBES}"
+            echo -e "    congestion: ${MEKO_ORIG_TCP_CONGESTION:-cubic}  qdisc: ${MEKO_ORIG_DEFAULT_QDISC:-pfifo_fast}"
+            echo ""
+        fi
+
+        echo -e "  ${DIM}[1]${NC} Применить / обновить"
+        echo -e "  ${DIM}[2]${NC} Откатить"
+        echo -e "  ${DIM}[0]${NC} Назад"
+        echo ""
+        local choice; choice=$(read_choice "выбор" "0")
+        case "$choice" in
+            1) meko_opt_apply; press_any_key ;;
+            2) meko_opt_remove; press_any_key ;;
             0|"") return ;;
         esac
     done

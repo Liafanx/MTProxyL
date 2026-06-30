@@ -124,7 +124,12 @@ _apply_expert_overrides() {
             fi
         fi
 
-        local section_header="[$section]"
+        local section_header
+        if [ "$section" = "server.listeners" ]; then
+            section_header="[[server.listeners]]"
+        else
+            section_header="[$section]"
+        fi
 
         # Заменить/добавить ключ строго внутри нужной секции
         awk -v sec="$section_header" -v key="$key" -v val="$fv" '

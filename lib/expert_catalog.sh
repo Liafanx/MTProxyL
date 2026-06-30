@@ -221,6 +221,24 @@ _catalog "logging" "max_size_bytes"   "u64"    "0"      "✘" "range:0:109951162
 _catalog "logging" "max_files"        "usize"  "0"      "✘" "range:0:1000000"             "0 = отключено"              "Максимум файлов логов"
 _catalog "logging" "max_age_secs"     "u64"    "0"      "✘" "range:0:315360000"           "0 = отключено"              "Максимальный возраст файлов логов"
 
+# ── server.listeners ──────────────────────────────────────────
+_catalog "server.listeners" "ip"                          "string" ""      "✘" "any"                                  "IPv4/IPv6-адрес"                    "Адрес для listener'а (обязательный)"
+_catalog "server.listeners" "port"                        "u16"    ""      "✘" "range:1:65535"                        "1..65535 или пусто = server.port"   "TCP-порт для listener'а (если не задан — server.port)"
+_catalog "server.listeners" "client_mss"                  "string" ""      "✘" "custom:_validate_client_mss"          "extreme-low/tspu/2in8/88..4096"     "Per-listener MSS override (пусто = наследует [server].client_mss)"
+_catalog "server.listeners" "synlimit"                    "string" "false" "✔" "custom:_validate_synlimit"            "false/iptables/nftables"            "Per-listener SYN limiter через netfilter (false = выкл)"
+_catalog "server.listeners" "synlimit_seconds"            "u32"    "60"    "✔" "range:1:86400"                       "1..86400"                           "Generic SYN-fix token-bucket interval (секунды)"
+_catalog "server.listeners" "synlimit_hitcount"           "u32"    "48"    "✔" "range:1:1000000"                     "1..1000000"                         "Generic SYN-fix token-bucket rate amount"
+_catalog "server.listeners" "synlimit_burst"              "u32"    "1"     "✔" "range:1:100000"                      "1..100000"                          "Generic SYN-fix token-bucket burst size"
+_catalog "server.listeners" "synlimit_ios_seconds"        "u32"    "1"     "✔" "range:1:86400"                       "1..86400"                           "iOS-like SYN classifier token-bucket interval (секунды)"
+_catalog "server.listeners" "synlimit_ios_hitcount"       "u32"    "12"    "✔" "range:1:1000000"                     "1..1000000"                         "iOS-like SYN classifier token-bucket rate amount"
+_catalog "server.listeners" "synlimit_ios_burst"          "u32"    "24"    "✔" "range:1:100000"                      "1..100000"                          "iOS-like SYN classifier token-bucket burst size"
+_catalog "server.listeners" "synlimit_hashlimit_expire_ms" "u32"   "60000" "✔" "range:1:3600000"                     "1..3600000 мс"                      "Entry expiration для iptables hashlimit buckets (мс)"
+_catalog "server.listeners" "synlimit_hashlimit_size"     "u32"    "32768" "✔" "range:1:1048576"                     "1..1048576"                         "Hash table size для iptables hashlimit buckets"
+_catalog "server.listeners" "announce"                    "string" ""      "✘" "any"                                  "домен или IP"                       "Публичный адрес/домен для proxy-ссылок listener'а"
+_catalog "server.listeners" "announce_ip"                 "string" ""      "✘" "any"                                  "IP-адрес (устарел, см. announce)"   "Устаревший — используйте announce"
+_catalog "server.listeners" "proxy_protocol"              "bool"   ""      "✘" "bool"                                 "true/false или пусто = server.*"    "Override PROXY protocol для listener'а"
+_catalog "server.listeners" "reuse_allow"                 "bool"   "false" "✘" "bool"                                 "true/false"                         "SO_REUSEPORT для совместного использования порта"
+
 # ── upstreams ─────────────────────────────────────────────────
 # Upstreams — только через nano, это массив таблиц TOML
 # Для меню не предназначено
@@ -233,6 +251,7 @@ _EXPERT_SECTIONS=(
     "general.telemetry"
     "network"
     "server"
+    "server.listeners"
     "server.conntrack_control"
     "server.api"
     "timeouts"
@@ -321,6 +340,13 @@ _validate_domain_list() {
     done
 
     return 0
+}
+
+_validate_synlimit() {
+    case "$1" in
+        false|iptables|nftables) return 0 ;;
+    esac
+    echo "Допустимо: false, iptables или nftables"; return 1
 }
 
 _validate_rpc_proxy_req() {

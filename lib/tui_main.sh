@@ -29,7 +29,8 @@ show_main_menu() {
             status_str=$(draw_status running)
             local up_secs; up_secs=$(get_proxy_uptime)
             uptime_str=$(format_duration "$up_secs")
-            read -r t_in t_out conns <<< "$(get_proxy_stats)"
+            flush_traffic_to_disk 2>/dev/null || true
+            read -r t_in t_out conns <<< "$(get_persistent_stats)"
         else
             status_str=$(draw_status stopped)
             uptime_str="—"; t_in=0; t_out=0; conns=0
@@ -50,6 +51,7 @@ show_main_menu() {
         echo -e "  ${BOLD}NFT лимитер:${NC} $(nft_status_line 2>/dev/null || echo "${DIM}—${NC}")"
         echo -e "  ${BOLD}iOS фикс v1:${NC} $(ios_fix_status_line 2>/dev/null || echo "${DIM}—${NC}")"
         echo -e "  ${BOLD}iOS фикс v2:${NC} $(ios2_fix_status_line 2>/dev/null || echo "${DIM}—${NC}")"
+        echo -e "  ${BOLD}MEKO оптим.:${NC} $(meko_opt_status 2>/dev/null || echo "${DIM}—${NC}")"
 
         if [ -n "$_UPDATE_AVAILABLE" ]; then
             echo ""
