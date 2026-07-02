@@ -405,6 +405,8 @@ handle_mask_backend() {
             return 1
         fi
     fi
+    auto_set_fake_cert_len "${MASKING_HOST:-${PROXY_DOMAIN}}" 2>/dev/null || \
+        log_warn "Не удалось определить TLS cert length для '${MASKING_HOST:-${PROXY_DOMAIN}}'"
     save_settings
     log_success "Mask backend: ${MASKING_HOST:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}"
     if is_proxy_running; then
