@@ -69,6 +69,45 @@ validate_domain() {
     [[ "$d" =~ ^[a-zA-Z0-9.-]+$ ]] && [[ "$d" =~ \. ]]
 }
 
+detect_tls_cert_len() {
+    local domain="$1"
+    [ -n "$domain" ] || return 1
+    command -v openssl &>/dev/null || return 1
+
+    local _pem=""
+    if command -v timeout &>/dev/null; then
+        _pem=$(timeout 8 openssl s_client -servername "$domain" -connect "${domain}:443" -showcerts </dev/null 2>/dev/null | \
+            awk '/-----BEGIN CERTIFICATE-----/{p=1} p{print} /-----END CERTIFICATE-----/{exit}')
+    else
+        _pem=$(openssl s_client -servername "$domain" -connect "${domain}:443" -showcerts </dev/null 2>/dev/null | \
+            awk '/-----BEGIN CERTIFICATE-----/{p=1} p{print} /-----END CERTIFICATE-----/{exit}')
+    fi
+
+    [ -n "$_pem" ] || return 1
+
+    local _len
+    _len=$(printf '%s\n' "$_pem" | openssl x509 -outform DER 2>/dev/null | wc -c | tr -d ' ')
+    [[ "$_len" =~ ^[0-9]+$ ]] || return 1
+    [ "$_len" -ge 512 ] && [ "$_len" -le 65535 ] || return 1
+
+    echo "$_len"
+}
+
+auto_set_fake_cert_len() {
+    local domain="$1"
+    [ -n "$domain" ] || return 1
+    local _old="${FAKE_CERT_LEN:-2048}"
+    local _new
+    _new=$(detect_tls_cert_len "$domain" 2>/dev/null) || return 1
+    if [ "$_new" != "$_old" ]; then
+        FAKE_CERT_LEN="$_new"
+        log_info "Auto-detected TLS cert length for '${domain}': ${FAKE_CERT_LEN} bytes (was ${_old})"
+    else
+        log_info "TLS cert length for '${domain}': ${FAKE_CERT_LEN} bytes"
+    fi
+    return 0
+}
+
 parse_human_bytes() {
     local input="${1:-0}"
     input="${input^^}"
@@ -314,6 +353,8 @@ handle_domain_command() {
     if validate_domain "$new_domain"; then
         local _old_domain="$PROXY_DOMAIN"
         PROXY_DOMAIN="$new_domain"
+        auto_set_fake_cert_len "$PROXY_DOMAIN" 2>/dev/null || \
+            log_warn "Не удалось определить TLS cert length для '${PROXY_DOMAIN}', оставляем ${FAKE_CERT_LEN:-2048}"
         save_settings
         log_success "Домен: ${PROXY_DOMAIN}"
         # Предложить обновить mask backend

@@ -37,6 +37,9 @@ NFT_IOS_RATE="15/second"
 NFT_IOS_BURST="30"
 NFT_OTHER_RATE="54/minute"
 NFT_OTHER_BURST="1"
+NFT_IOS_LIMIT_ENABLED="true"
+NFT_OTHER_LIMIT_ENABLED="true"
+NFT_IOS_DETECT="fingerprint"
 
 # iOS Fix v1
 IOS_FIX_ENABLED="false"
@@ -77,6 +80,11 @@ NFT_IOS_RATE='${NFT_IOS_RATE}'
 NFT_IOS_BURST='${NFT_IOS_BURST}'
 NFT_OTHER_RATE='${NFT_OTHER_RATE}'
 NFT_OTHER_BURST='${NFT_OTHER_BURST}'
+NFT_OTHER_RATE='${NFT_OTHER_RATE}'
+NFT_OTHER_BURST='${NFT_OTHER_BURST}'
+NFT_IOS_LIMIT_ENABLED='${NFT_IOS_LIMIT_ENABLED}'
+NFT_OTHER_LIMIT_ENABLED='${NFT_OTHER_LIMIT_ENABLED}'
+NFT_IOS_DETECT='${NFT_IOS_DETECT}'
 IOS_FIX_ENABLED='${IOS_FIX_ENABLED}'
 IOS_KA_TIME='${IOS_KA_TIME}'
 IOS_KA_INTVL='${IOS_KA_INTVL}'
@@ -116,6 +124,7 @@ EOF
 
 load_nft_settings() {
     [ -f "$NFT_CONF" ] || return 0
+    local _have_ios_detect="false"
     while IFS= read -r _line; do
         [[ "$_line" =~ ^[[:space:]]*# ]] && continue
         [[ "$_line" =~ ^[[:space:]]*$ ]] && continue
@@ -126,6 +135,7 @@ load_nft_settings() {
                 NFT_TABLE|NFT_SERVER_IP|\
                 NFT_REJECT_MODE|NFT_IOS_RATE|NFT_IOS_BURST|\
                 NFT_OTHER_RATE|NFT_OTHER_BURST|\
+                NFT_IOS_LIMIT_ENABLED|NFT_OTHER_LIMIT_ENABLED|NFT_IOS_DETECT|\
                 IOS_FIX_ENABLED|IOS_KA_TIME|IOS_KA_INTVL|IOS_KA_PROBES|\
                 IOS_ORIG_TIME|IOS_ORIG_INTVL|IOS_ORIG_PROBES|\
                 IOS2_FIX_ENABLED|IOS2_EXTERNAL_PORT|IOS2_TARGET_PORT|IOS2_MSS|\
@@ -136,7 +146,9 @@ load_nft_settings() {
                 MEKO_ORIG_TCP_FASTOPEN|MEKO_ORIG_FILE_MAX|\
                 MEKO_ORIG_DEFAULT_QDISC|MEKO_ORIG_TCP_CONGESTION|\
                 NFT_EXTRA_COUNT)
-                    printf -v "$_key" '%s' "$_val" ;;
+                    printf -v "$_key" '%s' "$_val"
+                    [ "$_key" = "NFT_IOS_DETECT" ] && _have_ios_detect="true"
+                    ;;
                 NFT_EXTRA_*_PORT)
                     local _idx="${_key#NFT_EXTRA_}"; _idx="${_idx%_PORT}"
                     NFT_EXTRA_PORT[$_idx]="$_val" ;;
@@ -159,6 +171,21 @@ load_nft_settings() {
     case "$NFT_OTHER_ACTION" in
         reject|drop|icmp-host-unreachable) ;;
         *) NFT_OTHER_ACTION="icmp-host-unreachable" ;;
+    esac
+
+    [ "$NFT_IOS_LIMIT_ENABLED" != "true" ] && [ "$NFT_IOS_LIMIT_ENABLED" != "false" ] && NFT_IOS_LIMIT_ENABLED="true"
+    [ "$NFT_OTHER_LIMIT_ENABLED" != "true" ] && [ "$NFT_OTHER_LIMIT_ENABLED" != "false" ] && NFT_OTHER_LIMIT_ENABLED="true"
+
+    case "$NFT_IOS_DETECT" in
+        fingerprint|ttl) ;;
+        *)
+            # Обратная совместимость: старые конфиги MTProxyL использовали TTL+Length
+            if [ "$_have_ios_detect" != "true" ]; then
+                NFT_IOS_DETECT="ttl"
+            else
+                NFT_IOS_DETECT="fingerprint"
+            fi
+            ;;
     esac
 }
 
@@ -283,23 +310,31 @@ _generate_smart_rules() {
     local _ios_burst="${NFT_IOS_BURST:-30}"
     local _other_rate="${NFT_OTHER_RATE:-54/minute}"
     local _other_burst="${NFT_OTHER_BURST:-1}"
+    local _ios_limit="${NFT_IOS_LIMIT_ENABLED:-true}"
+    local _other_limit="${NFT_OTHER_LIMIT_ENABLED:-true}"
+    local _ios_detect="${NFT_IOS_DETECT:-fingerprint}"
 
-    # Правило 1: iOS SYN (TTL < 65, length 64) → мягкий лимит → accept
-    cat >> "$NFT_SCRIPT_FILE" << SMART1EOF
-nft "add rule inet \$TABLE input ${_ip_match}tcp dport ${_port} tcp flags & (syn | ack) == syn ip ttl < 65 meta length 64 meter mtproxyl_ios { ip saddr timeout ${_timeout} limit rate ${_ios_rate} burst ${_ios_burst} packets } accept comment \\"mtproxyl_smart_ios_accept\\""
+    local _ios_match
+    if [ "$_ios_detect" = "ttl" ]; then
+        _ios_match="ip ttl < 65 meta length 64"
+    else
+        _ios_match="@th,108,20 0x2ffff @th,160,16 0x204 @th,192,16 0x103 @th,224,24 0x10108 @th,320,32 0x4020000"
+    fi
+
+    if [ "$_ios_limit" = "true" ]; then
+        cat >> "$NFT_SCRIPT_FILE" << SMART1EOF
+nft "add rule inet \$TABLE input ${_ip_match}tcp dport ${_port} tcp flags & (syn | ack) == syn ${_ios_match} meter mtproxyl_ios { ip saddr timeout ${_timeout} limit rate ${_ios_rate} burst ${_ios_burst} packets } counter accept comment \\"mtproxyl_smart_ios_accept\\""
 SMART1EOF
 
-    # Правило 2: iOS SYN сверх лимита → REJECT
-    cat >> "$NFT_SCRIPT_FILE" << SMART2EOF
-nft "add rule inet \$TABLE input ${_ip_match}tcp dport ${_port} tcp flags & (syn | ack) == syn ip ttl < 65 meta length 64 counter reject with tcp reset comment \\"mtproxyl_smart_ios_reject\\""
+        cat >> "$NFT_SCRIPT_FILE" << SMART2EOF
+nft "add rule inet \$TABLE input ${_ip_match}tcp dport ${_port} tcp flags & (syn | ack) == syn ${_ios_match} counter reject with tcp reset comment \\"mtproxyl_smart_ios_reject\\""
 SMART2EOF
+    else
+        cat >> "$NFT_SCRIPT_FILE" << SMART1NOLIMEOF
+nft "add rule inet \$TABLE input ${_ip_match}tcp dport ${_port} tcp flags & (syn | ack) == syn ${_ios_match} counter accept comment \\"mtproxyl_smart_ios_accept\\""
+SMART1NOLIMEOF
+    fi
 
-    # Правило 3: Остальные SYN → строгий лимит → accept
-    cat >> "$NFT_SCRIPT_FILE" << SMART3EOF
-nft "add rule inet \$TABLE input ${_ip_match}tcp dport ${_port} tcp flags & (syn | ack) == syn meter mtproxyl_other { ip saddr timeout ${_timeout} limit rate ${_other_rate} burst ${_other_burst} packets } accept comment \\"mtproxyl_smart_other_accept\\""
-SMART3EOF
-
-    # Правило 4: Остальные SYN сверх лимита → действие по настройке
     local _other_action_cmd
     case "${NFT_OTHER_ACTION:-icmp-host-unreachable}" in
         drop)
@@ -310,9 +345,19 @@ SMART3EOF
             _other_action_cmd="reject with tcp reset" ;;
     esac
 
-    cat >> "$NFT_SCRIPT_FILE" << SMART4EOF
+    if [ "$_other_limit" = "true" ]; then
+        cat >> "$NFT_SCRIPT_FILE" << SMART3EOF
+nft "add rule inet \$TABLE input ${_ip_match}tcp dport ${_port} tcp flags & (syn | ack) == syn meter mtproxyl_other { ip saddr timeout ${_timeout} limit rate ${_other_rate} burst ${_other_burst} packets } counter accept comment \\"mtproxyl_smart_other_accept\\""
+SMART3EOF
+
+        cat >> "$NFT_SCRIPT_FILE" << SMART4EOF
 nft "add rule inet \$TABLE input ${_ip_match}tcp dport ${_port} tcp flags & (syn | ack) == syn counter ${_other_action_cmd} comment \\"mtproxyl_smart_other_reject\\""
 SMART4EOF
+    else
+        cat >> "$NFT_SCRIPT_FILE" << SMART3NOLIMEOF
+nft "add rule inet \$TABLE input ${_ip_match}tcp dport ${_port} tcp flags & (syn | ack) == syn counter accept comment \\"mtproxyl_smart_other_accept\\""
+SMART3NOLIMEOF
+    fi
 }
 
 # ── Применение / удаление правил ──────────────────────────────
@@ -404,6 +449,10 @@ apply_nft_preset() {
             NFT_IOS_BURST="30"
             NFT_OTHER_RATE="54/minute"
             NFT_OTHER_BURST="1"
+            NFT_IOS_LIMIT_ENABLED="true"
+            NFT_OTHER_LIMIT_ENABLED="true"
+            NFT_IOS_DETECT="fingerprint"
+            NFT_OTHER_ACTION="icmp-host-unreachable"
             ;;
         *) log_error "Неизвестный пресет: $1"; return 1 ;;
     esac
@@ -969,13 +1018,32 @@ nft_status_line() {
         if [ "$NFT_MODE" = "smart" ]; then
             local _ip_info=""
             [ -n "${NFT_SERVER_IP:-}" ] && _ip_info=" ip=${NFT_SERVER_IP}"
-            local _action_short
-            case "${NFT_OTHER_ACTION:-icmp-host-unreachable}" in
-                icmp-host-unreachable) _action_short="icmp" ;;
-                drop) _action_short="drop" ;;
-                *) _action_short="rst" ;;
-            esac
-            echo -e "${GREEN}Smart By-MEKO${NC} (iOS: ${NFT_IOS_RATE}/${NFT_IOS_BURST} Other: ${NFT_OTHER_RATE}/${NFT_OTHER_BURST} action:${_action_short}${_ip_info})"
+
+            local _ios_info _other_info _action_info="" _detect_info
+            if [ "${NFT_IOS_LIMIT_ENABLED:-true}" = "true" ]; then
+                _ios_info="iOS:${NFT_IOS_RATE}/${NFT_IOS_BURST}"
+            else
+                _ios_info="iOS:unlimited"
+            fi
+
+            if [ "${NFT_OTHER_LIMIT_ENABLED:-true}" = "true" ]; then
+                _other_info="Other:${NFT_OTHER_RATE}/${NFT_OTHER_BURST}"
+                case "${NFT_OTHER_ACTION:-icmp-host-unreachable}" in
+                    icmp-host-unreachable) _action_info=" action:icmp" ;;
+                    drop) _action_info=" action:drop" ;;
+                    *) _action_info=" action:rst" ;;
+                esac
+            else
+                _other_info="Other:unlimited"
+            fi
+
+            if [ "${NFT_IOS_DETECT:-fingerprint}" = "ttl" ]; then
+                _detect_info=" detect:ttl"
+            else
+                _detect_info=" detect:fp"
+            fi
+
+            echo -e "${GREEN}Smart By-MEKO${NC} (${_ios_info} ${_other_info}${_action_info}${_detect_info}${_ip_info})"
         else
             if [ -n "${NFT_SERVER_IP:-}" ]; then
                 echo -e "${GREEN}Classic${NC} (${NFT_RATE} burst ${NFT_BURST} ip=${NFT_SERVER_IP})"

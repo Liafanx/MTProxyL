@@ -52,15 +52,17 @@ tui_settings_menu() {
                 press_any_key ;;
             3)
                 local _old_domain="$PROXY_DOMAIN"
-                echo -e "  ${DIM}[1] rutube.ru  [2] google.com  [3] microsoft.com  [4] Свой${NC}"
+                echo -e "  ${DIM}[1] autoscout24.ru  [2] google.com  [3] twitch.tv  [4] Свой${NC}"
                 local d; d=$(read_choice "выбор" "1")
                 case "$d" in
                     2) PROXY_DOMAIN="google.com" ;;
-                    3) PROXY_DOMAIN="microsoft.com" ;;
+                    3) PROXY_DOMAIN="twitch.tv" ;;
                     4) echo -en "  Домен: "; local cd; read -r cd
                        [ -n "$cd" ] && validate_domain "$cd" && PROXY_DOMAIN="$cd" || log_error "Некорректный домен" ;;
-                    *) PROXY_DOMAIN="rutube.ru" ;;
+                    *) PROXY_DOMAIN="autoscout24.ru" ;;
                 esac
+                auto_set_fake_cert_len "$PROXY_DOMAIN" 2>/dev/null || \
+                    log_warn "Не удалось определить TLS cert length для '${PROXY_DOMAIN}', оставляем ${FAKE_CERT_LEN:-2048}"
                 save_settings; log_success "Домен: ${PROXY_DOMAIN}"
                 # Предложить обновить mask backend
                 if [ "$MASKING_ENABLED" = "true" ] && [ "$PROXY_DOMAIN" != "$_old_domain" ]; then
