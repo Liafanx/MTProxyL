@@ -10,6 +10,7 @@
 
 - [Установка](#install)
 - [Быстрый старт](#quickstart)
+- [⚠️ Важно: выбор домена для FakeTLS](#pq-warning)
 - [Что умеет](#features)
 - [Основные CLI команды](#cli)
   - [Прокси](#cli-proxy)
@@ -30,6 +31,8 @@
 - [Модульная архитектура](#architecture)
 - [Требования](#requirements)
 - [Удаление](#uninstall)
+- [Благодарности](#thanks)
+- [Поддержать автора](#donate)
 
 ---
 
@@ -74,6 +77,22 @@ mtproxyl
 
 ---
 
+<a id="pq-warning"></a>
+
+## ⚠️ Важно: выбор домена для FakeTLS
+
+> **Используя любой вариант SYN-ограничений (Smart By-MEKO, Classic, встроенный synlimit telemt), убедитесь что домен для FakeTLS поддерживает постквантовый гибридный алгоритм обмена ключами (X25519MLKEM768 + классическая эллиптическая кривая).**
+>
+> Если выбранный домен **не поддерживает** PQ — с высокой вероятностью после попытки подключения с iOS прилетит блокировка и подключение не удастся (бесконечное «Соединение…»).
+>
+> **Как проверить:** отправьте домен боту [@Sni_checker_bot](https://t.me/Sni_checker_bot)
+>
+> - 🟢 **сервер принимает X25519MLKEM768** — домен подходит
+> - 🔴 **PQ не поддерживается** + `Peer Temp Key = X25519` — **iOS не сможет подключиться**
+>
+
+---
+
 <a id="features"></a>
 
 ## Что умеет
@@ -111,10 +130,13 @@ mtproxyl
 Два режима на выбор:
 
 **★ Smart By-MEKO** *(рекомендуется)* — интеллектуальное разделение клиентов:
-- iOS и Android/Desktop разделяются **автоматически по TTL** на одном порту
+- iOS и Android/Desktop разделяются автоматически на одном порту
+- Два метода определения iOS: **TCP fingerprint** *(рекомендуется)* и TTL+Length *(устаревший)*
+- Лимиты iOS и Other можно включать/отключать раздельно
 - Выбор действия для non-iOS: `icmp-host-unreachable` *(рекомендуется)* / `reject` / `drop`
 - `icmp-host-unreachable` — Telegram мгновенно переключается на основное соединение, медиа без задержек
 - Один порт для всех клиентов, iOS Fix v2 и client_mss не нужны
+- Автоопределение `fake_cert_len` при выборе домена
 - Вдохновлён проектом [MTPROTO-FIX-By-MEKO](https://github.com/Mekotofeuka/MTPR-FIX-By-MEKO)
 
 **Оптимизация By-MEKO** — системные sysctl-параметры из проекта MTPROTO-FIX-By-MEKO:
@@ -198,8 +220,8 @@ mtproxyl port 443                      # Изменить порт прокси
 mtproxyl port                          # Показать текущий порт
 mtproxyl ip auto                       # Сбросить IP на автоопределение
 mtproxyl ip 1.2.3.4                    # Установить свой IP
-mtproxyl domain cloudflare.com         # Установить FakeTLS домен
-mtproxyl mask-backend 127.0.0.1:8443   # Установить mask backend
+mtproxyl domain cloudflare.com         # Установить FakeTLS домен (авто-подбор fake_cert_len)
+mtproxyl mask-backend 127.0.0.1:8443   # Установить mask backend (авто-подбор fake_cert_len)
 mtproxyl sni-policy mask               # Установить SNI-политику (mask/drop/accept/reject_handshake)
 mtproxyl config                        # Показать текущий config.toml
 ```
@@ -375,38 +397,45 @@ counter drop
 
 ### Как работает
 
-Вместо одного правила для всех — четыре точечных правила через nftables:
+Вместо одного правила для всех — точечные правила через nftables. iOS определяется одним из двух методов:
+
+#### Метод 1: TCP fingerprint *(по умолчанию, рекомендуется)*
+
+Точное определение iOS по TCP SYN payload — работает независимо от TTL и длины пакета:
 
 ```nft
-# 1. iOS SYN (TTL < 65, length 64) → мягкий лимит → accept
-tcp dport PORT tcp flags syn ip ttl < 65 meta length 64
+# 1. iOS SYN (TCP fingerprint) → мягкий лимит → accept
+tcp dport PORT tcp flags syn
+  @th,108,20 0x2ffff @th,160,16 0x204 @th,192,16 0x103
+  @th,224,24 0x10108 @th,320,32 0x4020000
   meter ios { ip saddr limit rate 15/second burst 30 } accept
 
 # 2. iOS SYN сверх лимита → мгновенный RST
-tcp dport PORT tcp flags syn ip ttl < 65 meta length 64
-  reject with tcp reset
-
 # 3. Остальные SYN → строгий лимит → accept
-tcp dport PORT tcp flags syn
-  meter other { ip saddr limit rate 54/minute burst 1 } accept
-
-# 4. Остальные SYN сверх лимита → настраиваемое действие
-tcp dport PORT tcp flags syn
-  reject with icmp type host-unreachable  # по умолчанию
-  # или: reject with tcp reset
-  # или: drop
+# 4. Остальные SYN сверх лимита → настраиваемое действие (icmp/rst/drop)
 ```
 
-### Три ключевых отличия от Classic
+#### Метод 2: TTL + Length *(устаревший, для совместимости)*
 
-**Разделение iOS и остальных клиентов по TTL**
+```nft
+# iOS: ip ttl < 65 AND meta length 64
+```
 
-iOS отправляет SYN с TTL=64 (то есть TTL < 65 у сервера) и длиной пакета ровно 64 байта. Это позволяет выделить iOS-клиентов **без второго порта**:
+Переключить метод: меню `[7] → [4] → [9]`
 
-| Клиент | TTL | Пакет | Лимит |
-|--------|-----|-------|-------|
-| iOS | < 65 | 64 байта | 15/sec burst 30 — мягкий |
-| Android / Desktop / macOS | ≥ 65 | любой | 54/min burst 1 — строгий |
+### Ключевые отличия от Classic
+
+**Разделение iOS и остальных клиентов**
+
+| Метод | iOS определяется по | Точность |
+|-------|-------------------|----------|
+| **fingerprint** | TCP SYN payload (5 полей) | Высокая |
+| TTL+Length | `ip ttl < 65` + `meta length 64` | Средняя |
+
+| Клиент | Лимит |
+|--------|-------|
+| iOS | 15/sec burst 30 — мягкий (можно отключить) |
+| Android / Desktop / macOS | 54/min burst 1 — строгий (можно отключить) |
 
 **REJECT вместо DROP**
 
@@ -448,9 +477,12 @@ mtproxyl nft preset smart
 |----------|-------------|----------|
 | iOS Rate | 15/second | Лимит SYN для iOS клиентов |
 | iOS Burst | 30 | Burst для iOS |
+| iOS Limit | включён | Можно отключить — безусловный ACCEPT для iOS |
 | Other Rate | 54/minute | Лимит SYN для Android/Desktop |
 | Other Burst | 1 | Burst для Android/Desktop |
+| Other Limit | включён | Можно отключить — безусловный ACCEPT для Other |
 | Other Action | icmp-host-unreachable | Действие при превышении лимита non-iOS |
+| iOS Detect | fingerprint | Метод определения iOS: `fingerprint` или `ttl` |
 | Timeout | 60s | Время жизни записи в meter |
 
 ### Systemd-служба
@@ -473,6 +505,8 @@ nft list table inet mtproxyl_limit
 ## iOS фиксы
 
 > При использовании **Smart By-MEKO** iOS Fix v2 не нужен — iOS и Android разделяются автоматически на одном порту.
+
+> ⚠️ **Независимо от выбранного метода SYN-ограничений**, убедитесь что FakeTLS домен поддерживает постквантовый обмен ключами (X25519MLKEM768). [Подробнее →](#pq-warning)
 
 ### Вариант 1 — TCP keepalive
 
@@ -682,11 +716,15 @@ Docker **не удаляется**. Глобальный Docker build cache **н
 
 ---
 
+<a id="thanks"></a>
+
 ## Благодарности
 
 - **[MTPROTO-FIX-By-MEKO](https://github.com/Mekotofeuka/MTPR-FIX-By-MEKO)** — идея Smart режима NFT: разделение iOS/Android по TTL+Length, REJECT вместо DROP, оптимизация системных параметров sysctl
 
 ---
+
+<a id="donate"></a>
 
 ## Поддержать автора
 
