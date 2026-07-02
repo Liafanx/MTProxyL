@@ -688,6 +688,16 @@ Docker **не удаляется**. Глобальный Docker build cache **н
 
 ---
 
+## Поддержать автора
+
+Если хотите поддержать проект и автора:
+- [Cloudtips](https://pay.cloudtips.ru/p/ad2f7e4d)
+- GRAM (TON) ```UQCcJR7546fnGX7jnJeFQdTUVMezVIvxutn074UezGOy_w8n```
+- USDT (TRC20) ```TJKiqjDX7nLihV3ACJdJ9cgPwM169L2xmB```
+- USDT (BER20) ```0xBf96ADb7c81eab25E56d7c40Bd414582E5B714A1```
+
+---
+
 ## Лицензия
 
 MIT
