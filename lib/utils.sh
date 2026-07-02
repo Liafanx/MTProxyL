@@ -353,6 +353,8 @@ handle_domain_command() {
     if validate_domain "$new_domain"; then
         local _old_domain="$PROXY_DOMAIN"
         PROXY_DOMAIN="$new_domain"
+        auto_set_fake_cert_len "$PROXY_DOMAIN" 2>/dev/null || \
+            log_warn "Не удалось определить TLS cert length для '${PROXY_DOMAIN}', оставляем ${FAKE_CERT_LEN:-2048}"
         save_settings
         log_success "Домен: ${PROXY_DOMAIN}"
         # Предложить обновить mask backend
