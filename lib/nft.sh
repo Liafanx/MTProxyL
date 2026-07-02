@@ -452,6 +452,7 @@ apply_nft_preset() {
             NFT_IOS_LIMIT_ENABLED="true"
             NFT_OTHER_LIMIT_ENABLED="true"
             NFT_IOS_DETECT="fingerprint"
+            NFT_OTHER_ACTION="icmp-host-unreachable"
             ;;
         *) log_error "Неизвестный пресет: $1"; return 1 ;;
     esac
