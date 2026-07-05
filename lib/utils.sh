@@ -345,6 +345,10 @@ handle_ip_command() {
 
 handle_domain_command() {
     local new_domain="${1:-}"
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ] && [ -n "$new_domain" ]; then
+        log_warn "Selfmask активен. Домен управляется через 'mtproxyl selfmask setup'"
+        return 1
+    fi
     if [ -z "$new_domain" ]; then
         echo -e "  ${BOLD}Домен:${NC} ${PROXY_DOMAIN}"
         return 0
@@ -382,6 +386,10 @@ handle_domain_command() {
 
 handle_mask_backend() {
     local input="${1:-}"
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ] && [ -n "$input" ]; then
+        log_warn "Selfmask активен. Локальный mask backend управляется через selfmask"
+        return 1
+    fi
     if [ -z "$input" ]; then
         echo -e "  ${BOLD}Mask backend:${NC} ${MASKING_HOST:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}"
         return 0
