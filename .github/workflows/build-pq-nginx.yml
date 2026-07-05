@@ -86,8 +86,8 @@ jobs:
             --with-http_sub_module \
             --with-threads \
             --with-pcre \
-            --with-ld-opt="-L${{ env.INSTALL_PREFIX }}/lib64 -Wl,-rpath,${{ env.INSTALL_PREFIX }}/lib64" \
-            --with-cc-opt="-I${{ env.INSTALL_PREFIX }}/include"
+            --with-openssl=/tmp/openssl-${{ github.event.inputs.openssl_version }} \
+            --with-openssl-opt=enable-tls1_3
           make -j$(nproc)
           sudo make install
 
@@ -97,6 +97,8 @@ jobs:
           ${{ env.INSTALL_PREFIX }}/sbin/nginx -v 2>&1
           echo "=== OpenSSL внутри nginx ==="
           ${{ env.INSTALL_PREFIX }}/sbin/nginx -V 2>&1 | grep -i openssl
+          echo "=== Поддержка групп в openssl ==="
+          ${{ env.INSTALL_PREFIX }}/bin/openssl list -groups 2>/dev/null | grep -E 'X25519|MLKEM' || true          
 
       - name: Упаковка архива amd64
         run: |
@@ -161,33 +163,33 @@ jobs:
               make install_sw install_ssldirs
 
           # nginx
-          RUN cd /tmp && \\
-              wget -q "https://nginx.org/download/nginx-\${NGINX_VER}.tar.gz" && \\
-              tar xzf "nginx-\${NGINX_VER}.tar.gz" && \\
-              cd "nginx-\${NGINX_VER}" && \\
-              ./configure \\
-                --prefix=\${PREFIX} \\
-                --conf-path=\${PREFIX}/conf/nginx.conf \\
-                --error-log-path=/var/log/mtproxyl-nginx/error.log \\
-                --http-log-path=/var/log/mtproxyl-nginx/access.log \\
-                --pid-path=/run/mtproxyl-nginx.pid \\
-                --lock-path=/var/lock/mtproxyl-nginx.lock \\
-                --http-client-body-temp-path=/var/lib/mtproxyl-nginx/body \\
-                --http-proxy-temp-path=/var/lib/mtproxyl-nginx/proxy \\
-                --http-fastcgi-temp-path=/var/lib/mtproxyl-nginx/fastcgi \\
-                --with-http_ssl_module \\
-                --with-http_v2_module \\
-                --with-http_realip_module \\
-                --with-http_gzip_static_module \\
-                --with-http_stub_status_module \\
-                --with-http_sub_module \\
-                --with-threads \\
-                --with-pcre \\
-                --with-ld-opt="-L\${PREFIX}/lib64 -Wl,-rpath,\${PREFIX}/lib64" \\
-                --with-cc-opt="-I\${PREFIX}/include" && \\
-              make -j\$(nproc) && \\
+          RUN cd /tmp && \
+              wget -q "https://nginx.org/download/nginx-${NGINX_VER}.tar.gz" && \
+              tar xzf "nginx-${NGINX_VER}.tar.gz" && \
+              cd "nginx-${NGINX_VER}" && \
+              ./configure \
+                --prefix=${PREFIX} \
+                --conf-path=${PREFIX}/conf/nginx.conf \
+                --error-log-path=/var/log/mtproxyl-nginx/error.log \
+                --http-log-path=/var/log/mtproxyl-nginx/access.log \
+                --pid-path=/run/mtproxyl-nginx.pid \
+                --lock-path=/var/lock/mtproxyl-nginx.lock \
+                --http-client-body-temp-path=/var/lib/mtproxyl-nginx/body \
+                --http-proxy-temp-path=/var/lib/mtproxyl-nginx/proxy \
+                --http-fastcgi-temp-path=/var/lib/mtproxyl-nginx/fastcgi \
+                --with-http_ssl_module \
+                --with-http_v2_module \
+                --with-http_realip_module \
+                --with-http_gzip_static_module \
+                --with-http_stub_status_module \
+                --with-http_sub_module \
+                --with-threads \
+                --with-pcre \
+                --with-openssl=/tmp/openssl-${OPENSSL_VER} \
+                --with-openssl-opt=enable-tls1_3 && \
+              make -j$(nproc) && \
               make install
-
+              
           FROM --platform=linux/arm64 debian:bookworm-slim
           COPY --from=builder /opt/mtproxyl-nginx /opt/mtproxyl-nginx
           RUN /opt/mtproxyl-nginx/sbin/nginx -v 2>&1
