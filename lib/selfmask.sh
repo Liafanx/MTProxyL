@@ -1,6 +1,6 @@
 #!/bin/bash
 # MTProxyL — Selfmask через локальный nginx + Let's Encrypt
-# Важно: backend nginx для mask работает на TLS 1.2
+# Важно: backend nginx для mask работает на TLS 1.2 + 1.3
 
 SELFMASK_PQ_PREFIX="/opt/mtproxyl-nginx"
 SELFMASK_PQ_SERVICE="mtproxyl-pq-nginx.service"
