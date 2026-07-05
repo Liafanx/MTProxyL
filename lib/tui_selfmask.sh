@@ -4,21 +4,40 @@
 tui_selfmask_menu() {
     while true; do
         clear_screen
-        draw_header "SELFMASK (NGINX + LET'S ENCRYPT)"
-        echo ""
-        echo -e "  ${BOLD}Статус:${NC} $(selfmask_status_line 2>/dev/null || echo "${DIM}неизвестно${NC}")"
-        echo -e "  ${BOLD}Домен:${NC}  ${SELFMASK_DOMAIN:-${DIM}не задан${NC}}"
-        echo -e "  ${BOLD}Backend:${NC} 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}"
-        echo -e "  ${BOLD}TLS:${NC}    ${SELFMASK_TLS_PROTOCOLS:-TLSv1.2}"
+        draw_header "SELFMASK (PQ NGINX + LET'S ENCRYPT)"
         echo ""
 
-        echo -e "  ${YELLOW}${BOLD}Важно:${NC} домен FakeTLS должен поддерживать PQ hybrid"
-        echo -e "  ${DIM}Проверка: @Sni_checker_bot${NC}"
+        load_nft_settings 2>/dev/null
+
+        echo -e "  ${BOLD}Статус:${NC}    $(selfmask_status_line 2>/dev/null || echo "${DIM}неизвестно${NC}")"
+        echo -e "  ${BOLD}Домен:${NC}     ${SELFMASK_DOMAIN:-${DIM}не задан${NC}}"
+        echo -e "  ${BOLD}Backend:${NC}   127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}"
+        echo -e "  ${BOLD}TLS:${NC}       ${SELFMASK_TLS_PROTOCOLS:-TLSv1.2} + TLSv1.3"
+        echo -e "  ${BOLD}PQ nginx:${NC}  $([ -x "$(_selfmask_pq_nginx_bin)" ] && echo -e "${GREEN}установлен${NC}" || echo -e "${DIM}не установлен${NC}")"
+
+        if [ -n "${SELFMASK_DOMAIN:-}" ] && [ -f "/etc/letsencrypt/live/${SELFMASK_DOMAIN}/fullchain.pem" ]; then
+            echo -e "  ${BOLD}Сертификат:${NC} ${GREEN}найден${NC}"
+        else
+            echo -e "  ${BOLD}Сертификат:${NC} ${DIM}не найден${NC}"
+        fi
+
+        if systemctl is-active "${SELFMASK_PQ_SERVICE}" &>/dev/null; then
+            echo -e "  ${BOLD}Служба:${NC}    ${GREEN}активна${NC}"
+        else
+            echo -e "  ${BOLD}Служба:${NC}    ${DIM}не запущена${NC}"
+        fi
+
+        echo ""
+        echo -e "  ${YELLOW}${BOLD}Важно:${NC}"
+        echo -e "  ${DIM}Домен для selfmask должен поддерживать PQ hybrid (X25519MLKEM768).${NC}"
+        echo -e "  ${DIM}Проверка: отправьте домен боту ${CYAN}@Sni_checker_bot${NC}"
+        echo -e "  ${DIM}🟢 X25519MLKEM768 — подходит${NC}"
+        echo -e "  ${DIM}🔴 PQ не поддерживается + X25519 — iOS не подключится${NC}"
         echo ""
 
-        echo -e "  ${CYAN}[1]${NC}  Статус и требования"
+        echo -e "  ${CYAN}[1]${NC}  Подробный статус и требования"
         echo -e "  ${CYAN}[2]${NC}  Настроить / переустановить selfmask"
-        echo -e "  ${CYAN}[3]${NC}  Проверить selfmask"
+        echo -e "  ${CYAN}[3]${NC}  Проверка selfmask (verify)"
         echo -e "  ${CYAN}[4]${NC}  Отключить selfmask"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
