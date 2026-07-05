@@ -674,11 +674,12 @@ selfmask_disable() {
     SELFMASK_ENABLED="false"
 
     if [ "${MASKING_HOST:-}" = "127.0.0.1" ] && [ "${MASKING_PORT:-}" = "${SELFMASK_NGINX_BACKEND_PORT}" ]; then
-        MASKING_ENABLED="false"
+        MASKING_ENABLED="true"
         MASKING_HOST=""
         MASKING_PORT="443"
-        log_warn "Маскировка переведена в выключенное состояние, чтобы избежать зацикливания на localhost"
-        log_warn "После отключения selfmask проверьте ссылки: mtproxyl secret link"
+        log_info "Selfmask отключён — маскировка возвращена в обычный режим"
+        log_info "Теперь backend по умолчанию: ${PROXY_DOMAIN}:443"
+        log_warn "Проверьте ссылки после отключения selfmask: mtproxyl secret link"
     fi
 
     save_settings
