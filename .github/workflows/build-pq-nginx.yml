@@ -46,7 +46,7 @@ jobs:
         run: |
           cat > Dockerfile.pq << 'EOF'
           ARG TARGETPLATFORM
-          FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS builder
+          FROM debian:bookworm-slim AS builder
 
           ARG OPENSSL_VER
           ARG NGINX_VER
@@ -74,7 +74,7 @@ jobs:
               make -j"$(nproc)" && \
               make install_sw install_ssldirs
 
-          # Сборка nginx с указанием исходников OpenSSL
+          # Сборка nginx с исходниками OpenSSL
           RUN cd /tmp && \
               wget -q "https://nginx.org/download/nginx-${NGINX_VER}.tar.gz" && \
               tar xzf "nginx-${NGINX_VER}.tar.gz" && \
@@ -101,8 +101,26 @@ jobs:
                 --with-openssl-opt=enable-tls1_3 && \
               make -j"$(nproc)" && \
               make install
+          
+          # Проверка OpenSSL через локальные библиотеки
+          RUN LD_LIBRARY_PATH=${PREFIX}/lib64:${PREFIX}/lib ${PREFIX}/bin/openssl version
 
-          RUN ${PREFIX}/bin/openssl version
+          # Обёртка для отдельного OpenSSL
+          RUN printf '%s\n' \
+            '#!/bin/sh' \
+            'PREFIX=/opt/mtproxyl-nginx' \
+            'export LD_LIBRARY_PATH="${PREFIX}/lib64:${PREFIX}/lib:${LD_LIBRARY_PATH}"' \
+            'exec "${PREFIX}/bin/openssl" "$@"' \
+            > ${PREFIX}/bin/openssl-pq && chmod +x ${PREFIX}/bin/openssl-pq
+
+          # Обёртка для nginx
+          RUN printf '%s\n' \
+            '#!/bin/sh' \
+            'PREFIX=/opt/mtproxyl-nginx' \
+            'export LD_LIBRARY_PATH="${PREFIX}/lib64:${PREFIX}/lib:${LD_LIBRARY_PATH}"' \
+            'exec "${PREFIX}/sbin/nginx" "$@"' \
+            > ${PREFIX}/sbin/nginx-pq && chmod +x ${PREFIX}/sbin/nginx-pq
+
           RUN ${PREFIX}/sbin/nginx -V 2>&1 || true
 
           FROM scratch AS artifact
