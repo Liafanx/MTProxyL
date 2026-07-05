@@ -253,8 +253,8 @@ Wants=network-online.target
 [Service]
 Type=forking
 PIDFile=/run/mtproxyl-nginx.pid
-ExecStartPre=$(_selfmask_pq_nginx_bin) -t
-ExecStart=$(_selfmask_pq_nginx_bin)
+ExecStartPre=$(_selfmask_pq_nginx_bin) -t -c $(_selfmask_pq_conf)
+ExecStart=$(_selfmask_pq_nginx_bin) -c $(_selfmask_pq_conf)
 ExecReload=$(_selfmask_pq_nginx_bin) -s reload
 ExecStop=$(_selfmask_pq_nginx_bin) -s quit
 Restart=on-failure
@@ -361,11 +361,13 @@ EOF
     _selfmask_open_public_ports
     _selfmask_install_pq_service
 
-    if ! "$(_selfmask_pq_nginx_bin)" -t &>/dev/null; then
+    local _test_out=""
+    _test_out=$("$(_selfmask_pq_nginx_bin)" -t -c "$(_selfmask_pq_conf)" 2>&1) || {
         log_error "Ошибка временного конфига PQ nginx для ACME"
+        echo "$_test_out" | sed 's/^/    /'
         return 1
-    fi
-
+    }
+    
     systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null || {
         log_error "Не удалось запустить PQ nginx"
         return 1
@@ -465,10 +467,12 @@ http {
 }
 EOF
 
-    if ! "$(_selfmask_pq_nginx_bin)" -t &>/dev/null; then
+    local _test_out=""
+    _test_out=$("$(_selfmask_pq_nginx_bin)" -t -c "$(_selfmask_pq_conf)" 2>&1) || {
         log_error "Ошибка итогового конфига PQ nginx"
+        echo "$_test_out" | sed 's/^/    /'
         return 1
-    fi
+    }
 
     systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null || {
         log_error "Не удалось перезапустить PQ nginx"
