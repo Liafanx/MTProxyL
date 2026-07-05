@@ -20,149 +20,61 @@ on:
           - 'true'
           - 'false'
 
-env:
-  INSTALL_PREFIX: /opt/mtproxyl-nginx
-
 jobs:
-  build-amd64:
-    name: Сборка amd64
+  build:
+    name: Сборка ${{ matrix.arch }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+
+    permissions:
+      contents: write
 
     steps:
-      - name: Установка зависимостей
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            build-essential wget zlib1g-dev \
-            libpcre3 libpcre3-dev
-
-      - name: Скачивание OpenSSL ${{ github.event.inputs.openssl_version }}
-        run: |
-          cd /tmp
-          wget -q "https://github.com/openssl/openssl/releases/download/openssl-${{ github.event.inputs.openssl_version }}/openssl-${{ github.event.inputs.openssl_version }}.tar.gz"
-          tar xzf "openssl-${{ github.event.inputs.openssl_version }}.tar.gz"
-
-      - name: Сборка OpenSSL ${{ github.event.inputs.openssl_version }}
-        run: |
-          cd "/tmp/openssl-${{ github.event.inputs.openssl_version }}"
-          ./Configure \
-            --prefix=${{ env.INSTALL_PREFIX }} \
-            --openssldir=${{ env.INSTALL_PREFIX }}/ssl \
-            '-Wl,-rpath,$(LIBRPATH)'
-          make -j$(nproc)
-          sudo make install_sw install_ssldirs
-
-      - name: Проверка OpenSSL
-        run: |
-          echo "=== Версия OpenSSL ==="
-          ${{ env.INSTALL_PREFIX }}/bin/openssl version
-          echo "=== Поддержка X25519MLKEM768 ==="
-          ${{ env.INSTALL_PREFIX }}/bin/openssl list -groups 2>/dev/null | grep -i mlkem || true
-
-      - name: Скачивание nginx ${{ github.event.inputs.nginx_version }}
-        run: |
-          cd /tmp
-          wget -q "https://nginx.org/download/nginx-${{ github.event.inputs.nginx_version }}.tar.gz"
-          tar xzf "nginx-${{ github.event.inputs.nginx_version }}.tar.gz"
-
-      - name: Сборка nginx с OpenSSL PQ
-        run: |
-          cd "/tmp/nginx-${{ github.event.inputs.nginx_version }}"
-          ./configure \
-            --prefix=${{ env.INSTALL_PREFIX }} \
-            --conf-path=${{ env.INSTALL_PREFIX }}/conf/nginx.conf \
-            --error-log-path=/var/log/mtproxyl-nginx/error.log \
-            --http-log-path=/var/log/mtproxyl-nginx/access.log \
-            --pid-path=/run/mtproxyl-nginx.pid \
-            --lock-path=/var/lock/mtproxyl-nginx.lock \
-            --http-client-body-temp-path=/var/lib/mtproxyl-nginx/body \
-            --http-proxy-temp-path=/var/lib/mtproxyl-nginx/proxy \
-            --http-fastcgi-temp-path=/var/lib/mtproxyl-nginx/fastcgi \
-            --with-http_ssl_module \
-            --with-http_v2_module \
-            --with-http_realip_module \
-            --with-http_gzip_static_module \
-            --with-http_stub_status_module \
-            --with-http_sub_module \
-            --with-threads \
-            --with-pcre \
-            --with-openssl=/tmp/openssl-${{ github.event.inputs.openssl_version }} \
-            --with-openssl-opt=enable-tls1_3
-          make -j$(nproc)
-          sudo make install
-
-      - name: Проверка nginx
-        run: |
-          echo "=== Версия nginx ==="
-          ${{ env.INSTALL_PREFIX }}/sbin/nginx -v 2>&1
-          echo "=== OpenSSL внутри nginx ==="
-          ${{ env.INSTALL_PREFIX }}/sbin/nginx -V 2>&1 | grep -i openssl
-          echo "=== Поддержка групп в openssl ==="
-          ${{ env.INSTALL_PREFIX }}/bin/openssl list -groups 2>/dev/null | grep -E 'X25519|MLKEM' || true          
-
-      - name: Упаковка архива amd64
-        run: |
-          OPENSSL_VER="${{ github.event.inputs.openssl_version }}"
-          NGINX_VER="${{ github.event.inputs.nginx_version }}"
-          ARCHIVE="mtproxyl-pq-nginx-${NGINX_VER}-openssl${OPENSSL_VER}-linux-amd64.tar.gz"
-
-          cd /opt
-          sudo tar czf "/tmp/${ARCHIVE}" mtproxyl-nginx/
-
-          echo "ARCHIVE_NAME=${ARCHIVE}" >> "$GITHUB_ENV"
-          echo "ARCHIVE_PATH=/tmp/${ARCHIVE}" >> "$GITHUB_ENV"
-
-      - name: Сохранение артефакта amd64
-        uses: actions/upload-artifact@v4
-        with:
-          name: pq-nginx-amd64
-          path: ${{ env.ARCHIVE_PATH }}
-          retention-days: 7
-
-  build-arm64:
-    name: Сборка arm64 (через QEMU)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Установка QEMU
+      - name: Подготовка QEMU
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
 
-      - name: Установка Docker Buildx
+      - name: Подготовка Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Создание Dockerfile для сборки arm64
+      - name: Создание Dockerfile
+        shell: bash
         run: |
-          OPENSSL_VER="${{ github.event.inputs.openssl_version }}"
-          NGINX_VER="${{ github.event.inputs.nginx_version }}"
-          PREFIX="/opt/mtproxyl-nginx"
+          cat > Dockerfile.pq << 'EOF'
+          ARG TARGETPLATFORM
+          FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS builder
 
-          cat > Dockerfile.arm64 << DEOF
-          FROM --platform=linux/arm64 debian:bookworm-slim AS builder
+          ARG OPENSSL_VER
+          ARG NGINX_VER
+          ARG PREFIX=/opt/mtproxyl-nginx
 
-          ARG OPENSSL_VER=${OPENSSL_VER}
-          ARG NGINX_VER=${NGINX_VER}
-          ARG PREFIX=${PREFIX}
-
-          RUN apt-get update -qq && apt-get install -y -qq \\
-              build-essential wget zlib1g-dev \\
-              libpcre3 libpcre3-dev \\
+          RUN apt-get update -qq && apt-get install -y -qq \
+              build-essential \
+              wget \
+              ca-certificates \
+              zlib1g-dev \
+              libpcre3 \
+              libpcre3-dev \
+              perl \
+              make \
+              gcc \
+              libc6-dev \
               && rm -rf /var/lib/apt/lists/*
 
-          # OpenSSL
-          RUN cd /tmp && \\
-              wget -q "https://github.com/openssl/openssl/releases/download/openssl-\${OPENSSL_VER}/openssl-\${OPENSSL_VER}.tar.gz" && \\
-              tar xzf "openssl-\${OPENSSL_VER}.tar.gz" && \\
-              cd "openssl-\${OPENSSL_VER}" && \\
-              ./Configure \\
-                --prefix=\${PREFIX} \\
-                --openssldir=\${PREFIX}/ssl \\
-                '-Wl,-rpath,\$(LIBRPATH)' && \\
-              make -j\$(nproc) && \\
+          # Сборка OpenSSL
+          RUN cd /tmp && \
+              wget -q "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VER}/openssl-${OPENSSL_VER}.tar.gz" && \
+              tar xzf "openssl-${OPENSSL_VER}.tar.gz" && \
+              cd "openssl-${OPENSSL_VER}" && \
+              ./Configure --prefix=${PREFIX} --openssldir=${PREFIX}/ssl && \
+              make -j"$(nproc)" && \
               make install_sw install_ssldirs
 
-          # nginx
+          # Сборка nginx с указанием исходников OpenSSL
           RUN cd /tmp && \
               wget -q "https://nginx.org/download/nginx-${NGINX_VER}.tar.gz" && \
               tar xzf "nginx-${NGINX_VER}.tar.gz" && \
@@ -187,95 +99,74 @@ jobs:
                 --with-pcre \
                 --with-openssl=/tmp/openssl-${OPENSSL_VER} \
                 --with-openssl-opt=enable-tls1_3 && \
-              make -j$(nproc) && \
+              make -j"$(nproc)" && \
               make install
-              
-          FROM --platform=linux/arm64 debian:bookworm-slim
+
+          RUN ${PREFIX}/bin/openssl version
+          RUN ${PREFIX}/sbin/nginx -V 2>&1 || true
+
+          FROM scratch AS artifact
           COPY --from=builder /opt/mtproxyl-nginx /opt/mtproxyl-nginx
-          RUN /opt/mtproxyl-nginx/sbin/nginx -v 2>&1
-          DEOF
+          EOF
 
-      - name: Сборка образа arm64
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.arm64
-          platforms: linux/arm64
-          push: false
-          load: false
-          outputs: type=local,dest=./arm64-output
-          build-args: |
-            OPENSSL_VER=${{ github.event.inputs.openssl_version }}
-            NGINX_VER=${{ github.event.inputs.nginx_version }}
-
-      - name: Упаковка архива arm64
+      - name: Сборка архива ${{ matrix.arch }}
+        shell: bash
         run: |
-          OPENSSL_VER="${{ github.event.inputs.openssl_version }}"
-          NGINX_VER="${{ github.event.inputs.nginx_version }}"
-          ARCHIVE="mtproxyl-pq-nginx-${NGINX_VER}-openssl${OPENSSL_VER}-linux-arm64.tar.gz"
+          mkdir -p out
 
-          cd ./arm64-output
-          tar czf "/tmp/${ARCHIVE}" opt/mtproxyl-nginx/
+          docker buildx build \
+            --platform linux/${{ matrix.arch }} \
+            --build-arg OPENSSL_VER=${{ github.event.inputs.openssl_version }} \
+            --build-arg NGINX_VER=${{ github.event.inputs.nginx_version }} \
+            --output type=local,dest=./out \
+            -f Dockerfile.pq .
 
-          echo "ARCHIVE_NAME_ARM64=${ARCHIVE}" >> "$GITHUB_ENV"
-          echo "ARCHIVE_PATH_ARM64=/tmp/${ARCHIVE}" >> "$GITHUB_ENV"
+          ARCHIVE="mtproxyl-pq-nginx-${{ github.event.inputs.nginx_version }}-openssl${{ github.event.inputs.openssl_version }}-linux-${{ matrix.arch }}.tar.gz"
 
-      - name: Сохранение артефакта arm64
+          tar czf "${ARCHIVE}" -C out opt/mtproxyl-nginx
+
+          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - name: Загрузка артефакта
         uses: actions/upload-artifact@v4
         with:
-          name: pq-nginx-arm64
-          path: ${{ env.ARCHIVE_PATH_ARM64 }}
+          name: pq-nginx-${{ matrix.arch }}
+          path: ${{ env.ARCHIVE }}
           retention-days: 7
 
   release:
     name: Публикация Release
-    needs: [build-amd64, build-arm64]
+    needs: build
     if: github.event.inputs.push_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: Скачивание артефактов
+      - name: Скачать артефакты
         uses: actions/download-artifact@v4
         with:
-          path: artifacts/
+          path: artifacts
 
-      - name: Список файлов
-        run: find artifacts/ -type f
+      - name: Показать файлы
+        run: find artifacts -type f -maxdepth 3
 
-      - name: Публикация Release
+      - name: Создать Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: pq-nginx-${{ github.event.inputs.nginx_version }}-openssl${{ github.event.inputs.openssl_version }}
           name: "PQ Nginx ${{ github.event.inputs.nginx_version }} + OpenSSL ${{ github.event.inputs.openssl_version }}"
           body: |
-            ## nginx ${{ github.event.inputs.nginx_version }} + OpenSSL ${{ github.event.inputs.openssl_version }}
+            nginx ${{ github.event.inputs.nginx_version }}, собранный с OpenSSL ${{ github.event.inputs.openssl_version }}.
 
-            Собран специально для MTProxyL selfmask.
-            Поддерживает постквантовый гибридный обмен ключами **X25519MLKEM768**.
+            Для использования в MTProxyL selfmask.
+            Предназначен для поддержки современных TLS-групп, включая X25519MLKEM768.
 
-            ### Архитектуры
-            - `linux/amd64`
-            - `linux/arm64`
+            Архитектуры:
+            - amd64
+            - arm64
 
-            ### Установка
-            MTProxyL скачивает и устанавливает автоматически при `selfmask setup`.
-
-            ### Ручная проверка
-            ```bash
-            tar xzf mtproxyl-pq-nginx-*.tar.gz -C /opt/
-            /opt/mtproxyl-nginx/bin/openssl version
-            /opt/mtproxyl-nginx/sbin/nginx -V 2>&1 | grep openssl
-            ```
-
-            ### Проверка PQ
-            ```bash
-            /opt/mtproxyl-nginx/bin/openssl s_client \
-              -groups X25519MLKEM768 \
-              -connect 127.0.0.1:8444 \
-              -servername ВАШ_ДОМЕН 2>&1 | grep "Server Temp Key"
-            ```
+            Установка в MTProxyL будет автоматической.
           files: |
             artifacts/pq-nginx-amd64/*.tar.gz
             artifacts/pq-nginx-arm64/*.tar.gz
