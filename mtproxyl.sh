@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-#  MTProxyL v1.0.11 — Telegram MTProto Proxy Manager
+#  MTProxyL v1.1.0 — Telegram MTProto Proxy Manager
 #  https://github.com/Liafanx/MTProxyL
 #  by LiafanX
 # ═══════════════════════════════════════════════════════════════
@@ -8,7 +8,7 @@
 set -o pipefail
 export LC_NUMERIC=C
 
-VERSION="1.0.11"
+VERSION="1.1.0"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -21,7 +21,7 @@ CONNECTION_LOG="${INSTALL_DIR}/connection.log"
 CONTAINER_NAME="mtproxyl"
 DOCKER_IMAGE_BASE="mtproxyl-telemt"
 GITHUB_REPO="Liafanx/MTProxyL"
-GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
+GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/dev"
 REGISTRY_IMAGE="ghcr.io/liafanx/mtproxyl-telemt"
 TELEMT_GITHUB="telemt/telemt"
 TELEMT_MIN_VERSION="3.4.22"
@@ -40,7 +40,7 @@ fi
 
 # Загрузка библиотек
 LIB_DIR="${INSTALL_DIR}/lib"
-for _lib in colors utils settings secrets config docker engine traffic geoblock upstream backup nft tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft expert_catalog expert_mode install; do
+for _lib in colors utils settings secrets config docker engine traffic geoblock upstream backup nft selfmask tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask expert_catalog expert_mode install; do
     if [ -f "${LIB_DIR}/${_lib}.sh" ]; then
         # shellcheck source=/dev/null
         source "${LIB_DIR}/${_lib}.sh"
@@ -252,6 +252,11 @@ cli_main() {
             check_root; load_settings
             self_update
             ;;
+
+         selfmask)
+            load_settings
+            handle_selfmask_command "$@"
+            ;;       
 
         install)
             run_installer
