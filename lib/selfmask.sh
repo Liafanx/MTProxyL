@@ -2,8 +2,23 @@
 # MTProxyL — Selfmask через локальный nginx + Let's Encrypt
 # Важно: backend nginx для mask работает на TLS 1.2
 
-SELFMASK_NGINX_CONF_DIR="/etc/nginx/sites-available"
-SELFMASK_NGINX_ENABLED_DIR="/etc/nginx/sites-enabled"
+SELFMASK_PQ_PREFIX="/opt/mtproxyl-nginx"
+SELFMASK_PQ_SERVICE="mtproxyl-pq-nginx.service"
+SELFMASK_PQ_RELEASE_TAG="pq-nginx-1.27.4-openssl3.5.0"
+SELFMASK_PQ_NGINX_VERSION="1.27.4"
+SELFMASK_PQ_OPENSSL_VERSION="3.5.0"
+
+_selfmask_pq_nginx_bin() {
+    echo "${SELFMASK_PQ_PREFIX}/sbin/nginx-pq"
+}
+
+_selfmask_pq_openssl_bin() {
+    echo "${SELFMASK_PQ_PREFIX}/bin/openssl-pq"
+}
+
+_selfmask_pq_conf() {
+    echo "${SELFMASK_PQ_PREFIX}/conf/nginx.conf"
+}
 
 selfmask_supported_os() {
     [ "$(detect_os)" = "debian" ]
@@ -43,7 +58,7 @@ selfmask_show_status() {
     echo -e "  ${BOLD}Продление cert:${NC} ${SELFMASK_AUTO_RENEW:-true}"
     echo ""
 
-    local _site_conf="${SELFMASK_NGINX_CONF_DIR}/${SELFMASK_NGINX_SITE_NAME:-mtproxyl-selfmask}"
+    local _site_conf="$(_selfmask_pq_conf)"
     [ -f "$_site_conf" ] && echo -e "  ${BOLD}Nginx conf:${NC}     ${_site_conf}" || echo -e "  ${BOLD}Nginx conf:${NC}     ${DIM}не найден${NC}"
 
     if [ -n "${SELFMASK_DOMAIN:-}" ] && [ -f "/etc/letsencrypt/live/${SELFMASK_DOMAIN}/fullchain.pem" ]; then
@@ -52,8 +67,8 @@ selfmask_show_status() {
         echo -e "  ${BOLD}Сертификат:${NC}     ${DIM}не найден${NC}"
     fi
 
-    if systemctl is-active nginx &>/dev/null; then
-        echo -e "  ${BOLD}Nginx:${NC}          ${GREEN}активен${NC}"
+    if systemctl is-active "${SELFMASK_PQ_SERVICE}" &>/dev/null; then
+        echo -e "  ${BOLD}PQ nginx:${NC}       ${GREEN}активен${NC}"
     else
         echo -e "  ${BOLD}Nginx:${NC}          ${DIM}не запущен${NC}"
     fi
@@ -174,14 +189,9 @@ _selfmask_install_deps() {
     log_info "Установка зависимостей..."
 
     local _missing=()
-    command -v nginx &>/dev/null || _missing+=("nginx")
-    command -v certbot &>/dev/null || _missing+=("certbot" "python3-certbot-nginx")
+    command -v certbot &>/dev/null || _missing+=("certbot")
     command -v git &>/dev/null || _missing+=("git")
     command -v rsync &>/dev/null || _missing+=("rsync")
-
-    if command -v certbot &>/dev/null; then
-        dpkg -s python3-certbot-nginx &>/dev/null 2>&1 || _missing+=("python3-certbot-nginx")
-    fi
 
     if [ ${#_missing[@]} -gt 0 ]; then
         _wait_apt
@@ -192,49 +202,94 @@ _selfmask_install_deps() {
         }
     fi
 
-    systemctl enable nginx &>/dev/null || true
-    systemctl start nginx &>/dev/null || true
-
     log_success "Зависимости установлены"
 }
 
 _selfmask_install_pq_nginx() {
-    local _prefix="/opt/mtproxyl-nginx"
-    
-    if [ -x "${_prefix}/sbin/nginx" ]; then
+    local _prefix="${SELFMASK_PQ_PREFIX}"
+
+    if [ -x "$(_selfmask_pq_nginx_bin)" ] && [ -x "$(_selfmask_pq_openssl_bin)" ]; then
         local _ver
-        _ver=$("${_prefix}/sbin/nginx" -V 2>&1 | grep -oP 'openssl/\K[0-9.]+' || echo "?")
-        log_success "PQ nginx уже установлен (OpenSSL ${_ver})"
+        _ver=$("$(_selfmask_pq_openssl_bin)" version 2>/dev/null | awk '{print $2}')
+        log_success "PQ nginx уже установлен (OpenSSL ${_ver:-?})"
         return 0
     fi
-    
-    log_info "Скачивание PQ nginx (OpenSSL 3.5 + X25519MLKEM768)..."
-    
+
+    log_info "Скачивание PQ nginx (OpenSSL ${SELFMASK_PQ_OPENSSL_VERSION} + nginx ${SELFMASK_PQ_NGINX_VERSION})..."
+
     local _arch
     case "$(uname -m)" in
         x86_64|amd64) _arch="amd64" ;;
         aarch64|arm64) _arch="arm64" ;;
-        *) log_error "Архитектура $(uname -m) не поддерживается"; return 1 ;;
+        *)
+            log_error "Архитектура $(uname -m) не поддерживается"
+            return 1
+            ;;
     esac
-    
-    local _release_tag="pq-nginx-1.27.4-openssl3.5.0"
-    local _archive="mtproxyl-pq-nginx-1.27.4-openssl3.5.0-linux-${_arch}.tar.gz"
-    local _url="https://github.com/${GITHUB_REPO}/releases/download/${_release_tag}/${_archive}"
+
+    local _archive="mtproxyl-pq-nginx-${SELFMASK_PQ_NGINX_VERSION}-openssl${SELFMASK_PQ_OPENSSL_VERSION}-linux-${_arch}.tar.gz"
+    local _url="https://github.com/${GITHUB_REPO}/releases/download/${SELFMASK_PQ_RELEASE_TAG}/${_archive}"
     local _tmp="/tmp/${_archive}"
-    
-    if curl -fsSL --max-time 120 "$_url" -o "$_tmp" 2>/dev/null; then
-        sudo tar xzf "$_tmp" -C /opt/ || { log_error "Не удалось распаковать PQ nginx"; rm -f "$_tmp"; return 1; }
-        rm -f "$_tmp"
-        
-        mkdir -p /var/log/mtproxyl-nginx /var/lib/mtproxyl-nginx/body /var/lib/mtproxyl-nginx/proxy /var/lib/mtproxyl-nginx/fastcgi
-        
-        log_success "PQ nginx установлен: ${_prefix}/sbin/nginx"
-        "${_prefix}/sbin/nginx" -V 2>&1 | grep -i openssl | sed 's/^/  /'
-    else
+
+    if ! curl -fsSL --max-time 180 "$_url" -o "$_tmp" 2>/dev/null; then
         log_error "Не удалось скачать PQ nginx"
-        log_info "URL: ${_url}"
+        log_info "Проверьте Release asset: ${_url}"
         return 1
     fi
+
+    rm -rf "$_prefix"
+    tar xzf "$_tmp" -C /opt/ || {
+        log_error "Не удалось распаковать PQ nginx"
+        rm -f "$_tmp"
+        return 1
+    }
+    rm -f "$_tmp"
+
+    mkdir -p /var/log/mtproxyl-nginx
+    mkdir -p /var/lib/mtproxyl-nginx/body
+    mkdir -p /var/lib/mtproxyl-nginx/proxy
+    mkdir -p /var/lib/mtproxyl-nginx/fastcgi
+    mkdir -p /var/lock
+
+    if [ ! -x "$(_selfmask_pq_nginx_bin)" ]; then
+        log_error "После распаковки nginx-pq не найден"
+        return 1
+    fi
+
+    if [ ! -x "$(_selfmask_pq_openssl_bin)" ]; then
+        log_error "После распаковки openssl-pq не найден"
+        return 1
+    fi
+
+    local _ver
+    _ver=$("$(_selfmask_pq_openssl_bin)" version 2>/dev/null | awk '{print $2}')
+    log_success "PQ nginx установлен (OpenSSL ${_ver:-?})"
+}
+
+_selfmask_install_pq_service() {
+    cat > "/etc/systemd/system/${SELFMASK_PQ_SERVICE}" << EOF
+[Unit]
+Description=MTProxyL PQ nginx for selfmask
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+PIDFile=/run/mtproxyl-nginx.pid
+ExecStartPre=$(_selfmask_pq_nginx_bin) -t
+ExecStart=$(_selfmask_pq_nginx_bin)
+ExecReload=$(_selfmask_pq_nginx_bin) -s reload
+ExecStop=$(_selfmask_pq_nginx_bin) -s quit
+Restart=on-failure
+RestartSec=3
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
 }
 
 _selfmask_deploy_site() {
@@ -321,40 +376,46 @@ _selfmask_obtain_cert() {
     fi
 
     mkdir -p "${SELFMASK_SITE_DIR}/.well-known/acme-challenge"
+    mkdir -p "${SELFMASK_PQ_PREFIX}/conf"
 
-    local _temp_conf="${SELFMASK_NGINX_CONF_DIR}/${SELFMASK_NGINX_SITE_NAME}-acme"
-    cat > "$_temp_conf" << EOF
-server {
-    listen 80;
-    server_name ${SELFMASK_DOMAIN};
-    root ${SELFMASK_SITE_DIR};
+    cat > "$(_selfmask_pq_conf)" << EOF
+worker_processes auto;
 
-    location /.well-known/acme-challenge/ {
-        allow all;
-    }
+events {
+    worker_connections 1024;
+}
 
-    location / {
-        return 200 'ok';
-        add_header Content-Type text/plain;
+http {
+    server {
+        listen 80;
+        server_name ${SELFMASK_DOMAIN};
+        root ${SELFMASK_SITE_DIR};
+
+        location /.well-known/acme-challenge/ {
+            root ${SELFMASK_SITE_DIR};
+            allow all;
+        }
+
+        location / {
+            return 200 'ok';
+            add_header Content-Type text/plain;
+        }
     }
 }
 EOF
 
-    ln -sf "$_temp_conf" "${SELFMASK_NGINX_ENABLED_DIR}/$(basename "$_temp_conf")"
-    rm -f "${SELFMASK_NGINX_ENABLED_DIR}/default" 2>/dev/null || true
-
-    nginx -t &>/dev/null || {
-        log_error "Ошибка временного nginx-конфига для ACME"
-        rm -f "$_temp_conf" "${SELFMASK_NGINX_ENABLED_DIR}/$(basename "$_temp_conf")"
-        return 1
-    }
-
-    systemctl restart nginx &>/dev/null || {
-        log_error "Не удалось перезапустить nginx перед выдачей сертификата"
-        return 1
-    }
-
     _selfmask_open_public_ports
+    _selfmask_install_pq_service
+
+    if ! "$(_selfmask_pq_nginx_bin)" -t &>/dev/null; then
+        log_error "Ошибка временного конфига PQ nginx для ACME"
+        return 1
+    fi
+
+    systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null || {
+        log_error "Не удалось запустить PQ nginx"
+        return 1
+    }
 
     if certbot certonly --webroot -w "$SELFMASK_SITE_DIR" \
         -d "$SELFMASK_DOMAIN" \
@@ -365,100 +426,102 @@ EOF
     else
         log_error "Не удалось получить сертификат"
         log_info "Проверьте DNS домена и доступность порта 80 извне"
-        rm -f "$_temp_conf" "${SELFMASK_NGINX_ENABLED_DIR}/$(basename "$_temp_conf")"
         return 1
     fi
-
-    rm -f "${SELFMASK_NGINX_ENABLED_DIR}/$(basename "$_temp_conf")"
-    rm -f "$_temp_conf"
 }
 
 _selfmask_configure_nginx() {
-    log_info "Настройка nginx..."
+    log_info "Настройка PQ nginx..."
 
-    local _conf="${SELFMASK_NGINX_CONF_DIR}/${SELFMASK_NGINX_SITE_NAME}"
     local _cert_dir="/etc/letsencrypt/live/${SELFMASK_DOMAIN}"
     [ -f "${_cert_dir}/fullchain.pem" ] || { log_error "Сертификат не найден"; return 1; }
 
-    cat > "$_conf" << EOF
-# MTProxyL selfmask
-# Домен: ${SELFMASK_DOMAIN}
-# Схема: telemt :443 → mask → nginx 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT}
+    mkdir -p "${SELFMASK_PQ_PREFIX}/conf"
 
-server {
-    listen 80 default_server;
-    server_name _;
-    return 444;
+    cat > "$(_selfmask_pq_conf)" << EOF
+worker_processes auto;
+
+events {
+    worker_connections 1024;
 }
 
-server {
-    listen 80;
-    server_name ${SELFMASK_DOMAIN};
+http {
+    server {
+        listen 80 default_server;
+        server_name _;
+        return 444;
+    }
 
-    root ${SELFMASK_SITE_DIR};
-
-    location /.well-known/acme-challenge/ {
+    server {
+        listen 80;
+        server_name ${SELFMASK_DOMAIN};
         root ${SELFMASK_SITE_DIR};
-        allow all;
+
+        location /.well-known/acme-challenge/ {
+            root ${SELFMASK_SITE_DIR};
+            allow all;
+        }
+
+        location / {
+            return 301 https://${SELFMASK_DOMAIN}\$request_uri;
+        }
     }
 
-    location / {
-        return 301 https://${SELFMASK_DOMAIN}\$request_uri;
-    }
-}
+    server {
+        listen 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT} ssl default_server;
+        server_name _;
 
-server {
-    listen 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT} ssl default_server;
-    server_name _;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ecdh_curve X25519MLKEM768:X25519:prime256v1;
+        ssl_prefer_server_ciphers on;
 
-    ssl_protocols ${SELFMASK_TLS_PROTOCOLS};
-    ssl_certificate     ${_cert_dir}/fullchain.pem;
-    ssl_certificate_key ${_cert_dir}/privkey.pem;
+        ssl_certificate     ${_cert_dir}/fullchain.pem;
+        ssl_certificate_key ${_cert_dir}/privkey.pem;
 
-    return 444;
-}
-
-server {
-    listen 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT} ssl;
-    server_name ${SELFMASK_DOMAIN};
-    server_tokens off;
-
-    ssl_protocols ${SELFMASK_TLS_PROTOCOLS};
-    ssl_certificate     ${_cert_dir}/fullchain.pem;
-    ssl_certificate_key ${_cert_dir}/privkey.pem;
-
-    root ${SELFMASK_SITE_DIR};
-    index index.html index.htm;
-
-    add_header X-Content-Type-Options nosniff always;
-    add_header X-Frame-Options SAMEORIGIN always;
-    add_header Referrer-Policy no-referrer always;
-
-    location ~* "(wget|curl|chmod|/tmp/|eval\\(|base64)" {
-        return 403;
+        return 444;
     }
 
-    location / {
-        try_files \$uri \$uri/ =404;
+    server {
+        listen 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT} ssl;
+        server_name ${SELFMASK_DOMAIN};
+        server_tokens off;
+
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ecdh_curve X25519MLKEM768:X25519:prime256v1;
+        ssl_prefer_server_ciphers on;
+
+        ssl_certificate     ${_cert_dir}/fullchain.pem;
+        ssl_certificate_key ${_cert_dir}/privkey.pem;
+
+        root ${SELFMASK_SITE_DIR};
+        index index.html index.htm;
+
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-Frame-Options SAMEORIGIN always;
+        add_header Referrer-Policy no-referrer always;
+
+        location ~* "(wget|curl|chmod|/tmp/|eval\\(|base64)" {
+            return 403;
+        }
+
+        location / {
+            try_files \$uri \$uri/ =404;
+        }
     }
 }
 EOF
 
-    ln -sf "$_conf" "${SELFMASK_NGINX_ENABLED_DIR}/${SELFMASK_NGINX_SITE_NAME}"
-    rm -f "${SELFMASK_NGINX_ENABLED_DIR}/default" 2>/dev/null || true
-    rm -f "${SELFMASK_NGINX_ENABLED_DIR}/${SELFMASK_NGINX_SITE_NAME}-acme" 2>/dev/null || true
+    if ! "$(_selfmask_pq_nginx_bin)" -t &>/dev/null; then
+        log_error "Ошибка итогового конфига PQ nginx"
+        return 1
+    fi
 
-    nginx -t &>/dev/null || {
-        log_error "Ошибка итогового nginx-конфига"
+    systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null || {
+        log_error "Не удалось перезапустить PQ nginx"
         return 1
     }
 
-    systemctl restart nginx &>/dev/null || {
-        log_error "Не удалось перезапустить nginx"
-        return 1
-    }
-
-    log_success "Nginx настроен"
+    log_success "PQ nginx настроен"
 }
 
 _selfmask_apply_mtproxyl_settings() {
@@ -500,7 +563,7 @@ _selfmask_setup_renewal() {
         return 0
     fi
 
-    local _cron_line="0 3 * * * certbot renew --quiet --deploy-hook 'systemctl reload nginx'"
+    local _cron_line="0 3 * * * certbot renew --quiet --deploy-hook 'systemctl reload ${SELFMASK_PQ_SERVICE}'"
     if ! crontab -l 2>/dev/null | grep -q "certbot renew"; then
         (crontab -l 2>/dev/null; echo "$_cron_line") | crontab -
         log_success "Добавлен cron для автопродления"
@@ -516,7 +579,8 @@ selfmask_verify() {
 
     local _ok=true
 
-    command -v nginx &>/dev/null && log_success "nginx установлен" || { log_error "nginx не установлен"; _ok=false; }
+    [ -x "$(_selfmask_pq_nginx_bin)" ] && log_success "PQ nginx установлен" || { log_error "PQ nginx не установлен"; _ok=false; }
+    [ -x "$(_selfmask_pq_openssl_bin)" ] && log_success "PQ openssl установлен" || { log_error "PQ openssl не установлен"; _ok=false; }
     command -v certbot &>/dev/null && log_success "certbot установлен" || { log_error "certbot не установлен"; _ok=false; }
 
     if [ -f "/etc/letsencrypt/live/${SELFMASK_DOMAIN}/fullchain.pem" ]; then
@@ -526,14 +590,14 @@ selfmask_verify() {
         _ok=false
     fi
 
-    if systemctl is-active nginx &>/dev/null; then
-        log_success "nginx активен"
+    if systemctl is-active "${SELFMASK_PQ_SERVICE}" &>/dev/null; then
+        log_success "PQ nginx активен"
     else
         log_warn "nginx не запущен"
         _ok=false
     fi
 
-    local _site_conf="${SELFMASK_NGINX_CONF_DIR}/${SELFMASK_NGINX_SITE_NAME:-mtproxyl-selfmask}"
+    local _site_conf="$(_selfmask_pq_conf)"
     [ -f "$_site_conf" ] && log_success "Конфиг nginx найден" || { log_warn "Конфиг nginx не найден"; _ok=false; }
 
     local _http_code=""
@@ -548,6 +612,21 @@ selfmask_verify() {
     else
         log_warn "Backend nginx не отвечает как ожидалось (HTTP ${_http_code:-?})"
     fi
+
+    if [ -n "${SELFMASK_DOMAIN:-}" ] && [ -x "$(_selfmask_pq_openssl_bin)" ]; then
+        local _pq_line
+        _pq_line=$("$(_selfmask_pq_openssl_bin)" s_client \
+            -groups X25519MLKEM768 \
+            -connect "127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT}" \
+            -servername "${SELFMASK_DOMAIN}" </dev/null 2>/dev/null | grep -i "Server Temp Key" | head -1 || true)
+
+        if echo "$_pq_line" | grep -q "X25519MLKEM768"; then
+            log_success "PQ handshake активен: ${_pq_line}"
+        else
+            log_warn "PQ handshake не подтверждён"
+            [ -n "$_pq_line" ] && log_warn "${_pq_line}"
+        fi
+    fi    
 
     if [ "${SELFMASK_ENABLED:-false}" = "true" ] && \
        [ "${MASKING_HOST:-}" = "127.0.0.1" ] && \
@@ -588,6 +667,7 @@ selfmask_setup() {
 
     _selfmask_collect_params       || return 1
     _selfmask_install_deps         || return 1
+    _selfmask_install_pq_nginx     || return 1
     _selfmask_deploy_site          || return 1
     _selfmask_obtain_cert          || return 1
     _selfmask_configure_nginx      || return 1
@@ -616,9 +696,10 @@ selfmask_disable() {
     read -r _yn
     [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
 
-    rm -f "${SELFMASK_NGINX_ENABLED_DIR}/${SELFMASK_NGINX_SITE_NAME}" 2>/dev/null || true
-    rm -f "${SELFMASK_NGINX_CONF_DIR}/${SELFMASK_NGINX_SITE_NAME}" 2>/dev/null || true
-    nginx -t &>/dev/null && systemctl reload nginx &>/dev/null || true
+    systemctl disable --now "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
+    rm -f "/etc/systemd/system/${SELFMASK_PQ_SERVICE}" 2>/dev/null || true
+    systemctl daemon-reload &>/dev/null || true
+    rm -f "$(_selfmask_pq_conf)" 2>/dev/null || true
 
     SELFMASK_ENABLED="false"
 
