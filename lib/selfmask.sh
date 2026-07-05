@@ -41,7 +41,8 @@ selfmask_show_requirements() {
     echo -e "  ${DIM}• Если PQ не поддерживается и Peer Temp Key = X25519,${NC}"
     echo -e "  ${DIM}  iOS-клиенты с высокой вероятностью не смогут подключиться.${NC}"
     echo ""
-    echo -e "  ${DIM}• Внутренний backend nginx для selfmask будет работать на ${BOLD}TLS 1.2${NC}${DIM}.${NC}"
+    echo -e "  ${DIM}• Внутренний backend nginx для selfmask поддерживает ${BOLD}TLS 1.2 и TLS 1.3${NC}${DIM}.${NC}"
+    echo -e "  ${DIM}• Постквантовый обмен ключами X25519MLKEM768 работает через ${BOLD}TLS 1.3${NC}${DIM}.${NC}"
     echo ""
 }
 
@@ -579,19 +580,23 @@ selfmask_verify() {
     fi
 
     if [ -n "${SELFMASK_DOMAIN:-}" ] && [ -x "$(_selfmask_pq_openssl_bin)" ]; then
-        local _pq_line
-        _pq_line=$("$(_selfmask_pq_openssl_bin)" s_client \
+        local _pq_out _pq_line
+        _pq_out=$("$(_selfmask_pq_openssl_bin)" s_client \
+            -tls1_3 \
             -groups X25519MLKEM768 \
             -connect "127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT}" \
-            -servername "${SELFMASK_DOMAIN}" </dev/null 2>/dev/null | grep -i "Server Temp Key" | head -1 || true)
+            -servername "${SELFMASK_DOMAIN}" </dev/null 2>&1 || true)
 
-        if echo "$_pq_line" | grep -q "X25519MLKEM768"; then
-            log_success "PQ handshake активен: ${_pq_line}"
+        _pq_line=$(echo "$_pq_out" | grep -iE "Server Temp Key|X25519MLKEM768|Negotiated group|group" | head -1 || true)
+
+        if echo "$_pq_out" | grep -q "X25519MLKEM768"; then
+            log_success "PQ handshake активен"
+            [ -n "$_pq_line" ] && log_info "${_pq_line}"
         else
             log_warn "PQ handshake не подтверждён"
             [ -n "$_pq_line" ] && log_warn "${_pq_line}"
         fi
-    fi    
+    fi   
 
     if [ "${SELFMASK_ENABLED:-false}" = "true" ] && \
        [ "${MASKING_HOST:-}" = "127.0.0.1" ] && \
