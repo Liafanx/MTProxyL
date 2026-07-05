@@ -53,6 +53,11 @@ tui_settings_menu() {
                 esac
                 press_any_key ;;
             3)
+                if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+                    log_warn "Selfmask активен. Домен меняется через меню Selfmask"
+                    press_any_key
+                    continue
+                fi
                 local _old_domain="$PROXY_DOMAIN"
                 echo -e "  ${DIM}[1] autoscout24.ru  [2] google.com  [3] twitch.tv  [4] Свой${NC}"
                 local d; d=$(read_choice "выбор" "1")
@@ -96,6 +101,11 @@ tui_settings_menu() {
                 is_proxy_running && { load_secrets; restart_proxy_container || true; }
                 press_any_key ;;
             m|M)
+                if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+                    log_warn "Selfmask активен. Локальный mask backend управляется через меню Selfmask"
+                    press_any_key
+                    continue
+                fi
                 echo -e "  ${DIM}Текущий: ${MASKING_HOST:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}${NC}"
                 echo -en "  ${BOLD}Хост:${NC} "; local mh; read -r mh
                 echo -en "  ${BOLD}Порт [${MASKING_PORT:-443}]:${NC} "; local mp; read -r mp
