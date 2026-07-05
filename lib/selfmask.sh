@@ -198,6 +198,45 @@ _selfmask_install_deps() {
     log_success "Зависимости установлены"
 }
 
+_selfmask_install_pq_nginx() {
+    local _prefix="/opt/mtproxyl-nginx"
+    
+    if [ -x "${_prefix}/sbin/nginx" ]; then
+        local _ver
+        _ver=$("${_prefix}/sbin/nginx" -V 2>&1 | grep -oP 'openssl/\K[0-9.]+' || echo "?")
+        log_success "PQ nginx уже установлен (OpenSSL ${_ver})"
+        return 0
+    fi
+    
+    log_info "Скачивание PQ nginx (OpenSSL 3.5 + X25519MLKEM768)..."
+    
+    local _arch
+    case "$(uname -m)" in
+        x86_64|amd64) _arch="amd64" ;;
+        aarch64|arm64) _arch="arm64" ;;
+        *) log_error "Архитектура $(uname -m) не поддерживается"; return 1 ;;
+    esac
+    
+    local _release_tag="pq-nginx-1.27.4-openssl3.5.0"
+    local _archive="mtproxyl-pq-nginx-1.27.4-openssl3.5.0-linux-${_arch}.tar.gz"
+    local _url="https://github.com/${GITHUB_REPO}/releases/download/${_release_tag}/${_archive}"
+    local _tmp="/tmp/${_archive}"
+    
+    if curl -fsSL --max-time 120 "$_url" -o "$_tmp" 2>/dev/null; then
+        sudo tar xzf "$_tmp" -C /opt/ || { log_error "Не удалось распаковать PQ nginx"; rm -f "$_tmp"; return 1; }
+        rm -f "$_tmp"
+        
+        mkdir -p /var/log/mtproxyl-nginx /var/lib/mtproxyl-nginx/body /var/lib/mtproxyl-nginx/proxy /var/lib/mtproxyl-nginx/fastcgi
+        
+        log_success "PQ nginx установлен: ${_prefix}/sbin/nginx"
+        "${_prefix}/sbin/nginx" -V 2>&1 | grep -i openssl | sed 's/^/  /'
+    else
+        log_error "Не удалось скачать PQ nginx"
+        log_info "URL: ${_url}"
+        return 1
+    fi
+}
+
 _selfmask_deploy_site() {
     log_info "Развёртывание сайта-маски..."
 
