@@ -6,7 +6,7 @@ on:
       openssl_version:
         description: 'Версия OpenSSL'
         required: true
-        default: '3.5.0'
+        default: '3.5.7'
       nginx_version:
         description: 'Версия nginx'
         required: true
