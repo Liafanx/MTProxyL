@@ -51,7 +51,7 @@ selfmask_show_status() {
     echo ""
     echo -e "  ${BOLD}Статус:${NC}         $(selfmask_status_line)"
     echo -e "  ${BOLD}Домен:${NC}          ${SELFMASK_DOMAIN:-${DIM}не задан${NC}}"
-    echo -e "  ${BOLD}Источник сайта:${NC} ${SELFMASK_SITE_SOURCE:-stub}"
+    echo -e "  ${BOLD}Источник сайта:${NC} HTML-заглушка"
     echo -e "  ${BOLD}Каталог сайта:${NC}  ${SELFMASK_SITE_DIR:-/var/www/mtproxyl-selfmask}"
     echo -e "  ${BOLD}Backend:${NC}        127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}"
     echo -e "  ${BOLD}TLS backend:${NC}    ${SELFMASK_TLS_PROTOCOLS:-TLSv1.2}"
@@ -126,37 +126,8 @@ _selfmask_collect_params() {
         [[ "$_dns_yn" =~ ^[yY]$ ]] || return 1
     fi
 
-    echo ""
-    draw_header "ШАБЛОН САЙТА"
-    echo ""
-    echo -e "  ${GREEN}[1]${NC} Market-Terminal-Template"
-    echo -e "      ${DIM}https://github.com/vaalaav/Market-Terminal-Template${NC}"
-    echo -e "  ${GREEN}[2]${NC} kotorunner"
-    echo -e "      ${DIM}https://github.com/vaalaav/kotorunner${NC}"
-    echo -e "  ${CYAN}[3]${NC} Указать свой git-репозиторий"
-    echo -e "  ${DIM}[4]${NC} Простая HTML-заглушка"
-    echo ""
-
-    local _tpl
-    _tpl=$(read_choice "выбор" "4")
-    case "$_tpl" in
-        1)
-            SELFMASK_SITE_SOURCE="https://github.com/vaalaav/Market-Terminal-Template.git"
-            ;;
-        2)
-            SELFMASK_SITE_SOURCE="https://github.com/vaalaav/kotorunner.git"
-            ;;
-        3)
-            echo -en "  ${BOLD}URL git-репозитория:${NC} "
-            local _repo
-            read -r _repo
-            [[ "$_repo" =~ ^https?:// ]] || { log_error "Нужен URL вида http(s)://..."; return 1; }
-            SELFMASK_SITE_SOURCE="$_repo"
-            ;;
-        *)
-            SELFMASK_SITE_SOURCE="stub"
-            ;;
-    esac
+    SELFMASK_SITE_SOURCE="stub"
+    log_info "Будет создана HTML-заглушка сайта"
 
     echo ""
     echo -en "  ${BOLD}Локальный backend-порт nginx [${SELFMASK_NGINX_BACKEND_PORT:-8444}]:${NC} "
@@ -171,7 +142,7 @@ _selfmask_collect_params() {
     echo -e "  ${BOLD}Итоговые параметры:${NC}"
     echo -e "    Домен:     ${SELFMASK_DOMAIN}"
     echo -e "    Email:     ${SELFMASK_CERT_EMAIL}"
-    echo -e "    Сайт:      ${SELFMASK_SITE_SOURCE}"
+    echo -e "    Сайт:      HTML-заглушка"
     echo -e "    Каталог:   ${SELFMASK_SITE_DIR}"
     echo -e "    Backend:   127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT}"
     echo -e "    TLS:       ${SELFMASK_TLS_PROTOCOLS:-TLSv1.2}"
@@ -190,8 +161,6 @@ _selfmask_install_deps() {
 
     local _missing=()
     command -v certbot &>/dev/null || _missing+=("certbot")
-    command -v git &>/dev/null || _missing+=("git")
-    command -v rsync &>/dev/null || _missing+=("rsync")
 
     if [ ${#_missing[@]} -gt 0 ]; then
         _wait_apt
@@ -328,29 +297,6 @@ _selfmask_deploy_site() {
 </html>
 HTML_EOF
         log_success "Создана HTML-заглушка"
-    else
-        local _tmp
-        _tmp=$(mktemp -d) || return 1
-        log_info "Клонирование шаблона: ${SELFMASK_SITE_SOURCE}"
-        if git clone --depth 1 "${SELFMASK_SITE_SOURCE}" "${_tmp}/repo" &>/dev/null; then
-            find "$SELFMASK_SITE_DIR" -mindepth 1 -maxdepth 1 ! -name '.well-known' -exec rm -rf {} + 2>/dev/null || true
-            if command -v rsync &>/dev/null; then
-                rsync -a --exclude='.git' "${_tmp}/repo/" "${SELFMASK_SITE_DIR}/" &>/dev/null || true
-            else
-                find "${_tmp}/repo" -mindepth 1 -maxdepth 1 ! -name '.git' -exec cp -a {} "${SELFMASK_SITE_DIR}/" \;
-            fi
-            log_success "Шаблон сайта развернут"
-        else
-            log_warn "Не удалось скачать шаблон, создаём HTML-заглушку"
-            cat > "${SELFMASK_SITE_DIR}/index.html" << 'HTML_EOF'
-<!doctype html>
-<html lang="ru">
-<head><meta charset="utf-8"><title>Добро пожаловать</title></head>
-<body><h1>Сайт временно недоступен</h1></body>
-</html>
-HTML_EOF
-        fi
-        rm -rf "$_tmp"
     fi
 
     chown -R www-data:www-data "$SELFMASK_SITE_DIR" 2>/dev/null || true
