@@ -160,7 +160,14 @@ _selfmask_install_deps() {
     log_info "Установка зависимостей..."
 
     local _missing=()
+
+    # certbot
     command -v certbot &>/dev/null || _missing+=("certbot")
+
+    # runtime-зависимости для PQ nginx
+    dpkg -s libpcre3 &>/dev/null 2>&1 || _missing+=("libpcre3")
+    dpkg -s zlib1g &>/dev/null 2>&1 || _missing+=("zlib1g")
+    dpkg -s ca-certificates &>/dev/null 2>&1 || _missing+=("ca-certificates")
 
     if [ ${#_missing[@]} -gt 0 ]; then
         _wait_apt
