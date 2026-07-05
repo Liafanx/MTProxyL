@@ -70,7 +70,7 @@ selfmask_show_status() {
     if systemctl is-active "${SELFMASK_PQ_SERVICE}" &>/dev/null; then
         echo -e "  ${BOLD}PQ nginx:${NC}       ${GREEN}активен${NC}"
     else
-        echo -e "  ${BOLD}Nginx:${NC}          ${DIM}не запущен${NC}"
+        echo -e "  ${BOLD}PQ nginx:${NC}       ${DIM}не запущен${NC}"
     fi
 
     selfmask_show_requirements
@@ -237,13 +237,20 @@ _selfmask_install_pq_nginx() {
         return 1
     fi
 
-    rm -rf "$_prefix"
-    tar xzf "$_tmp" -C /opt/ || {
+    rm -rf "$_prefix" /opt/opt/mtproxyl-nginx
+    tar xzf "$_tmp" -C / || {
         log_error "Не удалось распаковать PQ nginx"
         rm -f "$_tmp"
         return 1
     }
     rm -f "$_tmp"
+
+    # Обратная совместимость: если архив всё же был распакован в /opt/opt
+    if [ ! -d "$_prefix" ] && [ -d "/opt/opt/mtproxyl-nginx" ]; then
+        mkdir -p /opt
+        mv /opt/opt/mtproxyl-nginx /opt/mtproxyl-nginx 2>/dev/null || true
+        rmdir /opt/opt 2>/dev/null || true
+    fi
 
     mkdir -p /var/log/mtproxyl-nginx
     mkdir -p /var/lib/mtproxyl-nginx/body
@@ -253,6 +260,7 @@ _selfmask_install_pq_nginx() {
 
     if [ ! -x "$(_selfmask_pq_nginx_bin)" ]; then
         log_error "После распаковки nginx-pq не найден"
+        log_info "Ожидался путь: $(_selfmask_pq_nginx_bin)"
         return 1
     fi
 
