@@ -17,7 +17,7 @@ tui_selfmask_menu() {
         echo ""
 
         echo -e "  ${CYAN}[1]${NC}  Статус и требования"
-        echo -e "  ${CYAN}[2]${NC}  Начать настройку selfmask"
+        echo -e "  ${CYAN}[2]${NC}  Настроить / переустановить selfmask"
         echo -e "  ${CYAN}[3]${NC}  Проверить selfmask"
         echo -e "  ${CYAN}[4]${NC}  Отключить selfmask"
         echo ""
