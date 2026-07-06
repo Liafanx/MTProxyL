@@ -333,7 +333,7 @@ _selfmask_deploy_site() {
     mkdir -p "$SELFMASK_SITE_DIR"
 
     local _src="${SELFMASK_SITE_SOURCE:-stub}"
-    local _templates_base="https://raw.githubusercontent.com/${GITHUB_REPO}/main/templates_html"
+    local _templates_base="https://raw.githubusercontent.com/${GITHUB_REPO}/dev/templates_html"
 
     case "$_src" in
         stub)
