@@ -26,7 +26,7 @@ selfmask_supported_os() {
 
 selfmask_status_line() {
     if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
-        echo -e "${GREEN}включён${NC} (${SELFMASK_DOMAIN:-?} → 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}, ${SELFMASK_TLS_PROTOCOLS:-TLSv1.2})"
+        echo -e "${GREEN}включён${NC} (${SELFMASK_DOMAIN:-?} → 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}, TLSv1.3 + PQ)"
     else
         echo -e "${DIM}выключен${NC}"
     fi
