@@ -4,16 +4,16 @@
 
 SELFMASK_PQ_PREFIX="/opt/mtproxyl-nginx"
 SELFMASK_PQ_SERVICE="mtproxyl-pq-nginx.service"
-SELFMASK_PQ_RELEASE_TAG="pq-nginx-1.27.4-openssl3.5.7"
-SELFMASK_PQ_NGINX_VERSION="1.27.4"
+SELFMASK_PQ_RELEASE_TAG="pq-nginx-1.28.3-openssl3.5.7"
+SELFMASK_PQ_NGINX_VERSION="1.28.3"
 SELFMASK_PQ_OPENSSL_VERSION="3.5.7"
 
 _selfmask_pq_nginx_bin() {
-    echo "${SELFMASK_PQ_PREFIX}/sbin/nginx-pq"
+    echo "${SELFMASK_PQ_PREFIX}/sbin/nginx"
 }
 
 _selfmask_pq_openssl_bin() {
-    echo "${SELFMASK_PQ_PREFIX}/bin/openssl-pq"
+    echo "${SELFMASK_PQ_PREFIX}/bin/openssl"
 }
 
 _selfmask_pq_conf() {
