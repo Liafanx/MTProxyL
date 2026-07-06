@@ -97,7 +97,8 @@ jobs:
                 --with-cc-opt="-I/tmp/openssl-static/include" \
                 --with-ld-opt="-L/tmp/openssl-static/lib -Wl,-Bstatic -lssl -lcrypto -Wl,-Bdynamic" && \
               make -j"$(nproc)" && \
-              make install
+              make install && \
+              mkdir -p ${PREFIX}/bin ${PREFIX}/conf /var/log/mtproxyl-nginx /var/lib/mtproxyl-nginx/body /var/lib/mtproxyl-nginx/proxy /var/lib/mtproxyl-nginx/fastcgi
 
           # Копируем openssl бинарник (тоже статический)
           RUN cp /tmp/openssl-static/bin/openssl ${PREFIX}/bin/openssl
