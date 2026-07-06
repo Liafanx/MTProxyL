@@ -291,9 +291,28 @@ self_update() {
     cp "${INSTALL_DIR}/mtproxyl.sh" "${INSTALL_DIR}/mtproxyl.sh.backup-$(date +%s)" 2>/dev/null || true
     mv "$_tmp" "${INSTALL_DIR}/mtproxyl.sh"; chmod +x "${INSTALL_DIR}/mtproxyl.sh"
     log_info "Обновление библиотек..."
-        for lib in colors utils settings secrets config docker engine traffic geoblock upstream backup nft selfmask tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons expert_catalog expert_mode install; do
-        curl -fsS --max-time 15 "${GITHUB_RAW}/lib/${lib}.sh" -o "${LIB_DIR}/${lib}.sh" 2>/dev/null || true
+
+    # Извлекаем актуальный список библиотек из уже скачанного mtproxyl.sh
+    local _lib_list
+    _lib_list=$(grep -oP 'for _lib in \K[^\n;]+' "${INSTALL_DIR}/mtproxyl.sh" 2>/dev/null | head -1 | tr -d '"' | tr -d "'")
+
+    # Fallback: если не удалось распарсить — используем захардкоженный список
+    if [ -z "$_lib_list" ]; then
+        log_warn "Не удалось извлечь список библиотек из нового скрипта, используем стандартный список"
+        _lib_list="colors utils settings secrets config docker engine traffic geoblock upstream backup nft selfmask tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons expert_catalog expert_mode install"
+    fi
+
+    local _failed=0 _ok=0
+    for lib in $_lib_list; do
+        if curl -fsS --max-time 15 "${GITHUB_RAW}/lib/${lib}.sh" -o "${LIB_DIR}/${lib}.sh" 2>/dev/null; then
+            _ok=$((_ok + 1))
+        else
+            log_warn "Не удалось обновить: lib/${lib}.sh"
+            _failed=$((_failed + 1))
+        fi
     done
+
+    log_info "Библиотек обновлено: ${_ok}, не удалось: ${_failed}"
     log_success "Обновлено до v${_new_ver}"
     log_info "Перезапуск..."
     exec "${INSTALL_DIR}/mtproxyl.sh"
