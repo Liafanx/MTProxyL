@@ -842,6 +842,86 @@ selfmask_disable() {
     log_success "Selfmask отключён"
 }
 
+selfmask_remove_pq_nginx() {
+    check_root
+
+    echo ""
+    echo -e "  ${RED}${BOLD}Полное удаление PQ nginx${NC}"
+    echo ""
+    echo -e "  ${DIM}Будет удалено:${NC}"
+    echo -e "  ${DIM}  - /opt/mtproxyl-nginx/ (nginx + OpenSSL)${NC}"
+    echo -e "  ${DIM}  - Служба ${SELFMASK_PQ_SERVICE}${NC}"
+    echo -e "  ${DIM}  - /var/log/mtproxyl-nginx/  /var/lib/mtproxyl-nginx/${NC}"
+    echo ""
+    echo -e "  ${GREEN}Не будет удалено:${NC}"
+    echo -e "  ${DIM}  - Сертификаты Let's Encrypt${NC}"
+    echo -e "  ${DIM}  - Каталог сайта ${SELFMASK_SITE_DIR}${NC}"
+    echo -e "  ${DIM}  - Системный nginx и OpenSSL${NC}"
+    echo ""
+
+    echo -en "  ${BOLD}Удалить PQ nginx? [y/N]:${NC} "
+    local _yn
+    read -r _yn
+    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
+
+    # Сначала отключаем selfmask если активен
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+        log_info "Отключаем selfmask..."
+        systemctl disable --now "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
+        rm -f "/etc/systemd/system/${SELFMASK_PQ_SERVICE}" 2>/dev/null || true
+        rm -f "$(_selfmask_pq_conf)" 2>/dev/null || true
+
+        SELFMASK_ENABLED="false"
+        if [ "${MASKING_HOST:-}" = "127.0.0.1" ] && [ "${MASKING_PORT:-}" = "${SELFMASK_NGINX_BACKEND_PORT}" ]; then
+            MASKING_ENABLED="true"
+            MASKING_HOST=""
+            MASKING_PORT="443"
+        fi
+        save_settings
+        log_success "Selfmask отключён"
+    fi
+
+    # Останавливаем сервис
+    systemctl disable --now "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
+    rm -f "/etc/systemd/system/${SELFMASK_PQ_SERVICE}" 2>/dev/null || true
+    systemctl daemon-reload &>/dev/null || true
+    pkill -f "${SELFMASK_PQ_PREFIX}/sbin/nginx" 2>/dev/null || true
+
+    # Удаляем файлы PQ nginx
+    rm -rf "${SELFMASK_PQ_PREFIX}"
+    rm -rf /var/log/mtproxyl-nginx
+    rm -rf /var/lib/mtproxyl-nginx
+
+    log_success "PQ nginx полностью удалён"
+
+    # Перезапуск прокси если работает
+    if is_proxy_running; then
+        log_info "Перезапуск прокси..."
+        load_secrets
+        restart_proxy_container || true
+    fi
+}
+
+_selfmask_cleanup_for_uninstall() {
+    # Отключаем selfmask
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+        SELFMASK_ENABLED="false"
+        save_settings 2>/dev/null || true
+    fi
+
+    # Останавливаем и удаляем PQ nginx сервис
+    systemctl disable --now "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
+    rm -f "/etc/systemd/system/${SELFMASK_PQ_SERVICE}" 2>/dev/null || true
+    pkill -f "${SELFMASK_PQ_PREFIX}/sbin/nginx" 2>/dev/null || true
+
+    # Удаляем PQ nginx
+    rm -rf "${SELFMASK_PQ_PREFIX}" 2>/dev/null || true
+    rm -rf /var/log/mtproxyl-nginx 2>/dev/null || true
+    rm -rf /var/lib/mtproxyl-nginx 2>/dev/null || true
+
+    systemctl daemon-reload &>/dev/null || true
+}
+
 handle_selfmask_command() {
     local subcmd="${1:-status}"
     shift 2>/dev/null || true
