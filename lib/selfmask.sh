@@ -311,12 +311,11 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=forking
-PIDFile=/run/mtproxyl-nginx.pid
+Type=simple
 ExecStartPre=$(_selfmask_pq_nginx_bin) -t -c $(_selfmask_pq_conf)
-ExecStart=$(_selfmask_pq_nginx_bin) -c $(_selfmask_pq_conf)
-ExecReload=$(_selfmask_pq_nginx_bin) -s reload
-ExecStop=$(_selfmask_pq_nginx_bin) -s quit
+ExecStart=$(_selfmask_pq_nginx_bin) -c $(_selfmask_pq_conf) -g 'daemon off;'
+ExecReload=/bin/kill -HUP \$MAINPID
+ExecStop=/bin/kill -QUIT \$MAINPID
 Restart=on-failure
 RestartSec=3
 PrivateTmp=true
@@ -645,7 +644,7 @@ selfmask_verify() {
     if systemctl is-active "${SELFMASK_PQ_SERVICE}" &>/dev/null; then
         log_success "PQ nginx активен"
     else
-        log_warn "nginx не запущен"
+        log_warn "PQ nginx не запущен"
         _ok=false
     fi
 
