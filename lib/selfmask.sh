@@ -41,8 +41,8 @@ selfmask_show_requirements() {
     echo -e "  ${DIM}• Если PQ не поддерживается и Peer Temp Key = X25519,${NC}"
     echo -e "  ${DIM}  iOS-клиенты с высокой вероятностью не смогут подключиться.${NC}"
     echo ""
-    echo -e "  ${DIM}• Внутренний backend nginx для selfmask поддерживает TLS 1.3${NC}${DIM}.${NC}"
-    echo -e "  ${DIM}• Постквантовый обмен ключами X25519MLKEM768 работает через ${BOLD}TLS 1.3${NC}${DIM}.${NC}"
+    echo -e "  ${DIM}• Внутренний backend nginx для selfmask работает на ${BOLD}TLS 1.3${NC}${DIM}.${NC}"
+    echo -e "  ${DIM}• Постквантовый обмен ключами X25519MLKEM768 включён.${NC}"
     echo ""
 }
 
@@ -55,7 +55,7 @@ selfmask_show_status() {
     echo -e "  ${BOLD}Источник сайта:${NC} HTML-заглушка"
     echo -e "  ${BOLD}Каталог сайта:${NC}  ${SELFMASK_SITE_DIR:-/var/www/mtproxyl-selfmask}"
     echo -e "  ${BOLD}Backend:${NC}        127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}"
-    echo -e "  ${BOLD}TLS backend:${NC}    ${SELFMASK_TLS_PROTOCOLS:-TLSv1.3}"
+    echo -e "  ${BOLD}TLS backend:${NC}    TLSv1.3 (X25519MLKEM768)"
     echo -e "  ${BOLD}Продление cert:${NC} ${SELFMASK_AUTO_RENEW:-true}"
     echo ""
 
