@@ -284,6 +284,8 @@ _selfmask_install_pq_nginx() {
     mkdir -p /var/lib/mtproxyl-nginx/proxy
     mkdir -p /var/lib/mtproxyl-nginx/fastcgi
     mkdir -p /var/lock
+    mkdir -p "${_prefix}/logs"
+    mkdir -p "${_prefix}/conf"
 
     if [ ! -x "$(_selfmask_pq_nginx_bin)" ]; then
         log_error "После распаковки nginx-pq не найден"
