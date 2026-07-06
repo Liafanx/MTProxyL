@@ -40,6 +40,7 @@ tui_selfmask_menu() {
         echo -e "  ${CYAN}[3]${NC}  Проверка selfmask (verify)"
         echo -e "  ${CYAN}[4]${NC}  Отключить selfmask"
         echo -e "  ${CYAN}[5]${NC}  Показать конфиг PQ nginx"
+        echo -e "  ${RED}[6]${NC}  Полностью удалить PQ nginx"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -50,7 +51,7 @@ tui_selfmask_menu() {
             2) selfmask_setup; press_any_key ;;
             3) selfmask_verify; press_any_key ;;
             4) selfmask_disable; press_any_key ;;
-            5)
+             5)
                 local _conf="$(_selfmask_pq_conf)"
                 if [ -f "$_conf" ]; then
                     echo ""
@@ -62,6 +63,7 @@ tui_selfmask_menu() {
                 fi
                 press_any_key
                 ;;
+            6) selfmask_remove_pq_nginx; press_any_key ;;
             0|"") return ;;
         esac
     done
