@@ -1,4 +1,4 @@
-name: Сборка PQ Nginx (OpenSSL 3.5 + nginx)
+name: Сборка PQ Nginx (OpenSSL статический + nginx)
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ on:
       nginx_version:
         description: 'Версия nginx'
         required: true
-        default: '1.27.4'
+        default: '1.28.3'
       push_release:
         description: 'Опубликовать как Release?'
         required: true
@@ -45,36 +45,33 @@ jobs:
         shell: bash
         run: |
           cat > Dockerfile.pq << 'EOF'
-          ARG TARGETPLATFORM
-          FROM debian:bookworm-slim AS builder
+          FROM debian:11-slim AS builder
 
           ARG OPENSSL_VER
           ARG NGINX_VER
           ARG PREFIX=/opt/mtproxyl-nginx
 
           RUN apt-get update -qq && apt-get install -y -qq \
-              build-essential \
-              wget \
-              ca-certificates \
-              zlib1g-dev \
-              libpcre3 \
-              libpcre3-dev \
-              perl \
-              make \
-              gcc \
-              libc6-dev \
+              build-essential wget ca-certificates \
+              zlib1g-dev libpcre3-dev perl \
               && rm -rf /var/lib/apt/lists/*
 
-          # Сборка OpenSSL
+          # OpenSSL — статическая сборка
           RUN cd /tmp && \
               wget -q "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VER}/openssl-${OPENSSL_VER}.tar.gz" && \
               tar xzf "openssl-${OPENSSL_VER}.tar.gz" && \
               cd "openssl-${OPENSSL_VER}" && \
-              ./Configure --prefix=${PREFIX} --openssldir=${PREFIX}/ssl && \
+              ./Configure no-shared no-tests \
+                --prefix=/tmp/openssl-static \
+                --openssldir=/tmp/openssl-static/ssl \
+                --libdir=lib && \
               make -j"$(nproc)" && \
-              make install_sw install_ssldirs
+              make install_sw
 
-          # Сборка nginx с исходниками OpenSSL
+          # Проверка OpenSSL
+          RUN /tmp/openssl-static/bin/openssl version
+
+          # nginx — статически линкуем OpenSSL
           RUN cd /tmp && \
               wget -q "https://nginx.org/download/nginx-${NGINX_VER}.tar.gz" && \
               tar xzf "nginx-${NGINX_VER}.tar.gz" && \
@@ -97,31 +94,28 @@ jobs:
                 --with-http_sub_module \
                 --with-threads \
                 --with-pcre \
-                --with-openssl=/tmp/openssl-${OPENSSL_VER} \
-                --with-openssl-opt=enable-tls1_3 && \
+                --with-cc-opt="-I/tmp/openssl-static/include" \
+                --with-ld-opt="-L/tmp/openssl-static/lib -Wl,-Bstatic -lssl -lcrypto -Wl,-Bdynamic" && \
               make -j"$(nproc)" && \
               make install
-          
-          # Проверка OpenSSL через локальные библиотеки
-          RUN LD_LIBRARY_PATH=${PREFIX}/lib64:${PREFIX}/lib ${PREFIX}/bin/openssl version
 
-          # Обёртка для отдельного OpenSSL
-          RUN printf '%s\n' \
-            '#!/bin/sh' \
-            'PREFIX=/opt/mtproxyl-nginx' \
-            'export LD_LIBRARY_PATH="${PREFIX}/lib64:${PREFIX}/lib:${LD_LIBRARY_PATH}"' \
-            'exec "${PREFIX}/bin/openssl" "$@"' \
-            > ${PREFIX}/bin/openssl-pq && chmod +x ${PREFIX}/bin/openssl-pq
+          # Копируем openssl бинарник (тоже статический)
+          RUN cp /tmp/openssl-static/bin/openssl ${PREFIX}/bin/openssl
 
-          # Обёртка для nginx
-          RUN printf '%s\n' \
-            '#!/bin/sh' \
-            'PREFIX=/opt/mtproxyl-nginx' \
-            'export LD_LIBRARY_PATH="${PREFIX}/lib64:${PREFIX}/lib:${LD_LIBRARY_PATH}"' \
-            'exec "${PREFIX}/sbin/nginx" "$@"' \
-            > ${PREFIX}/sbin/nginx-pq && chmod +x ${PREFIX}/sbin/nginx-pq
+          # Проверка: nginx запускается
+          RUN ${PREFIX}/sbin/nginx -V 2>&1
 
-          RUN ${PREFIX}/sbin/nginx -V 2>&1 || true
+          # Проверка: openssl запускается
+          RUN ${PREFIX}/bin/openssl version
+
+          # Проверка: ssl/crypto НЕ в динамических зависимостях
+          RUN ldd ${PREFIX}/sbin/nginx | grep -Ei 'ssl|crypto' && \
+              (echo "ОШИБКА: OpenSSL слинкован динамически!" && exit 1) || \
+              echo "OK: OpenSSL слинкован статически"
+
+          # Проверка GLIBC
+          RUN echo "Требуемая GLIBC:" && \
+              objdump -T ${PREFIX}/sbin/nginx | grep -oP 'GLIBC_[0-9.]+' | sort -V | uniq | tail -1
 
           FROM scratch AS artifact
           COPY --from=builder /opt/mtproxyl-nginx /opt/mtproxyl-nginx
@@ -140,7 +134,6 @@ jobs:
             -f Dockerfile.pq .
 
           ARCHIVE="mtproxyl-pq-nginx-${{ github.event.inputs.nginx_version }}-openssl${{ github.event.inputs.openssl_version }}-linux-${{ matrix.arch }}.tar.gz"
-
           tar czf "${ARCHIVE}" -C out opt/mtproxyl-nginx
 
           echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
@@ -175,16 +168,31 @@ jobs:
           tag_name: pq-nginx-${{ github.event.inputs.nginx_version }}-openssl${{ github.event.inputs.openssl_version }}
           name: "PQ Nginx ${{ github.event.inputs.nginx_version }} + OpenSSL ${{ github.event.inputs.openssl_version }}"
           body: |
-            nginx ${{ github.event.inputs.nginx_version }}, собранный с OpenSSL ${{ github.event.inputs.openssl_version }}.
+            ## nginx ${{ github.event.inputs.nginx_version }} + OpenSSL ${{ github.event.inputs.openssl_version }} (статический)
 
-            Для использования в MTProxyL selfmask.
-            Предназначен для поддержки современных TLS-групп, включая X25519MLKEM768.
+            Собран для MTProxyL selfmask.
+            OpenSSL слинкован **статически** — не требует установки OpenSSL на сервере.
+            Поддерживает **X25519MLKEM768** для постквантового обмена ключами.
 
-            Архитектуры:
-            - amd64
-            - arm64
+            ### Совместимость
+            - Debian 11+ (Bullseye и новее)
+            - Ubuntu 20.04+
+            - RHEL/Rocky/Alma 9+ (возможно 8, не тестировалось)
 
-            Установка в MTProxyL будет автоматической.
+            ### Архитектуры
+            - `linux/amd64`
+            - `linux/arm64`
+
+            ### Установка
+            MTProxyL selfmask скачивает и устанавливает автоматически.
+
+            ### Ручная проверка
+            ```bash
+            tar xzf mtproxyl-pq-nginx-*.tar.gz -C /
+            /opt/mtproxyl-nginx/bin/openssl version
+            /opt/mtproxyl-nginx/sbin/nginx -V 2>&1 | grep openssl
+            ldd /opt/mtproxyl-nginx/sbin/nginx | grep -E 'ssl|crypto'  # должно быть пусто
+            ```
           files: |
             artifacts/pq-nginx-amd64/*.tar.gz
             artifacts/pq-nginx-arm64/*.tar.gz
