@@ -1,5 +1,5 @@
 #!/bin/bash
-# MTProxyL — подменю: ссылки и QR
+# MTProxyL — подменю: ссылки 
 
 tui_links_menu() {
     clear_screen
