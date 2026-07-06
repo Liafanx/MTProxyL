@@ -332,6 +332,7 @@ uninstall() {
     echo -e "  ${DIM}- Конфигурация и секреты${NC}"
     echo -e "  ${DIM}- Systemd-сервисы MTProxyL${NC}"
     echo -e "  ${DIM}- NFT правила и iOS фиксы${NC}"
+    echo -e "  ${DIM}- Selfmask и PQ nginx (если установлены)${NC}"
     echo -e "  ${DIM}- /usr/local/bin/mtproxyl${NC}"
     echo ""
     echo -e "  ${GREEN}НЕ будет удалено:${NC}"
@@ -355,6 +356,22 @@ uninstall() {
             log_success "Секреты сохранены: ${export_file}"
         else
             log_warn "Файл секретов не найден — нечего сохранять"
+        fi
+    fi
+
+    # Selfmask и PQ nginx
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ] || [ -d "${SELFMASK_PQ_PREFIX:-/opt/mtproxyl-nginx}" ]; then
+        echo ""
+        echo -e "  ${BOLD}Обнаружен Selfmask / PQ nginx${NC}"
+        echo -en "  ${BOLD}Удалить PQ nginx и отключить selfmask? [Y/n]:${NC} "
+        local _sm_yn
+        read -r _sm_yn
+        if [[ ! "$_sm_yn" =~ ^[nN]$ ]]; then
+            log_info "Удаление selfmask и PQ nginx..."
+            _selfmask_cleanup_for_uninstall 2>/dev/null || true
+            log_success "Selfmask и PQ nginx удалены"
+        else
+            log_info "PQ nginx оставлен без изменений"
         fi
     fi
 
