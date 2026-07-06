@@ -3,7 +3,7 @@
 
 tui_links_menu() {
     clear_screen
-    draw_header "ССЫЛКИ И QR-КОДЫ"
+    draw_header "ССЫЛКИ для подключения"
     local server_ip; server_ip=$(get_public_ip)
     [ -z "$server_ip" ] && { log_error "Не удалось определить IP"; press_any_key; return; }
     local i; for i in "${!SECRETS_LABELS[@]}"; do
