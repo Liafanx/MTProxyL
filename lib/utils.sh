@@ -469,6 +469,7 @@ show_cli_help() {
     echo -e "  ${BOLD}Эксперт:${NC}        expert list|set|clear|edit"
     echo -e "  ${BOLD}NFT:${NC}            nft apply|remove|service|drop|preset|ios1|ios2"
     echo -e "  ${BOLD}Selfmask:${NC}       selfmask status|setup|verify|disable|menu"
+    echo -e "  ${BOLD}PQ проверка:${NC}    pq-check [домен[:порт]]"
     echo -e "  ${BOLD}Безопасность:${NC}   geoblock add|remove|list | upstream list|add|remove | sni-policy"
     echo -e "  ${BOLD}Мониторинг:${NC}     traffic | connections | metrics [live] | logs | health | info"
     echo -e "  ${BOLD}Бэкапы:${NC}         backup [--encrypt] | restore <файл>"
