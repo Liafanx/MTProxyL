@@ -256,7 +256,17 @@ cli_main() {
          selfmask)
             load_settings
             handle_selfmask_command "$@"
-            ;;       
+            ;;
+
+        pq-check)
+            load_settings
+            if [ -x "$(_selfmask_pq_openssl_bin)" ]; then
+                _addon_check_pq_domain "${1:-${PROXY_DOMAIN:-}}"
+            else
+                log_error "PQ OpenSSL не установлен"
+                log_info "Установите через: mtproxyl selfmask setup"
+            fi
+            ;;            
 
         install)
             run_installer
