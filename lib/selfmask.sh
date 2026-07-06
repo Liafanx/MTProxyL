@@ -1,12 +1,12 @@
 #!/bin/bash
 # MTProxyL — Selfmask через локальный nginx + Let's Encrypt
-# Важно: backend nginx для mask работает на TLS 1.2 + 1.3
+# Важно: backend nginx для mask работает на TLS 1.3
 
 SELFMASK_PQ_PREFIX="/opt/mtproxyl-nginx"
 SELFMASK_PQ_SERVICE="mtproxyl-pq-nginx.service"
-SELFMASK_PQ_RELEASE_TAG="pq-nginx-1.27.4-openssl3.5.0"
+SELFMASK_PQ_RELEASE_TAG="pq-nginx-1.27.4-openssl3.5.7"
 SELFMASK_PQ_NGINX_VERSION="1.27.4"
-SELFMASK_PQ_OPENSSL_VERSION="3.5.0"
+SELFMASK_PQ_OPENSSL_VERSION="3.5.7"
 
 _selfmask_pq_nginx_bin() {
     echo "${SELFMASK_PQ_PREFIX}/sbin/nginx-pq"
@@ -41,7 +41,7 @@ selfmask_show_requirements() {
     echo -e "  ${DIM}• Если PQ не поддерживается и Peer Temp Key = X25519,${NC}"
     echo -e "  ${DIM}  iOS-клиенты с высокой вероятностью не смогут подключиться.${NC}"
     echo ""
-    echo -e "  ${DIM}• Внутренний backend nginx для selfmask поддерживает ${BOLD}TLS 1.2 и TLS 1.3${NC}${DIM}.${NC}"
+    echo -e "  ${DIM}• Внутренний backend nginx для selfmask поддерживает TLS 1.3${NC}${DIM}.${NC}"
     echo -e "  ${DIM}• Постквантовый обмен ключами X25519MLKEM768 работает через ${BOLD}TLS 1.3${NC}${DIM}.${NC}"
     echo ""
 }
@@ -55,7 +55,7 @@ selfmask_show_status() {
     echo -e "  ${BOLD}Источник сайта:${NC} HTML-заглушка"
     echo -e "  ${BOLD}Каталог сайта:${NC}  ${SELFMASK_SITE_DIR:-/var/www/mtproxyl-selfmask}"
     echo -e "  ${BOLD}Backend:${NC}        127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}"
-    echo -e "  ${BOLD}TLS backend:${NC}    ${SELFMASK_TLS_PROTOCOLS:-TLSv1.2}"
+    echo -e "  ${BOLD}TLS backend:${NC}    ${SELFMASK_TLS_PROTOCOLS:-TLSv1.3}"
     echo -e "  ${BOLD}Продление cert:${NC} ${SELFMASK_AUTO_RENEW:-true}"
     echo ""
 
@@ -146,7 +146,7 @@ _selfmask_collect_params() {
     echo -e "    Сайт:      HTML-заглушка"
     echo -e "    Каталог:   ${SELFMASK_SITE_DIR}"
     echo -e "    Backend:   127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT}"
-    echo -e "    TLS:       ${SELFMASK_TLS_PROTOCOLS:-TLSv1.2}"
+    echo -e "    TLS:       ${SELFMASK_TLS_PROTOCOLS:-TLSv1.3}"
     echo ""
 
     echo -en "  ${BOLD}Продолжить настройку? [Y/n]:${NC} "
@@ -435,7 +435,7 @@ http {
         listen 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT} ssl default_server;
         server_name _;
 
-        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_protocols TLSv1.3;
         ssl_ecdh_curve X25519MLKEM768:X25519:prime256v1;
         ssl_prefer_server_ciphers on;
 
@@ -450,7 +450,7 @@ http {
         server_name ${SELFMASK_DOMAIN};
         server_tokens off;
 
-        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_protocols TLSv1.3;
         ssl_ecdh_curve X25519MLKEM768:X25519:prime256v1;
         ssl_prefer_server_ciphers on;
 
