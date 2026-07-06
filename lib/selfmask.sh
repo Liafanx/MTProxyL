@@ -328,6 +328,67 @@ EOF
     systemctl enable "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
 }
 
+SELFMASK_SYSTEM_NGINX_WAS_ACTIVE="false"
+
+_selfmask_free_ports() {
+    # 1. Останавливаем наш PQ nginx если он уже запущен
+    if systemctl is-active "${SELFMASK_PQ_SERVICE}" &>/dev/null 2>&1; then
+        log_info "Останавливаем предыдущий экземпляр PQ nginx"
+        systemctl stop "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
+    fi
+
+    # На всякий случай убиваем только наш nginx
+    pkill -f "${SELFMASK_PQ_PREFIX}/sbin/nginx" 2>/dev/null || true
+
+    # 2. Проверяем занят ли порт 80 кем-то ещё
+    local _port80_busy="false"
+    if command -v ss &>/dev/null; then
+        ss -tln 2>/dev/null | awk '{print $4}' | grep -qE '(^|:|])80$' && _port80_busy="true"
+    elif command -v netstat &>/dev/null; then
+        netstat -tln 2>/dev/null | awk '{print $4}' | grep -qE '(^|:|])80$' && _port80_busy="true"
+    fi
+
+    # Если порт 80 свободен — отлично
+    [ "$_port80_busy" != "true" ] && return 0
+
+    # 3. Если активен системный nginx — спрашиваем пользователя
+    if systemctl list-unit-files 2>/dev/null | grep -q '^nginx\.service' && systemctl is-active nginx &>/dev/null 2>&1; then
+        echo ""
+        log_warn "Обнаружен системный nginx, который использует порт 80"
+        echo -e "  ${DIM}Selfmask требует порт 80 для Let's Encrypt и http→https redirect.${NC}"
+        echo -e "  ${DIM}Если остановить системный nginx, его сайты/панели временно станут недоступны.${NC}"
+        echo ""
+        echo -en "  ${BOLD}Временно остановить системный nginx? [y/N]:${NC} "
+        local _yn
+        read -r _yn
+        if [[ "$_yn" =~ ^[yY]$ ]]; then
+            SELFMASK_SYSTEM_NGINX_WAS_ACTIVE="true"
+            systemctl stop nginx &>/dev/null || {
+                log_error "Не удалось остановить системный nginx"
+                return 1
+            }
+            log_info "Системный nginx временно остановлен"
+            return 0
+        else
+            log_error "Настройка selfmask отменена: порт 80 занят системным nginx"
+            return 1
+        fi
+    fi
+
+    # 4. Если занят не nginx'ом — просто сообщаем
+    log_error "Порт 80 уже занят другим процессом"
+    log_info "Освободите порт 80 и повторите настройку selfmask"
+    return 1
+}
+
+_selfmask_restore_system_nginx() {
+    if [ "${SELFMASK_SYSTEM_NGINX_WAS_ACTIVE:-false}" = "true" ]; then
+        log_info "Возвращаем системный nginx в исходное состояние..."
+        systemctl start nginx &>/dev/null || log_warn "Не удалось снова запустить системный nginx"
+        SELFMASK_SYSTEM_NGINX_WAS_ACTIVE="false"
+    fi
+}
+
 _selfmask_deploy_site() {
     log_info "Развёртывание сайта-маски..."
 
@@ -453,6 +514,7 @@ EOF
 
     _selfmask_open_public_ports
     _selfmask_install_pq_service
+    _selfmask_free_ports || return 1
 
     local _test_out=""
     _test_out=$("$(_selfmask_pq_nginx_bin)" -t -c "$(_selfmask_pq_conf)" 2>&1) || {
@@ -567,8 +629,11 @@ EOF
         return 1
     }
 
+    _selfmask_free_ports || return 1
     systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null || {
         log_error "Не удалось перезапустить PQ nginx"
+        journalctl -u "${SELFMASK_PQ_SERVICE}" -n 20 --no-pager 2>/dev/null | sed 's/^/    /'
+        _selfmask_restore_system_nginx
         return 1
     }
 
@@ -724,9 +789,9 @@ selfmask_setup() {
     _selfmask_install_deps         || return 1
     _selfmask_install_pq_nginx     || return 1
     _selfmask_deploy_site          || return 1
-    _selfmask_obtain_cert          || return 1
-    _selfmask_configure_nginx      || return 1
-    _selfmask_apply_mtproxyl_settings || return 1
+    _selfmask_obtain_cert          || { _selfmask_restore_system_nginx; return 1; }
+    _selfmask_configure_nginx      || { _selfmask_restore_system_nginx; return 1; }
+    _selfmask_apply_mtproxyl_settings || { _selfmask_restore_system_nginx; return 1; }
     _selfmask_setup_renewal        || true
     selfmask_verify
 
