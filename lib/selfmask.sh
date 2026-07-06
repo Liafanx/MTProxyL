@@ -52,7 +52,15 @@ selfmask_show_status() {
     echo ""
     echo -e "  ${BOLD}Статус:${NC}         $(selfmask_status_line)"
     echo -e "  ${BOLD}Домен:${NC}          ${SELFMASK_DOMAIN:-${DIM}не задан${NC}}"
-    echo -e "  ${BOLD}Источник сайта:${NC} HTML-заглушка"
+    local _src_display
+    case "${SELFMASK_SITE_SOURCE:-stub}" in
+        stub)        _src_display="Простая заглушка" ;;
+        filemanager) _src_display="Файловый менеджер" ;;
+        catrunner)   _src_display="Cat Runner" ;;
+        http*)       _src_display="${SELFMASK_SITE_SOURCE}" ;;
+        *)           _src_display="${SELFMASK_SITE_SOURCE:-stub}" ;;
+    esac
+    echo -e "  ${BOLD}Источник сайта:${NC} ${_src_display}"
     echo -e "  ${BOLD}Каталог сайта:${NC}  ${SELFMASK_SITE_DIR:-/var/www/mtproxyl-selfmask}"
     echo -e "  ${BOLD}Backend:${NC}        127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}"
     echo -e "  ${BOLD}TLS backend:${NC}    TLSv1.3 (X25519MLKEM768)"
@@ -127,8 +135,43 @@ _selfmask_collect_params() {
         [[ "$_dns_yn" =~ ^[yY]$ ]] || return 1
     fi
 
-    SELFMASK_SITE_SOURCE="stub"
-    log_info "Будет создана HTML-заглушка сайта"
+    echo ""
+    draw_header "ШАБЛОН САЙТА"
+    echo ""
+    echo -e "  ${DIM}[1]${NC} Простая заглушка ${DIM}(«Сайт временно недоступен»)${NC}"
+    echo -e "  ${DIM}[2]${NC} Файловый менеджер ${DIM}(форма входа с логином/паролем)${NC}"
+    echo -e "  ${DIM}[3]${NC} Cat Runner ${DIM}(мини-игра: кот прыгает через кактусы)${NC}"
+    echo -e "  ${CYAN}[4]${NC} Указать свой URL ${DIM}(прямая ссылка на index.html)${NC}"
+    echo ""
+
+    local _tpl
+    _tpl=$(read_choice "выбор" "1")
+    case "$_tpl" in
+        2)
+            SELFMASK_SITE_SOURCE="filemanager"
+            log_info "Выбран шаблон: Файловый менеджер"
+            ;;
+        3)
+            SELFMASK_SITE_SOURCE="catrunner"
+            log_info "Выбран шаблон: Cat Runner"
+            ;;
+        4)
+            echo -en "  ${BOLD}URL файла index.html:${NC} "
+            local _custom_url
+            read -r _custom_url
+            if [[ "$_custom_url" =~ ^https?:// ]]; then
+                SELFMASK_SITE_SOURCE="$_custom_url"
+                log_info "Пользовательский шаблон: ${_custom_url}"
+            else
+                log_error "Нужен URL вида http(s)://..."
+                return 1
+            fi
+            ;;
+        *)
+            SELFMASK_SITE_SOURCE="stub"
+            log_info "Выбрана простая заглушка"
+            ;;
+    esac
 
     echo ""
     echo -en "  ${BOLD}Локальный backend-порт nginx [${SELFMASK_NGINX_BACKEND_PORT:-8444}]:${NC} "
@@ -143,7 +186,14 @@ _selfmask_collect_params() {
     echo -e "  ${BOLD}Итоговые параметры:${NC}"
     echo -e "    Домен:     ${SELFMASK_DOMAIN}"
     echo -e "    Email:     ${SELFMASK_CERT_EMAIL}"
-    echo -e "    Сайт:      HTML-заглушка"
+    local _src_display
+    case "${SELFMASK_SITE_SOURCE:-stub}" in
+        stub)        _src_display="Простая заглушка" ;;
+        filemanager) _src_display="Файловый менеджер" ;;
+        catrunner)   _src_display="Cat Runner" ;;
+        *)           _src_display="${SELFMASK_SITE_SOURCE}" ;;
+    esac
+    echo -e "    Сайт:      ${_src_display}"
     echo -e "    Каталог:   ${SELFMASK_SITE_DIR}"
     echo -e "    Backend:   127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT}"
     echo -e "    TLS:       ${SELFMASK_TLS_PROTOCOLS:-TLSv1.3}"
@@ -282,8 +332,46 @@ _selfmask_deploy_site() {
 
     mkdir -p "$SELFMASK_SITE_DIR"
 
-    if [ "${SELFMASK_SITE_SOURCE:-stub}" = "stub" ]; then
-        cat > "${SELFMASK_SITE_DIR}/index.html" << 'HTML_EOF'
+    local _src="${SELFMASK_SITE_SOURCE:-stub}"
+    local _templates_base="https://raw.githubusercontent.com/${GITHUB_REPO}/main/templates_html"
+
+    case "$_src" in
+        stub)
+            _selfmask_download_template "${_templates_base}/stub.html" || _selfmask_fallback_stub
+            ;;
+        filemanager)
+            _selfmask_download_template "${_templates_base}/filemanager.html" || _selfmask_fallback_stub
+            ;;
+        catrunner)
+            _selfmask_download_template "${_templates_base}/catrunner.html" || _selfmask_fallback_stub
+            ;;
+        http*) 
+            _selfmask_download_template "$_src" || _selfmask_fallback_stub
+            ;;
+        *)
+            _selfmask_fallback_stub
+            ;;
+    esac
+
+    chown -R www-data:www-data "$SELFMASK_SITE_DIR" 2>/dev/null || true
+    chmod -R 755 "$SELFMASK_SITE_DIR" 2>/dev/null || true
+}
+
+_selfmask_download_template() {
+    local _url="$1"
+    log_info "Скачивание шаблона: ${_url}"
+    if curl -fsSL --max-time 15 "$_url" -o "${SELFMASK_SITE_DIR}/index.html" 2>/dev/null; then
+        log_success "Шаблон установлен"
+        return 0
+    else
+        log_warn "Не удалось скачать шаблон"
+        return 1
+    fi
+}
+
+_selfmask_fallback_stub() {
+    log_info "Создаём встроенную заглушку..."
+    cat > "${SELFMASK_SITE_DIR}/index.html" << 'HTML_EOF'
 <!doctype html>
 <html lang="ru">
 <head>
@@ -304,11 +392,7 @@ _selfmask_deploy_site() {
 </body>
 </html>
 HTML_EOF
-        log_success "Создана HTML-заглушка"
-    fi
-
-    chown -R www-data:www-data "$SELFMASK_SITE_DIR" 2>/dev/null || true
-    chmod -R 755 "$SELFMASK_SITE_DIR" 2>/dev/null || true
+    log_success "Встроенная заглушка создана"
 }
 
 _selfmask_open_public_ports() {
