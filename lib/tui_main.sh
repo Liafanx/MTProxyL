@@ -69,10 +69,11 @@ show_main_menu() {
         echo -e "  ${BRIGHT_CYAN}[4]${NC}  Настройки"
         echo -e "  ${BRIGHT_CYAN}[5]${NC}  Безопасность и маршрутизация"
         echo -e "  ${BRIGHT_CYAN}[6]${NC}  Логи и трафик"
-        echo -e "  ${BRIGHT_CYAN}[7]${NC}  NFT лимитер и iOS фиксы"
+        echo -e "  ${BRIGHT_CYAN}[7]${NC}  NFT лимитер и фиксы"
         echo -e "  ${BRIGHT_CYAN}[8]${NC}  Движок Telemt"
         echo -e "  ${BRIGHT_CYAN}[9]${NC}  Обновление и бэкапы"
         echo -e "  ${BRIGHT_CYAN}[e]${NC}  Режим эксперта (override поверх config.toml)"
+        echo -e "  ${BRIGHT_CYAN}[d]${NC}  Дополнения (утилиты)"
         echo -e "  ${BRIGHT_CYAN}[i]${NC}  Информация"
         echo ""
         echo -e "  ${BRIGHT_CYAN}[r]${NC}  Переустановить"
@@ -92,6 +93,7 @@ show_main_menu() {
             8) tui_engine_menu ;;
             9) tui_backup_menu ;;
             e|E) tui_expert_menu ;;
+            d|D) tui_addons_menu ;;
             i|I) show_server_info; press_any_key ;;
             r|R) run_installer ;;
             u|U) uninstall; exit 0 ;;
