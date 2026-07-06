@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-#  MTProxyL v1.0.11 — Telegram MTProto Proxy Manager
+#  MTProxyL v1.1.0 — Telegram MTProto Proxy Manager
 #  https://github.com/Liafanx/MTProxyL
 #  by LiafanX
 # ═══════════════════════════════════════════════════════════════
@@ -8,7 +8,7 @@
 set -o pipefail
 export LC_NUMERIC=C
 
-VERSION="1.0.11"
+VERSION="1.1.0"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -40,7 +40,7 @@ fi
 
 # Загрузка библиотек
 LIB_DIR="${INSTALL_DIR}/lib"
-for _lib in colors utils settings secrets config docker engine traffic geoblock upstream backup nft tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft expert_catalog expert_mode install; do
+for _lib in colors utils settings secrets config docker engine traffic geoblock upstream backup nft selfmask tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons expert_catalog expert_mode install; do
     if [ -f "${LIB_DIR}/${_lib}.sh" ]; then
         # shellcheck source=/dev/null
         source "${LIB_DIR}/${_lib}.sh"
@@ -252,6 +252,21 @@ cli_main() {
             check_root; load_settings
             self_update
             ;;
+
+         selfmask)
+            load_settings
+            handle_selfmask_command "$@"
+            ;;
+
+        pq-check)
+            load_settings
+            if [ -x "$(_selfmask_pq_openssl_bin)" ]; then
+                _addon_check_pq_domain "${1:-${PROXY_DOMAIN:-}}"
+            else
+                log_error "PQ OpenSSL не установлен"
+                log_info "Установите через: mtproxyl selfmask setup"
+            fi
+            ;;            
 
         install)
             run_installer

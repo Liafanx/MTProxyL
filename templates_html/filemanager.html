@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>File Manager — Вход</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:#1a1a2e;color:#e0e0e0;display:flex;justify-content:center;align-items:center;min-height:100vh}
+.login-box{background:#16213e;border-radius:12px;padding:40px 36px;width:100%;max-width:380px;box-shadow:0 8px 32px rgba(0,0,0,.4)}
+.login-box h1{font-size:1.3rem;text-align:center;margin-bottom:6px;color:#e94560}
+.login-box p.sub{text-align:center;font-size:.85rem;color:#888;margin-bottom:28px}
+.field{margin-bottom:18px}
+.field label{display:block;font-size:.8rem;color:#aaa;margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px}
+.field input{width:100%;padding:11px 14px;border:1px solid #333;border-radius:8px;background:#0f3460;color:#e0e0e0;font-size:.95rem;outline:none;transition:border .2s}
+.field input:focus{border-color:#e94560}
+.btn{width:100%;padding:12px;border:none;border-radius:8px;background:#e94560;color:#fff;font-size:1rem;font-weight:600;cursor:pointer;transition:background .2s;margin-top:6px}
+.btn:hover{background:#c73e54}
+.btn:active{transform:scale(.98)}
+.error{text-align:center;color:#e94560;font-size:.85rem;margin-top:14px;min-height:20px;opacity:0;transition:opacity .3s}
+.error.show{opacity:1}
+.footer{text-align:center;margin-top:22px;font-size:.75rem;color:#555}
+</style>
+</head>
+<body>
+<div class="login-box">
+  <h1>📁 File Manager</h1>
+  <p class="sub">Авторизация для доступа к панели</p>
+  <form id="lf" onsubmit="return tryLogin()">
+    <div class="field">
+      <label>Логин</label>
+      <input type="text" id="user" autocomplete="username" required>
+    </div>
+    <div class="field">
+      <label>Пароль</label>
+      <input type="password" id="pass" autocomplete="current-password" required>
+    </div>
+    <button class="btn" type="submit">Войти</button>
+  </form>
+  <div class="error" id="err">Неверный логин или пароль</div>
+  <div class="footer">FileManager v3.2.1 &copy; 2026</div>
+</div>
+<script>
+var a=0;
+function tryLogin(){
+  a++;
+  var e=document.getElementById('err');
+  e.classList.remove('show');
+  var b=document.querySelector('.btn');
+  b.textContent='Проверка...';
+  b.disabled=true;
+  setTimeout(function(){
+    b.textContent='Войти';
+    b.disabled=false;
+    e.textContent=a>2?'Аккаунт временно заблокирован':'Неверный логин или пароль';
+    e.classList.add('show');
+  },800+Math.random()*700);
+  return false;
+}
+</script>
+</body>
+</html>

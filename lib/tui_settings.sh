@@ -16,6 +16,7 @@ tui_settings_menu() {
         echo -e "  ${BOLD}Рекл. метка:${NC} ${AD_TAG:-${DIM}не задана${NC}}"
         echo -e "  ${BOLD}SNI-полит.:${NC}  ${UNKNOWN_SNI_ACTION}"
         echo -e "  ${BOLD}PROXY proto:${NC} ${PROXY_PROTOCOL}"
+        echo -e "  ${BOLD}Selfmask:${NC}    $(selfmask_status_line 2>/dev/null || echo "${DIM}выключен${NC}")"
         echo -e "  ${BOLD}Движок:${NC}      telemt v$(get_telemt_version)"
         echo ""
         echo -e "  ${DIM}[1]${NC} Изменить порт"
@@ -32,6 +33,7 @@ tui_settings_menu() {
         echo -e "  ${DIM}[v]${NC} Просмотр текущего конфига"
         echo -e "  ${DIM}[t]${NC} Тюнинг движка (tune) Telemt"
         echo -e "  ${DIM}[u]${NC} Пользовательские URL Telegram"
+        echo -e "  ${DIM}[h]${NC} Selfmask (nginx + Let's Encrypt)"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
@@ -51,6 +53,11 @@ tui_settings_menu() {
                 esac
                 press_any_key ;;
             3)
+                if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+                    log_warn "Selfmask активен. Домен меняется через меню Selfmask"
+                    press_any_key
+                    continue
+                fi
                 local _old_domain="$PROXY_DOMAIN"
                 echo -e "  ${DIM}[1] autoscout24.ru  [2] google.com  [3] twitch.tv  [4] Свой${NC}"
                 local d; d=$(read_choice "выбор" "1")
@@ -94,6 +101,11 @@ tui_settings_menu() {
                 is_proxy_running && { load_secrets; restart_proxy_container || true; }
                 press_any_key ;;
             m|M)
+                if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+                    log_warn "Selfmask активен. Локальный mask backend управляется через меню Selfmask"
+                    press_any_key
+                    continue
+                fi
                 echo -e "  ${DIM}Текущий: ${MASKING_HOST:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}${NC}"
                 echo -en "  ${BOLD}Хост:${NC} "; local mh; read -r mh
                 echo -en "  ${BOLD}Порт [${MASKING_PORT:-443}]:${NC} "; local mp; read -r mp
@@ -192,7 +204,8 @@ tui_settings_menu() {
                        save_settings; log_success "URL сброшены"
                        is_proxy_running && { load_secrets; restart_proxy_container || true; } ;;
                 esac
-                press_any_key ;;
+                press_any_key ;;        
+             h|H) tui_selfmask_menu ;;             
             0|"") return ;;
         esac
     done

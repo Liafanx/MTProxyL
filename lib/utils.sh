@@ -291,7 +291,7 @@ self_update() {
     cp "${INSTALL_DIR}/mtproxyl.sh" "${INSTALL_DIR}/mtproxyl.sh.backup-$(date +%s)" 2>/dev/null || true
     mv "$_tmp" "${INSTALL_DIR}/mtproxyl.sh"; chmod +x "${INSTALL_DIR}/mtproxyl.sh"
     log_info "Обновление библиотек..."
-    for lib in colors utils settings secrets config docker engine traffic geoblock upstream backup nft tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft expert_catalog expert_mode install; do
+        for lib in colors utils settings secrets config docker engine traffic geoblock upstream backup nft selfmask tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons expert_catalog expert_mode install; do
         curl -fsS --max-time 15 "${GITHUB_RAW}/lib/${lib}.sh" -o "${LIB_DIR}/${lib}.sh" 2>/dev/null || true
     done
     log_success "Обновлено до v${_new_ver}"
@@ -345,6 +345,10 @@ handle_ip_command() {
 
 handle_domain_command() {
     local new_domain="${1:-}"
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ] && [ -n "$new_domain" ]; then
+        log_warn "Selfmask активен. Домен управляется через 'mtproxyl selfmask setup'"
+        return 1
+    fi
     if [ -z "$new_domain" ]; then
         echo -e "  ${BOLD}Домен:${NC} ${PROXY_DOMAIN}"
         return 0
@@ -382,6 +386,10 @@ handle_domain_command() {
 
 handle_mask_backend() {
     local input="${1:-}"
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ] && [ -n "$input" ]; then
+        log_warn "Selfmask активен. Локальный mask backend управляется через selfmask"
+        return 1
+    fi
     if [ -z "$input" ]; then
         echo -e "  ${BOLD}Mask backend:${NC} ${MASKING_HOST:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}"
         return 0
@@ -460,6 +468,8 @@ show_cli_help() {
     echo -e "  ${BOLD}Движок:${NC}         engine status|list|update|rollback|rebuild"
     echo -e "  ${BOLD}Эксперт:${NC}        expert list|set|clear|edit"
     echo -e "  ${BOLD}NFT:${NC}            nft apply|remove|service|drop|preset|ios1|ios2"
+    echo -e "  ${BOLD}Selfmask:${NC}       selfmask status|setup|verify|disable|menu"
+    echo -e "  ${BOLD}PQ проверка:${NC}    pq-check [домен[:порт]]"
     echo -e "  ${BOLD}Безопасность:${NC}   geoblock add|remove|list | upstream list|add|remove | sni-policy"
     echo -e "  ${BOLD}Мониторинг:${NC}     traffic | connections | metrics [live] | logs | health | info"
     echo -e "  ${BOLD}Бэкапы:${NC}         backup [--encrypt] | restore <файл>"

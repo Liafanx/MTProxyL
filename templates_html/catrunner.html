@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cat Runner</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#1a1a2e;overflow:hidden;font-family:system-ui,-apple-system,sans-serif}
+canvas{display:block;margin:0 auto;background:#0f3460;border-radius:0 0 12px 12px}
+.ui{text-align:center;padding:16px;color:#e0e0e0}
+.ui h1{font-size:1.4rem;margin-bottom:4px}
+.ui .score{font-size:1.1rem;color:#e94560}
+.ui .hint{font-size:.8rem;color:#888;margin-top:6px}
+</style>
+</head>
+<body>
+<div class="ui">
+  <h1>🐱 Cat Runner</h1>
+  <div class="score">Прыжки: <span id="sc">0</span></div>
+  <div class="hint">Пробел или тап — прыжок</div>
+</div>
+<canvas id="c"></canvas>
+<script>
+var c=document.getElementById('c'),x=c.getContext('2d'),W,H,cat,cacti,spd,score,dead,ground,frame;
+function resize(){W=Math.min(window.innerWidth,600);H=240;c.width=W;c.height=H;ground=H-30}
+function init(){resize();score=0;dead=false;frame=0;spd=3;cat={x:60,y:ground,w:28,h:28,vy:0,jumping:false};cacti=[];document.getElementById('sc').textContent='0'}
+function jump(){if(dead){init();return}if(!cat.jumping){cat.vy=-10;cat.jumping=true;score++;document.getElementById('sc').textContent=score}}
+function spawnCactus(){cacti.push({x:W+10,w:14+Math.random()*10,h:24+Math.random()*18})}
+function update(){
+if(dead)return;
+frame++;
+if(frame%Math.max(40,80-score*2)===0)spawnCactus();
+cat.vy+=0.6;cat.y+=cat.vy;
+if(cat.y>=ground){cat.y=ground;cat.vy=0;cat.jumping=false}
+for(var i=cacti.length-1;i>=0;i--){
+  cacti[i].x-=spd;
+  if(cacti[i].x+cacti[i].w<0){cacti.splice(i,1);continue}
+  var cx=cacti[i];
+  if(cat.x+cat.w-6>cx.x&&cat.x+6<cx.x+cx.w&&cat.y+cat.h>ground-cx.h){dead=true}
+}
+if(frame%200===0&&spd<8)spd+=0.3;
+}
+function draw(){
+x.clearRect(0,0,W,H);
+x.fillStyle='#16213e';x.fillRect(0,ground,W,H-ground);
+x.strokeStyle='#333';x.beginPath();x.moveTo(0,ground);x.lineTo(W,ground);x.stroke();
+if(!dead){x.font='26px serif';x.fillText('🐱',cat.x,cat.y+cat.h-2)}
+else{x.font='26px serif';x.fillText('😿',cat.x,cat.y+cat.h-2);
+x.fillStyle='#e94560';x.font='bold 18px system-ui';x.textAlign='center';
+x.fillText('Врезался! Тап / пробел — заново',W/2,H/2);x.textAlign='start'}
+x.fillStyle='#2ecc71';
+for(var i=0;i<cacti.length;i++){var cc=cacti[i];x.fillRect(cc.x,ground-cc.h,cc.w,cc.h);
+x.fillRect(cc.x+cc.w/2-2,ground-cc.h-6,4,6)}
+}
+function loop(){update();draw();requestAnimationFrame(loop)}
+window.addEventListener('keydown',function(e){if(e.code==='Space'){e.preventDefault();jump()}});
+c.addEventListener('touchstart',function(e){e.preventDefault();jump()});
+c.addEventListener('click',function(){jump()});
+window.addEventListener('resize',resize);
+init();loop();
+</script>
+</body>
+</html>
