@@ -155,5 +155,5 @@ load_settings() {
     [ -n "$SELFMASK_SITE_DIR" ] || SELFMASK_SITE_DIR="/var/www/mtproxyl-selfmask"
     [ -n "$SELFMASK_NGINX_SITE_NAME" ] || SELFMASK_NGINX_SITE_NAME="mtproxyl-selfmask"
     [ -n "$SELFMASK_SITE_SOURCE" ] || SELFMASK_SITE_SOURCE="stub"
-    [ "$SELFMASK_TLS_PROTOCOLS" = "TLSv1.2" ] || SELFMASK_TLS_PROTOCOLS="TLSv1.2"
+    [ "$SELFMASK_TLS_PROTOCOLS" = "TLSv1.3" ] || SELFMASK_TLS_PROTOCOLS="TLSv1.3"
 }
