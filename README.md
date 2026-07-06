@@ -133,6 +133,7 @@ mtproxyl
 
 **★ Smart By-MEKO** *(рекомендуется)* — интеллектуальное разделение клиентов:
 - Два метода определения iOS: **TCP fingerprint** *(рекомендуется)* и TTL+Length
+- iOS пропускается без ограничений по умолчанию, лимит Other включён
 - Лимиты iOS и Other можно включать/отключать раздельно
 - Выбор действия для non-iOS: `icmp-host-unreachable` / `reject` / `drop`
 - Один порт для всех клиентов
@@ -379,7 +380,7 @@ iOS определяется одним из двух методов:
 |----------|-------------|----------|
 | iOS Rate | 15/second | Лимит SYN для iOS |
 | iOS Burst | 30 | Burst для iOS |
-| iOS Limit | включён | Можно отключить |
+| iOS Limit | отключён | iOS пропускаются без ограничений (безусловный ACCEPT) |
 | Other Rate | 54/minute | Лимит SYN для Android/Desktop |
 | Other Burst | 1 | Burst для Other |
 | Other Limit | включён | Можно отключить |
