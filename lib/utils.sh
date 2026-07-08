@@ -247,7 +247,7 @@ read_choice() {
     [ -n "$default" ] && echo -en " [${default}]" >&2
     echo -en ": " >&2
     local choice
-    read -e -r choice
+    read -r choice
     [ -z "$choice" ] && choice="$default"
     echo "$choice"
 }
