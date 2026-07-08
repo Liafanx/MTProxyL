@@ -241,12 +241,13 @@ press_any_key() {
 read_choice() {
     local prompt="${1:-выбор}"
     local default="${2:-}"
+    fix_tty_input
     read -rn 256 -t 0.05 _ 2>/dev/null || true
     echo -en "\n  Введите ${prompt,,}" >&2
     [ -n "$default" ] && echo -en " [${default}]" >&2
     echo -en ": " >&2
     local choice
-    read -r choice
+    read -e -r choice
     [ -z "$choice" ] && choice="$default"
     echo "$choice"
 }
@@ -255,6 +256,12 @@ clear_screen() {
     clear 2>/dev/null || printf '\033[2J\033[H'
     echo -e "${BRIGHT_CYAN}${BOLD}  MTProxyL${NC} ${DIM}v${VERSION}${NC} ${DIM}by LiafanX${NC}"
     echo -e "  ${DIM}$(_repeat '─' 30)${NC}"
+}
+
+fix_tty_input() {
+    [ -t 0 ] || return 0
+    stty sane 2>/dev/null || true
+    stty erase '^?' 2>/dev/null || true
 }
 
 # ── Проверка обновлений ───────────────────────────────────────
