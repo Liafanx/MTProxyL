@@ -261,7 +261,7 @@ clear_screen() {
 fix_tty_input() {
     [ -t 0 ] || return 0
     stty sane 2>/dev/null || true
-    stty erase '^?' 2>/dev/null || true
+    stty erase '^?' iutf8 2>/dev/null || stty erase '^?' 2>/dev/null || true
 }
 
 # ── Проверка обновлений ───────────────────────────────────────
