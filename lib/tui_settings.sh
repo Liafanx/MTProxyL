@@ -83,7 +83,7 @@ tui_settings_menu() {
                     continue
                 fi
                 echo ""
-                echo -e "  ${DIM}[1] autoscout24.ru  [2] google.com  [3] twitch.tv  [4] Свой  [0] Отмена${NC}"
+                echo -e "  ${DIM}[1] autoscout24.ru  [2] m.beboo.ru  [3] twitch.tv  [4] Свой  [0] Отмена${NC}"
                 local d
                 d=$(read_choice "выбор" "0")
                 case "$d" in
@@ -93,7 +93,7 @@ tui_settings_menu() {
                         continue
                         ;;
                     1) PROXY_DOMAIN="autoscout24.ru" ;;
-                    2) PROXY_DOMAIN="google.com" ;;
+                    2) PROXY_DOMAIN="m.beboo.ru" ;;
                     3) PROXY_DOMAIN="twitch.tv" ;;
                     4)
                         echo -en "  ${BOLD}Домен:${NC} "
