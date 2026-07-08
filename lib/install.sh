@@ -58,9 +58,29 @@ run_installer() {
 
     # Порт
     echo -e "  ${BOLD}Порт прокси${NC} ${DIM}(по умолчанию: 443)${NC}"
-    echo -en "  ${DIM}Порт [443]:${NC} "
-    local port_input; read -r port_input
-    [ -n "$port_input" ] && validate_port "$port_input" && PROXY_PORT="$port_input"
+    while true; do
+        echo -en "  ${DIM}Порт [443]:${NC} "
+        local port_input=""
+        read -r port_input
+        if [ -z "$port_input" ]; then
+            break
+        fi
+        if ! validate_port "$port_input"; then
+            log_error "Некорректный порт (допустимо 1..65535)"
+            continue
+        fi
+        if ! is_port_available "$port_input"; then
+            log_warn "Порт ${port_input} уже занят"
+            echo -en "  ${BOLD}Использовать всё равно? [y/N]:${NC} "
+            local _force_port=""
+            read -r _force_port
+            if [[ ! "$_force_port" =~ ^[yY]$ ]]; then
+                continue
+            fi
+        fi
+        PROXY_PORT="$port_input"
+        break
+    done
 
     # Metrics port — автоматически выбираем свободный
     echo ""
@@ -102,17 +122,32 @@ run_installer() {
     echo ""
     local _det_ip; _det_ip=$(CUSTOM_IP="" get_public_ip)
     echo -e "  ${BOLD}IP или домен для ссылок${NC}"
-    echo -en "  ${DIM}Определён: ${_det_ip:-?} — Свой IP/домен или Enter [${_det_ip:-авто}]:${NC} "
-    local ip_input; read -r ip_input
-    [ -n "$ip_input" ] && CUSTOM_IP="$ip_input"
+    echo -e "  ${DIM}Определён: ${_det_ip:-?}${NC}"
+    echo -e "  ${DIM}Введите свой IPv4 или домен, либо Enter для автоопределения.${NC}"
+    echo ""
+    echo -en "  ${BOLD}IP/домен [${_det_ip:-авто}]:${NC} "
+    local ip_input=""
+    read -r ip_input
+    if [ -n "$ip_input" ]; then
+        if validate_ip_literal "$ip_input"; then
+            CUSTOM_IP="$ip_input"
+            log_success "IP: ${CUSTOM_IP}"
+        elif validate_domain "$ip_input"; then
+            CUSTOM_IP="$ip_input"
+            log_success "Домен: ${CUSTOM_IP}"
+        else
+            log_warn "Некорректный IP/домен: '${ip_input}' — используем автоопределение"
+            CUSTOM_IP=""
+        fi
+    fi
 
     # Домен
     echo ""
     echo -e "  ${BOLD}FakeTLS домен (потом можно будет изменить)${NC}"
-    echo -e "  ${DIM}[1] autoscout24.ru  [2] google.com  [3] twitch.tv  [4] Свой${NC}"
+    echo -e "  ${DIM}[1] autoscout24.ru  [2] m.beboo.ru  [3] twitch.tv  [4] Свой${NC}"
     local d; d=$(read_choice "выбор" "1")
     case "$d" in
-        2) PROXY_DOMAIN="google.com" ;;
+        2) PROXY_DOMAIN="m.beboo.ru" ;;
         3) PROXY_DOMAIN="twitch.tv" ;;
         4) echo -en "  Домен: "; local cd; read -r cd
            [ -n "$cd" ] && validate_domain "$cd" && PROXY_DOMAIN="$cd" ;;
@@ -173,10 +208,10 @@ run_installer() {
     echo -e "  ${DIM}Без этого прокси нестабилен в ~90% случаев.${NC}"
     echo ""
     echo -e "  ${DIM}Пресеты:${NC}"
-    echo -e "    ${BRIGHT_GREEN}[s]${NC} ★ Smart By-MEKO ${DIM}(рекомендуется — iOS/Android авторазделение + REJECT)${NC}"
-    echo -e "    ${RED}[1]${NC} Жёсткий  — 1/sec burst 1  ${DIM}(Classic)${NC}"
-    echo -e "    ${YELLOW}[2]${NC} Средний  — 1/sec burst 3  ${DIM}(Classic)${NC}"
-    echo -e "    ${GREEN}[3]${NC} Мягкий   — 2/sec burst 5  ${DIM}(Classic)${NC}"
+    echo -e "    ${BRIGHT_GREEN}[S]${NC} ★ Smart By-MEKO ${DIM}(рекомендуется — iOS/Android авторазделение + REJECT)${NC}"
+    echo -e "    ${RED}[1]${NC} Жёсткий  — 1/sec burst 1 (устарел)  ${DIM}(Classic)${NC}"
+    echo -e "    ${YELLOW}[2]${NC} Средний  — 1/sec burst 3 (не работает)  ${DIM}(Classic)${NC}"
+    echo -e "    ${GREEN}[3]${NC} Мягкий   — 2/sec burst 5 (не работает)  ${DIM}(Classic)${NC}"
     echo -e "    ${DIM}[n]${NC} Не применять"
     echo ""
     echo -en "  ${BOLD}Применить NFT limiter? [s по умолчанию]:${NC} "
