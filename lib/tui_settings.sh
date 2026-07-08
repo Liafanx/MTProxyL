@@ -82,27 +82,57 @@ tui_settings_menu() {
                     press_any_key
                     continue
                 fi
-                local _old_domain="$PROXY_DOMAIN"
-                echo -e "  ${DIM}[1] autoscout24.ru  [2] google.com  [3] twitch.tv  [4] Свой${NC}"
-                local d; d=$(read_choice "выбор" "1")
+                echo ""
+                echo -e "  ${DIM}[1] autoscout24.ru  [2] google.com  [3] twitch.tv  [4] Свой  [0] Отмена${NC}"
+                local d
+                d=$(read_choice "выбор" "0")
                 case "$d" in
+                    0|"")
+                        log_info "Отменено"
+                        press_any_key
+                        continue
+                        ;;
+                    1) PROXY_DOMAIN="autoscout24.ru" ;;
                     2) PROXY_DOMAIN="google.com" ;;
                     3) PROXY_DOMAIN="twitch.tv" ;;
-                    4) echo -en "  Домен: "; local cd; read -r cd
-                       [ -n "$cd" ] && validate_domain "$cd" && PROXY_DOMAIN="$cd" || log_error "Некорректный домен" ;;
-                    *) PROXY_DOMAIN="autoscout24.ru" ;;
+                    4)
+                        echo -en "  ${BOLD}Домен:${NC} "
+                        local cd=""
+                        read -r cd
+                        if [ -z "$cd" ]; then
+                            log_info "Отменено"
+                            press_any_key
+                            continue
+                        fi
+                        if validate_domain "$cd"; then
+                            PROXY_DOMAIN="$cd"
+                        else
+                            log_error "Некорректный домен: ${cd}"
+                            press_any_key
+                            continue
+                        fi
+                        ;;
+                    *)
+                        log_error "Некорректный выбор"
+                        press_any_key
+                        continue
+                        ;;
                 esac
+
+                local _old_domain="${PROXY_DOMAIN}"
                 auto_set_fake_cert_len "$PROXY_DOMAIN" 2>/dev/null || \
                     log_warn "Не удалось определить TLS cert length для '${PROXY_DOMAIN}', оставляем ${FAKE_CERT_LEN:-2048}"
-                save_settings; log_success "Домен: ${PROXY_DOMAIN}"
-                # Предложить обновить mask backend
-                if [ "$MASKING_ENABLED" = "true" ] && [ "$PROXY_DOMAIN" != "$_old_domain" ]; then
-                    local _cur_mask="${MASKING_HOST:-$_old_domain}"
-                    if [ "$_cur_mask" = "$_old_domain" ] || [ -z "$MASKING_HOST" ]; then
+                save_settings
+                log_success "Домен: ${PROXY_DOMAIN}"
+
+                if [ "$MASKING_ENABLED" = "true" ]; then
+                    local _cur_mask="${MASKING_HOST:-}"
+                    if [ -z "$_cur_mask" ] || [ "$_cur_mask" = "$_old_domain" ]; then
                         echo ""
-                        echo -e "  ${YELLOW}Маскировка включена. Mask backend сейчас: ${_cur_mask}:${MASKING_PORT:-443}${NC}"
+                        echo -e "  ${YELLOW}Маскировка включена. Mask backend сейчас: ${_cur_mask:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}${NC}"
                         echo -en "  ${BOLD}Обновить mask backend на ${PROXY_DOMAIN}? [Y/n]:${NC} "
-                        local _mask_yn; read -r _mask_yn
+                        local _mask_yn=""
+                        read -r _mask_yn
                         if [[ ! "$_mask_yn" =~ ^[nN]$ ]]; then
                             MASKING_HOST="$PROXY_DOMAIN"
                             save_settings
@@ -110,6 +140,7 @@ tui_settings_menu() {
                         fi
                     fi
                 fi
+
                 is_proxy_running && { load_secrets; restart_proxy_container || true; }
                 press_any_key ;;
             4)
