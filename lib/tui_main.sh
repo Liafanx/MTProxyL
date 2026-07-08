@@ -43,7 +43,7 @@ show_main_menu() {
 
         echo -e "  ${BOLD}Движок:${NC}      telemt v$(get_telemt_version)  ${BOLD}Статус:${NC} ${status_str}"
         echo -e "  ${BOLD}Порт:${NC}        ${PROXY_PORT}            ${BOLD}Работает:${NC} ${uptime_str}"
-        echo -e "  ${BOLD}Домен:${NC}       ${PROXY_DOMAIN}"
+        echo -e "  ${BOLD}Домен(SNI):${NC}  ${PROXY_DOMAIN}"
         echo -e "  ${BOLD}Трафик:${NC}      ${SYM_DOWN} $(format_bytes "$t_in")  ${SYM_UP} $(format_bytes "$t_out")  ${BOLD}Соед.:${NC} ${conns}"
         echo -e "  ${BOLD}Секреты:${NC}     ${active} активных / ${disabled} выключенных"
 
