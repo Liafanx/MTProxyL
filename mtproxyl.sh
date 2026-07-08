@@ -303,6 +303,7 @@ cli_main() {
 
 # ── Main ──────────────────────────────────────────────────────
 main() {
+    fix_tty_input 2>/dev/null || true
     cli_main "$@"
 }
 
