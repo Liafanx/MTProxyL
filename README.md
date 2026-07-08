@@ -4,6 +4,10 @@
 
 Один скрипт. Полный контроль. Всё на русском.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Liafanx/MTProxyL/main/mtproxyl.png" alt="MTProxyL" width="600">
+</p>
+
 ---
 
 ## Навигация
