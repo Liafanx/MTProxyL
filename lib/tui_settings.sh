@@ -45,11 +45,35 @@ tui_settings_menu() {
                 elif [ -n "$p" ]; then log_error "Некорректный порт"; fi
                 press_any_key ;;
             2)
-                echo -en "  ${BOLD}IP [${CUSTOM_IP:-авто}]:${NC} "; local ip; read -r ip
+                echo ""
+                echo -e "  ${DIM}Введите IPv4-адрес или домен для ссылок на прокси.${NC}"
+                echo -e "  ${DIM}auto / clear — использовать автоопределение IP сервера.${NC}"
+                echo -e "  ${DIM}Enter — оставить текущее значение.${NC}"
+                echo ""
+                echo -en "  ${BOLD}IP/домен [${CUSTOM_IP:-авто}]:${NC} "
+                local ip=""
+                read -r ip
                 case "$ip" in
-                    auto|clear) CUSTOM_IP=""; save_settings; log_success "IP: авто" ;;
-                    "") ;;
-                    *) CUSTOM_IP="$ip"; save_settings; log_success "IP: ${ip}" ;;
+                    auto|clear|AUTO|CLEAR)
+                        CUSTOM_IP=""
+                        save_settings
+                        log_success "IP: авто ($(get_public_ip 2>/dev/null || echo '?'))"
+                        ;;
+                    "")
+                        ;;
+                    *)
+                        if validate_ip_literal "$ip"; then
+                            CUSTOM_IP="$ip"
+                            save_settings
+                            log_success "IP: ${ip}"
+                        elif validate_domain "$ip"; then
+                            CUSTOM_IP="$ip"
+                            save_settings
+                            log_success "Домен: ${ip}"
+                        else
+                            log_error "Некорректный IP-адрес или домен"
+                        fi
+                        ;;
                 esac
                 press_any_key ;;
             3)
