@@ -11,6 +11,40 @@ set -e
 REPO="Liafanx/MTProxyL"
 INSTALL_DIR="/opt/mtproxyl"
 SCRIPT_URL="https://raw.githubusercontent.com/${REPO}/main"
+INSTALL_LOG="/tmp/mtproxyl-install.log"
+
+download_file() {
+    local url="$1"
+    local dest="$2"
+    local label="$3"
+
+    local tmp
+    tmp=$(mktemp "/tmp/.mtproxyl-download.XXXXXX") || {
+        echo "  ОШИБКА: Не удалось создать временный файл для ${label}" >&2
+        return 1
+    }
+
+    # Несколько попыток скачать файл
+    if curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --max-time 45 "$url" -o "$tmp" 2>>"$INSTALL_LOG"; then
+        # Для shell-файлов дополнительно проверяем синтаксис
+        if [[ "$dest" == *.sh ]]; then
+            if ! bash -n "$tmp" 2>/dev/null; then
+                echo "  ОШИБКА: Скачанный файл ${label} содержит синтаксическую ошибку" >&2
+                rm -f "$tmp"
+                return 1
+            fi
+        fi
+
+        mkdir -p "$(dirname "$dest")"
+        mv "$tmp" "$dest"
+        return 0
+    else
+        rm -f "$tmp"
+        echo "  ОШИБКА: Не удалось скачать ${label}" >&2
+        echo "  Подробности: ${INSTALL_LOG}" >&2
+        return 1
+    fi
+}
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "Запустите от root:" >&2
@@ -18,6 +52,7 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+: > "$INSTALL_LOG"
 echo ""
 echo "  MTProxyL — установка"
 echo "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -29,9 +64,9 @@ echo "  Скачивание файлов..."
 
 # Главный скрипт
 echo "  → mtproxyl.sh"
-if ! curl -fsSL --max-time 30 "${SCRIPT_URL}/mtproxyl.sh" -o "${INSTALL_DIR}/mtproxyl.sh"; then
-    echo "  ОШИБКА: Не удалось скачать mtproxyl.sh" >&2
-    echo "  Проверьте интернет и доступность github.com" >&2
+if ! download_file "${SCRIPT_URL}/mtproxyl.sh" "${INSTALL_DIR}/mtproxyl.sh" "mtproxyl.sh"; then
+    echo "  Проверьте интернет, лимиты GitHub Raw и доступность github.com" >&2
+    echo "  Подробности: ${INSTALL_LOG}" >&2
     exit 1
 fi
 chmod +x "${INSTALL_DIR}/mtproxyl.sh"
@@ -39,10 +74,12 @@ chmod +x "${INSTALL_DIR}/mtproxyl.sh"
 # Библиотеки
 for lib in colors utils settings secrets config docker engine traffic geoblock upstream backup nft selfmask tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons expert_catalog expert_mode install; do
     echo "  → lib/${lib}.sh"
-    if ! curl -fsSL --max-time 30 "${SCRIPT_URL}/lib/${lib}.sh" -o "${INSTALL_DIR}/lib/${lib}.sh"; then
-        echo "  ОШИБКА: Не удалось скачать lib/${lib}.sh" >&2
+    if ! download_file "${SCRIPT_URL}/lib/${lib}.sh" "${INSTALL_DIR}/lib/${lib}.sh" "lib/${lib}.sh"; then
+        echo "  Установка прервана. Повторите попытку через 10–30 секунд." >&2
+        echo "  Подробности: ${INSTALL_LOG}" >&2
         exit 1
     fi
+    sleep 0.2
 done
 
 # Симлинк

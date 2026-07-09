@@ -279,17 +279,24 @@ check_for_update() {
 }
 
 self_update() {
-    log_info "Скачивание обновления..."
+    echo ""
+    draw_header "ОБНОВЛЕНИЕ MTPROXYL"
+    echo ""
+
+    log_info "Шаг 1/4: Скачивание основного скрипта..."
     local _tmp="/tmp/mtproxyl-update-$$.sh"
 
     if ! curl -fsS --retry 3 --retry-delay 2 --max-time 30 "${GITHUB_RAW}/mtproxyl.sh" -o "$_tmp" 2>/dev/null; then
-        log_error "Не удалось скачать обновление"
+        log_error "Не удалось скачать mtproxyl.sh"
+        log_info "Проверьте интернет и доступность github.com"
         rm -f "$_tmp"
         return 1
     fi
+    log_success "mtproxyl.sh скачан"
 
+    log_info "Шаг 2/4: Проверка синтаксиса..."
     if ! bash -n "$_tmp" 2>/dev/null; then
-        log_error "Ошибка синтаксиса — обновление отменено"
+        log_error "Ошибка синтаксиса в скачанном скрипте — обновление отменено"
         rm -f "$_tmp"
         return 1
     fi
@@ -297,41 +304,53 @@ self_update() {
     local _new_ver
     _new_ver=$(grep -m1 '^VERSION="' "$_tmp" | cut -d'"' -f2)
     if [ -z "$_new_ver" ]; then
-        log_error "Не удалось определить версию"
+        log_error "Не удалось определить версию нового скрипта"
         rm -f "$_tmp"
         return 1
     fi
 
     if [ "$_new_ver" = "$VERSION" ]; then
-        log_info "Версия актуальна (v${VERSION})"
+        log_success "Версия актуальна (v${VERSION})"
         rm -f "$_tmp"
         return 0
     fi
 
+    log_info "Текущая версия: v${VERSION}"
+    log_info "Новая версия:   v${_new_ver}"
+    echo ""
+
+    log_info "Шаг 3/4: Замена основного скрипта..."
     cp "${INSTALL_DIR}/mtproxyl.sh" "${INSTALL_DIR}/mtproxyl.sh.backup-$(date +%s)" 2>/dev/null || true
     mv "$_tmp" "${INSTALL_DIR}/mtproxyl.sh"
     chmod +x "${INSTALL_DIR}/mtproxyl.sh"
+    log_success "mtproxyl.sh обновлён"
+    echo ""
 
-    log_info "Обновление библиотек..."
+    log_info "Шаг 4/4: Обновление библиотек..."
     mkdir -p "$LIB_DIR"
 
-    # Извлекаем актуальный список библиотек из уже скачанного mtproxyl.sh
     local _lib_list
     _lib_list=$(grep -oP 'for _lib in \K[^\n;]+' "${INSTALL_DIR}/mtproxyl.sh" 2>/dev/null | head -1 | tr -d '"' | tr -d "'")
 
-    # Fallback
     if [ -z "$_lib_list" ]; then
-        log_warn "Не удалось извлечь список библиотек из нового скрипта, используем резервный список"
+        log_warn "Не удалось извлечь список библиотек из нового скрипта"
+        log_info "Используем резервный список"
         _lib_list="colors utils settings secrets config docker engine traffic geoblock upstream backup nft selfmask tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons expert_catalog expert_mode install"
     fi
 
-    local _failed=0 _ok=0
+    local _total=0 _ok=0 _failed=0 _skipped=0
     local _failed_list=""
 
+    for _w in $_lib_list; do _total=$((_total + 1)); done
+
+    local _current=0
     local lib _lib_tmp
     for lib in $_lib_list; do
+        _current=$((_current + 1))
+
+        local _lib_tmp
         _lib_tmp=$(mktemp "/tmp/.mtproxyl-lib-${lib}.XXXXXX") || {
-            log_warn "Не удалось создать временный файл для ${lib}.sh"
+            echo -e "  ${RED}[${_current}/${_total}]${NC} ${lib}.sh — не удалось создать временный файл"
             _failed=$((_failed + 1))
             _failed_list="${_failed_list} ${lib}.sh"
             continue
@@ -341,32 +360,43 @@ self_update() {
             if bash -n "$_lib_tmp" 2>/dev/null; then
                 mv "$_lib_tmp" "${LIB_DIR}/${lib}.sh"
                 chmod 644 "${LIB_DIR}/${lib}.sh" 2>/dev/null || true
+                echo -e "  ${GREEN}[${_current}/${_total}]${NC} ${lib}.sh ${GREEN}✓${NC}"
                 _ok=$((_ok + 1))
             else
                 rm -f "$_lib_tmp"
-                log_warn "Синтаксическая ошибка в загруженном lib/${lib}.sh — оставляем старую версию"
-                _failed=$((_failed + 1))
+                echo -e "  ${YELLOW}[${_current}/${_total}]${NC} ${lib}.sh — ошибка синтаксиса, оставлена старая версия"
+                _skipped=$((_skipped + 1))
                 _failed_list="${_failed_list} ${lib}.sh"
             fi
         else
             rm -f "$_lib_tmp"
-            log_warn "Не удалось обновить: lib/${lib}.sh"
+            echo -e "  ${RED}[${_current}/${_total}]${NC} ${lib}.sh — не удалось скачать"
             _failed=$((_failed + 1))
             _failed_list="${_failed_list} ${lib}.sh"
         fi
+
+        sleep 0.15
     done
 
-    log_info "Библиотек обновлено: ${_ok}, не удалось: ${_failed}"
+    echo ""
+    echo -e "  ${BOLD}Итог обновления библиотек:${NC}"
+    echo -e "    ${GREEN}Обновлено:${NC}     ${_ok}/${_total}"
+    [ "$_skipped" -gt 0 ] && echo -e "    ${YELLOW}Пропущено:${NC}     ${_skipped} (ошибка синтаксиса)"
+    [ "$_failed" -gt 0 ] && echo -e "    ${RED}Не удалось:${NC}    ${_failed}"
+    echo ""
 
-    if [ "$_failed" -gt 0 ]; then
+    if [ "$_failed" -gt 0 ] || [ "$_skipped" -gt 0 ]; then
         log_warn "Часть библиотек не обновилась:${_failed_list}"
-        log_warn "Старые версии файлов сохранены, можно продолжать работу"
+        log_info "Старые версии файлов сохранены, можно продолжать работу"
+        log_info "Повторите обновление позже: mtproxyl update"
+        echo ""
     fi
 
-    log_success "Обновлено до v${_new_ver}"
+    log_success "MTProxyL обновлён: v${VERSION} → v${_new_ver}"
     log_info "Перезапуск..."
     exec "${INSTALL_DIR}/mtproxyl.sh"
 }
+
 # ── CLI-обработчики для быстрых команд ────────────────────────
 handle_port_command() {
     local new_port="${1:-}"
