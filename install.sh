@@ -24,7 +24,7 @@ download_file() {
     }
 
     # Несколько попыток скачать файл
-    if curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --max-time 45 "$url" -o "$tmp"; then
+    if curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --max-time 45 "$url" -o "$tmp" 2>>/tmp/mtproxyl-install.log; then
         # Для shell-файлов дополнительно проверяем синтаксис
         if [[ "$dest" == *.sh ]]; then
             if ! bash -n "$tmp" 2>/dev/null; then
