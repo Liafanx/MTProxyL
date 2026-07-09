@@ -20,13 +20,27 @@ _selfmask_pq_conf() {
     echo "${SELFMASK_PQ_PREFIX}/conf/nginx.conf"
 }
 
+_selfmask_get_tls_info() {
+    local _conf="$(_selfmask_pq_conf)"
+    if [ -f "$_conf" ]; then
+        local _proto _curve
+        _proto=$(grep -m1 'ssl_protocols' "$_conf" 2>/dev/null | awk '{$1=""; print}' | tr -d ';' | xargs)
+        _curve=$(grep -m1 'ssl_ecdh_curve' "$_conf" 2>/dev/null | awk '{$1=""; print}' | tr -d ';' | xargs)
+        if [ -n "$_proto" ]; then
+            [ -n "$_curve" ] && echo "${_proto} (${_curve})" || echo "${_proto}"
+            return 0
+        fi
+    fi
+    echo "TLSv1.3 (X25519MLKEM768)"
+}
+
 selfmask_supported_os() {
     [ "$(detect_os)" = "debian" ]
 }
 
 selfmask_status_line() {
     if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
-        echo -e "${GREEN}включён${NC} (${SELFMASK_DOMAIN:-?} → 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}, TLSv1.3 + PQ)"
+        echo -e "${GREEN}включён${NC} (${SELFMASK_DOMAIN:-?} → 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444})"
     else
         echo -e "${DIM}выключен${NC}"
     fi
@@ -63,7 +77,7 @@ selfmask_show_status() {
     echo -e "  ${BOLD}Источник сайта:${NC} ${_src_display}"
     echo -e "  ${BOLD}Каталог сайта:${NC}  ${SELFMASK_SITE_DIR:-/var/www/mtproxyl-selfmask}"
     echo -e "  ${BOLD}Backend:${NC}        127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}"
-    echo -e "  ${BOLD}TLS backend:${NC}    TLSv1.3 (X25519MLKEM768)"
+    echo -e "  ${BOLD}TLS backend:${NC}    $(_selfmask_get_tls_info)"
     echo -e "  ${BOLD}Продление cert:${NC} ${SELFMASK_AUTO_RENEW:-true}"
     echo ""
 
