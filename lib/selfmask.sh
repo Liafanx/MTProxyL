@@ -90,7 +90,7 @@ _selfmask_collect_params() {
     draw_header "ПАРАМЕТРЫ SELFMASK"
     echo ""
     echo -e "  ${DIM}Selfmask маскирует прокси под реальный сайт на вашем домене.${NC}"
-    echo -e "  ${DIM}MTProto остаётся на :443, браузерные запросы и mask идут в локальный nginx.${NC}"
+    echo -e "  ${DIM}MTProto остаётся на :443 (или другой), браузерные запросы и mask идут в локальный nginx.${NC}"
     echo -e "  ${DIM}Нужен домен с A-записью на этот сервер.${NC}"
     selfmask_show_requirements
 
