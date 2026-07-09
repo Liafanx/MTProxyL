@@ -12,7 +12,7 @@ tui_selfmask_menu() {
         echo -e "  ${BOLD}Статус:${NC}    $(selfmask_status_line 2>/dev/null || echo "${DIM}неизвестно${NC}")"
         echo -e "  ${BOLD}Домен:${NC}     ${SELFMASK_DOMAIN:-${DIM}не задан${NC}}"
         echo -e "  ${BOLD}Backend:${NC}   127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}"
-        echo -e "  ${BOLD}TLS:${NC}       TLSv1.3 (X25519MLKEM768)"
+        echo -e "  ${BOLD}TLS:${NC}       $(_selfmask_get_tls_info)"
         echo -e "  ${BOLD}PQ nginx:${NC}  $([ -x "$(_selfmask_pq_nginx_bin)" ] && echo -e "${GREEN}установлен${NC}" || echo -e "${DIM}не установлен${NC}")"
 
         if [ -n "${SELFMASK_DOMAIN:-}" ] && [ -f "/etc/letsencrypt/live/${SELFMASK_DOMAIN}/fullchain.pem" ]; then
