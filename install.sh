@@ -11,6 +11,7 @@ set -e
 REPO="Liafanx/MTProxyL"
 INSTALL_DIR="/opt/mtproxyl"
 SCRIPT_URL="https://raw.githubusercontent.com/${REPO}/dev"
+INSTALL_LOG="/tmp/mtproxyl-install.log"
 
 download_file() {
     local url="$1"
@@ -24,7 +25,7 @@ download_file() {
     }
 
     # Несколько попыток скачать файл
-    if curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --max-time 45 "$url" -o "$tmp" 2>>/tmp/mtproxyl-install.log; then
+    if curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --max-time 45 "$url" -o "$tmp" 2>>"$INSTALL_LOG"; then
         # Для shell-файлов дополнительно проверяем синтаксис
         if [[ "$dest" == *.sh ]]; then
             if ! bash -n "$tmp" 2>/dev/null; then
@@ -40,6 +41,7 @@ download_file() {
     else
         rm -f "$tmp"
         echo "  ОШИБКА: Не удалось скачать ${label}" >&2
+        echo "  Подробности: ${INSTALL_LOG}" >&2
         return 1
     fi
 }
@@ -50,6 +52,7 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+: > "$INSTALL_LOG"
 echo ""
 echo "  MTProxyL — установка"
 echo "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -63,6 +66,7 @@ echo "  Скачивание файлов..."
 echo "  → mtproxyl.sh"
 if ! download_file "${SCRIPT_URL}/mtproxyl.sh" "${INSTALL_DIR}/mtproxyl.sh" "mtproxyl.sh"; then
     echo "  Проверьте интернет, лимиты GitHub Raw и доступность github.com" >&2
+    echo "  Подробности: ${INSTALL_LOG}" >&2
     exit 1
 fi
 chmod +x "${INSTALL_DIR}/mtproxyl.sh"
@@ -72,6 +76,7 @@ for lib in colors utils settings secrets config docker engine traffic geoblock u
     echo "  → lib/${lib}.sh"
     if ! download_file "${SCRIPT_URL}/lib/${lib}.sh" "${INSTALL_DIR}/lib/${lib}.sh" "lib/${lib}.sh"; then
         echo "  Установка прервана. Повторите попытку через 10–30 секунд." >&2
+        echo "  Подробности: ${INSTALL_LOG}" >&2
         exit 1
     fi
     sleep 0.2
