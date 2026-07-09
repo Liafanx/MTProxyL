@@ -280,7 +280,7 @@ tui_nft_smart_settings_menu() {
         echo ""
         echo -e "  ${DIM}[8]${NC} Timeout     [${NFT_METER_TIMEOUT}]"
         echo -e "  ${DIM}[9]${NC} Метод идентификации iOS"
-        echo -e "  ${DIM}[i]${NC} IP привязку"
+        echo -e "  ${DIM}[i]${NC} Изменить IP привязку(или убрать)"
         echo -e "  ${DIM}[c]${NC} Переключить на Classic режим"
         echo -e "  ${DIM}[0]${NC} Назад"
         echo ""
