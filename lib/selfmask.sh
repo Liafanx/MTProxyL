@@ -20,6 +20,16 @@ _selfmask_pq_conf() {
     echo "${SELFMASK_PQ_PREFIX}/conf/nginx.conf"
 }
 
+_selfmask_template_label() {
+    case "${1:-stub}" in
+        stub)        echo "Простая заглушка" ;;
+        filemanager) echo "Файловый менеджер" ;;
+        catrunner)   echo "Cat Runner" ;;
+        http*)       echo "$1" ;;
+        *)           echo "${1:-stub}" ;;
+    esac
+}
+
 _selfmask_get_tls_info() {
     local _conf="$(_selfmask_pq_conf)"
     if [ -f "$_conf" ]; then
@@ -66,14 +76,7 @@ selfmask_show_status() {
     echo ""
     echo -e "  ${BOLD}Статус:${NC}         $(selfmask_status_line)"
     echo -e "  ${BOLD}Домен:${NC}          ${SELFMASK_DOMAIN:-${DIM}не задан${NC}}"
-    local _src_display
-    case "${SELFMASK_SITE_SOURCE:-stub}" in
-        stub)        _src_display="Простая заглушка" ;;
-        filemanager) _src_display="Файловый менеджер" ;;
-        catrunner)   _src_display="Cat Runner" ;;
-        http*)       _src_display="${SELFMASK_SITE_SOURCE}" ;;
-        *)           _src_display="${SELFMASK_SITE_SOURCE:-stub}" ;;
-    esac
+    echo -e "  ${BOLD}Источник сайта:${NC} $(_selfmask_template_label "${SELFMASK_SITE_SOURCE:-stub}")"
     echo -e "  ${BOLD}Источник сайта:${NC} ${_src_display}"
     echo -e "  ${BOLD}Каталог сайта:${NC}  ${SELFMASK_SITE_DIR:-/var/www/mtproxyl-selfmask}"
     echo -e "  ${BOLD}Backend:${NC}        127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}"
@@ -104,15 +107,24 @@ _selfmask_collect_params() {
     draw_header "ПАРАМЕТРЫ SELFMASK"
     echo ""
     echo -e "  ${DIM}Selfmask маскирует прокси под реальный сайт на вашем домене.${NC}"
-    echo -e "  ${DIM}MTProto остаётся на :443, браузерные запросы и mask идут в локальный nginx.${NC}"
+    echo -e "  ${DIM}MTProto остаётся на порту прокси (${PROXY_PORT:-443}), браузерные запросы и mask идут в локальный nginx.${NC}"
     echo -e "  ${DIM}Нужен домен с A-записью на этот сервер.${NC}"
     selfmask_show_requirements
 
     local _domain=""
+    local _saved_domain="${SELFMASK_DOMAIN:-}"
+
     while true; do
-        echo -en "  ${BOLD}Ваш домен:${NC} "
+        if [ -n "$_saved_domain" ] && validate_domain "$_saved_domain"; then
+            echo -en "  ${BOLD}Ваш домен [${_saved_domain}]:${NC} "
+        else
+            echo -en "  ${BOLD}Ваш домен:${NC} "
+        fi
+
         read -r _domain
+        [ -z "$_domain" ] && _domain="$_saved_domain"
         _domain=$(echo "$_domain" | tr '[:upper:]' '[:lower:]')
+
         if validate_domain "$_domain"; then
             SELFMASK_DOMAIN="$_domain"
             break
@@ -120,9 +132,15 @@ _selfmask_collect_params() {
         log_error "Некорректный домен"
     done
 
-    local _email_default="admin@${SELFMASK_DOMAIN}"
+    local _email_default
+    if [ -n "${SELFMASK_CERT_EMAIL:-}" ]; then
+        _email_default="${SELFMASK_CERT_EMAIL}"
+    else
+        _email_default="admin@${SELFMASK_DOMAIN}"
+    fi
+
     echo -en "  ${BOLD}Email для Let's Encrypt [${_email_default}]:${NC} "
-    local _email
+    local _email=""
     read -r _email
     SELFMASK_CERT_EMAIL="${_email:-$_email_default}"
 
@@ -152,6 +170,10 @@ _selfmask_collect_params() {
     echo ""
     draw_header "ШАБЛОН САЙТА"
     echo ""
+    local _saved_tpl="${SELFMASK_SITE_SOURCE:-stub}"
+    echo -e "  ${BOLD}Текущий шаблон:${NC} $(_selfmask_template_label "$_saved_tpl")"
+    echo ""
+    echo -e "  ${DIM}[0]${NC} Оставить текущий шаблон"
     echo -e "  ${DIM}[1]${NC} Простая заглушка ${DIM}(«Сайт временно недоступен»)${NC}"
     echo -e "  ${DIM}[2]${NC} Файловый менеджер ${DIM}(форма входа с логином/паролем)${NC}"
     echo -e "  ${DIM}[3]${NC} Cat Runner ${DIM}(мини-игра: кот прыгает через кактусы)${NC}"
@@ -159,8 +181,12 @@ _selfmask_collect_params() {
     echo ""
 
     local _tpl
-    _tpl=$(read_choice "выбор" "1")
+    _tpl=$(read_choice "выбор" "0")
     case "$_tpl" in
+        0|"")
+            SELFMASK_SITE_SOURCE="$_saved_tpl"
+            log_info "Оставлен текущий шаблон: $(_selfmask_template_label "$SELFMASK_SITE_SOURCE")"
+            ;;
         2)
             SELFMASK_SITE_SOURCE="filemanager"
             log_info "Выбран шаблон: Файловый менеджер"
@@ -201,16 +227,12 @@ _selfmask_collect_params() {
     echo -e "    Домен:     ${SELFMASK_DOMAIN}"
     echo -e "    Email:     ${SELFMASK_CERT_EMAIL}"
     local _src_display
-    case "${SELFMASK_SITE_SOURCE:-stub}" in
-        stub)        _src_display="Простая заглушка" ;;
-        filemanager) _src_display="Файловый менеджер" ;;
-        catrunner)   _src_display="Cat Runner" ;;
-        *)           _src_display="${SELFMASK_SITE_SOURCE}" ;;
-    esac
+    echo -e "    Сайт:      $(_selfmask_template_label "${SELFMASK_SITE_SOURCE:-stub}")"
     echo -e "    Сайт:      ${_src_display}"
     echo -e "    Каталог:   ${SELFMASK_SITE_DIR}"
     echo -e "    Backend:   127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT}"
-    echo -e "    TLS:       ${SELFMASK_TLS_PROTOCOLS:-TLSv1.3}"
+    echo -e "    TLS:       TLSv1.3 (PQ)"
+    echo -e "    Порт прокси: ${PROXY_PORT:-443}"
     echo ""
 
     echo -en "  ${BOLD}Продолжить настройку? [Y/n]:${NC} "
@@ -792,7 +814,12 @@ selfmask_setup() {
 
     if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
         echo ""
-        log_warn "Selfmask уже включён для домена: ${SELFMASK_DOMAIN:-?}"
+        log_warn "Selfmask уже включён"
+        echo -e "  ${BOLD}Текущие параметры:${NC}"
+        echo -e "    Домен:    ${SELFMASK_DOMAIN:-${DIM}не задан${NC}}"
+        echo -e "    Шаблон:   $(_selfmask_template_label "${SELFMASK_SITE_SOURCE:-stub}")"
+        echo -e "    Backend:  127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}"
+        echo ""
         echo -en "  ${BOLD}Переустановить / обновить настройку? [y/N]:${NC} "
         local _re
         read -r _re
@@ -813,7 +840,7 @@ selfmask_setup() {
     log_success "Selfmask настроен"
     echo -e "  ${BOLD}Домен:${NC}   https://${SELFMASK_DOMAIN}"
     echo -e "  ${BOLD}Сайт:${NC}    ${SELFMASK_SITE_DIR}"
-    echo -e "  ${BOLD}Схема:${NC}   telemt :443 → mask → nginx 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT}"
+    echo -e "  ${BOLD}Схема:${NC}   telemt :${PROXY_PORT:-443} → mask → nginx 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT}"
     echo ""
 }
 
