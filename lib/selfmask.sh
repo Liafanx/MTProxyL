@@ -77,7 +77,6 @@ selfmask_show_status() {
     echo -e "  ${BOLD}Статус:${NC}         $(selfmask_status_line)"
     echo -e "  ${BOLD}Домен:${NC}          ${SELFMASK_DOMAIN:-${DIM}не задан${NC}}"
     echo -e "  ${BOLD}Источник сайта:${NC} $(_selfmask_template_label "${SELFMASK_SITE_SOURCE:-stub}")"
-    echo -e "  ${BOLD}Источник сайта:${NC} ${_src_display}"
     echo -e "  ${BOLD}Каталог сайта:${NC}  ${SELFMASK_SITE_DIR:-/var/www/mtproxyl-selfmask}"
     echo -e "  ${BOLD}Backend:${NC}        127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}"
     echo -e "  ${BOLD}TLS backend:${NC}    $(_selfmask_get_tls_info)"
@@ -226,9 +225,7 @@ _selfmask_collect_params() {
     echo -e "  ${BOLD}Итоговые параметры:${NC}"
     echo -e "    Домен:     ${SELFMASK_DOMAIN}"
     echo -e "    Email:     ${SELFMASK_CERT_EMAIL}"
-    local _src_display
     echo -e "    Сайт:      $(_selfmask_template_label "${SELFMASK_SITE_SOURCE:-stub}")"
-    echo -e "    Сайт:      ${_src_display}"
     echo -e "    Каталог:   ${SELFMASK_SITE_DIR}"
     echo -e "    Backend:   127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT}"
     echo -e "    TLS:       TLSv1.3 (PQ)"
@@ -552,6 +549,13 @@ EOF
     _selfmask_install_pq_service
     _selfmask_free_ports || return 1
 
+    mkdir -p /var/lib/mtproxyl-nginx/body
+    mkdir -p /var/lib/mtproxyl-nginx/proxy
+    mkdir -p /var/lib/mtproxyl-nginx/fastcgi
+    mkdir -p /var/log/mtproxyl-nginx
+    mkdir -p /var/lock
+    rm -f /run/mtproxyl-nginx.pid 2>/dev/null || true
+
     local _test_out=""
     _test_out=$("$(_selfmask_pq_nginx_bin)" -t -c "$(_selfmask_pq_conf)" 2>&1) || {
         log_error "Ошибка временного конфига PQ nginx для ACME"
@@ -666,6 +670,15 @@ EOF
     }
 
     _selfmask_free_ports || return 1
+
+    # Создаём директории на случай их отсутствия
+    mkdir -p /var/lib/mtproxyl-nginx/body
+    mkdir -p /var/lib/mtproxyl-nginx/proxy
+    mkdir -p /var/lib/mtproxyl-nginx/fastcgi
+    mkdir -p /var/log/mtproxyl-nginx
+    mkdir -p /var/lock
+    rm -f /run/mtproxyl-nginx.pid 2>/dev/null || true
+
     systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null || {
         log_error "Не удалось перезапустить PQ nginx"
         journalctl -u "${SELFMASK_PQ_SERVICE}" -n 20 --no-pager 2>/dev/null | sed 's/^/    /'
