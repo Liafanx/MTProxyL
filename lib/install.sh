@@ -247,9 +247,18 @@ run_installer() {
 
     if [ "$_nft_choice" != "n" ] && [ "$_nft_choice" != "N" ]; then
         # По умолчанию ограничиваем по IP сервера
-        if [ -n "${CUSTOM_IP:-}" ]; then
+        if [ -n "${CUSTOM_IP:-}" ] && validate_ip_literal "${CUSTOM_IP}"; then
             NFT_SERVER_IP="${CUSTOM_IP}"
             log_info "Используем IP из настроек ссылок: ${NFT_SERVER_IP}"
+        elif [ -n "${CUSTOM_IP:-}" ]; then
+            log_warn "В настройках ссылок указан домен '${CUSTOM_IP}' — для NFT нужен IPv4"
+            NFT_SERVER_IP="$(get_public_ip)"
+            if [ -n "$NFT_SERVER_IP" ]; then
+                log_info "Автоматически определён IP для NFT: ${NFT_SERVER_IP}"
+            else
+                log_warn "Не удалось определить IP — NFT правило без привязки к IP"
+                NFT_SERVER_IP=""
+            fi
         else
             NFT_SERVER_IP="$(get_public_ip)"
             if [ -n "$NFT_SERVER_IP" ]; then
