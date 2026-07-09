@@ -669,9 +669,11 @@ EOF
         return 1
     }
 
+    # Убеждаемся что unit-файл существует — создаём/обновляем его
+    _selfmask_install_pq_service
+
     _selfmask_free_ports || return 1
 
-    # Создаём директории на случай их отсутствия
     mkdir -p /var/lib/mtproxyl-nginx/body
     mkdir -p /var/lib/mtproxyl-nginx/proxy
     mkdir -p /var/lib/mtproxyl-nginx/fastcgi
