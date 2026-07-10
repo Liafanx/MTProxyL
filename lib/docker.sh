@@ -187,7 +187,7 @@ run_proxy_container() {
     [ -n "${PROXY_CPUS}" ] && _args+=(--cpus "${PROXY_CPUS}")
     [ -n "${PROXY_MEMORY}" ] && _args+=(--memory "${PROXY_MEMORY}" --memory-swap "${PROXY_MEMORY}")
 
-local _run_err
+local _run_err=""
     _run_err=$(docker run -d "${_args[@]}" \
         --ulimit nofile=65535:65535 \
         -v "${CONFIG_DIR}/config.toml:/etc/telemt.toml:ro" \
@@ -215,6 +215,7 @@ local _run_err
         return 0
     else
         log_error "Контейнер не запустился — проверьте логи: docker logs ${CONTAINER_NAME}"
+        docker ps -a --filter "name=^/${CONTAINER_NAME}$" --format '    status={{.Status}}  image={{.Image}}' 2>/dev/null || true
         return 1
     fi
 }
