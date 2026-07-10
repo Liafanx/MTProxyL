@@ -177,7 +177,8 @@ _selfmask_collect_params() {
     echo -e "  ${DIM}[1]${NC} Простая заглушка ${DIM}(«Сайт временно недоступен»)${NC}"
     echo -e "  ${DIM}[2]${NC} Файловый менеджер ${DIM}(форма входа с логином/паролем)${NC}"
     echo -e "  ${DIM}[3]${NC} Cat Runner ${DIM}(мини-игра: кот прыгает через кактусы)${NC}"
-    echo -e "  ${CYAN}[4]${NC} Указать свой URL ${DIM}(прямая ссылка на index.html)${NC}"
+    echo -e "  ${DIM}[4]${NC} MEKO Runner ${DIM}(MEKO убегает от сотрудников РКН)${NC}"
+    echo -e "  ${CYAN}[5]${NC} Указать свой URL ${DIM}(прямая ссылка на index.html)${NC}"
     echo ""
 
     local _tpl
@@ -196,6 +197,10 @@ _selfmask_collect_params() {
             log_info "Выбран шаблон: Cat Runner"
             ;;
         4)
+            SELFMASK_SITE_SOURCE="mekorunner"
+            log_info "Выбран шаблон: MEKO Runner"
+            ;;
+        5)
             echo -en "  ${BOLD}URL файла index.html:${NC} "
             local _custom_url
             read -r _custom_url
@@ -441,11 +446,11 @@ _selfmask_deploy_site() {
         catrunner)
             _selfmask_download_template "${_templates_base}/catrunner.html" || _selfmask_fallback_stub
             ;;
+        mekorunner)
+            _selfmask_download_template "${_templates_base}/mekorunner.html" || _selfmask_fallback_stub
+            ;;
         http*) 
             _selfmask_download_template "$_src" || _selfmask_fallback_stub
-            ;;
-        *)
-            _selfmask_fallback_stub
             ;;
     esac
 
