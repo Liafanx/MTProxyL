@@ -85,10 +85,6 @@ canvas{display:block;margin:0 auto;cursor:pointer}
   }
 
   function spawnFoe() {
-    var last = foes.length ? foes[foes.length - 1].x : 0;
-    if (last > W - 140) return;
-    foes.push({ x: W + 10, w: 30, h: 60 });
-  }
 
   function update() {
     if (dead) return;
@@ -388,7 +384,7 @@ canvas{display:block;margin:0 auto;cursor:pointer}
     ctx.fill();
   }
 
-  /* ── СОТРУДНИК РКН ── */
+  /* ── СОТРУДНИК ── */
   function drawFoe(f) {
     var fx = f.x, fh = f.h, fw = f.w;
     var topY = ground - fh;
@@ -396,100 +392,97 @@ canvas{display:block;margin:0 auto;cursor:pointer}
     ctx.save();
     ctx.translate(fx, topY);
 
-    // ноги (тёмно-синие штаны)
+    // ноги
     ctx.fillStyle = '#1a2540';
-    ctx.fillRect(6, fh * 0.75, 8, fh * 0.25);
-    ctx.fillRect(16, fh * 0.75, 8, fh * 0.25);
+    ctx.fillRect(fw * 0.2, fh * 0.75, fw * 0.27, fh * 0.25);
+    ctx.fillRect(fw * 0.53, fh * 0.75, fw * 0.27, fh * 0.25);
     // ботинки
     ctx.fillStyle = '#000';
-    ctx.fillRect(4, fh - 4, 11, 4);
-    ctx.fillRect(15, fh - 4, 11, 4);
+    ctx.fillRect(fw * 0.13, fh - 4, fw * 0.37, 4);
+    ctx.fillRect(fw * 0.5, fh - 4, fw * 0.37, 4);
 
-    // китель / форма (серо-синий)
+    // китель
     var uniformGrd = ctx.createLinearGradient(0, fh * 0.35, 0, fh * 0.75);
-    uniformGrd.addColorStop(0, '#3d4a6b');
+    uniformGrd.addColorStop(0, f.tint || '#3d4a6b');
     uniformGrd.addColorStop(1, '#2a3550');
     ctx.fillStyle = uniformGrd;
-    ctx.fillRect(4, fh * 0.35, 22, fh * 0.42);
+    ctx.fillRect(fw * 0.13, fh * 0.35, fw * 0.74, fh * 0.42);
 
     // ремень
     ctx.fillStyle = '#000';
-    ctx.fillRect(4, fh * 0.72, 22, 3);
+    ctx.fillRect(fw * 0.13, fh * 0.72, fw * 0.74, 3);
     ctx.fillStyle = '#f6d55c';
-    ctx.fillRect(13, fh * 0.72, 4, 3);
+    ctx.fillRect(fw * 0.43, fh * 0.72, fw * 0.14, 3);
 
-    // ПОГОНЫ красные (РКН)
+    // погоны красные
     ctx.fillStyle = '#c0392b';
-    ctx.fillRect(3, fh * 0.36, 8, 4);
-    ctx.fillRect(19, fh * 0.36, 8, 4);
-    // золотые полоски на погонах
+    ctx.fillRect(fw * 0.1, fh * 0.36, fw * 0.27, 4);
+    ctx.fillRect(fw * 0.63, fh * 0.36, fw * 0.27, 4);
+    // золотые полоски (кол-во зависит от роста = звание)
     ctx.fillStyle = '#f6d55c';
-    ctx.fillRect(4, fh * 0.37, 6, 1);
-    ctx.fillRect(20, fh * 0.37, 6, 1);
-    ctx.fillRect(4, fh * 0.39, 6, 1);
-    ctx.fillRect(20, fh * 0.39, 6, 1);
+    var stripes = fh > 70 ? 3 : (fh > 55 ? 2 : 1);
+    for (var st = 0; st < stripes; st++) {
+      ctx.fillRect(fw * 0.13, fh * 0.365 + st * 1.2, fw * 0.2, 0.8);
+      ctx.fillRect(fw * 0.67, fh * 0.365 + st * 1.2, fw * 0.2, 0.8);
+    }
 
     // пуговицы
     ctx.fillStyle = '#f6d55c';
-    ctx.beginPath(); ctx.arc(15, fh * 0.45, 1.2, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(15, fh * 0.55, 1.2, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(15, fh * 0.65, 1.2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(fw * 0.5, fh * 0.45, 1.2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(fw * 0.5, fh * 0.55, 1.2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(fw * 0.5, fh * 0.65, 1.2, 0, Math.PI * 2); ctx.fill();
 
     // руки
     ctx.fillStyle = uniformGrd;
-    ctx.fillRect(0, fh * 0.38, 5, fh * 0.34);
-    ctx.fillRect(25, fh * 0.38, 5, fh * 0.34);
+    ctx.fillRect(0, fh * 0.38, fw * 0.17, fh * 0.34);
+    ctx.fillRect(fw * 0.83, fh * 0.38, fw * 0.17, fh * 0.34);
     // кисти
     ctx.fillStyle = '#f2c290';
-    ctx.beginPath(); ctx.arc(2.5, fh * 0.74, 2.5, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(27.5, fh * 0.74, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(fw * 0.08, fh * 0.74, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(fw * 0.92, fh * 0.74, 2.5, 0, Math.PI * 2); ctx.fill();
 
     // шея
     ctx.fillStyle = '#f2c290';
-    ctx.fillRect(12, fh * 0.3, 6, 4);
+    ctx.fillRect(fw * 0.4, fh * 0.3, fw * 0.2, 4);
 
-    // ГОЛОВА
+    // голова
     ctx.fillStyle = '#f2c290';
     ctx.beginPath();
-    ctx.arc(15, fh * 0.22, 8, 0, Math.PI * 2);
+    ctx.arc(fw * 0.5, fh * 0.22, 8, 0, Math.PI * 2);
     ctx.fill();
 
-    // ФУРАЖКА
+    // фуражка
     ctx.fillStyle = '#1a2540';
-    ctx.fillRect(6, fh * 0.14, 18, 5);
-    ctx.fillRect(8, fh * 0.1, 14, 5);
+    ctx.fillRect(fw * 0.2, fh * 0.14, fw * 0.6, 5);
+    ctx.fillRect(fw * 0.27, fh * 0.1, fw * 0.46, 5);
     // козырёк
     ctx.fillStyle = '#000';
-    ctx.fillRect(4, fh * 0.18, 22, 2);
+    ctx.fillRect(fw * 0.13, fh * 0.18, fw * 0.74, 2);
     // кокарда
     ctx.fillStyle = '#c0392b';
-    ctx.beginPath();
-    ctx.arc(15, fh * 0.12, 2, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.beginPath(); ctx.arc(fw * 0.5, fh * 0.12, 2, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#f6d55c';
-    ctx.beginPath();
-    ctx.arc(15, fh * 0.12, 1, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.beginPath(); ctx.arc(fw * 0.5, fh * 0.12, 1, 0, Math.PI * 2); ctx.fill();
 
-    // глаза (сердитые)
+    // глаза
     ctx.fillStyle = '#000';
-    ctx.fillRect(11, fh * 0.22, 2, 1.5);
-    ctx.fillRect(17, fh * 0.22, 2, 1.5);
+    ctx.fillRect(fw * 0.37, fh * 0.22, 2, 1.5);
+    ctx.fillRect(fw * 0.57, fh * 0.22, 2, 1.5);
     // брови
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(10, fh * 0.2); ctx.lineTo(14, fh * 0.21); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(16, fh * 0.21); ctx.lineTo(20, fh * 0.2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(fw * 0.33, fh * 0.2); ctx.lineTo(fw * 0.47, fh * 0.21); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(fw * 0.53, fh * 0.21); ctx.lineTo(fw * 0.67, fh * 0.2); ctx.stroke();
     // рот
-    ctx.beginPath(); ctx.moveTo(13, fh * 0.28); ctx.lineTo(17, fh * 0.28); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(fw * 0.43, fh * 0.28); ctx.lineTo(fw * 0.57, fh * 0.28); ctx.stroke();
 
-    // табличка РКН на груди
+    // табличка РКН
     ctx.fillStyle = '#fff';
-    ctx.fillRect(10, fh * 0.5, 10, 4);
+    ctx.fillRect(fw * 0.33, fh * 0.5, fw * 0.34, 4);
     ctx.fillStyle = '#c0392b';
     ctx.font = 'bold 4px system-ui';
     ctx.textAlign = 'center';
-    ctx.fillText('РКН', 15, fh * 0.53);
+    ctx.fillText('РКН', fw * 0.5, fh * 0.53);
     ctx.textAlign = 'start';
 
     ctx.restore();
