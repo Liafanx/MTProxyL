@@ -25,6 +25,7 @@ _selfmask_template_label() {
         stub)        echo "Простая заглушка" ;;
         filemanager) echo "Файловый менеджер" ;;
         catrunner)   echo "Cat Runner" ;;
+        mekorunner)  echo "MEKO Runner" ;;
         http*)       echo "$1" ;;
         *)           echo "${1:-stub}" ;;
     esac
