@@ -33,9 +33,9 @@ if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
     exit 1
 fi
 
-# Защита stdin при curl | bash
-if [[ ! -t 0 ]] && [[ -e /dev/tty ]]; then
-    exec < /dev/tty
+# Защита stdin при curl | bash (только если это не фоновый/systemd запуск)
+if [[ ! -t 0 ]] && [[ -e /dev/tty ]] && ps -p $$ -o stat= | grep -q "+"; then
+    exec < /dev/tty 2>/dev/null || true
 fi
 
 # Загрузка библиотек
