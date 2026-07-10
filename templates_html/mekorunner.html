@@ -1,0 +1,683 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Meko Runner</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#1a1a2e;overflow:hidden;font-family:system-ui,-apple-system,sans-serif}
+canvas{display:block;margin:0 auto;cursor:pointer}
+.ui{text-align:center;padding:16px;color:#e0e0e0}
+.ui h1{font-size:1.4rem;margin-bottom:4px;letter-spacing:2px}
+.ui .score{font-size:1.1rem;color:#f6d55c}
+.ui .hint{font-size:.8rem;color:#888;margin-top:6px}
+</style>
+</head>
+<body>
+<div class="ui">
+  <h1>⭐ MEKO RUNNER ⭐</h1>
+  <div class="score">Счёт: <span id="sc">0</span> &nbsp; Рекорд: <span id="hi">0</span></div>
+  <div class="hint">Пробел / тап — прыжок (×2 в воздухе). Убегай от РКН!</div>
+</div>
+
+<canvas id="c"></canvas>
+
+<script>
+(function () {
+  var c = document.getElementById('c'),
+      ctx = c.getContext('2d'),
+      W, H, ground, meko, foes, clouds, particles, spd, score, best, dead, frame, shake, nightCycle;
+
+  best = parseInt(localStorage.getItem('mekoBest') || '0', 10);
+  document.getElementById('hi').textContent = best;
+
+  function resize() {
+    W = Math.min(window.innerWidth, 720);
+    H = 320;
+    c.width = W;
+    c.height = H;
+    ground = H - 40;
+    if (meko) {
+      var floor = ground - meko.h;
+      if (meko.y > floor) meko.y = floor;
+    }
+  }
+
+  function init() {
+    resize();
+    score = 0; dead = false; frame = 0; spd = 3.8; shake = 0; nightCycle = 0;
+    meko = {
+      x: 80, y: ground - 60, w: 44, h: 60,
+      vy: 0, jumps: 0, maxJumps: 2,
+      legFrame: 0, tailAngle: 0, eyeBlink: 0
+    };
+    foes = []; clouds = []; particles = [];
+    for (var i = 0; i < 4; i++) {
+      clouds.push({
+        x: Math.random() * W,
+        y: 20 + Math.random() * 70,
+        r: 20 + Math.random() * 25,
+        s: 0.3 + Math.random() * 0.5
+      });
+    }
+    document.getElementById('sc').textContent = '0';
+  }
+
+  function jump() {
+    if (dead) { init(); return; }
+    if (meko.jumps < meko.maxJumps) {
+      meko.vy = meko.jumps === 0 ? -12 : -10;
+      meko.jumps++;
+      for (var i = 0; i < 8; i++) {
+        particles.push({
+          x: meko.x + meko.w / 2,
+          y: meko.y + meko.h,
+          vx: (Math.random() - 0.5) * 3,
+          vy: Math.random() * 2 + 1,
+          life: 22,
+          maxLife: 22,
+          r: 2 + Math.random() * 3,
+          col: meko.jumps === 2 ? '#f6d55c' : '#dfe6e9'
+        });
+      }
+    }
+  }
+
+  function spawnFoe() {
+    var last = foes.length ? foes[foes.length - 1].x : 0;
+    if (last > W - 140) return;
+    foes.push({ x: W + 10, w: 30, h: 60 });
+  }
+
+  function update() {
+    if (dead) return;
+    frame++;
+    nightCycle = (Math.sin(frame * 0.002) + 1) / 2;
+
+    var interval = Math.max(45, 90 - score);
+    if (frame % interval === 0) spawnFoe();
+
+    meko.vy += 0.6;
+    meko.y += meko.vy;
+    var floor = ground - meko.h;
+    if (meko.y >= floor) { meko.y = floor; meko.vy = 0; meko.jumps = 0; }
+
+    meko.legFrame += spd * 0.2;
+    meko.tailAngle = Math.sin(frame * 0.08) * 0.5;
+    meko.eyeBlink = (frame % 200 < 6) ? 1 : 0;
+
+    for (var i = foes.length - 1; i >= 0; i--) {
+      foes[i].x -= spd;
+      if (foes[i].x + foes[i].w < 0) {
+        foes.splice(i, 1);
+        score++;
+        document.getElementById('sc').textContent = score;
+        continue;
+      }
+      var f = foes[i];
+      if (
+        meko.x + meko.w - 10 > f.x + 4 &&
+        meko.x + 10 < f.x + f.w - 4 &&
+        meko.y + meko.h > ground - f.h + 6
+      ) {
+        dead = true;
+        shake = 14;
+        if (score > best) {
+          best = score;
+          localStorage.setItem('mekoBest', best);
+          document.getElementById('hi').textContent = best;
+        }
+        for (var j = 0; j < 20; j++) {
+          particles.push({
+            x: meko.x + meko.w / 2,
+            y: meko.y + meko.h / 2,
+            vx: (Math.random() - 0.5) * 7,
+            vy: (Math.random() - 0.5) * 7,
+            life: 40, maxLife: 40,
+            r: 2 + Math.random() * 4,
+            col: '#e94560'
+          });
+        }
+      }
+    }
+
+    for (var k = 0; k < clouds.length; k++) {
+      clouds[k].x -= clouds[k].s;
+      if (clouds[k].x + clouds[k].r < 0) {
+        clouds[k].x = W + clouds[k].r;
+        clouds[k].y = 20 + Math.random() * 70;
+      }
+    }
+
+    for (var p = particles.length - 1; p >= 0; p--) {
+      var pt = particles[p];
+      pt.x += pt.vx; pt.y += pt.vy;
+      pt.life--;
+      if (pt.life <= 0) particles.splice(p, 1);
+    }
+
+    if (frame % 200 === 0 && spd < 9.5) spd += 0.25;
+  }
+
+  /* ── MEKO ── */
+  function drawMeko(px, py, w, h) {
+    var onGround = meko.jumps === 0 && meko.vy === 0;
+    // бег на двух лапах — руки/ноги
+    var legPhase = onGround ? Math.sin(meko.legFrame) : 0;
+    var armPhase = onGround ? Math.sin(meko.legFrame + Math.PI) : 0;
+    var legOff1 = onGround ? legPhase * 6 : -4;
+    var legOff2 = onGround ? -legPhase * 6 : 4;
+    var armOff1 = onGround ? armPhase * 5 : -6;
+    var armOff2 = onGround ? -armPhase * 5 : -6;
+
+    ctx.save();
+    ctx.translate(px, py);
+
+    // имя MEKO над головой
+    ctx.save();
+    ctx.font = 'bold 11px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(w/2 - 22, -18, 44, 14);
+    ctx.strokeStyle = '#f6d55c';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(w/2 - 22, -18, 44, 14);
+    ctx.fillStyle = '#f6d55c';
+    ctx.fillText('MEKO', w/2, -7);
+    ctx.restore();
+
+    // хвост
+    ctx.strokeStyle = '#0a0a0a';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(w * 0.15, h * 0.55);
+    ctx.quadraticCurveTo(
+      -6, h * 0.45 + Math.sin(meko.tailAngle) * 8,
+      -4, h * 0.25 + Math.sin(meko.tailAngle + 0.5) * 6
+    );
+    ctx.stroke();
+
+    // НОГИ (сапоги — чёрные, бежит на двух)
+    ctx.fillStyle = '#1a1a1a';
+    // левая нога
+    ctx.fillRect(w * 0.32, h * 0.78, 7, 14 + legOff1);
+    ctx.fillRect(w * 0.30, h * 0.78 + 14 + legOff1, 11, 4);
+    // правая нога
+    ctx.fillRect(w * 0.52, h * 0.78, 7, 14 + legOff2);
+    ctx.fillRect(w * 0.50, h * 0.78 + 14 + legOff2, 11, 4);
+
+    // КИТЕЛЬ (тёмно-синий) — торс
+    var coatX = w * 0.18, coatY = h * 0.38, coatW = w * 0.64, coatH = h * 0.42;
+
+    // золотой контур
+    ctx.fillStyle = '#d4a017';
+    ctx.fillRect(coatX - 1, coatY - 1, coatW + 2, coatH + 2);
+
+    // основная ткань
+    var coatGrd = ctx.createLinearGradient(coatX, coatY, coatX, coatY + coatH);
+    coatGrd.addColorStop(0, '#2c3e70');
+    coatGrd.addColorStop(1, '#1a2450');
+    ctx.fillStyle = coatGrd;
+    ctx.fillRect(coatX, coatY, coatW, coatH);
+
+    // ЗВЁЗДЫ на кителе
+    ctx.fillStyle = '#f6d55c';
+    var starPositions = [
+      [0.28,0.44],[0.42,0.42],[0.58,0.44],[0.72,0.42],
+      [0.35,0.52],[0.52,0.5],[0.68,0.54],[0.25,0.6],
+      [0.45,0.62],[0.62,0.6],[0.75,0.64],[0.32,0.7],
+      [0.55,0.72],[0.7,0.72],[0.38,0.78],[0.6,0.78]
+    ];
+    for (var s = 0; s < starPositions.length; s++) {
+      drawStar(w * starPositions[s][0], h * starPositions[s][1], 1.8);
+    }
+
+    // золотые пуговицы по центру
+    ctx.fillStyle = '#f6d55c';
+    for (var b = 0; b < 4; b++) {
+      ctx.beginPath();
+      ctx.arc(w * 0.5, coatY + 6 + b * 8, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.strokeStyle = '#8b6914';
+    ctx.lineWidth = 0.5;
+    for (var b = 0; b < 4; b++) {
+      ctx.beginPath();
+      ctx.arc(w * 0.5, coatY + 6 + b * 8, 1.8, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // ПОГОНЫ (золотые)
+    ctx.fillStyle = '#f6d55c';
+    ctx.fillRect(coatX - 2, coatY, 10, 5);
+    ctx.fillRect(coatX + coatW - 8, coatY, 10, 5);
+    // звёздочки на погонах
+    ctx.fillStyle = '#8b6914';
+    drawStar(coatX + 3, coatY + 2.5, 1);
+    drawStar(coatX + coatW - 3, coatY + 2.5, 1);
+
+    // РУКИ (в рукавах кителя) — бегут
+    ctx.fillStyle = coatGrd;
+    // левая рука
+    ctx.save();
+    ctx.translate(coatX + 3, coatY + 8);
+    ctx.rotate(armOff1 * 0.08);
+    ctx.fillRect(-3, 0, 7, 20);
+    // лапа
+    ctx.fillStyle = '#0a0a0a';
+    ctx.beginPath();
+    ctx.arc(0.5, 22, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // правая рука
+    ctx.fillStyle = coatGrd;
+    ctx.save();
+    ctx.translate(coatX + coatW - 3, coatY + 8);
+    ctx.rotate(armOff2 * 0.08);
+    ctx.fillRect(-4, 0, 7, 20);
+    ctx.fillStyle = '#0a0a0a';
+    ctx.beginPath();
+    ctx.arc(-0.5, 22, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // ВОРОТНИК-СТОЙКА
+    ctx.fillStyle = '#d4a017';
+    ctx.fillRect(coatX + 6, coatY - 4, coatW - 12, 5);
+    ctx.fillStyle = '#2c3e70';
+    ctx.fillRect(coatX + 8, coatY - 3, coatW - 16, 3);
+
+    // ГОЛОВА (чёрная кошачья)
+    var headX = w * 0.5, headY = h * 0.22, headR = 14;
+
+    // уши
+    ctx.fillStyle = '#0a0a0a';
+    // левое (длинное острое как на фото)
+    ctx.beginPath();
+    ctx.moveTo(headX - 12, headY - 4);
+    ctx.lineTo(headX - 16, headY - 20);
+    ctx.lineTo(headX - 4, headY - 10);
+    ctx.closePath();
+    ctx.fill();
+    // правое
+    ctx.beginPath();
+    ctx.moveTo(headX + 12, headY - 4);
+    ctx.lineTo(headX + 15, headY - 18);
+    ctx.lineTo(headX + 4, headY - 10);
+    ctx.closePath();
+    ctx.fill();
+    // розовое внутри правого уха
+    ctx.fillStyle = '#8b3a5c';
+    ctx.beginPath();
+    ctx.moveTo(headX + 10, headY - 6);
+    ctx.lineTo(headX + 13, headY - 15);
+    ctx.lineTo(headX + 6, headY - 9);
+    ctx.closePath();
+    ctx.fill();
+
+    // морда
+    ctx.fillStyle = '#0a0a0a';
+    ctx.beginPath();
+    ctx.arc(headX, headY, headR, 0, Math.PI * 2);
+    ctx.fill();
+
+    // ГЛАЗА (большие белые как на фото)
+    if (meko.eyeBlink) {
+      ctx.fillStyle = '#0a0a0a';
+      ctx.fillRect(headX - 8, headY - 1, 5, 1.5);
+      ctx.fillRect(headX + 3, headY - 1, 5, 1.5);
+    } else {
+      // белки
+      ctx.fillStyle = '#f5f5dc';
+      ctx.beginPath();
+      ctx.arc(headX - 5, headY - 1, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(headX + 5, headY - 1, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      // зрачки
+      ctx.fillStyle = '#0a0a0a';
+      ctx.beginPath();
+      ctx.arc(headX - 5, headY - 1, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(headX + 5, headY - 1, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // нос (треугольный)
+    ctx.fillStyle = '#1a1a1a';
+    ctx.beginPath();
+    ctx.moveTo(headX - 2, headY + 4);
+    ctx.lineTo(headX + 2, headY + 4);
+    ctx.lineTo(headX, headY + 7);
+    ctx.closePath();
+    ctx.fill();
+
+    // БЕЛЫЕ УСЫ (главная фишка!)
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.2;
+    ctx.lineCap = 'round';
+    // левые
+    ctx.beginPath(); ctx.moveTo(headX - 4, headY + 6); ctx.lineTo(headX - 18, headY + 4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(headX - 4, headY + 7); ctx.lineTo(headX - 18, headY + 8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(headX - 4, headY + 8); ctx.lineTo(headX - 17, headY + 12); ctx.stroke();
+    // правые
+    ctx.beginPath(); ctx.moveTo(headX + 4, headY + 6); ctx.lineTo(headX + 18, headY + 4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(headX + 4, headY + 7); ctx.lineTo(headX + 18, headY + 8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(headX + 4, headY + 8); ctx.lineTo(headX + 17, headY + 12); ctx.stroke();
+
+    ctx.restore();
+  }
+
+  function drawStar(cx, cy, size) {
+    ctx.beginPath();
+    for (var i = 0; i < 5; i++) {
+      var a = (Math.PI * 2 * i) / 5 - Math.PI / 2;
+      var x = cx + Math.cos(a) * size;
+      var y = cy + Math.sin(a) * size;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+      var a2 = a + Math.PI / 5;
+      ctx.lineTo(cx + Math.cos(a2) * size * 0.45, cy + Math.sin(a2) * size * 0.45);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  /* ── СОТРУДНИК РКН ── */
+  function drawFoe(f) {
+    var fx = f.x, fh = f.h, fw = f.w;
+    var topY = ground - fh;
+
+    ctx.save();
+    ctx.translate(fx, topY);
+
+    // ноги (тёмно-синие штаны)
+    ctx.fillStyle = '#1a2540';
+    ctx.fillRect(6, fh * 0.75, 8, fh * 0.25);
+    ctx.fillRect(16, fh * 0.75, 8, fh * 0.25);
+    // ботинки
+    ctx.fillStyle = '#000';
+    ctx.fillRect(4, fh - 4, 11, 4);
+    ctx.fillRect(15, fh - 4, 11, 4);
+
+    // китель / форма (серо-синий)
+    var uniformGrd = ctx.createLinearGradient(0, fh * 0.35, 0, fh * 0.75);
+    uniformGrd.addColorStop(0, '#3d4a6b');
+    uniformGrd.addColorStop(1, '#2a3550');
+    ctx.fillStyle = uniformGrd;
+    ctx.fillRect(4, fh * 0.35, 22, fh * 0.42);
+
+    // ремень
+    ctx.fillStyle = '#000';
+    ctx.fillRect(4, fh * 0.72, 22, 3);
+    ctx.fillStyle = '#f6d55c';
+    ctx.fillRect(13, fh * 0.72, 4, 3);
+
+    // ПОГОНЫ красные (РКН)
+    ctx.fillStyle = '#c0392b';
+    ctx.fillRect(3, fh * 0.36, 8, 4);
+    ctx.fillRect(19, fh * 0.36, 8, 4);
+    // золотые полоски на погонах
+    ctx.fillStyle = '#f6d55c';
+    ctx.fillRect(4, fh * 0.37, 6, 1);
+    ctx.fillRect(20, fh * 0.37, 6, 1);
+    ctx.fillRect(4, fh * 0.39, 6, 1);
+    ctx.fillRect(20, fh * 0.39, 6, 1);
+
+    // пуговицы
+    ctx.fillStyle = '#f6d55c';
+    ctx.beginPath(); ctx.arc(15, fh * 0.45, 1.2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(15, fh * 0.55, 1.2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(15, fh * 0.65, 1.2, 0, Math.PI * 2); ctx.fill();
+
+    // руки
+    ctx.fillStyle = uniformGrd;
+    ctx.fillRect(0, fh * 0.38, 5, fh * 0.34);
+    ctx.fillRect(25, fh * 0.38, 5, fh * 0.34);
+    // кисти
+    ctx.fillStyle = '#f2c290';
+    ctx.beginPath(); ctx.arc(2.5, fh * 0.74, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(27.5, fh * 0.74, 2.5, 0, Math.PI * 2); ctx.fill();
+
+    // шея
+    ctx.fillStyle = '#f2c290';
+    ctx.fillRect(12, fh * 0.3, 6, 4);
+
+    // ГОЛОВА
+    ctx.fillStyle = '#f2c290';
+    ctx.beginPath();
+    ctx.arc(15, fh * 0.22, 8, 0, Math.PI * 2);
+    ctx.fill();
+
+    // ФУРАЖКА
+    ctx.fillStyle = '#1a2540';
+    ctx.fillRect(6, fh * 0.14, 18, 5);
+    ctx.fillRect(8, fh * 0.1, 14, 5);
+    // козырёк
+    ctx.fillStyle = '#000';
+    ctx.fillRect(4, fh * 0.18, 22, 2);
+    // кокарда
+    ctx.fillStyle = '#c0392b';
+    ctx.beginPath();
+    ctx.arc(15, fh * 0.12, 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#f6d55c';
+    ctx.beginPath();
+    ctx.arc(15, fh * 0.12, 1, 0, Math.PI * 2);
+    ctx.fill();
+
+    // глаза (сердитые)
+    ctx.fillStyle = '#000';
+    ctx.fillRect(11, fh * 0.22, 2, 1.5);
+    ctx.fillRect(17, fh * 0.22, 2, 1.5);
+    // брови
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(10, fh * 0.2); ctx.lineTo(14, fh * 0.21); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(16, fh * 0.21); ctx.lineTo(20, fh * 0.2); ctx.stroke();
+    // рот
+    ctx.beginPath(); ctx.moveTo(13, fh * 0.28); ctx.lineTo(17, fh * 0.28); ctx.stroke();
+
+    // табличка РКН на груди
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(10, fh * 0.5, 10, 4);
+    ctx.fillStyle = '#c0392b';
+    ctx.font = 'bold 4px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText('РКН', 15, fh * 0.53);
+    ctx.textAlign = 'start';
+
+    ctx.restore();
+  }
+
+  function draw() {
+    var sx = 0, sy = 0;
+    if (shake > 0) {
+      sx = (Math.random() - 0.5) * shake;
+      sy = (Math.random() - 0.5) * shake;
+      shake *= 0.85;
+      if (shake < 0.5) shake = 0;
+    }
+    ctx.save();
+    ctx.translate(sx, sy);
+
+    // небо
+    var skyTop = lerpColor('#e8b892', '#1a1a3e', nightCycle);
+    var skyBot = lerpColor('#f4d4b0', '#2a2a5e', nightCycle);
+    var sky = ctx.createLinearGradient(0, 0, 0, ground);
+    sky.addColorStop(0, skyTop);
+    sky.addColorStop(1, skyBot);
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, W, ground);
+
+    // звёзды
+    if (nightCycle > 0.4) {
+      ctx.fillStyle = 'rgba(246,213,92,' + ((nightCycle - 0.4) * 1.2) + ')';
+      for (var s = 0; s < 40; s++) {
+        var sx2 = (s * 137.5 + frame * 0.02) % W;
+        var sy2 = (s * 97.3) % (ground - 20) + 10;
+        ctx.beginPath();
+        ctx.arc(sx2, sy2, 1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // облака
+    ctx.fillStyle = 'rgba(255,255,255,' + (0.25 + nightCycle * 0.1) + ')';
+    for (var k = 0; k < clouds.length; k++) {
+      var cl = clouds[k];
+      ctx.beginPath();
+      ctx.arc(cl.x, cl.y, cl.r, 0, Math.PI * 2);
+      ctx.arc(cl.x + cl.r * 0.7, cl.y - cl.r * 0.3, cl.r * 0.7, 0, Math.PI * 2);
+      ctx.arc(cl.x - cl.r * 0.5, cl.y + cl.r * 0.1, cl.r * 0.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // земля
+    var gndGrd = ctx.createLinearGradient(0, ground, 0, H);
+    gndGrd.addColorStop(0, '#6b4423');
+    gndGrd.addColorStop(1, '#3d2612');
+    ctx.fillStyle = gndGrd;
+    ctx.fillRect(0, ground, W, H - ground);
+
+    // асфальтовая разметка
+    ctx.fillStyle = '#f6d55c';
+    for (var g = -((frame * spd) % 40); g < W; g += 40) {
+      ctx.fillRect(g, ground + 18, 20, 2);
+    }
+
+    // линия
+    ctx.strokeStyle = '#2a1810';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, ground);
+    ctx.lineTo(W, ground);
+    ctx.stroke();
+
+    // пыль при беге
+    if (!dead && meko.jumps === 0 && frame % 4 === 0) {
+      particles.push({
+        x: meko.x + 8,
+        y: ground - 2,
+        vx: -Math.random() * 2,
+        vy: -Math.random() * 1.5,
+        life: 14, maxLife: 14,
+        r: 1.5 + Math.random() * 2,
+        col: '#8b6914'
+      });
+    }
+
+    // сотрудники
+    for (var i = 0; i < foes.length; i++) {
+      drawFoe(foes[i]);
+    }
+
+    // тень MEKO
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    var shadowScale = 1 - (ground - meko.h - meko.y) / 150;
+    if (shadowScale < 0.3) shadowScale = 0.3;
+    ctx.beginPath();
+    ctx.ellipse(meko.x + meko.w / 2, ground + 2, meko.w / 2 * shadowScale, 4 * shadowScale, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // MEKO
+    if (!dead) {
+      drawMeko(meko.x, meko.y, meko.w, meko.h);
+    } else {
+      // упавший MEKO
+      ctx.save();
+      ctx.translate(meko.x + meko.w / 2, meko.y + meko.h / 2);
+      ctx.rotate(Math.PI / 2);
+      ctx.translate(-meko.w / 2, -meko.h / 2);
+      drawMeko(0, 0, meko.w, meko.h);
+      ctx.restore();
+
+      // затемнение
+      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      ctx.fillRect(0, 0, W, H);
+
+      // рамка предупреждения
+      ctx.strokeStyle = '#c0392b';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(20, H/2 - 60, W - 40, 120);
+
+      ctx.fillStyle = '#c0392b';
+      ctx.font = 'bold 20px system-ui';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('⚠ MEKO ПОПАЛСЯ ⚠', W / 2, H / 2 - 30);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 15px system-ui';
+      ctx.fillText('Его поймали сотрудники РКН!', W / 2, H / 2 - 5);
+      ctx.fillStyle = '#f6d55c';
+      ctx.font = '13px system-ui';
+      ctx.fillText('Счёт: ' + score + '  |  Рекорд: ' + best, W / 2, H / 2 + 20);
+      ctx.fillStyle = '#888';
+      ctx.font = '11px system-ui';
+      ctx.fillText('Тап или пробел — сбежать снова', W / 2, H / 2 + 44);
+      ctx.textAlign = 'start';
+      ctx.textBaseline = 'alphabetic';
+    }
+
+    // частицы
+    for (var p = 0; p < particles.length; p++) {
+      var pt = particles[p];
+      ctx.globalAlpha = pt.life / pt.maxLife;
+      ctx.fillStyle = pt.col;
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // индикатор прыжков (звёздочки)
+    if (!dead) {
+      for (var d = 0; d < meko.maxJumps; d++) {
+        ctx.fillStyle = d < (meko.maxJumps - meko.jumps) ? '#f6d55c' : '#555';
+        drawStar(meko.x + meko.w / 2 - 8 + d * 16, meko.y - 26, 4);
+      }
+    }
+
+    // скорость
+    if (!dead) {
+      ctx.fillStyle = 'rgba(255,255,255,0.4)';
+      ctx.font = '10px system-ui';
+      ctx.fillText('×' + spd.toFixed(1), W - 40, 16);
+    }
+
+    ctx.restore();
+  }
+
+  function lerpColor(a, b, t) {
+    var ar = parseInt(a.slice(1, 3), 16), ag = parseInt(a.slice(3, 5), 16), ab = parseInt(a.slice(5, 7), 16);
+    var br = parseInt(b.slice(1, 3), 16), bg = parseInt(b.slice(3, 5), 16), bb = parseInt(b.slice(5, 7), 16);
+    var rr = Math.round(ar + (br - ar) * t);
+    var rg = Math.round(ag + (bg - ag) * t);
+    var rb = Math.round(ab + (bb - ab) * t);
+    return '#' + ((1 << 24) + (rr << 16) + (rg << 8) + rb).toString(16).slice(1);
+  }
+
+  function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  window.addEventListener('keydown', function (e) {
+    if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); jump(); }
+  });
+  c.addEventListener('touchstart', function (e) { e.preventDefault(); jump(); }, { passive: false });
+  c.addEventListener('click', function () { jump(); });
+  window.addEventListener('resize', resize);
+
+  init();
+  loop();
+})();
+</script>
+</body>
+</html>
