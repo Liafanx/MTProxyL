@@ -187,11 +187,13 @@ run_proxy_container() {
     [ -n "${PROXY_CPUS}" ] && _args+=(--cpus "${PROXY_CPUS}")
     [ -n "${PROXY_MEMORY}" ] && _args+=(--memory "${PROXY_MEMORY}" --memory-swap "${PROXY_MEMORY}")
 
-    docker run -d "${_args[@]}" \
+    local _run_err
+    _run_err=$(docker run -d "${_docker_args[@]}" \
         --ulimit nofile=65535:65535 \
         -v "${CONFIG_DIR}/config.toml:/etc/telemt.toml:ro" \
-        "$(get_docker_image)" /etc/telemt.toml &>/dev/null || {
+        "$(get_docker_image)" /etc/telemt.toml 2>&1) || {
             log_error "Не удалось запустить контейнер"
+            echo "$_run_err" | sed 's/^/    /' >&2
             return 1
         }
 
