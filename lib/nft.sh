@@ -449,7 +449,7 @@ apply_nft_preset() {
             NFT_IOS_BURST="30"
             NFT_OTHER_RATE="54/minute"
             NFT_OTHER_BURST="1"
-            NFT_IOS_LIMIT_ENABLED="true"
+            NFT_IOS_LIMIT_ENABLED="false"
             NFT_OTHER_LIMIT_ENABLED="true"
             NFT_IOS_DETECT="fingerprint"
             NFT_OTHER_ACTION="icmp-host-unreachable"
