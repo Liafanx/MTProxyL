@@ -8,7 +8,7 @@
 set -o pipefail
 export LC_NUMERIC=C
 
-VERSION="1.1.4"
+VERSION="1.1.5"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -24,8 +24,8 @@ GITHUB_REPO="Liafanx/MTProxyL"
 GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
 REGISTRY_IMAGE="ghcr.io/liafanx/mtproxyl-telemt"
 TELEMT_GITHUB="telemt/telemt"
-TELEMT_MIN_VERSION="3.4.22"
-TELEMT_COMMIT="ed1895d"
+TELEMT_MIN_VERSION="3.4.24"
+TELEMT_COMMIT="1f9c82c"
 
 # Bash version check
 if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
