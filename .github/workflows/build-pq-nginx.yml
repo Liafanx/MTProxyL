@@ -1,4 +1,4 @@
-name: Сборка PQ Nginx (OpenSSL статический + nginx)
+name: Сборка PQ Nginx (OpenSSL статический + nginx + PCRE2)
 
 on:
   workflow_dispatch:
@@ -52,8 +52,14 @@ jobs:
           ARG PREFIX=/opt/mtproxyl-nginx
 
           RUN apt-get update -qq && apt-get install -y -qq \
-              build-essential wget ca-certificates \
-              zlib1g-dev libpcre3-dev perl \
+              build-essential \
+              wget \
+              ca-certificates \
+              zlib1g-dev \
+              libpcre2-dev \
+              perl \
+              binutils \
+              file \
               && rm -rf /var/lib/apt/lists/*
 
           # OpenSSL — статическая сборка
@@ -71,7 +77,7 @@ jobs:
           # Проверка OpenSSL
           RUN /tmp/openssl-static/bin/openssl version
 
-          # nginx — статически линкуем OpenSSL
+          # nginx — OpenSSL статически, PCRE2 системный
           RUN cd /tmp && \
               wget -q "https://nginx.org/download/nginx-${NGINX_VER}.tar.gz" && \
               tar xzf "nginx-${NGINX_VER}.tar.gz" && \
@@ -93,30 +99,38 @@ jobs:
                 --with-http_stub_status_module \
                 --with-http_sub_module \
                 --with-threads \
-                --with-pcre \
+                --with-pcre-jit \
                 --with-cc-opt="-I/tmp/openssl-static/include" \
                 --with-ld-opt="-L/tmp/openssl-static/lib -Wl,-Bstatic -lssl -lcrypto -Wl,-Bdynamic" && \
               make -j"$(nproc)" && \
               make install && \
               mkdir -p ${PREFIX}/bin ${PREFIX}/conf /var/log/mtproxyl-nginx /var/lib/mtproxyl-nginx/body /var/lib/mtproxyl-nginx/proxy /var/lib/mtproxyl-nginx/fastcgi
 
-          # Копируем openssl бинарник (тоже статический)
+          # Копируем openssl бинарник
           RUN cp /tmp/openssl-static/bin/openssl ${PREFIX}/bin/openssl
 
           # Проверка: nginx запускается
-          RUN ${PREFIX}/sbin/nginx -V 2>&1
+          RUN ${PREFIX}/sbin/nginx -V 2>&1 | tee /tmp/nginx-version.txt
 
           # Проверка: openssl запускается
           RUN ${PREFIX}/bin/openssl version
 
-          # Проверка: ssl/crypto НЕ в динамических зависимостях
+          # Проверка: OpenSSL НЕ в динамических зависимостях
           RUN ldd ${PREFIX}/sbin/nginx | grep -Ei 'ssl|crypto' && \
               (echo "ОШИБКА: OpenSSL слинкован динамически!" && exit 1) || \
               echo "OK: OpenSSL слинкован статически"
 
+          # Проверка: бинарь использует PCRE2, а не старый PCRE1
+          RUN ldd ${PREFIX}/sbin/nginx | tee /tmp/nginx-ldd.txt && \
+              grep -q 'libpcre2-8' /tmp/nginx-ldd.txt && \
+              ! grep -q 'libpcre.so.3' /tmp/nginx-ldd.txt
+
           # Проверка GLIBC
           RUN echo "Требуемая GLIBC:" && \
               objdump -T ${PREFIX}/sbin/nginx | grep -oP 'GLIBC_[0-9.]+' | sort -V | uniq | tail -1
+
+          # Проверка архитектуры бинаря
+          RUN file ${PREFIX}/sbin/nginx && file ${PREFIX}/bin/openssl
 
           FROM scratch AS artifact
           COPY --from=builder /opt/mtproxyl-nginx /opt/mtproxyl-nginx
@@ -169,16 +183,20 @@ jobs:
           tag_name: pq-nginx-${{ github.event.inputs.nginx_version }}-openssl${{ github.event.inputs.openssl_version }}
           name: "PQ Nginx ${{ github.event.inputs.nginx_version }} + OpenSSL ${{ github.event.inputs.openssl_version }}"
           body: |
-            ## nginx ${{ github.event.inputs.nginx_version }} + OpenSSL ${{ github.event.inputs.openssl_version }} (статический)
+            ## nginx ${{ github.event.inputs.nginx_version }} + OpenSSL ${{ github.event.inputs.openssl_version }}
 
             Собран для MTProxyL selfmask.
-            OpenSSL слинкован **статически** — не требует установки OpenSSL на сервере.
-            Поддерживает **X25519MLKEM768** для постквантового обмена ключами.
+
+            ### Особенности
+            - OpenSSL слинкован **статически**
+            - PCRE используется через **PCRE2**
+            - Совместимо с **Debian 13+**
+            - Поддерживает **X25519MLKEM768**
 
             ### Совместимость
-            - Debian 11+ (Bullseye и новее)
+            - Debian 11+
             - Ubuntu 20.04+
-            - RHEL/Rocky/Alma 9+ (возможно 8, не тестировалось)
+            - Debian 13 требует `libpcre2-8-0`
 
             ### Архитектуры
             - `linux/amd64`
@@ -191,8 +209,10 @@ jobs:
             ```bash
             tar xzf mtproxyl-pq-nginx-*.tar.gz -C /
             /opt/mtproxyl-nginx/bin/openssl version
-            /opt/mtproxyl-nginx/sbin/nginx -V 2>&1 | grep openssl
-            ldd /opt/mtproxyl-nginx/sbin/nginx | grep -E 'ssl|crypto'  # должно быть пусто
+            /opt/mtproxyl-nginx/sbin/nginx -V 2>&1
+            ldd /opt/mtproxyl-nginx/sbin/nginx | grep -E 'ssl|crypto'   # должно быть пусто
+            ldd /opt/mtproxyl-nginx/sbin/nginx | grep pcre2             # должна быть libpcre2-8.so.0
+            ldd /opt/mtproxyl-nginx/sbin/nginx | grep 'libpcre.so.3'    # должно быть пусто
             ```
           files: |
             artifacts/pq-nginx-amd64/*.tar.gz
