@@ -250,42 +250,15 @@ _selfmask_install_deps() {
     log_info "Установка зависимостей..."
 
     local _missing=()
-    local _apt_updated="false"
-    local _pcre_pkg=""
 
-    # certbot
     command -v certbot &>/dev/null || _missing+=("certbot")
-
-    # runtime-зависимости для PQ nginx
-    # - Ubuntu 24.04: libpcre3
-    # - Debian 13:    libpcre3t64
-    if ! dpkg -s libpcre3 &>/dev/null 2>&1 && ! dpkg -s libpcre3t64 &>/dev/null 2>&1; then
-        _wait_apt
-        apt-get update -qq || true
-        _apt_updated="true"
-
-        if apt-cache show libpcre3 &>/dev/null 2>&1; then
-            _pcre_pkg="libpcre3"
-        elif apt-cache show libpcre3t64 &>/dev/null 2>&1; then
-            _pcre_pkg="libpcre3t64"
-        else
-            log_error "Не найден подходящий пакет PCRE1: ни libpcre3, ни libpcre3t64"
-            log_info "Текущий PQ nginx собран с зависимостью на PCRE1 (libpcre.so.3)"
-            return 1
-        fi
-
-        _missing+=("$_pcre_pkg")
-    fi
-
+    dpkg -s libpcre2-8-0 &>/dev/null 2>&1 || _missing+=("libpcre2-8-0")
     dpkg -s zlib1g &>/dev/null 2>&1 || _missing+=("zlib1g")
     dpkg -s ca-certificates &>/dev/null 2>&1 || _missing+=("ca-certificates")
 
     if [ ${#_missing[@]} -gt 0 ]; then
-        if [ "$_apt_updated" != "true" ]; then
-            _wait_apt
-            apt-get update -qq || true
-        fi
-
+        _wait_apt
+        apt-get update -qq || true
         apt-get install -y -qq "${_missing[@]}" || {
             log_error "Не удалось установить зависимости: ${_missing[*]}"
             return 1
