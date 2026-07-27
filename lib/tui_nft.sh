@@ -859,6 +859,9 @@ tui_zapret2_menu() {
             echo -e "  ${CYAN}[6]${NC}  Логи службы"
             echo -e "  ${CYAN}[7]${NC}  Диагностика (wscale + NFT + queue)"
             echo -e "  ${CYAN}[r]${NC}  Сбросить настройки к дефолту"
+            if [ "${ZAPRET2_DEBUG:-false}" = "true" ]; then
+                echo -e "  ${CYAN}[d]${NC}  Debug лог (tail -100)"
+            fi
             echo -e "  ${RED}[8]${NC}  Удалить"
         fi
         echo -e "  ${DIM}[0]${NC}  Назад"
@@ -940,6 +943,20 @@ tui_zapret2_menu() {
                     else
                         log_info "Отменено"
                     fi
+                fi
+                press_any_key ;;
+            d|D)
+                if [ "${ZAPRET2_APPLIED:-false}" = "true" ] && [ "${ZAPRET2_DEBUG:-false}" = "true" ]; then
+                    echo ""
+                    if [ -f "${ZAPRET2_DEBUG_LOG}" ]; then
+                        echo -e "  ${BOLD}=== ${ZAPRET2_DEBUG_LOG} (tail -100) ===${NC}"
+                        echo ""
+                        tail -100 "${ZAPRET2_DEBUG_LOG}"
+                    else
+                        log_info "Debug лог пуст или не существует"
+                    fi
+                else
+                    log_info "Debug лог не включён. Включите через [4] → [9]"
                 fi
                 press_any_key ;;
             8) [ "${ZAPRET2_APPLIED:-false}" = "true" ] && zapret2_remove; press_any_key ;;
