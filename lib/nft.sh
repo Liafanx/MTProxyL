@@ -1005,25 +1005,36 @@ nft_full_cleanup() {
     rm -f "$NFT_CONF"
 }
 
-# ── Счётчик правил ────────────────────────────────────────────
 show_nft_drop_counter() {
     local _table="${NFT_TABLE:-mtproxyl_limit}"
     local _ios2_table="${IOS2_NFT_TABLE:-mtproxyl_ios2}"
+    local _z_table="${ZAPRET2_NFT_TABLE:-MTProtoL}"
 
-    if ! nft list table inet "$_table" &>/dev/null; then
+    local _limiter_active="false"
+    local _zapret_active="false"
+    local _ios2_active="false"
+
+    nft list table inet "$_table" &>/dev/null 2>&1 && _limiter_active="true"
+    nft list table ip "$_z_table" &>/dev/null 2>&1 && _zapret_active="true"
+    nft list table inet "$_ios2_table" &>/dev/null 2>&1 && _ios2_active="true"
+
+    if [ "$_limiter_active" != "true" ] && [ "$_zapret_active" != "true" ] && [ "$_ios2_active" != "true" ]; then
         log_warn "Активных NFT правил не найдено"
         return 1
     fi
 
     echo ""
-    if [ "$NFT_MODE" = "smart" ]; then
+    if [ "$_zapret_active" = "true" ] && [ "$_limiter_active" = "true" ]; then
+        echo -e "  ${BOLD}Счётчики всех активных правил (Zapret2 + SYN limiter) (Ctrl+C для выхода):${NC}"
+    elif [ "$_zapret_active" = "true" ]; then
+        echo -e "  ${BOLD}Счётчик правил Zapret2 (Ctrl+C для выхода):${NC}"
+    elif [ "$NFT_MODE" = "smart" ]; then
         echo -e "  ${BOLD}Счётчик правил Smart By-MEKO (Ctrl+C для выхода):${NC}"
     else
         echo -e "  ${BOLD}Счётчик правил Classic (Ctrl+C для выхода):${NC}"
     fi
     echo ""
 
-    # Генерируем временный скрипт для watch чтобы передать переменные
     local _watch_script
     _watch_script=$(mktemp /tmp/mtproxyl-watch.XXXXXX.sh)
     chmod +x "$_watch_script"
@@ -1032,14 +1043,26 @@ show_nft_drop_counter() {
 #!/bin/sh
 TABLE="${_table}"
 IOS2_TABLE="${_ios2_table}"
-IOS2_ENABLED="${IOS2_FIX_ENABLED:-false}"
+ZTABLE="${_z_table}"
 
-echo "=== \${TABLE} (chain input) ==="
-nft list chain inet "\$TABLE" input 2>/dev/null | grep -E 'counter|comment' | sed 's/^/  /'
+_has_output="false"
 
-if [ "\$IOS2_ENABLED" = "true" ]; then
-    echo ""
-    echo "=== \${IOS2_TABLE} ==="
+if nft list table ip "\$ZTABLE" >/dev/null 2>&1; then
+    echo "=== Zapret2 (ip \$ZTABLE) ==="
+    nft list table ip "\$ZTABLE" 2>/dev/null | grep -E 'counter|queue|notrack|ct mark' | sed 's/^/  /'
+    _has_output="true"
+fi
+
+if nft list table inet "\$TABLE" >/dev/null 2>&1; then
+    [ "\$_has_output" = "true" ] && echo ""
+    echo "=== SYN limiter (inet \$TABLE / chain input) ==="
+    nft list chain inet "\$TABLE" input 2>/dev/null | grep -E 'counter|comment' | sed 's/^/  /'
+    _has_output="true"
+fi
+
+if nft list table inet "\$IOS2_TABLE" >/dev/null 2>&1; then
+    [ "\$_has_output" = "true" ] && echo ""
+    echo "=== iOS Fix v2 (inet \$IOS2_TABLE) ==="
     nft list table inet "\$IOS2_TABLE" 2>/dev/null | grep -E 'counter|comment' | sed 's/^/  /'
 fi
 WATCHEOF
