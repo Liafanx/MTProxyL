@@ -9,52 +9,65 @@ tui_nft_menu() {
         load_nft_settings 2>/dev/null
 
         # Статус
-        echo -e "  ${BOLD}NFT лимитер:${NC} $(nft_status_line)"
-        echo -e "  ${BOLD}iOS фикс v1:${NC} $(ios_fix_status_line)"
-        echo -e "  ${BOLD}iOS фикс v2:${NC} $(ios2_fix_status_line)"
-        echo -e "  ${BOLD}MEKO оптим.:${NC} $(meko_opt_status)"
         echo -e "  ${BOLD}Zapret2 fix:${NC} $(zapret2_status)"
+
+        local _zapret_active="false"
+        nft list table ip "${ZAPRET2_NFT_TABLE:-MTProtoL}" &>/dev/null 2>&1 && _zapret_active="true"
+
+        if [ "$_zapret_active" != "true" ] || nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1; then
+            echo -e "  ${BOLD}NFT лимитер:${NC} $(nft_status_line)"
+        fi
+
+        if [ "${IOS_FIX_ENABLED:-false}" = "true" ]; then
+            echo -e "  ${BOLD}iOS фикс v1:${NC} $(ios_fix_status_line)"
+        fi
+        if [ "${IOS2_FIX_ENABLED:-false}" = "true" ]; then
+            echo -e "  ${BOLD}iOS фикс v2:${NC} $(ios2_fix_status_line)"
+        fi
+        echo -e "  ${BOLD}MEKO оптим.:${NC} $(meko_opt_status)"
         echo ""
 
-        # Текущие параметры
-        echo -e "  ${DIM}Режим:   ${BOLD}${NFT_MODE}${NC}"
-        if [ "$NFT_MODE" = "smart" ]; then
-            if [ "${NFT_IOS_LIMIT_ENABLED:-true}" = "true" ]; then
-                echo -e "  ${DIM}iOS:     ${NFT_IOS_RATE} burst ${NFT_IOS_BURST}${NC}"
-            else
-                echo -e "  ${DIM}iOS:     unlimited${NC}"
-            fi
+        # Текущие параметры (скрываем limiter если только zapret2 активен)
+        if [ "$_zapret_active" != "true" ] || nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1; then
+            echo -e "  ${DIM}Режим:   ${BOLD}${NFT_MODE}${NC}"
+            if [ "$NFT_MODE" = "smart" ]; then
+                if [ "${NFT_IOS_LIMIT_ENABLED:-true}" = "true" ]; then
+                    echo -e "  ${DIM}iOS:     ${NFT_IOS_RATE} burst ${NFT_IOS_BURST}${NC}"
+                else
+                    echo -e "  ${DIM}iOS:     unlimited${NC}"
+                fi
 
-            if [ "${NFT_OTHER_LIMIT_ENABLED:-true}" = "true" ]; then
-                echo -e "  ${DIM}Other:   ${NFT_OTHER_RATE} burst ${NFT_OTHER_BURST}${NC}"
-                local _action_display
-                case "${NFT_OTHER_ACTION:-icmp-host-unreachable}" in
-                    icmp-host-unreachable) _action_display="${GREEN}icmp-host-unreachable${NC} ${DIM}(рекомендуется)${NC}" ;;
-                    drop)                  _action_display="${YELLOW}drop${NC}" ;;
-                    *)                     _action_display="${DIM}reject (tcp reset)${NC}" ;;
-                esac
-                echo -e "  ${DIM}Action:  ${NC}${_action_display}"
-            else
-                echo -e "  ${DIM}Other:   unlimited${NC}"
-            fi
+                if [ "${NFT_OTHER_LIMIT_ENABLED:-true}" = "true" ]; then
+                    echo -e "  ${DIM}Other:   ${NFT_OTHER_RATE} burst ${NFT_OTHER_BURST}${NC}"
+                    local _action_display
+                    case "${NFT_OTHER_ACTION:-icmp-host-unreachable}" in
+                        icmp-host-unreachable) _action_display="${GREEN}icmp-host-unreachable${NC} ${DIM}(рекомендуется)${NC}" ;;
+                        drop)                  _action_display="${YELLOW}drop${NC}" ;;
+                        *)                     _action_display="${DIM}reject (tcp reset)${NC}" ;;
+                    esac
+                    echo -e "  ${DIM}Action:  ${NC}${_action_display}"
+                else
+                    echo -e "  ${DIM}Other:   unlimited${NC}"
+                fi
 
-            if [ "${NFT_IOS_DETECT:-fingerprint}" = "ttl" ]; then
-                echo -e "  ${DIM}Detect:  TTL+Length${NC}"
+                if [ "${NFT_IOS_DETECT:-fingerprint}" = "ttl" ]; then
+                    echo -e "  ${DIM}Detect:  TTL+Length${NC}"
+                else
+                    echo -e "  ${DIM}Detect:  TCP fingerprint${NC}"
+                fi
             else
-                echo -e "  ${DIM}Detect:  TCP fingerprint${NC}"
+                echo -e "  ${DIM}Rate:    ${NFT_RATE}${NC}"
+                echo -e "  ${DIM}Burst:   ${NFT_BURST}${NC}"
             fi
-        else
-            echo -e "  ${DIM}Rate:    ${NFT_RATE}${NC}"
-            echo -e "  ${DIM}Burst:   ${NFT_BURST}${NC}"
-        fi
-        echo -e "  ${DIM}Timeout: ${NFT_METER_TIMEOUT}${NC}"
-        if [ -n "${NFT_SERVER_IP:-}" ]; then
-            echo -e "  ${DIM}IP:      ${NFT_SERVER_IP}${NC}"
-        else
-            echo -e "  ${DIM}IP:      ${DIM}все IP сервера${NC}"
-        fi
-        if [ "$NFT_EXTRA_COUNT" -gt 0 ]; then
-            echo -e "  ${DIM}Доп. правила: ${NFT_EXTRA_COUNT}${NC}"
+            echo -e "  ${DIM}Timeout: ${NFT_METER_TIMEOUT}${NC}"
+            if [ -n "${NFT_SERVER_IP:-}" ]; then
+                echo -e "  ${DIM}IP:      ${NFT_SERVER_IP}${NC}"
+            else
+                echo -e "  ${DIM}IP:      ${DIM}все IP сервера${NC}"
+            fi
+            if [ "$NFT_EXTRA_COUNT" -gt 0 ]; then
+                echo -e "  ${DIM}Доп. правила: ${NFT_EXTRA_COUNT}${NC}"
+            fi
         fi
         echo ""
 
@@ -76,9 +89,11 @@ tui_nft_menu() {
             _counter_label="Счётчик правил SYN limiter"
         fi
         echo -e "  ${CYAN}[5]${NC}  ${_counter_label}"
-        echo -e "  ${CYAN}[6]${NC}  Установить службу автозапуска"
-        echo -e "  ${CYAN}[7]${NC}  Удалить службу"
-        echo -e "  ${CYAN}[8]${NC}  Дополнительные правила"
+        if [ "$_zapret_active" != "true" ] || nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1; then
+            echo -e "  ${CYAN}[6]${NC}  Установить службу автозапуска"
+            echo -e "  ${CYAN}[7]${NC}  Удалить службу"
+            echo -e "  ${CYAN}[8]${NC}  Дополнительные правила"
+        fi
         echo ""
         echo -e "  ${CYAN}[m]${NC}  Оптимизация By-MEKO (BBR, очереди, keepalive)"
         echo -e "  ${DIM}[o]${NC}  Устаревшие настройки (iOS фиксы)"
@@ -87,29 +102,63 @@ tui_nft_menu() {
         echo ""
         local choice; choice=$(read_choice "выбор" "0")
 
-        case "$choice" in
-            s|S) enable_smart_mode; press_any_key ;;
+         case "$choice" in
             z|Z) tui_zapret2_menu ;;
+            s|S)
+                if [ "$_zapret_active" = "true" ]; then
+                    log_warn "Zapret2 fix активен — отключите его перед включением Smart"
+                    press_any_key
+                else
+                    enable_smart_mode; press_any_key
+                fi ;;
             1)
+                if [ "$_zapret_active" = "true" ]; then
+                    log_warn "Zapret2 fix активен — SYN limiter не нужен"
+                    press_any_key; continue
+                fi
                 if [ -z "${PROXY_PORT:-}" ]; then
                     log_error "Порт прокси не задан — запустите прокси"
                     press_any_key; continue
                 fi
                 apply_nft_rules || true
                 press_any_key ;;
-            2) remove_nft_rules || true; press_any_key ;;
-            3) tui_nft_presets ;;
-            4) tui_nft_settings ;;
+            2)
+                remove_nft_rules || true; press_any_key ;;
+            3)
+                if [ "$_zapret_active" = "true" ]; then
+                    log_warn "Zapret2 fix активен — пресеты SYN limiter не нужны"
+                    press_any_key
+                else
+                    tui_nft_presets
+                fi ;;
+            4)
+                if [ "$_zapret_active" = "true" ]; then
+                    log_warn "Zapret2 fix активен — настройки SYN limiter скрыты. Используйте [z] → Настройки"
+                    press_any_key
+                else
+                    tui_nft_settings
+                fi ;;
             5) show_nft_drop_counter || true ;;
             6)
+                if [ "$_zapret_active" = "true" ]; then
+                    log_warn "Zapret2 fix активен — служба SYN limiter не нужна"
+                    press_any_key; continue
+                fi
                 if [ -z "${PROXY_PORT:-}" ]; then
                     log_error "Порт прокси не задан — запустите прокси"
                     press_any_key; continue
                 fi
                 install_nft_service || true
                 press_any_key ;;
-            7) remove_nft_service || true; press_any_key ;;
-            8) tui_nft_extra_menu ;;
+            7)
+                remove_nft_service || true; press_any_key ;;
+            8)
+                if [ "$_zapret_active" = "true" ]; then
+                    log_warn "Zapret2 fix активен — доп. правила SYN limiter не нужны"
+                    press_any_key
+                else
+                    tui_nft_extra_menu
+                fi ;;
             m|M) tui_meko_opt_menu ;;
             o|O) tui_nft_legacy_menu ;;
             0|"") return ;;
