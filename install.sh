@@ -53,6 +53,33 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 : > "$INSTALL_LOG"
+
+# Проверка и установка curl
+if ! command -v curl &>/dev/null; then
+    echo "  curl не найден, устанавливаю..."
+    if command -v apt-get &>/dev/null; then
+        # Ждём если apt занят
+        local_waited=0
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+            [ "$local_waited" -eq 0 ] && echo "  apt занят, ждём..."
+            sleep 3; local_waited=$((local_waited + 3))
+            [ "$local_waited" -ge 60 ] && break
+        done
+        apt-get update -qq >>"$INSTALL_LOG" 2>&1 && apt-get install -y -qq curl >>"$INSTALL_LOG" 2>&1
+    elif command -v yum &>/dev/null; then
+        yum install -y -q curl >>"$INSTALL_LOG" 2>&1
+    elif command -v dnf &>/dev/null; then
+        dnf install -y -q curl >>"$INSTALL_LOG" 2>&1
+    elif command -v apk &>/dev/null; then
+        apk add --no-cache curl >>"$INSTALL_LOG" 2>&1
+    fi
+    if ! command -v curl &>/dev/null; then
+        echo "  ОШИБКА: Не удалось установить curl. Установите вручную: apt install curl" >&2
+        exit 1
+    fi
+    echo "  ✓ curl установлен"
+fi
+
 echo ""
 echo "  MTProxyL — установка"
 echo "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

@@ -48,9 +48,27 @@ show_main_menu() {
         echo -e "  ${BOLD}Секреты:${NC}     ${active} активных / ${disabled} выключенных"
 
         load_nft_settings 2>/dev/null
-        echo -e "  ${BOLD}NFT лимитер:${NC} $(nft_status_line 2>/dev/null || echo "${DIM}—${NC}")"
-        echo -e "  ${BOLD}iOS фикс v1:${NC} $(ios_fix_status_line 2>/dev/null || echo "${DIM}—${NC}")"
-        echo -e "  ${BOLD}iOS фикс v2:${NC} $(ios2_fix_status_line 2>/dev/null || echo "${DIM}—${NC}")"
+
+        # Zapret2 — показываем первым
+        echo -e "  ${BOLD}Zapret2 fix:${NC} $(zapret2_status 2>/dev/null || echo "${DIM}—${NC}")"
+
+        # NFT limiter — скрываем если только zapret2 активен
+        local _z_active="false" _l_active="false"
+        nft list table ip "${ZAPRET2_NFT_TABLE:-MTProtoL}" &>/dev/null 2>&1 && _z_active="true"
+        nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1 && _l_active="true"
+
+        if [ "$_z_active" != "true" ] || [ "$_l_active" = "true" ]; then
+            echo -e "  ${BOLD}NFT лимитер:${NC} $(nft_status_line 2>/dev/null || echo "${DIM}—${NC}")"
+        fi
+
+        # iOS фиксы — только если применены
+        if [ "${IOS_FIX_ENABLED:-false}" = "true" ]; then
+            echo -e "  ${BOLD}iOS фикс v1:${NC} $(ios_fix_status_line 2>/dev/null || echo "${DIM}—${NC}")"
+        fi
+        if [ "${IOS2_FIX_ENABLED:-false}" = "true" ]; then
+            echo -e "  ${BOLD}iOS фикс v2:${NC} $(ios2_fix_status_line 2>/dev/null || echo "${DIM}—${NC}")"
+        fi
+
         echo -e "  ${BOLD}MEKO оптим.:${NC} $(meko_opt_status 2>/dev/null || echo "${DIM}—${NC}")"
         echo -e "  ${BOLD}Selfmask:${NC}    $(selfmask_status_line 2>/dev/null || echo "${DIM}—${NC}")"
 
@@ -69,7 +87,7 @@ show_main_menu() {
         echo -e "  ${BRIGHT_CYAN}[4]${NC}  Настройки"
         echo -e "  ${BRIGHT_CYAN}[5]${NC}  Безопасность и маршрутизация"
         echo -e "  ${BRIGHT_CYAN}[6]${NC}  Логи и трафик"
-        echo -e "  ${BRIGHT_CYAN}[7]${NC}  NFT лимитер и фиксы"
+        echo -e "  ${BRIGHT_CYAN}[7]${NC}  NFT лимитер, Zapret2 и фиксы"
         echo -e "  ${BRIGHT_CYAN}[8]${NC}  Движок Telemt"
         echo -e "  ${BRIGHT_CYAN}[9]${NC}  Обновление и бэкапы"
         echo -e "  ${BRIGHT_CYAN}[e]${NC}  Режим эксперта (override поверх config.toml)"
