@@ -65,7 +65,17 @@ tui_nft_menu() {
         echo -e "  ${CYAN}[2]${NC}  Удалить NFT правила"
         echo -e "  ${CYAN}[3]${NC}  Пресеты (жёсткий / средний / мягкий / smart)"
         echo -e "  ${CYAN}[4]${NC}  Настройки NFT (rate / burst / timeout / IP)"
-        echo -e "  ${CYAN}[5]${NC}  Счётчик правил"
+        local _counter_label="Счётчик правил"
+        if nft list table ip "${ZAPRET2_NFT_TABLE:-MTProtoL}" &>/dev/null 2>&1; then
+            if nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1; then
+                _counter_label="Счётчики правил: Zapret2 + SYN limiter"
+            else
+                _counter_label="Счётчик правил Zapret2"
+            fi
+        elif nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1; then
+            _counter_label="Счётчик правил SYN limiter"
+        fi
+        echo -e "  ${CYAN}[5]${NC}  ${_counter_label}"
         echo -e "  ${CYAN}[6]${NC}  Установить службу автозапуска"
         echo -e "  ${CYAN}[7]${NC}  Удалить службу"
         echo -e "  ${CYAN}[8]${NC}  Дополнительные правила"
