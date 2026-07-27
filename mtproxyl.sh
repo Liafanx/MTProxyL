@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-#  MTProxyL v1.1.6 — Telegram MTProto Proxy Manager
+#  MTProxyL v1.2.0 — Telegram MTProto Proxy Manager
 #  https://github.com/Liafanx/MTProxyL
 #  by LiafanX
 # ═══════════════════════════════════════════════════════════════
@@ -8,7 +8,7 @@
 set -o pipefail
 export LC_NUMERIC=C
 
-VERSION="1.1.6"
+VERSION="1.2.0"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -21,7 +21,7 @@ CONNECTION_LOG="${INSTALL_DIR}/connection.log"
 CONTAINER_NAME="mtproxyl"
 DOCKER_IMAGE_BASE="mtproxyl-telemt"
 GITHUB_REPO="Liafanx/MTProxyL"
-GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
+GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/dev"
 REGISTRY_IMAGE="ghcr.io/liafanx/mtproxyl-telemt"
 TELEMT_GITHUB="telemt/telemt"
 TELEMT_MIN_VERSION="3.4.24"
@@ -230,6 +230,10 @@ cli_main() {
                     check_root; nft_extra_add "$2" "$3" "$4" "$5" ;;
                 extra-rm)
                     check_root; nft_extra_remove "$2" ;;
+                zapret2)       check_root; load_nft_settings; zapret2_install ;;
+                zapret2-stop)  check_root; load_nft_settings; zapret2_stop ;;
+                zapret2-rm)    check_root; load_nft_settings; zapret2_remove ;;
+                zapret2-wscale) load_nft_settings; zapret2_check_wscale "true" ;;
                 *)
                     echo -e "  ${BOLD}NFT SYN Limiter:${NC}"
                     echo -e "    ${GREEN}nft apply${NC}        Применить правила"
@@ -244,6 +248,12 @@ cli_main() {
                     echo -e "    ${GREEN}nft ios2-off${NC}     Откатить iOS Fix v2"
                     echo -e "    ${GREEN}nft extra-add${NC}    Доп. правило"
                     echo -e "    ${GREEN}nft extra-rm${NC} N   Удалить доп. правило"
+                    echo ""
+                    echo -e "  ${BOLD}Zapret2:${NC}"
+                    echo -e "    ${GREEN}nft zapret2${NC}      Установить / переустановить Zapret2 fix"
+                    echo -e "    ${GREEN}nft zapret2-stop${NC} Остановить Zapret2"
+                    echo -e "    ${GREEN}nft zapret2-rm${NC}   Удалить Zapret2"
+                    echo -e "    ${GREEN}nft zapret2-wscale${NC} Проверить wscale / win ACK"
                     ;;
             esac
             ;;
