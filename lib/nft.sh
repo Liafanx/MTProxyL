@@ -1426,6 +1426,27 @@ zapret2_stop() {
     log_success "zapret2 остановлен"
 }
 
+zapret2_start_existing() {
+    if [ "${ZAPRET2_APPLIED:-false}" != "true" ] || [ ! -x "$ZAPRET2_BIN" ]; then
+        log_error "Zapret2 не установлен — используйте [1] Установить"
+        return 1
+    fi
+    zapret2_apply_nft || return 1
+    systemctl daemon-reload
+    systemctl enable "$ZAPRET2_SERVICE" >/dev/null 2>&1 || true
+    systemctl start "$ZAPRET2_SERVICE" 2>/dev/null || true
+    sleep 1
+    if systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null; then
+        ZAPRET2_SERVICE_ENABLED="true"
+        save_nft_settings
+        log_success "zapret2 запущен"
+    else
+        log_error "zapret2 не запустился"
+        journalctl -u "$ZAPRET2_SERVICE" -n 10 --no-pager 2>/dev/null || true
+        return 1
+    fi
+}
+
 zapret2_update_config() {
     if [ "${ZAPRET2_APPLIED:-false}" != "true" ]; then
         log_warn "Zapret2 не установлен"
