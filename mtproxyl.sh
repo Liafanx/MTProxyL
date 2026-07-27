@@ -231,6 +231,7 @@ cli_main() {
                 extra-rm)
                     check_root; nft_extra_remove "$2" ;;
                 zapret2)       check_root; load_nft_settings; zapret2_install ;;
+                zapret2-start) check_root; load_nft_settings; zapret2_start_existing ;;
                 zapret2-stop)  check_root; load_nft_settings; zapret2_stop ;;
                 zapret2-rm)    check_root; load_nft_settings; zapret2_remove ;;
                 zapret2-wscale) load_nft_settings; zapret2_check_wscale "true" ;;
@@ -251,6 +252,7 @@ cli_main() {
                     echo ""
                     echo -e "  ${BOLD}Zapret2:${NC}"
                     echo -e "    ${GREEN}nft zapret2${NC}      Установить / переустановить Zapret2 fix"
+                    echo -e "    ${GREEN}nft zapret2-start${NC} Запустить Zapret2 (после остановки)"
                     echo -e "    ${GREEN}nft zapret2-stop${NC} Остановить Zapret2"
                     echo -e "    ${GREEN}nft zapret2-rm${NC}   Удалить Zapret2"
                     echo -e "    ${GREEN}nft zapret2-wscale${NC} Проверить wscale / win ACK"
