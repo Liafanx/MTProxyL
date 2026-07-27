@@ -70,9 +70,8 @@ tui_nft_menu() {
         echo -e "  ${CYAN}[7]${NC}  Удалить службу"
         echo -e "  ${CYAN}[8]${NC}  Дополнительные правила"
         echo ""
-        echo -e "  ${CYAN}[a]${NC}  iOS Fix v1 — TCP keepalive"
-        echo -e "  ${CYAN}[b]${NC}  iOS Fix v2 — MSS + redirect"
         echo -e "  ${CYAN}[m]${NC}  Оптимизация By-MEKO (BBR, очереди, keepalive)"
+        echo -e "  ${DIM}[o]${NC}  Устаревшие настройки (iOS фиксы)"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -101,9 +100,8 @@ tui_nft_menu() {
                 press_any_key ;;
             7) remove_nft_service || true; press_any_key ;;
             8) tui_nft_extra_menu ;;
-            a|A) tui_ios1_menu ;;
-            b|B) tui_ios2_menu ;;
             m|M) tui_meko_opt_menu ;;
+            o|O) tui_nft_legacy_menu ;;
             0|"") return ;;
         esac
     done
@@ -116,19 +114,13 @@ tui_nft_presets() {
     echo ""
     echo -e "  ${BOLD}Выберите пресет ограничения:${NC}"; echo ""
     echo -e "  ${BRIGHT_GREEN}[s]${NC} ${BOLD}★ Smart By-MEKO${NC}"
-    echo -e "      ${DIM}iOS/Android авторазделение по TTL + REJECT вместо DROP.${NC}"
+    echo -e "      ${DIM}iOS/Android авторазделение по fingerprint + REJECT.${NC}"
     echo -e "      ${DIM}Подключение 3-8 сек. Один порт для всех клиентов.${NC}"
     echo ""
-    echo -e "  ${RED}[1]${NC} Жёсткий (Classic)  — 1/second burst 1"
+    echo -e "  ${RED}[1]${NC} Classic — 1/second burst 1"
     echo -e "      ${DIM}Каждый IP — не более 1 SYN/сек. DROP при превышении.${NC}"
     echo ""
-    echo -e "  ${YELLOW}[2]${NC} Средний (Classic)  — 1/second burst 3"
-    echo -e "      ${DIM}Разрешает кратковременный burst.${NC}"
-    echo ""
-    echo -e "  ${GREEN}[3]${NC} Мягкий (Classic)   — 2/second burst 5"
-    echo -e "      ${DIM}Для серверов с большим числом клиентов или за CGNAT.${NC}"
-    echo ""
-    echo -e "  ${DIM}[4]${NC} Свой вариант (Classic)"
+    echo -e "  ${DIM}[2]${NC} Свой вариант (Classic)"
     echo -e "  ${DIM}[0]${NC} Назад"
     echo ""
     local choice; choice=$(read_choice "выбор" "0")
@@ -136,9 +128,7 @@ tui_nft_presets() {
     case "$choice" in
         s|S) enable_smart_mode ;;
         1) apply_nft_preset hard ;;
-        2) apply_nft_preset medium ;;
-        3) apply_nft_preset soft ;;
-        4)
+        2)
             echo -en "  ${BOLD}Rate (напр. 1/second, 2/second) [${NFT_RATE}]:${NC} "
             local r; read -r r; [ -n "$r" ] && NFT_RATE="$r"
             echo -en "  ${BOLD}Burst [${NFT_BURST}]:${NC} "
@@ -732,6 +722,28 @@ tui_ios2_menu() {
     done
 }
 
+# ── Устаревшие настройки (iOS фиксы) ─────────────────────────
+tui_nft_legacy_menu() {
+    while true; do
+        clear_screen
+        draw_header "УСТАРЕВШИЕ НАСТРОЙКИ"
+        echo ""
+        echo -e "  ${DIM}Эти настройки сохранены для обратной совместимости.${NC}"
+        echo -e "  ${DIM}При использовании Smart By-MEKO или Zapret2 fix они не нужны.${NC}"
+        echo ""
+        echo -e "  ${CYAN}[1]${NC}  iOS Fix v1 — TCP keepalive"
+        echo -e "  ${CYAN}[2]${NC}  iOS Fix v2 — MSS + redirect"
+        echo ""
+        echo -e "  ${DIM}[0]${NC}  Назад"
+        echo ""
+        local choice; choice=$(read_choice "выбор" "0")
+        case "$choice" in
+            1) tui_ios1_menu ;;
+            2) tui_ios2_menu ;;
+            0|"") return ;;
+        esac
+    done
+}
 
 # ══════════════════════════════════════════════════════════════
 #  Zapret2 TUI меню
