@@ -1,5 +1,5 @@
 #!/bin/bash
-# MTProxyL — NFT SYN limiter + iOS фиксы + Smart режим + доп. правила
+# MTProxyL — NFT SYN limiter + Zapret2 + iOS фиксы + Smart режим + доп. правила
 
 NFT_CONF="${INSTALL_DIR}/nft-rules.conf"
 NFT_SCRIPT_FILE="/usr/local/sbin/mtproxyl-syn-limit.sh"
