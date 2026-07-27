@@ -853,7 +853,11 @@ tui_zapret2_menu() {
         echo -e "  ${GREEN}[1]${NC}  Установить / переустановить"
         if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
             echo -e "  ${CYAN}[2]${NC}  Перезапустить"
-            echo -e "  ${CYAN}[3]${NC}  Остановить"
+            if systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null 2>&1; then
+                echo -e "  ${CYAN}[3]${NC}  Остановить"
+            else
+                echo -e "  ${GREEN}[3]${NC}  Запустить"
+            fi
             echo -e "  ${CYAN}[4]${NC}  Настройки параметров"
             echo -e "  ${CYAN}[5]${NC}  Показать конфиг + Lua + NFT"
             echo -e "  ${CYAN}[6]${NC}  Логи службы"
@@ -877,7 +881,15 @@ tui_zapret2_menu() {
                     systemctl status "$ZAPRET2_SERVICE" --no-pager -l 2>/dev/null || true
                 fi
                 press_any_key ;;
-            3) [ "${ZAPRET2_APPLIED:-false}" = "true" ] && zapret2_stop; press_any_key ;;
+            3)
+                if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
+                    if systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null 2>&1; then
+                        zapret2_stop
+                    else
+                        zapret2_start_existing
+                    fi
+                fi
+                press_any_key ;;
             4) [ "${ZAPRET2_APPLIED:-false}" = "true" ] && tui_zapret2_settings ;;
             5)
                 if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
