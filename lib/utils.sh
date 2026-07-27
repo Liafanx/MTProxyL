@@ -565,7 +565,7 @@ show_cli_help() {
     echo -e "  ${BOLD}Настройки:${NC}      port | ip | domain | mask-backend | config"
     echo -e "  ${BOLD}Движок:${NC}         engine status|list|update|rollback|rebuild"
     echo -e "  ${BOLD}Эксперт:${NC}        expert list|set|clear|edit"
-    echo -e "  ${BOLD}NFT:${NC}            nft apply|remove|service|drop|preset|smart|zapret2"
+    echo -e "  ${BOLD}NFT:${NC}            nft apply|remove|service|drop|preset|smart|zapret2|zapret2-stop|zapret2-rm|zapret2-wscale"
     echo -e "  ${BOLD}Selfmask:${NC}       selfmask status|setup|verify|disable|menu"
     echo -e "  ${BOLD}PQ проверка:${NC}    pq-check [домен[:порт]]"
     echo -e "  ${BOLD}Безопасность:${NC}   geoblock add|remove|list | upstream list|add|remove | sni-policy"
