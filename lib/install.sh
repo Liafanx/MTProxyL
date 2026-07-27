@@ -201,32 +201,76 @@ run_installer() {
     # Главный скрипт уже скачан корневым install.sh, здесь только обновляем симлинк
     ln -sf "${INSTALL_DIR}/mtproxyl.sh" /usr/local/bin/mtproxyl
 
-    # NFT SYN limiter
+    # Zapret2 MTProto fix
     echo ""
-    echo -e "  ${BOLD}NFT SYN Limiter${NC}"
-    echo -e "  ${DIM}Ограничение входящих SYN-пакетов клиента.${NC}"
-    echo -e "  ${DIM}Без этого прокси нестабилен в ~90% случаев.${NC}"
+    echo -e "  ${DIM}────────────────────────────────────────${NC}"
     echo ""
-    echo -e "  ${DIM}Пресеты:${NC}"
-    echo -e "    ${BRIGHT_GREEN}[S]${NC} ★ Smart By-MEKO ${DIM}(рекомендуется — iOS/Android авторазделение + REJECT)${NC}"
-    echo -e "    ${RED}[1]${NC} Жёсткий  — 1/sec burst 1 (устарел)  ${DIM}(Classic)${NC}"
-    echo -e "    ${YELLOW}[2]${NC} Средний  — 1/sec burst 3 (не работает)  ${DIM}(Classic)${NC}"
-    echo -e "    ${GREEN}[3]${NC} Мягкий   — 2/sec burst 5 (не работает)  ${DIM}(Classic)${NC}"
-    echo -e "    ${DIM}[n]${NC} Не применять"
+    echo -e "  ${BRIGHT_CYAN}${BOLD}Zapret2 MTProto fix${NC}"
     echo ""
-    echo -en "  ${BOLD}Применить NFT limiter? [s по умолчанию]:${NC} "
-    local _nft_choice; read -r _nft_choice
+    echo -e "  ${DIM}Серверный обход MTProto прокси на уровне TCP-пакетов.${NC}"
+    echo -e "  ${DIM}Метод: disorder + badsum + TCP window control.${NC}"
+    echo -e "  ${DIM}Работает на сервере — клиент ничего не устанавливает.${NC}"
+    echo -e "  ${DIM}При установке заменяет SYN limiter.${NC}"
+    echo ""
+    echo -en "  ${BOLD}Установить Zapret2 MTProto fix? [Y/n]:${NC} "
+    local _yn_zapret2; read -r _yn_zapret2
+    local _zapret2_installed="false"
+    if [[ ! "$_yn_zapret2" =~ ^[nN]$ ]]; then
+        load_nft_settings 2>/dev/null || true
+        zapret2_download_bundle
+        if [ $? -eq 0 ]; then
+            zapret2_write_conf
+            zapret2_write_lua
+            zapret2_write_service
+            zapret2_apply_nft
+            systemctl enable "$ZAPRET2_SERVICE" 2>/dev/null || true
+            systemctl start "$ZAPRET2_SERVICE" 2>/dev/null || true
+            sleep 1
+            if systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null; then
+                ZAPRET2_APPLIED="true"
+                ZAPRET2_SERVICE_ENABLED="true"
+                save_nft_settings
+                _zapret2_installed="true"
+                log_success "Zapret2 MTProto fix установлен и запущен"
+                zapret2_check_wscale "false"
+            else
+                log_error "zapret2 не запустился"
+                journalctl -u "$ZAPRET2_SERVICE" -n 5 --no-pager 2>/dev/null || true
+            fi
+        else
+            log_error "Не удалось скачать zapret2 — можно установить позже через меню NFT → [z]"
+        fi
+    else
+        log_info "Zapret2 fix не установлен. Можно установить позже: меню NFT → [z]"
+    fi
 
-    case "$_nft_choice" in
+    # NFT SYN limiter (только если zapret2 не установлен)
+    if [ "$_zapret2_installed" != "true" ]; then
+      echo ""
+      echo -e "  ${BOLD}NFT SYN Limiter${NC}"
+      echo -e "  ${DIM}Ограничение входящих SYN-пакетов клиента.${NC}"
+      echo -e "  ${DIM}Без этого прокси нестабилен в ~90% случаев.${NC}"
+      echo ""
+      echo -e "  ${DIM}Пресеты:${NC}"
+      echo -e "    ${BRIGHT_GREEN}[S]${NC} ★ Smart By-MEKO ${DIM}(рекомендуется — iOS/Android авторазделение + REJECT)${NC}"
+      echo -e "    ${RED}[1]${NC} Жёсткий  — 1/sec burst 1 (устарел)  ${DIM}(Classic)${NC}"
+      echo -e "    ${YELLOW}[2]${NC} Средний  — 1/sec burst 3 (не работает)  ${DIM}(Classic)${NC}"
+      echo -e "    ${GREEN}[3]${NC} Мягкий   — 2/sec burst 5 (не работает)  ${DIM}(Classic)${NC}"
+      echo -e "    ${DIM}[n]${NC} Не применять"
+      echo ""
+      echo -en "  ${BOLD}Применить NFT limiter? [s по умолчанию]:${NC} "
+      local _nft_choice; read -r _nft_choice
+
+      case "$_nft_choice" in
         1) apply_nft_preset hard ;;
         2) apply_nft_preset medium ;;
         3) apply_nft_preset soft ;;
         n|N) log_info "NFT limiter не применён" ;;
         *) apply_nft_preset smart ;;
-    esac
+      esac
 
-    # Выбор Other Action для Smart режима
-    if [ "$NFT_MODE" = "smart" ]; then
+      # Выбор Other Action для Smart режима
+      if [ "$NFT_MODE" = "smart" ]; then
         echo ""
         echo -e "  ${BOLD}Действие для non-iOS устройств (Android / Desktop):${NC}"
         echo ""
@@ -243,9 +287,9 @@ run_installer() {
         esac
         save_nft_settings
         log_success "Other Action: ${NFT_OTHER_ACTION}"
-    fi
+      fi
 
-    if [ "$_nft_choice" != "n" ] && [ "$_nft_choice" != "N" ]; then
+      if [ "$_nft_choice" != "n" ] && [ "$_nft_choice" != "N" ]; then
         # По умолчанию ограничиваем по IP сервера
         if [ -n "${CUSTOM_IP:-}" ] && validate_ip_literal "${CUSTOM_IP}"; then
             NFT_SERVER_IP="${CUSTOM_IP}"
@@ -273,7 +317,8 @@ run_installer() {
         save_nft_settings
         apply_nft_rules || log_warn "Не удалось применить NFT правила"
         install_nft_service || log_warn "Не удалось установить службу NFT"
-    fi
+      fi
+    fi 
 
     # Оптимизация By-MEKO
     echo ""
@@ -281,9 +326,9 @@ run_installer() {
     echo -e "  ${DIM}TCP keepalive 45s, BBR, расширенные очереди.${NC}"
     echo -e "  ${DIM}Текущие значения ядра будут сохранены для отката.${NC}"
     echo ""
-    echo -en "  ${BOLD}Применить оптимизацию By-MEKO? [y/N]:${NC} "
+    echo -en "  ${BOLD}Применить оптимизацию By-MEKO? [Y/n]:${NC} "
     local _meko_choice; read -r _meko_choice
-    if [[ "$_meko_choice" =~ ^[yY]$ ]]; then
+    if [[ ! "$_meko_choice" =~ ^[nN]$ ]]; then
         load_nft_settings 2>/dev/null || true
         meko_opt_apply || log_warn "Не удалось применить оптимизацию By-MEKO"
     fi
