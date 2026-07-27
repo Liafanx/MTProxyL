@@ -265,8 +265,8 @@ run_installer() {
         *) apply_nft_preset smart ;;
     esac
 
-      # Выбор Other Action для Smart режима
-      if [ "$NFT_MODE" = "smart" ]; then
+      # Выбор Other Action для Smart режима (только если zapret2 не установлен)
+      if [ "$NFT_MODE" = "smart" ] && [ "$_zapret2_installed" != "true" ]; then
         echo ""
         echo -e "  ${BOLD}Действие для non-iOS устройств (Android / Desktop):${NC}"
         echo ""
