@@ -251,23 +251,19 @@ run_installer() {
       echo -e "  ${DIM}Ограничение входящих SYN-пакетов клиента.${NC}"
       echo -e "  ${DIM}Без этого прокси нестабилен в ~90% случаев.${NC}"
       echo ""
-      echo -e "  ${DIM}Пресеты:${NC}"
-      echo -e "    ${BRIGHT_GREEN}[S]${NC} ★ Smart By-MEKO ${DIM}(рекомендуется — iOS/Android авторазделение + REJECT)${NC}"
-      echo -e "    ${RED}[1]${NC} Жёсткий  — 1/sec burst 1 (устарел)  ${DIM}(Classic)${NC}"
-      echo -e "    ${YELLOW}[2]${NC} Средний  — 1/sec burst 3 (не работает)  ${DIM}(Classic)${NC}"
-      echo -e "    ${GREEN}[3]${NC} Мягкий   — 2/sec burst 5 (не работает)  ${DIM}(Classic)${NC}"
-      echo -e "    ${DIM}[n]${NC} Не применять"
-      echo ""
-      echo -en "  ${BOLD}Применить NFT limiter? [s по умолчанию]:${NC} "
-      local _nft_choice; read -r _nft_choice
+    echo -e "  ${DIM}Режимы:${NC}"
+    echo -e "    ${BRIGHT_GREEN}[S]${NC} ★ Smart By-MEKO ${DIM}(рекомендуется — iOS/Android авторазделение + REJECT)${NC}"
+    echo -e "    ${RED}[1]${NC} Classic — 1/sec burst 1"
+    echo -e "    ${DIM}[n]${NC} Не применять"
+    echo ""
+    echo -en "  ${BOLD}Применить NFT limiter? [s по умолчанию]:${NC} "
+    local _nft_choice; read -r _nft_choice
 
-      case "$_nft_choice" in
+    case "$_nft_choice" in
         1) apply_nft_preset hard ;;
-        2) apply_nft_preset medium ;;
-        3) apply_nft_preset soft ;;
         n|N) log_info "NFT limiter не применён" ;;
         *) apply_nft_preset smart ;;
-      esac
+    esac
 
       # Выбор Other Action для Smart режима
       if [ "$NFT_MODE" = "smart" ]; then
