@@ -1,6 +1,6 @@
 # MTProxyL
 
-**MTProxyL** — менеджер Telegram MTProto прокси на базе движка **[telemt](https://github.com/drkctrl/telemt)** (Rust).
+**MTProxyL** — менеджер Telegram MTProto прокси на базе движка **[telemt](https://github.com/telemt/telemt)** (Rust).
 
 Один скрипт. Полный контроль. Всё на русском.
 
