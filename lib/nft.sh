@@ -1298,8 +1298,7 @@ function lets_resend(ctx, desync)
 
     -- Пустые ACK: зажимаем окно, отпускаем после первого payload
     if direction_check(desync) and bitand(desync.dis.tcp.th_flags, TH_SYN + TH_ACK) == (TH_ACK) then
-        local ack0 = desync.track and desync.track.lua_state["ack0"]
-        if ack0 and (desync.dis.tcp.th_ack - ack0 >= 1400) then
+        if desync.track and desync.dis.tcp.th_ack - desync.track.lua_state["ack0"] >= 1400 then
             instance_cutoff(ctx, true)
             desync.arg.fwmark = 0x40000
             rawsend_dissect_segmented(desync)
