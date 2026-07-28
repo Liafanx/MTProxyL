@@ -871,10 +871,10 @@ tui_zapret2_menu() {
             fi
         fi
             echo -e "  ${CYAN}[4]${NC}  Настройки параметров ${DIM}(NFQUEUE, win, split и др.)${NC}"
-        if
             echo -e "  ${CYAN}[5]${NC}  Показать конфиг + Lua + NFT"
             echo -e "  ${CYAN}[6]${NC}  Логи службы"
             echo -e "  ${CYAN}[7]${NC}  Диагностика (wscale + NFT + queue)"
+        if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then     
             echo -e "  ${CYAN}[r]${NC}  Сбросить настройки к дефолту"
             if [ "${ZAPRET2_DEBUG:-false}" = "true" ]; then
                 echo -e "  ${CYAN}[d]${NC}  Debug лог (tail -100)"
