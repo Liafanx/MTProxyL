@@ -1080,13 +1080,21 @@ zapret2_find_free_queue() {
     local _end="${2:-299}"
     local _q
 
+    modprobe nfnetlink_queue 2>/dev/null || true
+
     for ((_q=_start; _q<=_end; _q++)); do
-        if ! grep -q "^ *${_q} " /proc/net/netfilter/nfnetlink_queue 2>/dev/null; then
+        if ! awk -v q="$_q" '$1 == q { found=1 } END { exit found ? 0 : 1 }' /proc/net/netfilter/nfnetlink_queue 2>/dev/null; then
             echo "$_q"
             return 0
         fi
     done
     return 1
+}
+
+zapret2_queue_in_use() {
+    local _q="${1:-200}"
+    modprobe nfnetlink_queue 2>/dev/null || true
+    awk -v q="$_q" '$1 == q { found=1 } END { exit found ? 0 : 1 }' /proc/net/netfilter/nfnetlink_queue 2>/dev/null
 }
 
 zapret2_has_residue() {
@@ -1503,18 +1511,22 @@ zapret2_update_config() {
         return 1
     fi
     # Проверяем занятость NFQUEUE и подбираем свободную
-    if grep -q "^ *${ZAPRET2_QNUM} " /proc/net/netfilter/nfnetlink_queue 2>/dev/null; then
-        local _old_q="$ZAPRET2_QNUM"
+    if zapret2_queue_in_use "${ZAPRET2_QNUM}"; then
+        local _old_q="${ZAPRET2_QNUM}"
         local _new_q
-        _new_q=$(zapret2_find_free_queue 200 299)
+
+        # сначала пробуем 250..299, потом 201..249
+        _new_q=$(zapret2_find_free_queue 250 299)
+        [ -z "$_new_q" ] && _new_q=$(zapret2_find_free_queue 201 249)
+
         if [ -n "$_new_q" ]; then
             log_warn "NFQUEUE ${_old_q} уже занята другим процессом"
             ZAPRET2_QNUM="$_new_q"
             save_nft_settings
             log_success "Автоматически выбрана свободная очередь: ${ZAPRET2_QNUM}"
         else
-            log_error "Все NFQUEUE 200-299 заняты — невозможно запустить zapret2"
-            log_info "Проверьте: cat /proc/net/netfilter/nfnetlink_queue"
+            log_error "Не удалось найти свободную NFQUEUE в диапазоне 201..299"
+            log_info "Проверьте занятые очереди: cat /proc/net/netfilter/nfnetlink_queue"
             return 1
         fi
     fi
