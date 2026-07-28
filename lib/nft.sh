@@ -1075,6 +1075,19 @@ WATCHEOF
 #  Zapret2 MTProto fix для MTProxyL
 # ══════════════════════════════════════════════════════════════
 
+zapret2_has_residue() {
+    nft list table ip "${ZAPRET2_NFT_TABLE}" &>/dev/null 2>&1 && return 0
+    systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null 2>&1 && return 0
+    systemctl is-enabled "$ZAPRET2_SERVICE" &>/dev/null 2>&1 && return 0
+    [ -f "/etc/systemd/system/${ZAPRET2_SERVICE}" ] && return 0
+    [ -f "/usr/local/sbin/mtproxyl-zapret2-start.sh" ] && return 0
+    [ -d "$ZAPRET2_DIR" ] && return 0
+    [ -d "$ZAPRET2_ETC_DIR" ] && return 0
+    pgrep -f "$ZAPRET2_BIN" >/dev/null 2>&1 && return 0
+    pgrep -x nfqws2 >/dev/null 2>&1 && return 0
+    return 1
+}
+
 zapret2_status() {
     if [ "${ZAPRET2_APPLIED:-false}" != "true" ]; then
         echo -e "${DIM}не установлен${NC}"
@@ -1428,6 +1441,27 @@ zapret2_stop() {
     log_success "zapret2 остановлен"
 }
 
+zapret2_cleanup_failed_install() {
+    systemctl stop "$ZAPRET2_SERVICE" 2>/dev/null || true
+    systemctl disable "$ZAPRET2_SERVICE" 2>/dev/null || true
+
+    pkill -9 -f "$ZAPRET2_BIN" 2>/dev/null || true
+    pkill -9 -x nfqws2 2>/dev/null || true
+
+    nft delete table ip "${ZAPRET2_NFT_TABLE}" 2>/dev/null || true
+
+    rm -f "/etc/systemd/system/${ZAPRET2_SERVICE}"
+    rm -f "/usr/local/sbin/mtproxyl-zapret2-start.sh"
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl reset-failed "$ZAPRET2_SERVICE" 2>/dev/null || true
+
+    ZAPRET2_APPLIED="false"
+    ZAPRET2_SERVICE_ENABLED="false"
+    save_nft_settings
+
+    log_success "Следы неудачной установки zapret2 очищены"
+}
+
 zapret2_start_existing() {
     if [ "${ZAPRET2_APPLIED:-false}" != "true" ] || [ ! -x "$ZAPRET2_BIN" ]; then
         log_error "Zapret2 не установлен — используйте [1] Установить"
@@ -1498,8 +1532,14 @@ zapret2_install() {
 
     zapret2_download_bundle || return 1
 
+    local _restore_limiter="false"
+    local _restore_limiter_service="false"
+
     # Отключаем SYN limiter если активен
     if [ "${NFT_ENABLED:-false}" = "true" ] || nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1; then
+        _restore_limiter="true"
+        [ "${NFT_ENABLED:-false}" = "true" ] && _restore_limiter_service="true"
+
         echo ""
         echo -e "  ${YELLOW}⚠ SYN limiter активен — zapret2 его заменит.${NC}"
         echo -en "  ${BOLD}Отключить SYN limiter? [Y/n]:${NC} "
@@ -1508,13 +1548,31 @@ zapret2_install() {
             remove_nft_rules 2>/dev/null || true
             remove_nft_service 2>/dev/null || true
             log_success "SYN limiter отключён"
+        else
+            _restore_limiter="false"
+            _restore_limiter_service="false"
         fi
     fi
 
     zapret2_write_conf
     zapret2_write_lua
     zapret2_write_service
-    zapret2_start || return 1
+
+    if ! zapret2_start; then
+        log_warn "zapret2 не запустился — выполняю откат"
+
+        zapret2_cleanup_failed_install || true
+
+        if [ "$_restore_limiter" = "true" ]; then
+            log_info "Возвращаю SYN limiter..."
+            apply_nft_rules || true
+            if [ "$_restore_limiter_service" = "true" ]; then
+                install_nft_service || true
+            fi
+        fi
+
+        return 1
+    fi
 
     ZAPRET2_APPLIED="true"
     ZAPRET2_SERVICE_ENABLED="true"
