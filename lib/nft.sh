@@ -1575,6 +1575,26 @@ zapret2_install() {
 
     zapret2_download_bundle || return 1
 
+    # Проверяем занятость NFQUEUE и подбираем свободную
+    if zapret2_queue_in_use "${ZAPRET2_QNUM}"; then
+        local _old_q="${ZAPRET2_QNUM}"
+        local _new_q
+
+        _new_q=$(zapret2_find_free_queue 250 299)
+        [ -z "$_new_q" ] && _new_q=$(zapret2_find_free_queue 201 249)
+
+        if [ -n "$_new_q" ]; then
+            log_warn "NFQUEUE ${_old_q} уже занята другим процессом"
+            ZAPRET2_QNUM="$_new_q"
+            save_nft_settings
+            log_success "Автоматически выбрана свободная очередь: ${ZAPRET2_QNUM}"
+        else
+            log_error "Не удалось найти свободную NFQUEUE в диапазоне 201..299"
+            log_info "Проверьте занятые очереди: cat /proc/net/netfilter/nfnetlink_queue"
+            return 1
+        fi
+    fi
+
     local _restore_limiter="false"
     local _restore_limiter_service="false"
 
