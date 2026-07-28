@@ -606,4 +606,3 @@ MIT
 ---
 
 MTProxyL by LiafanX · [GitHub](https://github.com/Liafanx/MTProxyL)
-```
