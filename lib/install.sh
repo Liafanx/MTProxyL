@@ -220,15 +220,17 @@ run_installer() {
         zapret2_download_bundle
         if [ $? -eq 0 ]; then
             # Проверяем занятость NFQUEUE
-            if grep -q "^ *${ZAPRET2_QNUM} " /proc/net/netfilter/nfnetlink_queue 2>/dev/null; then
+            if zapret2_queue_in_use "${ZAPRET2_QNUM}"; then
                 local _new_q
-                _new_q=$(zapret2_find_free_queue 200 299)
+                _new_q=$(zapret2_find_free_queue 250 299)
+                [ -z "$_new_q" ] && _new_q=$(zapret2_find_free_queue 201 249)
+
                 if [ -n "$_new_q" ]; then
                     log_warn "NFQUEUE ${ZAPRET2_QNUM} занята — используем ${_new_q}"
                     ZAPRET2_QNUM="$_new_q"
                     save_nft_settings
                 else
-                    log_error "Все NFQUEUE 200-299 заняты"
+                    log_error "Не удалось найти свободную NFQUEUE в диапазоне 201..299"
                 fi
             fi
 
