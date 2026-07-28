@@ -850,6 +850,17 @@ tui_zapret2_menu() {
             echo ""
         fi
 
+        if [ "${ZAPRET2_APPLIED:-false}" != "true" ]; then
+            echo -e "  ${BOLD}Параметры для установки:${NC}"
+            echo -e "    out-range:   ${ZAPRET2_OUT_RANGE}"
+            echo -e "    split len:   ${ZAPRET2_SPLIT_LEN}"
+            echo -e "    win SYN+ACK: ${ZAPRET2_WIN_SYNACK}"
+            echo -e "    win ACK:     ${ZAPRET2_WIN_ACK}"
+            echo -e "    NFQUEUE:     ${ZAPRET2_QNUM}"
+            echo -e "    Порт:        ${PROXY_PORT:-не задан}"
+            echo ""
+        fi
+
         echo -e "  ${GREEN}[1]${NC}  Установить / переустановить"
         if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
             echo -e "  ${CYAN}[2]${NC}  Перезапустить"
@@ -858,7 +869,9 @@ tui_zapret2_menu() {
             else
                 echo -e "  ${GREEN}[3]${NC}  Запустить"
             fi
-            echo -e "  ${CYAN}[4]${NC}  Настройки параметров"
+        fi
+            echo -e "  ${CYAN}[4]${NC}  Настройки параметров ${DIM}(NFQUEUE, win, split и др.)${NC}"
+        if
             echo -e "  ${CYAN}[5]${NC}  Показать конфиг + Lua + NFT"
             echo -e "  ${CYAN}[6]${NC}  Логи службы"
             echo -e "  ${CYAN}[7]${NC}  Диагностика (wscale + NFT + queue)"
@@ -892,7 +905,7 @@ tui_zapret2_menu() {
                     fi
                 fi
                 press_any_key ;;
-            4) [ "${ZAPRET2_APPLIED:-false}" = "true" ] && tui_zapret2_settings ;;
+            4) tui_zapret2_settings ;;
             5)
                 if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
                     echo ""
