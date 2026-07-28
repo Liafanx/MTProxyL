@@ -867,6 +867,8 @@ tui_zapret2_menu() {
                 echo -e "  ${CYAN}[d]${NC}  Debug лог (tail -100)"
             fi
             echo -e "  ${RED}[8]${NC}  Удалить"
+        elif zapret2_has_residue; then
+            echo -e "  ${YELLOW}[8]${NC}  Очистить следы неудачной установки"
         fi
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -971,7 +973,20 @@ tui_zapret2_menu() {
                     log_info "Debug лог не включён. Включите через [4] → [9]"
                 fi
                 press_any_key ;;
-            8) [ "${ZAPRET2_APPLIED:-false}" = "true" ] && zapret2_remove; press_any_key ;;
+            8)
+                if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
+                    zapret2_remove
+                elif zapret2_has_residue; then
+                    echo ""
+                    echo -en "  ${BOLD}Очистить следы неудачной установки zapret2? [Y/n]:${NC} "
+                    local _yn; read -r _yn
+                    if [[ ! "$_yn" =~ ^[nN]$ ]]; then
+                        zapret2_cleanup_failed_install
+                    else
+                        log_info "Отменено"
+                    fi
+                fi
+                press_any_key ;;
             0|"") return ;;
         esac
     done
