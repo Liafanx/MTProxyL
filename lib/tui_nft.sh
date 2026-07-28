@@ -923,6 +923,13 @@ tui_zapret2_menu() {
                     echo ""
                     echo -e "  ${BOLD}=== NFQUEUE ===${NC}"
                     modprobe nfnetlink_queue 2>/dev/null || true
+                    echo -e "  ${DIM}Используемая очередь: ${ZAPRET2_QNUM}${NC}"
+                    if grep -q "^ *${ZAPRET2_QNUM} " /proc/net/netfilter/nfnetlink_queue 2>/dev/null; then
+                        echo -e "  ${GREEN}Очередь ${ZAPRET2_QNUM} активна${NC}"
+                    else
+                        echo -e "  ${YELLOW}Очередь ${ZAPRET2_QNUM} не найдена в системе${NC}"
+                    fi
+                    echo -e "  ${DIM}Все очереди:${NC}"
                     cat /proc/net/netfilter/nfnetlink_queue 2>/dev/null || echo "  unavailable"
                     echo ""
                     echo -e "  ${BOLD}=== NFT table ===${NC}"
