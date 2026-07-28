@@ -1358,12 +1358,12 @@ nft "add rule ip \$TABLE output meta mark and \$COMBINED_MARK == \$COMBINED_MARK
 
 nft "add chain ip \$TABLE postrouting { type filter hook postrouting priority srcnat + 1; policy accept; }"
 nft "add rule ip \$TABLE postrouting ct mark \$CT_MARK counter accept"
-nft "add rule ip \$TABLE postrouting meta mark and \$FWMARK == 0x00000000 tcp sport \$PORT counter queue flags bypass to \$QNUM"
+nft "add rule ip \$TABLE postrouting meta mark and \$FWMARK == 0x00000000 tcp sport \$PORT counter queue num \$QNUM bypass"
 
 nft "add chain ip \$TABLE prerouting { type filter hook prerouting priority mangle; policy accept; }"
 nft "add rule ip \$TABLE prerouting ct state invalid counter drop"
 nft "add rule ip \$TABLE prerouting ct mark \$CT_MARK counter accept"
-nft "add rule ip \$TABLE prerouting meta mark and \$FWMARK == 0x00000000 tcp dport \$PORT counter queue flags bypass to \$QNUM"
+nft "add rule ip \$TABLE prerouting meta mark and \$FWMARK == 0x00000000 tcp dport \$PORT counter queue num \$QNUM bypass"
 
 echo "MTProxyL: NFT table \$TABLE applied (port=\$PORT qnum=\$QNUM)"
 
@@ -1422,12 +1422,12 @@ zapret2_apply_nft() {
 
     nft "add chain ip $_table postrouting { type filter hook postrouting priority srcnat + 1; policy accept; }"
     nft "add rule ip $_table postrouting ct mark ${_ct_mark} counter accept"
-    nft "add rule ip $_table postrouting meta mark and $_fwmark == 0x00000000 tcp sport ${_port} counter queue flags bypass to ${ZAPRET2_QNUM}"
+    nft "add rule ip $_table postrouting meta mark and $_fwmark == 0x00000000 tcp sport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
 
     nft "add chain ip $_table prerouting { type filter hook prerouting priority mangle; policy accept; }"
     nft "add rule ip $_table prerouting ct state invalid counter drop"
     nft "add rule ip $_table prerouting ct mark ${_ct_mark} counter accept"
-    nft "add rule ip $_table prerouting meta mark and $_fwmark == 0x00000000 tcp dport ${_port} counter queue flags bypass to ${ZAPRET2_QNUM}"
+    nft "add rule ip $_table prerouting meta mark and $_fwmark == 0x00000000 tcp dport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
 
     log_success "NFT таблица ${_table} применена (порт=${_port} qnum=${ZAPRET2_QNUM})"
 }
