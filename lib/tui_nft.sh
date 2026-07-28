@@ -850,6 +850,17 @@ tui_zapret2_menu() {
             echo ""
         fi
 
+        if [ "${ZAPRET2_APPLIED:-false}" != "true" ]; then
+            echo -e "  ${BOLD}Параметры для установки:${NC}"
+            echo -e "    out-range:   ${ZAPRET2_OUT_RANGE}"
+            echo -e "    split len:   ${ZAPRET2_SPLIT_LEN}"
+            echo -e "    win SYN+ACK: ${ZAPRET2_WIN_SYNACK}"
+            echo -e "    win ACK:     ${ZAPRET2_WIN_ACK}"
+            echo -e "    NFQUEUE:     ${ZAPRET2_QNUM}"
+            echo -e "    Порт:        ${PROXY_PORT:-не задан}"
+            echo ""
+        fi
+
         echo -e "  ${GREEN}[1]${NC}  Установить / переустановить"
         if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
             echo -e "  ${CYAN}[2]${NC}  Перезапустить"
@@ -858,15 +869,19 @@ tui_zapret2_menu() {
             else
                 echo -e "  ${GREEN}[3]${NC}  Запустить"
             fi
-            echo -e "  ${CYAN}[4]${NC}  Настройки параметров"
+        fi
+            echo -e "  ${CYAN}[4]${NC}  Настройки параметров ${DIM}(NFQUEUE, win, split и др.)${NC}"
             echo -e "  ${CYAN}[5]${NC}  Показать конфиг + Lua + NFT"
             echo -e "  ${CYAN}[6]${NC}  Логи службы"
             echo -e "  ${CYAN}[7]${NC}  Диагностика (wscale + NFT + queue)"
+        if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then     
             echo -e "  ${CYAN}[r]${NC}  Сбросить настройки к дефолту"
             if [ "${ZAPRET2_DEBUG:-false}" = "true" ]; then
                 echo -e "  ${CYAN}[d]${NC}  Debug лог (tail -100)"
             fi
             echo -e "  ${RED}[8]${NC}  Удалить"
+        elif zapret2_has_residue; then
+            echo -e "  ${YELLOW}[8]${NC}  Очистить следы неудачной установки"
         fi
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -890,7 +905,7 @@ tui_zapret2_menu() {
                     fi
                 fi
                 press_any_key ;;
-            4) [ "${ZAPRET2_APPLIED:-false}" = "true" ] && tui_zapret2_settings ;;
+            4) tui_zapret2_settings ;;
             5)
                 if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
                     echo ""
@@ -921,6 +936,13 @@ tui_zapret2_menu() {
                     echo ""
                     echo -e "  ${BOLD}=== NFQUEUE ===${NC}"
                     modprobe nfnetlink_queue 2>/dev/null || true
+                    echo -e "  ${DIM}Используемая очередь: ${ZAPRET2_QNUM}${NC}"
+                    if grep -q "^ *${ZAPRET2_QNUM} " /proc/net/netfilter/nfnetlink_queue 2>/dev/null; then
+                        echo -e "  ${GREEN}Очередь ${ZAPRET2_QNUM} активна${NC}"
+                    else
+                        echo -e "  ${YELLOW}Очередь ${ZAPRET2_QNUM} не найдена в системе${NC}"
+                    fi
+                    echo -e "  ${DIM}Все очереди:${NC}"
                     cat /proc/net/netfilter/nfnetlink_queue 2>/dev/null || echo "  unavailable"
                     echo ""
                     echo -e "  ${BOLD}=== NFT table ===${NC}"
@@ -971,7 +993,20 @@ tui_zapret2_menu() {
                     log_info "Debug лог не включён. Включите через [4] → [9]"
                 fi
                 press_any_key ;;
-            8) [ "${ZAPRET2_APPLIED:-false}" = "true" ] && zapret2_remove; press_any_key ;;
+            8)
+                if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
+                    zapret2_remove
+                elif zapret2_has_residue; then
+                    echo ""
+                    echo -en "  ${BOLD}Очистить следы неудачной установки zapret2? [Y/n]:${NC} "
+                    local _yn; read -r _yn
+                    if [[ ! "$_yn" =~ ^[nN]$ ]]; then
+                        zapret2_cleanup_failed_install
+                    else
+                        log_info "Отменено"
+                    fi
+                fi
+                press_any_key ;;
             0|"") return ;;
         esac
     done
