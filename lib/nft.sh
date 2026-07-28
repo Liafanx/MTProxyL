@@ -1075,6 +1075,20 @@ WATCHEOF
 #  Zapret2 MTProto fix для MTProxyL
 # ══════════════════════════════════════════════════════════════
 
+zapret2_find_free_queue() {
+    local _start="${1:-200}"
+    local _end="${2:-299}"
+    local _q
+
+    for ((_q=_start; _q<=_end; _q++)); do
+        if ! grep -q "^ *${_q} " /proc/net/netfilter/nfnetlink_queue 2>/dev/null; then
+            echo "$_q"
+            return 0
+        fi
+    done
+    return 1
+}
+
 zapret2_has_residue() {
     nft list table ip "${ZAPRET2_NFT_TABLE}" &>/dev/null 2>&1 && return 0
     systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null 2>&1 && return 0
@@ -1488,6 +1502,23 @@ zapret2_update_config() {
         log_warn "Zapret2 не установлен"
         return 1
     fi
+    # Проверяем занятость NFQUEUE и подбираем свободную
+    if grep -q "^ *${ZAPRET2_QNUM} " /proc/net/netfilter/nfnetlink_queue 2>/dev/null; then
+        local _old_q="$ZAPRET2_QNUM"
+        local _new_q
+        _new_q=$(zapret2_find_free_queue 200 299)
+        if [ -n "$_new_q" ]; then
+            log_warn "NFQUEUE ${_old_q} уже занята другим процессом"
+            ZAPRET2_QNUM="$_new_q"
+            save_nft_settings
+            log_success "Автоматически выбрана свободная очередь: ${ZAPRET2_QNUM}"
+        else
+            log_error "Все NFQUEUE 200-299 заняты — невозможно запустить zapret2"
+            log_info "Проверьте: cat /proc/net/netfilter/nfnetlink_queue"
+            return 1
+        fi
+    fi
+
     zapret2_write_conf
     zapret2_write_lua
     zapret2_write_service
