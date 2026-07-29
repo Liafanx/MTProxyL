@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-#  MTProxyL v1.2.2 — Telegram MTProto Proxy Manager
+#  MTProxyL v1.3.0 — Telegram MTProto Proxy Manager
 #  https://github.com/Liafanx/MTProxyL
 #  by LiafanX
 # ═══════════════════════════════════════════════════════════════
@@ -8,7 +8,7 @@
 set -o pipefail
 export LC_NUMERIC=C
 
-VERSION="1.2.2"
+VERSION="1.3.0"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -40,7 +40,7 @@ fi
 
 # Загрузка библиотек
 LIB_DIR="${INSTALL_DIR}/lib"
-for _lib in colors utils settings secrets config docker engine traffic geoblock upstream backup nft selfmask tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons expert_catalog expert_mode install; do
+for _lib in colors utils settings detect secrets config docker engine traffic geoblock upstream backup nft selfmask tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode install; do
     if [ -f "${LIB_DIR}/${_lib}.sh" ]; then
         # shellcheck source=/dev/null
         source "${LIB_DIR}/${_lib}.sh"
@@ -81,6 +81,11 @@ cli_main() {
                 load_secrets
                 load_upstreams
                 load_nft_settings
+                load_detect_settings
+                if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+                    detect_telemt || true
+                    save_detect_settings
+                fi
                 check_for_update
                 show_main_menu
             else
@@ -91,20 +96,22 @@ cli_main() {
         start)
             check_root
             load_settings; load_secrets; load_upstreams
+            _require_manager_mode || exit 1
             start_proxy_container
             ;;
         stop)
             check_root
             load_settings
+            _require_manager_mode || exit 1
             stop_proxy_container
             ;;
         restart)
             check_root
-            load_settings; load_secrets; load_upstreams
-            restart_proxy_container
+            load_settings; load_secrets; load_upstreams; load_detect_settings
+            restart_target
             ;;
         status)
-            load_settings; load_secrets
+            load_settings; load_secrets; load_detect_settings
             if [ "$1" = "--json" ]; then
                 show_status_json
             else
@@ -143,17 +150,17 @@ cli_main() {
             ;;
 
         traffic)
-            load_settings; load_secrets
+            load_settings; load_secrets; load_detect_settings
             show_traffic
             ;;
 
         connections)
-            load_settings; load_secrets
+            load_settings; load_secrets; load_detect_settings
             show_connections
             ;;
 
         config)
-            load_settings
+            load_settings; load_detect_settings
             show_config
             ;;
 
@@ -168,8 +175,24 @@ cli_main() {
             ;;
 
         tune)
-            load_settings
+            load_settings; load_detect_settings
             handle_tune_command "$@"
+            ;;
+
+        mode)
+            check_root; load_settings
+            case "${1:-}" in
+                manager)    switch_to_manager_mode ;;
+                reanimator) switch_to_reanimator_mode ;;
+                "")         echo -e "  ${BOLD}Текущий режим:${NC} ${MTPROXYL_MODE:-manager}" ;;
+                *)          log_error "Использование: mtproxyl mode [manager|reanimator]" ;;
+            esac
+            ;;
+
+        detect)
+            check_root; load_settings; load_detect_settings
+            run_target_detection
+            save_detect_settings
             ;;
 
         geoblock)
@@ -193,19 +216,19 @@ cli_main() {
             ;;
 
         health)
-            load_settings; load_secrets
+            load_settings; load_secrets; load_detect_settings
             health_check
             ;;
 
         info)
-            load_settings; load_secrets
+            load_settings; load_secrets; load_detect_settings
             show_server_info
             ;;
 
         logs)
-            load_settings
+            load_settings; load_detect_settings
             echo -e "  ${DIM}Потоковые логи (Ctrl+C для остановки)...${NC}"
-            docker logs -f --tail 50 "$CONTAINER_NAME" 2>&1
+            show_target_logs 50
             ;;
 
         metrics)
@@ -285,19 +308,25 @@ cli_main() {
             ;;
 
         menu)
-            load_settings; load_secrets; load_upstreams
+            load_settings; load_secrets; load_upstreams; load_detect_settings
             show_main_menu
             ;;
 
         uninstall)
-            check_root; load_settings; load_secrets
+            check_root; load_settings; load_secrets; load_detect_settings
             uninstall
             exit 0
             ;;
 
         version)
             echo -e "  ${BOLD}MTProxyL${NC} v${VERSION}"
-            echo -e "  ${DIM}Движок: telemt v$(get_telemt_version) (Rust)${NC}"
+            load_settings 2>/dev/null
+            if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+                load_detect_settings
+                echo -e "  ${DIM}Режим: reanimator, цель: ${DETECTED_MODE:-unknown}${NC}"
+            else
+                echo -e "  ${DIM}Движок: telemt v$(get_telemt_version) (Rust)${NC}"
+            fi
             echo -e "  ${DIM}by LiafanX${NC}"
             ;;
 

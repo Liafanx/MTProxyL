@@ -13,6 +13,14 @@ check_root() {
     fi
 }
 
+# Гвард для команд, бессмысленных/опасных в режиме reanimator
+# (владение конфигом/движком, которого у reanimator-цели нет)
+_require_manager_mode() {
+    [ "${MTPROXYL_MODE:-manager}" = "manager" ] && return 0
+    log_error "Команда недоступна в режиме reanimator (нет владения конфигом/движком цели)"
+    return 1
+}
+
 detect_os() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
@@ -404,6 +412,7 @@ handle_port_command() {
         echo -e "  ${BOLD}Порт:${NC} ${PROXY_PORT}"
         return 0
     fi
+    _require_manager_mode || return 1
     check_root
     if validate_port "$new_port"; then
         PROXY_PORT="$new_port"
@@ -451,6 +460,7 @@ handle_domain_command() {
         echo -e "  ${BOLD}Домен:${NC} ${PROXY_DOMAIN}"
         return 0
     fi
+    _require_manager_mode || return 1
     check_root
     if validate_domain "$new_domain"; then
         local _old_domain="$PROXY_DOMAIN"
@@ -492,6 +502,7 @@ handle_mask_backend() {
         echo -e "  ${BOLD}Mask backend:${NC} ${MASKING_HOST:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}"
         return 0
     fi
+    _require_manager_mode || return 1
     check_root
     # Парсим host:port или только host
     local new_host new_port
@@ -571,6 +582,7 @@ show_cli_help() {
     echo -e "  ${BOLD}Безопасность:${NC}   geoblock add|remove|list | upstream list|add|remove | sni-policy"
     echo -e "  ${BOLD}Мониторинг:${NC}     traffic | connections | metrics [live] | logs | health | info"
     echo -e "  ${BOLD}Бэкапы:${NC}         backup [--encrypt] | restore <файл>"
+    echo -e "  ${BOLD}Reanimator:${NC}     mode [manager|reanimator] | detect"
     echo -e "  ${BOLD}Система:${NC}        install | menu | update | uninstall | version | help"
     echo ""
 }

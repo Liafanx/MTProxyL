@@ -7,6 +7,11 @@ NFT_SYSTEMD_UNIT="mtproxyl-syn-limit.service"
 IOS_SYSCTL_FILE="/etc/sysctl.d/99-mtproxyl-keepalive.conf"
 IOS2_NFT_TABLE="mtproxyl_ios2"
 
+# Reanimator: watcher IP Docker-bridge цели (только DETECT_BRIDGE_STRATEGY=precise)
+BRIDGE_WATCH_SCRIPT="/usr/local/sbin/mtproxyl-bridge-watch.sh"
+BRIDGE_WATCH_UNIT="mtproxyl-bridge-watch.service"
+BRIDGE_WATCH_INTERVAL="5"
+
 # ── Значения по умолчанию ─────────────────────────────────────
 NFT_ENABLED="false"
 NFT_MODE="classic"
@@ -432,10 +437,94 @@ remove_nft_rules() {
 }
 
 # ── Systemd сервис ────────────────────────────────────────────
+# ── Reanimator: watcher для точного bridge-режима ──────────────
+_bridge_watch_needed() {
+    [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && \
+    [ "${DETECTED_NETWORK_MODE:-host}" = "bridge" ] && \
+    [ "${DETECT_BRIDGE_STRATEGY:-simple}" = "precise" ]
+}
+
+mtproxyl_generate_bridge_watch_script() {
+    cat > "$BRIDGE_WATCH_SCRIPT" << EOF
+#!/bin/sh
+set -eu
+
+CONTAINER="${DETECTED_CONTAINER}"
+NFT_SCRIPT="${NFT_SCRIPT_FILE}"
+INTERVAL="${BRIDGE_WATCH_INTERVAL}"
+
+LAST_IP=""
+
+echo "MTProxyL reanimator: watching container \$CONTAINER (bridge precise mode)"
+
+while true; do
+    RUNNING="\$(docker inspect -f '{{.State.Running}}' "\$CONTAINER" 2>/dev/null || true)"
+
+    if [ "\$RUNNING" = "true" ]; then
+        IP="\$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{"\n"}}{{end}}' "\$CONTAINER" 2>/dev/null | awk 'NF {print; exit}')"
+
+        if [ -n "\$IP" ] && [ "\$IP" != "\$LAST_IP" ]; then
+            echo "Container IP changed: \${LAST_IP:-none} -> \$IP"
+            if systemctl is-active mtproxyl-zapret2.service >/dev/null 2>&1 || systemctl is-enabled mtproxyl-zapret2.service >/dev/null 2>&1; then
+                systemctl restart mtproxyl-zapret2.service || true
+            elif [ -f "\$NFT_SCRIPT" ]; then
+                /bin/sh "\$NFT_SCRIPT" || true
+            fi
+            LAST_IP="\$IP"
+        fi
+    else
+        if [ -n "\$LAST_IP" ]; then
+            echo "Container \$CONTAINER is not running"
+            LAST_IP=""
+        fi
+    fi
+
+    sleep "\$INTERVAL"
+done
+EOF
+    chmod +x "$BRIDGE_WATCH_SCRIPT"
+    log_success "Watcher-скрипт создан: ${BRIDGE_WATCH_SCRIPT}"
+}
+
+remove_bridge_watch_service() {
+    systemctl disable --now "$BRIDGE_WATCH_UNIT" 2>/dev/null || true
+    rm -f "/etc/systemd/system/${BRIDGE_WATCH_UNIT}"
+    rm -f "$BRIDGE_WATCH_SCRIPT"
+    systemctl daemon-reload 2>/dev/null || true
+}
+
 install_nft_service() {
     generate_nft_script
     local _table="${NFT_TABLE:-mtproxyl_limit}"
     local _ios2_table="${IOS2_NFT_TABLE}"
+
+    systemctl disable --now "$BRIDGE_WATCH_UNIT" 2>/dev/null || true
+    rm -f "/etc/systemd/system/${BRIDGE_WATCH_UNIT}"
+
+    if _bridge_watch_needed; then
+        mtproxyl_generate_bridge_watch_script
+
+        cat > "/etc/systemd/system/${BRIDGE_WATCH_UNIT}" << EOF
+[Unit]
+Description=MTProxyL reanimator Docker bridge watcher
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${BRIDGE_WATCH_SCRIPT}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        systemctl daemon-reload
+        systemctl enable "$BRIDGE_WATCH_UNIT" 2>/dev/null
+        systemctl restart "$BRIDGE_WATCH_UNIT" 2>/dev/null
+        log_success "Установлена watcher-служба для точного Docker bridge-режима"
+    fi
 
     cat > "/etc/systemd/system/${NFT_SYSTEMD_UNIT}" << SVCEOF
 [Unit]
@@ -465,6 +554,7 @@ remove_nft_service() {
     systemctl disable --now "$NFT_SYSTEMD_UNIT" 2>/dev/null || true
     rm -f "/etc/systemd/system/${NFT_SYSTEMD_UNIT}"
     rm -f "$NFT_SCRIPT_FILE"
+    remove_bridge_watch_service
     systemctl daemon-reload 2>/dev/null || true
     NFT_ENABLED="false"
     save_nft_settings

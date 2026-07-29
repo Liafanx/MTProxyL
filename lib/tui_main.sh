@@ -41,7 +41,13 @@ show_main_menu() {
             [ "${SECRETS_ENABLED[$i]}" = "true" ] && active=$((active+1)) || disabled=$((disabled+1))
         done
 
-        echo -e "  ${BOLD}Движок:${NC}      telemt v$(get_telemt_version)  ${BOLD}Статус:${NC} ${status_str}"
+        if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+            echo -e "  ${BOLD}Режим:${NC}       ${BRIGHT_CYAN}Reanimator${NC}  ${BOLD}Статус:${NC} ${status_str}"
+            echo -e "  ${BOLD}Цель:${NC}        ${DETECTED_MODE:-unknown}$([ -n "$DETECTED_CONTAINER" ] && echo " (${DETECTED_CONTAINER})")"
+            echo -e "  ${BOLD}Конфиг цели:${NC} ${DETECTED_CONFIG_PATH:-${DIM}не найден${NC}}"
+        else
+            echo -e "  ${BOLD}Движок:${NC}      telemt v$(get_telemt_version)  ${BOLD}Статус:${NC} ${status_str}"
+        fi
         echo -e "  ${BOLD}Порт:${NC}        ${PROXY_PORT}            ${BOLD}Работает:${NC} ${uptime_str}"
         echo -e "  ${BOLD}Домен(SNI):${NC}  ${PROXY_DOMAIN}"
         echo -e "  ${BOLD}Трафик:${NC}      ${SYM_DOWN} $(format_bytes "$t_in")  ${SYM_UP} $(format_bytes "$t_out")  ${BOLD}Соед.:${NC} ${conns}"
@@ -92,6 +98,7 @@ show_main_menu() {
         echo -e "  ${BRIGHT_CYAN}[9]${NC}  Обновление и бэкапы"
         echo -e "  ${BRIGHT_CYAN}[e]${NC}  Режим эксперта (override поверх config.toml)"
         echo -e "  ${BRIGHT_CYAN}[d]${NC}  Дополнения (утилиты)"
+        echo -e "  ${BRIGHT_CYAN}[t]${NC}  Цель / режим (Manager ⇄ Reanimator)"
         echo -e "  ${BRIGHT_CYAN}[i]${NC}  Информация"
         echo ""
         echo -e "  ${BRIGHT_CYAN}[r]${NC}  Переустановить"
@@ -102,16 +109,17 @@ show_main_menu() {
 
         case "$choice" in
             1) tui_proxy_menu ;;
-            2) tui_secrets_menu ;;
+            2) _require_manager_mode && tui_secrets_menu || press_any_key ;;
             3) tui_links_menu ;;
-            4) tui_settings_menu ;;
+            4) _require_manager_mode && tui_settings_menu || press_any_key ;;
             5) tui_security_menu ;;
             6) tui_traffic_menu ;;
             7) tui_nft_menu ;;
-            8) tui_engine_menu ;;
+            8) _require_manager_mode && tui_engine_menu || press_any_key ;;
             9) tui_backup_menu ;;
-            e|E) tui_expert_menu ;;
+            e|E) _require_manager_mode && tui_expert_menu || press_any_key ;;
             d|D) tui_addons_menu ;;
+            t|T) tui_target_menu ;;
             i|I) show_server_info; press_any_key ;;
             r|R) run_installer ;;
             u|U) uninstall; exit 0 ;;

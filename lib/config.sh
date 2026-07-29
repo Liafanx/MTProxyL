@@ -73,9 +73,13 @@ handle_tune_command() {
             echo "${param}|${value}" >> "$tmp"
             mv "$tmp" "$_TUNE_FILE"; chmod 600 "$_TUNE_FILE"
             log_success "${param} = ${value}"
-            if is_proxy_running; then
-                echo -en "  ${DIM}Перезапустить? [Y/n]:${NC} "; local r; read -r r 2>/dev/null || r="y"
-                [[ ! "$r" =~ ^[nN] ]] && { load_secrets; restart_proxy_container || true; }
+            if [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
+                if is_proxy_running; then
+                    echo -en "  ${DIM}Перезапустить? [Y/n]:${NC} "; local r; read -r r 2>/dev/null || r="y"
+                    [[ ! "$r" =~ ^[nN] ]] && { load_secrets; restart_proxy_container || true; }
+                fi
+            else
+                apply_target_tuning "$param" "$value" "$sect"
             fi ;;
         clear)
             check_root
@@ -294,6 +298,7 @@ TOML_EOF
 
 handle_expert_command() {
     local subcmd="${1:-list}"; shift 2>/dev/null || true
+    [ "$subcmd" = "list" ] || _require_manager_mode || return 1
     case "$subcmd" in
         list)  expert_list ;;
         set)   check_root; expert_set "$1" "$2" "$3" ;;

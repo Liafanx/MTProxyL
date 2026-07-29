@@ -14,6 +14,7 @@
 
 - [Установка](#install)
 - [Быстрый старт](#quickstart)
+- [Режимы работы: Manager / Reanimator](#modes)
 - [⚠️ Важно: выбор домена для FakeTLS](#pq-warning)
 - [Что умеет](#features)
 - [Основные CLI команды](#cli)
@@ -31,6 +32,7 @@
   - [Бэкапы и обновления](#cli-backup)
   - [Система](#cli-system)
   - [Tune (быстрый тюнинг)](#cli-tune)
+  - [Reanimator (режим/детект)](#cli-reanimator)
 - [Zapret2 MTProto fix — подробнее](#zapret2-details)
 - [NFT SYN Limiter — подробнее](#nft-details)
 - [NFT Smart By-MEKO — подробнее](#nft-smart)
@@ -83,6 +85,28 @@ mtproxyl
 4. Откройте ссылку в Telegram — готово!
 
 > Один порт для **всех** клиентов (iOS, Android, Desktop) — никаких дополнительных настроек.
+
+---
+
+<a id="modes"></a>
+
+## Режимы работы: Manager / Reanimator
+
+С версии 1.3.0 MTProxyL умеет работать в двух режимах — выбор происходит на первом шаге мастера установки (`mtproxyl install`):
+
+- **Manager** *(по умолчанию, прежнее поведение)* — MTProxyL сам устанавливает движок telemt (образ из GHCR или сборка из исходников), сам генерирует `config.toml`, управляет секретами/upstream'ами/бэкапами и своим Docker-контейнером.
+- **Reanimator** — вместо установки MTProxyL ищет уже работающую установку telemt на сервере (Docker-контейнер сторонней панели, MTProxyMax, голый процесс/systemd-юнит `telemt.service` или просто конфиг-файл) и применяет к ней тот же арсенал фиксов: NFT SYN limiter, Zapret2 MTProto fix, iOS-фиксы, оптимизацию By-MEKO и точечный тюнинг `config.toml` — не устанавливая ничего и не перезаписывая чужой конфиг целиком.
+
+Переключение режима в любой момент:
+
+```bash
+mtproxyl mode                # текущий режим
+mtproxyl mode reanimator      # перейти в Reanimator (с подтверждением)
+mtproxyl mode manager         # перейти в Manager (с подтверждением)
+mtproxyl detect               # повторно найти цель (Reanimator)
+```
+
+В режиме Reanimator недоступны команды, требующие владения движком/конфигом (`secret`, `upstream`, `port`, `domain`, `mask-backend`, `engine`, `expert`, `backup`/`restore`) — обо всём остальном (NFT, Zapret2, `tune set`, `status`, `traffic`, `logs`) MTProxyL заботится как обычно, но точечно и без установки.
 
 ---
 
@@ -343,6 +367,17 @@ mtproxyl tune set tg_connect 30
 mtproxyl tune clear all
 ```
 
+<a id="cli-reanimator"></a>
+
+### Reanimator (режим/детект)
+
+```bash
+mtproxyl mode                 # текущий режим (manager|reanimator)
+mtproxyl mode manager         # переключиться в Manager
+mtproxyl mode reanimator      # переключиться в Reanimator
+mtproxyl detect               # (пере)обнаружить существующую установку telemt
+```
+
 ---
 
 <a id="zapret2-details"></a>
@@ -514,6 +549,7 @@ TCP keepalive 45s, BBR, расширенные очереди. Меню: `[7] �
 │   ├── colors.sh                # UI: цвета, символы
 │   ├── utils.sh                 # Утилиты, валидация, CLI-обработчики
 │   ├── settings.sh              # Настройки
+│   ├── detect.sh                # Reanimator: детект чужого telemt + точечный тюнинг
 │   ├── secrets.sh               # Секреты пользователей
 │   ├── config.sh                # Генерация config.toml
 │   ├── docker.sh                # Docker
@@ -538,6 +574,7 @@ TCP keepalive 45s, BBR, расширенные очереди. Меню: `[7] �
 │   ├── tui_nft.sh               # Подменю: NFT + Zapret2
 │   ├── tui_selfmask.sh          # Подменю: selfmask
 │   ├── tui_addons.sh            # Подменю: дополнения
+│   ├── tui_detect.sh            # Подменю: цель / режим (Reanimator)
 │   └── install.sh               # Установщик + деинсталлятор
 ├── mtproxy/config.toml          # Конфиг telemt
 ├── settings.conf                # Настройки MTProxyL

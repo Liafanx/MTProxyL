@@ -214,6 +214,7 @@ migrate_import() {
 }
 
 handle_backup_command() {
+    _require_manager_mode || return 1
     case "${1:-}" in
         --encrypt|encrypt) backup_create_encrypted ;;
         restore-encrypted) backup_restore_encrypted "$2" ;;
@@ -223,6 +224,7 @@ handle_backup_command() {
 }
 
 handle_restore_command() {
+    _require_manager_mode || return 1
     if [ "${1:-}" = "--encrypted" ] && [ -n "${2:-}" ]; then
         backup_restore_encrypted "$2"
     else

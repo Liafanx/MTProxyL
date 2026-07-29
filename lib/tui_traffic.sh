@@ -48,7 +48,7 @@ tui_traffic_menu() {
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
-            1) echo -e "  ${DIM}Ctrl+C для остановки...${NC}"; docker logs -f --tail 30 "$CONTAINER_NAME" 2>&1; ;;
+            1) echo -e "  ${DIM}Ctrl+C для остановки...${NC}"; show_target_logs 30; ;;
             2) show_metrics 2>/dev/null || log_error "Метрики недоступны"; press_any_key ;;
             3) tui_metrics_live ;;
             4) show_connections; press_any_key ;;

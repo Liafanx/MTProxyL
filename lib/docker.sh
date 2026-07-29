@@ -135,11 +135,41 @@ get_docker_image() {
 }
 
 is_proxy_running() {
+    if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
+        case "${DETECTED_MODE:-unknown}" in
+            docker|mtproxymax)
+                [ -n "$DETECTED_CONTAINER" ] || return 1
+                docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DETECTED_CONTAINER}$" ;;
+            local)
+                pgrep -x telemt &>/dev/null || systemctl is-active telemt.service &>/dev/null 2>&1 ;;
+            *) return 1 ;;
+        esac
+        return
+    fi
     docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"
 }
 
 get_proxy_uptime() {
     is_proxy_running || { echo "0"; return; }
+    if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
+        case "${DETECTED_MODE:-unknown}" in
+            docker|mtproxymax)
+                local started_at
+                started_at=$(docker inspect --format '{{.State.StartedAt}}' "$DETECTED_CONTAINER" 2>/dev/null)
+                [ -z "$started_at" ] && { echo "0"; return; }
+                local start_epoch now_epoch
+                start_epoch=$(_iso_to_epoch "$started_at")
+                now_epoch=$(date +%s)
+                [ "$start_epoch" -gt 0 ] 2>/dev/null && echo $((now_epoch - start_epoch)) || echo "0" ;;
+            local)
+                local since_epoch now_epoch
+                since_epoch=$(systemctl show telemt.service -p ActiveEnterTimestamp --value 2>/dev/null | xargs -I{} date -d {} +%s 2>/dev/null)
+                now_epoch=$(date +%s)
+                [ -n "$since_epoch" ] && [ "$since_epoch" -gt 0 ] 2>/dev/null && echo $((now_epoch - since_epoch)) || echo "0" ;;
+            *) echo "0" ;;
+        esac
+        return
+    fi
     local started_at
     started_at=$(docker inspect --format '{{.State.StartedAt}}' "$CONTAINER_NAME" 2>/dev/null)
     [ -z "$started_at" ] && { echo "0"; return; }
@@ -147,6 +177,58 @@ get_proxy_uptime() {
     start_epoch=$(_iso_to_epoch "$started_at")
     now_epoch=$(date +%s)
     [ "$start_epoch" -gt 0 ] 2>/dev/null && echo $((now_epoch - start_epoch)) || echo "0"
+}
+
+# ── Абстракция цели: работает и на своём контейнере, и на чужой цели ──
+restart_target() {
+    if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
+        case "${DETECTED_MODE:-unknown}" in
+            docker)
+                log_info "Перезапуск контейнера ${DETECTED_CONTAINER}..."
+                docker restart "$DETECTED_CONTAINER" &>/dev/null || log_warn "Не удалось перезапустить контейнер" ;;
+            mtproxymax)
+                command -v mtproxymax &>/dev/null && mtproxymax restart &>/dev/null || log_warn "Не удалось перезапустить mtproxymax" ;;
+            local)
+                if systemctl is-active telemt.service &>/dev/null 2>&1; then
+                    systemctl restart telemt.service &>/dev/null || log_warn "Не удалось перезапустить telemt.service"
+                else
+                    pkill -HUP telemt 2>/dev/null || log_warn "Не удалось отправить сигнал telemt"
+                fi ;;
+            *) log_warn "Нет способа перезапустить обнаруженную цель (${DETECTED_MODE:-unknown})" ;;
+        esac
+        return
+    fi
+    restart_proxy_container
+}
+
+show_target_logs() {
+    local _tail="${1:-30}"
+    if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
+        case "${DETECTED_MODE:-unknown}" in
+            docker|mtproxymax) docker logs -f --tail "$_tail" "$DETECTED_CONTAINER" 2>&1 ;;
+            local)
+                if systemctl list-units --all 2>/dev/null | grep -q telemt.service; then
+                    journalctl -u telemt.service -f -n "$_tail"
+                else
+                    log_warn "Логи недоступны: процесс telemt не привязан к systemd-юниту"
+                fi ;;
+            *) log_warn "Логи недоступны для обнаруженной цели (${DETECTED_MODE:-unknown})" ;;
+        esac
+        return
+    fi
+    docker logs -f --tail "$_tail" "$CONTAINER_NAME" 2>&1
+}
+
+reload_target_config() {
+    if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
+        case "${DETECTED_MODE:-unknown}" in
+            docker)     docker kill -s SIGHUP "$DETECTED_CONTAINER" 2>/dev/null || restart_target ;;
+            local)      pkill -HUP telemt 2>/dev/null || restart_target ;;
+            *)          restart_target ;;
+        esac
+        return
+    fi
+    reload_proxy_config
 }
 
 run_proxy_container() {

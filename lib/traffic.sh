@@ -374,6 +374,7 @@ show_status_json() {
 
 show_config() {
     local config="${CONFIG_DIR}/config.toml"
+    [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && config="${DETECTED_CONFIG_PATH:-$config}"
     if [ -f "$config" ]; then
         echo ""; draw_header "КОНФИГ ДВИЖКА"; echo ""
         sed 's/^/  /' "$config"; echo ""

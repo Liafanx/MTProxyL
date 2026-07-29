@@ -6,6 +6,26 @@
 
 ---
 
+## v1.3.0 — 29.07.2026
+
+### Режим Reanimator
+
+Функционал проекта [MTproxy-reanimation](https://github.com/Liafanx/MTproxy-reanimation) перенесён в MTProxyL как второй режим работы. MTProxyL теперь умеет:
+
+- **Manager** *(по умолчанию, прежнее поведение)* — устанавливает и владеет своим telemt.
+- **Reanimator** — находит уже работающую установку telemt на сервере (Docker-контейнер сторонней панели, MTProxyMax, голый процесс/systemd-юнит, либо просто конфиг-файл) и применяет к ней NFT SYN limiter, Zapret2 MTProto fix, iOS-фиксы, оптимизацию By-MEKO и точечный тюнинг `config.toml` — без установки движка и без перезаписи чужого конфига целиком.
+
+Новое:
+- `lib/detect.sh` — каскад обнаружения (`detect_telemt`), безопасный точечный TOML-патчер (`apply_target_tuning`), мастер установки для Reanimator.
+- `lib/tui_detect.sh`, пункт меню `[t]` — статус цели и переключение режима.
+- CLI: `mtproxyl mode [manager|reanimator]`, `mtproxyl detect`.
+- Watcher для Docker bridge-сети с точным IP контейнера (`mtproxyl-bridge-watch.service`) — включается только в Reanimator при обнаружении bridge-режима.
+- Команды, требующие владения движком (`secret`, `upstream`, `port`, `domain`, `mask-backend`, `engine`, `expert`, `backup`/`restore`), в Reanimator недоступны — об остальном (NFT/Zapret2/tune/traffic/logs) MTProxyL заботится как обычно.
+
+Репозиторий MTproxy-reanimation помечен как deprecated — дальнейшее развитие функционала происходит только здесь.
+
+---
+
 ## v1.2.0 — 27.07.2026
 
 ### Zapret2 MTProto fix

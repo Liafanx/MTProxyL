@@ -2,6 +2,7 @@
 # MTProxyL — сохранение / загрузка настроек
 
 # ── Значения по умолчанию ─────────────────────────────────────
+MTPROXYL_MODE="manager"
 PROXY_PORT=443
 PROXY_METRICS_PORT=9090
 PROXY_DOMAIN="autoscout24.ru"
@@ -47,6 +48,9 @@ save_settings() {
 # MTProxyL — настройки v${VERSION}
 # Создано: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
 # НЕ РЕДАКТИРУЙТЕ ВРУЧНУЮ — используйте 'mtproxyl' для изменения
+
+# Режим работы: manager (владеет своим telemt) | reanimator (чинит чужой)
+MTPROXYL_MODE='${MTPROXYL_MODE}'
 
 # Конфигурация прокси
 PROXY_PORT='${PROXY_PORT}'
@@ -120,6 +124,7 @@ load_settings() {
         fi
 
         case "$key" in
+            MTPROXYL_MODE|\
             PROXY_PORT|PROXY_METRICS_PORT|PROXY_DOMAIN|PROXY_CONCURRENCY|\
             PROXY_CPUS|PROXY_MEMORY|CUSTOM_IP|FAKE_CERT_LEN|\
             PROXY_PROTOCOL|PROXY_PROTOCOL_TRUSTED_CIDRS|\
@@ -137,6 +142,10 @@ load_settings() {
     done < "$SETTINGS_FILE"
 
     # Валидация
+    case "$MTPROXYL_MODE" in
+        manager|reanimator) ;;
+        *) MTPROXYL_MODE="manager" ;;
+    esac
     [[ "$PROXY_PORT" =~ ^[0-9]+$ ]] && [ "$PROXY_PORT" -ge 1 ] && [ "$PROXY_PORT" -le 65535 ] || PROXY_PORT=443
     [[ "$PROXY_METRICS_PORT" =~ ^[0-9]+$ ]] && [ "$PROXY_METRICS_PORT" -ge 1 ] && [ "$PROXY_METRICS_PORT" -le 65535 ] || PROXY_METRICS_PORT=9090
     [[ "$MASKING_PORT" =~ ^[0-9]+$ ]] && [ "$MASKING_PORT" -ge 1 ] && [ "$MASKING_PORT" -le 65535 ] || MASKING_PORT=443
