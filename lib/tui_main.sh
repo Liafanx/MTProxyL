@@ -110,16 +110,19 @@ show_main_menu() {
         echo ""
         echo -e "  ${DIM}────────────────────────────────────────${NC}"
         echo ""
+        # В reanimator-режиме не показываем пункты, требующие владения
+        # конфигом/движком цели — они всё равно блокируются
+        # _require_manager_mode при выборе.
         echo -e "  ${BRIGHT_CYAN}[1]${NC}  Управление прокси"
-        echo -e "  ${BRIGHT_CYAN}[2]${NC}  Управление секретами (пользователями)"
+        [ "$_reanimator" != "true" ] && echo -e "  ${BRIGHT_CYAN}[2]${NC}  Управление секретами (пользователями)"
         echo -e "  ${BRIGHT_CYAN}[3]${NC}  Ссылки на прокси"
-        echo -e "  ${BRIGHT_CYAN}[4]${NC}  Настройки"
+        [ "$_reanimator" != "true" ] && echo -e "  ${BRIGHT_CYAN}[4]${NC}  Настройки"
         echo -e "  ${BRIGHT_CYAN}[5]${NC}  Безопасность и маршрутизация"
         echo -e "  ${BRIGHT_CYAN}[6]${NC}  Логи и трафик"
         echo -e "  ${BRIGHT_CYAN}[7]${NC}  NFT лимитер, Zapret2 и фиксы"
-        echo -e "  ${BRIGHT_CYAN}[8]${NC}  Движок Telemt"
+        [ "$_reanimator" != "true" ] && echo -e "  ${BRIGHT_CYAN}[8]${NC}  Движок Telemt"
         echo -e "  ${BRIGHT_CYAN}[9]${NC}  Обновление и бэкапы"
-        echo -e "  ${BRIGHT_CYAN}[e]${NC}  Режим эксперта (override поверх config.toml)"
+        [ "$_reanimator" != "true" ] && echo -e "  ${BRIGHT_CYAN}[e]${NC}  Режим эксперта (override поверх config.toml)"
         echo -e "  ${BRIGHT_CYAN}[d]${NC}  Дополнения (утилиты)"
         echo -e "  ${BRIGHT_CYAN}[t]${NC}  Цель / режим (Manager ⇄ Reanimator)"
         echo -e "  ${BRIGHT_CYAN}[i]${NC}  Информация"

@@ -57,14 +57,23 @@ _selfmask_generate_selfsigned_cert() {
     fi
 
     mkdir -p "$_dir"
-    local _openssl; _openssl="$(_selfmask_pq_openssl_bin)"
-    [ -x "$_openssl" ] || _openssl="openssl"
 
-    if ! "$_openssl" req -x509 -newkey rsa:2048 -nodes -days 3650 \
+    # Используем системный openssl (жёсткая зависимость MTProxyL). PQ-сборка
+    # openssl из релиза PQ nginx — специализированный бинарник для TLS-
+    # хендшейка nginx, у него нет своего OPENSSLDIR/openssl.cnf и 'req -x509'
+    # в нём не работает. На постквантовость это не влияет: X25519MLKEM768
+    # согласуется nginx во время хендшейка и не зависит от того, чем сгенерён
+    # файл сертификата.
+    local _openssl="openssl"
+    command -v openssl &>/dev/null || _openssl="$(_selfmask_pq_openssl_bin)"
+
+    local _err=""
+    if ! _err=$("$_openssl" req -x509 -newkey rsa:2048 -nodes -days 3650 \
         -keyout "${_dir}/privkey.pem" -out "${_dir}/fullchain.pem" \
         -subj "/CN=${SELFMASK_DOMAIN}" \
-        -addext "subjectAltName=DNS:${SELFMASK_DOMAIN}" 2>/dev/null; then
+        -addext "subjectAltName=DNS:${SELFMASK_DOMAIN}" 2>&1); then
         log_error "Не удалось сгенерировать самоподписанный сертификат"
+        [ -n "$_err" ] && echo "$_err" | sed 's/^/    /' >&2
         return 1
     fi
     chmod 600 "${_dir}/privkey.pem"

@@ -4,7 +4,11 @@
 tui_selfmask_menu() {
     while true; do
         clear_screen
-        draw_header "SELFMASK (PQ NGINX + LET'S ENCRYPT)"
+        if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "selfsigned" ]; then
+            draw_header "SELFMASK (PQ NGINX + САМОПОДПИСАННЫЙ CERT)"
+        else
+            draw_header "SELFMASK (PQ NGINX + LET'S ENCRYPT)"
+        fi
         echo ""
 
         load_nft_settings 2>/dev/null
