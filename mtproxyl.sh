@@ -194,6 +194,11 @@ cli_main() {
             sync_port_from_target
             ;;
 
+        install-telemt)
+            check_root; load_settings; load_detect_settings
+            install_original_telemt
+            ;;
+
         edit-config)
             check_root; load_settings; load_detect_settings
             if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then

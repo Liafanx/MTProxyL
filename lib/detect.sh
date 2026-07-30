@@ -938,6 +938,131 @@ switch_to_reanimator_mode() {
     log_success "Режим: reanimator"
 }
 
+# ── Установка оригинального telemt (telemt/telemt) ─────────────
+# Реаниматору нечего чинить, если telemt на сервере вообще нет. В этом
+# случае предлагаем официальный установщик проекта telemt — он ставит
+# бинарник, конфиг и systemd-юнит, то есть ровно ту цель, которой потом
+# управляет MTProxyL. Сами мы при этом ничего не устанавливаем и не
+# подменяем — запускается оригинальный скрипт как есть.
+TELEMT_INSTALLER_URL="https://raw.githubusercontent.com/${TELEMT_GITHUB:-telemt/telemt}/main/install.sh"
+
+# Цели нет: ни процесса на хосте, ни юнита, ни бинарника, ни контейнера
+_no_telemt_target() {
+    # Проверяем реальность, а не запомненный результат детекта: цель могли
+    # снести уже после него.
+    case "${DETECTED_MODE:-unknown}" in
+        docker|mtproxymax)
+            [ -n "${DETECTED_CONTAINER:-}" ] \
+                && docker inspect "$DETECTED_CONTAINER" &>/dev/null && return 1 ;;
+    esac
+    _telemt_host_pids >/dev/null && return 1
+    _telemt_unit_exists && return 1
+    command -v telemt &>/dev/null && return 1
+    [ -x /bin/telemt ] && return 1
+    [ -x /usr/local/bin/telemt ] && return 1
+    return 0
+}
+
+install_original_telemt() {
+    # _offer_tuning=false — когда тюнинг предлагает вызывающий мастер
+    local _offer_tuning="${1:-true}"
+    if [ "${MTPROXYL_MODE:-manager}" != "reanimator" ]; then
+        log_error "Установка оригинального telemt доступна только в режиме reanimator"
+        log_info "В режиме manager MTProxyL ставит и обслуживает собственный telemt: mtproxyl install"
+        return 1
+    fi
+    check_root
+
+    draw_header "УСТАНОВКА ОРИГИНАЛЬНОГО TELEMT"
+    echo ""
+    echo -e "  Будет запущен официальный установщик проекта telemt:"
+    echo -e "  ${DIM}${TELEMT_INSTALLER_URL}${NC}"
+    echo ""
+    echo -e "  ${DIM}Он спросит язык, порт и TLS-домен, затем поставит бинарник${NC}"
+    echo -e "  ${DIM}/bin/telemt, конфиг /etc/telemt/telemt.toml и службу${NC}"
+    echo -e "  ${DIM}telemt.service с включённым API на 127.0.0.1:9091.${NC}"
+    echo -e "  ${DIM}MTProxyL запускает его как есть и ничего не подменяет.${NC}"
+    if ! _no_telemt_target; then
+        echo ""
+        log_warn "telemt на сервере уже есть — установщик обновит бинарник и параметры существующего конфига"
+    fi
+    echo ""
+    echo -en "  ${BOLD}Запустить установщик telemt? [y/N]:${NC} "
+    local _yn; read -er _yn
+    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 1; }
+
+    local _tmp
+    _tmp=$(mktemp "${TMPDIR:-/tmp}/telemt-install.XXXXXX") || { log_error "Не удалось создать временный файл"; return 1; }
+
+    log_info "Загрузка установщика..."
+    if command -v curl &>/dev/null; then
+        curl -fsSL "$TELEMT_INSTALLER_URL" -o "$_tmp" 2>/dev/null || true
+    elif command -v wget &>/dev/null; then
+        wget -qO "$_tmp" "$TELEMT_INSTALLER_URL" 2>/dev/null || true
+    else
+        rm -f "$_tmp"
+        log_error "Нужен curl или wget"
+        return 1
+    fi
+    if [ ! -s "$_tmp" ]; then
+        rm -f "$_tmp"
+        log_error "Не удалось загрузить установщик telemt"
+        return 1
+    fi
+
+    echo ""
+    echo -e "  ${DIM}$(_repeat '─' 60)${NC}"
+    # Установщик telemt отказывается работать, если uid=0, но USER/LOGNAME
+    # указывают на другого пользователя (обычный запуск через sudo). Права
+    # мы уже проверили сами, поэтому приводим окружение в порядок. Заодно
+    # снимаем переменные, которыми он переопределяет свои пути и версию:
+    # у MTProxyL переменные с такими же именами, и случайный export из
+    # окружения увёл бы установку telemt не туда.
+    local _rc=0
+    env -u REPO -u BIN_NAME -u INSTALL_DIR -u CONFIG_DIR -u CONFIG_FILE \
+        -u WORK_DIR -u TLS_DOMAIN -u SERVER_PORT -u VERSION \
+        USER=root LOGNAME=root sh "$_tmp" || _rc=$?
+    rm -f "$_tmp"
+    echo -e "  ${DIM}$(_repeat '─' 60)${NC}"
+    echo ""
+
+    if [ "$_rc" -ne 0 ]; then
+        log_warn "Установщик telemt завершился с кодом ${_rc}"
+        return 1
+    fi
+
+    log_info "Повторное обнаружение цели..."
+    if ! run_target_detection; then
+        log_warn "telemt установлен, но цель не определилась — проверьте: systemctl status telemt"
+        save_detect_settings
+        return 1
+    fi
+    save_detect_settings
+    sync_port_from_target || true
+
+    # Конфиг только что создан установщиком — самое время предложить наш
+    # набор таймаутов, пока пользователь здесь.
+    if [ "$_offer_tuning" != "false" ] && [ -n "${DETECTED_CONFIG_PATH:-}" ] && [ -f "${DETECTED_CONFIG_PATH}" ]; then
+        echo ""
+        run_reanimator_tuning_wizard || true
+    fi
+    return 0
+}
+
+# Предложить установку, если чинить нечего. Возвращает 0, если telemt
+# в итоге установлен.
+offer_install_original_telemt() {
+    _no_telemt_target || return 0
+    echo ""
+    log_warn "Установленный telemt на сервере не найден — реаниматору нечем управлять"
+    echo -e "  ${DIM}Можно поставить оригинальный telemt официальным установщиком проекта${NC}"
+    echo -en "  ${BOLD}Установить telemt сейчас? [Y/n]:${NC} "
+    local _yn; read -er _yn
+    [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Позже: меню «Цель / режим» → «Установить telemt»"; return 1; }
+    # Тюнинг предложит сам мастер установки реаниматора — здесь не дублируем
+    install_original_telemt "false"
+}
+
 # ── Установочный визард для режима Reanimator ──────────────────
 run_reanimator_installer() {
     draw_header "REANIMATOR — ПОИСК СУЩЕСТВУЮЩЕЙ УСТАНОВКИ TELEMT"
@@ -946,6 +1071,14 @@ run_reanimator_installer() {
     check_root
 
     if ! run_target_detection; then
+        # Чинить нечего — сначала предлагаем поставить оригинальный telemt
+        # и только потом уходим в ручной путь к конфигу.
+        if _no_telemt_target; then
+            offer_install_original_telemt && run_target_detection >/dev/null 2>&1 || true
+        fi
+    fi
+
+    if [ -z "${DETECTED_CONFIG_PATH:-}" ] || [ ! -f "${DETECTED_CONFIG_PATH:-}" ]; then
         echo ""
         echo -e "  ${BOLD}Укажите путь к конфигу telemt вручную (Enter — пропустить):${NC}"
         echo -en "  ${DIM}Путь:${NC} "
