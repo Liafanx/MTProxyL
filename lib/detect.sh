@@ -561,6 +561,70 @@ apply_target_tuning() {
     fi
 }
 
+# ── Тюнинг таймаутов цели (визард при установке) ───────────────
+# Применяем только тот набор, который MTProxyL держит в своём конфиге
+# (_REANIMATOR_TUNE_SET в lib/config.sh) — одним подтверждением и одним
+# перезапуском, без ручного ввода параметров.
+run_reanimator_tuning_wizard() {
+    if [ -z "${DETECTED_CONFIG_PATH:-}" ] || [ ! -f "$DETECTED_CONFIG_PATH" ]; then
+        log_warn "Конфиг цели не найден — тюнинг таймаутов пропущен"
+        return 1
+    fi
+
+    echo ""
+    draw_header "ТЮНИНГ ТАЙМАУТОВ ЦЕЛИ"
+    echo ""
+    echo -e "  ${DIM}Значения, которые MTProxyL использует в своём конфиге.${NC}"
+    echo -e "  ${DIM}У telemt по умолчанию они ниже — на нестабильных сетях${NC}"
+    echo -e "  ${DIM}клиенты чаще отваливаются и дольше переподключаются.${NC}"
+    echo ""
+
+    # Заголовок таблицы не выравниваем через printf: %-Ns считает байты,
+    # а не символы, поэтому кириллица разъезжается с ASCII-строками ниже.
+    local _entry _p _sect _val _cur _changes=0
+    echo -e "  ${DIM}параметр            секция      сейчас → станет${NC}"
+    for _entry in "${_REANIMATOR_TUNE_SET[@]}"; do
+        IFS=':' read -r _p _sect _val <<< "$_entry"
+        _cur=$(_toml_get_string_in_section "$_sect" "$_p" "$DETECTED_CONFIG_PATH")
+        if [ "$_cur" = "$_val" ]; then
+            printf "  %-19s %-11s %-6s ${DIM}(уже применено)${NC}\n" "$_p" "[$_sect]" "$_cur"
+        else
+            printf "  %-19s %-11s %-6s → ${GREEN}%s${NC}\n" "$_p" "[$_sect]" "${_cur:-—}" "$_val"
+            _changes=$((_changes + 1))
+        fi
+    done
+    echo ""
+
+    if [ "$_changes" -eq 0 ]; then
+        log_success "Таймауты цели уже соответствуют рекомендуемым — менять нечего"
+        return 0
+    fi
+
+    echo -en "  ${BOLD}Применить эти значения в конфиге цели? [Y/n]:${NC} "
+    local _yn; read -r _yn
+    if [[ "$_yn" =~ ^[nN]$ ]]; then
+        log_info "Тюнинг пропущен. Позже: mtproxyl tune set <параметр> <значение>"
+        return 0
+    fi
+
+    local _ok=true
+    for _entry in "${_REANIMATOR_TUNE_SET[@]}"; do
+        IFS=':' read -r _p _sect _val <<< "$_entry"
+        apply_target_tuning "$_p" "$_val" "$_sect" true || _ok=false
+    done
+
+    [ "$_ok" = "true" ] && log_success "Таймауты применены" \
+                        || log_warn "Не все параметры удалось применить"
+
+    if is_proxy_running; then
+        echo -en "  ${BOLD}Перезапустить цель, чтобы значения вступили в силу? [Y/n]:${NC} "
+        local _r; read -r _r
+        [[ ! "$_r" =~ ^[nN] ]] && restart_target
+    else
+        log_info "Цель не запущена — значения применятся при её запуске"
+    fi
+}
+
 # ── Резервная копия конфига цели ───────────────────────────────
 # Единая точка бэкапа чужого конфига. tag попадает в имя файла, чтобы
 # было понятно, откуда копия (install / tune / pre-edit).
@@ -750,6 +814,8 @@ run_reanimator_installer() {
 
     run_fix_arsenal_wizard
 
+    run_reanimator_tuning_wizard || true
+
     echo ""
     draw_header "REANIMATOR НАСТРОЕН"
     echo ""
@@ -757,19 +823,14 @@ run_reanimator_installer() {
     echo -e "  ${BOLD}Цель:${NC}        ${DETECTED_MODE}$([ -n "$DETECTED_CONTAINER" ] && echo " (${DETECTED_CONTAINER})")"
     echo -e "  ${BOLD}Конфиг цели:${NC} ${DETECTED_CONFIG_PATH:-нет}"
     echo -e "  ${BOLD}Порт:${NC}        ${PROXY_PORT}"
+    echo -e "  ${BOLD}Домен(SNI):${NC}  $(_current_sni_domain 2>/dev/null || echo '?')"
     echo ""
-    echo -e "  ${DIM}Точечный тюнинг: mtproxyl tune set <параметр> <значение>${NC}"
-    echo -e "  ${DIM}Повторный детект: mtproxyl detect${NC}"
+    echo -e "  ${DIM}Тюнинг параметров: mtproxyl tune set <параметр> <значение>${NC}"
+    echo -e "  ${DIM}Повторный детект:  mtproxyl detect${NC}"
+    echo -e "  ${DIM}Правка конфига:    mtproxyl edit-config${NC}"
     echo ""
 
     ln -sf "${INSTALL_DIR}/mtproxyl.sh" /usr/local/bin/mtproxyl
-
-    echo -en "  ${BOLD}Настроить точечный тюнинг сейчас? [Y/n]:${NC} "
-    local _tune_yn; read -r _tune_yn
-    if [[ ! "$_tune_yn" =~ ^[nN]$ ]]; then
-        echo ""
-        run_tune_wizard
-    fi
 
     echo -en "  ${DIM}Нажмите клавишу для входа в меню...${NC}"
     read -rsn1

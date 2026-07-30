@@ -3,6 +3,21 @@
 
 _TUNE_FILE="${INSTALL_DIR}/tunings.conf"
 
+# ── Таймауты, которые MTProxyL пишет в свой config.toml ───────
+# Единственный источник истины: их подставляет generate_telemt_config()
+# ниже, и их же предлагает применить визард тюнинга в режиме Reanimator
+# (значения telemt по умолчанию заметно ниже: 10/30/15).
+MTPROXYL_TG_CONNECT=30
+MTPROXYL_CLIENT_HANDSHAKE=90
+MTPROXYL_CLIENT_KEEPALIVE=120
+
+# Набор параметров для тюнинга чужой цели: параметр:секция:значение
+_REANIMATOR_TUNE_SET=(
+    "client_handshake:timeouts:${MTPROXYL_CLIENT_HANDSHAKE}"
+    "tg_connect:general:${MTPROXYL_TG_CONNECT}"
+    "client_keepalive:timeouts:${MTPROXYL_CLIENT_KEEPALIVE}"
+)
+
 # ── Tune whitelist ────────────────────────────────────────────
 _TUNE_WHITELIST=(
     "fake_cert_len:censorship:^[0-9]+$"
@@ -130,7 +145,7 @@ generate_telemt_config() {
 
 [general]
 prefer_ipv6 = false
-tg_connect = 30
+tg_connect = ${MTPROXYL_TG_CONNECT}
 fast_mode = true
 use_middle_proxy = true
 log_level = "normal"
@@ -152,8 +167,8 @@ metrics_listen = "127.0.0.1:${metrics_port}"
 metrics_whitelist = ["127.0.0.1", "::1"]
 
 [timeouts]
-client_handshake = 90
-client_keepalive = 120
+client_handshake = ${MTPROXYL_CLIENT_HANDSHAKE}
+client_keepalive = ${MTPROXYL_CLIENT_KEEPALIVE}
 client_ack = 90
 
 [censorship]
