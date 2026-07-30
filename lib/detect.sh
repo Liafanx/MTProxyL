@@ -752,6 +752,56 @@ edit_target_config() {
 }
 
 # ── Переключение режима работы ─────────────────────────────────
+# В reanimator-режиме порт цели — источник истины: на него навешиваются
+# zapret2/NFT-правила. Если PROXY_PORT остался от менеджера, фиксы уйдут
+# на чужой порт, поэтому синхронизируем и предлагаем переприменить правила.
+sync_port_from_target() {
+    [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] || return 0
+
+    local _p="${DETECTED_PORT:-}"
+    if [ -z "$_p" ] || ! validate_port "$_p"; then
+        echo ""
+        log_warn "Порт цели определить не удалось (текущий: ${PROXY_PORT:-не задан})"
+        echo -en "  ${BOLD}Укажите порт цели [${PROXY_PORT:-443}]:${NC} "
+        local _in; read -r _in
+        _in="${_in:-${PROXY_PORT:-443}}"
+        validate_port "$_in" || { log_error "Некорректный порт — оставляем ${PROXY_PORT:-443}"; return 1; }
+        _p="$_in"
+    fi
+
+    [ "$_p" = "${PROXY_PORT:-}" ] && return 0
+
+    local _old="${PROXY_PORT:-не задан}"
+    PROXY_PORT="$_p"
+    save_settings
+    log_success "Порт переключён на порт цели: ${_old} → ${PROXY_PORT}"
+
+    # Правила, уже наложенные на старый порт, надо переналожить.
+    load_nft_settings 2>/dev/null || true
+    local _need_reapply="false"
+    [ "${ZAPRET2_APPLIED:-false}" = "true" ] && _need_reapply="true"
+    [ "${NFT_ENABLED:-false}" = "true" ] && _need_reapply="true"
+    nft list table ip "${ZAPRET2_NFT_TABLE:-MTProtoL}" &>/dev/null 2>&1 && _need_reapply="true"
+    nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1 && _need_reapply="true"
+    [ "$_need_reapply" = "true" ] || return 0
+
+    echo ""
+    log_warn "Правила фиксов наложены на прежний порт ${_old} — их нужно переприменить"
+    echo -en "  ${BOLD}Переприменить сейчас? [Y/n]:${NC} "
+    local _yn; read -r _yn
+    [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Переприменить позже: меню NFT/Zapret2"; return 0; }
+
+    if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
+        zapret2_update_config || log_warn "Не удалось обновить zapret2"
+    fi
+    if [ "${NFT_ENABLED:-false}" = "true" ]; then
+        apply_nft_rules || log_warn "Не удалось применить NFT-правила"
+        install_nft_service || true
+    elif nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1; then
+        apply_nft_rules || log_warn "Не удалось применить NFT-правила"
+    fi
+}
+
 # Есть ли у нас собственная установка (контейнер в любом состоянии
 # либо сгенерированный конфиг)
 _own_install_exists() {
@@ -839,6 +889,9 @@ switch_to_reanimator_mode() {
     save_settings
     run_target_detection
     save_detect_settings
+    # Порт менеджера здесь уже не актуален — переходим на порт цели,
+    # иначе фиксы останутся навешенными на прежний порт.
+    sync_port_from_target
     log_success "Режим: reanimator"
 }
 

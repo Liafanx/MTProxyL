@@ -66,6 +66,11 @@ show_main_menu() {
             fi
         fi
         echo -e "  ${BOLD}Порт:${NC}        ${PROXY_PORT}            ${BOLD}Работает:${NC} ${uptime_str}"
+        # Порт цели разошёлся с нашим — фиксы висят не на том порту
+        if [ "$_reanimator" = "true" ] && [ -n "${DETECTED_PORT:-}" ] && [ "${DETECTED_PORT}" != "${PROXY_PORT}" ]; then
+            echo -e "  ${YELLOW}⚠ Порт цели ${DETECTED_PORT}, а фиксы применяются к ${PROXY_PORT}${NC}"
+            echo -e "  ${DIM}  Синхронизировать: Цель/режим → Повторить обнаружение${NC}"
+        fi
         echo -e "  ${BOLD}Домен(SNI):${NC}  $(_current_sni_domain 2>/dev/null || echo "$PROXY_DOMAIN")"
         if [ "$_reanimator" = "true" ]; then
             if [ "$_target_stats_ok" = "true" ]; then
@@ -131,7 +136,7 @@ show_main_menu() {
             echo -e "  ${BRIGHT_CYAN}[9]${NC}   Редактировать конфиг цели"
             echo -e "  ${BRIGHT_CYAN}[10]${NC}  Информация"
             echo ""
-            echo -e "  ${BRIGHT_CYAN}[11]${NC}  Переустановить"
+            echo -e "  ${BRIGHT_CYAN}[11]${NC}  Установка / переустановка"
             echo -e "  ${RED}[12]${NC}  Удаление"
             echo -e "  ${BRIGHT_CYAN}[0]${NC}   Выход"
             echo ""
@@ -166,7 +171,7 @@ show_main_menu() {
             echo -e "  ${BRIGHT_CYAN}[12]${NC}  Цель / режим (Manager ⇄ Reanimator)"
             echo -e "  ${BRIGHT_CYAN}[13]${NC}  Информация"
             echo ""
-            echo -e "  ${BRIGHT_CYAN}[14]${NC}  Переустановить"
+            echo -e "  ${BRIGHT_CYAN}[14]${NC}  Установка / переустановка"
             echo -e "  ${RED}[15]${NC}  Удаление"
             echo -e "  ${BRIGHT_CYAN}[0]${NC}   Выход"
             echo ""

@@ -191,6 +191,7 @@ cli_main() {
             check_root; load_settings; load_detect_settings
             run_target_detection
             save_detect_settings
+            sync_port_from_target
             ;;
 
         edit-config)

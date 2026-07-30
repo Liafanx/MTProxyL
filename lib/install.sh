@@ -15,7 +15,7 @@ run_installer() {
         echo -e "  ${YELLOW}MTProxyL уже установлен.${NC}"
         echo ""
         echo -e "  ${DIM}[1]${NC} Открыть меню"
-        echo -e "  ${DIM}[2]${NC} Переустановить"
+        echo -e "  ${DIM}[2]${NC} Установка / переустановка"
         echo -e "  ${DIM}[3]${NC} Удалить"
         echo -e "  ${DIM}[0]${NC} Выход"
         local choice; choice=$(read_choice "выбор" "1")

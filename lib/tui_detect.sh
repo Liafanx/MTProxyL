@@ -22,7 +22,7 @@ tui_target_menu() {
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
-            1) run_target_detection; save_detect_settings; press_any_key ;;
+            1) run_target_detection; save_detect_settings; sync_port_from_target; press_any_key ;;
             2)
                 if [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
                     switch_to_reanimator_mode
