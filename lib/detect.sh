@@ -752,6 +752,13 @@ edit_target_config() {
 }
 
 # ── Переключение режима работы ─────────────────────────────────
+# Есть ли у нас собственная установка (контейнер в любом состоянии
+# либо сгенерированный конфиг)
+_own_install_exists() {
+    [ "$(own_container_state 2>/dev/null)" != "absent" ] && return 0
+    [ -f "${CONFIG_DIR}/config.toml" ]
+}
+
 switch_to_manager_mode() {
     if [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
         log_info "Уже в режиме manager"
@@ -765,6 +772,34 @@ switch_to_manager_mode() {
     MTPROXYL_MODE="manager"
     save_settings
     log_success "Режим: manager"
+
+    # Своей установки нет — в режиме manager управлять нечем, поэтому
+    # сразу предлагаем установку (иначе меню открывается «пустым»).
+    if _own_install_exists; then
+        log_info "Найдена собственная установка — управление доступно из меню"
+        return 0
+    fi
+
+    echo ""
+    log_warn "Собственный telemt не установлен — в режиме Manager управлять нечем"
+    if [ -n "${DETECTED_PORT:-}" ] || [ -n "${PROXY_PORT:-}" ]; then
+        local _p="${PROXY_PORT:-$DETECTED_PORT}"
+        if ! is_port_available "$_p" 2>/dev/null; then
+            echo ""
+            log_warn "Порт ${_p} сейчас занят (вероятно, прежней целью реаниматора)"
+            show_port_listener "$_p"
+            echo -e "  ${DIM}В мастере выберите другой порт либо сначала остановите то,${NC}"
+            echo -e "  ${DIM}что занимает порт — иначе контейнер не запустится.${NC}"
+        fi
+    fi
+    echo ""
+    echo -en "  ${BOLD}Запустить установку сейчас? [Y/n]:${NC} "
+    local _yn; read -r _yn
+    if [[ "$_yn" =~ ^[nN]$ ]]; then
+        log_info "Установку можно запустить позже: mtproxyl install"
+        return 0
+    fi
+    run_installer
 }
 
 switch_to_reanimator_mode() {
@@ -773,10 +808,33 @@ switch_to_reanimator_mode() {
         return 0
     fi
     echo ""
-    log_warn "Переход в режим Reanimator. Свой контейнер/конфиг MTProxyL (если есть) больше не будет управляться из меню — используйте 'docker rm ${CONTAINER_NAME}' вручную, если он больше не нужен."
+    log_warn "Переход в режим Reanimator. Свой контейнер/конфиг MTProxyL больше не будет управляться из меню."
     echo -en "  ${BOLD}Введите 'yes' для подтверждения:${NC} "
     local _c; read -r _c
     [ "$_c" != "yes" ] && { log_info "Отменено"; return 1; }
+
+    # Свой контейнер держит порт — а он же нужен цели реаниматора.
+    # Предлагаем убрать его сразу, чтобы не делать это вручную.
+    local _own_state; _own_state=$(own_container_state 2>/dev/null)
+    if [ "$_own_state" != "absent" ]; then
+        echo ""
+        echo -e "  ${BOLD}Свой контейнер ${CONTAINER_NAME}:${NC} ${_own_state}"
+        echo -e "  ${DIM}Он занимает порт ${PROXY_PORT:-443} и будет мешать цели реаниматора.${NC}"
+        echo ""
+        echo -e "  ${DIM}[1]${NC} Остановить и удалить контейнер ${DIM}(рекомендуется)${NC}"
+        echo -e "  ${DIM}[2]${NC} Только остановить, контейнер оставить"
+        echo -e "  ${DIM}[3]${NC} Не трогать"
+        local _oc; _oc=$(read_choice "выбор" "1")
+        case "$_oc" in
+            1) remove_own_container ;;
+            2) docker update --restart=no "$CONTAINER_NAME" &>/dev/null || true
+               docker stop --timeout 10 "$CONTAINER_NAME" &>/dev/null \
+                   && log_success "Контейнер остановлен (не удалён)" \
+                   || log_warn "Не удалось остановить контейнер" ;;
+            *) log_info "Контейнер оставлен как есть" ;;
+        esac
+    fi
+
     MTPROXYL_MODE="reanimator"
     save_settings
     run_target_detection

@@ -58,6 +58,12 @@ show_main_menu() {
             echo -e "  ${BOLD}Конфиг цели:${NC} ${DETECTED_CONFIG_PATH:-${DIM}не найден${NC}}"
         else
             echo -e "  ${BOLD}Движок:${NC}      telemt v$(get_telemt_version)  ${BOLD}Статус:${NC} ${status_str}"
+            # Контейнер есть, но не работает (например, порт занят и он
+            # падает в цикле) — показываем причину, а не просто «ОСТАНОВЛЕН».
+            if [ "$_running" != "true" ]; then
+                local _prob; _prob=$(own_container_problem 2>/dev/null)
+                [ -n "$_prob" ] && echo -e "  ${RED}Контейнер:${NC}   ${_prob}"
+            fi
         fi
         echo -e "  ${BOLD}Порт:${NC}        ${PROXY_PORT}            ${BOLD}Работает:${NC} ${uptime_str}"
         echo -e "  ${BOLD}Домен(SNI):${NC}  $(_current_sni_domain 2>/dev/null || echo "$PROXY_DOMAIN")"

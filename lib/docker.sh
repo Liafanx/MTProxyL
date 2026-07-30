@@ -146,7 +146,34 @@ is_proxy_running() {
         esac
         return
     fi
-    docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"
+    # docker ps показывает и контейнер в состоянии Restarting, поэтому
+    # падающий в цикле контейнер выглядел как «РАБОТАЕТ». Смотрим состояние.
+    local _st
+    _st=$(docker inspect -f '{{.State.Running}}|{{.State.Restarting}}' "$CONTAINER_NAME" 2>/dev/null) || return 1
+    [ "$_st" = "true|false" ]
+}
+
+# Состояние собственного контейнера: running|restarting|exited|created|absent
+own_container_state() {
+    command -v docker &>/dev/null || { echo "absent"; return; }
+    local _running _restarting _status
+    _status=$(docker inspect -f '{{.State.Status}}|{{.State.Running}}|{{.State.Restarting}}' "$CONTAINER_NAME" 2>/dev/null) || { echo "absent"; return; }
+    IFS='|' read -r _status _running _restarting <<< "$_status"
+    if [ "$_restarting" = "true" ]; then echo "restarting"; return; fi
+    if [ "$_running" = "true" ]; then echo "running"; return; fi
+    echo "${_status:-absent}"
+}
+
+# Короткая причина, почему свой контейнер не работает (для статус-панели)
+own_container_problem() {
+    local _st; _st=$(own_container_state)
+    case "$_st" in
+        running|absent) return 1 ;;
+    esac
+    local _code _err
+    _code=$(docker inspect -f '{{.State.ExitCode}}' "$CONTAINER_NAME" 2>/dev/null)
+    _err=$(docker logs --tail 3 "$CONTAINER_NAME" 2>&1 | tr '\n' ' ' | cut -c1-120)
+    echo "${_st} (exit=${_code:-?})${_err:+: ${_err}}"
 }
 
 get_proxy_uptime() {
@@ -382,6 +409,27 @@ local _run_err=""
         docker ps -a --filter "name=^/${CONTAINER_NAME}$" --format '    status={{.Status}}  image={{.Image}}' 2>/dev/null || true
         return 1
     fi
+}
+
+# Полностью убрать собственный контейнер (образ и конфиг остаются).
+# Нужно при переходе в reanimator и когда контейнер менеджера больше
+# не используется, но продолжает держать порт.
+remove_own_container() {
+    local _st; _st=$(own_container_state)
+    if [ "$_st" = "absent" ]; then
+        log_info "Контейнер ${CONTAINER_NAME} отсутствует"
+        return 0
+    fi
+    flush_traffic_to_disk 2>/dev/null || true
+    docker update --restart=no "$CONTAINER_NAME" &>/dev/null || true
+    docker stop --timeout 10 "$CONTAINER_NAME" &>/dev/null || true
+    if docker rm -f "$CONTAINER_NAME" &>/dev/null; then
+        log_success "Контейнер ${CONTAINER_NAME} остановлен и удалён"
+        log_info "Образ и конфиг сохранены — контейнер поднимется заново при запуске"
+        return 0
+    fi
+    log_error "Не удалось удалить контейнер ${CONTAINER_NAME}"
+    return 1
 }
 
 stop_proxy_container() {

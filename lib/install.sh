@@ -74,26 +74,26 @@ run_installer() {
     echo ""
 
     # Порт
-    echo -e "  ${BOLD}Порт прокси${NC} ${DIM}(по умолчанию: 443)${NC}"
+    echo -e "  ${BOLD}Порт прокси${NC} ${DIM}(по умолчанию: ${PROXY_PORT:-443})${NC}"
     while true; do
-        echo -en "  ${DIM}Порт [443]:${NC} "
+        echo -en "  ${DIM}Порт [${PROXY_PORT:-443}]:${NC} "
         local port_input=""
         read -r port_input
-        if [ -z "$port_input" ]; then
-            break
-        fi
+        # Пустой ввод — это выбор порта по умолчанию, его тоже надо проверить
+        # на занятость, иначе контейнер молча упадёт после установки.
+        [ -z "$port_input" ] && port_input="${PROXY_PORT:-443}"
         if ! validate_port "$port_input"; then
             log_error "Некорректный порт (допустимо 1..65535)"
             continue
         fi
         if ! is_port_available "$port_input"; then
             log_warn "Порт ${port_input} уже занят"
-            echo -en "  ${BOLD}Использовать всё равно? [y/N]:${NC} "
-            local _force_port=""
-            read -r _force_port
-            if [[ ! "$_force_port" =~ ^[yY]$ ]]; then
-                continue
-            fi
+            show_port_listener "$port_input"
+            echo -e "  ${DIM}Контейнер не сможет занять этот порт и упадёт при запуске.${NC}"
+            echo -e "  ${DIM}[1]${NC} Указать другой порт ${DIM}(рекомендуется)${NC}"
+            echo -e "  ${DIM}[2]${NC} Всё равно использовать ${port_input}"
+            local _pc; _pc=$(read_choice "выбор" "1")
+            [ "$_pc" = "2" ] || continue
         fi
         PROXY_PORT="$port_input"
         break

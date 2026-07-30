@@ -599,6 +599,26 @@ is_port_available() {
     fi
 }
 
+# Кто именно слушает порт — чтобы пользователь понимал, с чем конфликт
+# (на сервере рядом может стоять свой telemt-бинарник, nginx, панель).
+show_port_listener() {
+    local _port="$1" _out=""
+    if command -v ss &>/dev/null; then
+        _out=$(ss -ltnp 2>/dev/null | awk -v p=":${_port}\$" '$4 ~ p {print}')
+    elif command -v netstat &>/dev/null; then
+        _out=$(netstat -ltnp 2>/dev/null | awk -v p=":${_port}\$" '$4 ~ p {print}')
+    fi
+    if [ -n "$_out" ]; then
+        echo -e "  ${DIM}Порт занимает:${NC}"
+        echo "$_out" | sed 's/^/    /'
+    fi
+    if command -v docker &>/dev/null; then
+        local _dc
+        _dc=$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep -E "(^|[^0-9])${_port}->" || true)
+        [ -n "$_dc" ] && { echo -e "  ${DIM}Docker-контейнеры на этом порту:${NC}"; echo "$_dc" | sed 's/^/    /'; }
+    fi
+}
+
 find_free_metrics_port() {
     local start="${1:-9090}"
     local end="${2:-9199}"

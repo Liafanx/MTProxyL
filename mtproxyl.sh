@@ -178,7 +178,7 @@ cli_main() {
             ;;
 
         mode)
-            check_root; load_settings
+            check_root; load_settings; load_detect_settings
             case "${1:-}" in
                 manager)    switch_to_manager_mode ;;
                 reanimator) switch_to_reanimator_mode ;;
