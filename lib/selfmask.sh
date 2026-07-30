@@ -31,6 +31,46 @@ _selfmask_template_label() {
     esac
 }
 
+_selfmask_selfsigned_dir() {
+    echo "${SELFMASK_PQ_PREFIX}/selfsigned/${SELFMASK_DOMAIN}"
+}
+
+# Каталог, где лежат fullchain.pem/privkey.pem для текущего домена —
+# либо Let's Encrypt (certbot), либо самоподписанный (openssl req -x509).
+# Имена файлов одинаковые в обоих случаях, поэтому nginx-конфиг не
+# нужно менять — меняется только источник каталога.
+_selfmask_cert_dir() {
+    if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "selfsigned" ]; then
+        _selfmask_selfsigned_dir
+    else
+        echo "/etc/letsencrypt/live/${SELFMASK_DOMAIN}"
+    fi
+}
+
+# Самоподписанный сертификат на произвольный (в т.ч. несуществующий) домен —
+# не требует A-записи и внешнего порта 80. CN/SAN = SELFMASK_DOMAIN.
+_selfmask_generate_selfsigned_cert() {
+    local _dir; _dir="$(_selfmask_selfsigned_dir)"
+    if [ -f "${_dir}/fullchain.pem" ] && [ -f "${_dir}/privkey.pem" ]; then
+        log_success "Самоподписанный сертификат уже существует"
+        return 0
+    fi
+
+    mkdir -p "$_dir"
+    local _openssl; _openssl="$(_selfmask_pq_openssl_bin)"
+    [ -x "$_openssl" ] || _openssl="openssl"
+
+    if ! "$_openssl" req -x509 -newkey rsa:2048 -nodes -days 3650 \
+        -keyout "${_dir}/privkey.pem" -out "${_dir}/fullchain.pem" \
+        -subj "/CN=${SELFMASK_DOMAIN}" \
+        -addext "subjectAltName=DNS:${SELFMASK_DOMAIN}" 2>/dev/null; then
+        log_error "Не удалось сгенерировать самоподписанный сертификат"
+        return 1
+    fi
+    chmod 600 "${_dir}/privkey.pem"
+    log_success "Самоподписанный сертификат создан (CN=${SELFMASK_DOMAIN}, 10 лет)"
+}
+
 _selfmask_get_tls_info() {
     local _conf="$(_selfmask_pq_conf)"
     if [ -f "$_conf" ]; then
@@ -81,13 +121,14 @@ selfmask_show_status() {
     echo -e "  ${BOLD}Каталог сайта:${NC}  ${SELFMASK_SITE_DIR:-/var/www/mtproxyl-selfmask}"
     echo -e "  ${BOLD}Backend:${NC}        127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}"
     echo -e "  ${BOLD}TLS backend:${NC}    $(_selfmask_get_tls_info)"
-    echo -e "  ${BOLD}Продление cert:${NC} ${SELFMASK_AUTO_RENEW:-true}"
+    echo -e "  ${BOLD}Тип сертификата:${NC} ${SELFMASK_CERT_MODE:-letsencrypt}"
+    [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "letsencrypt" ] && echo -e "  ${BOLD}Продление cert:${NC} ${SELFMASK_AUTO_RENEW:-true}"
     echo ""
 
     local _site_conf="$(_selfmask_pq_conf)"
     [ -f "$_site_conf" ] && echo -e "  ${BOLD}Nginx conf:${NC}     ${_site_conf}" || echo -e "  ${BOLD}Nginx conf:${NC}     ${DIM}не найден${NC}"
 
-    if [ -n "${SELFMASK_DOMAIN:-}" ] && [ -f "/etc/letsencrypt/live/${SELFMASK_DOMAIN}/fullchain.pem" ]; then
+    if [ -n "${SELFMASK_DOMAIN:-}" ] && [ -f "$(_selfmask_cert_dir)/fullchain.pem" ]; then
         echo -e "  ${BOLD}Сертификат:${NC}     ${GREEN}найден${NC}"
     else
         echo -e "  ${BOLD}Сертификат:${NC}     ${DIM}не найден${NC}"
@@ -108,7 +149,19 @@ _selfmask_collect_params() {
     echo ""
     echo -e "  ${DIM}Selfmask маскирует прокси под реальный сайт на вашем домене.${NC}"
     echo -e "  ${DIM}MTProto остаётся на порту прокси (${PROXY_PORT:-443}), браузерные запросы и mask идут в локальный nginx.${NC}"
-    echo -e "  ${DIM}Нужен домен с A-записью на этот сервер.${NC}"
+    echo ""
+    echo -e "  ${BOLD}Тип сертификата${NC}"
+    echo -e "  ${DIM}[1]${NC} Let's Encrypt ${DIM}(реальный домен, нужна A-запись на этот сервер)${NC}"
+    echo -e "  ${DIM}[2]${NC} Самоподписанный ${DIM}(любой домен, в т.ч. несуществующий, A-запись не нужна)${NC}"
+    local _cm_default="1"; [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "selfsigned" ] && _cm_default="2"
+    local _cm; _cm=$(read_choice "выбор" "$_cm_default")
+    if [ "$_cm" = "2" ]; then
+        SELFMASK_CERT_MODE="selfsigned"
+    else
+        SELFMASK_CERT_MODE="letsencrypt"
+    fi
+
+    [ "$SELFMASK_CERT_MODE" = "letsencrypt" ] && echo -e "  ${DIM}Нужен домен с A-записью на этот сервер.${NC}"
     selfmask_show_requirements
 
     local _domain=""
@@ -132,39 +185,43 @@ _selfmask_collect_params() {
         log_error "Некорректный домен"
     done
 
-    local _email_default
-    if [ -n "${SELFMASK_CERT_EMAIL:-}" ]; then
-        _email_default="${SELFMASK_CERT_EMAIL}"
-    else
-        _email_default="admin@${SELFMASK_DOMAIN}"
-    fi
+    if [ "$SELFMASK_CERT_MODE" = "letsencrypt" ]; then
+        local _email_default
+        if [ -n "${SELFMASK_CERT_EMAIL:-}" ]; then
+            _email_default="${SELFMASK_CERT_EMAIL}"
+        else
+            _email_default="admin@${SELFMASK_DOMAIN}"
+        fi
 
-    echo -en "  ${BOLD}Email для Let's Encrypt [${_email_default}]:${NC} "
-    local _email=""
-    read -r _email
-    SELFMASK_CERT_EMAIL="${_email:-$_email_default}"
+        echo -en "  ${BOLD}Email для Let's Encrypt [${_email_default}]:${NC} "
+        local _email=""
+        read -r _email
+        SELFMASK_CERT_EMAIL="${_email:-$_email_default}"
 
-    echo ""
-    log_info "Проверяем DNS..."
-    local _server_ip _resolved_ip
-    _server_ip=$(get_public_ip)
-    _resolved_ip=$(getent ahostsv4 "$SELFMASK_DOMAIN" 2>/dev/null | awk '{print $1; exit}')
-    [ -n "$_server_ip" ] && log_info "IP сервера: ${_server_ip}"
-    if [ -n "$_resolved_ip" ]; then
-        log_info "A-запись ${SELFMASK_DOMAIN}: ${_resolved_ip}"
-        if [ -n "$_server_ip" ] && [ "$_server_ip" != "$_resolved_ip" ]; then
-            log_warn "A-запись домена не совпадает с IP сервера"
+        echo ""
+        log_info "Проверяем DNS..."
+        local _server_ip _resolved_ip
+        _server_ip=$(get_public_ip)
+        _resolved_ip=$(getent ahostsv4 "$SELFMASK_DOMAIN" 2>/dev/null | awk '{print $1; exit}')
+        [ -n "$_server_ip" ] && log_info "IP сервера: ${_server_ip}"
+        if [ -n "$_resolved_ip" ]; then
+            log_info "A-запись ${SELFMASK_DOMAIN}: ${_resolved_ip}"
+            if [ -n "$_server_ip" ] && [ "$_server_ip" != "$_resolved_ip" ]; then
+                log_warn "A-запись домена не совпадает с IP сервера"
+                echo -en "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
+                local _dns_yn
+                read -r _dns_yn
+                [[ "$_dns_yn" =~ ^[yY]$ ]] || return 1
+            fi
+        else
+            log_warn "Не удалось определить A-запись домена"
             echo -en "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
             local _dns_yn
             read -r _dns_yn
             [[ "$_dns_yn" =~ ^[yY]$ ]] || return 1
         fi
     else
-        log_warn "Не удалось определить A-запись домена"
-        echo -en "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
-        local _dns_yn
-        read -r _dns_yn
-        [[ "$_dns_yn" =~ ^[yY]$ ]] || return 1
+        log_info "Самоподписанный сертификат — проверка A-записи не требуется"
     fi
 
     echo ""
@@ -230,7 +287,11 @@ _selfmask_collect_params() {
     echo ""
     echo -e "  ${BOLD}Итоговые параметры:${NC}"
     echo -e "    Домен:     ${SELFMASK_DOMAIN}"
-    echo -e "    Email:     ${SELFMASK_CERT_EMAIL}"
+    if [ "$SELFMASK_CERT_MODE" = "selfsigned" ]; then
+        echo -e "    Сертификат: самоподписанный (10 лет)"
+    else
+        echo -e "    Email:     ${SELFMASK_CERT_EMAIL}"
+    fi
     echo -e "    Сайт:      $(_selfmask_template_label "${SELFMASK_SITE_SOURCE:-stub}")"
     echo -e "    Каталог:   ${SELFMASK_SITE_DIR}"
     echo -e "    Backend:   127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT}"
@@ -251,7 +312,9 @@ _selfmask_install_deps() {
 
     local _missing=()
 
-    command -v certbot &>/dev/null || _missing+=("certbot")
+    if [ "${SELFMASK_CERT_MODE:-letsencrypt}" != "selfsigned" ]; then
+        command -v certbot &>/dev/null || _missing+=("certbot")
+    fi
     dpkg -s libpcre2-8-0 &>/dev/null 2>&1 || _missing+=("libpcre2-8-0")
     dpkg -s zlib1g &>/dev/null 2>&1 || _missing+=("zlib1g")
     dpkg -s ca-certificates &>/dev/null 2>&1 || _missing+=("ca-certificates")
@@ -513,7 +576,7 @@ _selfmask_open_public_ports() {
 _selfmask_obtain_cert() {
     log_info "Получение сертификата Let's Encrypt..."
 
-    local _cert_dir="/etc/letsencrypt/live/${SELFMASK_DOMAIN}"
+    local _cert_dir; _cert_dir="$(_selfmask_cert_dir)"
     if [ -f "${_cert_dir}/fullchain.pem" ]; then
         log_success "Сертификат уже существует"
         return 0
@@ -587,7 +650,7 @@ EOF
 _selfmask_configure_nginx() {
     log_info "Настройка PQ nginx..."
 
-    local _cert_dir="/etc/letsencrypt/live/${SELFMASK_DOMAIN}"
+    local _cert_dir; _cert_dir="$(_selfmask_cert_dir)"
     [ -f "${_cert_dir}/fullchain.pem" ] || { log_error "Сертификат не найден"; return 1; }
 
     mkdir -p "${SELFMASK_PQ_PREFIX}/conf"
@@ -695,6 +758,11 @@ EOF
 }
 
 _selfmask_apply_mtproxyl_settings() {
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        _selfmask_apply_target_settings
+        return $?
+    fi
+
     log_info "Применение selfmask-настроек в MTProxyL..."
 
     SELFMASK_ENABLED="true"
@@ -717,6 +785,47 @@ _selfmask_apply_mtproxyl_settings() {
         restart_proxy_container || true
     else
         log_info "Прокси не запущен — запустите позже командой mtproxyl start"
+    fi
+}
+
+# Reanimator: собственного generate_telemt_config у нас нет — конфиг чужой.
+# Точечно патчим [censorship] mask_host/mask_port/unknown_sni_action через
+# уже существующий apply_target_tuning() (lib/detect.sh), а также всегда
+# печатаем точную инструкцию — на случай нестандартного конфига (например,
+# MTProxyMax), когда автопатч невозможен.
+_selfmask_apply_target_settings() {
+    SELFMASK_ENABLED="true"
+    save_settings
+
+    echo ""
+    echo -e "  ${BOLD}Нужно применить в конфиге цели, секция [censorship]:${NC}"
+    echo -e "    mask_host = \"127.0.0.1\""
+    echo -e "    mask_port = ${SELFMASK_NGINX_BACKEND_PORT}"
+    echo -e "    unknown_sni_action = \"mask\""
+    echo -e "  ${DIM}(и перезапустить цель, чтобы изменения вступили в силу)${NC}"
+    echo ""
+
+    if [ -z "${DETECTED_CONFIG_PATH:-}" ] || [ ! -f "${DETECTED_CONFIG_PATH:-}" ]; then
+        log_warn "Конфиг цели не найден — примените параметры выше вручную и перезапустите цель"
+        return 1
+    fi
+
+    echo -en "  ${BOLD}Применить автоматически в ${DETECTED_CONFIG_PATH}? [Y/n]:${NC} "
+    local _yn; read -r _yn
+    if [[ "$_yn" =~ ^[nN]$ ]]; then
+        log_info "Пропущено — примените параметры вручную и перезапустите цель"
+        return 0
+    fi
+
+    local _ok=true
+    apply_target_tuning "mask_host" "127.0.0.1" "censorship" || _ok=false
+    apply_target_tuning "mask_port" "${SELFMASK_NGINX_BACKEND_PORT}" "censorship" || _ok=false
+    apply_target_tuning "unknown_sni_action" "mask" "censorship" || _ok=false
+
+    if [ "$_ok" = "true" ]; then
+        log_success "Параметры selfmask применены в конфиге цели"
+    else
+        log_warn "Не всё удалось применить автоматически — сверьтесь с инструкцией выше"
     fi
 }
 
@@ -751,10 +860,12 @@ selfmask_verify() {
 
     [ -x "$(_selfmask_pq_nginx_bin)" ] && log_success "PQ nginx установлен" || { log_error "PQ nginx не установлен"; _ok=false; }
     [ -x "$(_selfmask_pq_openssl_bin)" ] && log_success "PQ openssl установлен" || { log_error "PQ openssl не установлен"; _ok=false; }
-    command -v certbot &>/dev/null && log_success "certbot установлен" || { log_error "certbot не установлен"; _ok=false; }
+    if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "letsencrypt" ]; then
+        command -v certbot &>/dev/null && log_success "certbot установлен" || { log_error "certbot не установлен"; _ok=false; }
+    fi
 
-    if [ -f "/etc/letsencrypt/live/${SELFMASK_DOMAIN}/fullchain.pem" ]; then
-        log_success "Сертификат найден"
+    if [ -f "$(_selfmask_cert_dir)/fullchain.pem" ]; then
+        log_success "Сертификат найден (${SELFMASK_CERT_MODE:-letsencrypt})"
     else
         log_warn "Сертификат не найден"
         _ok=false
@@ -848,10 +959,14 @@ selfmask_setup() {
     _selfmask_install_deps         || return 1
     _selfmask_install_pq_nginx     || return 1
     _selfmask_deploy_site          || return 1
-    _selfmask_obtain_cert          || { _selfmask_restore_system_nginx; return 1; }
+    if [ "$SELFMASK_CERT_MODE" = "selfsigned" ]; then
+        _selfmask_generate_selfsigned_cert || return 1
+    else
+        _selfmask_obtain_cert          || { _selfmask_restore_system_nginx; return 1; }
+    fi
     _selfmask_configure_nginx      || { _selfmask_restore_system_nginx; return 1; }
     _selfmask_apply_mtproxyl_settings || { _selfmask_restore_system_nginx; return 1; }
-    _selfmask_setup_renewal        || true
+    [ "$SELFMASK_CERT_MODE" = "letsencrypt" ] && { _selfmask_setup_renewal || true; }
     selfmask_verify
 
     echo ""
@@ -882,7 +997,11 @@ selfmask_disable() {
 
     SELFMASK_ENABLED="false"
 
-    if [ "${MASKING_HOST:-}" = "127.0.0.1" ] && [ "${MASKING_PORT:-}" = "${SELFMASK_NGINX_BACKEND_PORT}" ]; then
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        echo -e "  ${DIM}Nginx-заглушка selfmask отключена. Конфиг цели не тронут —${NC}"
+        echo -e "  ${DIM}при необходимости верните в [censorship] цели прежние${NC}"
+        echo -e "  ${DIM}mask_host/mask_port/unknown_sni_action вручную и перезапустите цель.${NC}"
+    elif [ "${MASKING_HOST:-}" = "127.0.0.1" ] && [ "${MASKING_PORT:-}" = "${SELFMASK_NGINX_BACKEND_PORT}" ]; then
         MASKING_ENABLED="true"
         MASKING_HOST=""
         MASKING_PORT="443"
@@ -893,7 +1012,9 @@ selfmask_disable() {
 
     save_settings
 
-    if is_proxy_running; then
+    if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
+        is_proxy_running && restart_target
+    elif is_proxy_running; then
         load_secrets
         restart_proxy_container || true
     fi

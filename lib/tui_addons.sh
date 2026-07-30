@@ -24,6 +24,8 @@ tui_addons_menu() {
         echo -e "  ${CYAN}[1]${NC}  Проверить текущий SNI-домен на PQ"
         echo -e "  ${CYAN}[2]${NC}  Проверить произвольный домен на PQ"
         echo -e "  ${CYAN}[3]${NC}  Установить PQ OpenSSL (из Release)"
+        echo -e "  ${CYAN}[4]${NC}  Проверка ограничений сервера (censorcheck)"
+        echo -e "  ${CYAN}[5]${NC}  Selfmask (заглушка + сертификат)"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -35,7 +37,7 @@ tui_addons_menu() {
                     log_error "PQ OpenSSL не установлен"
                     log_info "Установите через: mtproxyl selfmask setup или меню [3]"
                 else
-                    local _domain="${PROXY_DOMAIN:-}"
+                    local _domain; _domain=$(_current_sni_domain 2>/dev/null)
                     if [ -z "$_domain" ]; then
                         log_warn "SNI-домен не задан"
                     else
@@ -60,9 +62,34 @@ tui_addons_menu() {
                 _selfmask_install_pq_nginx
                 press_any_key
                 ;;
+            4)
+                _addon_censorcheck
+                press_any_key
+                ;;
+            5)
+                tui_selfmask_menu
+                ;;
             0|"") return ;;
         esac
     done
+}
+
+# Проверка ограничений (censorship) сервера — портировано без изменений
+# из MTproxy-reanimation (mtpr.sh:611-624, check_censor()). Работает по
+# внешнему IP/порту сервера, не зависит от режима manager/reanimator.
+_addon_censorcheck() {
+    echo ""
+    echo -e "  ${BOLD}Проверка ограничений на сервере${NC}"
+    echo -e "  ${DIM}Источник: censorcheck.tlab.pw${NC}"
+    echo ""
+    if command -v wget &>/dev/null; then
+        wget -qO- censorcheck.tlab.pw | bash
+    elif command -v curl &>/dev/null; then
+        curl -fsSL censorcheck.tlab.pw | bash
+    else
+        log_error "Не найден wget или curl"
+        return 1
+    fi
 }
 
 _addon_check_pq_domain() {

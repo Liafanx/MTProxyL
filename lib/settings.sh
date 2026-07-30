@@ -28,7 +28,7 @@ AUTO_UPDATE_ENABLED="true"
 SECRET_AUTO_ROTATE_DAYS="0"
 BACKUP_RETENTION_DAYS="30"
 
-# Selfmask (локальный nginx + Let's Encrypt)
+# Selfmask (локальный nginx + Let's Encrypt либо самоподписанный сертификат)
 SELFMASK_ENABLED="false"
 SELFMASK_DOMAIN=""
 SELFMASK_SITE_SOURCE="stub"
@@ -38,6 +38,7 @@ SELFMASK_CERT_EMAIL=""
 SELFMASK_NGINX_SITE_NAME="mtproxyl-selfmask"
 SELFMASK_AUTO_RENEW="true"
 SELFMASK_TLS_PROTOCOLS="TLSv1.3"
+SELFMASK_CERT_MODE="letsencrypt"  # letsencrypt|selfsigned
 
 save_settings() {
     mkdir -p "$INSTALL_DIR"
@@ -100,6 +101,7 @@ SELFMASK_CERT_EMAIL='${SELFMASK_CERT_EMAIL}'
 SELFMASK_NGINX_SITE_NAME='${SELFMASK_NGINX_SITE_NAME}'
 SELFMASK_AUTO_RENEW='${SELFMASK_AUTO_RENEW}'
 SELFMASK_TLS_PROTOCOLS='${SELFMASK_TLS_PROTOCOLS}'
+SELFMASK_CERT_MODE='${SELFMASK_CERT_MODE}'
 SETTINGS_EOF
 
     chmod 600 "$tmp"
@@ -135,7 +137,7 @@ load_settings() {
             AUTO_UPDATE_ENABLED|SECRET_AUTO_ROTATE_DAYS|BACKUP_RETENTION_DAYS|\
             SELFMASK_ENABLED|SELFMASK_DOMAIN|SELFMASK_SITE_SOURCE|SELFMASK_SITE_DIR|\
             SELFMASK_NGINX_BACKEND_PORT|SELFMASK_CERT_EMAIL|SELFMASK_NGINX_SITE_NAME|\
-            SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS)
+            SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS|SELFMASK_CERT_MODE)
                 printf -v "$key" '%s' "$val"
                 ;;
         esac
@@ -165,4 +167,8 @@ load_settings() {
     [ -n "$SELFMASK_NGINX_SITE_NAME" ] || SELFMASK_NGINX_SITE_NAME="mtproxyl-selfmask"
     [ -n "$SELFMASK_SITE_SOURCE" ] || SELFMASK_SITE_SOURCE="stub"
     [ "$SELFMASK_TLS_PROTOCOLS" = "TLSv1.3" ] || SELFMASK_TLS_PROTOCOLS="TLSv1.3"
+    case "$SELFMASK_CERT_MODE" in
+        letsencrypt|selfsigned) ;;
+        *) SELFMASK_CERT_MODE="letsencrypt" ;;
+    esac
 }

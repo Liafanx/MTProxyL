@@ -101,9 +101,8 @@ cli_main() {
             ;;
         stop)
             check_root
-            load_settings
-            _require_manager_mode || exit 1
-            stop_proxy_container
+            load_settings; load_detect_settings
+            stop_target
             ;;
         restart)
             check_root
@@ -294,9 +293,9 @@ cli_main() {
             ;;
 
         pq-check)
-            load_settings
+            load_settings; load_detect_settings
             if [ -x "$(_selfmask_pq_openssl_bin)" ]; then
-                _addon_check_pq_domain "${1:-${PROXY_DOMAIN:-}}"
+                _addon_check_pq_domain "${1:-$(_current_sni_domain)}"
             else
                 log_error "PQ OpenSSL не установлен"
                 log_info "Установите через: mtproxyl selfmask setup"

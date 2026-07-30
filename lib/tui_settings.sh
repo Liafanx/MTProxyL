@@ -219,17 +219,7 @@ tui_settings_menu() {
                 press_any_key ;;
             v|V) show_config; press_any_key ;;
             t|T)
-                handle_tune_command list
-                echo -e "  ${DIM}[1] Установить  [2] Очистить  [3] Очистить все  [0] Назад${NC}"
-                local tc; tc=$(read_choice "выбор" "0")
-                case "$tc" in
-                    1) echo -en "  ${BOLD}Параметр:${NC} "; local tp; read -r tp
-                       echo -en "  ${BOLD}Значение:${NC} "; local tv; read -r tv
-                       [ -n "$tp" ] && [ -n "$tv" ] && handle_tune_command set "$tp" "$tv" ;;
-                    2) echo -en "  ${BOLD}Параметр:${NC} "; local tp; read -r tp
-                       [ -n "$tp" ] && handle_tune_command clear "$tp" ;;
-                    3) handle_tune_command clear all ;;
-                esac
+                run_tune_wizard
                 press_any_key ;;
             u|U)
                 echo -e "  ${BOLD}Пользовательские URL Telegram${NC}"

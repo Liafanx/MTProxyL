@@ -23,25 +23,36 @@ show_main_menu() {
 
         local _running=false
         is_proxy_running && _running=true
+        local _reanimator="false"
+        [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && _reanimator="true"
 
         local status_str uptime_str t_in t_out conns
         if [ "$_running" = "true" ]; then
             status_str=$(draw_status running)
             local up_secs; up_secs=$(get_proxy_uptime)
             uptime_str=$(format_duration "$up_secs")
-            flush_traffic_to_disk 2>/dev/null || true
-            read -r t_in t_out conns <<< "$(get_persistent_stats)"
+            if [ "$_reanimator" != "true" ]; then
+                flush_traffic_to_disk 2>/dev/null || true
+                read -r t_in t_out conns <<< "$(get_persistent_stats)"
+            fi
         else
             status_str=$(draw_status stopped)
             uptime_str="—"; t_in=0; t_out=0; conns=0
         fi
 
-        local active=0 disabled=0 i
-        for i in "${!SECRETS_ENABLED[@]}"; do
-            [ "${SECRETS_ENABLED[$i]}" = "true" ] && active=$((active+1)) || disabled=$((disabled+1))
-        done
+        local active=0 disabled=0 i _target_stats_ok="false"
+        if [ "$_reanimator" = "true" ]; then
+            fetch_target_stats && _target_stats_ok="true"
+            conns="${TARGET_STATS_CONNS:-0}"
+            active="${TARGET_STATS_ACTIVE:-0}"
+            disabled="${TARGET_STATS_DISABLED:-0}"
+        else
+            for i in "${!SECRETS_ENABLED[@]}"; do
+                [ "${SECRETS_ENABLED[$i]}" = "true" ] && active=$((active+1)) || disabled=$((disabled+1))
+            done
+        fi
 
-        if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        if [ "$_reanimator" = "true" ]; then
             echo -e "  ${BOLD}Режим:${NC}       ${BRIGHT_CYAN}Reanimator${NC}  ${BOLD}Статус:${NC} ${status_str}"
             echo -e "  ${BOLD}Цель:${NC}        ${DETECTED_MODE:-unknown}$([ -n "$DETECTED_CONTAINER" ] && echo " (${DETECTED_CONTAINER})")"
             echo -e "  ${BOLD}Конфиг цели:${NC} ${DETECTED_CONFIG_PATH:-${DIM}не найден${NC}}"
@@ -49,9 +60,21 @@ show_main_menu() {
             echo -e "  ${BOLD}Движок:${NC}      telemt v$(get_telemt_version)  ${BOLD}Статус:${NC} ${status_str}"
         fi
         echo -e "  ${BOLD}Порт:${NC}        ${PROXY_PORT}            ${BOLD}Работает:${NC} ${uptime_str}"
-        echo -e "  ${BOLD}Домен(SNI):${NC}  ${PROXY_DOMAIN}"
-        echo -e "  ${BOLD}Трафик:${NC}      ${SYM_DOWN} $(format_bytes "$t_in")  ${SYM_UP} $(format_bytes "$t_out")  ${BOLD}Соед.:${NC} ${conns}"
-        echo -e "  ${BOLD}Секреты:${NC}     ${active} активных / ${disabled} выключенных"
+        echo -e "  ${BOLD}Домен(SNI):${NC}  $(_current_sni_domain 2>/dev/null || echo "$PROXY_DOMAIN")"
+        if [ "$_reanimator" = "true" ]; then
+            if [ "$_target_stats_ok" = "true" ]; then
+                echo -e "  ${BOLD}Трафик:${NC}      $(format_bytes "${TARGET_STATS_OCTETS:-0}")  ${BOLD}Соед.:${NC} ${conns}"
+            else
+                echo -e "  ${BOLD}Трафик:${NC}      ${DIM}н/д (API цели недоступен/выключен)${NC}"
+            fi
+        else
+            echo -e "  ${BOLD}Трафик:${NC}      ${SYM_DOWN} $(format_bytes "$t_in")  ${SYM_UP} $(format_bytes "$t_out")  ${BOLD}Соед.:${NC} ${conns}"
+        fi
+        if [ "$_reanimator" = "true" ] && [ "$_target_stats_ok" != "true" ]; then
+            echo -e "  ${BOLD}Секреты:${NC}     ${DIM}н/д (API цели недоступен/выключен)${NC}"
+        else
+            echo -e "  ${BOLD}Секреты:${NC}     ${active} активных / ${disabled} выключенных"
+        fi
 
         load_nft_settings 2>/dev/null
 

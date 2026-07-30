@@ -92,6 +92,128 @@ _toml_safe_set() {
     return 1
 }
 
+# Читает произвольный ключ (строку или число, без обрезания не-цифр — в
+# отличие от _toml_get_value) внутри конкретной секции [section].
+_toml_get_string_in_section() {
+    local _section="$1" _key="$2" _file="$3"
+    [ -f "$_file" ] || return 0
+    awk -v sect="[${_section}]" -v k="$_key" '
+        $0 == sect { insect=1; next }
+        /^\[/ { insect=0 }
+        insect {
+            line = $0
+            sub(/^[[:space:]]+/, "", line)
+            if (line ~ ("^" k "[[:space:]]*=")) {
+                sub(("^" k "[[:space:]]*=[[:space:]]*"), "", line)
+                sub(/[[:space:]]*#.*$/, "", line)
+                gsub(/"/, "", line)
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+                print line
+                exit
+            }
+        }
+    ' "$_file" 2>/dev/null
+}
+
+# ── API управления цели (telemt [server.api]) ──────────────────
+_get_telemt_api_port() {
+    local _cfg="${1:-$DETECTED_CONFIG_PATH}"
+    local _listen="" _port=""
+    if [ -n "$_cfg" ] && [ -f "$_cfg" ]; then
+        _listen=$(_toml_get_string_in_section "server.api" "listen" "$_cfg")
+        [ -n "$_listen" ] && _port=$(printf '%s\n' "$_listen" | sed -nE 's/.*:([0-9]+)$/\1/p')
+    fi
+    [ -z "$_port" ] && _port="9091"
+    echo "$_port"
+}
+
+_get_telemt_metrics_port() {
+    local _cfg="${1:-$DETECTED_CONFIG_PATH}"
+    local _listen="" _port=""
+    if [ -n "$_cfg" ] && [ -f "$_cfg" ]; then
+        _listen=$(_toml_get_string_in_section "server" "metrics_listen" "$_cfg")
+        [ -n "$_listen" ] && _port=$(printf '%s\n' "$_listen" | sed -nE 's/.*:([0-9]+)$/\1/p')
+    fi
+    [ -z "$_port" ] && _port="9090"
+    echo "$_port"
+}
+
+_telemt_api_enabled() {
+    local _cfg="${1:-$DETECTED_CONFIG_PATH}"
+    [ -n "$_cfg" ] && [ -f "$_cfg" ] || return 1
+    local _en; _en=$(_toml_get_string_in_section "server.api" "enabled" "$_cfg")
+    [ "$_en" = "true" ]
+}
+
+# Забирает JSON с /v1/users API цели (список пользователей + их
+# трафик/соединения/ссылки). Возвращает непустой JSON с "ok":true,
+# либо код ошибки, если API выключен/недоступен.
+_get_telemt_users_json() {
+    local _cfg="${1:-$DETECTED_CONFIG_PATH}"
+    _telemt_api_enabled "$_cfg" || return 1
+    local _port; _port=$(_get_telemt_api_port "$_cfg")
+    local _json
+    _json=$(curl -s --max-time 3 --connect-timeout 2 "http://127.0.0.1:${_port}/v1/users" 2>/dev/null) || return 1
+    [ -z "$_json" ] && return 1
+    echo "$_json" | grep -q '"ok":true' || return 1
+    echo "$_json"
+}
+
+_target_tls_domain() {
+    local _cfg="${1:-$DETECTED_CONFIG_PATH}"
+    [ -n "$_cfg" ] && [ -f "$_cfg" ] || return 1
+    _toml_get_string_in_section "censorship" "tls_domain" "$_cfg"
+}
+
+# Лёгкий парсинг плоских числовых/булевых полей из JSON без внешних
+# зависимостей (jq): суммирует/считает поле по всем объектам массива data[].
+_json_sum_field() {
+    local _json="$1" _field="$2"
+    grep -oE "\"${_field}\"[[:space:]]*:[[:space:]]*[0-9]+" <<< "$_json" \
+        | grep -oE '[0-9]+$' | awk '{sum+=$1} END {print sum+0}'
+}
+
+_json_count_bool_field() {
+    local _json="$1" _field="$2" _val="$3"
+    grep -oE "\"${_field}\"[[:space:]]*:[[:space:]]*${_val}" <<< "$_json" | wc -l
+}
+
+# Агрегированная статистика цели через её собственный API (для
+# reanimator-режима): заполняет глобальные TARGET_STATS_*. Возвращает 1,
+# если [server.api] выключен или API недоступен — вызывающий код должен
+# в этом случае показать явное "н/д", а не тихий ноль.
+TARGET_STATS_OCTETS=0
+TARGET_STATS_CONNS=0
+TARGET_STATS_ACTIVE=0
+TARGET_STATS_DISABLED=0
+
+fetch_target_stats() {
+    TARGET_STATS_OCTETS=0
+    TARGET_STATS_CONNS=0
+    TARGET_STATS_ACTIVE=0
+    TARGET_STATS_DISABLED=0
+    local _json
+    _json=$(_get_telemt_users_json) || return 1
+    TARGET_STATS_OCTETS=$(_json_sum_field "$_json" "total_octets")
+    TARGET_STATS_CONNS=$(_json_sum_field "$_json" "current_connections")
+    TARGET_STATS_ACTIVE=$(_json_count_bool_field "$_json" "enabled" "true")
+    TARGET_STATS_DISABLED=$(_json_count_bool_field "$_json" "enabled" "false")
+}
+
+# Текущий SNI-домен: домен цели в reanimator-режиме (из TOML), иначе
+# PROXY_DOMAIN менеджера. Используется и в статус-панели, и в дополнениях
+# (проверка PQ/censorcheck), чтобы не проверять чужой дефолтный домен.
+_current_sni_domain() {
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        local _d; _d=$(_target_tls_domain 2>/dev/null)
+        if [ -n "$_d" ]; then
+            echo "$_d"
+            return 0
+        fi
+    fi
+    echo "${PROXY_DOMAIN:-}"
+}
+
 # ── Исключение чужих панелей / собственного контейнера ────────
 _is_excluded_path() {
     local _path="$1"
@@ -436,6 +558,13 @@ run_reanimator_installer() {
     echo ""
 
     ln -sf "${INSTALL_DIR}/mtproxyl.sh" /usr/local/bin/mtproxyl
+
+    echo -en "  ${BOLD}Настроить точечный тюнинг сейчас? [Y/n]:${NC} "
+    local _tune_yn; read -r _tune_yn
+    if [[ ! "$_tune_yn" =~ ^[nN]$ ]]; then
+        echo ""
+        run_tune_wizard
+    fi
 
     echo -en "  ${DIM}Нажмите клавишу для входа в меню...${NC}"
     read -rsn1

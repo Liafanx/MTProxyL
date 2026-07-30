@@ -401,25 +401,29 @@ SMART3NOLIMEOF
 }
 
 # ── Применение / удаление правил ──────────────────────────────
-apply_nft_rules() {
-    if ! command -v nft &>/dev/null; then
-        log_info "nftables не установлен, устанавливаем..."
-        _wait_apt 2>/dev/null || true
-        if command -v apt-get &>/dev/null; then
-            apt-get update -qq && apt-get install -y -qq nftables
-        elif command -v yum &>/dev/null; then
-            yum install -y -q nftables
-        elif command -v dnf &>/dev/null; then
-            dnf install -y -q nftables
-        elif command -v apk &>/dev/null; then
-            apk add --no-cache nftables
-        else
-            log_error "Не удалось установить nftables — установите вручную: apt install nftables"
-            return 1
-        fi
-        command -v nft &>/dev/null || { log_error "nftables не установлен после попытки установки"; return 1; }
-        log_success "nftables установлен"
+ensure_nftables_installed() {
+    command -v nft &>/dev/null && return 0
+
+    log_info "nftables не установлен, устанавливаем..."
+    _wait_apt 2>/dev/null || true
+    if command -v apt-get &>/dev/null; then
+        apt-get update -qq && apt-get install -y -qq nftables
+    elif command -v yum &>/dev/null; then
+        yum install -y -q nftables
+    elif command -v dnf &>/dev/null; then
+        dnf install -y -q nftables
+    elif command -v apk &>/dev/null; then
+        apk add --no-cache nftables
+    else
+        log_error "Не удалось установить nftables — установите вручную: apt install nftables"
+        return 1
     fi
+    command -v nft &>/dev/null || { log_error "nftables не установлен после попытки установки"; return 1; }
+    log_success "nftables установлен"
+}
+
+apply_nft_rules() {
+    ensure_nftables_installed || return 1
 
     generate_nft_script
     if /bin/sh "$NFT_SCRIPT_FILE"; then
@@ -1230,6 +1234,8 @@ zapret2_detect_arch() {
 }
 
 zapret2_download_bundle() {
+    ensure_nftables_installed || return 1
+
     local _arch
     _arch=$(zapret2_detect_arch)
     if [ -z "$_arch" ]; then
@@ -1488,6 +1494,8 @@ EOF
 }
 
 zapret2_apply_nft() {
+    ensure_nftables_installed || return 1
+
     local _table="${ZAPRET2_NFT_TABLE}"
     local _fwmark="${ZAPRET2_FWMARK}"
     local _port="${PROXY_PORT:-443}"
@@ -1534,7 +1542,8 @@ zapret2_start() {
         return 1
     fi
     systemctl daemon-reload
-    systemctl enable --now "$ZAPRET2_SERVICE" >/dev/null 2>&1 || true
+    systemctl enable "$ZAPRET2_SERVICE" >/dev/null 2>&1 || true
+    systemctl restart "$ZAPRET2_SERVICE" 2>/dev/null || true
     sleep 1
     if systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null; then
         ZAPRET2_SERVICE_ENABLED="true"
@@ -1601,6 +1610,11 @@ zapret2_update_config() {
         log_warn "Zapret2 не установлен"
         return 1
     fi
+
+    # Останавливаем текущий экземпляр перед проверкой занятости NFQUEUE —
+    # иначе он сам же держит свою очередь, и она ложно кажется занятой.
+    systemctl stop "$ZAPRET2_SERVICE" 2>/dev/null || true
+
     # Проверяем занятость NFQUEUE и подбираем свободную
     if zapret2_queue_in_use "${ZAPRET2_QNUM}"; then
         local _old_q="${ZAPRET2_QNUM}"
@@ -1653,16 +1667,25 @@ zapret2_install() {
     echo -e "    win ACK:     ${ZAPRET2_WIN_ACK}"
     echo ""
 
+    local _reinstall="false"
     if [ "${ZAPRET2_APPLIED:-false}" = "true" ] && [ -x "$ZAPRET2_BIN" ]; then
         echo -e "  ${YELLOW}Zapret2 уже установлен. Переустановить?${NC}"
         echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
         local _yn; read -r _yn
         [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Отменено"; return 0; }
+        _reinstall="true"
     fi
 
     echo -en "  ${BOLD}Скачать и установить zapret2? [Y/n]:${NC} "
     local _yn; read -r _yn
     [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Отменено"; return 0; }
+
+    # При переустановке останавливаем старый экземпляр ДО проверки занятости
+    # NFQUEUE — иначе он сам же держит свою очередь, и проверка ложно решает,
+    # что она занята "другим процессом".
+    if [ "$_reinstall" = "true" ]; then
+        zapret2_stop
+    fi
 
     zapret2_download_bundle || return 1
 

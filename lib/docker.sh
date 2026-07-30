@@ -201,6 +201,27 @@ restart_target() {
     restart_proxy_container
 }
 
+stop_target() {
+    if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
+        case "${DETECTED_MODE:-unknown}" in
+            docker)
+                log_info "Остановка контейнера ${DETECTED_CONTAINER}..."
+                docker stop "$DETECTED_CONTAINER" &>/dev/null && log_success "Контейнер остановлен" || log_warn "Не удалось остановить контейнер" ;;
+            mtproxymax)
+                command -v mtproxymax &>/dev/null && mtproxymax stop &>/dev/null && log_success "mtproxymax остановлен" || log_warn "Не удалось остановить mtproxymax" ;;
+            local)
+                if systemctl is-active telemt.service &>/dev/null 2>&1; then
+                    systemctl stop telemt.service &>/dev/null && log_success "telemt.service остановлен" || log_warn "Не удалось остановить telemt.service"
+                else
+                    pkill telemt 2>/dev/null && log_success "Процесс telemt остановлен" || log_warn "Не удалось остановить процесс telemt"
+                fi ;;
+            *) log_warn "Нет способа остановить обнаруженную цель (${DETECTED_MODE:-unknown})" ;;
+        esac
+        return
+    fi
+    stop_proxy_container
+}
+
 show_target_logs() {
     local _tail="${1:-30}"
     if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
