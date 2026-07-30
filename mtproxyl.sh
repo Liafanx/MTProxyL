@@ -95,9 +95,8 @@ cli_main() {
 
         start)
             check_root
-            load_settings; load_secrets; load_upstreams
-            _require_manager_mode || exit 1
-            start_proxy_container
+            load_settings; load_secrets; load_upstreams; load_detect_settings
+            start_target
             ;;
         stop)
             check_root

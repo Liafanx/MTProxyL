@@ -131,10 +131,12 @@ _get_telemt_metrics_port() {
     local _cfg="${1:-$DETECTED_CONFIG_PATH}"
     local _listen="" _port=""
     if [ -n "$_cfg" ] && [ -f "$_cfg" ]; then
+        # metrics_listen имеет приоритет над metrics_port (так же, как в telemt)
         _listen=$(_toml_get_string_in_section "server" "metrics_listen" "$_cfg")
         [ -n "$_listen" ] && _port=$(printf '%s\n' "$_listen" | sed -nE 's/.*:([0-9]+)$/\1/p')
+        [ -z "$_port" ] && _port=$(_toml_get_string_in_section "server" "metrics_port" "$_cfg")
     fi
-    [ -z "$_port" ] && _port="9090"
+    [[ "$_port" =~ ^[0-9]+$ ]] || _port="9090"
     echo "$_port"
 }
 
@@ -149,8 +151,10 @@ _telemt_api_enabled() {
 # трафик/соединения/ссылки).
 # Коды возврата: 0 — успех, 2 — API выключен в конфиге цели,
 # 3 — API включён, но не отвечает/вернул некорректный ответ.
-# Пробелы в JSON терпим намеренно: ответ может быть как компактным
-# ("ok":true), так и pretty-printed ("ok": true).
+# Валидацию держим мягкой: разные версии telemt отдают ответ либо
+# компактным, либо pretty-printed, и поле "ok" может отсутствовать.
+# Ориентируемся на наличие массива "data" — именно его мы и разбираем;
+# отказываем только если API явно ответил "ok": false.
 _get_telemt_users_json() {
     local _cfg="${1:-$DETECTED_CONFIG_PATH}"
     _telemt_api_enabled "$_cfg" || return 2
@@ -158,7 +162,8 @@ _get_telemt_users_json() {
     local _json
     _json=$(curl -s --max-time 3 --connect-timeout 2 "http://127.0.0.1:${_port}/v1/users" 2>/dev/null) || return 3
     [ -z "$_json" ] && return 3
-    grep -qE '"ok"[[:space:]]*:[[:space:]]*true' <<< "$_json" || return 3
+    grep -qE '"ok"[[:space:]]*:[[:space:]]*false' <<< "$_json" && return 3
+    grep -q '"data"' <<< "$_json" || return 3
     echo "$_json"
 }
 
@@ -178,25 +183,30 @@ _telemt_api_unavailable_reason() {
 }
 
 # Возвращает строки "пользователь|tg-ссылка" из ответа API цели, оставляя
-# только IPv4-ссылки (server=:: и server=[..] отбрасываются) и подставляя
-# публичный IPv4 сервера вместо того, что вернул API (цель может отдавать
-# внутренний адрес контейнера или 0.0.0.0).
+# только IPv4-ссылки. Ссылки берём как есть: секрет в ee-ссылке содержит
+# hex-домен, и сама telemt — единственный корректный источник ссылок
+# (её docs прямо предупреждают не собирать ссылки вручную), поэтому
+# server=/port= не подменяем — за это отвечает [general.links] в конфиге цели.
+# IPv6 отбрасываем по наличию ':' в значении server= (адрес может быть и без
+# скобок: server=2a13:7c00:...), заодно убираем 0.0.0.0/::.
 # Пары username↔links собираем без jq: перед каждым "username" вставляем
 # перевод строки, ссылки пользователя лежат в его же объекте после username.
 _target_links_ipv4() {
-    local _json="$1" _ip="$2"
+    local _json="$1"
     printf '%s' "$_json" | tr -d '\n' \
         | awk '{gsub(/"username"/, "\n\"username\""); print}' \
         | while IFS= read -r _chunk; do
             case "$_chunk" in *'"username"'*) ;; *) continue ;; esac
-            local _u _links _l
+            local _u _links _l _srv
             _u=$(sed -nE 's/.*"username"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' <<< "$_chunk")
-            _links=$(grep -oE 'tg://proxy\?[^"]+' <<< "$_chunk" \
-                     | grep -v 'server=::' | grep -v 'server=\[' | sort -u)
+            _links=$(grep -oE 'tg://proxy\?[^"]+' <<< "$_chunk" | sort -u)
             [ -z "$_links" ] && continue
             while IFS= read -r _l; do
                 [ -z "$_l" ] && continue
-                [ -n "$_ip" ] && _l=$(sed -E "s/server=[^&]+/server=${_ip}/" <<< "$_l")
+                _srv=$(sed -nE 's/.*[?&]server=([^&]*).*/\1/p' <<< "$_l")
+                case "$_srv" in
+                    ""|*:*|0.0.0.0) continue ;;
+                esac
                 printf '%s|%s\n' "${_u:-?}" "$_l"
             done <<< "$_links"
         done
@@ -213,10 +223,10 @@ show_target_links_ipv4() {
         return 1
     fi
 
-    local _ip; _ip="${CUSTOM_IP:-$(get_public_ip 2>/dev/null)}"
-    local _pairs; _pairs=$(_target_links_ipv4 "$_json" "$_ip")
+    local _pairs; _pairs=$(_target_links_ipv4 "$_json")
     if [ -z "$_pairs" ]; then
         log_warn "IPv4-ссылки не найдены в ответе API цели"
+        log_info "Если цель отдаёт только IPv6 — задайте [general.links] public_host в конфиге цели"
         return 1
     fi
 
@@ -276,6 +286,11 @@ fetch_target_stats() {
     TARGET_STATS_CONNS=$(_json_sum_field "$_json" "current_connections")
     TARGET_STATS_ACTIVE=$(_json_count_bool_field "$_json" "enabled" "true")
     TARGET_STATS_DISABLED=$(_json_count_bool_field "$_json" "enabled" "false")
+    # Если версия API не отдаёт "enabled" — считаем всех найденных
+    # пользователей активными, чтобы не показывать 0 при живых ссылках.
+    if [ "$((TARGET_STATS_ACTIVE + TARGET_STATS_DISABLED))" -eq 0 ]; then
+        TARGET_STATS_ACTIVE=$(grep -oE '"username"[[:space:]]*:' <<< "$_json" | wc -l)
+    fi
 }
 
 # Текущий SNI-домен: домен цели в reanimator-режиме (из TOML), иначе

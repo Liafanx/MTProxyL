@@ -180,25 +180,77 @@ get_proxy_uptime() {
 }
 
 # ── Абстракция цели: работает и на своём контейнере, и на чужой цели ──
+# Юнит telemt.service существует (пусть и остановлен). Проверять именно
+# наличие юнита, а не is-active: остановленную службу надо уметь запустить
+# и перезапустить, а не отправлять SIGHUP несуществующему процессу.
+_telemt_unit_exists() {
+    systemctl list-unit-files 2>/dev/null | grep -q '^telemt\.service'
+}
+
 restart_target() {
     if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
         case "${DETECTED_MODE:-unknown}" in
             docker)
                 log_info "Перезапуск контейнера ${DETECTED_CONTAINER}..."
-                docker restart "$DETECTED_CONTAINER" &>/dev/null || log_warn "Не удалось перезапустить контейнер" ;;
+                docker restart "$DETECTED_CONTAINER" &>/dev/null \
+                    && log_success "Контейнер перезапущен" \
+                    || log_warn "Не удалось перезапустить контейнер" ;;
             mtproxymax)
-                command -v mtproxymax &>/dev/null && mtproxymax restart &>/dev/null || log_warn "Не удалось перезапустить mtproxymax" ;;
+                command -v mtproxymax &>/dev/null && mtproxymax restart &>/dev/null \
+                    && log_success "mtproxymax перезапущен" \
+                    || log_warn "Не удалось перезапустить mtproxymax" ;;
             local)
-                if systemctl is-active telemt.service &>/dev/null 2>&1; then
-                    systemctl restart telemt.service &>/dev/null || log_warn "Не удалось перезапустить telemt.service"
+                if _telemt_unit_exists; then
+                    log_info "Перезапуск telemt.service..."
+                    systemctl restart telemt.service &>/dev/null \
+                        && log_success "telemt.service перезапущен" \
+                        || log_warn "Не удалось перезапустить telemt.service"
+                elif pgrep -x telemt &>/dev/null; then
+                    pkill -HUP telemt 2>/dev/null \
+                        && log_success "Процессу telemt отправлен SIGHUP" \
+                        || log_warn "Не удалось отправить сигнал telemt"
                 else
-                    pkill -HUP telemt 2>/dev/null || log_warn "Не удалось отправить сигнал telemt"
+                    log_warn "telemt не запущен и systemd-юнит не найден — запустите цель вручную"
                 fi ;;
             *) log_warn "Нет способа перезапустить обнаруженную цель (${DETECTED_MODE:-unknown})" ;;
         esac
         return
     fi
     restart_proxy_container
+}
+
+start_target() {
+    if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
+        if is_proxy_running; then
+            log_info "Цель уже запущена"
+            return 0
+        fi
+        case "${DETECTED_MODE:-unknown}" in
+            docker)
+                [ -n "$DETECTED_CONTAINER" ] || { log_warn "Контейнер цели не определён"; return 1; }
+                log_info "Запуск контейнера ${DETECTED_CONTAINER}..."
+                docker start "$DETECTED_CONTAINER" &>/dev/null \
+                    && log_success "Контейнер запущен" \
+                    || log_warn "Не удалось запустить контейнер" ;;
+            mtproxymax)
+                command -v mtproxymax &>/dev/null && mtproxymax start &>/dev/null \
+                    && log_success "mtproxymax запущен" \
+                    || log_warn "Не удалось запустить mtproxymax" ;;
+            local)
+                if _telemt_unit_exists; then
+                    log_info "Запуск telemt.service..."
+                    systemctl start telemt.service &>/dev/null \
+                        && log_success "telemt.service запущен" \
+                        || { log_warn "Не удалось запустить telemt.service"
+                             journalctl -u telemt.service -n 10 --no-pager 2>/dev/null | sed 's/^/    /'; }
+                else
+                    log_warn "systemd-юнит telemt.service не найден — запустите цель вручную"
+                fi ;;
+            *) log_warn "Нет способа запустить обнаруженную цель (${DETECTED_MODE:-unknown})" ;;
+        esac
+        return
+    fi
+    start_proxy_container
 }
 
 stop_target() {
@@ -210,10 +262,10 @@ stop_target() {
             mtproxymax)
                 command -v mtproxymax &>/dev/null && mtproxymax stop &>/dev/null && log_success "mtproxymax остановлен" || log_warn "Не удалось остановить mtproxymax" ;;
             local)
-                if systemctl is-active telemt.service &>/dev/null 2>&1; then
+                if _telemt_unit_exists; then
                     systemctl stop telemt.service &>/dev/null && log_success "telemt.service остановлен" || log_warn "Не удалось остановить telemt.service"
                 else
-                    pkill telemt 2>/dev/null && log_success "Процесс telemt остановлен" || log_warn "Не удалось остановить процесс telemt"
+                    pkill -x telemt 2>/dev/null && log_success "Процесс telemt остановлен" || log_warn "Не удалось остановить процесс telemt"
                 fi ;;
             *) log_warn "Нет способа остановить обнаруженную цель (${DETECTED_MODE:-unknown})" ;;
         esac

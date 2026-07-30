@@ -108,15 +108,14 @@ selfmask_status_line() {
 
 selfmask_show_requirements() {
     echo ""
-    echo -e "  ${YELLOW}${BOLD}Важно для Selfmask / FakeTLS:${NC}"
-    echo -e "  ${DIM}• Домен для FakeTLS должен поддерживать PQ hybrid:${NC}"
-    echo -e "  ${DIM}  X25519MLKEM768 + классическую эллиптическую кривую.${NC}"
-    echo -e "  ${DIM}• Проверка: отправьте домен боту ${CYAN}@Sni_checker_bot${NC}"
-    echo -e "  ${DIM}• Если PQ не поддерживается и Peer Temp Key = X25519,${NC}"
-    echo -e "  ${DIM}  iOS-клиенты с высокой вероятностью не смогут подключиться.${NC}"
+    echo -e "  ${BOLD}Selfmask / FakeTLS:${NC}"
+    echo -e "  ${GREEN}${SYM_CHECK}${NC} ${DIM}Заглушка ставится самим MTProxyL — PQ hybrid${NC}"
+    echo -e "    ${DIM}(X25519MLKEM768) поддерживается гарантированно.${NC}"
+    echo -e "  ${DIM}• Backend nginx работает на ${BOLD}TLS 1.3${NC}${DIM}.${NC}"
     echo ""
-    echo -e "  ${DIM}• Внутренний backend nginx для selfmask работает на ${BOLD}TLS 1.3${NC}${DIM}.${NC}"
-    echo -e "  ${DIM}• Постквантовый обмен ключами X25519MLKEM768 включён.${NC}"
+    echo -e "  ${DIM}Если вы используете ${BOLD}чужой${NC}${DIM} домен для FakeTLS — его поддержку${NC}"
+    echo -e "  ${DIM}PQ можно проверить: меню ${BOLD}Дополнения${NC}${DIM} → проверка домена на PQ,${NC}"
+    echo -e "  ${DIM}либо ботом ${CYAN}@Sni_checker_bot${NC}${DIM}.${NC}"
     echo ""
 }
 
@@ -1127,7 +1126,8 @@ selfmask_remove_pq_nginx() {
         rm -f "$(_selfmask_pq_conf)" 2>/dev/null || true
 
         SELFMASK_ENABLED="false"
-        if [ "${MASKING_HOST:-}" = "127.0.0.1" ] && [ "${MASKING_PORT:-}" = "${SELFMASK_NGINX_BACKEND_PORT}" ]; then
+        if [ "${MTPROXYL_MODE:-manager}" = "manager" ] && \
+           [ "${MASKING_HOST:-}" = "127.0.0.1" ] && [ "${MASKING_PORT:-}" = "${SELFMASK_NGINX_BACKEND_PORT}" ]; then
             MASKING_ENABLED="true"
             MASKING_HOST=""
             MASKING_PORT="443"
@@ -1149,7 +1149,19 @@ selfmask_remove_pq_nginx() {
 
     log_success "PQ nginx полностью удалён"
 
-    # Перезапуск прокси если работает
+    # Перезапуск: в reanimator-режиме нельзя дёргать restart_proxy_container —
+    # он пересобирает СВОЙ образ telemt (а Docker на хосте может быть вообще
+    # не установлен). Цель перезапускаем её же способом.
+    if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
+        if is_proxy_running; then
+            echo ""
+            log_warn "Заглушка удалена, но в конфиге цели остались mask_host/mask_port на 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT}"
+            echo -e "  ${DIM}Поправьте [censorship] в ${DETECTED_CONFIG_PATH:-конфиге цели} (меню: Цель/режим → Редактировать конфиг цели),${NC}"
+            echo -e "  ${DIM}иначе маскировка будет ссылаться на несуществующий backend.${NC}"
+        fi
+        return 0
+    fi
+
     if is_proxy_running; then
         log_info "Перезапуск прокси..."
         load_secrets

@@ -33,11 +33,15 @@ tui_selfmask_menu() {
         fi
 
         echo ""
-        echo -e "  ${YELLOW}${BOLD}Важно:${NC}"
-        echo -e "  ${DIM}Домен для selfmask должен поддерживать PQ hybrid (X25519MLKEM768).${NC}"
-        echo -e "  ${DIM}Проверка: отправьте домен боту ${CYAN}@Sni_checker_bot${NC}"
-        echo -e "  ${DIM}🟢 X25519MLKEM768 — подходит${NC}"
-        echo -e "  ${DIM}🔴 PQ не поддерживается + X25519 — iOS не подключится${NC}"
+        if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+            echo -e "  ${DIM}Заглушку поднял MTProxyL — поддержка PQ hybrid${NC}"
+            echo -e "  ${DIM}(X25519MLKEM768) обеспечена самим backend'ом.${NC}"
+        else
+            echo -e "  ${DIM}Заглушку поднимает сам MTProxyL, поэтому PQ hybrid${NC}"
+            echo -e "  ${DIM}(X25519MLKEM768) поддерживается гарантированно.${NC}"
+        fi
+        echo -e "  ${DIM}Чужой домен для FakeTLS можно проверить на PQ:${NC}"
+        echo -e "  ${DIM}меню ${BOLD}Дополнения${NC}${DIM} → проверка домена, либо ${CYAN}@Sni_checker_bot${NC}${DIM}.${NC}"
         echo ""
 
         echo -e "  ${CYAN}[1]${NC}  Подробный статус и требования"

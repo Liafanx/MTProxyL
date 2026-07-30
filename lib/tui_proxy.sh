@@ -17,7 +17,7 @@ tui_proxy_menu() {
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
-            1) _require_manager_mode && { start_proxy_container || true; }; press_any_key ;;
+            1) start_target || true; press_any_key ;;
             2) stop_target || true; press_any_key ;;
             3) restart_target || true; press_any_key ;;
             4) echo -e "  ${DIM}Ctrl+C для остановки...${NC}"; show_target_logs 30 || true; press_any_key ;;
