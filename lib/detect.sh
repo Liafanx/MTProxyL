@@ -146,17 +146,95 @@ _telemt_api_enabled() {
 }
 
 # Забирает JSON с /v1/users API цели (список пользователей + их
-# трафик/соединения/ссылки). Возвращает непустой JSON с "ok":true,
-# либо код ошибки, если API выключен/недоступен.
+# трафик/соединения/ссылки).
+# Коды возврата: 0 — успех, 2 — API выключен в конфиге цели,
+# 3 — API включён, но не отвечает/вернул некорректный ответ.
+# Пробелы в JSON терпим намеренно: ответ может быть как компактным
+# ("ok":true), так и pretty-printed ("ok": true).
 _get_telemt_users_json() {
     local _cfg="${1:-$DETECTED_CONFIG_PATH}"
-    _telemt_api_enabled "$_cfg" || return 1
+    _telemt_api_enabled "$_cfg" || return 2
     local _port; _port=$(_get_telemt_api_port "$_cfg")
     local _json
-    _json=$(curl -s --max-time 3 --connect-timeout 2 "http://127.0.0.1:${_port}/v1/users" 2>/dev/null) || return 1
-    [ -z "$_json" ] && return 1
-    echo "$_json" | grep -q '"ok":true' || return 1
+    _json=$(curl -s --max-time 3 --connect-timeout 2 "http://127.0.0.1:${_port}/v1/users" 2>/dev/null) || return 3
+    [ -z "$_json" ] && return 3
+    grep -qE '"ok"[[:space:]]*:[[:space:]]*true' <<< "$_json" || return 3
     echo "$_json"
+}
+
+# Человекочитаемая причина, почему API цели недоступен — для показа
+# вместо тихих нулей/«н/д» без объяснения.
+_telemt_api_unavailable_reason() {
+    local _cfg="${1:-$DETECTED_CONFIG_PATH}"
+    if [ -z "$_cfg" ] || [ ! -f "$_cfg" ]; then
+        echo "конфиг цели не найден"
+        return
+    fi
+    if ! _telemt_api_enabled "$_cfg"; then
+        echo "[server.api] enabled = false в конфиге цели"
+        return
+    fi
+    echo "API не отвечает на 127.0.0.1:$(_get_telemt_api_port "$_cfg")"
+}
+
+# Возвращает строки "пользователь|tg-ссылка" из ответа API цели, оставляя
+# только IPv4-ссылки (server=:: и server=[..] отбрасываются) и подставляя
+# публичный IPv4 сервера вместо того, что вернул API (цель может отдавать
+# внутренний адрес контейнера или 0.0.0.0).
+# Пары username↔links собираем без jq: перед каждым "username" вставляем
+# перевод строки, ссылки пользователя лежат в его же объекте после username.
+_target_links_ipv4() {
+    local _json="$1" _ip="$2"
+    printf '%s' "$_json" | tr -d '\n' \
+        | awk '{gsub(/"username"/, "\n\"username\""); print}' \
+        | while IFS= read -r _chunk; do
+            case "$_chunk" in *'"username"'*) ;; *) continue ;; esac
+            local _u _links _l
+            _u=$(sed -nE 's/.*"username"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' <<< "$_chunk")
+            _links=$(grep -oE 'tg://proxy\?[^"]+' <<< "$_chunk" \
+                     | grep -v 'server=::' | grep -v 'server=\[' | sort -u)
+            [ -z "$_links" ] && continue
+            while IFS= read -r _l; do
+                [ -z "$_l" ] && continue
+                [ -n "$_ip" ] && _l=$(sed -E "s/server=[^&]+/server=${_ip}/" <<< "$_l")
+                printf '%s|%s\n' "${_u:-?}" "$_l"
+            done <<< "$_links"
+        done
+}
+
+# Печатает ссылки цели (IPv4). Используется и в меню «Ссылки на прокси»,
+# и после настройки selfmask, когда домен/маскировка поменялись.
+show_target_links_ipv4() {
+    local _json _rc
+    _json=$(_get_telemt_users_json 2>/dev/null); _rc=$?
+    if [ $_rc -ne 0 ]; then
+        log_warn "Ссылки недоступны: $(_telemt_api_unavailable_reason)"
+        [ $_rc -eq 2 ] && log_info "Включите [server.api] enabled = true в ${DETECTED_CONFIG_PATH:-конфиге цели} и перезапустите цель"
+        return 1
+    fi
+
+    local _ip; _ip="${CUSTOM_IP:-$(get_public_ip 2>/dev/null)}"
+    local _pairs; _pairs=$(_target_links_ipv4 "$_json" "$_ip")
+    if [ -z "$_pairs" ]; then
+        log_warn "IPv4-ссылки не найдены в ответе API цели"
+        return 1
+    fi
+
+    echo ""
+    echo -e "  ${DIM}Источник: API цели (127.0.0.1:$(_get_telemt_api_port)/v1/users)${NC}"
+    local _last_u="" _u _l
+    while IFS='|' read -r _u _l; do
+        [ -z "$_l" ] && continue
+        if [ "$_u" != "$_last_u" ]; then
+            echo ""
+            echo -e "  ${BRIGHT_GREEN}${BOLD}${_u}${NC}"
+            echo -e "  ${DIM}$(_repeat '─' 40)${NC}"
+            _last_u="$_u"
+        fi
+        echo -e "  ${BOLD}TG:${NC}  ${CYAN}${_l}${NC}"
+        echo -e "  ${BOLD}Веб:${NC} ${CYAN}https://t.me/proxy?${_l#tg://proxy?}${NC}"
+    done <<< "$_pairs"
+    echo ""
 }
 
 _target_tls_domain() {
@@ -401,7 +479,7 @@ run_target_detection() {
 
 # ── Безопасный точечный тюнинг чужого конфига (reanimator) ────
 apply_target_tuning() {
-    local param="$1" value="$2" section="$3"
+    local param="$1" value="$2" section="$3" _batch="${4:-false}"
 
     if [ "$DETECTED_MODE" = "mtproxymax" ]; then
         command -v mtproxymax &>/dev/null || { log_error "mtproxymax не найден в PATH"; return 1; }
@@ -442,10 +520,83 @@ apply_target_tuning() {
         fi
     fi
 
+    # В пакетном режиме (несколько параметров подряд) перезапуск делает
+    # вызывающий код — один раз в конце, а не после каждого параметра.
+    [ "$_batch" = "true" ] && return 0
+
     if is_proxy_running; then
         echo -en "  ${BOLD}Перезапустить цель, чтобы применить изменения? [Y/n]:${NC} "
         local _r; read -r _r
         [[ ! "$_r" =~ ^[nN] ]] && restart_target
+    fi
+}
+
+# ── Ручное редактирование конфига цели ─────────────────────────
+# Открывает чужой toml в редакторе, и только если файл реально изменился —
+# предлагает перезапустить цель. Перед правкой делает резервную копию.
+edit_target_config() {
+    if [ -z "${DETECTED_CONFIG_PATH:-}" ] || [ ! -f "$DETECTED_CONFIG_PATH" ]; then
+        log_error "Конфиг цели не найден — выполните 'mtproxyl detect'"
+        return 1
+    fi
+
+    local _editor="${EDITOR:-}"
+    if [ -z "$_editor" ]; then
+        local _e
+        for _e in nano vi vim; do
+            command -v "$_e" &>/dev/null && { _editor="$_e"; break; }
+        done
+    fi
+    if [ -z "$_editor" ]; then
+        log_error "Не найден редактор (nano/vi/vim) — установите nano: apt install nano"
+        return 1
+    fi
+
+    mkdir -p "$BACKUP_DIR"
+    local _bak="${BACKUP_DIR}/$(basename "$DETECTED_CONFIG_PATH").pre-edit-$(date +%s)"
+    cp "$DETECTED_CONFIG_PATH" "$_bak" 2>/dev/null \
+        && log_info "Резервная копия: ${_bak}" \
+        || log_warn "Не удалось создать резервную копию"
+
+    local _sum_before _sum_after
+    _sum_before=$(md5sum "$DETECTED_CONFIG_PATH" 2>/dev/null | awk '{print $1}')
+
+    "$_editor" "$DETECTED_CONFIG_PATH"
+
+    _sum_after=$(md5sum "$DETECTED_CONFIG_PATH" 2>/dev/null | awk '{print $1}')
+
+    if [ "$_sum_before" = "$_sum_after" ]; then
+        log_info "Изменений нет — перезапуск не требуется"
+        return 0
+    fi
+
+    log_success "Конфиг изменён"
+
+    # Не даём молча уехать в нерабочее состояние: сверяем, что файл
+    # всё ещё выглядит как конфиг telemt.
+    if ! _looks_like_telemt_config "$DETECTED_CONFIG_PATH"; then
+        log_warn "Файл больше не похож на конфиг telemt — проверьте правки"
+        echo -e "  ${DIM}Откатить: cp ${_bak} ${DETECTED_CONFIG_PATH}${NC}"
+    fi
+
+    if ! is_proxy_running; then
+        log_info "Цель не запущена — запустите её, чтобы применить изменения"
+        return 0
+    fi
+
+    echo -en "  ${BOLD}Перезапустить цель, чтобы применить изменения? [Y/n]:${NC} "
+    local _r; read -r _r
+    if [[ ! "$_r" =~ ^[nN] ]]; then
+        restart_target
+        sleep 1
+        if is_proxy_running; then
+            log_success "Цель перезапущена"
+        else
+            log_error "Цель не поднялась после перезапуска — проверьте правки и логи"
+            echo -e "  ${DIM}Откатить: cp ${_bak} ${DETECTED_CONFIG_PATH}${NC}"
+        fi
+    else
+        log_info "Перезапуск отложен — изменения вступят в силу после restart"
     fi
 }
 

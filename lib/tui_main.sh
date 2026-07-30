@@ -64,15 +64,14 @@ show_main_menu() {
         if [ "$_reanimator" = "true" ]; then
             if [ "$_target_stats_ok" = "true" ]; then
                 echo -e "  ${BOLD}Трафик:${NC}      $(format_bytes "${TARGET_STATS_OCTETS:-0}")  ${BOLD}Соед.:${NC} ${conns}"
+                echo -e "  ${BOLD}Секреты:${NC}     ${active} активных / ${disabled} выключенных"
             else
-                echo -e "  ${BOLD}Трафик:${NC}      ${DIM}н/д (API цели недоступен/выключен)${NC}"
+                local _api_why; _api_why=$(_telemt_api_unavailable_reason 2>/dev/null)
+                echo -e "  ${BOLD}Трафик:${NC}      ${DIM}н/д — ${_api_why:-API цели недоступен}${NC}"
+                echo -e "  ${BOLD}Секреты:${NC}     ${DIM}н/д${NC}"
             fi
         else
             echo -e "  ${BOLD}Трафик:${NC}      ${SYM_DOWN} $(format_bytes "$t_in")  ${SYM_UP} $(format_bytes "$t_out")  ${BOLD}Соед.:${NC} ${conns}"
-        fi
-        if [ "$_reanimator" = "true" ] && [ "$_target_stats_ok" != "true" ]; then
-            echo -e "  ${BOLD}Секреты:${NC}     ${DIM}н/д (API цели недоступен/выключен)${NC}"
-        else
             echo -e "  ${BOLD}Секреты:${NC}     ${active} активных / ${disabled} выключенных"
         fi
 

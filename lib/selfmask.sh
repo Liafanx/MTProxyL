@@ -806,36 +806,58 @@ _selfmask_apply_target_settings() {
     SELFMASK_ENABLED="true"
     save_settings
 
+    local _old_domain; _old_domain=$(_target_tls_domain 2>/dev/null)
+
     echo ""
     echo -e "  ${BOLD}Нужно применить в конфиге цели, секция [censorship]:${NC}"
+    echo -e "    tls_domain = \"${SELFMASK_DOMAIN}\"${_old_domain:+  ${DIM}(было: ${_old_domain})${NC}}"
     echo -e "    mask_host = \"127.0.0.1\""
     echo -e "    mask_port = ${SELFMASK_NGINX_BACKEND_PORT}"
     echo -e "    unknown_sni_action = \"mask\""
-    echo -e "  ${DIM}(и перезапустить цель, чтобы изменения вступили в силу)${NC}"
     echo ""
+    if [ -n "$_old_domain" ] && [ "$_old_domain" != "${SELFMASK_DOMAIN}" ]; then
+        log_warn "Смена SNI-домена меняет FakeTLS-ссылки — старые ee-ссылки перестанут работать"
+        echo -e "  ${DIM}Новые ссылки будут показаны после перезапуска цели.${NC}"
+        echo ""
+    fi
 
     if [ -z "${DETECTED_CONFIG_PATH:-}" ] || [ ! -f "${DETECTED_CONFIG_PATH:-}" ]; then
         log_warn "Конфиг цели не найден — примените параметры выше вручную и перезапустите цель"
         return 1
     fi
 
-    echo -en "  ${BOLD}Применить автоматически в ${DETECTED_CONFIG_PATH}? [Y/n]:${NC} "
+    echo -en "  ${BOLD}Применить в ${DETECTED_CONFIG_PATH} и перезапустить цель? [Y/n]:${NC} "
     local _yn; read -r _yn
     if [[ "$_yn" =~ ^[nN]$ ]]; then
         log_info "Пропущено — примените параметры вручную и перезапустите цель"
         return 0
     fi
 
+    # Пакетный режим: перезапуск один раз в конце, а не после каждого ключа.
     local _ok=true
-    apply_target_tuning "mask_host" "127.0.0.1" "censorship" || _ok=false
-    apply_target_tuning "mask_port" "${SELFMASK_NGINX_BACKEND_PORT}" "censorship" || _ok=false
-    apply_target_tuning "unknown_sni_action" "mask" "censorship" || _ok=false
+    apply_target_tuning "tls_domain" "${SELFMASK_DOMAIN}" "censorship" true || _ok=false
+    apply_target_tuning "mask_host" "127.0.0.1" "censorship" true || _ok=false
+    apply_target_tuning "mask_port" "${SELFMASK_NGINX_BACKEND_PORT}" "censorship" true || _ok=false
+    apply_target_tuning "unknown_sni_action" "mask" "censorship" true || _ok=false
 
     if [ "$_ok" = "true" ]; then
         log_success "Параметры selfmask применены в конфиге цели"
     else
         log_warn "Не всё удалось применить автоматически — сверьтесь с инструкцией выше"
     fi
+
+    if is_proxy_running; then
+        restart_target
+        # Даём цели поднять API перед запросом новых ссылок
+        sleep 2
+    else
+        log_info "Цель не запущена — запустите её, чтобы изменения вступили в силу"
+        return 0
+    fi
+
+    echo ""
+    draw_header "НОВЫЕ ССЫЛКИ (SNI: ${SELFMASK_DOMAIN})"
+    show_target_links_ipv4 || true
 }
 
 _selfmask_setup_renewal() {
@@ -922,7 +944,24 @@ selfmask_verify() {
         fi
     fi   
 
-    if [ "${SELFMASK_ENABLED:-false}" = "true" ] && \
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        # Сверяем конфиг ЦЕЛИ, а не собственные настройки менеджера —
+        # в этом режиме mask/SNI живут в чужом toml.
+        local _t_host _t_port _t_dom
+        _t_host=$(_toml_get_string_in_section "censorship" "mask_host" "${DETECTED_CONFIG_PATH:-}" 2>/dev/null)
+        _t_port=$(_toml_get_string_in_section "censorship" "mask_port" "${DETECTED_CONFIG_PATH:-}" 2>/dev/null)
+        _t_dom=$(_target_tls_domain 2>/dev/null)
+        if [ "$_t_host" = "127.0.0.1" ] && \
+           [ "$_t_port" = "${SELFMASK_NGINX_BACKEND_PORT}" ] && \
+           [ "$_t_dom" = "${SELFMASK_DOMAIN:-}" ]; then
+            log_success "Конфиг цели настроен под selfmask (SNI: ${_t_dom})"
+        else
+            log_warn "Конфиг цели не совпадает с selfmask"
+            echo -e "    ${DIM}ожидалось: tls_domain=${SELFMASK_DOMAIN} mask_host=127.0.0.1 mask_port=${SELFMASK_NGINX_BACKEND_PORT}${NC}"
+            echo -e "    ${DIM}в конфиге: tls_domain=${_t_dom:-—} mask_host=${_t_host:-—} mask_port=${_t_port:-—}${NC}"
+            _ok=false
+        fi
+    elif [ "${SELFMASK_ENABLED:-false}" = "true" ] && \
        [ "${MASKING_HOST:-}" = "127.0.0.1" ] && \
        [ "${MASKING_PORT:-}" = "${SELFMASK_NGINX_BACKEND_PORT}" ] && \
        [ "${PROXY_DOMAIN:-}" = "${SELFMASK_DOMAIN:-}" ]; then

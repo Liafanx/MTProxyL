@@ -194,6 +194,16 @@ cli_main() {
             save_detect_settings
             ;;
 
+        edit-config)
+            check_root; load_settings; load_detect_settings
+            if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+                edit_target_config
+            else
+                log_error "Доступно только в режиме reanimator (свой конфиг: mtproxyl expert / tune)"
+                exit 1
+            fi
+            ;;
+
         geoblock)
             load_settings
             handle_geoblock_command "$@"
