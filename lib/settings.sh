@@ -106,6 +106,82 @@ SETTINGS_EOF
 
     chmod 600 "$tmp"
     mv "$tmp" "$SETTINGS_FILE"
+
+    save_selfmask_settings
+}
+
+# ── Selfmask: отдельный набор настроек на каждый режим ─────────
+# PQ nginx на хосте один, но «чей» selfmask настроен — у manager и
+# reanimator своё: иначе после переключения режима в панели светился
+# selfmask, настроенный для другого режима.
+_selfmask_conf_file() {
+    echo "${INSTALL_DIR}/selfmask-${MTPROXYL_MODE:-manager}.conf"
+}
+
+save_selfmask_settings() {
+    mkdir -p "$INSTALL_DIR"
+    local _f; _f=$(_selfmask_conf_file)
+    cat > "$_f" << SELFMASK_EOF
+# MTProxyL — настройки Selfmask для режима ${MTPROXYL_MODE:-manager}
+SELFMASK_ENABLED='${SELFMASK_ENABLED}'
+SELFMASK_DOMAIN='${SELFMASK_DOMAIN}'
+SELFMASK_SITE_SOURCE='${SELFMASK_SITE_SOURCE}'
+SELFMASK_SITE_DIR='${SELFMASK_SITE_DIR}'
+SELFMASK_NGINX_BACKEND_PORT='${SELFMASK_NGINX_BACKEND_PORT}'
+SELFMASK_CERT_EMAIL='${SELFMASK_CERT_EMAIL}'
+SELFMASK_NGINX_SITE_NAME='${SELFMASK_NGINX_SITE_NAME}'
+SELFMASK_AUTO_RENEW='${SELFMASK_AUTO_RENEW}'
+SELFMASK_TLS_PROTOCOLS='${SELFMASK_TLS_PROTOCOLS}'
+SELFMASK_CERT_MODE='${SELFMASK_CERT_MODE}'
+SELFMASK_EOF
+    chmod 600 "$_f"
+}
+
+# Значения из per-mode файла перекрывают то, что пришло из settings.conf.
+# Если файла ещё нет (обновление со старой версии) — остаются текущие,
+# и они запишутся в per-mode файл при первом сохранении.
+load_selfmask_settings() {
+    local _f; _f=$(_selfmask_conf_file)
+    [ -f "$_f" ] || return 0
+    local _line _key _val
+    while IFS= read -r _line; do
+        [[ "$_line" =~ ^[[:space:]]*# ]] && continue
+        [[ "$_line" =~ ^([A-Z_][A-Z0-9_]*)=\'([^\']*)\'$ ]] || continue
+        _key="${BASH_REMATCH[1]}"; _val="${BASH_REMATCH[2]}"
+        case "$_key" in
+            SELFMASK_ENABLED|SELFMASK_DOMAIN|SELFMASK_SITE_SOURCE|SELFMASK_SITE_DIR|\
+            SELFMASK_NGINX_BACKEND_PORT|SELFMASK_CERT_EMAIL|SELFMASK_NGINX_SITE_NAME|\
+            SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS|SELFMASK_CERT_MODE)
+                printf -v "$_key" '%s' "$_val" ;;
+        esac
+    done < "$_f"
+}
+
+_selfmask_reset_defaults() {
+    SELFMASK_ENABLED="false"
+    SELFMASK_DOMAIN=""
+    SELFMASK_SITE_SOURCE="stub"
+    SELFMASK_SITE_DIR="/var/www/mtproxyl-selfmask"
+    SELFMASK_NGINX_BACKEND_PORT="8444"
+    SELFMASK_CERT_EMAIL=""
+    SELFMASK_NGINX_SITE_NAME="mtproxyl-selfmask"
+    SELFMASK_AUTO_RENEW="true"
+    SELFMASK_TLS_PROTOCOLS="TLSv1.3"
+    SELFMASK_CERT_MODE="letsencrypt"
+}
+
+# Смена режима: профиль старого режима сохраняем, профиль нового
+# подгружаем (а если его ещё нет — начинаем с чистых значений, чтобы
+# selfmask одного режима не «протёк» в другой).
+switch_selfmask_profile() {
+    local _new="$1"
+    save_selfmask_settings
+    MTPROXYL_MODE="$_new"
+    if [ -f "$(_selfmask_conf_file)" ]; then
+        load_selfmask_settings
+    else
+        _selfmask_reset_defaults
+    fi
 }
 
 load_settings() {
@@ -167,6 +243,9 @@ load_settings() {
     [ -n "$SELFMASK_NGINX_SITE_NAME" ] || SELFMASK_NGINX_SITE_NAME="mtproxyl-selfmask"
     [ -n "$SELFMASK_SITE_SOURCE" ] || SELFMASK_SITE_SOURCE="stub"
     [ "$SELFMASK_TLS_PROTOCOLS" = "TLSv1.3" ] || SELFMASK_TLS_PROTOCOLS="TLSv1.3"
+    # Selfmask своего режима — уже после того, как известен MTPROXYL_MODE
+    load_selfmask_settings
+
     case "$SELFMASK_CERT_MODE" in
         letsencrypt|selfsigned) ;;
         *) SELFMASK_CERT_MODE="letsencrypt" ;;

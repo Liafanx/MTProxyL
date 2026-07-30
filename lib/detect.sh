@@ -819,7 +819,7 @@ switch_to_manager_mode() {
     echo -en "  ${BOLD}Введите 'yes' для подтверждения:${NC} "
     local _c; read -r _c
     [ "$_c" != "yes" ] && { log_info "Отменено"; return 1; }
-    MTPROXYL_MODE="manager"
+    switch_selfmask_profile "manager"
     save_settings
     log_success "Режим: manager"
 
@@ -885,7 +885,7 @@ switch_to_reanimator_mode() {
         esac
     fi
 
-    MTPROXYL_MODE="reanimator"
+    switch_selfmask_profile "reanimator"
     save_settings
     run_target_detection
     save_detect_settings

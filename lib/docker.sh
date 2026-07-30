@@ -17,11 +17,23 @@ install_docker() {
             [ -f /etc/os-release ] && . /etc/os-release
             [ "$ID" = "fedora" ] && _repo="https://download.docker.com/linux/fedora/docker-ce.repo"
             if command -v dnf &>/dev/null; then
-                dnf config-manager --add-repo "$_repo" 2>/dev/null || dnf config-manager --addrepo "$_repo" 2>/dev/null
-                dnf install -y docker-ce docker-ce-cli containerd.io
+                # config-manager живёт в dnf-plugins-core: на минимальных
+                # образах RHEL/AlmaLinux/Rocky его нет, и подключение репо
+                # молча проваливалось. Последний рубеж — скачать .repo сами.
+                dnf install -y dnf-plugins-core &>/dev/null || true
+                dnf config-manager --add-repo "$_repo" &>/dev/null \
+                    || dnf config-manager addrepo --from-repofile="$_repo" &>/dev/null \
+                    || curl -fsSL "$_repo" -o /etc/yum.repos.d/docker-ce.repo \
+                    || { log_error "Не удалось подключить репозиторий Docker"; return 1; }
+                # --allowerasing: на RHEL9-производных containerd.io конфликтует
+                # с runc из подсистемы podman
+                dnf install -y docker-ce docker-ce-cli containerd.io \
+                    || dnf install -y --allowerasing docker-ce docker-ce-cli containerd.io
             else
                 yum install -y yum-utils
-                yum-config-manager --add-repo "$_repo"
+                yum-config-manager --add-repo "$_repo" \
+                    || curl -fsSL "$_repo" -o /etc/yum.repos.d/docker-ce.repo \
+                    || { log_error "Не удалось подключить репозиторий Docker"; return 1; }
                 yum install -y docker-ce docker-ce-cli containerd.io
             fi ;;
         alpine) apk add --no-cache docker docker-compose ;;

@@ -579,9 +579,10 @@ remove_nft_service() {
 # ── Пресеты ───────────────────────────────────────────────────
 apply_nft_preset() {
     case "$1" in
-        hard)   NFT_MODE="classic"; NFT_RATE="1/second"; NFT_BURST="1" ;;
-        medium) NFT_MODE="classic"; NFT_RATE="1/second"; NFT_BURST="3" ;;
-        soft)   NFT_MODE="classic"; NFT_RATE="2/second"; NFT_BURST="5" ;;
+        # classic — единственный стандартный вариант лимитера (1/second
+        # burst 1); всё остальное задаётся вручную. hard оставлен как
+        # синоним для совместимости со старыми вызовами CLI.
+        classic|hard) NFT_MODE="classic"; NFT_RATE="1/second"; NFT_BURST="1" ;;
         smart)
             NFT_MODE="smart"
             NFT_REJECT_MODE="reset"
@@ -600,7 +601,7 @@ apply_nft_preset() {
     if [ "$1" = "smart" ]; then
         log_success "Пресет: Smart By-MEKO (iOS: ${NFT_IOS_RATE} burst ${NFT_IOS_BURST} / Other: ${NFT_OTHER_RATE} burst ${NFT_OTHER_BURST})"
     else
-        log_success "Пресет: $1 (rate=$NFT_RATE burst=$NFT_BURST)"
+        log_success "Classic лимитер: rate=$NFT_RATE burst=$NFT_BURST"
     fi
 }
 
@@ -1619,6 +1620,29 @@ EOF
 
 # true, если цель живёт в Docker bridge и трафик до неё идёт через forward,
 # а не через локальные pre/postrouting хуки хоста.
+# Zapret2 и SYN limiter взаимоисключающи. Вместо того чтобы блокировать
+# переключение, предлагаем отключить активный механизм и перейти на другой.
+# Возвращает 0, если путь свободен (zapret2 отключён либо и не был активен).
+offer_disable_zapret2() {
+    local _reason="${1:-SYN limiter}"
+    nft list table ip "${ZAPRET2_NFT_TABLE:-MTProtoL}" &>/dev/null 2>&1 || \
+        [ "${ZAPRET2_APPLIED:-false}" = "true" ] || return 0
+
+    echo ""
+    log_warn "Сейчас активен Zapret2 fix — вместе с ${_reason} он не работает"
+    echo -e "  ${DIM}[1]${NC} Отключить Zapret2 и перейти на ${_reason} ${DIM}(рекомендуется)${NC}"
+    echo -e "  ${DIM}[2]${NC} Оставить Zapret2, отменить переключение"
+    local _c; _c=$(read_choice "выбор" "1")
+    [ "$_c" = "1" ] || { log_info "Отменено — Zapret2 остаётся активным"; return 1; }
+
+    zapret2_stop
+    ZAPRET2_SERVICE_ENABLED="false"
+    save_nft_settings
+    log_success "Zapret2 отключён — можно включать ${_reason}"
+    return 0
+}
+
+
 zapret2_is_bridge_target() {
     [ "${DETECTED_NETWORK_MODE:-host}" = "bridge" ] || [ "${NFT_HOOK:-input}" = "forward" ]
 }

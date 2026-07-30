@@ -25,11 +25,20 @@ detect_os() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
         case "$ID" in
-            ubuntu|debian|pop|linuxmint|kali) echo "debian" ;;
-            centos|rhel|fedora|rocky|alma|oracle) echo "rhel" ;;
-            alpine) echo "alpine" ;;
-            *) echo "unknown" ;;
+            ubuntu|debian|pop|linuxmint|kali|raspbian|devuan|neon|zorin|elementary)
+                echo "debian"; return ;;
+            centos|rhel|fedora|rocky|alma|almalinux|oracle|ol|amzn|cloudlinux|navylinux|circle)
+                echo "rhel"; return ;;
+            alpine) echo "alpine"; return ;;
         esac
+        # ID неизвестен — опираемся на ID_LIKE, чтобы производные дистрибутивы
+        # (AlmaLinux, Rocky, Mint и т.п.) не отваливались в "unknown".
+        case " ${ID_LIKE:-} " in
+            *" debian "*|*" ubuntu "*)              echo "debian"; return ;;
+            *" rhel "*|*" fedora "*|*" centos "*)   echo "rhel";   return ;;
+            *" alpine "*)                            echo "alpine"; return ;;
+        esac
+        echo "unknown"
     elif [ -f /etc/debian_version ]; then
         echo "debian"
     elif [ -f /etc/redhat-release ]; then

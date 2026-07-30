@@ -339,7 +339,7 @@ run_fix_arsenal_wizard() {
     local _nft_choice; read -r _nft_choice
 
     case "$_nft_choice" in
-        2) apply_nft_preset hard ;;
+        2) apply_nft_preset classic ;;
         0) log_info "NFT limiter не применён" ;;
         *) apply_nft_preset smart ;;
     esac

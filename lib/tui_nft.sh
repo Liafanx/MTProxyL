@@ -76,7 +76,7 @@ tui_nft_menu() {
         echo ""
         echo -e "  ${CYAN}[3]${NC}  Применить NFT правила"
         echo -e "  ${CYAN}[4]${NC}  Удалить NFT правила"
-        echo -e "  ${CYAN}[5]${NC}  Пресеты (жёсткий / средний / мягкий / smart)"
+        echo -e "  ${CYAN}[5]${NC}  Режим лимитера (Smart / Classic)"
         echo -e "  ${CYAN}[6]${NC}  Настройки NFT (rate / burst / timeout / IP)"
         local _counter_label="Счётчик правил"
         if nft list table ip "${ZAPRET2_NFT_TABLE:-MTProtoL}" &>/dev/null 2>&1; then
@@ -96,7 +96,7 @@ tui_nft_menu() {
             _limiter_items="true"
             echo -e "  ${CYAN}[8]${NC}  Установить службу автозапуска"
             echo -e "  ${CYAN}[9]${NC}  Удалить службу"
-            echo -e "  ${CYAN}[10]${NC} Дополнительные правила"
+            echo -e "  ${CYAN}[10]${NC} Добавить порт для текущих правил"
         fi
         echo ""
         echo -e "  ${CYAN}[11]${NC} Оптимизация By-MEKO (BBR, очереди, keepalive)"
@@ -109,17 +109,10 @@ tui_nft_menu() {
          case "$choice" in
             2) tui_zapret2_menu ;;
             1)
-                if [ "$_zapret_active" = "true" ]; then
-                    log_warn "Zapret2 fix активен — отключите его перед включением Smart"
-                    press_any_key
-                else
-                    enable_smart_mode; press_any_key
-                fi ;;
+                if ! offer_disable_zapret2 "Smart By-MEKO"; then press_any_key; continue; fi
+                enable_smart_mode; press_any_key ;;
             3)
-                if [ "$_zapret_active" = "true" ]; then
-                    log_warn "Zapret2 fix активен — SYN limiter не нужен"
-                    press_any_key; continue
-                fi
+                if ! offer_disable_zapret2 "SYN limiter"; then press_any_key; continue; fi
                 if [ -z "${PROXY_PORT:-}" ]; then
                     log_error "Порт прокси не задан — запустите прокси"
                     press_any_key; continue
@@ -129,25 +122,14 @@ tui_nft_menu() {
             4)
                 remove_nft_rules || true; press_any_key ;;
             5)
-                if [ "$_zapret_active" = "true" ]; then
-                    log_warn "Zapret2 fix активен — пресеты SYN limiter не нужны"
-                    press_any_key
-                else
-                    tui_nft_presets
-                fi ;;
+                if ! offer_disable_zapret2 "SYN limiter"; then press_any_key; continue; fi
+                tui_nft_presets ;;
             6)
-                if [ "$_zapret_active" = "true" ]; then
-                    log_warn "Zapret2 fix активен — настройки SYN limiter скрыты. Используйте [2] → Настройки"
-                    press_any_key
-                else
-                    tui_nft_settings
-                fi ;;
+                if ! offer_disable_zapret2 "SYN limiter"; then press_any_key; continue; fi
+                tui_nft_settings ;;
             7) show_nft_drop_counter || true ;;
             8)
-                if [ "$_limiter_items" != "true" ] || [ "$_zapret_active" = "true" ]; then
-                    log_warn "Zapret2 fix активен — служба SYN limiter не нужна"
-                    press_any_key; continue
-                fi
+                if ! offer_disable_zapret2 "SYN limiter"; then press_any_key; continue; fi
                 if [ -z "${PROXY_PORT:-}" ]; then
                     log_error "Порт прокси не задан — запустите прокси"
                     press_any_key; continue
@@ -161,12 +143,12 @@ tui_nft_menu() {
                 fi
                 remove_nft_service || true; press_any_key ;;
             10)
-                if [ "$_limiter_items" != "true" ] || [ "$_zapret_active" = "true" ]; then
-                    log_warn "Zapret2 fix активен — доп. правила SYN limiter не нужны"
-                    press_any_key
-                else
-                    tui_nft_extra_menu
-                fi ;;
+                if [ "$_limiter_items" != "true" ]; then
+                    log_error "Пункт недоступен: SYN limiter не активен"
+                    press_any_key; continue
+                fi
+                if ! offer_disable_zapret2 "SYN limiter"; then press_any_key; continue; fi
+                tui_nft_extra_menu ;;
             11) tui_meko_opt_menu ;;
             12) tui_nft_legacy_menu ;;
             0|"") return ;;
@@ -177,9 +159,9 @@ tui_nft_menu() {
 # ── Пресеты ───────────────────────────────────────────────────
 tui_nft_presets() {
     clear_screen
-    draw_header "ПРЕСЕТЫ NFT"
+    draw_header "РЕЖИМ ЛИМИТЕРА"
     echo ""
-    echo -e "  ${BOLD}Выберите пресет ограничения:${NC}"; echo ""
+    echo -e "  ${BOLD}Выберите режим ограничения:${NC}"; echo ""
     echo -e "  ${BRIGHT_GREEN}[1]${NC} ${BOLD}★ Smart By-MEKO${NC}"
     echo -e "      ${DIM}iOS/Android авторазделение по fingerprint + REJECT.${NC}"
     echo -e "      ${DIM}Подключение 3-8 сек. Один порт для всех клиентов.${NC}"
@@ -194,7 +176,7 @@ tui_nft_presets() {
 
     case "$choice" in
         1) enable_smart_mode ;;
-        2) apply_nft_preset hard ;;
+        2) apply_nft_preset classic ;;
         3)
             echo -en "  ${BOLD}Rate (напр. 1/second, 2/second) [${NFT_RATE}]:${NC} "
             local r; read -r r; [ -n "$r" ] && NFT_RATE="$r"

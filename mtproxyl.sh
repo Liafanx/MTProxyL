@@ -252,7 +252,7 @@ cli_main() {
                 remove)   check_root; remove_nft_rules ;;
                 service)  check_root; install_nft_service ;;
                 drop)     show_nft_drop_counter ;;
-                preset)   check_root; apply_nft_preset "${2:-hard}" ;;
+                preset)   check_root; apply_nft_preset "${2:-classic}" ;;
                 smart)    check_root; enable_smart_mode ;;
                 ios1)     check_root; ios_fix_apply ;;
                 ios1-off) check_root; ios_fix_remove ;;
@@ -272,7 +272,7 @@ cli_main() {
                     echo -e "    ${GREEN}nft apply${NC}        Применить правила"
                     echo -e "    ${GREEN}nft remove${NC}       Удалить правила"
                     echo -e "    ${GREEN}nft smart${NC}        Smart By-MEKO (рекомендуется)"
-                    echo -e "    ${GREEN}nft preset${NC} X     Пресет (hard/medium/soft/smart)"
+                    echo -e "    ${GREEN}nft preset${NC} X     Режим лимитера (classic/smart)"
                     echo -e "    ${GREEN}nft service${NC}      Установить службу"
                     echo -e "    ${GREEN}nft drop${NC}         Счётчик правил"
                     echo -e "    ${GREEN}nft ios1${NC}         iOS Fix v1 (keepalive)"
