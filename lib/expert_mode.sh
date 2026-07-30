@@ -245,7 +245,9 @@ show_expert_overrides() {
     echo ""
     draw_header "АКТИВНЫЕ EXPERT OVERRIDE"
     echo ""
-    printf "  ${BOLD}%-4s %-24s %-24s %s${NC}\n" "#" "СЕКЦИЯ" "КЛЮЧ" "ЗНАЧЕНИЕ"
+    # printf считает байты, а не символы: кириллица в заголовке ломала бы
+    # выравнивание колонок, поэтому шапку печатаем без padding'а printf.
+    echo -e "  ${BOLD}#    СЕКЦИЯ                   КЛЮЧ                     ЗНАЧЕНИЕ${NC}"
     echo -e "  ${DIM}$(_repeat '─' 72)${NC}"
     local _n=0
     while IFS='|' read -r _s _k _v; do

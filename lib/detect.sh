@@ -57,39 +57,57 @@ _toml_get_value() {
     ' "$_file" 2>/dev/null
 }
 
-_toml_has_section() {
-    local _section="$1" _file="$2"
-    grep -qE "^\\[${_section}\\]" "$_file" 2>/dev/null
-}
-
-_toml_has_key() {
-    local _key="$1" _file="$2"
-    awk -v k="$_key" '
-        /^[[:space:]]*#/ { next }
-        {
-            line = $0
-            sub(/^[[:space:]]+/, "", line)
-            if (substr(line, 1, length(k)) == k) {
-                rest = substr(line, length(k) + 1)
-                if (rest ~ /^[[:space:]]*=/) { found=1; exit }
-            }
-        }
-        END { exit !found }
-    ' "$_file" 2>/dev/null
-}
-
+# Правка ключа строго внутри своей секции. Одинаковые имена (port,
+# log_level, timeout, enabled) встречаются в TOML в разных таблицах, а
+# правка по всему файлу переписала бы чужую строку и оставила нужную
+# секцию нетронутой. Содержимое пишем обратно в тот же файл (cat >), а не
+# подменяем файл целиком, чтобы у чужого конфига сохранились владелец и
+# права (у telemt это root:telemt 640 — иначе служба перестанет его читать).
 _toml_safe_set() {
     local _key="$1" _value="$2" _section="$3" _file="$4"
     [ -f "$_file" ] || return 1
-    if _toml_has_key "$_key" "$_file"; then
-        sed -i "s/^${_key}[[:space:]]*=.*/${_key} = ${_value}/" "$_file"
-        return 0
+
+    local _tmp; _tmp=$(_mktemp) || return 1
+    local _rc=0
+    awk -v sect="[${_section}]" -v k="$_key" -v v="$_value" '
+        function flush_blanks(   i) { for (i = 1; i <= nb; i++) print blanks[i]; nb = 0 }
+        BEGIN { insect=0; done=0; sect_seen=0; nb=0 }
+        {
+            line = $0
+            t = line; sub(/^[[:space:]]+/, "", t)
+            # Пустые строки в конце секции придерживаем: новый ключ должен
+            # встать в саму секцию, а не за её пустой строкой.
+            if (insect && t == "") { blanks[++nb] = line; next }
+            if (t ~ /^\[/) {
+                if (insect && !done) { print k " = " v; done=1 }
+                flush_blanks()
+                insect = (t == sect) ? 1 : 0
+                if (insect) sect_seen=1
+                print line
+                next
+            }
+            flush_blanks()
+            if (insect && !done && t ~ ("^" k "[[:space:]]*=")) {
+                print k " = " v
+                done = 1
+                next
+            }
+            print line
+        }
+        END {
+            if (insect && !done) { print k " = " v; done=1 }
+            flush_blanks()
+            exit (sect_seen && done) ? 0 : 1
+        }
+    ' "$_file" > "$_tmp" || _rc=1
+
+    if [ "$_rc" -ne 0 ] || [ ! -s "$_tmp" ]; then
+        rm -f "$_tmp"
+        return 1
     fi
-    if _toml_has_section "$_section" "$_file"; then
-        sed -i "/^\\[${_section}\\]/a ${_key} = ${_value}" "$_file"
-        return 0
-    fi
-    return 1
+    cat "$_tmp" > "$_file" || { rm -f "$_tmp"; return 1; }
+    rm -f "$_tmp"
+    return 0
 }
 
 # Читает произвольный ключ (строку или число, без обрезания не-цифр — в
@@ -818,6 +836,8 @@ offer_reapply_fixes() {
     [ "${NFT_ENABLED:-false}" = "true" ] && _need="true"
     nft list table ip "${ZAPRET2_NFT_TABLE:-MTProtoL}" &>/dev/null 2>&1 && _need="true"
     nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1 && _need="true"
+    # Гео-блокировка тоже прибита к порту
+    [ -n "${BLOCKLIST_COUNTRIES:-}" ] && _need="true"
     [ "$_need" = "true" ] || return 0
 
     echo ""
@@ -834,6 +854,12 @@ offer_reapply_fixes() {
         install_nft_service || true
     elif nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1; then
         apply_nft_rules || log_warn "Не удалось применить NFT-правила"
+    fi
+    if [ -n "${BLOCKLIST_COUNTRIES:-}" ]; then
+        geoblock_remove_all >/dev/null 2>&1 || true
+        geoblock_reapply_all >/dev/null 2>&1 || true
+        geoblock_rules_active && log_success "Гео-блокировка переприменена на порт ${PROXY_PORT}" \
+            || log_warn "Гео-блокировку переприменить не удалось: mtproxyl geoblock reapply"
     fi
 }
 

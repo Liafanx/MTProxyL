@@ -102,6 +102,25 @@ _ensure_default_drop() {
     fi
 }
 
+# Правила гео-блокировки живут в iptables/ipset и не переживают
+# перезагрузку сервера, а после смены порта прокси остаются висеть на
+# старом. Проверяем факт, а не запись в настройках.
+geoblock_rules_active() {
+    [ -n "$BLOCKLIST_COUNTRIES" ] || return 1
+    command -v iptables &>/dev/null || return 1
+    iptables-save 2>/dev/null | grep -q -- "--comment ${GEOBLOCK_COMMENT}" || return 1
+    return 0
+}
+
+# Порт, на который реально навешаны правила (может отличаться от текущего
+# PROXY_PORT, если порт меняли уже после применения).
+geoblock_rules_port() {
+    command -v iptables &>/dev/null || return 1
+    iptables-save 2>/dev/null \
+        | grep -- "--comment ${GEOBLOCK_COMMENT}" \
+        | grep -oE '\--dport [0-9]+' | awk '{print $2}' | sort -u | head -1
+}
+
 geoblock_reapply_all() {
     [ -z "$BLOCKLIST_COUNTRIES" ] && return 0
     command -v ipset &>/dev/null || return 0
@@ -176,15 +195,46 @@ handle_geoblock_command() {
             save_settings
             log_success "Все гео-блокировки сняты"
             ;;
+        reapply)
+            check_root
+            [ -z "$BLOCKLIST_COUNTRIES" ] && { log_info "Список стран пуст — нечего применять"; return 0; }
+            _ensure_ipset || return 1
+            log_info "Переприменение гео-блокировки на порт ${PROXY_PORT}..."
+            geoblock_remove_all >/dev/null 2>&1 || true
+            local _code
+            IFS=',' read -ra codes <<< "$BLOCKLIST_COUNTRIES"
+            for _code in "${codes[@]}"; do
+                [ -z "$_code" ] && continue
+                _download_country_cidrs "$_code" || continue
+            done
+            geoblock_reapply_all
+            geoblock_rules_active && log_success "Гео-блокировка применена (порт ${PROXY_PORT})" \
+                || log_error "Правила применить не удалось"
+            ;;
         list|"")
             echo -e "  ${BOLD}Заблокированные страны:${NC} ${BLOCKLIST_COUNTRIES:-${DIM}нет${NC}}"
             echo -e "  ${BOLD}Режим:${NC} ${GEOBLOCK_MODE}"
+            if [ -n "$BLOCKLIST_COUNTRIES" ]; then
+                if geoblock_rules_active; then
+                    local _rp; _rp=$(geoblock_rules_port)
+                    if [ -n "$_rp" ] && [ "$_rp" != "${PROXY_PORT}" ]; then
+                        echo -e "  ${BOLD}Правила:${NC} ${YELLOW}висят на порту ${_rp}, а прокси на ${PROXY_PORT}${NC}"
+                        echo -e "  ${DIM}Переприменить: mtproxyl geoblock reapply${NC}"
+                    else
+                        echo -e "  ${BOLD}Правила:${NC} ${GREEN}активны${NC}"
+                    fi
+                else
+                    echo -e "  ${BOLD}Правила:${NC} ${RED}отсутствуют${NC} ${DIM}(сброшены перезагрузкой?)${NC}"
+                    echo -e "  ${DIM}Восстановить: mtproxyl geoblock reapply${NC}"
+                fi
+            fi
             ;;
         *)
             echo -e "  ${BOLD}Гео-блокировка:${NC}"
             echo -e "    ${GREEN}geoblock add${NC} <CC>      Заблокировать страну"
             echo -e "    ${GREEN}geoblock remove${NC} <CC>   Разблокировать"
-            echo -e "    ${GREEN}geoblock list${NC}          Список"
+            echo -e "    ${GREEN}geoblock list${NC}          Список и состояние правил"
+            echo -e "    ${GREEN}geoblock reapply${NC}       Переприменить (после перезагрузки/смены порта)"
             echo -e "    ${GREEN}geoblock clear${NC}         Очистить все"
             ;;
     esac

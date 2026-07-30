@@ -379,10 +379,16 @@ mtproxyl pq-check example.com:8443    # На нестандартном порт
 ```bash
 mtproxyl geoblock add ir      # Заблокировать страну
 mtproxyl geoblock remove ir   # Разблокировать
-mtproxyl geoblock list        # Список
+mtproxyl geoblock list        # Список стран и состояние правил
+mtproxyl geoblock reapply     # Переприменить после перезагрузки/смены порта
 mtproxyl upstream list        # Upstream-маршруты
 mtproxyl upstream add warp socks5 127.0.0.1:40000
 ```
+
+Правила гео-блокировки живут в `iptables`/`ipset` и не переживают перезагрузку
+сервера, поэтому `geoblock list` показывает не только список стран, но и
+реальное состояние правил (и порт, на котором они висят). При смене порта
+прокси правила переносятся автоматически.
 
 <a id="cli-monitoring"></a>
 

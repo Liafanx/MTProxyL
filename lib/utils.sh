@@ -436,9 +436,19 @@ handle_port_command() {
     _require_manager_mode || return 1
     check_root
     if validate_port "$new_port"; then
+        local _port_before="${PROXY_PORT}"
         PROXY_PORT="$new_port"
         save_settings
         log_success "Порт: ${PROXY_PORT}"
+        # Правила гео-блокировки прибиты к порту: после смены они остались
+        # бы висеть на старом и не защищали новый.
+        if [ -n "${BLOCKLIST_COUNTRIES:-}" ] && [ "$_port_before" != "$PROXY_PORT" ]; then
+            log_info "Перенос правил гео-блокировки на порт ${PROXY_PORT}..."
+            geoblock_remove_all >/dev/null 2>&1 || true
+            geoblock_reapply_all >/dev/null 2>&1 || true
+            geoblock_rules_active && log_success "Гео-блокировка переприменена" \
+                || log_warn "Гео-блокировку переприменить не удалось: mtproxyl geoblock reapply"
+        fi
         if is_proxy_running; then
             load_secrets
             restart_proxy_container || true

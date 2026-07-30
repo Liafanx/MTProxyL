@@ -70,15 +70,26 @@ ZAPRET2_CONF="${ZAPRET2_ETC_DIR}/mtproto.conf"
 ZAPRET2_LUA="${ZAPRET2_LUA_DIR}/mtproto.lua"
 ZAPRET2_SERVICE="mtproxyl-zapret2.service"
 ZAPRET2_NFT_TABLE="MTProtoL"
-ZAPRET2_FWMARK="0x40000000"
-ZAPRET2_QNUM="200"
-ZAPRET2_OUT_RANGE="a"
-ZAPRET2_IN_RANGE="a"
-ZAPRET2_SPLIT_LEN="200"
+# Значения по умолчанию держим одним набором: их же показывает и
+# восстанавливает пункт «Сброс к дефолту», иначе сброс уводил настройки
+# к значениям, которых нет ни у одной свежей установки.
+ZAPRET2_DEFAULT_FWMARK="0x40000000"
+ZAPRET2_DEFAULT_QNUM="200"
+ZAPRET2_DEFAULT_OUT_RANGE="a"
+ZAPRET2_DEFAULT_IN_RANGE="a"
+ZAPRET2_DEFAULT_SPLIT_LEN="200"
+ZAPRET2_DEFAULT_WIN_SYNACK="1280"
+ZAPRET2_DEFAULT_WIN_ACK="10"
+
+ZAPRET2_FWMARK="$ZAPRET2_DEFAULT_FWMARK"
+ZAPRET2_QNUM="$ZAPRET2_DEFAULT_QNUM"
+ZAPRET2_OUT_RANGE="$ZAPRET2_DEFAULT_OUT_RANGE"
+ZAPRET2_IN_RANGE="$ZAPRET2_DEFAULT_IN_RANGE"
+ZAPRET2_SPLIT_LEN="$ZAPRET2_DEFAULT_SPLIT_LEN"
 ZAPRET2_DEBUG="false"
 ZAPRET2_DEBUG_LOG="/var/log/mtproxyl-nfqws2.log"
-ZAPRET2_WIN_SYNACK="1280"
-ZAPRET2_WIN_ACK="10"
+ZAPRET2_WIN_SYNACK="$ZAPRET2_DEFAULT_WIN_SYNACK"
+ZAPRET2_WIN_ACK="$ZAPRET2_DEFAULT_WIN_ACK"
 # Доп. порты/диапазоны для --filter-tcp, через запятую (напр. "8443,9000-9100").
 # Порт прокси добавляется автоматически и здесь не нужен.
 ZAPRET2_EXTRA_PORTS=""
@@ -1963,6 +1974,8 @@ zapret2_remove() {
     systemctl disable "$ZAPRET2_SERVICE" 2>/dev/null || true
     rm -f "/etc/systemd/system/${ZAPRET2_SERVICE}"
     rm -f "/usr/local/sbin/mtproxyl-zapret2-start.sh"
+    # Watcher bridge-режима живёт только ради правил zapret2
+    remove_bridge_watch_service 2>/dev/null || true
     systemctl daemon-reload 2>/dev/null || true
     rm -f "$ZAPRET2_CONF"
     rm -f "$ZAPRET2_LUA"
@@ -2086,6 +2099,10 @@ zapret2_full_cleanup() {
         rm -rf "$ZAPRET2_DIR" "$ZAPRET2_ETC_DIR"
         log_info "Zapret2 MTProto fix удалён"
     fi
+    # Watcher нужен только правилам zapret2 в bridge-режиме: без этого он
+    # оставался в systemd и продолжал переналагать правила несуществующей
+    # таблицы.
+    remove_bridge_watch_service 2>/dev/null || true
 }
 
 # ── Статусы для шапки ─────────────────────────────────────────

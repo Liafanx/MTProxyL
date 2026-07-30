@@ -947,20 +947,20 @@ tui_zapret2_menu() {
                 if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
                     echo ""
                     echo -e "  ${BOLD}Сброс к дефолту:${NC}"
-                    echo -e "    out-range: a  in-range: a"
-                    echo -e "    split len: 400  win SYN+ACK: 1400  win ACK: 10"
-                    echo -e "    NFQUEUE: 200  fwmark: 0x40000000"
+                    echo -e "    out-range: ${ZAPRET2_DEFAULT_OUT_RANGE}  in-range: ${ZAPRET2_DEFAULT_IN_RANGE}"
+                    echo -e "    split len: ${ZAPRET2_DEFAULT_SPLIT_LEN}  win SYN+ACK: ${ZAPRET2_DEFAULT_WIN_SYNACK}  win ACK: ${ZAPRET2_DEFAULT_WIN_ACK}"
+                    echo -e "    NFQUEUE: ${ZAPRET2_DEFAULT_QNUM}  fwmark: ${ZAPRET2_DEFAULT_FWMARK}"
                     echo ""
                     echo -en "  ${BOLD}Сбросить и перезапустить? [y/N]:${NC} "
                     local _yn; read -er _yn
                     if [[ "$_yn" =~ ^[yY]$ ]]; then
-                        ZAPRET2_OUT_RANGE="a"
-                        ZAPRET2_IN_RANGE="a"
-                        ZAPRET2_SPLIT_LEN="400"
-                        ZAPRET2_WIN_SYNACK="1400"
-                        ZAPRET2_WIN_ACK="10"
-                        ZAPRET2_QNUM="200"
-                        ZAPRET2_FWMARK="0x40000000"
+                        ZAPRET2_OUT_RANGE="$ZAPRET2_DEFAULT_OUT_RANGE"
+                        ZAPRET2_IN_RANGE="$ZAPRET2_DEFAULT_IN_RANGE"
+                        ZAPRET2_SPLIT_LEN="$ZAPRET2_DEFAULT_SPLIT_LEN"
+                        ZAPRET2_WIN_SYNACK="$ZAPRET2_DEFAULT_WIN_SYNACK"
+                        ZAPRET2_WIN_ACK="$ZAPRET2_DEFAULT_WIN_ACK"
+                        ZAPRET2_QNUM="$ZAPRET2_DEFAULT_QNUM"
+                        ZAPRET2_FWMARK="$ZAPRET2_DEFAULT_FWMARK"
                         save_nft_settings
                         zapret2_update_config
                         log_success "Настройки сброшены к дефолту"

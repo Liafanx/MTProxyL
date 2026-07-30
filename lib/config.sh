@@ -325,13 +325,76 @@ TOML_EOF
     cp "$tmp" "${CONFIG_DIR}/config.toml" && rm -f "$tmp"
 }
 
+# Override сам по себе ничего не меняет: он попадает в конфиг только при
+# его генерации. Предлагаем это сразу, иначе «сохранено» вводит в
+# заблуждение — движок продолжает работать со старым значением.
+_expert_apply_prompt() {
+    echo -en "  ${BOLD}Пересобрать конфиг и применить сейчас? [Y/n]:${NC} "
+    local _yn; read -er _yn
+    [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Позже: mtproxyl config или меню → Режим эксперта → Пересобрать"; return 0; }
+    generate_telemt_config || { log_error "Ошибка генерации конфига"; return 1; }
+    log_success "Конфиг обновлён"
+    if is_proxy_running; then
+        reload_target_config &>/dev/null || true
+        log_success "Hot-reload отправлен"
+    else
+        log_warn "Прокси не запущен — значения применятся при запуске"
+    fi
+}
+
 handle_expert_command() {
     local subcmd="${1:-list}"; shift 2>/dev/null || true
     [ "$subcmd" = "list" ] || _require_manager_mode || return 1
     case "$subcmd" in
-        list)  expert_list ;;
-        set)   check_root; expert_set "$1" "$2" "$3" ;;
-        clear) check_root; expert_clear "$1" ;;
+        list)  show_expert_overrides ;;
+        set)
+            check_root
+            local _sec="${1:-}" _key="${2:-}" _val="${3:-}"
+            if [ -z "$_sec" ] || [ -z "$_key" ] || [ -z "$_val" ]; then
+                log_error "Использование: mtproxyl expert set <секция> <ключ> <значение>"
+                return 1
+            fi
+            local _entry; _entry=$(_expert_find "$_sec" "$_key")
+            if [ -z "$_entry" ]; then
+                log_error "Параметр [${_sec}] ${_key} не найден в каталоге"
+                log_info "Список доступных: меню → Режим эксперта"
+                return 1
+            fi
+            _expert_parse "$_entry"
+            local _verr
+            _verr=$(_expert_validate "$EXPERT_P_VALIDATOR" "$_val" 2>&1)
+            if [ -n "$_verr" ]; then
+                log_error "Некорректное значение: ${_verr}"
+                return 1
+            fi
+            save_expert_override "$_sec" "$_key" "$_val" || return 1
+            log_success "Override сохранён: [${_sec}] ${_key} = ${_val}"
+            _expert_apply_prompt ;;
+        clear)
+            check_root
+            local _what="${1:-}"
+            case "$_what" in
+                "")
+                    log_error "Использование: mtproxyl expert clear <секция> <ключ> | all"
+                    return 1 ;;
+                all)
+                    clear_all_expert_overrides
+                    log_success "Все expert override удалены"
+                    _expert_apply_prompt ;;
+                *)
+                    local _key="${2:-}"
+                    if [ -z "$_key" ]; then
+                        log_error "Использование: mtproxyl expert clear <секция> <ключ> | all"
+                        return 1
+                    fi
+                    if [ -z "$(get_expert_override_value "$_what" "$_key")" ]; then
+                        log_info "Override [${_what}] ${_key} не задан"
+                        return 0
+                    fi
+                    delete_expert_override "$_what" "$_key" || return 1
+                    log_success "Override удалён: [${_what}] ${_key}"
+                    _expert_apply_prompt ;;
+            esac ;;
         edit)
             check_root
             local config="${CONFIG_DIR}/config.toml"
@@ -345,7 +408,7 @@ handle_expert_command() {
             echo -e "  ${BOLD}Режим эксперта:${NC}"
             echo -e "    ${GREEN}expert list${NC}                            Параметры"
             echo -e "    ${GREEN}expert set${NC} <секция> <ключ> <значение>   Добавить"
-            echo -e "    ${GREEN}expert clear${NC} <ключ|all>                 Удалить"
+            echo -e "    ${GREEN}expert clear${NC} <секция> <ключ> | all      Удалить"
             echo -e "    ${GREEN}expert edit${NC}                            Редактор" ;;
     esac
 }

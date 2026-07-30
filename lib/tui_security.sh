@@ -50,10 +50,25 @@ tui_geoblock_menu() {
         echo ""
         echo -e "  ${BOLD}Режим:${NC}   ${GEOBLOCK_MODE}"
         echo -e "  ${BOLD}Страны:${NC} ${BLOCKLIST_COUNTRIES:-${DIM}нет${NC}}"
+        if [ -n "${BLOCKLIST_COUNTRIES:-}" ]; then
+            # Правила iptables/ipset не переживают перезагрузку — показываем
+            # реальное состояние, а не только список стран в настройках.
+            if geoblock_rules_active; then
+                local _gp; _gp=$(geoblock_rules_port)
+                if [ -n "$_gp" ] && [ "$_gp" != "${PROXY_PORT}" ]; then
+                    echo -e "  ${BOLD}Правила:${NC} ${YELLOW}на порту ${_gp}, прокси на ${PROXY_PORT} — переприменить${NC}"
+                else
+                    echo -e "  ${BOLD}Правила:${NC} ${GREEN}активны${NC}"
+                fi
+            else
+                echo -e "  ${BOLD}Правила:${NC} ${RED}отсутствуют${NC} ${DIM}(сброшены перезагрузкой?)${NC}"
+            fi
+        fi
         echo ""
         echo -e "  ${DIM}[1]${NC} Добавить страну"
         echo -e "  ${DIM}[2]${NC} Удалить страну"
-        echo -e "  ${DIM}[3]${NC} Очистить все"
+        echo -e "  ${DIM}[3]${NC} Переприменить правила"
+        echo -e "  ${DIM}[4]${NC} Очистить все"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
@@ -62,7 +77,8 @@ tui_geoblock_menu() {
                [ -n "$cc" ] && handle_geoblock_command add "$cc"; press_any_key ;;
             2) echo -en "  ${BOLD}Код:${NC} "; local cc; read -er cc
                [ -n "$cc" ] && handle_geoblock_command remove "$cc"; press_any_key ;;
-            3) handle_geoblock_command clear; press_any_key ;;
+            3) handle_geoblock_command reapply; press_any_key ;;
+            4) handle_geoblock_command clear; press_any_key ;;
             0|"") return ;;
         esac
     done
