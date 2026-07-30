@@ -13,15 +13,32 @@ check_root() {
     fi
 }
 
+# Гвард для команд, бессмысленных/опасных в режиме reanimator
+# (владение конфигом/движком, которого у reanimator-цели нет)
+_require_manager_mode() {
+    [ "${MTPROXYL_MODE:-manager}" = "manager" ] && return 0
+    log_error "Команда недоступна в режиме reanimator (нет владения конфигом/движком цели)"
+    return 1
+}
+
 detect_os() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
         case "$ID" in
-            ubuntu|debian|pop|linuxmint|kali) echo "debian" ;;
-            centos|rhel|fedora|rocky|alma|oracle) echo "rhel" ;;
-            alpine) echo "alpine" ;;
-            *) echo "unknown" ;;
+            ubuntu|debian|pop|linuxmint|kali|raspbian|devuan|neon|zorin|elementary)
+                echo "debian"; return ;;
+            centos|rhel|fedora|rocky|alma|almalinux|oracle|ol|amzn|cloudlinux|navylinux|circle)
+                echo "rhel"; return ;;
+            alpine) echo "alpine"; return ;;
         esac
+        # ID неизвестен — опираемся на ID_LIKE, чтобы производные дистрибутивы
+        # (AlmaLinux, Rocky, Mint и т.п.) не отваливались в "unknown".
+        case " ${ID_LIKE:-} " in
+            *" debian "*|*" ubuntu "*)              echo "debian"; return ;;
+            *" rhel "*|*" fedora "*|*" centos "*)   echo "rhel";   return ;;
+            *" alpine "*)                            echo "alpine"; return ;;
+        esac
+        echo "unknown"
     elif [ -f /etc/debian_version ]; then
         echo "debian"
     elif [ -f /etc/redhat-release ]; then
@@ -335,7 +352,7 @@ self_update() {
     if [ -z "$_lib_list" ]; then
         log_warn "Не удалось извлечь список библиотек из нового скрипта"
         log_info "Используем резервный список"
-        _lib_list="colors utils settings secrets config docker engine traffic geoblock upstream backup nft selfmask tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons expert_catalog expert_mode install"
+        _lib_list="colors utils settings secrets config docker engine traffic geoblock upstream backup nft selfmask detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode install"
     fi
 
     local _total=0 _ok=0 _failed=0 _skipped=0
@@ -404,6 +421,7 @@ handle_port_command() {
         echo -e "  ${BOLD}Порт:${NC} ${PROXY_PORT}"
         return 0
     fi
+    _require_manager_mode || return 1
     check_root
     if validate_port "$new_port"; then
         PROXY_PORT="$new_port"
@@ -451,6 +469,7 @@ handle_domain_command() {
         echo -e "  ${BOLD}Домен:${NC} ${PROXY_DOMAIN}"
         return 0
     fi
+    _require_manager_mode || return 1
     check_root
     if validate_domain "$new_domain"; then
         local _old_domain="$PROXY_DOMAIN"
@@ -492,6 +511,7 @@ handle_mask_backend() {
         echo -e "  ${BOLD}Mask backend:${NC} ${MASKING_HOST:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}"
         return 0
     fi
+    _require_manager_mode || return 1
     check_root
     # Парсим host:port или только host
     local new_host new_port
@@ -571,6 +591,7 @@ show_cli_help() {
     echo -e "  ${BOLD}Безопасность:${NC}   geoblock add|remove|list | upstream list|add|remove | sni-policy"
     echo -e "  ${BOLD}Мониторинг:${NC}     traffic | connections | metrics [live] | logs | health | info"
     echo -e "  ${BOLD}Бэкапы:${NC}         backup [--encrypt] | restore <файл>"
+    echo -e "  ${BOLD}Reanimator:${NC}     mode [manager|reanimator] | detect | edit-config"
     echo -e "  ${BOLD}Система:${NC}        install | menu | update | uninstall | version | help"
     echo ""
 }
@@ -584,6 +605,26 @@ is_port_available() {
         ! netstat -tln 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${port}$"
     else
         return 0
+    fi
+}
+
+# Кто именно слушает порт — чтобы пользователь понимал, с чем конфликт
+# (на сервере рядом может стоять свой telemt-бинарник, nginx, панель).
+show_port_listener() {
+    local _port="$1" _out=""
+    if command -v ss &>/dev/null; then
+        _out=$(ss -ltnp 2>/dev/null | awk -v p=":${_port}\$" '$4 ~ p {print}')
+    elif command -v netstat &>/dev/null; then
+        _out=$(netstat -ltnp 2>/dev/null | awk -v p=":${_port}\$" '$4 ~ p {print}')
+    fi
+    if [ -n "$_out" ]; then
+        echo -e "  ${DIM}Порт занимает:${NC}"
+        echo "$_out" | sed 's/^/    /'
+    fi
+    if command -v docker &>/dev/null; then
+        local _dc
+        _dc=$(docker ps --format '{{.Names}} {{.Ports}}' 2>/dev/null | grep -E "(^|[^0-9])${_port}->" || true)
+        [ -n "$_dc" ] && { echo -e "  ${DIM}Docker-контейнеры на этом порту:${NC}"; echo "$_dc" | sed 's/^/    /'; }
     fi
 }
 

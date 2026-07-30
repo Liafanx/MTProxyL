@@ -3,6 +3,21 @@
 
 _TUNE_FILE="${INSTALL_DIR}/tunings.conf"
 
+# ── Таймауты, которые MTProxyL пишет в свой config.toml ───────
+# Единственный источник истины: их подставляет generate_telemt_config()
+# ниже, и их же предлагает применить визард тюнинга в режиме Reanimator
+# (значения telemt по умолчанию заметно ниже: 10/30/15).
+MTPROXYL_TG_CONNECT=30
+MTPROXYL_CLIENT_HANDSHAKE=90
+MTPROXYL_CLIENT_KEEPALIVE=120
+
+# Набор параметров для тюнинга чужой цели: параметр:секция:значение
+_REANIMATOR_TUNE_SET=(
+    "client_handshake:timeouts:${MTPROXYL_CLIENT_HANDSHAKE}"
+    "tg_connect:general:${MTPROXYL_TG_CONNECT}"
+    "client_keepalive:timeouts:${MTPROXYL_CLIENT_KEEPALIVE}"
+)
+
 # ── Tune whitelist ────────────────────────────────────────────
 _TUNE_WHITELIST=(
     "fake_cert_len:censorship:^[0-9]+$"
@@ -24,6 +39,20 @@ _TUNE_WHITELIST=(
     "client_mss:server:^(extreme-low|tspu|2in8|[0-9]+)$"
     "client_mss_bulk:server:^(extreme-low|tspu|2in8|[0-9]+)$"
 )
+
+run_tune_wizard() {
+    handle_tune_command list
+    echo -e "  ${DIM}[1] Установить  [2] Очистить  [3] Очистить все  [0] Назад${NC}"
+    local tc; tc=$(read_choice "выбор" "0")
+    case "$tc" in
+        1) echo -en "  ${BOLD}Параметр:${NC} "; local tp; read -r tp
+           echo -en "  ${BOLD}Значение:${NC} "; local tv; read -r tv
+           [ -n "$tp" ] && [ -n "$tv" ] && handle_tune_command set "$tp" "$tv" ;;
+        2) echo -en "  ${BOLD}Параметр:${NC} "; local tp; read -r tp
+           [ -n "$tp" ] && handle_tune_command clear "$tp" ;;
+        3) handle_tune_command clear all ;;
+    esac
+}
 
 _tune_lookup() {
     local param="$1" entry
@@ -73,9 +102,13 @@ handle_tune_command() {
             echo "${param}|${value}" >> "$tmp"
             mv "$tmp" "$_TUNE_FILE"; chmod 600 "$_TUNE_FILE"
             log_success "${param} = ${value}"
-            if is_proxy_running; then
-                echo -en "  ${DIM}Перезапустить? [Y/n]:${NC} "; local r; read -r r 2>/dev/null || r="y"
-                [[ ! "$r" =~ ^[nN] ]] && { load_secrets; restart_proxy_container || true; }
+            if [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
+                if is_proxy_running; then
+                    echo -en "  ${DIM}Перезапустить? [Y/n]:${NC} "; local r; read -r r 2>/dev/null || r="y"
+                    [[ ! "$r" =~ ^[nN] ]] && { load_secrets; restart_proxy_container || true; }
+                fi
+            else
+                apply_target_tuning "$param" "$value" "$sect"
             fi ;;
         clear)
             check_root
@@ -112,7 +145,7 @@ generate_telemt_config() {
 
 [general]
 prefer_ipv6 = false
-tg_connect = 30
+tg_connect = ${MTPROXYL_TG_CONNECT}
 fast_mode = true
 use_middle_proxy = true
 log_level = "normal"
@@ -134,8 +167,8 @@ metrics_listen = "127.0.0.1:${metrics_port}"
 metrics_whitelist = ["127.0.0.1", "::1"]
 
 [timeouts]
-client_handshake = 90
-client_keepalive = 120
+client_handshake = ${MTPROXYL_CLIENT_HANDSHAKE}
+client_keepalive = ${MTPROXYL_CLIENT_KEEPALIVE}
 client_ack = 90
 
 [censorship]
@@ -294,6 +327,7 @@ TOML_EOF
 
 handle_expert_command() {
     local subcmd="${1:-list}"; shift 2>/dev/null || true
+    [ "$subcmd" = "list" ] || _require_manager_mode || return 1
     case "$subcmd" in
         list)  expert_list ;;
         set)   check_root; expert_set "$1" "$2" "$3" ;;

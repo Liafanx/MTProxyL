@@ -7,6 +7,11 @@ NFT_SYSTEMD_UNIT="mtproxyl-syn-limit.service"
 IOS_SYSCTL_FILE="/etc/sysctl.d/99-mtproxyl-keepalive.conf"
 IOS2_NFT_TABLE="mtproxyl_ios2"
 
+# Reanimator: watcher IP Docker-bridge цели (только DETECT_BRIDGE_STRATEGY=precise)
+BRIDGE_WATCH_SCRIPT="/usr/local/sbin/mtproxyl-bridge-watch.sh"
+BRIDGE_WATCH_UNIT="mtproxyl-bridge-watch.service"
+BRIDGE_WATCH_INTERVAL="5"
+
 # ── Значения по умолчанию ─────────────────────────────────────
 NFT_ENABLED="false"
 NFT_MODE="classic"
@@ -69,11 +74,14 @@ ZAPRET2_FWMARK="0x40000000"
 ZAPRET2_QNUM="200"
 ZAPRET2_OUT_RANGE="a"
 ZAPRET2_IN_RANGE="a"
-ZAPRET2_SPLIT_LEN="400"
+ZAPRET2_SPLIT_LEN="200"
 ZAPRET2_DEBUG="false"
 ZAPRET2_DEBUG_LOG="/var/log/mtproxyl-nfqws2.log"
-ZAPRET2_WIN_SYNACK="1400"
+ZAPRET2_WIN_SYNACK="1280"
 ZAPRET2_WIN_ACK="10"
+# Доп. порты/диапазоны для --filter-tcp, через запятую (напр. "8443,9000-9100").
+# Порт прокси добавляется автоматически и здесь не нужен.
+ZAPRET2_EXTRA_PORTS=""
 ZAPRET2_APPLIED="false"
 ZAPRET2_SERVICE_ENABLED="false"
 
@@ -137,6 +145,7 @@ ZAPRET2_IN_RANGE='${ZAPRET2_IN_RANGE}'
 ZAPRET2_SPLIT_LEN='${ZAPRET2_SPLIT_LEN}'
 ZAPRET2_WIN_SYNACK='${ZAPRET2_WIN_SYNACK}'
 ZAPRET2_WIN_ACK='${ZAPRET2_WIN_ACK}'
+ZAPRET2_EXTRA_PORTS='${ZAPRET2_EXTRA_PORTS}'
 ZAPRET2_QNUM='${ZAPRET2_QNUM}'
 ZAPRET2_FWMARK='${ZAPRET2_FWMARK}'
 ZAPRET2_DEBUG='${ZAPRET2_DEBUG}'
@@ -179,7 +188,7 @@ load_nft_settings() {
                 NFT_EXTRA_COUNT|\
                 ZAPRET2_APPLIED|ZAPRET2_SERVICE_ENABLED|\
                 ZAPRET2_OUT_RANGE|ZAPRET2_IN_RANGE|ZAPRET2_SPLIT_LEN|\
-                ZAPRET2_WIN_SYNACK|ZAPRET2_WIN_ACK|\
+                ZAPRET2_WIN_SYNACK|ZAPRET2_WIN_ACK|ZAPRET2_EXTRA_PORTS|\
                 ZAPRET2_QNUM|ZAPRET2_FWMARK|ZAPRET2_DEBUG)
                     printf -v "$_key" '%s' "$_val"
                     [ "$_key" = "NFT_IOS_DETECT" ] && _have_ios_detect="true"
@@ -396,25 +405,29 @@ SMART3NOLIMEOF
 }
 
 # ── Применение / удаление правил ──────────────────────────────
-apply_nft_rules() {
-    if ! command -v nft &>/dev/null; then
-        log_info "nftables не установлен, устанавливаем..."
-        _wait_apt 2>/dev/null || true
-        if command -v apt-get &>/dev/null; then
-            apt-get update -qq && apt-get install -y -qq nftables
-        elif command -v yum &>/dev/null; then
-            yum install -y -q nftables
-        elif command -v dnf &>/dev/null; then
-            dnf install -y -q nftables
-        elif command -v apk &>/dev/null; then
-            apk add --no-cache nftables
-        else
-            log_error "Не удалось установить nftables — установите вручную: apt install nftables"
-            return 1
-        fi
-        command -v nft &>/dev/null || { log_error "nftables не установлен после попытки установки"; return 1; }
-        log_success "nftables установлен"
+ensure_nftables_installed() {
+    command -v nft &>/dev/null && return 0
+
+    log_info "nftables не установлен, устанавливаем..."
+    _wait_apt 2>/dev/null || true
+    if command -v apt-get &>/dev/null; then
+        apt-get update -qq && apt-get install -y -qq nftables
+    elif command -v yum &>/dev/null; then
+        yum install -y -q nftables
+    elif command -v dnf &>/dev/null; then
+        dnf install -y -q nftables
+    elif command -v apk &>/dev/null; then
+        apk add --no-cache nftables
+    else
+        log_error "Не удалось установить nftables — установите вручную: apt install nftables"
+        return 1
     fi
+    command -v nft &>/dev/null || { log_error "nftables не установлен после попытки установки"; return 1; }
+    log_success "nftables установлен"
+}
+
+apply_nft_rules() {
+    ensure_nftables_installed || return 1
 
     generate_nft_script
     if /bin/sh "$NFT_SCRIPT_FILE"; then
@@ -432,10 +445,101 @@ remove_nft_rules() {
 }
 
 # ── Systemd сервис ────────────────────────────────────────────
+# ── Reanimator: watcher для точного bridge-режима ──────────────
+_bridge_watch_needed() {
+    [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && \
+    [ "${DETECTED_NETWORK_MODE:-host}" = "bridge" ] && \
+    [ "${DETECT_BRIDGE_STRATEGY:-simple}" = "precise" ]
+}
+
+mtproxyl_generate_bridge_watch_script() {
+    cat > "$BRIDGE_WATCH_SCRIPT" << EOF
+#!/bin/sh
+set -eu
+
+CONTAINER="${DETECTED_CONTAINER}"
+NFT_SCRIPT="${NFT_SCRIPT_FILE}"
+INTERVAL="${BRIDGE_WATCH_INTERVAL}"
+
+LAST_IP=""
+
+echo "MTProxyL reanimator: watching container \$CONTAINER (bridge precise mode)"
+
+while true; do
+    RUNNING="\$(docker inspect -f '{{.State.Running}}' "\$CONTAINER" 2>/dev/null || true)"
+
+    if [ "\$RUNNING" = "true" ]; then
+        IP="\$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{"\n"}}{{end}}' "\$CONTAINER" 2>/dev/null | awk 'NF {print; exit}')"
+
+        if [ -n "\$IP" ] && [ "\$IP" != "\$LAST_IP" ]; then
+            echo "Container IP changed: \${LAST_IP:-none} -> \$IP"
+            if systemctl is-active mtproxyl-zapret2.service >/dev/null 2>&1 || systemctl is-enabled mtproxyl-zapret2.service >/dev/null 2>&1; then
+                systemctl restart mtproxyl-zapret2.service || true
+            elif [ -f "\$NFT_SCRIPT" ]; then
+                /bin/sh "\$NFT_SCRIPT" || true
+            fi
+            LAST_IP="\$IP"
+        fi
+    else
+        if [ -n "\$LAST_IP" ]; then
+            echo "Container \$CONTAINER is not running"
+            LAST_IP=""
+        fi
+    fi
+
+    sleep "\$INTERVAL"
+done
+EOF
+    chmod +x "$BRIDGE_WATCH_SCRIPT"
+    log_success "Watcher-скрипт создан: ${BRIDGE_WATCH_SCRIPT}"
+}
+
+remove_bridge_watch_service() {
+    systemctl disable --now "$BRIDGE_WATCH_UNIT" 2>/dev/null || true
+    rm -f "/etc/systemd/system/${BRIDGE_WATCH_UNIT}"
+    rm -f "$BRIDGE_WATCH_SCRIPT"
+    systemctl daemon-reload 2>/dev/null || true
+}
+
+# Watcher нужен и для SYN limiter, и для zapret2: в bridge/precise IP
+# контейнера может измениться после его перезапуска, и правила надо
+# переналожить. Поэтому вынесено в отдельную функцию.
+install_bridge_watch_service() {
+    systemctl disable --now "$BRIDGE_WATCH_UNIT" 2>/dev/null || true
+    rm -f "/etc/systemd/system/${BRIDGE_WATCH_UNIT}"
+
+    _bridge_watch_needed || { systemctl daemon-reload 2>/dev/null || true; return 0; }
+
+    mtproxyl_generate_bridge_watch_script
+
+    cat > "/etc/systemd/system/${BRIDGE_WATCH_UNIT}" << EOF
+[Unit]
+Description=MTProxyL reanimator Docker bridge watcher
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${BRIDGE_WATCH_SCRIPT}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable "$BRIDGE_WATCH_UNIT" 2>/dev/null
+    systemctl restart "$BRIDGE_WATCH_UNIT" 2>/dev/null
+    log_success "Установлена watcher-служба для точного Docker bridge-режима"
+}
+
 install_nft_service() {
     generate_nft_script
     local _table="${NFT_TABLE:-mtproxyl_limit}"
     local _ios2_table="${IOS2_NFT_TABLE}"
+
+    install_bridge_watch_service
 
     cat > "/etc/systemd/system/${NFT_SYSTEMD_UNIT}" << SVCEOF
 [Unit]
@@ -465,6 +569,7 @@ remove_nft_service() {
     systemctl disable --now "$NFT_SYSTEMD_UNIT" 2>/dev/null || true
     rm -f "/etc/systemd/system/${NFT_SYSTEMD_UNIT}"
     rm -f "$NFT_SCRIPT_FILE"
+    remove_bridge_watch_service
     systemctl daemon-reload 2>/dev/null || true
     NFT_ENABLED="false"
     save_nft_settings
@@ -474,9 +579,10 @@ remove_nft_service() {
 # ── Пресеты ───────────────────────────────────────────────────
 apply_nft_preset() {
     case "$1" in
-        hard)   NFT_MODE="classic"; NFT_RATE="1/second"; NFT_BURST="1" ;;
-        medium) NFT_MODE="classic"; NFT_RATE="1/second"; NFT_BURST="3" ;;
-        soft)   NFT_MODE="classic"; NFT_RATE="2/second"; NFT_BURST="5" ;;
+        # classic — единственный стандартный вариант лимитера (1/second
+        # burst 1); всё остальное задаётся вручную. hard оставлен как
+        # синоним для совместимости со старыми вызовами CLI.
+        classic|hard) NFT_MODE="classic"; NFT_RATE="1/second"; NFT_BURST="1" ;;
         smart)
             NFT_MODE="smart"
             NFT_REJECT_MODE="reset"
@@ -495,7 +601,7 @@ apply_nft_preset() {
     if [ "$1" = "smart" ]; then
         log_success "Пресет: Smart By-MEKO (iOS: ${NFT_IOS_RATE} burst ${NFT_IOS_BURST} / Other: ${NFT_OTHER_RATE} burst ${NFT_OTHER_BURST})"
     else
-        log_success "Пресет: $1 (rate=$NFT_RATE burst=$NFT_BURST)"
+        log_success "Classic лимитер: rate=$NFT_RATE burst=$NFT_BURST"
     fi
 }
 
@@ -1122,7 +1228,11 @@ zapret2_status() {
     if systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null 2>&1; then
         local _dbg=""
         [ "${ZAPRET2_DEBUG:-false}" = "true" ] && _dbg=" ${YELLOW}debug${NC}"
-        echo -e "${GREEN}активен${NC} (out-range=${ZAPRET2_OUT_RANGE} len=${ZAPRET2_SPLIT_LEN} win=${ZAPRET2_WIN_SYNACK}/${ZAPRET2_WIN_ACK})${_dbg}"
+        local _extra=""
+        [ -n "${ZAPRET2_EXTRA_PORTS:-}" ] && _extra=" ports=$(zapret2_filter_ports)"
+        local _br=""
+        zapret2_is_bridge_target && _br=" bridge/${DETECT_BRIDGE_STRATEGY:-simple}"
+        echo -e "${GREEN}активен${NC} (out-range=${ZAPRET2_OUT_RANGE} len=${ZAPRET2_SPLIT_LEN} win=${ZAPRET2_WIN_SYNACK}/${ZAPRET2_WIN_ACK}${_extra}${_br})${_dbg}"
     else
         echo -e "${YELLOW}установлен, остановлен${NC}"
     fi
@@ -1140,6 +1250,8 @@ zapret2_detect_arch() {
 }
 
 zapret2_download_bundle() {
+    ensure_nftables_installed || return 1
+
     local _arch
     _arch=$(zapret2_detect_arch)
     if [ -z "$_arch" ]; then
@@ -1238,8 +1350,64 @@ zapret2_download_bundle() {
     return 0
 }
 
-zapret2_write_conf() {
+# Список портов для --filter-tcp: порт прокси + ZAPRET2_EXTRA_PORTS.
+# Формат nfqws2: port1[-port2] через запятую, количество не ограничено.
+zapret2_filter_ports() {
     local _port="${PROXY_PORT:-443}"
+    local _list="$_port"
+    local _p
+    if [ -n "${ZAPRET2_EXTRA_PORTS:-}" ]; then
+        IFS=',' read -r -a _arr <<< "$ZAPRET2_EXTRA_PORTS"
+        for _p in "${_arr[@]}"; do
+            _p="${_p// /}"
+            [ -z "$_p" ] && continue
+            # не дублируем порт прокси
+            [ "$_p" = "$_port" ] && continue
+            _list="${_list},${_p}"
+        done
+    fi
+    echo "$_list"
+}
+
+# Валидация одного элемента списка: порт или диапазон порт-порт
+zapret2_validate_port_item() {
+    local _item="${1// /}"
+    if [[ "$_item" =~ ^([0-9]{1,5})-([0-9]{1,5})$ ]]; then
+        local _a="${BASH_REMATCH[1]}" _b="${BASH_REMATCH[2]}"
+        [ "$_a" -ge 1 ] && [ "$_a" -le 65535 ] && [ "$_b" -ge 1 ] && [ "$_b" -le 65535 ] && [ "$_a" -le "$_b" ]
+        return $?
+    fi
+    if [[ "$_item" =~ ^[0-9]{1,5}$ ]]; then
+        [ "$_item" -ge 1 ] && [ "$_item" -le 65535 ]
+        return $?
+    fi
+    return 1
+}
+
+# Валидация всего списка ZAPRET2_EXTRA_PORTS
+zapret2_validate_extra_ports() {
+    local _spec="$1" _p
+    [ -z "$_spec" ] && return 0
+    IFS=',' read -r -a _arr <<< "$_spec"
+    for _p in "${_arr[@]}"; do
+        [ -z "${_p// /}" ] && continue
+        zapret2_validate_port_item "$_p" || return 1
+    done
+    return 0
+}
+
+# Порты для NFT-правил: разворачиваем список в nft-синтаксис
+# ("443" -> "443", "443,8443,9000-9100" -> "{ 443, 8443, 9000-9100 }")
+zapret2_nft_port_spec() {
+    local _list; _list=$(zapret2_filter_ports)
+    case "$_list" in
+        *,*) echo "{ ${_list//,/, } }" ;;
+        *)   echo "$_list" ;;
+    esac
+}
+
+zapret2_write_conf() {
+    local _port; _port=$(zapret2_filter_ports)
     mkdir -p "$ZAPRET2_ETC_DIR"
     local _debug_line=""
     [ "${ZAPRET2_DEBUG:-false}" = "true" ] && _debug_line="--debug=@${ZAPRET2_DEBUG_LOG}"
@@ -1259,7 +1427,7 @@ ${_debug_line}
 --lua-desync=lets_resend
 --new
 EOF
-    log_success "Конфиг записан: ${ZAPRET2_CONF} (порт=${_port})"
+    log_success "Конфиг записан: ${ZAPRET2_CONF} (порты=${_port})"
 }
 
 zapret2_write_lua() {
@@ -1299,7 +1467,7 @@ function lets_resend(ctx, desync)
     -- Пустые ACK: зажимаем окно, отпускаем после первого payload
     if direction_check(desync) and bitand(desync.dis.tcp.th_flags, TH_SYN + TH_ACK) == (TH_ACK) then
         local ack0 = desync.track and desync.track.lua_state["ack0"]
-        if ack0 and (desync.dis.tcp.th_ack - ack0 >= 1400) then
+        if ack0 and (desync.dis.tcp.th_ack - ack0 >= ${ZAPRET2_WIN_SYNACK}) then
             instance_cutoff(ctx, true)
             desync.arg.fwmark = 0x40000
             rawsend_dissect_segmented(desync)
@@ -1336,16 +1504,24 @@ zapret2_write_service() {
     local _combined_mark
     printf -v _combined_mark '0x%08x' "$(( ZAPRET2_FWMARK | _ct_mark ))"
 
+    local _is_bridge="false"
+    zapret2_is_bridge_target && _is_bridge="true"
+    local _is_precise="false"
+    [ "${DETECT_BRIDGE_STRATEGY:-simple}" = "precise" ] && _is_precise="true"
+
     cat > "$_nft_script" << NFTSTART
 #!/bin/bash
 set -e
 
 TABLE="${ZAPRET2_NFT_TABLE}"
 FWMARK="${ZAPRET2_FWMARK}"
-PORT="${PROXY_PORT:-443}"
+PORT="$(zapret2_nft_port_spec)"
 QNUM="${ZAPRET2_QNUM}"
 CT_MARK="${_ct_mark}"
 COMBINED_MARK="${_combined_mark}"
+IS_BRIDGE="${_is_bridge}"
+IS_PRECISE="${_is_precise}"
+CONTAINER="${DETECTED_CONTAINER}"
 
 nft delete table ip "\$TABLE" 2>/dev/null || true
 nft add table ip "\$TABLE"
@@ -1357,26 +1533,67 @@ nft "add rule ip \$TABLE predefrag meta mark and \$FWMARK != 0x00000000 counter 
 nft "add chain ip \$TABLE output { type route hook output priority mangle; policy accept; }"
 nft "add rule ip \$TABLE output meta mark and \$COMBINED_MARK == \$COMBINED_MARK ct mark set \$CT_MARK counter accept"
 
-nft "add chain ip \$TABLE postrouting { type filter hook postrouting priority srcnat + 1; policy accept; }"
-nft "add rule ip \$TABLE postrouting ct mark \$CT_MARK counter accept"
-nft "add rule ip \$TABLE postrouting meta mark and \$FWMARK == 0x00000000 tcp sport \$PORT counter queue num \$QNUM bypass"
+if [ "\$IS_BRIDGE" = "true" ]; then
+    # Docker bridge: трафик до контейнера идёт через forward.
+    DADDR_MATCH=""
+    SADDR_MATCH=""
+    if [ "\$IS_PRECISE" = "true" ] && [ -n "\$CONTAINER" ]; then
+        # Контейнер после перезагрузки может подняться позже нас —
+        # ждём его IP до 30 секунд.
+        CIP=""
+        for i in \$(seq 1 30); do
+            RUNNING="\$(docker inspect -f '{{.State.Running}}' "\$CONTAINER" 2>/dev/null || true)"
+            if [ "\$RUNNING" = "true" ]; then
+                CIP="\$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{"\n"}}{{end}}' "\$CONTAINER" 2>/dev/null | awk 'NF {print; exit}')"
+                [ -n "\$CIP" ] && break
+            fi
+            sleep 1
+        done
+        if [ -n "\$CIP" ]; then
+            DADDR_MATCH="ip daddr \$CIP "
+            SADDR_MATCH="ip saddr \$CIP "
+            echo "MTProxyL: zapret2 bridge precise mode, container IP \$CIP"
+        else
+            echo "MTProxyL: warning - container IP for \$CONTAINER not detected, applying without IP match" >&2
+        fi
+    fi
 
-nft "add chain ip \$TABLE prerouting { type filter hook prerouting priority mangle; policy accept; }"
-nft "add rule ip \$TABLE prerouting ct state invalid counter drop"
-nft "add rule ip \$TABLE prerouting ct mark \$CT_MARK counter accept"
-nft "add rule ip \$TABLE prerouting meta mark and \$FWMARK == 0x00000000 tcp dport \$PORT counter queue num \$QNUM bypass"
+    nft "add chain ip \$TABLE forward { type filter hook forward priority mangle; policy accept; }"
+    nft "add rule ip \$TABLE forward ct state invalid counter drop"
+    nft "add rule ip \$TABLE forward ct mark \$CT_MARK counter accept"
+    nft "add rule ip \$TABLE forward \${DADDR_MATCH}meta mark and \$FWMARK == 0x00000000 tcp dport \$PORT counter queue num \$QNUM bypass"
+    nft "add rule ip \$TABLE forward \${SADDR_MATCH}meta mark and \$FWMARK == 0x00000000 tcp sport \$PORT counter queue num \$QNUM bypass"
+else
+    nft "add chain ip \$TABLE postrouting { type filter hook postrouting priority srcnat + 1; policy accept; }"
+    nft "add rule ip \$TABLE postrouting ct mark \$CT_MARK counter accept"
+    nft "add rule ip \$TABLE postrouting meta mark and \$FWMARK == 0x00000000 tcp sport \$PORT counter queue num \$QNUM bypass"
 
-echo "MTProxyL: NFT table \$TABLE applied (port=\$PORT qnum=\$QNUM)"
+    nft "add chain ip \$TABLE prerouting { type filter hook prerouting priority mangle; policy accept; }"
+    nft "add rule ip \$TABLE prerouting ct state invalid counter drop"
+    nft "add rule ip \$TABLE prerouting ct mark \$CT_MARK counter accept"
+    nft "add rule ip \$TABLE prerouting meta mark and \$FWMARK == 0x00000000 tcp dport \$PORT counter queue num \$QNUM bypass"
+fi
+
+echo "MTProxyL: NFT table \$TABLE applied (ports=\$PORT qnum=\$QNUM bridge=\$IS_BRIDGE precise=\$IS_PRECISE)"
 
 exec ${ZAPRET2_BIN} @${ZAPRET2_CONF}
 NFTSTART
     chmod +x "$_nft_script"
 
+    # В bridge-режиме стартовый скрипт опрашивает docker inspect —
+    # значит служба должна подниматься после docker.
+    local _unit_after="network-online.target nftables.service"
+    local _unit_wants="network-online.target"
+    if [ "$_is_bridge" = "true" ]; then
+        _unit_after="${_unit_after} docker.service"
+        _unit_wants="${_unit_wants} docker.service"
+    fi
+
     cat > "/etc/systemd/system/${ZAPRET2_SERVICE}" << EOF
 [Unit]
 Description=MTProxyL Zapret2 MTProto fix
-After=network-online.target nftables.service
-Wants=network-online.target
+After=${_unit_after}
+Wants=${_unit_wants}
 
 [Service]
 Type=simple
@@ -1395,18 +1612,53 @@ EOF
     systemctl daemon-reload
     systemctl reset-failed "${ZAPRET2_SERVICE}" 2>/dev/null || true
     log_success "Служба создана: ${ZAPRET2_SERVICE}"
+
+    # В bridge/precise IP контейнера может смениться — watcher переналожит
+    # правила (он перезапускает именно zapret2-службу, если она активна).
+    install_bridge_watch_service
+}
+
+# true, если цель живёт в Docker bridge и трафик до неё идёт через forward,
+# а не через локальные pre/postrouting хуки хоста.
+# Zapret2 и SYN limiter взаимоисключающи. Вместо того чтобы блокировать
+# переключение, предлагаем отключить активный механизм и перейти на другой.
+# Возвращает 0, если путь свободен (zapret2 отключён либо и не был активен).
+offer_disable_zapret2() {
+    local _reason="${1:-SYN limiter}"
+    nft list table ip "${ZAPRET2_NFT_TABLE:-MTProtoL}" &>/dev/null 2>&1 || \
+        [ "${ZAPRET2_APPLIED:-false}" = "true" ] || return 0
+
+    echo ""
+    log_warn "Сейчас активен Zapret2 fix — вместе с ${_reason} он не работает"
+    echo -e "  ${DIM}[1]${NC} Отключить Zapret2 и перейти на ${_reason} ${DIM}(рекомендуется)${NC}"
+    echo -e "  ${DIM}[2]${NC} Оставить Zapret2, отменить переключение"
+    local _c; _c=$(read_choice "выбор" "1")
+    [ "$_c" = "1" ] || { log_info "Отменено — Zapret2 остаётся активным"; return 1; }
+
+    zapret2_stop
+    ZAPRET2_SERVICE_ENABLED="false"
+    save_nft_settings
+    log_success "Zapret2 отключён — можно включать ${_reason}"
+    return 0
+}
+
+
+zapret2_is_bridge_target() {
+    [ "${DETECTED_NETWORK_MODE:-host}" = "bridge" ] || [ "${NFT_HOOK:-input}" = "forward" ]
 }
 
 zapret2_apply_nft() {
+    ensure_nftables_installed || return 1
+
     local _table="${ZAPRET2_NFT_TABLE}"
     local _fwmark="${ZAPRET2_FWMARK}"
-    local _port="${PROXY_PORT:-443}"
+    local _port; _port=$(zapret2_nft_port_spec)
     local _ct_mark="0x00040000"
     local _combined_mark
 
     printf -v _combined_mark '0x%08x' "$(( _fwmark | _ct_mark ))"
 
-    if [ -z "$_port" ]; then
+    if [ -z "${PROXY_PORT:-}" ]; then
         log_error "Порт не задан — невозможно применить NFT правила zapret2"
         return 1
     fi
@@ -1421,6 +1673,32 @@ zapret2_apply_nft() {
     nft "add chain ip $_table output { type route hook output priority mangle; policy accept; }"
     nft "add rule ip $_table output meta mark and ${_combined_mark} == ${_combined_mark} ct mark set ${_ct_mark} counter accept"
 
+    if zapret2_is_bridge_target; then
+        # Docker bridge: пакеты до контейнера проходят forward, а не
+        # prerouting/postrouting хоста. В precise-режиме дополнительно
+        # сужаем правило до IP контейнера (его отслеживает watcher).
+        local _daddr_match="" _saddr_match=""
+        if [ "${DETECT_BRIDGE_STRATEGY:-simple}" = "precise" ]; then
+            local _cip
+            _cip=$(docker_container_ip "$DETECTED_CONTAINER" 2>/dev/null || true)
+            if [ -n "$_cip" ]; then
+                _daddr_match="ip daddr ${_cip} "
+                _saddr_match="ip saddr ${_cip} "
+                log_info "Zapret2 bridge/precise: IP контейнера ${_cip}"
+            else
+                log_warn "Zapret2 bridge/precise: IP контейнера не определён — правила без фильтра по IP"
+            fi
+        fi
+
+        nft "add chain ip $_table forward { type filter hook forward priority mangle; policy accept; }"
+        nft "add rule ip $_table forward ct state invalid counter drop"
+        nft "add rule ip $_table forward ct mark ${_ct_mark} counter accept"
+        nft "add rule ip $_table forward ${_daddr_match}meta mark and $_fwmark == 0x00000000 tcp dport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
+        nft "add rule ip $_table forward ${_saddr_match}meta mark and $_fwmark == 0x00000000 tcp sport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
+        log_success "NFT таблица ${_table} применена для Docker bridge (forward: порты=${_port} qnum=${ZAPRET2_QNUM} strategy=${DETECT_BRIDGE_STRATEGY:-simple})"
+        return 0
+    fi
+
     nft "add chain ip $_table postrouting { type filter hook postrouting priority srcnat + 1; policy accept; }"
     nft "add rule ip $_table postrouting ct mark ${_ct_mark} counter accept"
     nft "add rule ip $_table postrouting meta mark and $_fwmark == 0x00000000 tcp sport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
@@ -1430,7 +1708,7 @@ zapret2_apply_nft() {
     nft "add rule ip $_table prerouting ct mark ${_ct_mark} counter accept"
     nft "add rule ip $_table prerouting meta mark and $_fwmark == 0x00000000 tcp dport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
 
-    log_success "NFT таблица ${_table} применена (порт=${_port} qnum=${ZAPRET2_QNUM})"
+    log_success "NFT таблица ${_table} применена (порты=${_port} qnum=${ZAPRET2_QNUM})"
 }
 
 zapret2_remove_nft() {
@@ -1444,7 +1722,8 @@ zapret2_start() {
         return 1
     fi
     systemctl daemon-reload
-    systemctl enable --now "$ZAPRET2_SERVICE" >/dev/null 2>&1 || true
+    systemctl enable "$ZAPRET2_SERVICE" >/dev/null 2>&1 || true
+    systemctl restart "$ZAPRET2_SERVICE" 2>/dev/null || true
     sleep 1
     if systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null; then
         ZAPRET2_SERVICE_ENABLED="true"
@@ -1511,6 +1790,11 @@ zapret2_update_config() {
         log_warn "Zapret2 не установлен"
         return 1
     fi
+
+    # Останавливаем текущий экземпляр перед проверкой занятости NFQUEUE —
+    # иначе он сам же держит свою очередь, и она ложно кажется занятой.
+    systemctl stop "$ZAPRET2_SERVICE" 2>/dev/null || true
+
     # Проверяем занятость NFQUEUE и подбираем свободную
     if zapret2_queue_in_use "${ZAPRET2_QNUM}"; then
         local _old_q="${ZAPRET2_QNUM}"
@@ -1563,16 +1847,25 @@ zapret2_install() {
     echo -e "    win ACK:     ${ZAPRET2_WIN_ACK}"
     echo ""
 
+    local _reinstall="false"
     if [ "${ZAPRET2_APPLIED:-false}" = "true" ] && [ -x "$ZAPRET2_BIN" ]; then
         echo -e "  ${YELLOW}Zapret2 уже установлен. Переустановить?${NC}"
         echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
         local _yn; read -r _yn
         [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Отменено"; return 0; }
+        _reinstall="true"
     fi
 
     echo -en "  ${BOLD}Скачать и установить zapret2? [Y/n]:${NC} "
     local _yn; read -r _yn
     [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Отменено"; return 0; }
+
+    # При переустановке останавливаем старый экземпляр ДО проверки занятости
+    # NFQUEUE — иначе он сам же держит свою очередь, и проверка ложно решает,
+    # что она занята "другим процессом".
+    if [ "$_reinstall" = "true" ]; then
+        zapret2_stop
+    fi
 
     zapret2_download_bundle || return 1
 

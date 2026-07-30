@@ -13,14 +13,22 @@ tui_security_menu() {
             sni_label="${GREEN}Mask${NC} (перенаправление)"
         fi
         echo -e "  ${DIM}[1]${NC} Гео-блокировка"
-        echo -e "  ${DIM}[2]${NC} Upstream-маршруты"
-        echo -e "  ${DIM}[3]${NC} SNI-политика: ${sni_label}"
+        if [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
+            echo -e "  ${DIM}[2]${NC} Upstream-маршруты"
+            echo -e "  ${DIM}[3]${NC} SNI-политика: ${sni_label}"
+        else
+            echo -e "  ${DIM}────────────────────────────────────${NC}"
+            echo -e "  ${DIM}Upstream-маршруты и SNI-политика правят только${NC}"
+            echo -e "  ${DIM}собственный генерируемый конфиг менеджера — в режиме${NC}"
+            echo -e "  ${DIM}reanimator недоступны (конфиг цели чужой).${NC}"
+        fi
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
             1) tui_geoblock_menu ;;
-            2) tui_upstream_menu ;;
+            2) _require_manager_mode && tui_upstream_menu || press_any_key ;;
             3)
+                _require_manager_mode || { press_any_key; continue; }
                 echo ""
                 echo -e "  ${BOLD}SNI-политика${NC}"
                 echo -e "  ${DIM}[1]${NC} ${GREEN}Mask${NC}  — перенаправлять на mask backend"

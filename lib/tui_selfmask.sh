@@ -4,18 +4,23 @@
 tui_selfmask_menu() {
     while true; do
         clear_screen
-        draw_header "SELFMASK (PQ NGINX + LET'S ENCRYPT)"
+        if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "selfsigned" ]; then
+            draw_header "SELFMASK (PQ NGINX + САМОПОДПИСАННЫЙ CERT)"
+        else
+            draw_header "SELFMASK (PQ NGINX + LET'S ENCRYPT)"
+        fi
         echo ""
 
         load_nft_settings 2>/dev/null
 
         echo -e "  ${BOLD}Статус:${NC}    $(selfmask_status_line 2>/dev/null || echo "${DIM}неизвестно${NC}")"
         echo -e "  ${BOLD}Домен:${NC}     ${SELFMASK_DOMAIN:-${DIM}не задан${NC}}"
+        echo -e "  ${BOLD}Тип cert:${NC}  ${SELFMASK_CERT_MODE:-letsencrypt}"
         echo -e "  ${BOLD}Backend:${NC}   127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}"
         echo -e "  ${BOLD}TLS:${NC}       $(_selfmask_get_tls_info)"
         echo -e "  ${BOLD}PQ nginx:${NC}  $([ -x "$(_selfmask_pq_nginx_bin)" ] && echo -e "${GREEN}установлен${NC}" || echo -e "${DIM}не установлен${NC}")"
 
-        if [ -n "${SELFMASK_DOMAIN:-}" ] && [ -f "/etc/letsencrypt/live/${SELFMASK_DOMAIN}/fullchain.pem" ]; then
+        if [ -n "${SELFMASK_DOMAIN:-}" ] && [ -f "$(_selfmask_cert_dir)/fullchain.pem" ]; then
             echo -e "  ${BOLD}Сертификат:${NC} ${GREEN}найден${NC}"
         else
             echo -e "  ${BOLD}Сертификат:${NC} ${DIM}не найден${NC}"
@@ -28,11 +33,15 @@ tui_selfmask_menu() {
         fi
 
         echo ""
-        echo -e "  ${YELLOW}${BOLD}Важно:${NC}"
-        echo -e "  ${DIM}Домен для selfmask должен поддерживать PQ hybrid (X25519MLKEM768).${NC}"
-        echo -e "  ${DIM}Проверка: отправьте домен боту ${CYAN}@Sni_checker_bot${NC}"
-        echo -e "  ${DIM}🟢 X25519MLKEM768 — подходит${NC}"
-        echo -e "  ${DIM}🔴 PQ не поддерживается + X25519 — iOS не подключится${NC}"
+        if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+            echo -e "  ${DIM}Заглушку поднял MTProxyL — поддержка PQ hybrid${NC}"
+            echo -e "  ${DIM}(X25519MLKEM768) обеспечена самим backend'ом.${NC}"
+        else
+            echo -e "  ${DIM}Заглушку поднимает сам MTProxyL, поэтому PQ hybrid${NC}"
+            echo -e "  ${DIM}(X25519MLKEM768) поддерживается гарантированно.${NC}"
+        fi
+        echo -e "  ${DIM}Чужой домен для FakeTLS можно проверить на PQ:${NC}"
+        echo -e "  ${DIM}меню ${BOLD}Дополнения${NC}${DIM} → проверка домена, либо ${CYAN}@Sni_checker_bot${NC}${DIM}.${NC}"
         echo ""
 
         echo -e "  ${CYAN}[1]${NC}  Подробный статус и требования"

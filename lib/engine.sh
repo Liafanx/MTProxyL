@@ -164,6 +164,7 @@ engine_rollback() {
 handle_engine_command() {
     local subcmd="${1:-status}"
     shift 2>/dev/null || true
+    _require_manager_mode || return 1
 
     case "$subcmd" in
         status)

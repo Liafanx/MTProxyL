@@ -14,9 +14,9 @@ tui_secrets_menu() {
         echo -e "  ${DIM}[7]${NC} Переименовать"
         echo -e "  ${DIM}[8]${NC} Полная информация"
         echo -e "  ${DIM}[9]${NC} Ссылки для подключения"
-        echo -e "  ${DIM}[k]${NC} Изменить ключ на свой"
-        echo -e "  ${DIM}[x]${NC} Экспорт секретов"
-        echo -e "  ${DIM}[m]${NC} Импорт секретов"
+        echo -e "  ${DIM}[10]${NC} Изменить ключ на свой"
+        echo -e "  ${DIM}[11]${NC} Экспорт секретов"
+        echo -e "  ${DIM}[12]${NC} Импорт секретов"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
@@ -78,7 +78,7 @@ tui_secrets_menu() {
                         command -v qrencode &>/dev/null && { echo ""; qrencode -t ANSIUTF8 "$link" | sed 's/^/  /'; }
                     fi
                 fi; press_any_key ;;
-            k|K)
+            10)
                 echo -en "  ${BOLD}Метка или #:${NC} "; local l; read -r l
                 if [[ "$l" =~ ^[0-9]+$ ]] && [ "$l" -ge 1 ] && [ "$l" -le "${#SECRETS_LABELS[@]}" ]; then
                     l="${SECRETS_LABELS[$((l - 1))]}"; fi
@@ -95,14 +95,14 @@ tui_secrets_menu() {
                         elif [ -n "$nk" ]; then log_error "Ключ должен быть ровно 32 hex-символа"; fi
                     else log_error "Секрет '${l}' не найден"; fi
                 fi; press_any_key ;;
-            x|X)
+            11)
                 local exp_file="/tmp/mtproxyl-secrets-$(date +%Y%m%d).csv"
                 echo "# label|key|enabled|max_conns|max_ips|quota|expires|notes" > "$exp_file"
                 local ii; for ii in "${!SECRETS_LABELS[@]}"; do
                     echo "${SECRETS_LABELS[$ii]}|${SECRETS_KEYS[$ii]}|${SECRETS_ENABLED[$ii]}|${SECRETS_MAX_CONNS[$ii]:-0}|${SECRETS_MAX_IPS[$ii]:-0}|${SECRETS_QUOTA[$ii]:-0}|${SECRETS_EXPIRES[$ii]:-0}|${SECRETS_NOTES[$ii]:-}" >> "$exp_file"
                 done
                 log_success "Экспортировано в ${exp_file}"; press_any_key ;;
-            m|M)
+            12)
                 echo -en "  ${BOLD}Файл для импорта:${NC} "; local f; read -r f
                 if [ -f "$f" ]; then
                     local added=0 skipped=0

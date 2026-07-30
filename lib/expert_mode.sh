@@ -429,8 +429,8 @@ tui_expert_menu() {
                 log_info "Пересборка конфига с expert override..."
                 generate_telemt_config && log_success "Конфиг обновлён" || log_error "Ошибка генерации конфига"
                 if is_proxy_running; then
-                    docker kill -s SIGHUP "$CONTAINER_NAME" &>/dev/null || true
-                    log_success "Hot-reload отправлен контейнеру"
+                    reload_target_config &>/dev/null || true
+                    log_success "Hot-reload отправлен"
                 else log_warn "Прокси не запущен — перезапустите вручную"; fi
                 press_any_key ;;
             0|"") return ;;

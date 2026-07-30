@@ -9,7 +9,9 @@ _fetch_metrics() {
     if [ -n "$_METRICS_CACHE" ] && [ $((now - _METRICS_CACHE_AGE)) -lt 2 ]; then
         echo "$_METRICS_CACHE"; return 0
     fi
-    _METRICS_CACHE=$(curl -s --max-time 2 "http://127.0.0.1:${PROXY_METRICS_PORT:-9090}/metrics" 2>/dev/null)
+    local _mport="${PROXY_METRICS_PORT:-9090}"
+    [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && _mport=$(_get_telemt_metrics_port)
+    _METRICS_CACHE=$(curl -s --max-time 2 "http://127.0.0.1:${_mport}/metrics" 2>/dev/null)
     _METRICS_CACHE_AGE=$now
     [ -n "$_METRICS_CACHE" ] && echo "$_METRICS_CACHE" && return 0
     return 1
@@ -374,6 +376,7 @@ show_status_json() {
 
 show_config() {
     local config="${CONFIG_DIR}/config.toml"
+    [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && config="${DETECTED_CONFIG_PATH:-$config}"
     if [ -f "$config" ]; then
         echo ""; draw_header "КОНФИГ ДВИЖКА"; echo ""
         sed 's/^/  /' "$config"; echo ""
@@ -400,12 +403,91 @@ handle_metrics_command() {
 # ── Диагностика ──────────────────────────────────────────────
 health_check() {
     echo ""; draw_header "ДИАГНОСТИКА"; echo ""
+
+    # В reanimator-режиме проверяем цель, а не собственный контейнер/конфиг:
+    # Docker может быть вообще не нужен (systemd-юнит или голый процесс),
+    # а секреты и config.toml принадлежат чужой установке.
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        _health_check_reanimator
+        return
+    fi
+
     command -v docker &>/dev/null && echo -e "  ${GREEN}${SYM_CHECK}${NC} Docker установлен" || echo -e "  ${RED}${SYM_CROSS}${NC} Docker не установлен"
     is_proxy_running && echo -e "  ${GREEN}${SYM_CHECK}${NC} Контейнер запущен" || echo -e "  ${RED}${SYM_CROSS}${NC} Контейнер не запущен"
     curl -s --max-time 2 "http://127.0.0.1:${PROXY_METRICS_PORT}/metrics" &>/dev/null && echo -e "  ${GREEN}${SYM_CHECK}${NC} Метрики доступны" || echo -e "  ${RED}${SYM_CROSS}${NC} Метрики недоступны"
     [ -f "${CONFIG_DIR}/config.toml" ] && echo -e "  ${GREEN}${SYM_CHECK}${NC} Конфиг существует" || echo -e "  ${RED}${SYM_CROSS}${NC} Конфиг не найден"
     local active=0 i; for i in "${!SECRETS_ENABLED[@]}"; do [ "${SECRETS_ENABLED[$i]}" = "true" ] && active=$((active+1)); done
     [ $active -gt 0 ] && echo -e "  ${GREEN}${SYM_CHECK}${NC} ${active} активных секретов" || echo -e "  ${RED}${SYM_CROSS}${NC} Нет активных секретов"
+    echo ""
+}
+
+_health_check_reanimator() {
+    local _tgt="${DETECTED_MODE:-unknown}"
+    echo -e "  ${BOLD}Цель:${NC} ${_tgt}$([ -n "$DETECTED_CONTAINER" ] && echo " (${DETECTED_CONTAINER})")"
+    echo ""
+
+    # Тип цели и способ управления
+    case "$_tgt" in
+        docker|mtproxymax)
+            if command -v docker &>/dev/null; then
+                echo -e "  ${GREEN}${SYM_CHECK}${NC} Docker установлен (цель — контейнер)"
+            else
+                echo -e "  ${RED}${SYM_CROSS}${NC} Docker не найден, хотя цель — контейнер"
+            fi ;;
+        local)
+            if systemctl is-active telemt.service &>/dev/null 2>&1; then
+                echo -e "  ${GREEN}${SYM_CHECK}${NC} Управление: systemd (telemt.service)"
+            else
+                echo -e "  ${GREEN}${SYM_CHECK}${NC} Управление: процесс telemt (без systemd-юнита)"
+            fi ;;
+        *)
+            echo -e "  ${YELLOW}!${NC} Тип цели не определён — выполните ${BOLD}mtproxyl detect${NC}" ;;
+    esac
+
+    is_proxy_running \
+        && echo -e "  ${GREEN}${SYM_CHECK}${NC} Цель запущена" \
+        || echo -e "  ${RED}${SYM_CROSS}${NC} Цель не запущена"
+
+    # Конфиг цели
+    if [ -n "${DETECTED_CONFIG_PATH:-}" ] && [ -f "$DETECTED_CONFIG_PATH" ]; then
+        echo -e "  ${GREEN}${SYM_CHECK}${NC} Конфиг цели: ${DETECTED_CONFIG_PATH}"
+        local _d; _d=$(_target_tls_domain 2>/dev/null)
+        [ -n "$_d" ] && echo -e "  ${GREEN}${SYM_CHECK}${NC} SNI-домен цели: ${_d}"
+    else
+        echo -e "  ${RED}${SYM_CROSS}${NC} Конфиг цели не найден"
+    fi
+
+    # Порт прокси
+    if command -v ss &>/dev/null; then
+        ss -ltn 2>/dev/null | grep -q ":${PROXY_PORT} " \
+            && echo -e "  ${GREEN}${SYM_CHECK}${NC} Порт ${PROXY_PORT} слушается" \
+            || echo -e "  ${RED}${SYM_CROSS}${NC} Порт ${PROXY_PORT} не слушается"
+    fi
+
+    # API управления цели
+    local _json _rc
+    _json=$(_get_telemt_users_json 2>/dev/null); _rc=$?
+    if [ $_rc -eq 0 ]; then
+        local _act _dis
+        _act=$(_json_count_bool_field "$_json" "enabled" "true")
+        _dis=$(_json_count_bool_field "$_json" "enabled" "false")
+        echo -e "  ${GREEN}${SYM_CHECK}${NC} API цели отвечает (127.0.0.1:$(_get_telemt_api_port))"
+        echo -e "  ${GREEN}${SYM_CHECK}${NC} Пользователей: ${_act} активных / ${_dis} выключенных"
+    else
+        echo -e "  ${RED}${SYM_CROSS}${NC} API цели: $(_telemt_api_unavailable_reason)"
+    fi
+
+    # Метрики цели (Prometheus)
+    curl -s --max-time 2 "http://127.0.0.1:$(_get_telemt_metrics_port)/metrics" &>/dev/null \
+        && echo -e "  ${GREEN}${SYM_CHECK}${NC} Метрики цели доступны (127.0.0.1:$(_get_telemt_metrics_port))" \
+        || echo -e "  ${DIM}—${NC} Метрики цели недоступны ${DIM}(metrics_listen в конфиге цели)${NC}"
+
+    # Наши фиксы
+    echo ""
+    echo -e "  ${BOLD}Применённые фиксы${NC}"
+    echo -e "    Zapret2:  $(zapret2_status 2>/dev/null || echo "${DIM}—${NC}")"
+    echo -e "    MEKO:     $(meko_opt_status 2>/dev/null || echo "${DIM}—${NC}")"
+    echo -e "    Selfmask: $(selfmask_status_line 2>/dev/null || echo "${DIM}—${NC}")"
     echo ""
 }
 
@@ -419,6 +501,27 @@ show_server_info() {
     echo -e "    Ядро:         ${kernel}"
     echo -e "    Архитектура:  ${arch}"
     echo ""
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        echo -e "  ${BOLD}Прокси (цель)${NC}"
+        echo -e "    Скрипт:       v${VERSION} ${DIM}(режим: reanimator)${NC}"
+        echo -e "    Цель:         ${DETECTED_MODE:-unknown}$([ -n "$DETECTED_CONTAINER" ] && echo " (${DETECTED_CONTAINER})")"
+        echo -e "    Конфиг цели:  ${DETECTED_CONFIG_PATH:-не найден}"
+        echo -e "    Домен(SNI):   $(_current_sni_domain 2>/dev/null || echo '?')"
+        echo -e "    Порт:         ${PROXY_PORT}"
+        local _mh _mp
+        _mh=$(_toml_get_string_in_section "censorship" "mask_host" "${DETECTED_CONFIG_PATH:-}" 2>/dev/null)
+        _mp=$(_toml_get_string_in_section "censorship" "mask_port" "${DETECTED_CONFIG_PATH:-}" 2>/dev/null)
+        if [ -n "$_mh" ] || [ -n "$_mp" ]; then
+            echo -e "    Маскировка:   ${_mh:-—}:${_mp:-443}"
+        else
+            echo -e "    Маскировка:   ${DIM}не задана в конфиге цели${NC}"
+        fi
+        echo -e "    API цели:     $(_telemt_api_enabled 2>/dev/null && echo "127.0.0.1:$(_get_telemt_api_port)" || echo "выключено")"
+        echo -e "    Статус:       $(is_proxy_running && echo "запущена" || echo "остановлена")"
+        echo ""
+        return
+    fi
+
     echo -e "  ${BOLD}Прокси${NC}"
     echo -e "    Скрипт:       v${VERSION}"
     echo -e "    Движок:       telemt v$(get_telemt_version)"

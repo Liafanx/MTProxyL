@@ -427,6 +427,7 @@ secret_show_limits() {
 # CLI обработчик
 handle_secret_command() {
     local subcmd="${1:-list}"; shift 2>/dev/null || true
+    _require_manager_mode || return 1
     case "$subcmd" in
         add)      check_root; secret_add "$@" ;;
         remove)   check_root; secret_remove "$1" ;;

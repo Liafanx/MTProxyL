@@ -17,11 +17,23 @@ install_docker() {
             [ -f /etc/os-release ] && . /etc/os-release
             [ "$ID" = "fedora" ] && _repo="https://download.docker.com/linux/fedora/docker-ce.repo"
             if command -v dnf &>/dev/null; then
-                dnf config-manager --add-repo "$_repo" 2>/dev/null || dnf config-manager --addrepo "$_repo" 2>/dev/null
-                dnf install -y docker-ce docker-ce-cli containerd.io
+                # config-manager живёт в dnf-plugins-core: на минимальных
+                # образах RHEL/AlmaLinux/Rocky его нет, и подключение репо
+                # молча проваливалось. Последний рубеж — скачать .repo сами.
+                dnf install -y dnf-plugins-core &>/dev/null || true
+                dnf config-manager --add-repo "$_repo" &>/dev/null \
+                    || dnf config-manager addrepo --from-repofile="$_repo" &>/dev/null \
+                    || curl -fsSL "$_repo" -o /etc/yum.repos.d/docker-ce.repo \
+                    || { log_error "Не удалось подключить репозиторий Docker"; return 1; }
+                # --allowerasing: на RHEL9-производных containerd.io конфликтует
+                # с runc из подсистемы podman
+                dnf install -y docker-ce docker-ce-cli containerd.io \
+                    || dnf install -y --allowerasing docker-ce docker-ce-cli containerd.io
             else
                 yum install -y yum-utils
-                yum-config-manager --add-repo "$_repo"
+                yum-config-manager --add-repo "$_repo" \
+                    || curl -fsSL "$_repo" -o /etc/yum.repos.d/docker-ce.repo \
+                    || { log_error "Не удалось подключить репозиторий Docker"; return 1; }
                 yum install -y docker-ce docker-ce-cli containerd.io
             fi ;;
         alpine) apk add --no-cache docker docker-compose ;;
@@ -135,11 +147,80 @@ get_docker_image() {
 }
 
 is_proxy_running() {
-    docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"
+    if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
+        case "${DETECTED_MODE:-unknown}" in
+            docker|mtproxymax)
+                [ -n "$DETECTED_CONTAINER" ] || return 1
+                docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DETECTED_CONTAINER}$" ;;
+            local)
+                pgrep -x telemt &>/dev/null || systemctl is-active telemt.service &>/dev/null 2>&1 ;;
+            *) return 1 ;;
+        esac
+        return
+    fi
+    # docker ps показывает и контейнер в состоянии Restarting, поэтому
+    # падающий в цикле контейнер выглядел как «РАБОТАЕТ». Смотрим состояние.
+    local _st
+    _st=$(docker inspect -f '{{.State.Running}}|{{.State.Restarting}}' "$CONTAINER_NAME" 2>/dev/null) || return 1
+    [ "$_st" = "true|false" ]
+}
+
+# Состояние собственного контейнера: running|restarting|exited|created|absent
+own_container_state() {
+    command -v docker &>/dev/null || { echo "absent"; return; }
+    local _running _restarting _status
+    _status=$(docker inspect -f '{{.State.Status}}|{{.State.Running}}|{{.State.Restarting}}' "$CONTAINER_NAME" 2>/dev/null) || { echo "absent"; return; }
+    IFS='|' read -r _status _running _restarting <<< "$_status"
+    if [ "$_restarting" = "true" ]; then echo "restarting"; return; fi
+    if [ "$_running" = "true" ]; then echo "running"; return; fi
+    echo "${_status:-absent}"
+}
+
+# Короткая причина, почему свой контейнер не работает — только когда это
+# действительно проблема. Чистая остановка (exited с кодом 0) — обычное
+# состояние после «Остановить», её не показываем и логами не пугаем.
+own_container_problem() {
+    local _st; _st=$(own_container_state)
+    case "$_st" in
+        running|absent|created) return 1 ;;
+    esac
+
+    local _code
+    _code=$(docker inspect -f '{{.State.ExitCode}}' "$CONTAINER_NAME" 2>/dev/null)
+    [ "$_st" = "exited" ] && [ "${_code:-0}" = "0" ] && return 1
+
+    # Берём последнюю строку, похожую на ошибку; если таких нет — просто
+    # последнюю. Timestamp отрезаем, он в панели только мешает.
+    local _log _err
+    _log=$(docker logs --tail 20 "$CONTAINER_NAME" 2>&1 | tr -d '\r')
+    _err=$(grep -iE 'error|panic|fatal|denied|refused|in use|failed' <<< "$_log" | tail -1)
+    [ -z "$_err" ] && _err=$(tail -1 <<< "$_log")
+    _err=$(sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z?[[:space:]]*//' <<< "$_err" | cut -c1-100)
+
+    echo "${_st} (exit=${_code:-?})${_err:+: ${_err}}"
 }
 
 get_proxy_uptime() {
     is_proxy_running || { echo "0"; return; }
+    if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
+        case "${DETECTED_MODE:-unknown}" in
+            docker|mtproxymax)
+                local started_at
+                started_at=$(docker inspect --format '{{.State.StartedAt}}' "$DETECTED_CONTAINER" 2>/dev/null)
+                [ -z "$started_at" ] && { echo "0"; return; }
+                local start_epoch now_epoch
+                start_epoch=$(_iso_to_epoch "$started_at")
+                now_epoch=$(date +%s)
+                [ "$start_epoch" -gt 0 ] 2>/dev/null && echo $((now_epoch - start_epoch)) || echo "0" ;;
+            local)
+                local since_epoch now_epoch
+                since_epoch=$(systemctl show telemt.service -p ActiveEnterTimestamp --value 2>/dev/null | xargs -I{} date -d {} +%s 2>/dev/null)
+                now_epoch=$(date +%s)
+                [ -n "$since_epoch" ] && [ "$since_epoch" -gt 0 ] 2>/dev/null && echo $((now_epoch - since_epoch)) || echo "0" ;;
+            *) echo "0" ;;
+        esac
+        return
+    fi
     local started_at
     started_at=$(docker inspect --format '{{.State.StartedAt}}' "$CONTAINER_NAME" 2>/dev/null)
     [ -z "$started_at" ] && { echo "0"; return; }
@@ -147,6 +228,140 @@ get_proxy_uptime() {
     start_epoch=$(_iso_to_epoch "$started_at")
     now_epoch=$(date +%s)
     [ "$start_epoch" -gt 0 ] 2>/dev/null && echo $((now_epoch - start_epoch)) || echo "0"
+}
+
+# ── Абстракция цели: работает и на своём контейнере, и на чужой цели ──
+# _telemt_unit_exists() определён в lib/detect.sh — им же пользуется
+# detect_telemt(), чтобы остановленная служба определялась как local.
+
+restart_target() {
+    if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
+        case "${DETECTED_MODE:-unknown}" in
+            docker)
+                log_info "Перезапуск контейнера ${DETECTED_CONTAINER}..."
+                docker restart "$DETECTED_CONTAINER" &>/dev/null \
+                    && log_success "Контейнер перезапущен" \
+                    || log_warn "Не удалось перезапустить контейнер" ;;
+            mtproxymax)
+                command -v mtproxymax &>/dev/null && mtproxymax restart &>/dev/null \
+                    && log_success "mtproxymax перезапущен" \
+                    || log_warn "Не удалось перезапустить mtproxymax" ;;
+            local|config_only|manual)
+                if _telemt_unit_exists; then
+                    log_info "Перезапуск telemt.service..."
+                    systemctl restart telemt.service &>/dev/null \
+                        && log_success "telemt.service перезапущен" \
+                        || log_warn "Не удалось перезапустить telemt.service"
+                elif pgrep -x telemt &>/dev/null; then
+                    pkill -HUP telemt 2>/dev/null \
+                        && log_success "Процессу telemt отправлен SIGHUP" \
+                        || log_warn "Не удалось отправить сигнал telemt"
+                else
+                    log_warn "telemt не запущен и systemd-юнит не найден — запустите цель вручную"
+                fi ;;
+            *) log_warn "Нет способа перезапустить обнаруженную цель (${DETECTED_MODE:-unknown})" ;;
+        esac
+        return
+    fi
+    restart_proxy_container
+}
+
+start_target() {
+    if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
+        if is_proxy_running; then
+            log_info "Цель уже запущена"
+            return 0
+        fi
+        case "${DETECTED_MODE:-unknown}" in
+            docker)
+                [ -n "$DETECTED_CONTAINER" ] || { log_warn "Контейнер цели не определён"; return 1; }
+                log_info "Запуск контейнера ${DETECTED_CONTAINER}..."
+                docker start "$DETECTED_CONTAINER" &>/dev/null \
+                    && log_success "Контейнер запущен" \
+                    || log_warn "Не удалось запустить контейнер" ;;
+            mtproxymax)
+                command -v mtproxymax &>/dev/null && mtproxymax start &>/dev/null \
+                    && log_success "mtproxymax запущен" \
+                    || log_warn "Не удалось запустить mtproxymax" ;;
+            local|config_only|manual)
+                if _telemt_unit_exists; then
+                    log_info "Запуск telemt.service..."
+                    systemctl start telemt.service &>/dev/null \
+                        && log_success "telemt.service запущен" \
+                        || { log_warn "Не удалось запустить telemt.service"
+                             journalctl -u telemt.service -n 10 --no-pager 2>/dev/null | sed 's/^/    /'; }
+                else
+                    log_warn "systemd-юнит telemt.service не найден — запустите цель вручную"
+                fi ;;
+            *) log_warn "Нет способа запустить обнаруженную цель (${DETECTED_MODE:-unknown})" ;;
+        esac
+        return
+    fi
+    start_proxy_container
+}
+
+stop_target() {
+    if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
+        case "${DETECTED_MODE:-unknown}" in
+            docker)
+                log_info "Остановка контейнера ${DETECTED_CONTAINER}..."
+                docker stop "$DETECTED_CONTAINER" &>/dev/null && log_success "Контейнер остановлен" || log_warn "Не удалось остановить контейнер" ;;
+            mtproxymax)
+                command -v mtproxymax &>/dev/null && mtproxymax stop &>/dev/null && log_success "mtproxymax остановлен" || log_warn "Не удалось остановить mtproxymax" ;;
+            local|config_only|manual)
+                if _telemt_unit_exists; then
+                    systemctl stop telemt.service &>/dev/null && log_success "telemt.service остановлен" || log_warn "Не удалось остановить telemt.service"
+                else
+                    pkill -x telemt 2>/dev/null && log_success "Процесс telemt остановлен" || log_warn "Не удалось остановить процесс telemt"
+                fi ;;
+            *) log_warn "Нет способа остановить обнаруженную цель (${DETECTED_MODE:-unknown})" ;;
+        esac
+        return
+    fi
+    stop_proxy_container
+}
+
+# Ctrl+C во время просмотра логов должен возвращать в меню, а не убивать
+# скрипт: journalctl -f / docker logs -f получают SIGINT из того же
+# терминала, поэтому на время стрима ставим свой обработчик INT.
+show_target_logs() {
+    local _tail="${1:-30}"
+    local _rc=0
+    trap ':' INT
+    _show_target_logs_stream "$_tail" || _rc=$?
+    trap - INT
+    echo ""
+    return $_rc
+}
+
+_show_target_logs_stream() {
+    local _tail="${1:-30}"
+    if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
+        case "${DETECTED_MODE:-unknown}" in
+            docker|mtproxymax) docker logs -f --tail "$_tail" "$DETECTED_CONTAINER" 2>&1 ;;
+            local|config_only|manual)
+                if _telemt_unit_exists; then
+                    journalctl -u telemt.service -f -n "$_tail"
+                else
+                    log_warn "Логи недоступны: процесс telemt не привязан к systemd-юниту"
+                fi ;;
+            *) log_warn "Логи недоступны для обнаруженной цели (${DETECTED_MODE:-unknown})" ;;
+        esac
+        return
+    fi
+    docker logs -f --tail "$_tail" "$CONTAINER_NAME" 2>&1
+}
+
+reload_target_config() {
+    if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
+        case "${DETECTED_MODE:-unknown}" in
+            docker)     docker kill -s SIGHUP "$DETECTED_CONTAINER" 2>/dev/null || restart_target ;;
+            local)      pkill -HUP telemt 2>/dev/null || restart_target ;;
+            *)          restart_target ;;
+        esac
+        return
+    fi
+    reload_proxy_config
 }
 
 run_proxy_container() {
@@ -218,6 +433,27 @@ local _run_err=""
         docker ps -a --filter "name=^/${CONTAINER_NAME}$" --format '    status={{.Status}}  image={{.Image}}' 2>/dev/null || true
         return 1
     fi
+}
+
+# Полностью убрать собственный контейнер (образ и конфиг остаются).
+# Нужно при переходе в reanimator и когда контейнер менеджера больше
+# не используется, но продолжает держать порт.
+remove_own_container() {
+    local _st; _st=$(own_container_state)
+    if [ "$_st" = "absent" ]; then
+        log_info "Контейнер ${CONTAINER_NAME} отсутствует"
+        return 0
+    fi
+    flush_traffic_to_disk 2>/dev/null || true
+    docker update --restart=no "$CONTAINER_NAME" &>/dev/null || true
+    docker stop --timeout 10 "$CONTAINER_NAME" &>/dev/null || true
+    if docker rm -f "$CONTAINER_NAME" &>/dev/null; then
+        log_success "Контейнер ${CONTAINER_NAME} остановлен и удалён"
+        log_info "Образ и конфиг сохранены — контейнер поднимется заново при запуске"
+        return 0
+    fi
+    log_error "Не удалось удалить контейнер ${CONTAINER_NAME}"
+    return 1
 }
 
 stop_proxy_container() {

@@ -15,17 +15,30 @@ run_installer() {
         echo -e "  ${YELLOW}MTProxyL уже установлен.${NC}"
         echo ""
         echo -e "  ${DIM}[1]${NC} Открыть меню"
-        echo -e "  ${DIM}[2]${NC} Переустановить"
+        echo -e "  ${DIM}[2]${NC} Установка / переустановка"
         echo -e "  ${DIM}[3]${NC} Удалить"
         echo -e "  ${DIM}[0]${NC} Выход"
         local choice; choice=$(read_choice "выбор" "1")
         case "$choice" in
-            1) load_settings; load_secrets; show_main_menu; return ;;
+            1) load_settings; load_secrets; load_detect_settings; show_main_menu; return ;;
             2) ;;
-            3) uninstall; return ;;
+            3) load_settings; uninstall; return ;;
             *) exit 0 ;;
         esac
     fi
+
+    draw_header "РЕЖИМ РАБОТЫ"
+    echo ""
+    echo -e "  ${BOLD}[1]${NC} Manager    ${DIM}— MTProxyL устанавливает и владеет своим telemt${NC}"
+    echo -e "  ${BOLD}[2]${NC} Reanimator ${DIM}— применить фиксы к уже установленному telemt${NC}"
+    echo ""
+    local _mode_choice; _mode_choice=$(read_choice "выбор" "1")
+    if [ "$_mode_choice" = "2" ]; then
+        MTPROXYL_MODE="reanimator"
+        run_reanimator_installer
+        return
+    fi
+    MTPROXYL_MODE="manager"
 
     draw_header "УСТАНОВКА"
     echo ""
@@ -36,6 +49,10 @@ run_installer() {
     command -v curl &>/dev/null || missing+=("curl")
     command -v awk &>/dev/null || missing+=("awk")
     command -v openssl &>/dev/null || missing+=("openssl")
+    # jq не нужен самому MTProxyL (JSON API цели разбирается awk/sed), но им
+    # пользуются штатные команды telemt вида: curl /v1/users | jq
+    command -v jq &>/dev/null || missing+=("jq")
+    command -v nano &>/dev/null || command -v vim &>/dev/null || missing+=("nano")
     if [ ${#missing[@]} -gt 0 ]; then
         log_info "Установка: ${missing[*]}"
         _wait_apt
@@ -57,26 +74,26 @@ run_installer() {
     echo ""
 
     # Порт
-    echo -e "  ${BOLD}Порт прокси${NC} ${DIM}(по умолчанию: 443)${NC}"
+    echo -e "  ${BOLD}Порт прокси${NC} ${DIM}(по умолчанию: ${PROXY_PORT:-443})${NC}"
     while true; do
-        echo -en "  ${DIM}Порт [443]:${NC} "
+        echo -en "  ${DIM}Порт [${PROXY_PORT:-443}]:${NC} "
         local port_input=""
         read -r port_input
-        if [ -z "$port_input" ]; then
-            break
-        fi
+        # Пустой ввод — это выбор порта по умолчанию, его тоже надо проверить
+        # на занятость, иначе контейнер молча упадёт после установки.
+        [ -z "$port_input" ] && port_input="${PROXY_PORT:-443}"
         if ! validate_port "$port_input"; then
             log_error "Некорректный порт (допустимо 1..65535)"
             continue
         fi
         if ! is_port_available "$port_input"; then
             log_warn "Порт ${port_input} уже занят"
-            echo -en "  ${BOLD}Использовать всё равно? [y/N]:${NC} "
-            local _force_port=""
-            read -r _force_port
-            if [[ ! "$_force_port" =~ ^[yY]$ ]]; then
-                continue
-            fi
+            show_port_listener "$port_input"
+            echo -e "  ${DIM}Контейнер не сможет занять этот порт и упадёт при запуске.${NC}"
+            echo -e "  ${DIM}[1]${NC} Указать другой порт ${DIM}(рекомендуется)${NC}"
+            echo -e "  ${DIM}[2]${NC} Всё равно использовать ${port_input}"
+            local _pc; _pc=$(read_choice "выбор" "1")
+            [ "$_pc" = "2" ] || continue
         fi
         PROXY_PORT="$port_input"
         break
@@ -201,6 +218,53 @@ run_installer() {
     # Главный скрипт уже скачан корневым install.sh, здесь только обновляем симлинк
     ln -sf "${INSTALL_DIR}/mtproxyl.sh" /usr/local/bin/mtproxyl
 
+    run_fix_arsenal_wizard
+
+    # Запуск
+    echo ""
+    draw_header "ЗАПУСК ПРОКСИ"
+    echo ""
+    run_proxy_container || {
+        log_error "Не удалось запустить прокси"
+        echo -e "  ${DIM}Проверьте: docker logs mtproxyl${NC}"
+    }
+
+    # Автозапуск
+    if command -v systemctl &>/dev/null; then
+        cat > /etc/systemd/system/mtproxyl.service << 'SVC_EOF'
+[Unit]
+Description=MTProxyL Telegram Proxy
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/mtproxyl start
+ExecStop=/usr/local/bin/mtproxyl stop
+
+[Install]
+WantedBy=multi-user.target
+SVC_EOF
+        systemctl daemon-reload
+        systemctl enable mtproxyl.service 2>/dev/null
+        log_success "Автозапуск включён"
+    fi
+
+    # Итог
+    show_install_summary
+
+    echo ""
+    echo -en "  ${DIM}Нажмите клавишу для входа в меню...${NC}"
+    read -rsn1
+    read -rn 256 -t 0.05 _ 2>/dev/null || true
+    load_settings; load_secrets
+    show_main_menu
+}
+
+# ── Общий блок фиксов (NFT/Zapret2/MEKO) — manager и reanimator ──
+run_fix_arsenal_wizard() {
     # Zapret2 MTProto fix
     echo ""
     echo -e "  ${DIM}────────────────────────────────────────${NC}"
@@ -253,10 +317,10 @@ run_installer() {
                 journalctl -u "$ZAPRET2_SERVICE" -n 5 --no-pager 2>/dev/null || true
             fi
         else
-            log_error "Не удалось скачать zapret2 — можно установить позже через меню NFT → [z]"
+            log_error "Не удалось скачать zapret2 — можно установить позже: меню NFT → [2]"
         fi
     else
-        log_info "Zapret2 fix не установлен. Можно установить позже: меню NFT → [z]"
+        log_info "Zapret2 fix не установлен. Можно установить позже: меню NFT → [2]"
     fi
 
     # NFT SYN limiter (только если zapret2 не установлен)
@@ -267,16 +331,16 @@ run_installer() {
       echo -e "  ${DIM}Без этого прокси нестабилен в ~90% случаев.${NC}"
       echo ""
     echo -e "  ${DIM}Режимы:${NC}"
-    echo -e "    ${BRIGHT_GREEN}[S]${NC} ★ Smart By-MEKO ${DIM}(рекомендуется — iOS/Android авторазделение + REJECT)${NC}"
-    echo -e "    ${RED}[1]${NC} Classic — 1/sec burst 1"
-    echo -e "    ${DIM}[n]${NC} Не применять"
+    echo -e "    ${BRIGHT_GREEN}[1]${NC} ★ Smart By-MEKO ${DIM}(рекомендуется — iOS/Android авторазделение + REJECT)${NC}"
+    echo -e "    ${RED}[2]${NC} Classic — 1/sec burst 1"
+    echo -e "    ${DIM}[0]${NC} Не применять"
     echo ""
-    echo -en "  ${BOLD}Применить NFT limiter? [s по умолчанию]:${NC} "
+    echo -en "  ${BOLD}Применить NFT limiter? [1 по умолчанию]:${NC} "
     local _nft_choice; read -r _nft_choice
 
     case "$_nft_choice" in
-        1) apply_nft_preset hard ;;
-        n|N) log_info "NFT limiter не применён" ;;
+        2) apply_nft_preset classic ;;
+        0) log_info "NFT limiter не применён" ;;
         *) apply_nft_preset smart ;;
     esac
 
@@ -343,48 +407,6 @@ run_installer() {
         load_nft_settings 2>/dev/null || true
         meko_opt_apply || log_warn "Не удалось применить оптимизацию By-MEKO"
     fi
-
-    # Запуск
-    echo ""
-    draw_header "ЗАПУСК ПРОКСИ"
-    echo ""
-    run_proxy_container || {
-        log_error "Не удалось запустить прокси"
-        echo -e "  ${DIM}Проверьте: docker logs mtproxyl${NC}"
-    }
-
-    # Автозапуск
-    if command -v systemctl &>/dev/null; then
-        cat > /etc/systemd/system/mtproxyl.service << 'SVC_EOF'
-[Unit]
-Description=MTProxyL Telegram Proxy
-After=network-online.target docker.service
-Wants=network-online.target
-Requires=docker.service
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/usr/local/bin/mtproxyl start
-ExecStop=/usr/local/bin/mtproxyl stop
-
-[Install]
-WantedBy=multi-user.target
-SVC_EOF
-        systemctl daemon-reload
-        systemctl enable mtproxyl.service 2>/dev/null
-        log_success "Автозапуск включён"
-    fi
-
-    # Итог
-    show_install_summary
-
-    echo ""
-    echo -en "  ${DIM}Нажмите клавишу для входа в меню...${NC}"
-    read -rsn1
-    read -rn 256 -t 0.05 _ 2>/dev/null || true
-    load_settings; load_secrets
-    show_main_menu
 }
 
 show_install_summary() {
@@ -428,7 +450,9 @@ uninstall() {
     echo -e "  ${BRIGHT_RED}${BOLD}УДАЛЕНИЕ MTPROXYL${NC}"
     echo ""
     echo -e "  ${YELLOW}Будет удалено:${NC}"
-    echo -e "  ${DIM}- Контейнер и Docker-образ MTProxyL${NC}"
+    if [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
+        echo -e "  ${DIM}- Контейнер и Docker-образ MTProxyL${NC}"
+    fi
     echo -e "  ${DIM}- Конфигурация и секреты${NC}"
     echo -e "  ${DIM}- Systemd-сервисы MTProxyL${NC}"
     echo -e "  ${DIM}- NFT правила и iOS фиксы${NC}"
@@ -437,6 +461,9 @@ uninstall() {
     echo ""
     echo -e "  ${GREEN}НЕ будет удалено:${NC}"
     echo -e "  ${DIM}- Docker (сам движок)${NC}"
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        echo -e "  ${DIM}- Обнаруженная цель (контейнер/процесс/конфиг telemt) — она не наша${NC}"
+    fi
     echo -e "  ${DIM}- Другие Docker-образы и контейнеры${NC}"
     echo -e "  ${DIM}- Глобальный Docker build cache${NC}"
     echo ""
@@ -491,24 +518,28 @@ uninstall() {
     log_info "Удаление гео-блокировки..."
     geoblock_remove_all >/dev/null 2>&1 || true
 
-    # Docker контейнер
-    log_info "Удаление контейнера..."
-    docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
-    docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    if [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
+        # Docker контейнер
+        log_info "Удаление контейнера..."
+        docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
+        docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 
-    # Docker образы — только MTProxyL
-    log_info "Удаление образов MTProxyL..."
-    docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
-        | grep "^${DOCKER_IMAGE_BASE}:" \
-        | while IFS= read -r _img; do
-            docker rmi "$_img" >/dev/null 2>&1 || true
-        done || true
+        # Docker образы — только MTProxyL
+        log_info "Удаление образов MTProxyL..."
+        docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+            | grep "^${DOCKER_IMAGE_BASE}:" \
+            | while IFS= read -r _img; do
+                docker rmi "$_img" >/dev/null 2>&1 || true
+            done || true
 
-    docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
-        | grep "^${REGISTRY_IMAGE}:" \
-        | while IFS= read -r _img; do
-            docker rmi "$_img" >/dev/null 2>&1 || true
-        done || true
+        docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+            | grep "^${REGISTRY_IMAGE}:" \
+            | while IFS= read -r _img; do
+                docker rmi "$_img" >/dev/null 2>&1 || true
+            done || true
+    else
+        log_info "Reanimator-режим: обнаруженная цель (${DETECTED_MODE:-unknown}) не трогается"
+    fi
 
     # Файлы
     log_info "Удаление файлов..."

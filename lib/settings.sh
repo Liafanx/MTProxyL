@@ -2,6 +2,7 @@
 # MTProxyL — сохранение / загрузка настроек
 
 # ── Значения по умолчанию ─────────────────────────────────────
+MTPROXYL_MODE="manager"
 PROXY_PORT=443
 PROXY_METRICS_PORT=9090
 PROXY_DOMAIN="autoscout24.ru"
@@ -27,7 +28,7 @@ AUTO_UPDATE_ENABLED="true"
 SECRET_AUTO_ROTATE_DAYS="0"
 BACKUP_RETENTION_DAYS="30"
 
-# Selfmask (локальный nginx + Let's Encrypt)
+# Selfmask (локальный nginx + Let's Encrypt либо самоподписанный сертификат)
 SELFMASK_ENABLED="false"
 SELFMASK_DOMAIN=""
 SELFMASK_SITE_SOURCE="stub"
@@ -37,6 +38,12 @@ SELFMASK_CERT_EMAIL=""
 SELFMASK_NGINX_SITE_NAME="mtproxyl-selfmask"
 SELFMASK_AUTO_RENEW="true"
 SELFMASK_TLS_PROTOCOLS="TLSv1.3"
+SELFMASK_CERT_MODE="letsencrypt"  # letsencrypt|selfsigned
+
+# Порт, запомненный за каждым режимом: при переключении режима порт
+# восстанавливается, а не тянется из предыдущего режима.
+PORT_PROFILE_MANAGER=""
+PORT_PROFILE_REANIMATOR=""
 
 save_settings() {
     mkdir -p "$INSTALL_DIR"
@@ -47,6 +54,9 @@ save_settings() {
 # MTProxyL — настройки v${VERSION}
 # Создано: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
 # НЕ РЕДАКТИРУЙТЕ ВРУЧНУЮ — используйте 'mtproxyl' для изменения
+
+# Режим работы: manager (владеет своим telemt) | reanimator (чинит чужой)
+MTPROXYL_MODE='${MTPROXYL_MODE}'
 
 # Конфигурация прокси
 PROXY_PORT='${PROXY_PORT}'
@@ -96,10 +106,117 @@ SELFMASK_CERT_EMAIL='${SELFMASK_CERT_EMAIL}'
 SELFMASK_NGINX_SITE_NAME='${SELFMASK_NGINX_SITE_NAME}'
 SELFMASK_AUTO_RENEW='${SELFMASK_AUTO_RENEW}'
 SELFMASK_TLS_PROTOCOLS='${SELFMASK_TLS_PROTOCOLS}'
+SELFMASK_CERT_MODE='${SELFMASK_CERT_MODE}'
+
+# Порты, запомненные за режимами
+PORT_PROFILE_MANAGER='${PORT_PROFILE_MANAGER}'
+PORT_PROFILE_REANIMATOR='${PORT_PROFILE_REANIMATOR}'
 SETTINGS_EOF
 
     chmod 600 "$tmp"
     mv "$tmp" "$SETTINGS_FILE"
+
+    save_selfmask_settings
+}
+
+# ── Selfmask: отдельный набор настроек на каждый режим ─────────
+# PQ nginx на хосте один, но «чей» selfmask настроен — у manager и
+# reanimator своё: иначе после переключения режима в панели светился
+# selfmask, настроенный для другого режима.
+_selfmask_conf_file() {
+    echo "${INSTALL_DIR}/selfmask-${MTPROXYL_MODE:-manager}.conf"
+}
+
+save_selfmask_settings() {
+    mkdir -p "$INSTALL_DIR"
+    local _f; _f=$(_selfmask_conf_file)
+    cat > "$_f" << SELFMASK_EOF
+# MTProxyL — настройки Selfmask для режима ${MTPROXYL_MODE:-manager}
+SELFMASK_ENABLED='${SELFMASK_ENABLED}'
+SELFMASK_DOMAIN='${SELFMASK_DOMAIN}'
+SELFMASK_SITE_SOURCE='${SELFMASK_SITE_SOURCE}'
+SELFMASK_SITE_DIR='${SELFMASK_SITE_DIR}'
+SELFMASK_NGINX_BACKEND_PORT='${SELFMASK_NGINX_BACKEND_PORT}'
+SELFMASK_CERT_EMAIL='${SELFMASK_CERT_EMAIL}'
+SELFMASK_NGINX_SITE_NAME='${SELFMASK_NGINX_SITE_NAME}'
+SELFMASK_AUTO_RENEW='${SELFMASK_AUTO_RENEW}'
+SELFMASK_TLS_PROTOCOLS='${SELFMASK_TLS_PROTOCOLS}'
+SELFMASK_CERT_MODE='${SELFMASK_CERT_MODE}'
+SELFMASK_EOF
+    chmod 600 "$_f"
+}
+
+# Значения из per-mode файла перекрывают то, что пришло из settings.conf.
+# Если файла ещё нет (обновление со старой версии) — остаются текущие,
+# и они запишутся в per-mode файл при первом сохранении.
+load_selfmask_settings() {
+    local _f; _f=$(_selfmask_conf_file)
+    [ -f "$_f" ] || return 0
+    local _line _key _val
+    while IFS= read -r _line; do
+        [[ "$_line" =~ ^[[:space:]]*# ]] && continue
+        [[ "$_line" =~ ^([A-Z_][A-Z0-9_]*)=\'([^\']*)\'$ ]] || continue
+        _key="${BASH_REMATCH[1]}"; _val="${BASH_REMATCH[2]}"
+        case "$_key" in
+            SELFMASK_ENABLED|SELFMASK_DOMAIN|SELFMASK_SITE_SOURCE|SELFMASK_SITE_DIR|\
+            SELFMASK_NGINX_BACKEND_PORT|SELFMASK_CERT_EMAIL|SELFMASK_NGINX_SITE_NAME|\
+            SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS|SELFMASK_CERT_MODE)
+                printf -v "$_key" '%s' "$_val" ;;
+        esac
+    done < "$_f"
+}
+
+_selfmask_reset_defaults() {
+    SELFMASK_ENABLED="false"
+    SELFMASK_DOMAIN=""
+    SELFMASK_SITE_SOURCE="stub"
+    SELFMASK_SITE_DIR="/var/www/mtproxyl-selfmask"
+    SELFMASK_NGINX_BACKEND_PORT="8444"
+    SELFMASK_CERT_EMAIL=""
+    SELFMASK_NGINX_SITE_NAME="mtproxyl-selfmask"
+    SELFMASK_AUTO_RENEW="true"
+    SELFMASK_TLS_PROTOCOLS="TLSv1.3"
+    SELFMASK_CERT_MODE="letsencrypt"
+}
+
+# Смена режима: профиль старого режима сохраняем, профиль нового
+# подгружаем (а если его ещё нет — начинаем с чистых значений, чтобы
+# selfmask одного режима не «протёк» в другой).
+switch_selfmask_profile() {
+    local _new="$1"
+    save_selfmask_settings
+    MTPROXYL_MODE="$_new"
+    if [ -f "$(_selfmask_conf_file)" ]; then
+        load_selfmask_settings
+    else
+        _selfmask_reset_defaults
+    fi
+}
+
+# Запоминаем порт уходящего режима и восстанавливаем порт входящего.
+# Для manager, если запомненного нет, берём порт из его же config.toml.
+# Возвращает 0, если порт изменился (вызывающий переприменяет правила).
+switch_port_profile() {
+    local _new="$1" _old="${MTPROXYL_MODE:-manager}"
+    local _before="${PROXY_PORT:-}"
+
+    case "$_old" in
+        manager)    PORT_PROFILE_MANAGER="$_before" ;;
+        reanimator) PORT_PROFILE_REANIMATOR="$_before" ;;
+    esac
+
+    local _restore=""
+    case "$_new" in
+        manager)
+            _restore="${PORT_PROFILE_MANAGER}"
+            if [ -z "$_restore" ] && [ -f "${CONFIG_DIR}/config.toml" ]; then
+                _restore=$(awk '/^port[[:space:]]*=/{gsub(/[^0-9]/,"",$3); print $3; exit}' "${CONFIG_DIR}/config.toml" 2>/dev/null)
+            fi ;;
+        reanimator) _restore="${PORT_PROFILE_REANIMATOR}" ;;
+    esac
+
+    [ -n "$_restore" ] && [[ "$_restore" =~ ^[0-9]+$ ]] && PROXY_PORT="$_restore"
+    [ "$PROXY_PORT" != "$_before" ]
 }
 
 load_settings() {
@@ -120,6 +237,7 @@ load_settings() {
         fi
 
         case "$key" in
+            MTPROXYL_MODE|\
             PROXY_PORT|PROXY_METRICS_PORT|PROXY_DOMAIN|PROXY_CONCURRENCY|\
             PROXY_CPUS|PROXY_MEMORY|CUSTOM_IP|FAKE_CERT_LEN|\
             PROXY_PROTOCOL|PROXY_PROTOCOL_TRUSTED_CIDRS|\
@@ -130,13 +248,18 @@ load_settings() {
             AUTO_UPDATE_ENABLED|SECRET_AUTO_ROTATE_DAYS|BACKUP_RETENTION_DAYS|\
             SELFMASK_ENABLED|SELFMASK_DOMAIN|SELFMASK_SITE_SOURCE|SELFMASK_SITE_DIR|\
             SELFMASK_NGINX_BACKEND_PORT|SELFMASK_CERT_EMAIL|SELFMASK_NGINX_SITE_NAME|\
-            SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS)
+            SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS|SELFMASK_CERT_MODE|\
+            PORT_PROFILE_MANAGER|PORT_PROFILE_REANIMATOR)
                 printf -v "$key" '%s' "$val"
                 ;;
         esac
     done < "$SETTINGS_FILE"
 
     # Валидация
+    case "$MTPROXYL_MODE" in
+        manager|reanimator) ;;
+        *) MTPROXYL_MODE="manager" ;;
+    esac
     [[ "$PROXY_PORT" =~ ^[0-9]+$ ]] && [ "$PROXY_PORT" -ge 1 ] && [ "$PROXY_PORT" -le 65535 ] || PROXY_PORT=443
     [[ "$PROXY_METRICS_PORT" =~ ^[0-9]+$ ]] && [ "$PROXY_METRICS_PORT" -ge 1 ] && [ "$PROXY_METRICS_PORT" -le 65535 ] || PROXY_METRICS_PORT=9090
     [[ "$MASKING_PORT" =~ ^[0-9]+$ ]] && [ "$MASKING_PORT" -ge 1 ] && [ "$MASKING_PORT" -le 65535 ] || MASKING_PORT=443
@@ -156,4 +279,11 @@ load_settings() {
     [ -n "$SELFMASK_NGINX_SITE_NAME" ] || SELFMASK_NGINX_SITE_NAME="mtproxyl-selfmask"
     [ -n "$SELFMASK_SITE_SOURCE" ] || SELFMASK_SITE_SOURCE="stub"
     [ "$SELFMASK_TLS_PROTOCOLS" = "TLSv1.3" ] || SELFMASK_TLS_PROTOCOLS="TLSv1.3"
+    # Selfmask своего режима — уже после того, как известен MTPROXYL_MODE
+    load_selfmask_settings
+
+    case "$SELFMASK_CERT_MODE" in
+        letsencrypt|selfsigned) ;;
+        *) SELFMASK_CERT_MODE="letsencrypt" ;;
+    esac
 }

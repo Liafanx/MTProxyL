@@ -4,6 +4,13 @@
 tui_links_menu() {
     clear_screen
     draw_header "ССЫЛКИ для подключения"
+
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        show_target_links_ipv4 || true
+        press_any_key
+        return
+    fi
+
     local server_ip; server_ip=$(get_public_ip)
     [ -z "$server_ip" ] && { log_error "Не удалось определить IP"; press_any_key; return; }
     local i; for i in "${!SECRETS_LABELS[@]}"; do
@@ -18,3 +25,6 @@ tui_links_menu() {
     done
     press_any_key
 }
+
+# Ссылки для reanimator-цели живут в show_target_links_ipv4() (lib/detect.sh) —
+# они берутся из API самой цели и переиспользуются после настройки selfmask.

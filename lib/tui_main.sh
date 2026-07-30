@@ -23,29 +23,68 @@ show_main_menu() {
 
         local _running=false
         is_proxy_running && _running=true
+        local _reanimator="false"
+        [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && _reanimator="true"
 
         local status_str uptime_str t_in t_out conns
         if [ "$_running" = "true" ]; then
             status_str=$(draw_status running)
             local up_secs; up_secs=$(get_proxy_uptime)
             uptime_str=$(format_duration "$up_secs")
-            flush_traffic_to_disk 2>/dev/null || true
-            read -r t_in t_out conns <<< "$(get_persistent_stats)"
+            if [ "$_reanimator" != "true" ]; then
+                flush_traffic_to_disk 2>/dev/null || true
+                read -r t_in t_out conns <<< "$(get_persistent_stats)"
+            fi
         else
             status_str=$(draw_status stopped)
             uptime_str="—"; t_in=0; t_out=0; conns=0
         fi
 
-        local active=0 disabled=0 i
-        for i in "${!SECRETS_ENABLED[@]}"; do
-            [ "${SECRETS_ENABLED[$i]}" = "true" ] && active=$((active+1)) || disabled=$((disabled+1))
-        done
+        local active=0 disabled=0 i _target_stats_ok="false"
+        if [ "$_reanimator" = "true" ]; then
+            fetch_target_stats && _target_stats_ok="true"
+            conns="${TARGET_STATS_CONNS:-0}"
+            active="${TARGET_STATS_ACTIVE:-0}"
+            disabled="${TARGET_STATS_DISABLED:-0}"
+        else
+            for i in "${!SECRETS_ENABLED[@]}"; do
+                [ "${SECRETS_ENABLED[$i]}" = "true" ] && active=$((active+1)) || disabled=$((disabled+1))
+            done
+        fi
 
-        echo -e "  ${BOLD}Движок:${NC}      telemt v$(get_telemt_version)  ${BOLD}Статус:${NC} ${status_str}"
+        if [ "$_reanimator" = "true" ]; then
+            echo -e "  ${BOLD}Режим:${NC}       ${BRIGHT_CYAN}Reanimator${NC}  ${BOLD}Статус:${NC} ${status_str}"
+            echo -e "  ${BOLD}Цель:${NC}        ${DETECTED_MODE:-unknown}$([ -n "$DETECTED_CONTAINER" ] && echo " (${DETECTED_CONTAINER})")"
+            echo -e "  ${BOLD}Конфиг цели:${NC} ${DETECTED_CONFIG_PATH:-${DIM}не найден${NC}}"
+        else
+            echo -e "  ${BOLD}Движок:${NC}      telemt v$(get_telemt_version)  ${BOLD}Статус:${NC} ${status_str}"
+            # Контейнер есть, но не работает (например, порт занят и он
+            # падает в цикле) — показываем причину, а не просто «ОСТАНОВЛЕН».
+            if [ "$_running" != "true" ]; then
+                local _prob; _prob=$(own_container_problem 2>/dev/null)
+                [ -n "$_prob" ] && echo -e "  ${RED}Контейнер:${NC}   ${_prob}"
+            fi
+        fi
         echo -e "  ${BOLD}Порт:${NC}        ${PROXY_PORT}            ${BOLD}Работает:${NC} ${uptime_str}"
-        echo -e "  ${BOLD}Домен(SNI):${NC}  ${PROXY_DOMAIN}"
-        echo -e "  ${BOLD}Трафик:${NC}      ${SYM_DOWN} $(format_bytes "$t_in")  ${SYM_UP} $(format_bytes "$t_out")  ${BOLD}Соед.:${NC} ${conns}"
-        echo -e "  ${BOLD}Секреты:${NC}     ${active} активных / ${disabled} выключенных"
+        # Порт цели разошёлся с нашим — фиксы висят не на том порту
+        if [ "$_reanimator" = "true" ] && [ -n "${DETECTED_PORT:-}" ] && [ "${DETECTED_PORT}" != "${PROXY_PORT}" ]; then
+            echo -e "  ${YELLOW}⚠ Порт цели ${DETECTED_PORT}, а фиксы применяются к ${PROXY_PORT}${NC}"
+            echo -e "  ${DIM}  Синхронизировать: Цель/режим → Повторить обнаружение${NC}"
+        fi
+        echo -e "  ${BOLD}Домен(SNI):${NC}  $(_current_sni_domain 2>/dev/null || echo "$PROXY_DOMAIN")"
+        if [ "$_reanimator" = "true" ]; then
+            if [ "$_target_stats_ok" = "true" ]; then
+                echo -e "  ${BOLD}Трафик:${NC}      $(format_bytes "${TARGET_STATS_OCTETS:-0}")  ${BOLD}Соед.:${NC} ${conns}"
+                echo -e "  ${BOLD}Секреты:${NC}     ${active} активных / ${disabled} выключенных"
+            else
+                local _api_why; _api_why=$(_telemt_api_unavailable_reason 2>/dev/null)
+                echo -e "  ${BOLD}Трафик:${NC}      ${DIM}н/д — ${_api_why:-API цели недоступен}${NC}"
+                echo -e "  ${BOLD}Секреты:${NC}     ${DIM}н/д${NC}"
+            fi
+        else
+            echo -e "  ${BOLD}Трафик:${NC}      ${SYM_DOWN} $(format_bytes "$t_in")  ${SYM_UP} $(format_bytes "$t_out")  ${BOLD}Соед.:${NC} ${conns}"
+            echo -e "  ${BOLD}Секреты:${NC}     ${active} активных / ${disabled} выключенных"
+        fi
 
         load_nft_settings 2>/dev/null
 
@@ -75,47 +114,86 @@ show_main_menu() {
         if [ -n "$_UPDATE_AVAILABLE" ]; then
             echo ""
             echo -e "  ${YELLOW}${BOLD}⬆ Доступно обновление: v${VERSION} → v${_UPDATE_AVAILABLE}${NC}"
-            echo -e "  ${DIM}  Обновить: меню [9] → Проверить обновления${NC}"
+            echo -e "  ${DIM}  Обновить: меню обновлений → Проверить обновления${NC}"
         fi
 
         echo ""
         echo -e "  ${DIM}────────────────────────────────────────${NC}"
         echo ""
-        echo -e "  ${BRIGHT_CYAN}[1]${NC}  Управление прокси"
-        echo -e "  ${BRIGHT_CYAN}[2]${NC}  Управление секретами (пользователями)"
-        echo -e "  ${BRIGHT_CYAN}[3]${NC}  Ссылки на прокси"
-        echo -e "  ${BRIGHT_CYAN}[4]${NC}  Настройки"
-        echo -e "  ${BRIGHT_CYAN}[5]${NC}  Безопасность и маршрутизация"
-        echo -e "  ${BRIGHT_CYAN}[6]${NC}  Логи и трафик"
-        echo -e "  ${BRIGHT_CYAN}[7]${NC}  NFT лимитер, Zapret2 и фиксы"
-        echo -e "  ${BRIGHT_CYAN}[8]${NC}  Движок Telemt"
-        echo -e "  ${BRIGHT_CYAN}[9]${NC}  Обновление и бэкапы"
-        echo -e "  ${BRIGHT_CYAN}[e]${NC}  Режим эксперта (override поверх config.toml)"
-        echo -e "  ${BRIGHT_CYAN}[d]${NC}  Дополнения (утилиты)"
-        echo -e "  ${BRIGHT_CYAN}[i]${NC}  Информация"
-        echo ""
-        echo -e "  ${BRIGHT_CYAN}[r]${NC}  Переустановить"
-        echo -e "  ${RED}[u]${NC}  Удаление"
-        echo -e "  ${BRIGHT_CYAN}[0]${NC}  Выход"
-        echo ""
-        local choice; choice=$(read_choice "выбор" "0")
-
-        case "$choice" in
-            1) tui_proxy_menu ;;
-            2) tui_secrets_menu ;;
-            3) tui_links_menu ;;
-            4) tui_settings_menu ;;
-            5) tui_security_menu ;;
-            6) tui_traffic_menu ;;
-            7) tui_nft_menu ;;
-            8) tui_engine_menu ;;
-            9) tui_backup_menu ;;
-            e|E) tui_expert_menu ;;
-            d|D) tui_addons_menu ;;
-            i|I) show_server_info; press_any_key ;;
-            r|R) run_installer ;;
-            u|U) uninstall; exit 0 ;;
-            0|q|Q) exit 0 ;;
-        esac
+        # Пункты нумеруются подряд, только цифрами, 0 — выход. Набор
+        # пунктов зависит от режима: в reanimator скрыто всё, что требует
+        # владения конфигом/движком цели, поэтому нумерация своя.
+        local choice
+        if [ "$_reanimator" = "true" ]; then
+            echo -e "  ${BRIGHT_CYAN}[1]${NC}   Управление прокси"
+            echo -e "  ${BRIGHT_CYAN}[2]${NC}   Ссылки на прокси"
+            echo -e "  ${BRIGHT_CYAN}[3]${NC}   Безопасность и маршрутизация"
+            echo -e "  ${BRIGHT_CYAN}[4]${NC}   Логи и трафик"
+            echo -e "  ${BRIGHT_CYAN}[5]${NC}   NFT лимитер, Zapret2 и фиксы"
+            echo -e "  ${BRIGHT_CYAN}[6]${NC}   Обновление MTProxyL"
+            echo -e "  ${BRIGHT_CYAN}[7]${NC}   Дополнения (утилиты)"
+            echo -e "  ${BRIGHT_CYAN}[8]${NC}   Цель / режим (Manager ⇄ Reanimator)"
+            echo -e "  ${BRIGHT_CYAN}[9]${NC}   Редактировать конфиг цели"
+            echo -e "  ${BRIGHT_CYAN}[10]${NC}  Информация"
+            echo ""
+            echo -e "  ${BRIGHT_CYAN}[11]${NC}  Установка / переустановка"
+            echo -e "  ${RED}[12]${NC}  Удаление"
+            echo -e "  ${BRIGHT_CYAN}[0]${NC}   Выход"
+            echo ""
+            choice=$(read_choice "выбор" "0")
+            case "$choice" in
+                1)  tui_proxy_menu ;;
+                2)  tui_links_menu ;;
+                3)  tui_security_menu ;;
+                4)  tui_traffic_menu ;;
+                5)  tui_nft_menu ;;
+                6)  tui_backup_menu ;;
+                7)  tui_addons_menu ;;
+                8)  tui_target_menu ;;
+                9)  edit_target_config || true; press_any_key ;;
+                10) show_server_info; press_any_key ;;
+                11) run_installer ;;
+                12) uninstall; exit 0 ;;
+                0)  exit 0 ;;
+            esac
+        else
+            echo -e "  ${BRIGHT_CYAN}[1]${NC}   Управление прокси"
+            echo -e "  ${BRIGHT_CYAN}[2]${NC}   Управление секретами (пользователями)"
+            echo -e "  ${BRIGHT_CYAN}[3]${NC}   Ссылки на прокси"
+            echo -e "  ${BRIGHT_CYAN}[4]${NC}   Настройки"
+            echo -e "  ${BRIGHT_CYAN}[5]${NC}   Безопасность и маршрутизация"
+            echo -e "  ${BRIGHT_CYAN}[6]${NC}   Логи и трафик"
+            echo -e "  ${BRIGHT_CYAN}[7]${NC}   NFT лимитер, Zapret2 и фиксы"
+            echo -e "  ${BRIGHT_CYAN}[8]${NC}   Движок Telemt"
+            echo -e "  ${BRIGHT_CYAN}[9]${NC}   Обновление и бэкапы"
+            echo -e "  ${BRIGHT_CYAN}[10]${NC}  Режим эксперта (override поверх config.toml)"
+            echo -e "  ${BRIGHT_CYAN}[11]${NC}  Дополнения (утилиты)"
+            echo -e "  ${BRIGHT_CYAN}[12]${NC}  Цель / режим (Manager ⇄ Reanimator)"
+            echo -e "  ${BRIGHT_CYAN}[13]${NC}  Информация"
+            echo ""
+            echo -e "  ${BRIGHT_CYAN}[14]${NC}  Установка / переустановка"
+            echo -e "  ${RED}[15]${NC}  Удаление"
+            echo -e "  ${BRIGHT_CYAN}[0]${NC}   Выход"
+            echo ""
+            choice=$(read_choice "выбор" "0")
+            case "$choice" in
+                1)  tui_proxy_menu ;;
+                2)  tui_secrets_menu ;;
+                3)  tui_links_menu ;;
+                4)  tui_settings_menu ;;
+                5)  tui_security_menu ;;
+                6)  tui_traffic_menu ;;
+                7)  tui_nft_menu ;;
+                8)  tui_engine_menu ;;
+                9)  tui_backup_menu ;;
+                10) tui_expert_menu ;;
+                11) tui_addons_menu ;;
+                12) tui_target_menu ;;
+                13) show_server_info; press_any_key ;;
+                14) run_installer ;;
+                15) uninstall; exit 0 ;;
+                0)  exit 0 ;;
+            esac
+        fi
     done
 }
