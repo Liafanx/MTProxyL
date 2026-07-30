@@ -438,8 +438,7 @@ EOF
 
 SELFMASK_SYSTEM_NGINX_WAS_ACTIVE="false"
 
-_selfmask_free_ports() {
-    # 1. Останавливаем наш PQ nginx если он уже запущен
+_selfmask_stop_own_nginx() {
     if systemctl is-active "${SELFMASK_PQ_SERVICE}" &>/dev/null 2>&1; then
         log_info "Останавливаем предыдущий экземпляр PQ nginx"
         systemctl stop "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
@@ -447,6 +446,18 @@ _selfmask_free_ports() {
 
     # На всякий случай убиваем только наш nginx
     pkill -f "${SELFMASK_PQ_PREFIX}/sbin/nginx" 2>/dev/null || true
+}
+
+_selfmask_free_ports() {
+    # 1. Останавливаем наш PQ nginx если он уже запущен
+    _selfmask_stop_own_nginx
+
+    # Самоподписанному сертификату порт 80 не нужен: ACME не используется,
+    # а mask-backend слушает только 127.0.0.1:<backend>. Не трогаем чужой
+    # nginx/панель на 80 порту.
+    if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "selfsigned" ]; then
+        return 0
+    fi
 
     # 2. Проверяем занят ли порт 80 кем-то ещё
     local _port80_busy="false"
@@ -664,14 +675,12 @@ _selfmask_configure_nginx() {
 
     mkdir -p "${SELFMASK_PQ_PREFIX}/conf"
 
-    cat > "$(_selfmask_pq_conf)" << EOF
-worker_processes auto;
-
-events {
-    worker_connections 1024;
-}
-
-http {
+    # Блоки на порту 80 (ACME-challenge + http→https redirect) нужны только
+    # для Let's Encrypt. При самоподписанном сертификате домена в DNS нет,
+    # ACME не используется, и занимать общий порт 80 незачем.
+    local _http80=""
+    if [ "${SELFMASK_CERT_MODE:-letsencrypt}" != "selfsigned" ]; then
+        _http80=$(cat << EOF
     server {
         listen 80 default_server;
         server_name _;
@@ -692,7 +701,19 @@ http {
             return 301 https://${SELFMASK_DOMAIN}\$request_uri;
         }
     }
+EOF
+)
+    fi
 
+    cat > "$(_selfmask_pq_conf)" << EOF
+worker_processes auto;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+${_http80}
     server {
         listen 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT} ssl default_server;
         server_name _;
@@ -1019,7 +1040,13 @@ selfmask_setup() {
 
     echo ""
     log_success "Selfmask настроен"
-    echo -e "  ${BOLD}Домен:${NC}   https://${SELFMASK_DOMAIN}"
+    if [ "$SELFMASK_CERT_MODE" = "selfsigned" ]; then
+        echo -e "  ${BOLD}Домен(SNI):${NC} ${SELFMASK_DOMAIN} ${DIM}(самоподписанный, A-запись не нужна)${NC}"
+        echo -e "  ${DIM}Снаружи домен не открывается — заглушка отдаётся только по SNI${NC}"
+        echo -e "  ${DIM}на mask-backend, порт 80 не занимается.${NC}"
+    else
+        echo -e "  ${BOLD}Домен:${NC}   https://${SELFMASK_DOMAIN}"
+    fi
     echo -e "  ${BOLD}Сайт:${NC}    ${SELFMASK_SITE_DIR}"
     echo -e "  ${BOLD}Схема:${NC}   telemt :${PROXY_PORT:-443} → mask → nginx 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT}"
     echo ""
