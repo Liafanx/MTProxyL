@@ -24,16 +24,16 @@ tui_settings_menu() {
         echo -e "  ${DIM}[3]${NC} Изменить домен(SNI)"
         echo -e "  ${DIM}[4]${NC} Ресурсы (CPU/RAM)"
         echo -e "  ${DIM}[5]${NC} Маскировка вкл/выкл"
-        echo -e "  ${DIM}[m]${NC} Mask backend (хост:порт)"
-        echo -e "  ${DIM}[6]${NC} Рекламная метка"
-        echo -e "  ${DIM}[7]${NC} SNI-политика [${UNKNOWN_SNI_ACTION}]"
-        echo -e "  ${DIM}[8]${NC} PROXY protocol вкл/выкл"
-        echo -e "  ${DIM}[9]${NC} Управление движком"
-        echo -e "  ${DIM}[g]${NC} Изменить порт метрик"        
-        echo -e "  ${DIM}[v]${NC} Просмотр текущего конфига"
-        echo -e "  ${DIM}[t]${NC} Тюнинг движка (tune) Telemt"
-        echo -e "  ${DIM}[u]${NC} Пользовательские URL Telegram"
-        echo -e "  ${DIM}[h]${NC} Selfmask (nginx + Let's Encrypt)"
+        echo -e "  ${DIM}[6]${NC} Mask backend (хост:порт)"
+        echo -e "  ${DIM}[7]${NC} Рекламная метка"
+        echo -e "  ${DIM}[8]${NC} SNI-политика [${UNKNOWN_SNI_ACTION}]"
+        echo -e "  ${DIM}[9]${NC} PROXY protocol вкл/выкл"
+        echo -e "  ${DIM}[10]${NC} Управление движком"
+        echo -e "  ${DIM}[11]${NC} Изменить порт метрик"        
+        echo -e "  ${DIM}[12]${NC} Просмотр текущего конфига"
+        echo -e "  ${DIM}[13]${NC} Тюнинг движка (tune) Telemt"
+        echo -e "  ${DIM}[14]${NC} Пользовательские URL Telegram"
+        echo -e "  ${DIM}[15]${NC} Selfmask (заглушка + сертификат)"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
@@ -155,7 +155,7 @@ tui_settings_menu() {
                 save_settings; log_success "Маскировка: ${MASKING_ENABLED}"
                 is_proxy_running && { load_secrets; restart_proxy_container || true; }
                 press_any_key ;;
-            m|M)
+            6)
                 if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
                     log_warn "Selfmask активен. Локальный mask backend управляется через меню Selfmask"
                     press_any_key
@@ -169,21 +169,21 @@ tui_settings_menu() {
                 save_settings; log_success "Mask backend: ${MASKING_HOST:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}"
                 is_proxy_running && { load_secrets; restart_proxy_container || true; }
                 press_any_key ;;
-            6)
+            7)
                 echo -en "  ${BOLD}Рекл. метка (32 hex, 'remove'):${NC} "; local at; read -r at
                 if [ "$at" = "remove" ]; then AD_TAG=""; log_success "Метка удалена"
                 elif [[ "$at" =~ ^[0-9a-fA-F]{32}$ ]]; then AD_TAG="$at"; log_success "Метка установлена"
                 elif [ -n "$at" ]; then log_error "Нужно 32 hex-символа"; fi
                 save_settings; load_secrets; reload_proxy_config 2>/dev/null || true
                 press_any_key ;;
-            7)
+            8)
                 echo -e "  ${DIM}[1] Mask (перенаправлять)  [2] Drop (закрывать)${NC}"
                 local sc; sc=$(read_choice "выбор" "1")
                 case "$sc" in 2) UNKNOWN_SNI_ACTION="drop" ;; *) UNKNOWN_SNI_ACTION="mask" ;; esac
                 save_settings; reload_proxy_config 2>/dev/null || true
                 log_success "SNI-политика: ${UNKNOWN_SNI_ACTION}"
                 press_any_key ;;
-            8)
+            9)
                 [ "$PROXY_PROTOCOL" = "true" ] && PROXY_PROTOCOL="false" || PROXY_PROTOCOL="true"
                 if [ "$PROXY_PROTOCOL" = "true" ]; then
                     echo -en "  ${BOLD}Доверенные CIDR (через запятую):${NC} "; local cidrs; read -r cidrs
@@ -192,8 +192,8 @@ tui_settings_menu() {
                 save_settings; log_success "PROXY protocol: ${PROXY_PROTOCOL}"
                 is_proxy_running && { load_secrets; restart_proxy_container || true; }
                 press_any_key ;;
-            9) tui_engine_menu ;;
-            g|G)
+            10) tui_engine_menu ;;
+            11)
                 echo ""
                 echo -e "  ${DIM}Порт Prometheus endpoint метрик (только localhost).${NC}"
                 echo -e "  ${DIM}Текущий: 127.0.0.1:${PROXY_METRICS_PORT:-9090}${NC}"
@@ -217,11 +217,11 @@ tui_settings_menu() {
                     fi
                 done
                 press_any_key ;;
-            v|V) show_config; press_any_key ;;
-            t|T)
+            12) show_config; press_any_key ;;
+            13)
                 run_tune_wizard
                 press_any_key ;;
-            u|U)
+            14)
                 echo -e "  ${BOLD}Пользовательские URL Telegram${NC}"
                 echo -e "  ${DIM}Для регионов где core.telegram.org заблокирован${NC}"
                 echo ""
@@ -250,7 +250,7 @@ tui_settings_menu() {
                        is_proxy_running && { load_secrets; restart_proxy_container || true; } ;;
                 esac
                 press_any_key ;;        
-             h|H) tui_selfmask_menu ;;             
+            15) tui_selfmask_menu ;;             
             0|"") return ;;
         esac
     done

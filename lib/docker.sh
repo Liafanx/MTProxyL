@@ -180,12 +180,8 @@ get_proxy_uptime() {
 }
 
 # ── Абстракция цели: работает и на своём контейнере, и на чужой цели ──
-# Юнит telemt.service существует (пусть и остановлен). Проверять именно
-# наличие юнита, а не is-active: остановленную службу надо уметь запустить
-# и перезапустить, а не отправлять SIGHUP несуществующему процессу.
-_telemt_unit_exists() {
-    systemctl list-unit-files 2>/dev/null | grep -q '^telemt\.service'
-}
+# _telemt_unit_exists() определён в lib/detect.sh — им же пользуется
+# detect_telemt(), чтобы остановленная служба определялась как local.
 
 restart_target() {
     if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
@@ -199,7 +195,7 @@ restart_target() {
                 command -v mtproxymax &>/dev/null && mtproxymax restart &>/dev/null \
                     && log_success "mtproxymax перезапущен" \
                     || log_warn "Не удалось перезапустить mtproxymax" ;;
-            local)
+            local|config_only|manual)
                 if _telemt_unit_exists; then
                     log_info "Перезапуск telemt.service..."
                     systemctl restart telemt.service &>/dev/null \
@@ -236,7 +232,7 @@ start_target() {
                 command -v mtproxymax &>/dev/null && mtproxymax start &>/dev/null \
                     && log_success "mtproxymax запущен" \
                     || log_warn "Не удалось запустить mtproxymax" ;;
-            local)
+            local|config_only|manual)
                 if _telemt_unit_exists; then
                     log_info "Запуск telemt.service..."
                     systemctl start telemt.service &>/dev/null \
@@ -261,7 +257,7 @@ stop_target() {
                 docker stop "$DETECTED_CONTAINER" &>/dev/null && log_success "Контейнер остановлен" || log_warn "Не удалось остановить контейнер" ;;
             mtproxymax)
                 command -v mtproxymax &>/dev/null && mtproxymax stop &>/dev/null && log_success "mtproxymax остановлен" || log_warn "Не удалось остановить mtproxymax" ;;
-            local)
+            local|config_only|manual)
                 if _telemt_unit_exists; then
                     systemctl stop telemt.service &>/dev/null && log_success "telemt.service остановлен" || log_warn "Не удалось остановить telemt.service"
                 else
@@ -274,13 +270,26 @@ stop_target() {
     stop_proxy_container
 }
 
+# Ctrl+C во время просмотра логов должен возвращать в меню, а не убивать
+# скрипт: journalctl -f / docker logs -f получают SIGINT из того же
+# терминала, поэтому на время стрима ставим свой обработчик INT.
 show_target_logs() {
+    local _tail="${1:-30}"
+    local _rc=0
+    trap ':' INT
+    _show_target_logs_stream "$_tail" || _rc=$?
+    trap - INT
+    echo ""
+    return $_rc
+}
+
+_show_target_logs_stream() {
     local _tail="${1:-30}"
     if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
         case "${DETECTED_MODE:-unknown}" in
             docker|mtproxymax) docker logs -f --tail "$_tail" "$DETECTED_CONTAINER" 2>&1 ;;
-            local)
-                if systemctl list-units --all 2>/dev/null | grep -q telemt.service; then
+            local|config_only|manual)
+                if _telemt_unit_exists; then
                     journalctl -u telemt.service -f -n "$_tail"
                 else
                     log_warn "Логи недоступны: процесс telemt не привязан к systemd-юниту"

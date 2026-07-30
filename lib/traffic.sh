@@ -501,6 +501,27 @@ show_server_info() {
     echo -e "    Ядро:         ${kernel}"
     echo -e "    Архитектура:  ${arch}"
     echo ""
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        echo -e "  ${BOLD}Прокси (цель)${NC}"
+        echo -e "    Скрипт:       v${VERSION} ${DIM}(режим: reanimator)${NC}"
+        echo -e "    Цель:         ${DETECTED_MODE:-unknown}$([ -n "$DETECTED_CONTAINER" ] && echo " (${DETECTED_CONTAINER})")"
+        echo -e "    Конфиг цели:  ${DETECTED_CONFIG_PATH:-не найден}"
+        echo -e "    Домен(SNI):   $(_current_sni_domain 2>/dev/null || echo '?')"
+        echo -e "    Порт:         ${PROXY_PORT}"
+        local _mh _mp
+        _mh=$(_toml_get_string_in_section "censorship" "mask_host" "${DETECTED_CONFIG_PATH:-}" 2>/dev/null)
+        _mp=$(_toml_get_string_in_section "censorship" "mask_port" "${DETECTED_CONFIG_PATH:-}" 2>/dev/null)
+        if [ -n "$_mh" ] || [ -n "$_mp" ]; then
+            echo -e "    Маскировка:   ${_mh:-—}:${_mp:-443}"
+        else
+            echo -e "    Маскировка:   ${DIM}не задана в конфиге цели${NC}"
+        fi
+        echo -e "    API цели:     $(_telemt_api_enabled 2>/dev/null && echo "127.0.0.1:$(_get_telemt_api_port)" || echo "выключено")"
+        echo -e "    Статус:       $(is_proxy_running && echo "запущена" || echo "остановлена")"
+        echo ""
+        return
+    fi
+
     echo -e "  ${BOLD}Прокси${NC}"
     echo -e "    Скрипт:       v${VERSION}"
     echo -e "    Движок:       telemt v$(get_telemt_version)"

@@ -103,52 +103,86 @@ show_main_menu() {
         if [ -n "$_UPDATE_AVAILABLE" ]; then
             echo ""
             echo -e "  ${YELLOW}${BOLD}⬆ Доступно обновление: v${VERSION} → v${_UPDATE_AVAILABLE}${NC}"
-            echo -e "  ${DIM}  Обновить: меню [9] → Проверить обновления${NC}"
+            echo -e "  ${DIM}  Обновить: меню обновлений → Проверить обновления${NC}"
         fi
 
         echo ""
         echo -e "  ${DIM}────────────────────────────────────────${NC}"
         echo ""
-        # В reanimator-режиме не показываем пункты, требующие владения
-        # конфигом/движком цели — они всё равно блокируются
-        # _require_manager_mode при выборе.
-        echo -e "  ${BRIGHT_CYAN}[1]${NC}  Управление прокси"
-        [ "$_reanimator" != "true" ] && echo -e "  ${BRIGHT_CYAN}[2]${NC}  Управление секретами (пользователями)"
-        echo -e "  ${BRIGHT_CYAN}[3]${NC}  Ссылки на прокси"
-        [ "$_reanimator" != "true" ] && echo -e "  ${BRIGHT_CYAN}[4]${NC}  Настройки"
-        echo -e "  ${BRIGHT_CYAN}[5]${NC}  Безопасность и маршрутизация"
-        echo -e "  ${BRIGHT_CYAN}[6]${NC}  Логи и трафик"
-        echo -e "  ${BRIGHT_CYAN}[7]${NC}  NFT лимитер, Zapret2 и фиксы"
-        [ "$_reanimator" != "true" ] && echo -e "  ${BRIGHT_CYAN}[8]${NC}  Движок Telemt"
-        echo -e "  ${BRIGHT_CYAN}[9]${NC}  Обновление и бэкапы"
-        [ "$_reanimator" != "true" ] && echo -e "  ${BRIGHT_CYAN}[e]${NC}  Режим эксперта (override поверх config.toml)"
-        echo -e "  ${BRIGHT_CYAN}[d]${NC}  Дополнения (утилиты)"
-        echo -e "  ${BRIGHT_CYAN}[t]${NC}  Цель / режим (Manager ⇄ Reanimator)"
-        echo -e "  ${BRIGHT_CYAN}[i]${NC}  Информация"
-        echo ""
-        echo -e "  ${BRIGHT_CYAN}[r]${NC}  Переустановить"
-        echo -e "  ${RED}[u]${NC}  Удаление"
-        echo -e "  ${BRIGHT_CYAN}[0]${NC}  Выход"
-        echo ""
-        local choice; choice=$(read_choice "выбор" "0")
-
-        case "$choice" in
-            1) tui_proxy_menu ;;
-            2) _require_manager_mode && tui_secrets_menu || press_any_key ;;
-            3) tui_links_menu ;;
-            4) _require_manager_mode && tui_settings_menu || press_any_key ;;
-            5) tui_security_menu ;;
-            6) tui_traffic_menu ;;
-            7) tui_nft_menu ;;
-            8) _require_manager_mode && tui_engine_menu || press_any_key ;;
-            9) tui_backup_menu ;;
-            e|E) _require_manager_mode && tui_expert_menu || press_any_key ;;
-            d|D) tui_addons_menu ;;
-            t|T) tui_target_menu ;;
-            i|I) show_server_info; press_any_key ;;
-            r|R) run_installer ;;
-            u|U) uninstall; exit 0 ;;
-            0|q|Q) exit 0 ;;
-        esac
+        # Пункты нумеруются подряд, только цифрами, 0 — выход. Набор
+        # пунктов зависит от режима: в reanimator скрыто всё, что требует
+        # владения конфигом/движком цели, поэтому нумерация своя.
+        local choice
+        if [ "$_reanimator" = "true" ]; then
+            echo -e "  ${BRIGHT_CYAN}[1]${NC}   Управление прокси"
+            echo -e "  ${BRIGHT_CYAN}[2]${NC}   Ссылки на прокси"
+            echo -e "  ${BRIGHT_CYAN}[3]${NC}   Безопасность и маршрутизация"
+            echo -e "  ${BRIGHT_CYAN}[4]${NC}   Логи и трафик"
+            echo -e "  ${BRIGHT_CYAN}[5]${NC}   NFT лимитер, Zapret2 и фиксы"
+            echo -e "  ${BRIGHT_CYAN}[6]${NC}   Обновление MTProxyL"
+            echo -e "  ${BRIGHT_CYAN}[7]${NC}   Дополнения (утилиты)"
+            echo -e "  ${BRIGHT_CYAN}[8]${NC}   Цель / режим (Manager ⇄ Reanimator)"
+            echo -e "  ${BRIGHT_CYAN}[9]${NC}   Редактировать конфиг цели"
+            echo -e "  ${BRIGHT_CYAN}[10]${NC}  Информация"
+            echo ""
+            echo -e "  ${BRIGHT_CYAN}[11]${NC}  Переустановить"
+            echo -e "  ${RED}[12]${NC}  Удаление"
+            echo -e "  ${BRIGHT_CYAN}[0]${NC}   Выход"
+            echo ""
+            choice=$(read_choice "выбор" "0")
+            case "$choice" in
+                1)  tui_proxy_menu ;;
+                2)  tui_links_menu ;;
+                3)  tui_security_menu ;;
+                4)  tui_traffic_menu ;;
+                5)  tui_nft_menu ;;
+                6)  tui_backup_menu ;;
+                7)  tui_addons_menu ;;
+                8)  tui_target_menu ;;
+                9)  edit_target_config || true; press_any_key ;;
+                10) show_server_info; press_any_key ;;
+                11) run_installer ;;
+                12) uninstall; exit 0 ;;
+                0)  exit 0 ;;
+            esac
+        else
+            echo -e "  ${BRIGHT_CYAN}[1]${NC}   Управление прокси"
+            echo -e "  ${BRIGHT_CYAN}[2]${NC}   Управление секретами (пользователями)"
+            echo -e "  ${BRIGHT_CYAN}[3]${NC}   Ссылки на прокси"
+            echo -e "  ${BRIGHT_CYAN}[4]${NC}   Настройки"
+            echo -e "  ${BRIGHT_CYAN}[5]${NC}   Безопасность и маршрутизация"
+            echo -e "  ${BRIGHT_CYAN}[6]${NC}   Логи и трафик"
+            echo -e "  ${BRIGHT_CYAN}[7]${NC}   NFT лимитер, Zapret2 и фиксы"
+            echo -e "  ${BRIGHT_CYAN}[8]${NC}   Движок Telemt"
+            echo -e "  ${BRIGHT_CYAN}[9]${NC}   Обновление и бэкапы"
+            echo -e "  ${BRIGHT_CYAN}[10]${NC}  Режим эксперта (override поверх config.toml)"
+            echo -e "  ${BRIGHT_CYAN}[11]${NC}  Дополнения (утилиты)"
+            echo -e "  ${BRIGHT_CYAN}[12]${NC}  Цель / режим (Manager ⇄ Reanimator)"
+            echo -e "  ${BRIGHT_CYAN}[13]${NC}  Информация"
+            echo ""
+            echo -e "  ${BRIGHT_CYAN}[14]${NC}  Переустановить"
+            echo -e "  ${RED}[15]${NC}  Удаление"
+            echo -e "  ${BRIGHT_CYAN}[0]${NC}   Выход"
+            echo ""
+            choice=$(read_choice "выбор" "0")
+            case "$choice" in
+                1)  tui_proxy_menu ;;
+                2)  tui_secrets_menu ;;
+                3)  tui_links_menu ;;
+                4)  tui_settings_menu ;;
+                5)  tui_security_menu ;;
+                6)  tui_traffic_menu ;;
+                7)  tui_nft_menu ;;
+                8)  tui_engine_menu ;;
+                9)  tui_backup_menu ;;
+                10) tui_expert_menu ;;
+                11) tui_addons_menu ;;
+                12) tui_target_menu ;;
+                13) show_server_info; press_any_key ;;
+                14) run_installer ;;
+                15) uninstall; exit 0 ;;
+                0)  exit 0 ;;
+            esac
+        fi
     done
 }

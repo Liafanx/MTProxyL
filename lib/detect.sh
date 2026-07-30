@@ -307,6 +307,21 @@ _current_sni_domain() {
     echo "${PROXY_DOMAIN:-}"
 }
 
+# Юнит telemt.service существует (пусть и остановлен/не enabled).
+# Проверяем LoadState, а не is-active и не grep по list-unit-files:
+# остановленную службу надо уметь запустить, а вывод list-unit-files
+# зависит от версии systemd и может не совпасть по префиксу.
+_telemt_unit_exists() {
+    [ "$(systemctl show telemt.service -p LoadState --value 2>/dev/null)" = "loaded" ] && return 0
+    local _u
+    for _u in /etc/systemd/system/telemt.service \
+              /lib/systemd/system/telemt.service \
+              /usr/lib/systemd/system/telemt.service; do
+        [ -f "$_u" ] && return 0
+    done
+    return 1
+}
+
 # ── Исключение чужих панелей / собственного контейнера ────────
 _is_excluded_path() {
     local _path="$1"
@@ -408,8 +423,11 @@ detect_telemt() {
         done
     fi
 
-    # 3. Локальный процесс telemt
-    if pgrep -x telemt &>/dev/null || systemctl is-active telemt.service &>/dev/null 2>&1; then
+    # 3. Локальный telemt: процесс, активная служба ИЛИ установленный юнит.
+    # Юнит учитываем даже остановленным — иначе остановленную службу
+    # определяет как config_only, и её нельзя запустить из меню.
+    if pgrep -x telemt &>/dev/null || systemctl is-active telemt.service &>/dev/null 2>&1 \
+       || _telemt_unit_exists; then
         DETECTED_MODE="local"
         DETECTED_NETWORK_MODE="host"
         local _args
@@ -510,10 +528,7 @@ apply_target_tuning() {
     fi
 
     local _cfg="$DETECTED_CONFIG_PATH"
-    mkdir -p "$BACKUP_DIR"
-    if ! cp "$_cfg" "${BACKUP_DIR}/$(basename "$_cfg").mtpr-backup-$(date +%s)" 2>/dev/null; then
-        log_warn "Не удалось создать резервную копию конфига цели"
-    fi
+    backup_target_config "tune" "true" || true
 
     local _tv_out="$value"
     case "$param" in
@@ -546,6 +561,29 @@ apply_target_tuning() {
     fi
 }
 
+# ── Резервная копия конфига цели ───────────────────────────────
+# Единая точка бэкапа чужого конфига. tag попадает в имя файла, чтобы
+# было понятно, откуда копия (install / tune / pre-edit).
+# Путь возвращается через TARGET_CONFIG_BACKUP, а не через stdout: log_*
+# пишет в stdout, и при $(...) сообщение попало бы в переменную вместо пути.
+TARGET_CONFIG_BACKUP=""
+
+backup_target_config() {
+    local _tag="${1:-tune}" _quiet="${2:-false}"
+    TARGET_CONFIG_BACKUP=""
+    [ -n "${DETECTED_CONFIG_PATH:-}" ] && [ -f "$DETECTED_CONFIG_PATH" ] || return 1
+
+    mkdir -p "$BACKUP_DIR"
+    local _dst="${BACKUP_DIR}/$(basename "$DETECTED_CONFIG_PATH").${_tag}-$(date +%Y%m%d-%H%M%S)"
+    if cp "$DETECTED_CONFIG_PATH" "$_dst" 2>/dev/null; then
+        TARGET_CONFIG_BACKUP="$_dst"
+        [ "$_quiet" = "true" ] || log_success "Резервная копия конфига цели: ${_dst}"
+        return 0
+    fi
+    log_warn "Не удалось создать резервную копию конфига цели"
+    return 1
+}
+
 # ── Ручное редактирование конфига цели ─────────────────────────
 # Открывает чужой toml в редакторе, и только если файл реально изменился —
 # предлагает перезапустить цель. Перед правкой делает резервную копию.
@@ -567,11 +605,8 @@ edit_target_config() {
         return 1
     fi
 
-    mkdir -p "$BACKUP_DIR"
-    local _bak="${BACKUP_DIR}/$(basename "$DETECTED_CONFIG_PATH").pre-edit-$(date +%s)"
-    cp "$DETECTED_CONFIG_PATH" "$_bak" 2>/dev/null \
-        && log_info "Резервная копия: ${_bak}" \
-        || log_warn "Не удалось создать резервную копию"
+    backup_target_config "pre-edit" || true
+    local _bak="$TARGET_CONFIG_BACKUP"
 
     local _sum_before _sum_after
     _sum_before=$(md5sum "$DETECTED_CONFIG_PATH" 2>/dev/null | awk '{print $1}')
@@ -708,6 +743,10 @@ run_reanimator_installer() {
     chmod 700 "$INSTALL_DIR"
     save_settings
     save_detect_settings
+
+    # Резервная копия чужого конфига ДО любых правок — и сразу сообщаем
+    # пользователю, где она лежит.
+    backup_target_config "install" || true
 
     run_fix_arsenal_wizard
 

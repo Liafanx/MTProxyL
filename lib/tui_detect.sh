@@ -18,7 +18,6 @@ tui_target_menu() {
             echo -e "  ${DIM}[2]${NC} Переключиться в Reanimator"
         else
             echo -e "  ${DIM}[2]${NC} Переключиться в Manager"
-            echo -e "  ${DIM}[3]${NC} Редактировать конфиг цели"
         fi
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
@@ -29,13 +28,6 @@ tui_target_menu() {
                     switch_to_reanimator_mode
                 else
                     switch_to_manager_mode
-                fi
-                press_any_key ;;
-            3)
-                if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
-                    edit_target_config || true
-                else
-                    log_error "Доступно только в режиме reanimator"
                 fi
                 press_any_key ;;
             0|"") return ;;

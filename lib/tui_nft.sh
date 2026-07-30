@@ -71,13 +71,13 @@ tui_nft_menu() {
         fi
         echo ""
 
-        echo -e "  ${BRIGHT_GREEN}[s]${NC}  ${BOLD}★ Smart By-MEKO${NC} ${DIM}(iOS/Android авторазделение + REJECT)${NC}"
-        echo -e "  ${BRIGHT_CYAN}[z]${NC}  ${BOLD}Zapret2 MTProto fix${NC} ${DIM}(TCP disorder + badsum + window control)${NC}"
+        echo -e "  ${BRIGHT_GREEN}[1]${NC}  ${BOLD}★ Smart By-MEKO${NC} ${DIM}(iOS/Android авторазделение + REJECT)${NC}"
+        echo -e "  ${BRIGHT_CYAN}[2]${NC}  ${BOLD}Zapret2 MTProto fix${NC} ${DIM}(TCP disorder + badsum + window control)${NC}"
         echo ""
-        echo -e "  ${CYAN}[1]${NC}  Применить NFT правила"
-        echo -e "  ${CYAN}[2]${NC}  Удалить NFT правила"
-        echo -e "  ${CYAN}[3]${NC}  Пресеты (жёсткий / средний / мягкий / smart)"
-        echo -e "  ${CYAN}[4]${NC}  Настройки NFT (rate / burst / timeout / IP)"
+        echo -e "  ${CYAN}[3]${NC}  Применить NFT правила"
+        echo -e "  ${CYAN}[4]${NC}  Удалить NFT правила"
+        echo -e "  ${CYAN}[5]${NC}  Пресеты (жёсткий / средний / мягкий / smart)"
+        echo -e "  ${CYAN}[6]${NC}  Настройки NFT (rate / burst / timeout / IP)"
         local _counter_label="Счётчик правил"
         if nft list table ip "${ZAPRET2_NFT_TABLE:-MTProtoL}" &>/dev/null 2>&1; then
             if nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1; then
@@ -88,30 +88,30 @@ tui_nft_menu() {
         elif nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1; then
             _counter_label="Счётчик правил SYN limiter"
         fi
-        echo -e "  ${CYAN}[5]${NC}  ${_counter_label}"
+        echo -e "  ${CYAN}[7]${NC}  ${_counter_label}"
         if [ "$_zapret_active" != "true" ] || nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1; then
-            echo -e "  ${CYAN}[6]${NC}  Установить службу автозапуска"
-            echo -e "  ${CYAN}[7]${NC}  Удалить службу"
-            echo -e "  ${CYAN}[8]${NC}  Дополнительные правила"
+            echo -e "  ${CYAN}[8]${NC}  Установить службу автозапуска"
+            echo -e "  ${CYAN}[9]${NC}  Удалить службу"
+            echo -e "  ${CYAN}[10]${NC} Дополнительные правила"
         fi
         echo ""
-        echo -e "  ${CYAN}[m]${NC}  Оптимизация By-MEKO (BBR, очереди, keepalive)"
-        echo -e "  ${DIM}[o]${NC}  Устаревшие настройки (iOS фиксы)"
+        echo -e "  ${CYAN}[11]${NC} Оптимизация By-MEKO (BBR, очереди, keepalive)"
+        echo -e "  ${DIM}[12]${NC} Устаревшие настройки (iOS фиксы)"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
         local choice; choice=$(read_choice "выбор" "0")
 
          case "$choice" in
-            z|Z) tui_zapret2_menu ;;
-            s|S)
+            2) tui_zapret2_menu ;;
+            1)
                 if [ "$_zapret_active" = "true" ]; then
                     log_warn "Zapret2 fix активен — отключите его перед включением Smart"
                     press_any_key
                 else
                     enable_smart_mode; press_any_key
                 fi ;;
-            1)
+            3)
                 if [ "$_zapret_active" = "true" ]; then
                     log_warn "Zapret2 fix активен — SYN limiter не нужен"
                     press_any_key; continue
@@ -122,24 +122,24 @@ tui_nft_menu() {
                 fi
                 apply_nft_rules || true
                 press_any_key ;;
-            2)
+            4)
                 remove_nft_rules || true; press_any_key ;;
-            3)
+            5)
                 if [ "$_zapret_active" = "true" ]; then
                     log_warn "Zapret2 fix активен — пресеты SYN limiter не нужны"
                     press_any_key
                 else
                     tui_nft_presets
                 fi ;;
-            4)
+            6)
                 if [ "$_zapret_active" = "true" ]; then
-                    log_warn "Zapret2 fix активен — настройки SYN limiter скрыты. Используйте [z] → Настройки"
+                    log_warn "Zapret2 fix активен — настройки SYN limiter скрыты. Используйте [2] → Настройки"
                     press_any_key
                 else
                     tui_nft_settings
                 fi ;;
-            5) show_nft_drop_counter || true ;;
-            6)
+            7) show_nft_drop_counter || true ;;
+            8)
                 if [ "$_zapret_active" = "true" ]; then
                     log_warn "Zapret2 fix активен — служба SYN limiter не нужна"
                     press_any_key; continue
@@ -150,17 +150,17 @@ tui_nft_menu() {
                 fi
                 install_nft_service || true
                 press_any_key ;;
-            7)
+            9)
                 remove_nft_service || true; press_any_key ;;
-            8)
+            10)
                 if [ "$_zapret_active" = "true" ]; then
                     log_warn "Zapret2 fix активен — доп. правила SYN limiter не нужны"
                     press_any_key
                 else
                     tui_nft_extra_menu
                 fi ;;
-            m|M) tui_meko_opt_menu ;;
-            o|O) tui_nft_legacy_menu ;;
+            11) tui_meko_opt_menu ;;
+            12) tui_nft_legacy_menu ;;
             0|"") return ;;
         esac
     done
@@ -172,22 +172,22 @@ tui_nft_presets() {
     draw_header "ПРЕСЕТЫ NFT"
     echo ""
     echo -e "  ${BOLD}Выберите пресет ограничения:${NC}"; echo ""
-    echo -e "  ${BRIGHT_GREEN}[s]${NC} ${BOLD}★ Smart By-MEKO${NC}"
+    echo -e "  ${BRIGHT_GREEN}[1]${NC} ${BOLD}★ Smart By-MEKO${NC}"
     echo -e "      ${DIM}iOS/Android авторазделение по fingerprint + REJECT.${NC}"
     echo -e "      ${DIM}Подключение 3-8 сек. Один порт для всех клиентов.${NC}"
     echo ""
-    echo -e "  ${RED}[1]${NC} Classic — 1/second burst 1"
+    echo -e "  ${RED}[2]${NC} Classic — 1/second burst 1"
     echo -e "      ${DIM}Каждый IP — не более 1 SYN/сек. DROP при превышении.${NC}"
     echo ""
-    echo -e "  ${DIM}[2]${NC} Свой вариант (Classic)"
+    echo -e "  ${DIM}[3]${NC} Свой вариант (Classic)"
     echo -e "  ${DIM}[0]${NC} Назад"
     echo ""
     local choice; choice=$(read_choice "выбор" "0")
 
     case "$choice" in
-        s|S) enable_smart_mode ;;
-        1) apply_nft_preset hard ;;
-        2)
+        1) enable_smart_mode ;;
+        2) apply_nft_preset hard ;;
+        3)
             echo -en "  ${BOLD}Rate (напр. 1/second, 2/second) [${NFT_RATE}]:${NC} "
             local r; read -r r; [ -n "$r" ] && NFT_RATE="$r"
             echo -en "  ${BOLD}Burst [${NFT_BURST}]:${NC} "
@@ -332,8 +332,8 @@ tui_nft_smart_settings_menu() {
         echo ""
         echo -e "  ${DIM}[8]${NC} Timeout     [${NFT_METER_TIMEOUT}]"
         echo -e "  ${DIM}[9]${NC} Метод идентификации iOS"
-        echo -e "  ${DIM}[i]${NC} Изменить IP привязку(или убрать)"
-        echo -e "  ${DIM}[c]${NC} Переключить на Classic режим"
+        echo -e "  ${DIM}[10]${NC} Изменить IP привязку(или убрать)"
+        echo -e "  ${DIM}[11]${NC} Переключить на Classic режим"
         echo -e "  ${DIM}[0]${NC} Назад"
         echo ""
 
@@ -427,8 +427,8 @@ tui_nft_smart_settings_menu() {
                     *) NFT_IOS_DETECT="fingerprint"; save_nft_settings; log_success "iOS detect: TCP fingerprint"; prompt_apply_nft_rules ;;
                 esac
                 press_any_key ;;
-            i|I) tui_nft_ip_settings ;;
-            c|C)
+            10) tui_nft_ip_settings ;;
+            11)
                 NFT_MODE="classic"
                 save_nft_settings
                 log_success "Переключено на Classic"
@@ -519,14 +519,14 @@ tui_nft_extra_menu() {
         fi
 
         echo ""
-        echo -e "  ${DIM}[a]${NC} Добавить правило"
-        echo -e "  ${DIM}[d]${NC} Удалить правило"
+        echo -e "  ${DIM}[1]${NC} Добавить правило"
+        echo -e "  ${DIM}[2]${NC} Удалить правило"
         echo -e "  ${DIM}[0]${NC} Назад"
         echo ""
         local choice; choice=$(read_choice "выбор" "0")
 
         case "$choice" in
-            a|A)
+            1)
                 echo ""
                 if [ "$NFT_MODE" = "smart" ]; then
                     echo -e "  ${YELLOW}Smart режим активен.${NC}"
@@ -568,7 +568,7 @@ tui_nft_extra_menu() {
                     fi
                 fi
                 press_any_key ;;
-            d|D)
+            2)
                 [ "$NFT_EXTRA_COUNT" -eq 0 ] && { log_info "Нет правил для удаления"; press_any_key; continue; }
                 echo -en "  ${BOLD}Номер правила для удаления:${NC} "
                 local _idx; read -r _idx
@@ -875,9 +875,9 @@ tui_zapret2_menu() {
             echo -e "  ${CYAN}[6]${NC}  Логи службы"
             echo -e "  ${CYAN}[7]${NC}  Диагностика (wscale + NFT + queue)"
         if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then     
-            echo -e "  ${CYAN}[r]${NC}  Сбросить настройки к дефолту"
+            echo -e "  ${CYAN}[9]${NC}  Сбросить настройки к дефолту"
             if [ "${ZAPRET2_DEBUG:-false}" = "true" ]; then
-                echo -e "  ${CYAN}[d]${NC}  Debug лог (tail -100)"
+                echo -e "  ${CYAN}[10]${NC} Debug лог (tail -100)"
             fi
             echo -e "  ${RED}[8]${NC}  Удалить"
         elif zapret2_has_residue; then
@@ -953,7 +953,7 @@ tui_zapret2_menu() {
                     zapret2_check_wscale "true"
                 fi
                 press_any_key ;;
-            r|R)
+            9)
                 if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
                     echo ""
                     echo -e "  ${BOLD}Сброс к дефолту:${NC}"
@@ -979,7 +979,7 @@ tui_zapret2_menu() {
                     fi
                 fi
                 press_any_key ;;
-            d|D)
+            10)
                 if [ "${ZAPRET2_APPLIED:-false}" = "true" ] && [ "${ZAPRET2_DEBUG:-false}" = "true" ]; then
                     echo ""
                     if [ -f "${ZAPRET2_DEBUG_LOG}" ]; then

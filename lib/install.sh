@@ -313,10 +313,10 @@ run_fix_arsenal_wizard() {
                 journalctl -u "$ZAPRET2_SERVICE" -n 5 --no-pager 2>/dev/null || true
             fi
         else
-            log_error "Не удалось скачать zapret2 — можно установить позже через меню NFT → [z]"
+            log_error "Не удалось скачать zapret2 — можно установить позже: меню NFT → [2]"
         fi
     else
-        log_info "Zapret2 fix не установлен. Можно установить позже: меню NFT → [z]"
+        log_info "Zapret2 fix не установлен. Можно установить позже: меню NFT → [2]"
     fi
 
     # NFT SYN limiter (только если zapret2 не установлен)
@@ -327,16 +327,16 @@ run_fix_arsenal_wizard() {
       echo -e "  ${DIM}Без этого прокси нестабилен в ~90% случаев.${NC}"
       echo ""
     echo -e "  ${DIM}Режимы:${NC}"
-    echo -e "    ${BRIGHT_GREEN}[S]${NC} ★ Smart By-MEKO ${DIM}(рекомендуется — iOS/Android авторазделение + REJECT)${NC}"
-    echo -e "    ${RED}[1]${NC} Classic — 1/sec burst 1"
-    echo -e "    ${DIM}[n]${NC} Не применять"
+    echo -e "    ${BRIGHT_GREEN}[1]${NC} ★ Smart By-MEKO ${DIM}(рекомендуется — iOS/Android авторазделение + REJECT)${NC}"
+    echo -e "    ${RED}[2]${NC} Classic — 1/sec burst 1"
+    echo -e "    ${DIM}[0]${NC} Не применять"
     echo ""
-    echo -en "  ${BOLD}Применить NFT limiter? [s по умолчанию]:${NC} "
+    echo -en "  ${BOLD}Применить NFT limiter? [1 по умолчанию]:${NC} "
     local _nft_choice; read -r _nft_choice
 
     case "$_nft_choice" in
-        1) apply_nft_preset hard ;;
-        n|N) log_info "NFT limiter не применён" ;;
+        2) apply_nft_preset hard ;;
+        0) log_info "NFT limiter не применён" ;;
         *) apply_nft_preset smart ;;
     esac
 
