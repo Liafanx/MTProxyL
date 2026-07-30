@@ -247,6 +247,43 @@ show_target_links_ipv4() {
     echo ""
 }
 
+# Построчная статистика по пользователям из ответа API цели:
+# "username|enabled|current_connections|active_unique_ips|total_octets".
+# Разбор без jq — тем же способом, что и ссылки (чанки по "username").
+_target_user_stats() {
+    local _json="$1"
+    printf '%s' "$_json" | tr -d '\n' \
+        | awk '{gsub(/"username"/, "\n\"username\""); print}' \
+        | while IFS= read -r _chunk; do
+            case "$_chunk" in *'"username"'*) ;; *) continue ;; esac
+            local _u _en _c _ips _oct
+            _u=$(sed -nE 's/.*"username"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' <<< "$_chunk")
+            _en=$(sed -nE 's/.*"enabled"[[:space:]]*:[[:space:]]*(true|false).*/\1/p' <<< "$_chunk")
+            _c=$(sed -nE 's/.*"current_connections"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' <<< "$_chunk")
+            _ips=$(sed -nE 's/.*"active_unique_ips"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' <<< "$_chunk")
+            _oct=$(sed -nE 's/.*"total_octets"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' <<< "$_chunk")
+            printf '%s|%s|%s|%s|%s\n' "${_u:-?}" "${_en:-true}" "${_c:-0}" "${_ips:-0}" "${_oct:-0}"
+        done
+}
+
+# Отвечает ли Prometheus-эндпоинт цели. Метрики движка в telemt по
+# умолчанию выключены (metrics_listen/metrics_port закомментированы),
+# поэтому это отдельная от API проверка.
+_target_metrics_available() {
+    curl -s --max-time 2 "http://127.0.0.1:$(_get_telemt_metrics_port)/metrics" &>/dev/null
+}
+
+_target_metrics_hint() {
+    echo ""
+    log_warn "Метрики движка у цели не включены"
+    echo -e "  ${DIM}Добавьте в конфиг цели (${DETECTED_CONFIG_PATH:-путь не определён})${NC}"
+    echo -e "  ${DIM}и перезапустите цель:${NC}"
+    echo -e "    ${BOLD}[server]${NC}"
+    echo -e "    ${BOLD}metrics_listen = \"127.0.0.1:9090\"${NC}"
+    echo -e "    ${BOLD}metrics_whitelist = [\"127.0.0.1/32\", \"::1/128\"]${NC}"
+    echo -e "  ${DIM}Трафик и соединения берутся из API цели — они работают без метрик.${NC}"
+}
+
 _target_tls_domain() {
     local _cfg="${1:-$DETECTED_CONFIG_PATH}"
     [ -n "$_cfg" ] && [ -f "$_cfg" ] || return 1
