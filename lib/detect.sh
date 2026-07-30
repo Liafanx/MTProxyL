@@ -963,6 +963,66 @@ _no_telemt_target() {
     return 0
 }
 
+# Порт, который установщик telemt предложит по умолчанию: он читает
+# существующий /etc/telemt/telemt.toml, иначе берёт 443. Спросит он всё
+# равно, но конфликт честнее показать до запуска.
+_telemt_installer_default_port() {
+    local _cfg="/etc/telemt/telemt.toml" _p=""
+    [ -f "$_cfg" ] && _p=$(_toml_get_value "port" "$_cfg")
+    [[ "$_p" =~ ^[0-9]+$ ]] && { echo "$_p"; return; }
+    echo "443"
+}
+
+# Порт под telemt занят — разбираемся до установки.
+# Отдельно ловим собственный контейнер MTProxyL: он работает в сети host,
+# поэтому в `ss` виден как процесс telemt. Установщик telemt сравнивает
+# вывод ss со своим BIN_NAME, решает, что порт держит его же служба, и
+# спокойно продолжает — а служба потом не может занять порт и падает в
+# рестарт-луп. Сам он об этом не предупредит.
+_preflight_telemt_port() {
+    local _port="$1"
+    is_port_available "$_port" && return 0
+
+    echo ""
+    log_warn "Порт ${_port} занят — telemt на него не встанет"
+    show_port_listener "$_port"
+
+    local _own; _own=$(own_container_state 2>/dev/null)
+    if [ "$_own" = "running" ] || [ "$_own" = "restarting" ]; then
+        echo ""
+        log_warn "Порт держит собственный контейнер MTProxyL (${CONTAINER_NAME}, сеть host)"
+        echo -e "  ${DIM}Установщик telemt увидит в ss имя процесса telemt, посчитает порт${NC}"
+        echo -e "  ${DIM}своим и продолжит установку — служба потом не поднимется.${NC}"
+        echo ""
+        echo -e "  ${DIM}[1]${NC} Остановить и удалить контейнер ${DIM}(рекомендуется)${NC}"
+        echo -e "  ${DIM}[2]${NC} Только остановить, контейнер оставить"
+        echo -e "  ${DIM}[3]${NC} Не трогать — укажу другой порт в установщике"
+        local _oc; _oc=$(read_choice "выбор" "1")
+        case "$_oc" in
+            1) remove_own_container ;;
+            2) docker update --restart=no "$CONTAINER_NAME" &>/dev/null || true
+               docker stop --timeout 10 "$CONTAINER_NAME" &>/dev/null \
+                   && log_success "Контейнер остановлен (не удалён)" \
+                   || log_warn "Не удалось остановить контейнер" ;;
+            *) log_info "Контейнер оставлен — укажите в установщике свободный порт" ;;
+        esac
+        sleep 1
+        if is_port_available "$_port"; then
+            log_success "Порт ${_port} свободен"
+            return 0
+        fi
+        echo ""
+        log_warn "Порт ${_port} всё ещё занят"
+        show_port_listener "$_port"
+    fi
+
+    echo ""
+    echo -e "  ${DIM}Установщик telemt либо откажется ставиться, либо поставит службу,${NC}"
+    echo -e "  ${DIM}которая не сможет занять порт. Освободите ${_port} или укажите${NC}"
+    echo -e "  ${DIM}другой порт, когда установщик спросит.${NC}"
+    return 1
+}
+
 install_original_telemt() {
     # _offer_tuning=false — когда тюнинг предлагает вызывающий мастер
     local _offer_tuning="${1:-true}"
@@ -986,6 +1046,9 @@ install_original_telemt() {
         echo ""
         log_warn "telemt на сервере уже есть — установщик обновит бинарник и параметры существующего конфига"
     fi
+
+    _preflight_telemt_port "$(_telemt_installer_default_port)" || true
+
     echo ""
     echo -en "  ${BOLD}Запустить установщик telemt? [y/N]:${NC} "
     local _yn; read -er _yn
