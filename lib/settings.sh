@@ -40,6 +40,11 @@ SELFMASK_AUTO_RENEW="true"
 SELFMASK_TLS_PROTOCOLS="TLSv1.3"
 SELFMASK_CERT_MODE="letsencrypt"  # letsencrypt|selfsigned
 
+# Порт, запомненный за каждым режимом: при переключении режима порт
+# восстанавливается, а не тянется из предыдущего режима.
+PORT_PROFILE_MANAGER=""
+PORT_PROFILE_REANIMATOR=""
+
 save_settings() {
     mkdir -p "$INSTALL_DIR"
     local tmp
@@ -102,6 +107,10 @@ SELFMASK_NGINX_SITE_NAME='${SELFMASK_NGINX_SITE_NAME}'
 SELFMASK_AUTO_RENEW='${SELFMASK_AUTO_RENEW}'
 SELFMASK_TLS_PROTOCOLS='${SELFMASK_TLS_PROTOCOLS}'
 SELFMASK_CERT_MODE='${SELFMASK_CERT_MODE}'
+
+# Порты, запомненные за режимами
+PORT_PROFILE_MANAGER='${PORT_PROFILE_MANAGER}'
+PORT_PROFILE_REANIMATOR='${PORT_PROFILE_REANIMATOR}'
 SETTINGS_EOF
 
     chmod 600 "$tmp"
@@ -184,6 +193,32 @@ switch_selfmask_profile() {
     fi
 }
 
+# Запоминаем порт уходящего режима и восстанавливаем порт входящего.
+# Для manager, если запомненного нет, берём порт из его же config.toml.
+# Возвращает 0, если порт изменился (вызывающий переприменяет правила).
+switch_port_profile() {
+    local _new="$1" _old="${MTPROXYL_MODE:-manager}"
+    local _before="${PROXY_PORT:-}"
+
+    case "$_old" in
+        manager)    PORT_PROFILE_MANAGER="$_before" ;;
+        reanimator) PORT_PROFILE_REANIMATOR="$_before" ;;
+    esac
+
+    local _restore=""
+    case "$_new" in
+        manager)
+            _restore="${PORT_PROFILE_MANAGER}"
+            if [ -z "$_restore" ] && [ -f "${CONFIG_DIR}/config.toml" ]; then
+                _restore=$(awk '/^port[[:space:]]*=/{gsub(/[^0-9]/,"",$3); print $3; exit}' "${CONFIG_DIR}/config.toml" 2>/dev/null)
+            fi ;;
+        reanimator) _restore="${PORT_PROFILE_REANIMATOR}" ;;
+    esac
+
+    [ -n "$_restore" ] && [[ "$_restore" =~ ^[0-9]+$ ]] && PROXY_PORT="$_restore"
+    [ "$PROXY_PORT" != "$_before" ]
+}
+
 load_settings() {
     [ -f "$SETTINGS_FILE" ] || return 0
 
@@ -213,7 +248,8 @@ load_settings() {
             AUTO_UPDATE_ENABLED|SECRET_AUTO_ROTATE_DAYS|BACKUP_RETENTION_DAYS|\
             SELFMASK_ENABLED|SELFMASK_DOMAIN|SELFMASK_SITE_SOURCE|SELFMASK_SITE_DIR|\
             SELFMASK_NGINX_BACKEND_PORT|SELFMASK_CERT_EMAIL|SELFMASK_NGINX_SITE_NAME|\
-            SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS|SELFMASK_CERT_MODE)
+            SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS|SELFMASK_CERT_MODE|\
+            PORT_PROFILE_MANAGER|PORT_PROFILE_REANIMATOR)
                 printf -v "$key" '%s' "$val"
                 ;;
         esac

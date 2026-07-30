@@ -313,7 +313,7 @@ mtproxyl expert edit
 ```bash
 mtproxyl nft smart            # Включить Smart режим
 mtproxyl nft preset smart     # Smart с параметрами по умолчанию
-mtproxyl nft preset hard      # Classic: жёсткий (1/s burst 1)
+mtproxyl nft preset classic   # Classic: 1/second burst 1
 mtproxyl nft apply            # Применить правила
 mtproxyl nft remove           # Удалить правила
 mtproxyl nft service          # Systemd-служба
@@ -511,7 +511,7 @@ MTProxyL поддерживает два режима: **Smart By-MEKO** и **Cl
 
 ### Classic режим
 
-Традиционное ограничение входящих SYN-пакетов. Доступен пресет: жёсткий (1/s burst 1) или свой вариант.
+Традиционное ограничение входящих SYN-пакетов. Стандартный вариант — 1/second burst 1, либо свои значения rate/burst.
 
 ---
 

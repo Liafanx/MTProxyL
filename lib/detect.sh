@@ -776,17 +776,24 @@ sync_port_from_target() {
     save_settings
     log_success "Порт переключён на порт цели: ${_old} → ${PROXY_PORT}"
 
-    # Правила, уже наложенные на старый порт, надо переналожить.
+    offer_reapply_fixes "$_old"
+}
+
+# Правила zapret2/NFT привязаны к порту. После смены порта их надо
+# переналожить, иначе фиксы остаются висеть на прежнем порту.
+offer_reapply_fixes() {
+    local _old="${1:-прежний порт}"
     load_nft_settings 2>/dev/null || true
-    local _need_reapply="false"
-    [ "${ZAPRET2_APPLIED:-false}" = "true" ] && _need_reapply="true"
-    [ "${NFT_ENABLED:-false}" = "true" ] && _need_reapply="true"
-    nft list table ip "${ZAPRET2_NFT_TABLE:-MTProtoL}" &>/dev/null 2>&1 && _need_reapply="true"
-    nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1 && _need_reapply="true"
-    [ "$_need_reapply" = "true" ] || return 0
+
+    local _need="false"
+    [ "${ZAPRET2_APPLIED:-false}" = "true" ] && _need="true"
+    [ "${NFT_ENABLED:-false}" = "true" ] && _need="true"
+    nft list table ip "${ZAPRET2_NFT_TABLE:-MTProtoL}" &>/dev/null 2>&1 && _need="true"
+    nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1 && _need="true"
+    [ "$_need" = "true" ] || return 0
 
     echo ""
-    log_warn "Правила фиксов наложены на прежний порт ${_old} — их нужно переприменить"
+    log_warn "Правила фиксов наложены на порт ${_old} — их нужно переприменить"
     echo -en "  ${BOLD}Переприменить сейчас? [Y/n]:${NC} "
     local _yn; read -r _yn
     [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Переприменить позже: меню NFT/Zapret2"; return 0; }
@@ -819,9 +826,16 @@ switch_to_manager_mode() {
     echo -en "  ${BOLD}Введите 'yes' для подтверждения:${NC} "
     local _c; read -r _c
     [ "$_c" != "yes" ] && { log_info "Отменено"; return 1; }
+    local _port_before="${PROXY_PORT:-}"
+    local _port_changed="false"
+    switch_port_profile "manager" && _port_changed="true"
     switch_selfmask_profile "manager"
     save_settings
     log_success "Режим: manager"
+    if [ "$_port_changed" = "true" ]; then
+        log_success "Порт режима manager восстановлен: ${_port_before} → ${PROXY_PORT}"
+        offer_reapply_fixes "$_port_before"
+    fi
 
     # Своей установки нет — в режиме manager управлять нечем, поэтому
     # сразу предлагаем установку (иначе меню открывается «пустым»).
@@ -885,6 +899,7 @@ switch_to_reanimator_mode() {
         esac
     fi
 
+    switch_port_profile "reanimator" || true
     switch_selfmask_profile "reanimator"
     save_settings
     run_target_detection

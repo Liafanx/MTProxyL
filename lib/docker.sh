@@ -176,15 +176,27 @@ own_container_state() {
     echo "${_status:-absent}"
 }
 
-# Короткая причина, почему свой контейнер не работает (для статус-панели)
+# Короткая причина, почему свой контейнер не работает — только когда это
+# действительно проблема. Чистая остановка (exited с кодом 0) — обычное
+# состояние после «Остановить», её не показываем и логами не пугаем.
 own_container_problem() {
     local _st; _st=$(own_container_state)
     case "$_st" in
-        running|absent) return 1 ;;
+        running|absent|created) return 1 ;;
     esac
-    local _code _err
+
+    local _code
     _code=$(docker inspect -f '{{.State.ExitCode}}' "$CONTAINER_NAME" 2>/dev/null)
-    _err=$(docker logs --tail 3 "$CONTAINER_NAME" 2>&1 | tr '\n' ' ' | cut -c1-120)
+    [ "$_st" = "exited" ] && [ "${_code:-0}" = "0" ] && return 1
+
+    # Берём последнюю строку, похожую на ошибку; если таких нет — просто
+    # последнюю. Timestamp отрезаем, он в панели только мешает.
+    local _log _err
+    _log=$(docker logs --tail 20 "$CONTAINER_NAME" 2>&1 | tr -d '\r')
+    _err=$(grep -iE 'error|panic|fatal|denied|refused|in use|failed' <<< "$_log" | tail -1)
+    [ -z "$_err" ] && _err=$(tail -1 <<< "$_log")
+    _err=$(sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z?[[:space:]]*//' <<< "$_err" | cut -c1-100)
+
     echo "${_st} (exit=${_code:-?})${_err:+: ${_err}}"
 }
 
