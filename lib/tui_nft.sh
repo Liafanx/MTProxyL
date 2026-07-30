@@ -89,7 +89,11 @@ tui_nft_menu() {
             _counter_label="Счётчик правил SYN limiter"
         fi
         echo -e "  ${CYAN}[7]${NC}  ${_counter_label}"
+        # Флаг нужен и при разборе выбора: иначе скрытые пункты всё равно
+        # срабатывают, если ввести их номер руками.
+        local _limiter_items="false"
         if [ "$_zapret_active" != "true" ] || nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1; then
+            _limiter_items="true"
             echo -e "  ${CYAN}[8]${NC}  Установить службу автозапуска"
             echo -e "  ${CYAN}[9]${NC}  Удалить службу"
             echo -e "  ${CYAN}[10]${NC} Дополнительные правила"
@@ -140,7 +144,7 @@ tui_nft_menu() {
                 fi ;;
             7) show_nft_drop_counter || true ;;
             8)
-                if [ "$_zapret_active" = "true" ]; then
+                if [ "$_limiter_items" != "true" ] || [ "$_zapret_active" = "true" ]; then
                     log_warn "Zapret2 fix активен — служба SYN limiter не нужна"
                     press_any_key; continue
                 fi
@@ -151,9 +155,13 @@ tui_nft_menu() {
                 install_nft_service || true
                 press_any_key ;;
             9)
+                if [ "$_limiter_items" != "true" ]; then
+                    log_error "Пункт недоступен: SYN limiter не активен"
+                    press_any_key; continue
+                fi
                 remove_nft_service || true; press_any_key ;;
             10)
-                if [ "$_zapret_active" = "true" ]; then
+                if [ "$_limiter_items" != "true" ] || [ "$_zapret_active" = "true" ]; then
                     log_warn "Zapret2 fix активен — доп. правила SYN limiter не нужны"
                     press_any_key
                 else
@@ -1020,7 +1028,7 @@ tui_zapret2_settings() {
         echo -e "  ${DIM}Изменение параметров перезаписывает конфиг, Lua и перезапускает службу.${NC}"
         echo ""
         echo -e "  ${DIM}[1]${NC} out-range   [${ZAPRET2_OUT_RANGE}]  ${DIM}— исходящие пакеты (a=always)${NC}"
-        echo -e "  ${DIM}[2]${NC} split len   [${ZAPRET2_SPLIT_LEN}]  ${DIM}— размер частей ClientHello (50..400)${NC}"
+        echo -e "  ${DIM}[2]${NC} split len   [${ZAPRET2_SPLIT_LEN}]  ${DIM}— размер частей ClientHello (50..1000)${NC}"
         echo -e "  ${DIM}[3]${NC} win SYN+ACK [${ZAPRET2_WIN_SYNACK}]  ${DIM}— окно в SYN+ACK${NC}"
         echo -e "  ${DIM}[4]${NC} win ACK     [${ZAPRET2_WIN_ACK}]  ${DIM}— окно в пустых ACK${NC}"
         echo -e "  ${DIM}[5]${NC} in-range    [${ZAPRET2_IN_RANGE}]  ${DIM}— входящие пакеты${NC}"
@@ -1032,6 +1040,12 @@ tui_zapret2_settings() {
             echo -e "  ${DIM}[9]${NC} Debug лог ${YELLOW}[включён]${NC}"
         else
             echo -e "  ${DIM}[9]${NC} Debug лог ${DIM}[выключен]${NC}"
+        fi
+        echo -e "  ${DIM}[10]${NC} Доп. порты  [${ZAPRET2_EXTRA_PORTS:-нет}]  ${DIM}— через запятую, можно диапазоны${NC}"
+        local _z_bridge="false"
+        if zapret2_is_bridge_target; then
+            _z_bridge="true"
+            echo -e "  ${DIM}[11]${NC} Docker bridge: фильтр по IP контейнера [${DETECT_BRIDGE_STRATEGY:-simple}]"
         fi
         echo ""
         echo -e "  ${DIM}[0]${NC} Назад"
@@ -1047,7 +1061,7 @@ tui_zapret2_settings() {
                 fi
                 press_any_key ;;
             2)
-                echo -en "  split len [${ZAPRET2_SPLIT_LEN}] (50..400): "
+                echo -en "  split len [${ZAPRET2_SPLIT_LEN}] (50..1000): "
                 local _v; read -r _v
                 if [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 50 ] && [ "$_v" -le 1000 ]; then
                     ZAPRET2_SPLIT_LEN="$_v"; save_nft_settings
@@ -1113,6 +1127,54 @@ tui_zapret2_settings() {
                         log_success "Debug лог включён → ${ZAPRET2_DEBUG_LOG}"; zapret2_update_config
                     fi
                 fi
+                press_any_key ;;
+            10)
+                echo ""
+                echo -e "  ${DIM}Порт прокси (${PROXY_PORT:-443}) добавляется автоматически.${NC}"
+                echo -e "  ${DIM}Формат: 8443,9000-9100 — сколько угодно портов и диапазонов.${NC}"
+                echo -e "  ${DIM}Пусто — убрать дополнительные порты.${NC}"
+                echo -en "  Доп. порты [${ZAPRET2_EXTRA_PORTS:-нет}]: "
+                local _ep; read -r _ep
+                if [ -z "$_ep" ]; then
+                    if [ -n "${ZAPRET2_EXTRA_PORTS:-}" ]; then
+                        ZAPRET2_EXTRA_PORTS=""
+                        save_nft_settings
+                        log_success "Дополнительные порты убраны"
+                        zapret2_update_config
+                    fi
+                elif zapret2_validate_extra_ports "$_ep"; then
+                    ZAPRET2_EXTRA_PORTS="${_ep// /}"
+                    save_nft_settings
+                    log_success "Доп. порты = ${ZAPRET2_EXTRA_PORTS}"
+                    log_info "Фильтр nfqws2: $(zapret2_filter_ports)"
+                    zapret2_update_config
+                else
+                    log_error "Некорректный список. Пример: 8443,9000-9100"
+                fi
+                press_any_key ;;
+            11)
+                if [ "$_z_bridge" != "true" ]; then
+                    log_error "Пункт доступен только для цели в Docker bridge"
+                    press_any_key; continue
+                fi
+                echo ""
+                echo -e "  ${BOLD}Правила NFT для Docker bridge${NC}"
+                echo -e "  ${DIM}[1]${NC} simple  — без фильтра по IP, только по портам"
+                echo -e "      ${DIM}надёжнее, watcher не нужен${NC}"
+                echo -e "  ${DIM}[2]${NC} precise — сузить правила до IP контейнера"
+                echo -e "      ${DIM}точнее, но нужен watcher (IP контейнера меняется)${NC}"
+                local _bs; _bs=$(read_choice "выбор" "0")
+                case "$_bs" in
+                    1) DETECT_BRIDGE_STRATEGY="simple"
+                       save_detect_settings 2>/dev/null || true
+                       remove_bridge_watch_service
+                       log_success "Docker bridge: simple (без фильтра по IP)"
+                       zapret2_update_config ;;
+                    2) DETECT_BRIDGE_STRATEGY="precise"
+                       save_detect_settings 2>/dev/null || true
+                       log_success "Docker bridge: precise (фильтр по IP контейнера)"
+                       zapret2_update_config ;;
+                esac
                 press_any_key ;;
             0|"") return ;;
         esac
