@@ -237,7 +237,7 @@ load_nft_settings() {
 prompt_apply_nft_rules() {
     echo ""
     echo -en "  ${BOLD}Применить новые NFT-правила сейчас? [Y/n]:${NC} "
-    local _yn; read -r _yn
+    local _yn; read -er _yn
     if [[ ! "$_yn" =~ ^[nN]$ ]]; then
         apply_nft_rules || true
         [ "${NFT_ENABLED:-false}" = "true" ] && install_nft_service || true
@@ -628,7 +628,7 @@ enable_smart_mode() {
     fi
 
     echo -en "  ${BOLD}Включить Smart режим? [Y/n]:${NC} "
-    local _yn; read -r _yn
+    local _yn; read -er _yn
     [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Отменено"; return 0; }
 
     # Отключаем iOS Fix v2 если был
@@ -673,11 +673,11 @@ ios_fix_apply() {
 
     echo -e "  ${BOLD}Параметры фикса (Enter = оставить текущее):${NC}"
     echo -en "    tcp_keepalive_time   [${IOS_KA_TIME}]: "
-    local _t; read -r _t; [[ "$_t" =~ ^[0-9]+$ ]] && IOS_KA_TIME="$_t"
+    local _t; read -er _t; [[ "$_t" =~ ^[0-9]+$ ]] && IOS_KA_TIME="$_t"
     echo -en "    tcp_keepalive_intvl  [${IOS_KA_INTVL}]: "
-    local _i; read -r _i; [[ "$_i" =~ ^[0-9]+$ ]] && IOS_KA_INTVL="$_i"
+    local _i; read -er _i; [[ "$_i" =~ ^[0-9]+$ ]] && IOS_KA_INTVL="$_i"
     echo -en "    tcp_keepalive_probes [${IOS_KA_PROBES}]: "
-    local _p; read -r _p; [[ "$_p" =~ ^[0-9]+$ ]] && IOS_KA_PROBES="$_p"
+    local _p; read -er _p; [[ "$_p" =~ ^[0-9]+$ ]] && IOS_KA_PROBES="$_p"
 
     local _detect=$(( IOS_KA_TIME + IOS_KA_INTVL * IOS_KA_PROBES ))
     echo ""
@@ -690,7 +690,7 @@ ios_fix_apply() {
     else
         echo -en "  ${BOLD}Применить фикс? [Y/n]:${NC} "
     fi
-    local _confirm; read -r _confirm
+    local _confirm; read -er _confirm
     [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     # Сохраняем оригиналы если ещё не сохранены
@@ -753,7 +753,7 @@ ios_fix_remove() {
         echo -e "  ${DIM}Будет удалён: ${IOS_SYSCTL_FILE}${NC}"
         echo -e "  ${DIM}Значения ядра будут восстановлены к тем, которые были до применения фикса.${NC}"; echo ""
         echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-        local _confirm; read -r _confirm
+        local _confirm; read -er _confirm
         [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
     fi
 
@@ -802,7 +802,7 @@ _ios2_check_client_mss() {
         echo -e "  ${CYAN}mtproxyl restart${NC}"
         echo ""
         echo -en "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
-        local _proceed; read -r _proceed
+        local _proceed; read -er _proceed
         [[ "$_proceed" =~ ^[yY] ]] || return 1
     fi
     return 0
@@ -816,7 +816,7 @@ ios2_fix_apply() {
         echo -e "  ${DIM}Smart режим автоматически разделяет iOS и Android на одном порту.${NC}"
         echo ""
         echo -en "  ${BOLD}Всё равно включить iOS Fix v2? [y/N]:${NC} "
-        local _force; read -r _force
+        local _force; read -er _force
         [[ "$_force" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
     fi
 
@@ -838,7 +838,7 @@ ios2_fix_apply() {
     _ios2_check_client_mss || return 0
 
     echo -en "  ${BOLD}Применить? [Y/n]:${NC} "
-    local _confirm; read -r _confirm
+    local _confirm; read -er _confirm
     [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     IOS2_FIX_ENABLED="true"
@@ -875,7 +875,7 @@ ios2_fix_remove() {
         echo -e "  ${BOLD}Отключение iOS Fix v2${NC}"; echo ""
         echo -e "  ${DIM}Редирект ${IOS2_EXTERNAL_PORT} → ${IOS2_TARGET_PORT:-${PROXY_PORT:-443}} будет удалён.${NC}"; echo ""
         echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-        local _confirm; read -r _confirm
+        local _confirm; read -er _confirm
         [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
     fi
 
@@ -965,7 +965,7 @@ meko_opt_apply() {
     else
         echo -en "  ${BOLD}Применить оптимизацию? [Y/n]:${NC} "
     fi
-    local _confirm; read -r _confirm
+    local _confirm; read -er _confirm
     [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     if [ -z "$MEKO_ORIG_KEEPALIVE_TIME" ]; then
@@ -1053,7 +1053,7 @@ meko_opt_remove() {
     echo -e "    congestion_control   → ${MEKO_ORIG_TCP_CONGESTION:-cubic}"
     echo ""
     echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-    local _confirm; read -r _confirm
+    local _confirm; read -er _confirm
     [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     rm -f "$MEKO_OPT_FILE"
@@ -1851,13 +1851,13 @@ zapret2_install() {
     if [ "${ZAPRET2_APPLIED:-false}" = "true" ] && [ -x "$ZAPRET2_BIN" ]; then
         echo -e "  ${YELLOW}Zapret2 уже установлен. Переустановить?${NC}"
         echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-        local _yn; read -r _yn
+        local _yn; read -er _yn
         [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Отменено"; return 0; }
         _reinstall="true"
     fi
 
     echo -en "  ${BOLD}Скачать и установить zapret2? [Y/n]:${NC} "
-    local _yn; read -r _yn
+    local _yn; read -er _yn
     [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Отменено"; return 0; }
 
     # При переустановке останавливаем старый экземпляр ДО проверки занятости
@@ -1900,7 +1900,7 @@ zapret2_install() {
         echo ""
         echo -e "  ${YELLOW}⚠ SYN limiter активен — zapret2 его заменит.${NC}"
         echo -en "  ${BOLD}Отключить SYN limiter? [Y/n]:${NC} "
-        local _yn_syn; read -r _yn_syn
+        local _yn_syn; read -er _yn_syn
         if [[ ! "$_yn_syn" =~ ^[nN]$ ]]; then
             remove_nft_rules 2>/dev/null || true
             remove_nft_service 2>/dev/null || true
@@ -1956,7 +1956,7 @@ zapret2_remove() {
     echo -e "  ${RED}${BOLD}Удаление Zapret2 MTProto fix${NC}"
     echo ""
     echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
-    local _yn; read -r _yn
+    local _yn; read -er _yn
     [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
 
     zapret2_stop
@@ -2050,7 +2050,7 @@ zapret2_check_wscale() {
             echo ""
             echo -e "  ${BOLD}Необходимо изменить win ACK: ${_current_win_ack} → ${_win_ack_rec}${NC}"
             echo -en "  Применить? [Y/n]: "
-            local _yn; read -r _yn
+            local _yn; read -er _yn
             if [[ ! "$_yn" =~ ^[nN]$ ]]; then
                 ZAPRET2_WIN_ACK="$_win_ack_rec"
                 save_nft_settings
@@ -2062,7 +2062,7 @@ zapret2_check_wscale() {
             echo -e "  ${DIM}Текущее значение работает. Оптимизировать?${NC}"
             echo -e "  ${DIM}win ACK ${_current_win_ack} (${_current_real} байт) → ${_win_ack_rec} (${_real_win} байт)${NC}"
             echo -en "  Оптимизировать? [y/N]: "
-            local _yn; read -r _yn
+            local _yn; read -er _yn
             if [[ "$_yn" =~ ^[yY]$ ]]; then
                 ZAPRET2_WIN_ACK="$_win_ack_rec"
                 save_nft_settings

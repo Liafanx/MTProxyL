@@ -104,7 +104,7 @@ except: print('?')
     # Предложить перезапуск
     if is_proxy_running; then
         echo -en "  ${BOLD}Перезапустить прокси? [Y/n]:${NC} "
-        local yn; read -r yn
+        local yn; read -er yn
         if [[ ! "$yn" =~ ^[nN]$ ]]; then
             load_secrets
             restart_proxy_container
@@ -140,7 +140,7 @@ engine_rollback() {
 
     echo ""
     echo -en "  ${BOLD}Номер версии для отката:${NC} "
-    local choice; read -r choice
+    local choice; read -er choice
 
     local selected
     selected=$(echo "$images" | sed -n "${choice}p")
@@ -152,7 +152,7 @@ engine_rollback() {
 
     if is_proxy_running; then
         echo -en "  ${BOLD}Перезапустить прокси? [Y/n]:${NC} "
-        local yn; read -r yn
+        local yn; read -er yn
         if [[ ! "$yn" =~ ^[nN]$ ]]; then
             load_secrets
             restart_proxy_container
@@ -213,7 +213,7 @@ handle_engine_command() {
 
                 echo ""
                 echo -en "  ${BOLD}Номер версии для установки:${NC} "
-                local choice; read -r choice
+                local choice; read -er choice
                 local selected_tag
                 selected_tag=$(echo "$releases" | sed -n "${choice}p" | cut -d'|' -f1)
                 [ -z "$selected_tag" ] && { log_error "Неверный номер"; return 1; }

@@ -359,6 +359,28 @@ _telemt_unit_exists() {
     return 1
 }
 
+# Процесс принадлежит контейнеру (docker/podman/lxc/k8s)
+_pid_in_container() {
+    local _cg="/proc/${1}/cgroup"
+    [ -r "$_cg" ] || return 1
+    grep -qE '(docker|containerd|libpod|kubepods|/lxc)' "$_cg" 2>/dev/null
+}
+
+# PID'ы telemt, которые действительно работают на хосте.
+# Процессы внутри контейнеров видны в хостовом PID namespace под тем же
+# именем, поэтому обычный `pgrep -x telemt` считал локальную цель
+# работающей, даже когда её служба остановлена, а telemt крутится в чужом
+# (или в нашем собственном, менеджерском) контейнере.
+_telemt_host_pids() {
+    local _pid _rc=1
+    for _pid in $(pgrep -x telemt 2>/dev/null); do
+        _pid_in_container "$_pid" && continue
+        echo "$_pid"
+        _rc=0
+    done
+    return $_rc
+}
+
 # ── Исключение чужих панелей / собственного контейнера ────────
 _is_excluded_path() {
     local _path="$1"
@@ -463,12 +485,18 @@ detect_telemt() {
     # 3. Локальный telemt: процесс, активная служба ИЛИ установленный юнит.
     # Юнит учитываем даже остановленным — иначе остановленную службу
     # определяет как config_only, и её нельзя запустить из меню.
-    if pgrep -x telemt &>/dev/null || systemctl is-active telemt.service &>/dev/null 2>&1 \
+    if _telemt_host_pids >/dev/null || systemctl is-active telemt.service &>/dev/null 2>&1 \
        || _telemt_unit_exists; then
         DETECTED_MODE="local"
         DETECTED_NETWORK_MODE="host"
-        local _args
-        _args=$(ps -eo args 2>/dev/null | grep '[t]elemt' | grep -v 'telemt-panel' | grep -v 'telemt_panel' | head -1 | grep -oE '/[^ ]+\.toml' | head -1)
+        local _args _pid _cmd
+        _args=""
+        for _pid in $(_telemt_host_pids); do
+            _cmd=$(tr '\0' ' ' < "/proc/${_pid}/cmdline" 2>/dev/null)
+            case "$_cmd" in *telemt-panel*|*telemt_panel*) continue ;; esac
+            _args=$(grep -oE '/[^ ]+\.toml' <<< "$_cmd" | head -1)
+            [ -n "$_args" ] && break
+        done
         if [ -n "$_args" ] && [ -f "$_args" ] && ! _is_excluded_path "$_args" && _looks_like_telemt_config "$_args"; then
             DETECTED_CONFIG_PATH="$_args"
         fi
@@ -578,7 +606,7 @@ apply_target_tuning() {
     else
         log_warn "Секция [${section}] отсутствует в ${_cfg}"
         echo -en "  ${BOLD}Создать секцию и применить? [Y/n]:${NC} "
-        local _cr; read -r _cr
+        local _cr; read -er _cr
         if [[ ! "$_cr" =~ ^[nN]$ ]]; then
             printf '\n[%s]\n%s = %s\n' "$section" "$param" "$_tv_out" >> "$_cfg"
             log_success "Секция [${section}] создана"
@@ -593,7 +621,7 @@ apply_target_tuning() {
 
     if is_proxy_running; then
         echo -en "  ${BOLD}Перезапустить цель, чтобы применить изменения? [Y/n]:${NC} "
-        local _r; read -r _r
+        local _r; read -er _r
         [[ ! "$_r" =~ ^[nN] ]] && restart_target
     fi
 }
@@ -638,7 +666,7 @@ run_reanimator_tuning_wizard() {
     fi
 
     echo -en "  ${BOLD}Применить эти значения в конфиге цели? [Y/n]:${NC} "
-    local _yn; read -r _yn
+    local _yn; read -er _yn
     if [[ "$_yn" =~ ^[nN]$ ]]; then
         log_info "Тюнинг пропущен. Позже: mtproxyl tune set <параметр> <значение>"
         return 0
@@ -655,7 +683,7 @@ run_reanimator_tuning_wizard() {
 
     if is_proxy_running; then
         echo -en "  ${BOLD}Перезапустить цель, чтобы значения вступили в силу? [Y/n]:${NC} "
-        local _r; read -r _r
+        local _r; read -er _r
         [[ ! "$_r" =~ ^[nN] ]] && restart_target
     else
         log_info "Цель не запущена — значения применятся при её запуске"
@@ -736,7 +764,7 @@ edit_target_config() {
     fi
 
     echo -en "  ${BOLD}Перезапустить цель, чтобы применить изменения? [Y/n]:${NC} "
-    local _r; read -r _r
+    local _r; read -er _r
     if [[ ! "$_r" =~ ^[nN] ]]; then
         restart_target
         sleep 1
@@ -763,7 +791,7 @@ sync_port_from_target() {
         echo ""
         log_warn "Порт цели определить не удалось (текущий: ${PROXY_PORT:-не задан})"
         echo -en "  ${BOLD}Укажите порт цели [${PROXY_PORT:-443}]:${NC} "
-        local _in; read -r _in
+        local _in; read -er _in
         _in="${_in:-${PROXY_PORT:-443}}"
         validate_port "$_in" || { log_error "Некорректный порт — оставляем ${PROXY_PORT:-443}"; return 1; }
         _p="$_in"
@@ -795,7 +823,7 @@ offer_reapply_fixes() {
     echo ""
     log_warn "Правила фиксов наложены на порт ${_old} — их нужно переприменить"
     echo -en "  ${BOLD}Переприменить сейчас? [Y/n]:${NC} "
-    local _yn; read -r _yn
+    local _yn; read -er _yn
     [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Переприменить позже: меню NFT/Zapret2"; return 0; }
 
     if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
@@ -824,7 +852,7 @@ switch_to_manager_mode() {
     echo ""
     log_warn "Переход в режим Manager. MTProxyL начнёт устанавливать/владеть СВОИМ telemt."
     echo -en "  ${BOLD}Введите 'yes' для подтверждения:${NC} "
-    local _c; read -r _c
+    local _c; read -er _c
     [ "$_c" != "yes" ] && { log_info "Отменено"; return 1; }
     local _port_before="${PROXY_PORT:-}"
     local _port_changed="false"
@@ -858,7 +886,7 @@ switch_to_manager_mode() {
     fi
     echo ""
     echo -en "  ${BOLD}Запустить установку сейчас? [Y/n]:${NC} "
-    local _yn; read -r _yn
+    local _yn; read -er _yn
     if [[ "$_yn" =~ ^[nN]$ ]]; then
         log_info "Установку можно запустить позже: mtproxyl install"
         return 0
@@ -874,7 +902,7 @@ switch_to_reanimator_mode() {
     echo ""
     log_warn "Переход в режим Reanimator. Свой контейнер/конфиг MTProxyL больше не будет управляться из меню."
     echo -en "  ${BOLD}Введите 'yes' для подтверждения:${NC} "
-    local _c; read -r _c
+    local _c; read -er _c
     [ "$_c" != "yes" ] && { log_info "Отменено"; return 1; }
 
     # Свой контейнер держит порт — а он же нужен цели реаниматора.
@@ -921,7 +949,7 @@ run_reanimator_installer() {
         echo ""
         echo -e "  ${BOLD}Укажите путь к конфигу telemt вручную (Enter — пропустить):${NC}"
         echo -en "  ${DIM}Путь:${NC} "
-        local _manual_path; read -r _manual_path
+        local _manual_path; read -er _manual_path
         if [ -n "$_manual_path" ] && [ -f "$_manual_path" ]; then
             DETECTED_CONFIG_PATH="$_manual_path"
             DETECTED_MODE="manual"
@@ -934,10 +962,10 @@ run_reanimator_installer() {
     else
         echo ""
         echo -en "  ${BOLD}Указать другой путь к конфигу? [y/N]:${NC} "
-        local _override; read -r _override
+        local _override; read -er _override
         if [[ "$_override" =~ ^[yY]$ ]]; then
             echo -en "  ${DIM}Путь:${NC} "
-            local _p; read -r _p
+            local _p; read -er _p
             [ -n "$_p" ] && [ -f "$_p" ] && DETECTED_CONFIG_PATH="$_p"
         fi
     fi
@@ -945,7 +973,7 @@ run_reanimator_installer() {
     echo ""
     echo -e "  ${BOLD}Порт прокси${NC} ${DIM}(обнаружен: ${DETECTED_PORT:-?})${NC}"
     echo -en "  ${DIM}Порт [${DETECTED_PORT:-443}]:${NC} "
-    local _port_in; read -r _port_in
+    local _port_in; read -er _port_in
     if [ -n "$_port_in" ] && validate_port "$_port_in"; then
         PROXY_PORT="$_port_in"
     else
@@ -956,7 +984,7 @@ run_reanimator_installer() {
     local _det_ip="${DETECTED_IP:-$(get_public_ip 2>/dev/null)}"
     echo -e "  ${BOLD}IP сервера${NC} ${DIM}(обнаружен/определён: ${_det_ip:-?})${NC}"
     echo -en "  ${DIM}IP [${_det_ip:-авто}]:${NC} "
-    local _ip_in; read -r _ip_in
+    local _ip_in; read -er _ip_in
     if [ -n "$_ip_in" ] && validate_ip_literal "$_ip_in"; then
         CUSTOM_IP="$_ip_in"
     else

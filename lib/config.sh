@@ -45,10 +45,10 @@ run_tune_wizard() {
     echo -e "  ${DIM}[1] Установить  [2] Очистить  [3] Очистить все  [0] Назад${NC}"
     local tc; tc=$(read_choice "выбор" "0")
     case "$tc" in
-        1) echo -en "  ${BOLD}Параметр:${NC} "; local tp; read -r tp
-           echo -en "  ${BOLD}Значение:${NC} "; local tv; read -r tv
+        1) echo -en "  ${BOLD}Параметр:${NC} "; local tp; read -er tp
+           echo -en "  ${BOLD}Значение:${NC} "; local tv; read -er tv
            [ -n "$tp" ] && [ -n "$tv" ] && handle_tune_command set "$tp" "$tv" ;;
-        2) echo -en "  ${BOLD}Параметр:${NC} "; local tp; read -r tp
+        2) echo -en "  ${BOLD}Параметр:${NC} "; local tp; read -er tp
            [ -n "$tp" ] && handle_tune_command clear "$tp" ;;
         3) handle_tune_command clear all ;;
     esac
@@ -104,7 +104,7 @@ handle_tune_command() {
             log_success "${param} = ${value}"
             if [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
                 if is_proxy_running; then
-                    echo -en "  ${DIM}Перезапустить? [Y/n]:${NC} "; local r; read -r r 2>/dev/null || r="y"
+                    echo -en "  ${DIM}Перезапустить? [Y/n]:${NC} "; local r; read -er r 2>/dev/null || r="y"
                     [[ ! "$r" =~ ^[nN] ]] && { load_secrets; restart_proxy_container || true; }
                 fi
             else

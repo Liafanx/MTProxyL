@@ -259,12 +259,15 @@ read_choice() {
     local prompt="${1:-выбор}"
     local default="${2:-}"
     fix_tty_input
-    read -rn 256 -t 0.05 _ 2>/dev/null || true
-    echo -en "\n  Введите ${prompt,,}" >&2
-    [ -n "$default" ] && echo -en " [${default}]" >&2
-    echo -en ": " >&2
+    # Сброс «набранного вперёд» имеет смысл только на терминале: из пайпа
+    # это съело бы реальный ввод.
+    [ -t 0 ] && { read -rn 256 -t 0.05 _ 2>/dev/null || true; }
+    echo "" >&2
+    local _p="  Введите ${prompt,,}"
+    [ -n "$default" ] && _p+=" [${default}]"
+    _p+=": "
     local choice
-    read -r choice
+    read -erp "$_p" choice
     [ -z "$choice" ] && choice="$default"
     echo "$choice"
 }
@@ -277,8 +280,17 @@ clear_screen() {
 
 fix_tty_input() {
     [ -t 0 ] || return 0
+    # Запоминаем текущий символ забоя: терминалы шлют либо ^? (0x7f), либо ^H
+    # (0x08), и навязывать один из них нельзя — иначе второй попадёт в ввод
+    # как литерал ^H. Ввод везде читается через readline (read -e), который
+    # понимает оба, но stty sane сбрасывает настройку пользователя.
+    local _erase=""
+    _erase=$(stty -a 2>/dev/null | sed -n 's/.*erase = \([^;]*\);.*/\1/p' | tr -d '[:space:]')
     stty sane 2>/dev/null || true
-    stty erase '^?' iutf8 2>/dev/null || stty erase '^?' 2>/dev/null || true
+    stty iutf8 2>/dev/null || true
+    case "$_erase" in
+        '^H'|'^?') stty erase "$_erase" 2>/dev/null || true ;;
+    esac
 }
 
 # ── Проверка обновлений ───────────────────────────────────────
@@ -483,7 +495,7 @@ handle_domain_command() {
             local _cur_mask="${MASKING_HOST:-$_old_domain}"
             if [ "$_cur_mask" = "$_old_domain" ] || [ -z "$MASKING_HOST" ]; then
                 echo -en "  ${BOLD}Обновить mask backend на ${PROXY_DOMAIN}? [Y/n]:${NC} "
-                local _mask_yn; read -r _mask_yn
+                local _mask_yn; read -er _mask_yn
                 if [[ ! "$_mask_yn" =~ ^[nN]$ ]]; then
                     MASKING_HOST="$PROXY_DOMAIN"
                     save_settings

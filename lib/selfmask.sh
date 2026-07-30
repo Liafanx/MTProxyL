@@ -182,7 +182,7 @@ _selfmask_collect_params() {
             echo -en "  ${BOLD}Ваш домен:${NC} "
         fi
 
-        read -r _domain
+        read -er _domain
         [ -z "$_domain" ] && _domain="$_saved_domain"
         _domain=$(echo "$_domain" | tr '[:upper:]' '[:lower:]')
 
@@ -203,7 +203,7 @@ _selfmask_collect_params() {
 
         echo -en "  ${BOLD}Email для Let's Encrypt [${_email_default}]:${NC} "
         local _email=""
-        read -r _email
+        read -er _email
         SELFMASK_CERT_EMAIL="${_email:-$_email_default}"
 
         echo ""
@@ -218,14 +218,14 @@ _selfmask_collect_params() {
                 log_warn "A-запись домена не совпадает с IP сервера"
                 echo -en "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
                 local _dns_yn
-                read -r _dns_yn
+                read -er _dns_yn
                 [[ "$_dns_yn" =~ ^[yY]$ ]] || return 1
             fi
         else
             log_warn "Не удалось определить A-запись домена"
             echo -en "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
             local _dns_yn
-            read -r _dns_yn
+            read -er _dns_yn
             [[ "$_dns_yn" =~ ^[yY]$ ]] || return 1
         fi
     else
@@ -268,7 +268,7 @@ _selfmask_collect_params() {
         5)
             echo -en "  ${BOLD}URL файла index.html:${NC} "
             local _custom_url
-            read -r _custom_url
+            read -er _custom_url
             if [[ "$_custom_url" =~ ^https?:// ]]; then
                 SELFMASK_SITE_SOURCE="$_custom_url"
                 log_info "Пользовательский шаблон: ${_custom_url}"
@@ -286,7 +286,7 @@ _selfmask_collect_params() {
     echo ""
     echo -en "  ${BOLD}Локальный backend-порт nginx [${SELFMASK_NGINX_BACKEND_PORT:-8444}]:${NC} "
     local _bp
-    read -r _bp
+    read -er _bp
     if [ -n "$_bp" ]; then
         validate_port "$_bp" || { log_error "Некорректный порт"; return 1; }
         SELFMASK_NGINX_BACKEND_PORT="$_bp"
@@ -309,7 +309,7 @@ _selfmask_collect_params() {
 
     echo -en "  ${BOLD}Продолжить настройку? [Y/n]:${NC} "
     local _yn
-    read -r _yn
+    read -er _yn
     [[ "$_yn" =~ ^[nN]$ ]] && return 1
 
     return 0
@@ -478,7 +478,7 @@ _selfmask_free_ports() {
         echo ""
         echo -en "  ${BOLD}Временно остановить системный nginx? [y/N]:${NC} "
         local _yn
-        read -r _yn
+        read -er _yn
         if [[ "$_yn" =~ ^[yY]$ ]]; then
             SELFMASK_SYSTEM_NGINX_WAS_ACTIVE="true"
             systemctl stop nginx &>/dev/null || {
@@ -847,7 +847,7 @@ _selfmask_apply_target_settings() {
     fi
 
     echo -en "  ${BOLD}Применить в ${DETECTED_CONFIG_PATH} и перезапустить цель? [Y/n]:${NC} "
-    local _yn; read -r _yn
+    local _yn; read -er _yn
     if [[ "$_yn" =~ ^[nN]$ ]]; then
         log_info "Пропущено — примените параметры вручную и перезапустите цель"
         return 0
@@ -1019,7 +1019,7 @@ selfmask_setup() {
         echo ""
         echo -en "  ${BOLD}Переустановить / обновить настройку? [y/N]:${NC} "
         local _re
-        read -r _re
+        read -er _re
         [[ "$_re" =~ ^[yY]$ ]] || return 0
     fi
 
@@ -1061,7 +1061,7 @@ selfmask_disable() {
     echo ""
     echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
     local _yn
-    read -r _yn
+    read -er _yn
     [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
 
     systemctl disable --now "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
@@ -1115,7 +1115,7 @@ selfmask_remove_pq_nginx() {
 
     echo -en "  ${BOLD}Удалить PQ nginx? [y/N]:${NC} "
     local _yn
-    read -r _yn
+    read -er _yn
     [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
 
     # Сначала отключаем selfmask если активен

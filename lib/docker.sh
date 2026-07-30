@@ -151,9 +151,23 @@ is_proxy_running() {
         case "${DETECTED_MODE:-unknown}" in
             docker|mtproxymax)
                 [ -n "$DETECTED_CONTAINER" ] || return 1
-                docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DETECTED_CONTAINER}$" ;;
-            local)
-                pgrep -x telemt &>/dev/null || systemctl is-active telemt.service &>/dev/null 2>&1 ;;
+                # docker ps показывает и контейнер в состоянии Restarting —
+                # падающая в цикле цель выглядела бы как «РАБОТАЕТ»
+                local _tst
+                _tst=$(docker inspect -f '{{.State.Running}}|{{.State.Restarting}}' "$DETECTED_CONTAINER" 2>/dev/null) || return 1
+                [ "$_tst" = "true|false" ] ;;
+            local|config_only|manual)
+                # Есть юнит — он и есть источник правды: после `systemctl stop`
+                # цель остановлена, даже если на хосте виден процесс telemt из
+                # контейнера (в хостовом PID namespace они тоже видны).
+                if _telemt_unit_exists; then
+                    systemctl is-active --quiet telemt.service 2>/dev/null && return 0
+                    # Юнит неактивен — работающей цель считаем, только если
+                    # telemt подняли мимо systemd, прямо на хосте.
+                    _telemt_host_pids >/dev/null
+                    return
+                fi
+                _telemt_host_pids >/dev/null ;;
             *) return 1 ;;
         esac
         return
@@ -212,11 +226,21 @@ get_proxy_uptime() {
                 start_epoch=$(_iso_to_epoch "$started_at")
                 now_epoch=$(date +%s)
                 [ "$start_epoch" -gt 0 ] 2>/dev/null && echo $((now_epoch - start_epoch)) || echo "0" ;;
-            local)
-                local since_epoch now_epoch
-                since_epoch=$(systemctl show telemt.service -p ActiveEnterTimestamp --value 2>/dev/null | xargs -I{} date -d {} +%s 2>/dev/null)
-                now_epoch=$(date +%s)
-                [ -n "$since_epoch" ] && [ "$since_epoch" -gt 0 ] 2>/dev/null && echo $((now_epoch - since_epoch)) || echo "0" ;;
+            local|config_only|manual)
+                # ActiveEnterTimestamp остаётся и после остановки службы,
+                # поэтому берём его только у активного юнита; процесс,
+                # запущенный мимо systemd, считаем по времени жизни.
+                local since_epoch now_epoch _pid
+                if _telemt_unit_exists && systemctl is-active --quiet telemt.service 2>/dev/null; then
+                    since_epoch=$(systemctl show telemt.service -p ActiveEnterTimestamp --value 2>/dev/null | xargs -I{} date -d {} +%s 2>/dev/null)
+                    now_epoch=$(date +%s)
+                    [ -n "$since_epoch" ] && [ "$since_epoch" -gt 0 ] 2>/dev/null && echo $((now_epoch - since_epoch)) || echo "0"
+                    return
+                fi
+                local _et=""
+                _pid=$(_telemt_host_pids | head -1)
+                [ -n "$_pid" ] && _et=$(ps -o etimes= -p "$_pid" 2>/dev/null | tr -cd '0-9')
+                echo "${_et:-0}" ;;
             *) echo "0" ;;
         esac
         return
@@ -252,8 +276,9 @@ restart_target() {
                     systemctl restart telemt.service &>/dev/null \
                         && log_success "telemt.service перезапущен" \
                         || log_warn "Не удалось перезапустить telemt.service"
-                elif pgrep -x telemt &>/dev/null; then
-                    pkill -HUP telemt 2>/dev/null \
+                elif _telemt_host_pids >/dev/null; then
+                    # shellcheck disable=SC2046
+                    kill -HUP $(_telemt_host_pids) 2>/dev/null \
                         && log_success "Процессу telemt отправлен SIGHUP" \
                         || log_warn "Не удалось отправить сигнал telemt"
                 else
@@ -311,8 +336,19 @@ stop_target() {
             local|config_only|manual)
                 if _telemt_unit_exists; then
                     systemctl stop telemt.service &>/dev/null && log_success "telemt.service остановлен" || log_warn "Не удалось остановить telemt.service"
+                    # Служба остановлена, а процесс на хосте всё ещё жив: его
+                    # запускали мимо systemd либо он не завершился. Без этого
+                    # предупреждения цель осталась бы «работающей» без причины.
+                    if _telemt_host_pids >/dev/null; then
+                        log_warn "На хосте остался процесс telemt (PID: $(_telemt_host_pids | tr '\n' ' ')) — запущен не через systemd"
+                    fi
+                elif _telemt_host_pids >/dev/null; then
+                    # shellcheck disable=SC2046
+                    kill $(_telemt_host_pids) 2>/dev/null \
+                        && log_success "Процесс telemt остановлен" \
+                        || log_warn "Не удалось остановить процесс telemt"
                 else
-                    pkill -x telemt 2>/dev/null && log_success "Процесс telemt остановлен" || log_warn "Не удалось остановить процесс telemt"
+                    log_warn "Процесс telemt на хосте не найден"
                 fi ;;
             *) log_warn "Нет способа остановить обнаруженную цель (${DETECTED_MODE:-unknown})" ;;
         esac
@@ -356,7 +392,15 @@ reload_target_config() {
     if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
         case "${DETECTED_MODE:-unknown}" in
             docker)     docker kill -s SIGHUP "$DETECTED_CONTAINER" 2>/dev/null || restart_target ;;
-            local)      pkill -HUP telemt 2>/dev/null || restart_target ;;
+            local|config_only|manual)
+                # shellcheck disable=SC2046
+                if _telemt_unit_exists && systemctl is-active --quiet telemt.service 2>/dev/null; then
+                    systemctl kill -s HUP telemt.service 2>/dev/null || restart_target
+                elif _telemt_host_pids >/dev/null; then
+                    kill -HUP $(_telemt_host_pids) 2>/dev/null || restart_target
+                else
+                    restart_target
+                fi ;;
             *)          restart_target ;;
         esac
         return

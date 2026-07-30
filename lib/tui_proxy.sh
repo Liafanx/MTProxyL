@@ -42,7 +42,7 @@ tui_proxy_menu() {
                 echo -e "  ${DIM}Контейнер будет остановлен и удалён. Образ, конфиг и секреты${NC}"
                 echo -e "  ${DIM}сохранятся — прокси поднимется заново пунктом [1].${NC}"
                 echo -en "  ${BOLD}Удалить контейнер? [y/N]:${NC} "
-                local _yn; read -r _yn
+                local _yn; read -er _yn
                 [[ "$_yn" =~ ^[yY]$ ]] && { remove_own_container || true; } || log_info "Отменено"
                 press_any_key ;;
             0|"") return ;;
