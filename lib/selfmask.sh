@@ -106,6 +106,26 @@ selfmask_status_line() {
     fi
 }
 
+# Машинный статус для панели: mtproxyl selfmask status --json
+selfmask_show_status_json() {
+    local _cert="false" _nginx="false" _conf
+    _conf="$(_selfmask_pq_conf)"
+    [ -n "${SELFMASK_DOMAIN:-}" ] && [ -f "$(_selfmask_cert_dir)/fullchain.pem" ] && _cert="true"
+    systemctl is-active "${SELFMASK_PQ_SERVICE}" &>/dev/null && _nginx="true"
+
+    printf '{"enabled":%s,"domain":"%s","site_source":"%s","site_dir":"%s","backend_port":%d,"cert_mode":"%s","auto_renew":%s,"nginx_conf":"%s","nginx_conf_exists":%s,"cert_found":%s,"pq_nginx_active":%s}\n' \
+        "$([ "${SELFMASK_ENABLED:-false}" = "true" ] && echo true || echo false)" \
+        "$(json_escape "${SELFMASK_DOMAIN:-}")" \
+        "$(json_escape "${SELFMASK_SITE_SOURCE:-stub}")" \
+        "$(json_escape "${SELFMASK_SITE_DIR:-/var/www/mtproxyl-selfmask}")" \
+        "${SELFMASK_NGINX_BACKEND_PORT:-8444}" \
+        "$(json_escape "${SELFMASK_CERT_MODE:-letsencrypt}")" \
+        "$([ "${SELFMASK_AUTO_RENEW:-true}" = "true" ] && echo true || echo false)" \
+        "$(json_escape "$_conf")" \
+        "$([ -f "$_conf" ] && echo true || echo false)" \
+        "$_cert" "$_nginx"
+}
+
 selfmask_show_requirements() {
     echo ""
     echo -e "  ${BOLD}Selfmask / FakeTLS:${NC}"
@@ -1225,7 +1245,13 @@ handle_selfmask_command() {
     shift 2>/dev/null || true
 
     case "$subcmd" in
-        status)  selfmask_show_status ;;
+        status)
+            if [ "${1:-}" = "--json" ]; then
+                selfmask_show_status_json
+            else
+                selfmask_show_status
+            fi
+            ;;
         setup)   selfmask_setup ;;
         verify)  selfmask_verify ;;
         disable) selfmask_disable ;;

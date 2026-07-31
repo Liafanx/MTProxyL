@@ -536,7 +536,7 @@ _telemt_host_pids() {
 _is_excluded_path() {
     local _path="$1"
     case "$_path" in
-        *telemt-panel*|*telemt_panel*) return 0 ;;
+        *telemt-panel*|*telemt_panel*|*mtproxyl-panel*) return 0 ;;
     esac
     return 1
 }
@@ -644,7 +644,7 @@ detect_telemt() {
         _args=""
         for _pid in $(_telemt_host_pids); do
             _cmd=$(tr '\0' ' ' < "/proc/${_pid}/cmdline" 2>/dev/null)
-            case "$_cmd" in *telemt-panel*|*telemt_panel*) continue ;; esac
+            case "$_cmd" in *telemt-panel*|*telemt_panel*|*mtproxyl-panel*) continue ;; esac
             _args=$(grep -oE '/[^ ]+\.toml' <<< "$_cmd" | head -1)
             [ -n "$_args" ] && break
         done

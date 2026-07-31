@@ -103,6 +103,23 @@ list_backups() {
     echo ""
 }
 
+# Машинный список бэкапов для панели: mtproxyl backup list --json
+list_backups_json() {
+    mkdir -p "$BACKUP_DIR"
+    local _first=1 _f _size _mtime
+    printf '['
+    while IFS= read -r _f; do
+        [ -n "$_f" ] || continue
+        _size=$(stat -c '%s' "$_f" 2>/dev/null || echo 0)
+        _mtime=$(stat -c '%Y' "$_f" 2>/dev/null || echo 0)
+        [ $_first -eq 1 ] || printf ','
+        _first=0
+        printf '{"name":"%s","size":%d,"mtime":%d}' \
+            "$(json_escape "$(basename "$_f")")" "${_size:-0}" "${_mtime:-0}"
+    done < <(ls -1t "${BACKUP_DIR}"/mtproxyl-*.tar.gz 2>/dev/null || true)
+    printf ']\n'
+}
+
 backup_autoclean() {
     local days="${1:-${BACKUP_RETENTION_DAYS:-30}}"
     [[ "$days" =~ ^[0-9]+$ ]] || { log_error "Дни: положительное число"; return 1; }
@@ -219,6 +236,13 @@ handle_backup_command() {
         --encrypt|encrypt) backup_create_encrypted ;;
         restore-encrypted) backup_restore_encrypted "$2" ;;
         autoclean)         backup_autoclean "${2:-${BACKUP_RETENTION_DAYS:-30}}" ;;
+        list)
+            if [ "${2:-}" = "--json" ]; then
+                list_backups_json
+            else
+                list_backups
+            fi
+            ;;
         *) create_backup ;;
     esac
 }

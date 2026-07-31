@@ -195,8 +195,15 @@ cli_main() {
             case "${1:-}" in
                 manager)    switch_to_manager_mode ;;
                 reanimator) switch_to_reanimator_mode ;;
+                --json)
+                    printf '{"mode":"%s","detected_mode":"%s","detected_config":"%s","port":%d}\n' \
+                        "$(json_escape "${MTPROXYL_MODE:-manager}")" \
+                        "$(json_escape "${DETECTED_MODE:-unknown}")" \
+                        "$(json_escape "${DETECTED_CONFIG_PATH:-}")" \
+                        "${PROXY_PORT:-0}"
+                    ;;
                 "")         echo -e "  ${BOLD}Текущий режим:${NC} ${MTPROXYL_MODE:-manager}" ;;
-                *)          log_error "Использование: mtproxyl mode [manager|reanimator]" ;;
+                *)          log_error "Использование: mtproxyl mode [manager|reanimator|--json]" ;;
             esac
             ;;
 
