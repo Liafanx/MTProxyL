@@ -205,6 +205,251 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
 	}))
 
+	// ── NFT limiter, iOS fixes, Zapret2 ─────────────────────────────────────
+	mux.Handle("GET /api/mtproxyl/nft", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		st, err := client.NftStatus(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: st})
+	}))
+
+	// Parameters are stored, not applied: the caller runs an action afterwards,
+	// mirroring how MTProxyL's own menu separates the two steps.
+	mux.Handle("POST /api/mtproxyl/nft/params", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		var req struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		if err := mtproxylctl.ValidateNftParam(req.Key, req.Value); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_param", "Недопустимый параметр или значение")
+			return
+		}
+		out, err := client.SetNftParam(r.Context(), req.Key, req.Value)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	// Applying rules can take a while (Zapret2 downloads a bundle), so these run
+	// in the background like the other long operations.
+	mux.Handle("POST /api/mtproxyl/nft/action", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		var req struct {
+			Action string `json:"action"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		action := mtproxylctl.NftAction(req.Action)
+		if !mtproxylctl.ValidNftAction(action) {
+			writeError(w, http.StatusBadRequest, "invalid_action", "Неизвестное действие")
+			return
+		}
+		started := runner.Start("nft:"+req.Action, func(ctx context.Context) (string, error) {
+			return client.RunNftAction(ctx, action)
+		})
+		if !started {
+			writeError(w, http.StatusConflict, "operation_busy",
+				"Другая операция MTProxyL уже выполняется")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/nft/preset", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		var req struct {
+			Preset string `json:"preset"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		if req.Preset != "classic" && req.Preset != "smart" {
+			writeError(w, http.StatusBadRequest, "invalid_preset", "Режим: classic или smart")
+			return
+		}
+		preset := req.Preset
+		started := runner.Start("nft:preset:"+preset, func(ctx context.Context) (string, error) {
+			return client.NftPreset(ctx, preset)
+		})
+		if !started {
+			writeError(w, http.StatusConflict, "operation_busy",
+				"Другая операция MTProxyL уже выполняется")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
+	}))
+
+	// ── Geoblock ────────────────────────────────────────────────────────────
+	mux.Handle("GET /api/mtproxyl/geoblock", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		st, err := client.GeoblockList(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: st})
+	}))
+
+	// Adding a country downloads its CIDR ranges, which is slow on first use.
+	mux.Handle("POST /api/mtproxyl/geoblock", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		var req struct {
+			Country string `json:"country"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		if err := mtproxylctl.ValidateCountryCode(req.Country); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_country", "Код страны: две буквы")
+			return
+		}
+		code := req.Country
+		started := runner.Start("geoblock:add:"+code, func(ctx context.Context) (string, error) {
+			return client.GeoblockAdd(ctx, code)
+		})
+		if !started {
+			writeError(w, http.StatusConflict, "operation_busy",
+				"Другая операция MTProxyL уже выполняется")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
+	}))
+
+	mux.Handle("DELETE /api/mtproxyl/geoblock/{country}", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		code := r.PathValue("country")
+		if err := mtproxylctl.ValidateCountryCode(code); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_country", "Код страны: две буквы")
+			return
+		}
+		out, err := client.GeoblockRemove(r.Context(), code)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	// ── Upstream routes ─────────────────────────────────────────────────────
+	mux.Handle("GET /api/mtproxyl/upstreams", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		list, err := client.UpstreamList(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: list})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/upstreams", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		var spec mtproxylctl.UpstreamSpec
+		if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		if err := spec.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_upstream", err.Error())
+			return
+		}
+		out, err := client.UpstreamAdd(r.Context(), spec)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	mux.Handle("DELETE /api/mtproxyl/upstreams/{name}", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		name := r.PathValue("name")
+		if err := mtproxylctl.ValidateUpstreamName(name); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_upstream", "Недопустимое имя маршрута")
+			return
+		}
+		out, err := client.UpstreamRemove(r.Context(), name)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/upstreams/{name}/toggle", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		name := r.PathValue("name")
+		if err := mtproxylctl.ValidateUpstreamName(name); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_upstream", "Недопустимое имя маршрута")
+			return
+		}
+		var req struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		out, err := client.UpstreamToggle(r.Context(), name, req.Enabled)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/upstreams/{name}/test", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		name := r.PathValue("name")
+		if err := mtproxylctl.ValidateUpstreamName(name); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_upstream", "Недопустимое имя маршрута")
+			return
+		}
+		out, err := client.UpstreamTest(r.Context(), name)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
 	mux.Handle("GET /api/mtproxyl/backups/{name}/download", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
 			return

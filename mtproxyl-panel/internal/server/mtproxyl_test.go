@@ -202,3 +202,90 @@ func mustWriteBackup(t *testing.T, dir, name, content string) {
 		t.Fatalf("write backup: %v", err)
 	}
 }
+
+func TestPhase2RoutesRequireAuth(t *testing.T) {
+	mux := newMtproxylMux(t, config.MtproxylConfig{Enabled: true, InstallDir: t.TempDir()})
+	for _, target := range []string{
+		"/api/mtproxyl/nft",
+		"/api/mtproxyl/geoblock",
+		"/api/mtproxyl/upstreams",
+	} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s without auth: got %d, want 401", target, rec.Code)
+		}
+	}
+}
+
+func TestNftParamRejectsInjectionOverHTTP(t *testing.T) {
+	mux := newMtproxylMux(t, config.MtproxylConfig{Enabled: true, InstallDir: t.TempDir()})
+	for _, body := range []string{
+		`{"key":"NFT_IOS_RATE","value":"1/second; id"}`,
+		`{"key":"NFT_IOS_RATE; id","value":"1/second"}`,
+		`{"key":"NFT_IOS_RATE","value":"--flag"}`,
+		`{"key":"","value":"x"}`,
+	} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, authedRequest(t, http.MethodPost, "/api/mtproxyl/nft/params", body))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("params %s: got %d, want 400", body, rec.Code)
+		}
+	}
+}
+
+func TestNftActionRejectsUnlisted(t *testing.T) {
+	mux := newMtproxylMux(t, config.MtproxylConfig{Enabled: true, InstallDir: t.TempDir()})
+	for _, body := range []string{
+		`{"action":"set"}`,
+		`{"action":"apply; id"}`,
+		`{"action":""}`,
+		`{"action":"status"}`,
+	} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, authedRequest(t, http.MethodPost, "/api/mtproxyl/nft/action", body))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("action %s: got %d, want 400", body, rec.Code)
+		}
+	}
+}
+
+func TestGeoblockRejectsBadCountry(t *testing.T) {
+	mux := newMtproxylMux(t, config.MtproxylConfig{Enabled: true, InstallDir: t.TempDir()})
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, authedRequest(t, http.MethodPost, "/api/mtproxyl/geoblock", `{"country":"us; id"}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("add: got %d, want 400", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, authedRequest(t, http.MethodDelete,
+		"/api/mtproxyl/geoblock/"+url.PathEscape("../../etc"), ""))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("delete: got %d, want 400", rec.Code)
+	}
+}
+
+func TestUpstreamRejectsBadSpec(t *testing.T) {
+	mux := newMtproxylMux(t, config.MtproxylConfig{Enabled: true, InstallDir: t.TempDir()})
+	for _, body := range []string{
+		`{"name":"a; id","type":"direct"}`,
+		`{"name":"x","type":"http"}`,
+		`{"name":"x","type":"socks5","address":"1.2.3.4:1080; id"}`,
+		`{"name":"x","type":"socks5"}`,
+	} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, authedRequest(t, http.MethodPost, "/api/mtproxyl/upstreams", body))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("upstream %s: got %d, want 400", body, rec.Code)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, authedRequest(t, http.MethodDelete,
+		"/api/mtproxyl/upstreams/"+url.PathEscape("../etc"), ""))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("delete: got %d, want 400", rec.Code)
+	}
+}
