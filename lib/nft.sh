@@ -70,15 +70,26 @@ ZAPRET2_CONF="${ZAPRET2_ETC_DIR}/mtproto.conf"
 ZAPRET2_LUA="${ZAPRET2_LUA_DIR}/mtproto.lua"
 ZAPRET2_SERVICE="mtproxyl-zapret2.service"
 ZAPRET2_NFT_TABLE="MTProtoL"
-ZAPRET2_FWMARK="0x40000000"
-ZAPRET2_QNUM="200"
-ZAPRET2_OUT_RANGE="a"
-ZAPRET2_IN_RANGE="a"
-ZAPRET2_SPLIT_LEN="400"
+# Значения по умолчанию держим одним набором: их же показывает и
+# восстанавливает пункт «Сброс к дефолту», иначе сброс уводил настройки
+# к значениям, которых нет ни у одной свежей установки.
+ZAPRET2_DEFAULT_FWMARK="0x40000000"
+ZAPRET2_DEFAULT_QNUM="200"
+ZAPRET2_DEFAULT_OUT_RANGE="a"
+ZAPRET2_DEFAULT_IN_RANGE="a"
+ZAPRET2_DEFAULT_SPLIT_LEN="400"
+ZAPRET2_DEFAULT_WIN_SYNACK="1400"
+ZAPRET2_DEFAULT_WIN_ACK="10"
+
+ZAPRET2_FWMARK="$ZAPRET2_DEFAULT_FWMARK"
+ZAPRET2_QNUM="$ZAPRET2_DEFAULT_QNUM"
+ZAPRET2_OUT_RANGE="$ZAPRET2_DEFAULT_OUT_RANGE"
+ZAPRET2_IN_RANGE="$ZAPRET2_DEFAULT_IN_RANGE"
+ZAPRET2_SPLIT_LEN="$ZAPRET2_DEFAULT_SPLIT_LEN"
 ZAPRET2_DEBUG="false"
 ZAPRET2_DEBUG_LOG="/var/log/mtproxyl-nfqws2.log"
-ZAPRET2_WIN_SYNACK="1400"
-ZAPRET2_WIN_ACK="10"
+ZAPRET2_WIN_SYNACK="$ZAPRET2_DEFAULT_WIN_SYNACK"
+ZAPRET2_WIN_ACK="$ZAPRET2_DEFAULT_WIN_ACK"
 # Доп. порты/диапазоны для --filter-tcp, через запятую (напр. "8443,9000-9100").
 # Порт прокси добавляется автоматически и здесь не нужен.
 ZAPRET2_EXTRA_PORTS=""
@@ -237,7 +248,7 @@ load_nft_settings() {
 prompt_apply_nft_rules() {
     echo ""
     echo -en "  ${BOLD}Применить новые NFT-правила сейчас? [Y/n]:${NC} "
-    local _yn; read -r _yn
+    local _yn; read_line _yn
     if [[ ! "$_yn" =~ ^[nN]$ ]]; then
         apply_nft_rules || true
         [ "${NFT_ENABLED:-false}" = "true" ] && install_nft_service || true
@@ -628,7 +639,7 @@ enable_smart_mode() {
     fi
 
     echo -en "  ${BOLD}Включить Smart режим? [Y/n]:${NC} "
-    local _yn; read -r _yn
+    local _yn; read_line _yn
     [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Отменено"; return 0; }
 
     # Отключаем iOS Fix v2 если был
@@ -673,11 +684,11 @@ ios_fix_apply() {
 
     echo -e "  ${BOLD}Параметры фикса (Enter = оставить текущее):${NC}"
     echo -en "    tcp_keepalive_time   [${IOS_KA_TIME}]: "
-    local _t; read -r _t; [[ "$_t" =~ ^[0-9]+$ ]] && IOS_KA_TIME="$_t"
+    local _t; read_line _t; [[ "$_t" =~ ^[0-9]+$ ]] && IOS_KA_TIME="$_t"
     echo -en "    tcp_keepalive_intvl  [${IOS_KA_INTVL}]: "
-    local _i; read -r _i; [[ "$_i" =~ ^[0-9]+$ ]] && IOS_KA_INTVL="$_i"
+    local _i; read_line _i; [[ "$_i" =~ ^[0-9]+$ ]] && IOS_KA_INTVL="$_i"
     echo -en "    tcp_keepalive_probes [${IOS_KA_PROBES}]: "
-    local _p; read -r _p; [[ "$_p" =~ ^[0-9]+$ ]] && IOS_KA_PROBES="$_p"
+    local _p; read_line _p; [[ "$_p" =~ ^[0-9]+$ ]] && IOS_KA_PROBES="$_p"
 
     local _detect=$(( IOS_KA_TIME + IOS_KA_INTVL * IOS_KA_PROBES ))
     echo ""
@@ -690,7 +701,7 @@ ios_fix_apply() {
     else
         echo -en "  ${BOLD}Применить фикс? [Y/n]:${NC} "
     fi
-    local _confirm; read -r _confirm
+    local _confirm; read_line _confirm
     [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     # Сохраняем оригиналы если ещё не сохранены
@@ -753,7 +764,7 @@ ios_fix_remove() {
         echo -e "  ${DIM}Будет удалён: ${IOS_SYSCTL_FILE}${NC}"
         echo -e "  ${DIM}Значения ядра будут восстановлены к тем, которые были до применения фикса.${NC}"; echo ""
         echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-        local _confirm; read -r _confirm
+        local _confirm; read_line _confirm
         [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
     fi
 
@@ -802,7 +813,7 @@ _ios2_check_client_mss() {
         echo -e "  ${CYAN}mtproxyl restart${NC}"
         echo ""
         echo -en "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
-        local _proceed; read -r _proceed
+        local _proceed; read_line _proceed
         [[ "$_proceed" =~ ^[yY] ]] || return 1
     fi
     return 0
@@ -816,7 +827,7 @@ ios2_fix_apply() {
         echo -e "  ${DIM}Smart режим автоматически разделяет iOS и Android на одном порту.${NC}"
         echo ""
         echo -en "  ${BOLD}Всё равно включить iOS Fix v2? [y/N]:${NC} "
-        local _force; read -r _force
+        local _force; read_line _force
         [[ "$_force" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
     fi
 
@@ -838,7 +849,7 @@ ios2_fix_apply() {
     _ios2_check_client_mss || return 0
 
     echo -en "  ${BOLD}Применить? [Y/n]:${NC} "
-    local _confirm; read -r _confirm
+    local _confirm; read_line _confirm
     [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     IOS2_FIX_ENABLED="true"
@@ -875,7 +886,7 @@ ios2_fix_remove() {
         echo -e "  ${BOLD}Отключение iOS Fix v2${NC}"; echo ""
         echo -e "  ${DIM}Редирект ${IOS2_EXTERNAL_PORT} → ${IOS2_TARGET_PORT:-${PROXY_PORT:-443}} будет удалён.${NC}"; echo ""
         echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-        local _confirm; read -r _confirm
+        local _confirm; read_line _confirm
         [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
     fi
 
@@ -965,7 +976,7 @@ meko_opt_apply() {
     else
         echo -en "  ${BOLD}Применить оптимизацию? [Y/n]:${NC} "
     fi
-    local _confirm; read -r _confirm
+    local _confirm; read_line _confirm
     [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     if [ -z "$MEKO_ORIG_KEEPALIVE_TIME" ]; then
@@ -1053,7 +1064,7 @@ meko_opt_remove() {
     echo -e "    congestion_control   → ${MEKO_ORIG_TCP_CONGESTION:-cubic}"
     echo ""
     echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-    local _confirm; read -r _confirm
+    local _confirm; read_line _confirm
     [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     rm -f "$MEKO_OPT_FILE"
@@ -1180,6 +1191,38 @@ WATCHEOF
 # ══════════════════════════════════════════════════════════════
 #  Zapret2 MTProto fix для MTProxyL
 # ══════════════════════════════════════════════════════════════
+
+# Кто держит NFQUEUE: во второй колонке /proc/net/netfilter/nfnetlink_queue
+# лежит netlink portid, который у nfqws/nfqws2 совпадает с PID процесса.
+zapret2_queue_holder() {
+    local _q="${1:-200}" _portid _pid _comm
+    _portid=$(awk -v q="$_q" '$1 == q { print $2; exit }' /proc/net/netfilter/nfnetlink_queue 2>/dev/null)
+    [ -n "$_portid" ] || return 1
+    _pid="$_portid"
+    if [ -r "/proc/${_pid}/comm" ]; then
+        _comm=$(tr -d '\n' < "/proc/${_pid}/comm" 2>/dev/null)
+        echo "${_comm:-?} (pid ${_pid})"
+    else
+        echo "процесс с portid ${_portid}"
+    fi
+}
+
+# Снимаем СВОЙ экземпляр zapret2 перед проверкой занятости очереди.
+# Иначе при повторной установке (и при «первой» установке поверх остатков
+# прошлой попытки) работающий nfqws2 держит свою же очередь, проверка
+# считает её занятой чужим процессом и установка молча переезжает на
+# другой номер.
+zapret2_free_own_queue() {
+    zapret2_has_residue || return 0
+    log_info "Найден работающий/остаточный экземпляр zapret2 — останавливаем перед установкой"
+    zapret2_stop
+    # Процессы вне systemd (запуск руками, оборванная установка)
+    if pgrep -x nfqws2 >/dev/null 2>&1 || pgrep -f "$ZAPRET2_BIN" >/dev/null 2>&1; then
+        pkill -x nfqws2 2>/dev/null || true
+        pkill -f "$ZAPRET2_BIN" 2>/dev/null || true
+        sleep 1
+    fi
+}
 
 zapret2_find_free_queue() {
     local _start="${1:-200}"
@@ -1794,6 +1837,7 @@ zapret2_update_config() {
     # Останавливаем текущий экземпляр перед проверкой занятости NFQUEUE —
     # иначе он сам же держит свою очередь, и она ложно кажется занятой.
     systemctl stop "$ZAPRET2_SERVICE" 2>/dev/null || true
+    pkill -x nfqws2 2>/dev/null || true
 
     # Проверяем занятость NFQUEUE и подбираем свободную
     if zapret2_queue_in_use "${ZAPRET2_QNUM}"; then
@@ -1804,8 +1848,9 @@ zapret2_update_config() {
         _new_q=$(zapret2_find_free_queue 250 299)
         [ -z "$_new_q" ] && _new_q=$(zapret2_find_free_queue 201 249)
 
+        local _holder; _holder=$(zapret2_queue_holder "$_old_q" 2>/dev/null)
         if [ -n "$_new_q" ]; then
-            log_warn "NFQUEUE ${_old_q} уже занята другим процессом"
+            log_warn "NFQUEUE ${_old_q} занята${_holder:+: ${_holder}}"
             ZAPRET2_QNUM="$_new_q"
             save_nft_settings
             log_success "Автоматически выбрана свободная очередь: ${ZAPRET2_QNUM}"
@@ -1851,21 +1896,19 @@ zapret2_install() {
     if [ "${ZAPRET2_APPLIED:-false}" = "true" ] && [ -x "$ZAPRET2_BIN" ]; then
         echo -e "  ${YELLOW}Zapret2 уже установлен. Переустановить?${NC}"
         echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-        local _yn; read -r _yn
+        local _yn; read_line _yn
         [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Отменено"; return 0; }
         _reinstall="true"
     fi
 
     echo -en "  ${BOLD}Скачать и установить zapret2? [Y/n]:${NC} "
-    local _yn; read -r _yn
+    local _yn; read_line _yn
     [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Отменено"; return 0; }
 
-    # При переустановке останавливаем старый экземпляр ДО проверки занятости
-    # NFQUEUE — иначе он сам же держит свою очередь, и проверка ложно решает,
-    # что она занята "другим процессом".
-    if [ "$_reinstall" = "true" ]; then
-        zapret2_stop
-    fi
+    # Свой экземпляр снимаем до проверки очереди в любом случае: и при
+    # переустановке, и когда настройки говорят «не установлен», а служба
+    # или процесс от прошлой попытки ещё живы.
+    zapret2_free_own_queue
 
     zapret2_download_bundle || return 1
 
@@ -1900,7 +1943,7 @@ zapret2_install() {
         echo ""
         echo -e "  ${YELLOW}⚠ SYN limiter активен — zapret2 его заменит.${NC}"
         echo -en "  ${BOLD}Отключить SYN limiter? [Y/n]:${NC} "
-        local _yn_syn; read -r _yn_syn
+        local _yn_syn; read_line _yn_syn
         if [[ ! "$_yn_syn" =~ ^[nN]$ ]]; then
             remove_nft_rules 2>/dev/null || true
             remove_nft_service 2>/dev/null || true
@@ -1956,13 +1999,15 @@ zapret2_remove() {
     echo -e "  ${RED}${BOLD}Удаление Zapret2 MTProto fix${NC}"
     echo ""
     echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
-    local _yn; read -r _yn
+    local _yn; read_line _yn
     [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
 
     zapret2_stop
     systemctl disable "$ZAPRET2_SERVICE" 2>/dev/null || true
     rm -f "/etc/systemd/system/${ZAPRET2_SERVICE}"
     rm -f "/usr/local/sbin/mtproxyl-zapret2-start.sh"
+    # Watcher bridge-режима живёт только ради правил zapret2
+    remove_bridge_watch_service 2>/dev/null || true
     systemctl daemon-reload 2>/dev/null || true
     rm -f "$ZAPRET2_CONF"
     rm -f "$ZAPRET2_LUA"
@@ -2050,7 +2095,7 @@ zapret2_check_wscale() {
             echo ""
             echo -e "  ${BOLD}Необходимо изменить win ACK: ${_current_win_ack} → ${_win_ack_rec}${NC}"
             echo -en "  Применить? [Y/n]: "
-            local _yn; read -r _yn
+            local _yn; read_line _yn
             if [[ ! "$_yn" =~ ^[nN]$ ]]; then
                 ZAPRET2_WIN_ACK="$_win_ack_rec"
                 save_nft_settings
@@ -2062,7 +2107,7 @@ zapret2_check_wscale() {
             echo -e "  ${DIM}Текущее значение работает. Оптимизировать?${NC}"
             echo -e "  ${DIM}win ACK ${_current_win_ack} (${_current_real} байт) → ${_win_ack_rec} (${_real_win} байт)${NC}"
             echo -en "  Оптимизировать? [y/N]: "
-            local _yn; read -r _yn
+            local _yn; read_line _yn
             if [[ "$_yn" =~ ^[yY]$ ]]; then
                 ZAPRET2_WIN_ACK="$_win_ack_rec"
                 save_nft_settings
@@ -2086,6 +2131,10 @@ zapret2_full_cleanup() {
         rm -rf "$ZAPRET2_DIR" "$ZAPRET2_ETC_DIR"
         log_info "Zapret2 MTProto fix удалён"
     fi
+    # Watcher нужен только правилам zapret2 в bridge-режиме: без этого он
+    # оставался в systemd и продолжал переналагать правила несуществующей
+    # таблицы.
+    remove_bridge_watch_service 2>/dev/null || true
 }
 
 # ── Статусы для шапки ─────────────────────────────────────────

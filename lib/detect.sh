@@ -57,39 +57,57 @@ _toml_get_value() {
     ' "$_file" 2>/dev/null
 }
 
-_toml_has_section() {
-    local _section="$1" _file="$2"
-    grep -qE "^\\[${_section}\\]" "$_file" 2>/dev/null
-}
-
-_toml_has_key() {
-    local _key="$1" _file="$2"
-    awk -v k="$_key" '
-        /^[[:space:]]*#/ { next }
-        {
-            line = $0
-            sub(/^[[:space:]]+/, "", line)
-            if (substr(line, 1, length(k)) == k) {
-                rest = substr(line, length(k) + 1)
-                if (rest ~ /^[[:space:]]*=/) { found=1; exit }
-            }
-        }
-        END { exit !found }
-    ' "$_file" 2>/dev/null
-}
-
+# Правка ключа строго внутри своей секции. Одинаковые имена (port,
+# log_level, timeout, enabled) встречаются в TOML в разных таблицах, а
+# правка по всему файлу переписала бы чужую строку и оставила нужную
+# секцию нетронутой. Содержимое пишем обратно в тот же файл (cat >), а не
+# подменяем файл целиком, чтобы у чужого конфига сохранились владелец и
+# права (у telemt это root:telemt 640 — иначе служба перестанет его читать).
 _toml_safe_set() {
     local _key="$1" _value="$2" _section="$3" _file="$4"
     [ -f "$_file" ] || return 1
-    if _toml_has_key "$_key" "$_file"; then
-        sed -i "s/^${_key}[[:space:]]*=.*/${_key} = ${_value}/" "$_file"
-        return 0
+
+    local _tmp; _tmp=$(_mktemp) || return 1
+    local _rc=0
+    awk -v sect="[${_section}]" -v k="$_key" -v v="$_value" '
+        function flush_blanks(   i) { for (i = 1; i <= nb; i++) print blanks[i]; nb = 0 }
+        BEGIN { insect=0; done=0; sect_seen=0; nb=0 }
+        {
+            line = $0
+            t = line; sub(/^[[:space:]]+/, "", t)
+            # Пустые строки в конце секции придерживаем: новый ключ должен
+            # встать в саму секцию, а не за её пустой строкой.
+            if (insect && t == "") { blanks[++nb] = line; next }
+            if (t ~ /^\[/) {
+                if (insect && !done) { print k " = " v; done=1 }
+                flush_blanks()
+                insect = (t == sect) ? 1 : 0
+                if (insect) sect_seen=1
+                print line
+                next
+            }
+            flush_blanks()
+            if (insect && !done && t ~ ("^" k "[[:space:]]*=")) {
+                print k " = " v
+                done = 1
+                next
+            }
+            print line
+        }
+        END {
+            if (insect && !done) { print k " = " v; done=1 }
+            flush_blanks()
+            exit (sect_seen && done) ? 0 : 1
+        }
+    ' "$_file" > "$_tmp" || _rc=1
+
+    if [ "$_rc" -ne 0 ] || [ ! -s "$_tmp" ]; then
+        rm -f "$_tmp"
+        return 1
     fi
-    if _toml_has_section "$_section" "$_file"; then
-        sed -i "/^\\[${_section}\\]/a ${_key} = ${_value}" "$_file"
-        return 0
-    fi
-    return 1
+    cat "$_tmp" > "$_file" || { rm -f "$_tmp"; return 1; }
+    rm -f "$_tmp"
+    return 0
 }
 
 # Читает произвольный ключ (строку или число, без обрезания не-цифр — в
@@ -276,12 +294,115 @@ _target_metrics_available() {
 _target_metrics_hint() {
     echo ""
     log_warn "Метрики движка у цели не включены"
-    echo -e "  ${DIM}Добавьте в конфиг цели (${DETECTED_CONFIG_PATH:-путь не определён})${NC}"
-    echo -e "  ${DIM}и перезапустите цель:${NC}"
+    echo -e "  ${DIM}Нужно добавить в конфиг цели (${DETECTED_CONFIG_PATH:-путь не определён})${NC}"
+    echo -e "  ${DIM}и перезапустить цель:${NC}"
     echo -e "    ${BOLD}[server]${NC}"
-    echo -e "    ${BOLD}metrics_listen = \"127.0.0.1:9090\"${NC}"
+    echo -e "    ${BOLD}metrics_listen = \"127.0.0.1:<порт>\"${NC}"
     echo -e "    ${BOLD}metrics_whitelist = [\"127.0.0.1/32\", \"::1/128\"]${NC}"
     echo -e "  ${DIM}Трафик и соединения берутся из API цели — они работают без метрик.${NC}"
+    offer_enable_target_metrics
+}
+
+# Включить метрики в конфиге цели вместо голой инструкции. Порт выбираем
+# свободный: 9090 часто занят (сам MTProxyL в режиме менеджера, node_exporter,
+# чужая панель), и цель бы просто не поднялась.
+offer_enable_target_metrics() {
+    [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] || return 0
+    if [ -z "${DETECTED_CONFIG_PATH:-}" ] || [ ! -f "${DETECTED_CONFIG_PATH}" ]; then
+        return 0
+    fi
+    if [ "${DETECTED_MODE:-}" = "mtproxymax" ]; then
+        return 0
+    fi
+
+    local _port="9090"
+    if ! is_port_available "$_port"; then
+        local _free; _free=$(find_free_metrics_port 9090 9199 2>/dev/null)
+        if [ -z "$_free" ]; then
+            echo ""
+            log_warn "Свободный порт для метрик в диапазоне 9090..9199 не найден"
+            return 1
+        fi
+        _port="$_free"
+        echo ""
+        log_info "Порт 9090 занят — метрики повесим на ${_port}"
+        show_port_listener 9090
+    fi
+
+    echo ""
+    echo -en "  ${BOLD}Включить метрики в конфиге цели на 127.0.0.1:${_port}? [y/N]:${NC} "
+    local _yn; read_line _yn
+    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Пропущено"; return 0; }
+
+    backup_target_config "metrics" "true" || true
+
+    local _ok=true
+    apply_target_tuning "metrics_listen" "127.0.0.1:${_port}" "server" true || _ok=false
+    apply_target_tuning "metrics_whitelist" '["127.0.0.1/32", "::1/128"]' "server" true || _ok=false
+
+    if [ "$_ok" != "true" ]; then
+        log_warn "Не удалось применить настройки метрик — добавьте их вручную"
+        return 1
+    fi
+    log_success "Метрики включены: 127.0.0.1:${_port}"
+
+    if is_proxy_running; then
+        echo -en "  ${BOLD}Перезапустить цель, чтобы метрики поднялись? [Y/n]:${NC} "
+        local _r; read_line _r
+        if [[ ! "$_r" =~ ^[nN] ]]; then
+            restart_target
+            if _wait_target_metrics 12; then
+                log_success "Метрики цели отвечают на 127.0.0.1:${_port}"
+            elif ! is_proxy_running; then
+                log_error "Цель не поднялась после перезапуска — проверьте конфиг"
+                echo -e "  ${DIM}journalctl -u telemt -n 20 --no-pager${NC}"
+            else
+                log_warn "Метрики пока не отвечают — проверьте: journalctl -u telemt -n 20"
+            fi
+        else
+            log_info "Метрики появятся после перезапуска цели"
+        fi
+    else
+        log_info "Цель не запущена — метрики поднимутся при её запуске"
+    fi
+}
+
+# Метрики — отдельный слушатель, он поднимается позже API, поэтому ждём
+# именно его, а не «цель вообще ожила».
+_wait_target_metrics() {
+    local _timeout="${1:-10}" _i=0
+    while [ "$_i" -lt "$_timeout" ]; do
+        if _target_metrics_available; then
+            [ "$_i" -gt 0 ] && echo ""
+            return 0
+        fi
+        [ "$_i" -eq 0 ] && echo -en "  ${DIM}Ждём, пока цель поднимет метрики${NC}"
+        echo -en "${DIM}.${NC}"
+        sleep 1
+        _i=$((_i + 1))
+    done
+    echo ""
+    return 1
+}
+
+# После рестарта цель поднимает API не мгновенно: запрос ссылок или
+# статистики сразу после restart упирался в «API не отвечает». Ждём, пока
+# API ответит, но не дольше _timeout секунд.
+_wait_target_api() {
+    local _timeout="${1:-8}" _i=0
+    _telemt_api_enabled || return 1
+    while [ "$_i" -lt "$_timeout" ]; do
+        if _get_telemt_users_json >/dev/null 2>&1; then
+            [ "$_i" -gt 0 ] && echo ""
+            return 0
+        fi
+        [ "$_i" -eq 0 ] && echo -en "  ${DIM}Ждём, пока цель поднимет API${NC}"
+        echo -en "${DIM}.${NC}"
+        sleep 1
+        _i=$((_i + 1))
+    done
+    echo ""
+    return 1
 }
 
 _target_tls_domain() {
@@ -357,6 +478,28 @@ _telemt_unit_exists() {
         [ -f "$_u" ] && return 0
     done
     return 1
+}
+
+# Процесс принадлежит контейнеру (docker/podman/lxc/k8s)
+_pid_in_container() {
+    local _cg="/proc/${1}/cgroup"
+    [ -r "$_cg" ] || return 1
+    grep -qE '(docker|containerd|libpod|kubepods|/lxc)' "$_cg" 2>/dev/null
+}
+
+# PID'ы telemt, которые действительно работают на хосте.
+# Процессы внутри контейнеров видны в хостовом PID namespace под тем же
+# именем, поэтому обычный `pgrep -x telemt` считал локальную цель
+# работающей, даже когда её служба остановлена, а telemt крутится в чужом
+# (или в нашем собственном, менеджерском) контейнере.
+_telemt_host_pids() {
+    local _pid _rc=1
+    for _pid in $(pgrep -x telemt 2>/dev/null); do
+        _pid_in_container "$_pid" && continue
+        echo "$_pid"
+        _rc=0
+    done
+    return $_rc
 }
 
 # ── Исключение чужих панелей / собственного контейнера ────────
@@ -463,12 +606,18 @@ detect_telemt() {
     # 3. Локальный telemt: процесс, активная служба ИЛИ установленный юнит.
     # Юнит учитываем даже остановленным — иначе остановленную службу
     # определяет как config_only, и её нельзя запустить из меню.
-    if pgrep -x telemt &>/dev/null || systemctl is-active telemt.service &>/dev/null 2>&1 \
+    if _telemt_host_pids >/dev/null || systemctl is-active telemt.service &>/dev/null 2>&1 \
        || _telemt_unit_exists; then
         DETECTED_MODE="local"
         DETECTED_NETWORK_MODE="host"
-        local _args
-        _args=$(ps -eo args 2>/dev/null | grep '[t]elemt' | grep -v 'telemt-panel' | grep -v 'telemt_panel' | head -1 | grep -oE '/[^ ]+\.toml' | head -1)
+        local _args _pid _cmd
+        _args=""
+        for _pid in $(_telemt_host_pids); do
+            _cmd=$(tr '\0' ' ' < "/proc/${_pid}/cmdline" 2>/dev/null)
+            case "$_cmd" in *telemt-panel*|*telemt_panel*) continue ;; esac
+            _args=$(grep -oE '/[^ ]+\.toml' <<< "$_cmd" | head -1)
+            [ -n "$_args" ] && break
+        done
         if [ -n "$_args" ] && [ -f "$_args" ] && ! _is_excluded_path "$_args" && _looks_like_telemt_config "$_args"; then
             DETECTED_CONFIG_PATH="$_args"
         fi
@@ -570,7 +719,13 @@ apply_target_tuning() {
     local _tv_out="$value"
     case "$param" in
         client_mss|client_mss_bulk) _tv_out="\"$value\"" ;;
-        *) [[ "$value" =~ ^(true|false|[0-9]+(\.[0-9]+)?)$ ]] || _tv_out="\"$value\"" ;;
+        *)
+            case "$value" in
+                # Массив TOML и уже закавыченную строку оборачивать нельзя —
+                # получится ""["a", "b"]"" и конфиг перестанет читаться.
+                \[*\]|\"*\") _tv_out="$value" ;;
+                *) [[ "$value" =~ ^(true|false|[0-9]+(\.[0-9]+)?)$ ]] || _tv_out="\"$value\"" ;;
+            esac ;;
     esac
 
     if _toml_safe_set "$param" "$_tv_out" "$section" "$_cfg"; then
@@ -578,7 +733,7 @@ apply_target_tuning() {
     else
         log_warn "Секция [${section}] отсутствует в ${_cfg}"
         echo -en "  ${BOLD}Создать секцию и применить? [Y/n]:${NC} "
-        local _cr; read -r _cr
+        local _cr; read_line _cr
         if [[ ! "$_cr" =~ ^[nN]$ ]]; then
             printf '\n[%s]\n%s = %s\n' "$section" "$param" "$_tv_out" >> "$_cfg"
             log_success "Секция [${section}] создана"
@@ -593,7 +748,7 @@ apply_target_tuning() {
 
     if is_proxy_running; then
         echo -en "  ${BOLD}Перезапустить цель, чтобы применить изменения? [Y/n]:${NC} "
-        local _r; read -r _r
+        local _r; read_line _r
         [[ ! "$_r" =~ ^[nN] ]] && restart_target
     fi
 }
@@ -638,7 +793,7 @@ run_reanimator_tuning_wizard() {
     fi
 
     echo -en "  ${BOLD}Применить эти значения в конфиге цели? [Y/n]:${NC} "
-    local _yn; read -r _yn
+    local _yn; read_line _yn
     if [[ "$_yn" =~ ^[nN]$ ]]; then
         log_info "Тюнинг пропущен. Позже: mtproxyl tune set <параметр> <значение>"
         return 0
@@ -655,7 +810,7 @@ run_reanimator_tuning_wizard() {
 
     if is_proxy_running; then
         echo -en "  ${BOLD}Перезапустить цель, чтобы значения вступили в силу? [Y/n]:${NC} "
-        local _r; read -r _r
+        local _r; read_line _r
         [[ ! "$_r" =~ ^[nN] ]] && restart_target
     else
         log_info "Цель не запущена — значения применятся при её запуске"
@@ -736,7 +891,7 @@ edit_target_config() {
     fi
 
     echo -en "  ${BOLD}Перезапустить цель, чтобы применить изменения? [Y/n]:${NC} "
-    local _r; read -r _r
+    local _r; read_line _r
     if [[ ! "$_r" =~ ^[nN] ]]; then
         restart_target
         sleep 1
@@ -763,7 +918,7 @@ sync_port_from_target() {
         echo ""
         log_warn "Порт цели определить не удалось (текущий: ${PROXY_PORT:-не задан})"
         echo -en "  ${BOLD}Укажите порт цели [${PROXY_PORT:-443}]:${NC} "
-        local _in; read -r _in
+        local _in; read_line _in
         _in="${_in:-${PROXY_PORT:-443}}"
         validate_port "$_in" || { log_error "Некорректный порт — оставляем ${PROXY_PORT:-443}"; return 1; }
         _p="$_in"
@@ -790,12 +945,14 @@ offer_reapply_fixes() {
     [ "${NFT_ENABLED:-false}" = "true" ] && _need="true"
     nft list table ip "${ZAPRET2_NFT_TABLE:-MTProtoL}" &>/dev/null 2>&1 && _need="true"
     nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1 && _need="true"
+    # Гео-блокировка тоже прибита к порту
+    [ -n "${BLOCKLIST_COUNTRIES:-}" ] && _need="true"
     [ "$_need" = "true" ] || return 0
 
     echo ""
     log_warn "Правила фиксов наложены на порт ${_old} — их нужно переприменить"
     echo -en "  ${BOLD}Переприменить сейчас? [Y/n]:${NC} "
-    local _yn; read -r _yn
+    local _yn; read_line _yn
     [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Переприменить позже: меню NFT/Zapret2"; return 0; }
 
     if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
@@ -806,6 +963,12 @@ offer_reapply_fixes() {
         install_nft_service || true
     elif nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1; then
         apply_nft_rules || log_warn "Не удалось применить NFT-правила"
+    fi
+    if [ -n "${BLOCKLIST_COUNTRIES:-}" ]; then
+        geoblock_remove_all >/dev/null 2>&1 || true
+        geoblock_reapply_all >/dev/null 2>&1 || true
+        geoblock_rules_active && log_success "Гео-блокировка переприменена на порт ${PROXY_PORT}" \
+            || log_warn "Гео-блокировку переприменить не удалось: mtproxyl geoblock reapply"
     fi
 }
 
@@ -824,7 +987,7 @@ switch_to_manager_mode() {
     echo ""
     log_warn "Переход в режим Manager. MTProxyL начнёт устанавливать/владеть СВОИМ telemt."
     echo -en "  ${BOLD}Введите 'yes' для подтверждения:${NC} "
-    local _c; read -r _c
+    local _c; read_line _c
     [ "$_c" != "yes" ] && { log_info "Отменено"; return 1; }
     local _port_before="${PROXY_PORT:-}"
     local _port_changed="false"
@@ -858,7 +1021,7 @@ switch_to_manager_mode() {
     fi
     echo ""
     echo -en "  ${BOLD}Запустить установку сейчас? [Y/n]:${NC} "
-    local _yn; read -r _yn
+    local _yn; read_line _yn
     if [[ "$_yn" =~ ^[nN]$ ]]; then
         log_info "Установку можно запустить позже: mtproxyl install"
         return 0
@@ -874,7 +1037,7 @@ switch_to_reanimator_mode() {
     echo ""
     log_warn "Переход в режим Reanimator. Свой контейнер/конфиг MTProxyL больше не будет управляться из меню."
     echo -en "  ${BOLD}Введите 'yes' для подтверждения:${NC} "
-    local _c; read -r _c
+    local _c; read_line _c
     [ "$_c" != "yes" ] && { log_info "Отменено"; return 1; }
 
     # Свой контейнер держит порт — а он же нужен цели реаниматора.
@@ -910,6 +1073,448 @@ switch_to_reanimator_mode() {
     log_success "Режим: reanimator"
 }
 
+# ── Установка оригинального telemt (telemt/telemt) ─────────────
+# Реаниматору нечего чинить, если telemt на сервере вообще нет. В этом
+# случае предлагаем официальный установщик проекта telemt — он ставит
+# бинарник, конфиг и systemd-юнит, то есть ровно ту цель, которой потом
+# управляет MTProxyL. Сами мы при этом ничего не устанавливаем и не
+# подменяем — запускается оригинальный скрипт как есть.
+TELEMT_INSTALLER_URL="https://raw.githubusercontent.com/${TELEMT_GITHUB:-telemt/telemt}/main/install.sh"
+
+# Цели нет: ни процесса на хосте, ни юнита, ни бинарника, ни контейнера
+_no_telemt_target() {
+    # Проверяем реальность, а не запомненный результат детекта: цель могли
+    # снести уже после него.
+    case "${DETECTED_MODE:-unknown}" in
+        docker|mtproxymax)
+            [ -n "${DETECTED_CONTAINER:-}" ] \
+                && docker inspect "$DETECTED_CONTAINER" &>/dev/null && return 1 ;;
+    esac
+    _telemt_host_pids >/dev/null && return 1
+    _telemt_unit_exists && return 1
+    command -v telemt &>/dev/null && return 1
+    [ -x /bin/telemt ] && return 1
+    [ -x /usr/local/bin/telemt ] && return 1
+    return 0
+}
+
+# Порт, который установщик telemt предложит по умолчанию: он читает
+# существующий /etc/telemt/telemt.toml, иначе берёт 443. Спросит он всё
+# равно, но конфликт честнее показать до запуска.
+_telemt_installer_default_port() {
+    local _cfg="/etc/telemt/telemt.toml" _p=""
+    [ -f "$_cfg" ] && _p=$(_toml_get_value "port" "$_cfg")
+    [[ "$_p" =~ ^[0-9]+$ ]] && { echo "$_p"; return; }
+    echo "443"
+}
+
+# Порт под telemt занят — разбираемся до установки.
+# Отдельно ловим собственный контейнер MTProxyL: он работает в сети host,
+# поэтому в `ss` виден как процесс telemt. Установщик telemt сравнивает
+# вывод ss со своим BIN_NAME, решает, что порт держит его же служба, и
+# спокойно продолжает — а служба потом не может занять порт и падает в
+# рестарт-луп. Сам он об этом не предупредит.
+# PID'ы, которые слушают порт (для разбора конфликта: своя служба telemt,
+# наш контейнер или вообще посторонний процесс).
+_port_listener_pids() {
+    local _port="$1" _out=""
+    if command -v ss &>/dev/null; then
+        _out=$(ss -ltnp 2>/dev/null | awk -v p=":${_port}\$" '$4 ~ p {print}')
+    elif command -v netstat &>/dev/null; then
+        _out=$(netstat -ltnp 2>/dev/null | awk -v p=":${_port}\$" '$4 ~ p {print}')
+    fi
+    [ -n "$_out" ] || return 1
+    {
+        grep -oE 'pid=[0-9]+' <<< "$_out" | cut -d= -f2
+        grep -oE '(^|[[:space:]])[0-9]+/' <<< "$_out" | tr -d ' /'
+    } | sort -un
+}
+
+# Процесс принадлежит службе telemt.service — той самой, которую
+# официальный установщик и обновляет.
+_pid_in_telemt_unit() {
+    local _pid="$1"
+    grep -q 'telemt\.service' "/proc/${_pid}/cgroup" 2>/dev/null && return 0
+    local _mp; _mp=$(systemctl show telemt.service -p MainPID --value 2>/dev/null)
+    [ "$_mp" = "$_pid" ] && [ "$_pid" != "0" ]
+}
+
+# Разбор занятого порта перед запуском установщика telemt.
+# Важно различать два случая, которые выглядят в `ss` одинаково (процесс
+# называется telemt):
+#   • порт держит сама telemt.service — установщик остановит её на своём
+#     этапе установки, это штатное обновление и конфликта нет;
+#   • порт держит telemt в контейнере (в т.ч. наш собственный) или процесс
+#     мимо systemd — установщик тоже увидит имя telemt, посчитает порт
+#     своим и продолжит, но служба потом не сможет забиндить порт.
+_preflight_telemt_port() {
+    local _port="$1"
+    is_port_available "$_port" && return 0
+
+    local _pids _p _in_unit="false" _in_container="false" _foreign="false"
+    _pids=$(_port_listener_pids "$_port" 2>/dev/null)
+    for _p in $_pids; do
+        if _pid_in_container "$_p"; then
+            _in_container="true"
+        elif _pid_in_telemt_unit "$_p"; then
+            _in_unit="true"
+        else
+            _foreign="true"
+        fi
+    done
+
+    if [ "$_in_unit" = "true" ] && [ "$_in_container" != "true" ] && [ "$_foreign" != "true" ]; then
+        echo ""
+        log_info "Порт ${_port} занимает служба telemt.service — это и есть цель обновления"
+        echo -e "  ${DIM}Установщик остановит её сам перед заменой бинарника: конфликта нет.${NC}"
+        return 0
+    fi
+
+    echo ""
+    log_warn "Порт ${_port} занят — telemt на него не встанет"
+    show_port_listener "$_port"
+
+    local _own; _own=$(own_container_state 2>/dev/null)
+    if [ "$_in_container" = "true" ] && { [ "$_own" = "running" ] || [ "$_own" = "restarting" ]; }; then
+        echo ""
+        log_warn "Порт держит собственный контейнер MTProxyL (${CONTAINER_NAME}, сеть host)"
+        echo -e "  ${DIM}Установщик telemt увидит в ss имя процесса telemt, посчитает порт${NC}"
+        echo -e "  ${DIM}своим и продолжит установку — служба потом не поднимется.${NC}"
+        echo ""
+        echo -e "  ${DIM}[1]${NC} Остановить и удалить контейнер ${DIM}(рекомендуется)${NC}"
+        echo -e "  ${DIM}[2]${NC} Только остановить, контейнер оставить"
+        echo -e "  ${DIM}[3]${NC} Не трогать — укажу другой порт в установщике"
+        local _oc; _oc=$(read_choice "выбор" "1")
+        case "$_oc" in
+            1) remove_own_container ;;
+            2) docker update --restart=no "$CONTAINER_NAME" &>/dev/null || true
+               docker stop --timeout 10 "$CONTAINER_NAME" &>/dev/null \
+                   && log_success "Контейнер остановлен (не удалён)" \
+                   || log_warn "Не удалось остановить контейнер" ;;
+            *) log_info "Контейнер оставлен — укажите в установщике свободный порт" ;;
+        esac
+        sleep 1
+        if is_port_available "$_port"; then
+            log_success "Порт ${_port} свободен"
+            return 0
+        fi
+        echo ""
+        log_warn "Порт ${_port} всё ещё занят"
+        show_port_listener "$_port"
+    elif [ "$_in_container" = "true" ]; then
+        echo ""
+        log_warn "Порт держит telemt в чужом контейнере — установщик его не остановит"
+        echo -e "  ${DIM}Он поставит отдельную службу telemt.service, которая не сможет${NC}"
+        echo -e "  ${DIM}занять порт. Остановите контейнер или укажите другой порт.${NC}"
+        return 1
+    fi
+
+    echo ""
+    echo -e "  ${DIM}Установщик telemt либо откажется ставиться, либо поставит службу,${NC}"
+    echo -e "  ${DIM}которая не сможет занять порт. Освободите ${_port} или укажите${NC}"
+    echo -e "  ${DIM}другой порт, когда установщик спросит.${NC}"
+    return 1
+}
+
+# Список релизов telemt с GitHub, постранично по 10 — как в меню движка.
+# Возвращает выбранный тег в _TELEMT_PICKED_VERSION ("" = latest).
+_TELEMT_PICKED_VERSION=""
+_telemt_pick_version() {
+    _TELEMT_PICKED_VERSION=""
+
+    local _json
+    _json=$(curl -fsS --max-time 10 "https://api.github.com/repos/${TELEMT_GITHUB:-telemt/telemt}/releases?per_page=100" 2>/dev/null) || {
+        log_warn "Не удалось получить список версий — ставим latest"
+        return 0
+    }
+
+    local _list
+    _list=$(python3 -c "
+import json, sys
+try:
+    rel = json.load(sys.stdin)
+    for r in rel:
+        if r.get('draft'): continue
+        tag = r.get('tag_name') or ''
+        if not tag: continue
+        date = (r.get('published_at') or '')[:10]
+        pre = ' (pre-release)' if r.get('prerelease') else ''
+        print(f'{tag}|{date}{pre}')
+except Exception:
+    pass
+" <<< "$_json" 2>/dev/null)
+
+    if [ -z "$_list" ]; then
+        log_warn "Список версий пуст — ставим latest"
+        return 0
+    fi
+
+    local -a _tags=() _rows=()
+    local _line
+    while IFS= read -r _line; do
+        [ -z "$_line" ] && continue
+        _tags+=("${_line%%|*}")
+        _rows+=("$_line")
+    done <<< "$_list"
+
+    local _total=${#_tags[@]}
+    local _per=10 _page=0 _pages
+    # Отдельным присваиванием: в одном `local` арифметика раскрывается до
+    # того, как переменные из этой же строки получат значения.
+    _pages=$(( (_total + _per - 1) / _per ))
+
+    while true; do
+        local _from=$(( _page * _per ))
+        local _to=$(( _from + _per ))
+        [ "$_to" -gt "$_total" ] && _to="$_total"
+
+        echo ""
+        echo -e "  ${BOLD}Версия telemt${NC} ${DIM}(страница $((_page + 1))/${_pages}, всего ${_total})${NC}"
+        echo ""
+        local _i _n=0
+        for (( _i = _from; _i < _to; _i++ )); do
+            _n=$(( _i - _from + 1 ))
+            local _tag="${_rows[$_i]%%|*}" _meta="${_rows[$_i]#*|}"
+            if [ "$_i" -eq 0 ]; then
+                echo -e "  ${DIM}[${_n}]${NC} ${_tag}  ${DIM}${_meta} — последняя${NC}"
+            else
+                echo -e "  ${DIM}[${_n}]${NC} ${_tag}  ${DIM}${_meta}${NC}"
+            fi
+        done
+        echo ""
+        local _next=$(( _n + 1 )) _prev=0
+        [ "$_pages" -gt 1 ] && echo -e "  ${DIM}[${_next}]${NC} Следующие 10"
+        if [ "$_page" -gt 0 ]; then
+            _prev=$(( _next + 1 ))
+            echo -e "  ${DIM}[${_prev}]${NC} Предыдущие 10"
+        fi
+        echo -e "  ${DIM}[0]${NC} Последняя версия (latest)"
+
+        local _c; _c=$(read_choice "выбор" "0")
+        case "$_c" in
+            0|"") _TELEMT_PICKED_VERSION=""; return 0 ;;
+        esac
+        if [ "$_c" = "$_next" ] && [ "$_pages" -gt 1 ]; then
+            _page=$(( (_page + 1) % _pages ))
+            continue
+        fi
+        if [ "$_page" -gt 0 ] && [ "$_c" = "$_prev" ]; then
+            _page=$(( _page - 1 ))
+            continue
+        fi
+        if [[ "$_c" =~ ^[0-9]+$ ]] && [ "$_c" -ge 1 ] && [ "$_c" -le "$_n" ]; then
+            _TELEMT_PICKED_VERSION="${_tags[$(( _from + _c - 1 ))]}"
+            return 0
+        fi
+        log_warn "Некорректный выбор"
+    done
+}
+
+# Скачивает официальный установщик telemt во временный файл.
+# Путь — в _TELEMT_INSTALLER_TMP.
+_TELEMT_INSTALLER_TMP=""
+_telemt_fetch_installer() {
+    _TELEMT_INSTALLER_TMP=""
+    local _tmp
+    _tmp=$(mktemp "${TMPDIR:-/tmp}/telemt-install.XXXXXX") || { log_error "Не удалось создать временный файл"; return 1; }
+
+    log_info "Загрузка установщика..."
+    if command -v curl &>/dev/null; then
+        curl -fsSL "$TELEMT_INSTALLER_URL" -o "$_tmp" 2>/dev/null || true
+    elif command -v wget &>/dev/null; then
+        wget -qO "$_tmp" "$TELEMT_INSTALLER_URL" 2>/dev/null || true
+    else
+        rm -f "$_tmp"
+        log_error "Нужен curl или wget"
+        return 1
+    fi
+    if [ ! -s "$_tmp" ]; then
+        rm -f "$_tmp"
+        log_error "Не удалось загрузить установщик telemt"
+        return 1
+    fi
+    _TELEMT_INSTALLER_TMP="$_tmp"
+}
+
+# Запуск официального установщика с нашими поправками окружения.
+# Установщик отказывается работать, если uid=0, но USER/LOGNAME указывают
+# на другого пользователя (обычный запуск через sudo) — права мы уже
+# проверили сами. Заодно снимаем переменные, которыми он переопределяет
+# свои пути и версию: у MTProxyL переменные с такими же именами, и
+# случайный export из окружения увёл бы установку telemt не туда.
+_telemt_run_installer() {
+    local _script="$1"; shift
+    local _rc=0
+    echo ""
+    echo -e "  ${DIM}$(_repeat '─' 60)${NC}"
+    env -u REPO -u BIN_NAME -u INSTALL_DIR -u CONFIG_DIR -u CONFIG_FILE \
+        -u WORK_DIR -u TLS_DOMAIN -u SERVER_PORT -u VERSION \
+        USER=root LOGNAME=root sh "$_script" "$@" || _rc=$?
+    echo -e "  ${DIM}$(_repeat '─' 60)${NC}"
+    echo ""
+    return $_rc
+}
+
+install_original_telemt() {
+    # _offer_tuning=false — когда тюнинг предлагает вызывающий мастер
+    local _offer_tuning="${1:-true}"
+    if [ "${MTPROXYL_MODE:-manager}" != "reanimator" ]; then
+        log_error "Установка оригинального telemt доступна только в режиме reanimator"
+        log_info "В режиме manager MTProxyL ставит и обслуживает собственный telemt: mtproxyl install"
+        return 1
+    fi
+    check_root
+
+    draw_header "УСТАНОВКА / ОБНОВЛЕНИЕ TELEMT"
+    echo ""
+    echo -e "  Будет запущен официальный установщик проекта telemt:"
+    echo -e "  ${DIM}${TELEMT_INSTALLER_URL}${NC}"
+    echo ""
+    echo -e "  ${DIM}Он спросит язык, порт и TLS-домен, затем поставит бинарник${NC}"
+    echo -e "  ${DIM}/bin/telemt, конфиг /etc/telemt/telemt.toml и службу${NC}"
+    echo -e "  ${DIM}telemt.service с включённым API на 127.0.0.1:9091.${NC}"
+    echo -e "  ${DIM}MTProxyL запускает его как есть и ничего не подменяет.${NC}"
+
+    # Установщик управляет только своей службой telemt.service и своим
+    # конфигом. Контейнер чужой панели или MTProxyMax он не обновит — для
+    # такой цели это будет ВТОРАЯ, отдельная установка.
+    case "${DETECTED_MODE:-unknown}" in
+        docker|mtproxymax)
+            echo ""
+            log_warn "Текущая цель — ${DETECTED_MODE}$([ -n "${DETECTED_CONTAINER:-}" ] && echo " (${DETECTED_CONTAINER})"), её этот установщик не обновляет"
+            echo -e "  ${DIM}Он ставит отдельную службу telemt.service с собственным конфигом${NC}"
+            echo -e "  ${DIM}/etc/telemt/telemt.toml — рядом с текущей целью, а не вместо неё.${NC}"
+            echo -e "  ${DIM}Порт у них будет общий, поэтому вторая установка не поднимется,${NC}"
+            echo -e "  ${DIM}пока первая занимает порт.${NC}"
+            ;;
+        local|config_only|manual)
+            if ! _no_telemt_target; then
+                echo ""
+                log_info "telemt на сервере уже есть — это будет обновление"
+                echo -e "  ${DIM}Конфиг целиком не перезаписывается: обновятся только порт и${NC}"
+                echo -e "  ${DIM}tls_domain (те значения, что подтвердите), остальное — тюнинг,${NC}"
+                echo -e "  ${DIM}[server.api], секреты пользователей — останется как есть.${NC}"
+            fi
+            ;;
+    esac
+
+    _preflight_telemt_port "$(_telemt_installer_default_port)" || true
+
+    echo ""
+    echo -en "  ${BOLD}Запустить установщик telemt? [y/N]:${NC} "
+    local _yn; read_line _yn
+    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 1; }
+
+    # Версию выбираем до запуска: установщик принимает её первым аргументом
+    _telemt_pick_version
+    local _ver="${_TELEMT_PICKED_VERSION}"
+    [ -n "$_ver" ] && log_info "Версия: ${_ver}" || log_info "Версия: latest"
+
+    _telemt_fetch_installer || return 1
+
+    local _rc=0
+    if [ -n "$_ver" ]; then
+        _telemt_run_installer "$_TELEMT_INSTALLER_TMP" "$_ver" || _rc=$?
+    else
+        _telemt_run_installer "$_TELEMT_INSTALLER_TMP" || _rc=$?
+    fi
+    rm -f "$_TELEMT_INSTALLER_TMP"; _TELEMT_INSTALLER_TMP=""
+
+    if [ "$_rc" -ne 0 ]; then
+        log_warn "Установщик telemt завершился с кодом ${_rc}"
+        return 1
+    fi
+
+    log_info "Повторное обнаружение цели..."
+    if ! run_target_detection; then
+        log_warn "telemt установлен, но цель не определилась — проверьте: systemctl status telemt"
+        save_detect_settings
+        return 1
+    fi
+    save_detect_settings
+    sync_port_from_target || true
+    # Служба только что стартовала — API поднимается на пару секунд позже
+    _wait_target_api 8 >/dev/null 2>&1 || true
+
+    # Конфиг только что создан установщиком — самое время предложить наш
+    # набор таймаутов, пока пользователь здесь.
+    if [ "$_offer_tuning" != "false" ] && [ -n "${DETECTED_CONFIG_PATH:-}" ] && [ -f "${DETECTED_CONFIG_PATH}" ]; then
+        echo ""
+        run_reanimator_tuning_wizard || true
+    fi
+    return 0
+}
+
+# Удаление telemt тем же официальным установщиком: uninstall — снять
+# бинарник и службу, purge — вместе с конфигом, данными и пользователем.
+# Трогает только telemt.service и его файлы: чужой контейнер, MTProxyMax
+# и любую другую установку это не затрагивает.
+uninstall_original_telemt() {
+    if [ "${MTPROXYL_MODE:-manager}" != "reanimator" ]; then
+        log_error "Удаление telemt доступно только в режиме reanimator"
+        return 1
+    fi
+    check_root
+
+    draw_header "УДАЛЕНИЕ TELEMT"
+    echo ""
+    case "${DETECTED_MODE:-unknown}" in
+        docker|mtproxymax)
+            log_warn "Текущая цель — ${DETECTED_MODE}, её этот установщик не удаляет"
+            echo -e "  ${DIM}Будут удалены только /bin/telemt, telemt.service и (при purge)${NC}"
+            echo -e "  ${DIM}/etc/telemt, /opt/telemt и системный пользователь telemt.${NC}"
+            echo "" ;;
+    esac
+    echo -e "  ${BOLD}Что делает официальный установщик:${NC}"
+    echo -e "  ${DIM}[1]${NC} uninstall — остановить службу, снять юнит и бинарник"
+    echo -e "      ${DIM}конфиг /etc/telemt/telemt.toml остаётся${NC}"
+    echo -e "  ${DIM}[2]${NC} purge — то же плюс конфиг, /opt/telemt и пользователь telemt"
+    echo -e "      ${RED}данные и секреты пользователей будут потеряны${NC}"
+    echo -e "  ${DIM}[0]${NC} Отмена"
+    local _c; _c=$(read_choice "выбор" "0")
+    local _action=""
+    case "$_c" in
+        1) _action="uninstall" ;;
+        2) _action="purge" ;;
+        *) log_info "Отменено"; return 0 ;;
+    esac
+
+    echo ""
+    log_warn "MTProxyL после этого останется без цели: фиксы (NFT/Zapret2) продолжат висеть на порту ${PROXY_PORT}"
+    echo -en "  ${BOLD}Введите 'yes' для подтверждения (${_action}):${NC} "
+    local _confirm; read_line _confirm
+    [ "$_confirm" = "yes" ] || { log_info "Отменено"; return 0; }
+
+    _telemt_fetch_installer || return 1
+    local _rc=0
+    _telemt_run_installer "$_TELEMT_INSTALLER_TMP" "$_action" || _rc=$?
+    rm -f "$_TELEMT_INSTALLER_TMP"; _TELEMT_INSTALLER_TMP=""
+
+    if [ "$_rc" -ne 0 ]; then
+        log_warn "Установщик telemt завершился с кодом ${_rc}"
+        return 1
+    fi
+
+    log_info "Повторное обнаружение цели..."
+    run_target_detection || log_info "Цель не найдена — это ожидаемо после удаления"
+    save_detect_settings
+    return 0
+}
+
+# Предложить установку, если чинить нечего. Возвращает 0, если telemt
+# в итоге установлен.
+offer_install_original_telemt() {
+    _no_telemt_target || return 0
+    echo ""
+    log_warn "Установленный telemt на сервере не найден — реаниматору нечем управлять"
+    echo -e "  ${DIM}Можно поставить оригинальный telemt официальным установщиком проекта${NC}"
+    echo -en "  ${BOLD}Установить telemt сейчас? [Y/n]:${NC} "
+    local _yn; read_line _yn
+    [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Позже: меню «Цель / режим» → «Установить telemt»"; return 1; }
+    # Тюнинг предложит сам мастер установки реаниматора — здесь не дублируем
+    install_original_telemt "false"
+}
+
 # ── Установочный визард для режима Reanimator ──────────────────
 run_reanimator_installer() {
     draw_header "REANIMATOR — ПОИСК СУЩЕСТВУЮЩЕЙ УСТАНОВКИ TELEMT"
@@ -918,10 +1523,18 @@ run_reanimator_installer() {
     check_root
 
     if ! run_target_detection; then
+        # Чинить нечего — сначала предлагаем поставить оригинальный telemt
+        # и только потом уходим в ручной путь к конфигу.
+        if _no_telemt_target; then
+            offer_install_original_telemt && run_target_detection >/dev/null 2>&1 || true
+        fi
+    fi
+
+    if [ -z "${DETECTED_CONFIG_PATH:-}" ] || [ ! -f "${DETECTED_CONFIG_PATH:-}" ]; then
         echo ""
         echo -e "  ${BOLD}Укажите путь к конфигу telemt вручную (Enter — пропустить):${NC}"
         echo -en "  ${DIM}Путь:${NC} "
-        local _manual_path; read -r _manual_path
+        local _manual_path; read_line _manual_path
         if [ -n "$_manual_path" ] && [ -f "$_manual_path" ]; then
             DETECTED_CONFIG_PATH="$_manual_path"
             DETECTED_MODE="manual"
@@ -934,10 +1547,10 @@ run_reanimator_installer() {
     else
         echo ""
         echo -en "  ${BOLD}Указать другой путь к конфигу? [y/N]:${NC} "
-        local _override; read -r _override
+        local _override; read_line _override
         if [[ "$_override" =~ ^[yY]$ ]]; then
             echo -en "  ${DIM}Путь:${NC} "
-            local _p; read -r _p
+            local _p; read_line _p
             [ -n "$_p" ] && [ -f "$_p" ] && DETECTED_CONFIG_PATH="$_p"
         fi
     fi
@@ -945,7 +1558,7 @@ run_reanimator_installer() {
     echo ""
     echo -e "  ${BOLD}Порт прокси${NC} ${DIM}(обнаружен: ${DETECTED_PORT:-?})${NC}"
     echo -en "  ${DIM}Порт [${DETECTED_PORT:-443}]:${NC} "
-    local _port_in; read -r _port_in
+    local _port_in; read_line _port_in
     if [ -n "$_port_in" ] && validate_port "$_port_in"; then
         PROXY_PORT="$_port_in"
     else
@@ -956,7 +1569,7 @@ run_reanimator_installer() {
     local _det_ip="${DETECTED_IP:-$(get_public_ip 2>/dev/null)}"
     echo -e "  ${BOLD}IP сервера${NC} ${DIM}(обнаружен/определён: ${_det_ip:-?})${NC}"
     echo -en "  ${DIM}IP [${_det_ip:-авто}]:${NC} "
-    local _ip_in; read -r _ip_in
+    local _ip_in; read_line _ip_in
     if [ -n "$_ip_in" ] && validate_ip_literal "$_ip_in"; then
         CUSTOM_IP="$_ip_in"
     else
@@ -998,6 +1611,10 @@ run_reanimator_installer() {
     echo -en "  ${DIM}Нажмите клавишу для входа в меню...${NC}"
     read -rsn1
     read -rn 256 -t 0.05 _ 2>/dev/null || true
+    echo ""
+    # Цель мы только что ставили/перезапускали — панель меню сразу же
+    # спрашивает её API, а он поднимается на пару секунд позже.
+    _wait_target_api 5 >/dev/null 2>&1 || true
     load_settings
     show_main_menu
 }

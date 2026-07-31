@@ -53,7 +53,7 @@ tui_addons_menu() {
                 else
                     echo -en "  ${BOLD}Домен (или домен:порт):${NC} "
                     local _input
-                    read -r _input
+                    read_line _input
                     [ -n "$_input" ] && _addon_check_pq_domain "$_input"
                 fi
                 press_any_key

@@ -255,16 +255,30 @@ press_any_key() {
     echo ""
 }
 
+# Чтение строки после приглашения, напечатанного отдельным echo.
+# Нужна из-за readline: если ввод пустой (пользователь просто нажал Enter),
+# readline завершает строку одним \r без перевода строки, и следующая же
+# строка вывода затирает приглашение прямо на экране.
+read_line() {
+    local __var="$1" __ans=""
+    IFS= read -er __ans || true
+    [ -z "$__ans" ] && [ -t 0 ] && echo ""
+    printf -v "$__var" '%s' "$__ans"
+}
+
 read_choice() {
     local prompt="${1:-выбор}"
     local default="${2:-}"
     fix_tty_input
-    read -rn 256 -t 0.05 _ 2>/dev/null || true
-    echo -en "\n  Введите ${prompt,,}" >&2
-    [ -n "$default" ] && echo -en " [${default}]" >&2
-    echo -en ": " >&2
+    # Сброс «набранного вперёд» имеет смысл только на терминале: из пайпа
+    # это съело бы реальный ввод.
+    [ -t 0 ] && { read -rn 256 -t 0.05 _ 2>/dev/null || true; }
+    echo "" >&2
+    local _p="  Введите ${prompt,,}"
+    [ -n "$default" ] && _p+=" [${default}]"
+    _p+=": "
     local choice
-    read -r choice
+    read -erp "$_p" choice
     [ -z "$choice" ] && choice="$default"
     echo "$choice"
 }
@@ -277,8 +291,17 @@ clear_screen() {
 
 fix_tty_input() {
     [ -t 0 ] || return 0
+    # Запоминаем текущий символ забоя: терминалы шлют либо ^? (0x7f), либо ^H
+    # (0x08), и навязывать один из них нельзя — иначе второй попадёт в ввод
+    # как литерал ^H. Ввод везде читается через readline (read -e), который
+    # понимает оба, но stty sane сбрасывает настройку пользователя.
+    local _erase=""
+    _erase=$(stty -a 2>/dev/null | sed -n 's/.*erase = \([^;]*\);.*/\1/p' | tr -d '[:space:]')
     stty sane 2>/dev/null || true
-    stty erase '^?' iutf8 2>/dev/null || stty erase '^?' 2>/dev/null || true
+    stty iutf8 2>/dev/null || true
+    case "$_erase" in
+        '^H'|'^?') stty erase "$_erase" 2>/dev/null || true ;;
+    esac
 }
 
 # ── Проверка обновлений ───────────────────────────────────────
@@ -424,9 +447,19 @@ handle_port_command() {
     _require_manager_mode || return 1
     check_root
     if validate_port "$new_port"; then
+        local _port_before="${PROXY_PORT}"
         PROXY_PORT="$new_port"
         save_settings
         log_success "Порт: ${PROXY_PORT}"
+        # Правила гео-блокировки прибиты к порту: после смены они остались
+        # бы висеть на старом и не защищали новый.
+        if [ -n "${BLOCKLIST_COUNTRIES:-}" ] && [ "$_port_before" != "$PROXY_PORT" ]; then
+            log_info "Перенос правил гео-блокировки на порт ${PROXY_PORT}..."
+            geoblock_remove_all >/dev/null 2>&1 || true
+            geoblock_reapply_all >/dev/null 2>&1 || true
+            geoblock_rules_active && log_success "Гео-блокировка переприменена" \
+                || log_warn "Гео-блокировку переприменить не удалось: mtproxyl geoblock reapply"
+        fi
         if is_proxy_running; then
             load_secrets
             restart_proxy_container || true
@@ -483,7 +516,7 @@ handle_domain_command() {
             local _cur_mask="${MASKING_HOST:-$_old_domain}"
             if [ "$_cur_mask" = "$_old_domain" ] || [ -z "$MASKING_HOST" ]; then
                 echo -en "  ${BOLD}Обновить mask backend на ${PROXY_DOMAIN}? [Y/n]:${NC} "
-                local _mask_yn; read -r _mask_yn
+                local _mask_yn; read_line _mask_yn
                 if [[ ! "$_mask_yn" =~ ^[nN]$ ]]; then
                     MASKING_HOST="$PROXY_DOMAIN"
                     save_settings
@@ -591,7 +624,7 @@ show_cli_help() {
     echo -e "  ${BOLD}Безопасность:${NC}   geoblock add|remove|list | upstream list|add|remove | sni-policy"
     echo -e "  ${BOLD}Мониторинг:${NC}     traffic | connections | metrics [live] | logs | health | info"
     echo -e "  ${BOLD}Бэкапы:${NC}         backup [--encrypt] | restore <файл>"
-    echo -e "  ${BOLD}Reanimator:${NC}     mode [manager|reanimator] | detect | edit-config"
+    echo -e "  ${BOLD}Reanimator:${NC}     mode [manager|reanimator] | detect | edit-config\n                  install-telemt | uninstall-telemt"
     echo -e "  ${BOLD}Система:${NC}        install | menu | update | uninstall | version | help"
     echo ""
 }

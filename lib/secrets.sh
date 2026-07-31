@@ -131,7 +131,7 @@ secret_remove() {
     if [ "$force" != "true" ] && [ -t 0 ]; then
         echo -e "  ${YELLOW}Удалить секрет '${label}'? Пользователи с этим ключом будут отключены.${NC}"
         echo -en "  ${BOLD}Введите 'yes':${NC} "
-        local confirm; read -r confirm
+        local confirm; read_line confirm
         [ "$confirm" != "yes" ] && { log_info "Отменено"; return 0; }
     fi
 

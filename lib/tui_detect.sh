@@ -13,11 +13,20 @@ tui_target_menu() {
             echo -e "  ${BOLD}Сеть Docker:${NC}   ${DETECTED_NETWORK_MODE:-?}"
         fi
         echo ""
+        # Установка оригинального telemt — только в реаниматоре: в режиме
+        # менеджера MTProxyL ставит и обслуживает свой движок сам.
+        local _telemt_item="false"
+        [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && _telemt_item="true"
+
         echo -e "  ${DIM}[1]${NC} Повторить обнаружение цели"
         if [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
             echo -e "  ${DIM}[2]${NC} Переключиться в Reanimator"
         else
             echo -e "  ${DIM}[2]${NC} Переключиться в Manager"
+        fi
+        if [ "$_telemt_item" = "true" ]; then
+            echo -e "  ${DIM}[3]${NC} Установить / обновить telemt (официальный установщик)"
+            echo -e "  ${DIM}[4]${NC} Удалить telemt (официальный установщик)"
         fi
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
@@ -29,6 +38,14 @@ tui_target_menu() {
                 else
                     switch_to_manager_mode
                 fi
+                press_any_key ;;
+            3)
+                [ "$_telemt_item" = "true" ] || continue
+                install_original_telemt || true
+                press_any_key ;;
+            4)
+                [ "$_telemt_item" = "true" ] || continue
+                uninstall_original_telemt || true
                 press_any_key ;;
             0|"") return ;;
         esac

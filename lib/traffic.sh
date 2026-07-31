@@ -254,7 +254,46 @@ get_persistent_user_stats() {
     echo "${_total_in} ${_total_out} ${_cur_conns:-0}"
 }
 
+# Reanimator: собственных счётчиков у нас нет — данные берём из API цели
+# (/v1/users), как это делает экран «Логи и трафик».
+show_target_traffic() {
+    echo ""
+    draw_header "ТРАФИК (ЦЕЛЬ)"
+    echo ""
+
+    local _json _rc
+    _json=$(_get_telemt_users_json 2>/dev/null); _rc=$?
+    if [ $_rc -ne 0 ]; then
+        log_warn "Статистика недоступна: $(_telemt_api_unavailable_reason)"
+        [ $_rc -eq 2 ] && log_info "Включите [server.api] enabled = true в конфиге цели и перезапустите её"
+        echo ""
+        return 1
+    fi
+
+    local _tot_oct _tot_conn _tot_ips
+    _tot_oct=$(_json_sum_field "$_json" "total_octets")
+    _tot_conn=$(_json_sum_field "$_json" "current_connections")
+    _tot_ips=$(_json_sum_field "$_json" "active_unique_ips")
+    echo -e "  ${BOLD}Всего по цели${NC} ${DIM}(API 127.0.0.1:$(_get_telemt_api_port))${NC}:"
+    echo -e "    Передано:            $(format_bytes "$_tot_oct")"
+    echo -e "    Активных соединений: ${_tot_conn}"
+    echo -e "    Уникальных IP:       ${_tot_ips}"
+    echo ""
+
+    local _u _en _c _ips _oct _mark
+    while IFS='|' read -r _u _en _c _ips _oct; do
+        [ -z "$_u" ] && continue
+        [ "$_en" = "false" ] && _mark="${DIM}${SYM_CROSS}${NC}" || _mark="${GREEN}${SYM_OK}${NC}"
+        echo -e "  ${_mark} ${BOLD}${_u}${NC}: $(format_bytes "$_oct")  соед: ${_c}  уник. IP: ${_ips}"
+    done <<< "$(_target_user_stats "$_json")"
+    echo ""
+}
+
 show_traffic() {
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        show_target_traffic
+        return
+    fi
     echo ""
     draw_header "ТРАФИК"
 
@@ -337,6 +376,31 @@ show_connections() {
 
 show_status() {
     echo ""
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        # В реаниматоре ни движок, ни домен, ни счётчики не наши: движок —
+        # чужой, домен лежит в конфиге цели, статистика приходит из её API.
+        local _st _up="—"
+        if is_proxy_running; then
+            _st=$(draw_status running)
+            _up=$(format_duration "$(get_proxy_uptime)")
+        else
+            _st=$(draw_status stopped)
+        fi
+        echo -e "  ${BOLD}Режим:${NC}       Reanimator  ${BOLD}Статус:${NC} ${_st}"
+        echo -e "  ${BOLD}Цель:${NC}        ${DETECTED_MODE:-unknown}$([ -n "${DETECTED_CONTAINER:-}" ] && echo " (${DETECTED_CONTAINER})")"
+        echo -e "  ${BOLD}Конфиг цели:${NC} ${DETECTED_CONFIG_PATH:-не найден}"
+        echo -e "  ${BOLD}Порт:${NC}        ${PROXY_PORT}            ${BOLD}Время работы:${NC} ${_up}"
+        echo -e "  ${BOLD}Домен(SNI):${NC}  $(_current_sni_domain 2>/dev/null || echo '?')"
+        if fetch_target_stats 2>/dev/null; then
+            echo -e "  ${BOLD}Трафик:${NC}      $(format_bytes "${TARGET_STATS_OCTETS:-0}")"
+            echo -e "  ${BOLD}Соединения:${NC}  ${TARGET_STATS_CONNS:-0}"
+            echo -e "  ${BOLD}Пользователи:${NC} ${TARGET_STATS_ACTIVE:-0} активных / ${TARGET_STATS_DISABLED:-0} выключенных"
+        else
+            echo -e "  ${BOLD}Трафик:${NC}      ${DIM}н/д — $(_telemt_api_unavailable_reason 2>/dev/null)${NC}"
+        fi
+        echo ""
+        return
+    fi
     local status_str uptime_str traffic_in traffic_out connections
     if is_proxy_running; then
         status_str=$(draw_status running)
@@ -368,9 +432,25 @@ show_status_json() {
     if is_proxy_running; then
         status="running"
         uptime_secs=$(get_proxy_uptime 2>/dev/null) || uptime_secs=0
-        read -r traffic_in traffic_out connections <<< "$(get_proxy_stats)"
+        [ "${MTPROXYL_MODE:-manager}" = "manager" ] && \
+            read -r traffic_in traffic_out connections <<< "$(get_proxy_stats)"
     fi
-    printf '{"version":"%s","status":"%s","port":%d,"domain":"%s","uptime":%d,"connections":%d,"traffic_in":%d,"traffic_out":%d}\n' \
+
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        # Направления трафика API цели не разделяет — отдаём одну сумму,
+        # чтобы не выдавать чужие данные за in/out.
+        local _octets=0
+        if fetch_target_stats 2>/dev/null; then
+            _octets="${TARGET_STATS_OCTETS:-0}"
+            connections="${TARGET_STATS_CONNS:-0}"
+        fi
+        printf '{"version":"%s","mode":"reanimator","status":"%s","target":"%s","config":"%s","port":%d,"domain":"%s","uptime":%d,"connections":%d,"traffic_total":%d}\n' \
+            "$VERSION" "$status" "${DETECTED_MODE:-unknown}" "${DETECTED_CONFIG_PATH:-}" \
+            "$PROXY_PORT" "$(_current_sni_domain 2>/dev/null)" "$uptime_secs" "${connections:-0}" "${_octets:-0}"
+        return
+    fi
+
+    printf '{"version":"%s","mode":"manager","status":"%s","port":%d,"domain":"%s","uptime":%d,"connections":%d,"traffic_in":%d,"traffic_out":%d}\n' \
         "$VERSION" "$status" "$PROXY_PORT" "$PROXY_DOMAIN" "$uptime_secs" "${connections:-0}" "${traffic_in:-0}" "${traffic_out:-0}"
 }
 

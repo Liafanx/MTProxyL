@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-#  MTProxyL v1.3.0 — Telegram MTProto Proxy Manager
+#  MTProxyL v1.3.1 — Telegram MTProto Proxy Manager
 #  https://github.com/Liafanx/MTProxyL
 #  by LiafanX
 # ═══════════════════════════════════════════════════════════════
@@ -8,7 +8,7 @@
 set -o pipefail
 export LC_NUMERIC=C
 
-VERSION="1.3.0"
+VERSION="1.3.1"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -21,7 +21,11 @@ CONNECTION_LOG="${INSTALL_DIR}/connection.log"
 CONTAINER_NAME="mtproxyl"
 DOCKER_IMAGE_BASE="mtproxyl-telemt"
 GITHUB_REPO="Liafanx/MTProxyL"
-GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
+# Ветка, из которой берутся обновления и библиотеки при self-update.
+# Релизная — main. Для тестов ветки разработки:
+#   MTPROXYL_BRANCH=dev mtproxyl update
+GITHUB_BRANCH="${MTPROXYL_BRANCH:-main}"
+GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
 REGISTRY_IMAGE="ghcr.io/liafanx/mtproxyl-telemt"
 TELEMT_GITHUB="telemt/telemt"
 TELEMT_MIN_VERSION="3.4.25"
@@ -192,6 +196,16 @@ cli_main() {
             run_target_detection
             save_detect_settings
             sync_port_from_target
+            ;;
+
+        install-telemt)
+            check_root; load_settings; load_detect_settings
+            install_original_telemt
+            ;;
+
+        uninstall-telemt)
+            check_root; load_settings; load_detect_settings
+            uninstall_original_telemt
             ;;
 
         edit-config)

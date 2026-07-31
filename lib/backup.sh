@@ -46,7 +46,7 @@ restore_backup() {
     fi
 
     echo -en "  ${YELLOW}Текущая конфигурация будет перезаписана. Продолжить? [y/N]:${NC} "
-    local confirm; read -r confirm
+    local confirm; read_line confirm
     [[ "$confirm" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     # Бэкап текущего состояния перед восстановлением
@@ -75,7 +75,7 @@ restore_backup() {
     # Предложение перезапуска
     if is_proxy_running; then
         echo -en "  ${BOLD}Перезапустить прокси для применения? [Y/n]:${NC} "
-        local yn; read -r yn
+        local yn; read_line yn
         if [[ ! "$yn" =~ ^[nN]$ ]]; then
             restart_proxy_container || true
         else
@@ -133,8 +133,8 @@ backup_create_encrypted() {
     local enc="${plain}.enc"
 
     local pw1 pw2
-    echo -en "  ${BOLD}Пароль шифрования:${NC} "; read -rs pw1; echo ""
-    echo -en "  ${BOLD}Повторите пароль:${NC} "; read -rs pw2; echo ""
+    echo -en "  ${BOLD}Пароль шифрования:${NC} "; read -ers pw1; echo ""
+    echo -en "  ${BOLD}Повторите пароль:${NC} "; read -ers pw2; echo ""
     [ "$pw1" != "$pw2" ] && { log_error "Пароли не совпадают"; rm -f "$plain"; return 1; }
     [ ${#pw1} -lt 8 ] && { log_error "Пароль: минимум 8 символов"; rm -f "$plain"; return 1; }
 
@@ -157,7 +157,7 @@ backup_restore_encrypted() {
     command -v openssl &>/dev/null || { log_error "Требуется openssl"; return 1; }
 
     local pw
-    echo -en "  ${BOLD}Пароль расшифровки:${NC} "; read -rs pw; echo ""
+    echo -en "  ${BOLD}Пароль расшифровки:${NC} "; read -ers pw; echo ""
     local plain; plain=$(mktemp "${BACKUP_DIR}/.decrypt.XXXXXX.tar.gz")
     local _rc=0
     MTPMXPW="$pw" openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -in "$file" -out "$plain" -pass env:MTPMXPW 2>/dev/null || _rc=1

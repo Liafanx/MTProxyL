@@ -10,7 +10,10 @@ set -e
 
 REPO="Liafanx/MTProxyL"
 INSTALL_DIR="/opt/mtproxyl"
-SCRIPT_URL="https://raw.githubusercontent.com/${REPO}/main"
+# Ветка установки. Релизная — main.
+# Для установки ветки разработки: MTPROXYL_BRANCH=dev bash install.sh
+BRANCH="${MTPROXYL_BRANCH:-main}"
+SCRIPT_URL="https://raw.githubusercontent.com/${REPO}/${BRANCH}"
 INSTALL_LOG="/tmp/mtproxyl-install.log"
 
 download_file() {

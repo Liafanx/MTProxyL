@@ -32,6 +32,10 @@ readonly SYM_UP='↑'
 readonly SYM_DOWN='↓'
 
 # Terminal width
+# tput может завершиться успешно и напечатать пусто (TERM=dumb, вывод не в
+# терминал) — без проверки на число дальше сыпались ошибки сравнения, а
+# ширина оставалась пустой.
 TERM_WIDTH=$(tput cols 2>/dev/null || echo 60)
+[[ "$TERM_WIDTH" =~ ^[0-9]+$ ]] || TERM_WIDTH=60
 [ "$TERM_WIDTH" -gt 80 ] && TERM_WIDTH=80
 [ "$TERM_WIDTH" -lt 40 ] && TERM_WIDTH=60

@@ -56,6 +56,10 @@ show_main_menu() {
             echo -e "  ${BOLD}Режим:${NC}       ${BRIGHT_CYAN}Reanimator${NC}  ${BOLD}Статус:${NC} ${status_str}"
             echo -e "  ${BOLD}Цель:${NC}        ${DETECTED_MODE:-unknown}$([ -n "$DETECTED_CONTAINER" ] && echo " (${DETECTED_CONTAINER})")"
             echo -e "  ${BOLD}Конфиг цели:${NC} ${DETECTED_CONFIG_PATH:-${DIM}не найден${NC}}"
+            if _no_telemt_target; then
+                echo -e "  ${YELLOW}⚠ telemt на сервере не найден — чинить нечего${NC}"
+                echo -e "  ${DIM}  Поставить оригинальный telemt: пункт «Установить telemt» ниже${NC}"
+            fi
         else
             echo -e "  ${BOLD}Движок:${NC}      telemt v$(get_telemt_version)  ${BOLD}Статус:${NC} ${status_str}"
             # Контейнер есть, но не работает (например, порт занят и он
@@ -125,6 +129,13 @@ show_main_menu() {
         # владения конфигом/движком цели, поэтому нумерация своя.
         local choice
         if [ "$_reanimator" = "true" ]; then
+            # Цели на сервере нет — добавляем пункт установки оригинального
+            # telemt: чинить пока нечего. Нумерация остаётся сплошной,
+            # поэтому номера двух последних пунктов зависят от этого.
+            local _n_telemt="__none__" _n_setup=11 _n_uninstall=12
+            if _no_telemt_target; then
+                _n_telemt=11; _n_setup=12; _n_uninstall=13
+            fi
             echo -e "  ${BRIGHT_CYAN}[1]${NC}   Управление прокси"
             echo -e "  ${BRIGHT_CYAN}[2]${NC}   Ссылки на прокси"
             echo -e "  ${BRIGHT_CYAN}[3]${NC}   Безопасность и маршрутизация"
@@ -136,8 +147,10 @@ show_main_menu() {
             echo -e "  ${BRIGHT_CYAN}[9]${NC}   Редактировать конфиг цели"
             echo -e "  ${BRIGHT_CYAN}[10]${NC}  Информация"
             echo ""
-            echo -e "  ${BRIGHT_CYAN}[11]${NC}  Установка / переустановка"
-            echo -e "  ${RED}[12]${NC}  Удаление"
+            [ "$_n_telemt" != "__none__" ] && \
+                echo -e "  ${GREEN}[${_n_telemt}]${NC}  Установить telemt (официальный установщик)"
+            echo -e "  ${BRIGHT_CYAN}[${_n_setup}]${NC}  Установка / переустановка"
+            echo -e "  ${RED}[${_n_uninstall}]${NC}  Удаление"
             echo -e "  ${BRIGHT_CYAN}[0]${NC}   Выход"
             echo ""
             choice=$(read_choice "выбор" "0")
@@ -152,8 +165,9 @@ show_main_menu() {
                 8)  tui_target_menu ;;
                 9)  edit_target_config || true; press_any_key ;;
                 10) show_server_info; press_any_key ;;
-                11) run_installer ;;
-                12) uninstall; exit 0 ;;
+                "$_n_telemt")    install_original_telemt || true; press_any_key ;;
+                "$_n_setup")     run_installer ;;
+                "$_n_uninstall") uninstall; exit 0 ;;
                 0)  exit 0 ;;
             esac
         else
