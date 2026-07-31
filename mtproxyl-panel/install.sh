@@ -3,6 +3,9 @@ set -eu
 
 # ── Constants ────────────────────────────────────────────────────────────────
 REPO="Liafanx/MTProxyL"
+# Панель живёт в репозитории MTProxyL, но выпускается отдельно — её релизы
+# помечаются собственным префиксом тега.
+RELEASE_TAG_PREFIX="mtproxyl-panel-v"
 BINARY_NAME="mtproxyl-panel"
 SERVICE_NAME="mtproxyl-panel"
 SYSTEM_USER="mtproxyl-panel"
@@ -424,19 +427,41 @@ do_install() {
   ARCH=$(detect_arch)
   say "Architecture: $ARCH"
 
-  # ── Stage 3: Download binary ─────────────────────────────────────────────
-  if [ -n "$_version" ]; then
+  # ── Stage 3: Obtain the binary ───────────────────────────────────────────
+  FROM_SOURCE=false
+  if [ "${_version#--from-source}" != "$_version" ]; then
+    # --from-source[=ветка]
+    FROM_SOURCE=true
+    _branch="${_version#--from-source}"
+    _branch="${_branch#=}"
+    build_from_source "${_branch:-main}"
+  elif [ -n "$_version" ]; then
     TAG="$_version"
     say "Requested version: $TAG"
   else
     say "Fetching latest release..."
-    TAG=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-      | grep '"tag_name"' | cut -d'"' -f4) \
-      || die "Could not determine latest release"
-    [ -n "$TAG" ] || die "Could not determine latest release"
+    # The panel shares a repository with MTProxyL, so /releases/latest would
+    # return an MTProxyL release that carries no panel assets. Pick the newest
+    # tag with the panel prefix instead.
+    _releases=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=100") \
+      || die "Could not reach the GitHub API"
+    # Пустой результат — это «релизов панели пока нет», а не сбой сети:
+    # grep вернул бы ненулевой код и увёл в неверное сообщение.
+    TAG=$(printf '%s\n' "$_releases" | grep '"tag_name"' | cut -d'"' -f4 \
+      | grep "^${RELEASE_TAG_PREFIX}" | head -1 || true)
+    if [ -z "$TAG" ]; then
+      say "No ${RELEASE_TAG_PREFIX}* release found in $REPO."
+      say "The panel is released separately from MTProxyL: publish a"
+      say "'${RELEASE_TAG_PREFIX}X.Y.Z' tag, or pass a version explicitly:"
+      say "  sh install.sh install ${RELEASE_TAG_PREFIX}0.1.0"
+      say "Or build straight from a branch:"
+      say "  sh install.sh install --from-source=dev"
+      die "No panel release available"
+    fi
     say "Latest version: $TAG"
   fi
 
+  if [ "$FROM_SOURCE" = "false" ]; then
   TARBALL="mtproxyl-panel-${ARCH}-linux-gnu.tar.gz"
   URL="https://github.com/$REPO/releases/download/$TAG/$TARBALL"
   ensure_temp_dir
@@ -473,6 +498,7 @@ do_install() {
 
   install_binary "$EXTRACTED" "$PANEL_BINARY_PATH"
   say "Installed $PANEL_BINARY_PATH ($TAG)"
+  fi
 
   # ── Stage 4: Configure ──────────────────────────────────────────────────
   if [ -f "$CONFIG_FILE" ]; then
@@ -661,6 +687,40 @@ do_purge() {
 
   say "Purge complete - all mtproxyl-panel files removed"
   printf '\n'
+}
+
+# ── Build from source ────────────────────────────────────────────────────────
+# Нужна, пока релиз не выпущен: позволяет собрать панель прямо из ветки
+# репозитория и проверить её до публикации тега.
+build_from_source() {
+  _branch="${1:-main}"
+
+  for _cmd in git go npm; do
+    command -v "$_cmd" >/dev/null 2>&1 \
+      || die "Building from source needs '$_cmd'. Install Go 1.25+, Node.js 20+ and git, or use a published release."
+  done
+
+  ensure_temp_dir
+  _src="$TEMP_DIR/src"
+
+  say "Cloning $REPO (branch: $_branch)..."
+  git clone --depth 1 --branch "$_branch" "https://github.com/${REPO}.git" "$_src" \
+    || die "Clone failed. Check the branch name and network access."
+
+  [ -d "$_src/mtproxyl-panel" ] || die "Branch '$_branch' has no mtproxyl-panel/ directory"
+
+  say "Building frontend (this takes a few minutes)..."
+  ( cd "$_src/mtproxyl-panel/frontend" && npm ci --no-audit --no-fund && npm run build ) \
+    || die "Frontend build failed"
+
+  say "Building binary..."
+  # Собираем ровно так же, как релизный Makefile: статический бинарник со
+  # встроенным фронтендом.
+  ( cd "$_src/mtproxyl-panel" && CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=source" -o mtproxyl-panel . ) \
+    || die "Backend build failed"
+
+  install_binary "$_src/mtproxyl-panel/mtproxyl-panel" "$PANEL_BINARY_PATH"
+  say "Installed $PANEL_BINARY_PATH (built from $_branch)"
 }
 
 # ═════════════════════════════════════════════════════════════════════════════

@@ -61,6 +61,21 @@ panel_install() {
     echo ""
     log_info "Установщик панели спросит адрес API telemt, логин и пароль администратора"
     log_info "Интеграция с MTProxyL будет предложена автоматически"
+
+    # В режиме реаниматора цель чужая, и её API может слушать не на порту по
+    # умолчанию — подсказываем найденный, чтобы не подбирать вручную.
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        local _api_port; _api_port=$(_get_telemt_api_port 2>/dev/null)
+        if [ -n "$_api_port" ]; then
+            log_info "API обнаруженной цели: http://127.0.0.1:${_api_port}"
+            if ! _telemt_api_enabled 2>/dev/null; then
+                log_warn "API цели сейчас недоступен: $(_telemt_api_unavailable_reason 2>/dev/null)"
+                log_warn "Без работающего API панель не сможет показывать данные"
+            fi
+        else
+            log_warn "Не удалось определить порт API цели — уточните его в конфиге цели"
+        fi
+    fi
     echo ""
 
     # Установщик интерактивный, поэтому запускаем его с терминалом, а не
@@ -72,8 +87,34 @@ panel_install() {
         return 1
     fi
     chmod +x "$_tmp"
-    sh "$_tmp" || { log_error "Установщик завершился с ошибкой"; return 1; }
 
+    # Первый заход — обычная установка из релиза.
+    if sh "$_tmp" install; then
+        _panel_install_report
+        return 0
+    fi
+
+    # Установщик уже объяснил причину своим сообщением. Самая частая — релиза
+    # панели ещё нет; в этом случае можно собрать её прямо из ветки.
+    echo ""
+    log_warn "Установка из релиза не удалась (причина выше)"
+    if panel_installed; then
+        return 1
+    fi
+
+    echo ""
+    log_info "Панель можно собрать из исходников ветки ${GITHUB_BRANCH}"
+    log_info "Потребуются git, Go 1.25+ и Node.js 20+, сборка займёт несколько минут"
+    echo -en "  ${BOLD}Собрать из исходников? [y/N]:${NC} "
+    local _yn; read_line _yn
+    [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 1; }
+
+    sh "$_tmp" install "--from-source=${GITHUB_BRANCH}" \
+        || { log_error "Сборка из исходников не удалась (причина выше)"; return 1; }
+    _panel_install_report
+}
+
+_panel_install_report() {
     echo ""
     if panel_installed; then
         log_success "Панель установлена"

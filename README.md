@@ -675,10 +675,15 @@ mtproxyl panel install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/main/mtproxyl-panel/install.sh -o install-panel.sh
-sh install-panel.sh
+sh install-panel.sh install
 ```
 
 После установки панель доступна на `http://<ваш-сервер>:8080`.
+
+> Панель выпускается отдельно от MTProxyL — её релизы помечены тегом
+> `mtproxyl-panel-vX.Y.Z`. Пока такого релиза нет, панель можно собрать прямо
+> из ветки: `sh install-panel.sh install --from-source=dev` (нужны `git`,
+> Go 1.25+ и Node.js 20+). `mtproxyl panel install` предложит это сам.
 
 ### Управление
 
