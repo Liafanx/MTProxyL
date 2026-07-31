@@ -22,9 +22,8 @@ CONTAINER_NAME="mtproxyl"
 DOCKER_IMAGE_BASE="mtproxyl-telemt"
 GITHUB_REPO="Liafanx/MTProxyL"
 # Ветка, из которой берутся обновления и библиотеки при self-update.
-# Релизная — main. Если ставили из другой ветки (install.sh --branch dev),
-# её имя лежит в ${INSTALL_DIR}/.branch — обновления идут оттуда же.
-# Разово: MTPROXYL_BRANCH=dev mtproxyl update
+# Релизная — main; если установка шла из другой ветки, её имя лежит
+# в ${INSTALL_DIR}/.branch и обновления идут оттуда же.
 GITHUB_BRANCH="${MTPROXYL_BRANCH:-}"
 if [ -z "$GITHUB_BRANCH" ] && [ -r "${INSTALL_DIR}/.branch" ]; then
     GITHUB_BRANCH=$(tr -cd 'A-Za-z0-9._/-' < "${INSTALL_DIR}/.branch" 2>/dev/null)

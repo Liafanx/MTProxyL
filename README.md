@@ -64,19 +64,6 @@ wget -qO /tmp/mtproxyl-install.sh https://raw.githubusercontent.com/Liafanx/MTPr
 mtproxyl
 ```
 
-<details>
-<summary>Установка из ветки разработки</summary>
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/dev/install.sh) --branch dev
-```
-
-Ветка запоминается в `/opt/mtproxyl/.branch`, поэтому `mtproxyl update` продолжит
-обновляться из неё же. Вернуться на релизную ветку — переустановкой без `--branch`
-(или `rm /opt/mtproxyl/.branch`). Разово переопределить: `MTPROXYL_BRANCH=dev mtproxyl update`.
-
-</details>
-
 > При первой установке скрипт первым предлагает **Zapret2 MTProto fix** (по умолчанию Y) — серверный обход через TCP-манипуляции. Если отказаться — предлагается **NFT Smart By-MEKO** — рекомендуемый режим с разделением iOS/Android.
 
 ---

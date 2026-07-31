@@ -5,19 +5,12 @@
 #
 # Или одной строкой:
 #   bash <(curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/main/install.sh)
-#
-# Ветка разработки (любой из вариантов):
-#   bash <(curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/dev/install.sh) --branch dev
-#   curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/dev/install.sh | sudo bash -s -- --branch dev
-#   curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/dev/install.sh | sudo MTPROXYL_BRANCH=dev bash
 
 set -e
 
 REPO="Liafanx/MTProxyL"
 INSTALL_DIR="/opt/mtproxyl"
-# Ветка, из которой скачиваются скрипт и библиотеки. Релизная — main;
-# сам файл install.sh взят из той ветки, по ссылке на которую вы его
-# запустили, а вот содержимое установки задаётся здесь.
+# Ветка репозитория, из которой скачиваются скрипт и библиотеки
 BRANCH="${MTPROXYL_BRANCH:-main}"
 
 while [ $# -gt 0 ]; do
@@ -28,8 +21,6 @@ while [ $# -gt 0 ]; do
         --branch=*) BRANCH="${1#*=}"; shift ;;
         -h|--help)
             echo "Использование: install.sh [--branch <ветка>]"
-            echo "  --branch, -b   ветка репозитория (по умолчанию: main)"
-            echo "  переменная окружения MTPROXYL_BRANCH делает то же самое"
             exit 0 ;;
         *) echo "ОШИБКА: неизвестный аргумент: $1" >&2; exit 1 ;;
     esac
@@ -135,8 +126,8 @@ for lib in colors utils settings secrets config docker engine traffic geoblock u
     sleep 0.2
 done
 
-# Ветку запоминаем, только если ставили не релизную: тогда и обновления
-# (mtproxyl update) продолжат приходить из неё, а не из main.
+# Ветку запоминаем, только если она не релизная: тогда и обновления
+# продолжат приходить из неё же.
 if [ "$BRANCH" = "main" ]; then
     rm -f "${INSTALL_DIR}/.branch"
 else
@@ -153,5 +144,10 @@ echo "  ✓ MTProxyL установлен"
 echo "  Запуск: mtproxyl"
 echo ""
 
-# Автозапуск
+# Автозапуск. Если скрипт запускали через пайп или подстановку процесса,
+# stdin у нас не терминал — интерактивное меню в таком случае сразу
+# «проваливается». Возвращаем ввод на терминал, пока он есть.
+if [ ! -t 0 ] && [ -e /dev/tty ]; then
+    exec < /dev/tty || true
+fi
 exec /usr/local/bin/mtproxyl
