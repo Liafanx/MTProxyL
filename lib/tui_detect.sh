@@ -24,8 +24,10 @@ tui_target_menu() {
         else
             echo -e "  ${DIM}[2]${NC} Переключиться в Manager"
         fi
-        [ "$_telemt_item" = "true" ] && \
+        if [ "$_telemt_item" = "true" ]; then
             echo -e "  ${DIM}[3]${NC} Установить / обновить telemt (официальный установщик)"
+            echo -e "  ${DIM}[4]${NC} Удалить telemt (официальный установщик)"
+        fi
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
@@ -40,6 +42,10 @@ tui_target_menu() {
             3)
                 [ "$_telemt_item" = "true" ] || continue
                 install_original_telemt || true
+                press_any_key ;;
+            4)
+                [ "$_telemt_item" = "true" ] || continue
+                uninstall_original_telemt || true
                 press_any_key ;;
             0|"") return ;;
         esac

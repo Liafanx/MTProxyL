@@ -113,9 +113,18 @@ selfmask_show_requirements() {
     echo -e "    ${DIM}(X25519MLKEM768) поддерживается гарантированно.${NC}"
     echo -e "  ${DIM}• Backend nginx работает на ${BOLD}TLS 1.3${NC}${DIM}.${NC}"
     echo ""
-    echo -e "  ${DIM}Если вы используете ${BOLD}чужой${NC}${DIM} домен для FakeTLS — его поддержку${NC}"
-    echo -e "  ${DIM}PQ можно проверить: меню ${BOLD}Дополнения${NC}${DIM} → проверка домена на PQ,${NC}"
-    echo -e "  ${DIM}либо ботом ${CYAN}@Sni_checker_bot${NC}${DIM}.${NC}"
+    if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "selfsigned" ]; then
+        # Самоподписанный сертификат мы выписываем сами и на любой домен —
+        # чужого домена в этой схеме нет, проверять на PQ нечего.
+        echo -e "  ${DIM}Сертификат самоподписанный: домен может быть любым, даже${NC}"
+        echo -e "  ${DIM}несуществующим — A-запись, порт 80 и Let's Encrypt не нужны.${NC}"
+        echo -e "  ${DIM}Домен нигде не проверяется: TLS отдаёт наш же nginx, поэтому${NC}"
+        echo -e "  ${DIM}поддержка PQ не зависит от выбранного имени.${NC}"
+    else
+        echo -e "  ${DIM}Если вы используете ${BOLD}чужой${NC}${DIM} домен для FakeTLS — его поддержку${NC}"
+        echo -e "  ${DIM}PQ можно проверить: меню ${BOLD}Дополнения${NC}${DIM} → проверка домена на PQ,${NC}"
+        echo -e "  ${DIM}либо ботом ${CYAN}@Sni_checker_bot${NC}${DIM}.${NC}"
+    fi
     echo ""
 }
 
@@ -868,16 +877,30 @@ _selfmask_apply_target_settings() {
 
     if is_proxy_running; then
         restart_target
-        # Даём цели поднять API перед запросом новых ссылок
-        sleep 2
     else
         log_info "Цель не запущена — запустите её, чтобы изменения вступили в силу"
         return 0
     fi
 
+    # Ссылки печатаем в самом конце setup'а: сразу после рестарта их
+    # затирали бы вывод verify и итоговая сводка, а API цели к этому
+    # моменту ещё не успевал подняться.
+    _SELFMASK_LINKS_PENDING="true"
+}
+
+# Новые ссылки цели — последним блоком, когда всё уже настроено.
+_selfmask_show_links_tail() {
+    [ "${_SELFMASK_LINKS_PENDING:-false}" = "true" ] || return 0
+    _SELFMASK_LINKS_PENDING="false"
+
     echo ""
     draw_header "НОВЫЕ ССЫЛКИ (SNI: ${SELFMASK_DOMAIN})"
-    show_target_links_ipv4 || true
+    if _wait_target_api 10; then
+        show_target_links_ipv4 || true
+    else
+        log_warn "Ссылки недоступны: $(_telemt_api_unavailable_reason)"
+        echo -e "  ${DIM}Позже: главное меню → Ссылки на прокси${NC}"
+    fi
 }
 
 _selfmask_setup_renewal() {
@@ -1049,6 +1072,8 @@ selfmask_setup() {
     echo -e "  ${BOLD}Сайт:${NC}    ${SELFMASK_SITE_DIR}"
     echo -e "  ${BOLD}Схема:${NC}   telemt :${PROXY_PORT:-443} → mask → nginx 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT}"
     echo ""
+
+    _selfmask_show_links_tail
 }
 
 selfmask_disable() {

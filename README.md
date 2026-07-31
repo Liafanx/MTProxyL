@@ -113,7 +113,8 @@ mtproxyl mode reanimator      # перейти в Reanimator (с подтвер�
 mtproxyl mode manager         # перейти в Manager (с подтверждением)
 mtproxyl detect               # повторно найти цель (Reanimator)
 mtproxyl edit-config          # открыть конфиг цели в редакторе (Reanimator)
-mtproxyl install-telemt       # поставить оригинальный telemt (Reanimator)
+mtproxyl install-telemt       # поставить/обновить оригинальный telemt (Reanimator)
+mtproxyl uninstall-telemt     # удалить telemt: uninstall или purge (Reanimator)
 ```
 
 Если на сервере вообще нет telemt — ни процесса, ни службы, ни бинарника —
@@ -123,7 +124,15 @@ mtproxyl install-telemt       # поставить оригинальный tele
 со своими вопросами про язык, порт и TLS-домен. Предложение появляется при
 установке в режиме Reanimator, отдельным пунктом в главном меню и в меню
 «Цель / режим». После установки цель обнаруживается заново, порт
-синхронизируется с её конфигом и предлагается тюнинг таймаутов.
+синхронизируется с её конфигом и предлагается тюнинг таймаутов. Перед запуском
+можно выбрать версию telemt — список релизов показывается по 10 на страницу,
+по умолчанию ставится latest. Тем же установщиком telemt можно удалить
+(`uninstall` — служба и бинарник, `purge` — вместе с конфигом и пользователем).
+
+Установщик управляет только `telemt.service`: если цель — Docker-контейнер
+сторонней панели или MTProxyMax, он её не обновляет, а ставит рядом отдельную
+службу. При обновлении конфиг цели не перезаписывается целиком: меняются только
+порт и `tls_domain`, а тюнинг, `[server.api]` и секреты остаются на месте.
 
 Порт проверяется до запуска установщика. Отдельно разбирается случай, когда
 порт держит собственный контейнер MTProxyL: он работает в сети host, поэтому
@@ -447,7 +456,8 @@ mtproxyl mode manager         # переключиться в Manager
 mtproxyl mode reanimator      # переключиться в Reanimator
 mtproxyl detect               # (пере)обнаружить существующую установку telemt
 mtproxyl edit-config          # открыть конфиг цели в $EDITOR/nano + предложить рестарт
-mtproxyl install-telemt       # запустить официальный установщик telemt (только Reanimator)
+mtproxyl install-telemt       # официальный установщик telemt: установка/обновление, выбор версии
+mtproxyl uninstall-telemt     # официальный установщик telemt: uninstall / purge
 ```
 
 ---

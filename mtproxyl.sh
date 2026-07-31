@@ -204,6 +204,11 @@ cli_main() {
             install_original_telemt
             ;;
 
+        uninstall-telemt)
+            check_root; load_settings; load_detect_settings
+            uninstall_original_telemt
+            ;;
+
         edit-config)
             check_root; load_settings; load_detect_settings
             if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
