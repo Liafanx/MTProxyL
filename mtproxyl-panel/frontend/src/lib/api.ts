@@ -66,3 +66,84 @@ export const authApi = {
   me: () =>
     request<{ username: string }>(AUTH_BASE, '/me'),
 };
+
+// ── MTProxyL integration ────────────────────────────────────────────────────
+// Host-level features backed by the MTProxyL CLI rather than telemt's API.
+
+export type MtproxylMode = 'manager' | 'reanimator';
+
+export interface MtproxylModeStatus {
+  mode: MtproxylMode;
+  detected_mode: string;
+  detected_config: string;
+  port: number;
+}
+
+export interface SelfmaskStatus {
+  enabled: boolean;
+  domain: string;
+  site_source: string;
+  site_dir: string;
+  backend_port: number;
+  cert_mode: string;
+  auto_renew: boolean;
+  nginx_conf: string;
+  nginx_conf_exists: boolean;
+  cert_found: boolean;
+  pq_nginx_active: boolean;
+}
+
+export interface MtproxylBackup {
+  name: string;
+  size: number;
+  mtime: number;
+}
+
+export type OperationPhase = 'idle' | 'running' | 'done' | 'failed';
+
+export interface MtproxylOperation {
+  phase: OperationPhase;
+  name?: string;
+  output?: string;
+  error?: string;
+  started_at?: string;
+  ended_at?: string;
+}
+
+export interface MtproxylAvailability {
+  enabled: boolean;
+  operation: MtproxylOperation;
+}
+
+const MTPROXYL_BASE = `${BASE}/api/mtproxyl`;
+
+export const mtproxylApi = {
+  status: () => request<MtproxylAvailability>(MTPROXYL_BASE, '/status'),
+
+  getMode: () => request<MtproxylModeStatus>(MTPROXYL_BASE, '/mode'),
+  switchMode: (mode: MtproxylMode) =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/mode', {
+      method: 'POST',
+      body: JSON.stringify({ mode }),
+    }),
+
+  selfmask: () => request<SelfmaskStatus>(MTPROXYL_BASE, '/selfmask'),
+  selfmaskSetup: () =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/selfmask/setup', { method: 'POST' }),
+  selfmaskVerify: () =>
+    request<{ output: string }>(MTPROXYL_BASE, '/selfmask/verify', { method: 'POST' }),
+  selfmaskDisable: () =>
+    request<{ output: string }>(MTPROXYL_BASE, '/selfmask/disable', { method: 'POST' }),
+
+  backups: () => request<MtproxylBackup[]>(MTPROXYL_BASE, '/backups'),
+  createBackup: () =>
+    request<{ name: string }>(MTPROXYL_BASE, '/backups', { method: 'POST' }),
+  restoreBackup: (name: string) =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/backups/restore', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }),
+  // Plain link rather than fetch: the browser handles the file download.
+  downloadUrl: (name: string) =>
+    `${MTPROXYL_BASE}/backups/${encodeURIComponent(name)}/download`,
+};

@@ -13,15 +13,20 @@ import { UpstreamsPage } from '@/pages/UpstreamsPage';
 import { UpdatePage } from '@/pages/UpdatePage';
 import { ConfigPage } from '@/pages/ConfigPage';
 import { LogsPage } from '@/pages/LogsPage';
+import { ModePage } from '@/pages/ModePage';
+import { SelfmaskPage } from '@/pages/SelfmaskPage';
+import { BackupsPage } from '@/pages/BackupsPage';
+import { MtproxylContext, useMtproxylAvailability } from '@/hooks/useMtproxyl';
 
 function AuthenticatedApp() {
   const { username, loading } = useAuth();
   const ws = useWsProvider();
+  const mtproxyl = useMtproxylAvailability();
 
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="text-text-secondary">Loading...</div>
+        <div className="text-text-secondary">Загрузка…</div>
       </div>
     );
   }
@@ -32,6 +37,7 @@ function AuthenticatedApp() {
 
   return (
     <WsContext.Provider value={ws}>
+      <MtproxylContext.Provider value={mtproxyl}>
       <Routes>
         <Route element={<AppLayout />}>
           <Route path="/" element={<DashboardPage />} />
@@ -43,8 +49,12 @@ function AuthenticatedApp() {
           <Route path="/config" element={<ConfigPage />} />
           <Route path="/update" element={<UpdatePage />} />
           <Route path="/logs" element={<LogsPage />} />
+          <Route path="/mode" element={<ModePage />} />
+          <Route path="/selfmask" element={<SelfmaskPage />} />
+          <Route path="/backups" element={<BackupsPage />} />
         </Route>
       </Routes>
+      </MtproxylContext.Provider>
     </WsContext.Provider>
   );
 }

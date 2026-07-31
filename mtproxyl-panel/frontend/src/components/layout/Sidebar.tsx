@@ -1,18 +1,27 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, LogOut, X, Sun, Moon } from 'lucide-react';
+import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, LogOut, X, Sun, Moon, ToggleLeft, Globe, Archive } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
+import { useMtproxyl } from '@/hooks/useMtproxyl';
 
 const navItems = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/users', icon: Users, label: 'Users' },
-  { to: '/runtime', icon: Activity, label: 'Runtime' },
-  { to: '/security', icon: Shield, label: 'Security' },
-  { to: '/upstreams', icon: Network, label: 'Upstreams & DCs' },
-  { to: '/config', icon: Settings, label: 'Configuration' },
-  { to: '/update', icon: ArrowUpCircle, label: 'Update' },
-  { to: '/logs', icon: ScrollText, label: 'Logs' },
+  { to: '/', icon: LayoutDashboard, label: 'Дашборд' },
+  { to: '/users', icon: Users, label: 'Пользователи' },
+  { to: '/runtime', icon: Activity, label: 'Телеметрия' },
+  { to: '/security', icon: Shield, label: 'Безопасность' },
+  { to: '/upstreams', icon: Network, label: 'Апстримы и DC' },
+  { to: '/config', icon: Settings, label: 'Конфигурация' },
+  { to: '/update', icon: ArrowUpCircle, label: 'Обновление' },
+  { to: '/logs', icon: ScrollText, label: 'Логи' },
+];
+
+// Shown only when the MTProxyL bridge is enabled: on a plain telemt install
+// these pages have nothing to talk to.
+const mtproxylNavItems = [
+  { to: '/mode', icon: ToggleLeft, label: 'Режим работы' },
+  { to: '/selfmask', icon: Globe, label: 'Selfmask' },
+  { to: '/backups', icon: Archive, label: 'Бэкапы' },
 ];
 
 interface SidebarProps {
@@ -23,6 +32,7 @@ interface SidebarProps {
 export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
   const { logout, username } = useAuth();
   const { theme, toggle: toggleTheme } = useTheme();
+  const { enabled: mtproxylEnabled } = useMtproxyl();
 
   return (
     <>
@@ -72,6 +82,32 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
               {label}
             </NavLink>
           ))}
+
+          {mtproxylEnabled && (
+            <>
+              <div className="pt-3 pb-1 px-3 text-xs font-medium text-text-secondary/70 uppercase tracking-wide">
+                MTProxyL
+              </div>
+              {mtproxylNavItems.map(({ to, icon: Icon, label }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  onClick={onClose}
+                  className={({ isActive }) =>
+                    cn(
+                      'flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors',
+                      isActive
+                        ? 'bg-accent/15 text-accent'
+                        : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
+                    )
+                  }
+                >
+                  <Icon size={18} />
+                  {label}
+                </NavLink>
+              ))}
+            </>
+          )}
         </nav>
 
         <div className="p-3 border-t border-border">
@@ -83,7 +119,7 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
             className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-text-secondary hover:text-text-primary hover:bg-surface-hover w-full transition-colors"
           >
             {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-            {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+            {theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}
           </button>
           <a
             href="https://github.com/Liafanx/MTProxyL"
@@ -99,7 +135,7 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
             className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-text-secondary hover:text-danger hover:bg-surface-hover w-full transition-colors"
           >
             <LogOut size={18} />
-            Logout
+            Выйти
           </button>
         </div>
       </aside>
@@ -110,10 +146,10 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
 // Mobile bottom navigation
 export function BottomNav() {
   const navItems = [
-    { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-    { to: '/users', icon: Users, label: 'Users' },
-    { to: '/runtime', icon: Activity, label: 'Runtime' },
-    { to: '/upstreams', icon: Network, label: 'More' },
+    { to: '/', icon: LayoutDashboard, label: 'Дашборд' },
+    { to: '/users', icon: Users, label: 'Пользователи' },
+    { to: '/runtime', icon: Activity, label: 'Телеметрия' },
+    { to: '/upstreams', icon: Network, label: 'Ещё' },
   ];
 
   return (
