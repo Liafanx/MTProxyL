@@ -194,7 +194,10 @@ _iso_to_epoch() {
     local ts="$1"
     [ -z "$ts" ] && { echo "0"; return; }
     local ts_clean="${ts%%.*}"
-    [[ "$ts" == *Z ]] && ts_clean="${ts_clean}Z"
+    # Дробную часть отрезаем вместе с суффиксом Z — возвращаем его обратно,
+    # но только если он действительно потерялся: иначе получалось "...ZZ",
+    # и date отказывался разбирать штамп без дробной части.
+    [[ "$ts" == *Z ]] && [[ "$ts_clean" != *Z ]] && ts_clean="${ts_clean}Z"
     local epoch
     epoch=$(date -d "${ts_clean}" +%s 2>/dev/null) && [ "$epoch" -gt 0 ] 2>/dev/null && { echo "$epoch"; return; }
     local ts_bb="${ts_clean%Z}"
@@ -225,6 +228,29 @@ _strlen() {
         clean="${before}${after}"
     done
     echo "${#clean}"
+}
+
+# Дополнение строки пробелами по числу СИМВОЛОВ, а не байтов: printf с
+# %-Ns считает байты, поэтому колонки с кириллицей разъезжаются. Убираем
+# продолжающие байты UTF-8 (0x80..0xBF) — остаётся ровно по одному байту
+# на символ в любой локали.
+_pad() {
+    local _s="$1" _w="${2:-0}" _plain _len
+    _plain="${_s//[$'\x80'-$'\xbf']/}"
+    _len=${#_plain}
+    if [ "$_len" -ge "$_w" ]; then
+        printf '%s' "$_s"
+    else
+        printf '%s%*s' "$_s" $(( _w - _len )) ''
+    fi
+}
+
+# Обрезка строки до N символов с многоточием (для колонок таблиц)
+_ellipsis() {
+    local _s="$1" _w="${2:-0}" _plain
+    _plain="${_s//[$'\x80'-$'\xbf']/}"
+    [ "${#_plain}" -le "$_w" ] && { printf '%s' "$_s"; return; }
+    printf '%s…' "${_s:0:$(( _w - 1 ))}"
 }
 
 _repeat() {

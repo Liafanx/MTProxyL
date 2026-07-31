@@ -314,10 +314,20 @@ show_traffic() {
     echo -e "    ${SYM_DOWN} $(format_bytes "$s_in")  ${SYM_UP} $(format_bytes "$s_out")  ${BOLD}Соед.:${NC} ${conns}"
     echo ""
 
-    local i
-    for i in "${!SECRETS_LABELS[@]}"; do
-        [ "${SECRETS_ENABLED[$i]}" = "true" ] || continue
-        local label="${SECRETS_LABELS[$i]}"
+    # В режиме супер эксперта пользователи заданы в конфиге пользователя
+    local _labels=() label
+    if _superexpert_active; then
+        local _su _sk
+        while IFS='|' read -r _su _sk; do
+            [ -n "$_su" ] && _labels+=("$_su")
+        done <<< "$(_superexpert_users)"
+    else
+        local i
+        for i in "${!SECRETS_LABELS[@]}"; do
+            [ "${SECRETS_ENABLED[$i]}" = "true" ] && _labels+=("${SECRETS_LABELS[$i]}")
+        done
+    fi
+    for label in "${_labels[@]}"; do
         local u_in u_out u_conns
         read -r u_in u_out u_conns <<< "$(get_persistent_user_stats "$label")"
         local su_in su_out su_conns

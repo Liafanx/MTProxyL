@@ -13,9 +13,16 @@ tui_security_menu() {
             sni_label="${GREEN}Mask${NC} (перенаправление)"
         fi
         echo -e "  ${DIM}[1]${NC} Гео-блокировка"
-        if [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
+        if [ "${MTPROXYL_MODE:-manager}" = "manager" ] && ! _superexpert_active; then
             echo -e "  ${DIM}[2]${NC} Upstream-маршруты"
             echo -e "  ${DIM}[3]${NC} SNI-политика: ${sni_label}"
+        elif _superexpert_active; then
+            # Оба пункта пишут в генерируемый config.toml, который в этом
+            # режиме всё равно заменяется файлом пользователя.
+            echo -e "  ${DIM}────────────────────────────────────${NC}"
+            echo -e "  ${DIM}Upstream-маршруты и SNI-политика правят config.toml —${NC}"
+            echo -e "  ${DIM}в режиме супер эксперта задаются в вашем конфиге:${NC}"
+            echo -e "  ${DIM}${SUPEREXPERT_FILE}${NC}"
         else
             echo -e "  ${DIM}────────────────────────────────────${NC}"
             echo -e "  ${DIM}Upstream-маршруты и SNI-политика правят только${NC}"
@@ -26,9 +33,13 @@ tui_security_menu() {
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
             1) tui_geoblock_menu ;;
-            2) _require_manager_mode && tui_upstream_menu || press_any_key ;;
+            2)
+                _require_manager_mode || { press_any_key; continue; }
+                _require_no_superexpert || { press_any_key; continue; }
+                tui_upstream_menu ;;
             3)
                 _require_manager_mode || { press_any_key; continue; }
+                _require_no_superexpert || { press_any_key; continue; }
                 echo ""
                 echo -e "  ${BOLD}SNI-политика${NC}"
                 echo -e "  ${DIM}[1]${NC} ${GREEN}Mask${NC}  — перенаправлять на mask backend"

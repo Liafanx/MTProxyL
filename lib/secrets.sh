@@ -261,6 +261,45 @@ secret_set_limits() {
 }
 
 # Список секретов
+# Человекочитаемые лимиты секрета: соединения, IP, квота трафика, срок.
+# Пустые (0) не показываем — иначе колонка превращается в шум.
+_secret_limits_text() {
+    local _i="$1" _used="${2:-0}"
+    local _mc="${SECRETS_MAX_CONNS[$_i]:-0}"
+    local _mi="${SECRETS_MAX_IPS[$_i]:-0}"
+    local _q="${SECRETS_QUOTA[$_i]:-0}"
+    local _ex="${SECRETS_EXPIRES[$_i]:-0}"
+    local _out=""
+
+    [ "$_mc" != "0" ] && [ -n "$_mc" ] && _out="соед ${_mc}"
+    if [ "$_mi" != "0" ] && [ -n "$_mi" ]; then
+        [ -n "$_out" ] && _out+=" · "
+        _out+="IP ${_mi}"
+    fi
+    if [ "$_q" != "0" ] && [ -n "$_q" ] && [[ "$_q" =~ ^[0-9]+$ ]]; then
+        [ -n "$_out" ] && _out+=" · "
+        local _pct=""
+        if [ "${_used:-0}" -gt 0 ] 2>/dev/null; then
+            _pct=$(awk -v u="$_used" -v q="$_q" 'BEGIN{printf "%.0f", (u*100)/q}')
+            _out+="квота $(format_bytes "$_q") (${_pct}%)"
+        else
+            _out+="квота $(format_bytes "$_q")"
+        fi
+    fi
+    if [ "$_ex" != "0" ] && [ -n "$_ex" ]; then
+        [ -n "$_out" ] && _out+=" · "
+        local _ex_epoch; _ex_epoch=$(_iso_to_epoch "$_ex")
+        local _ex_fmt="${_ex%%T*}"
+        if [ "${_ex_epoch:-0}" -gt 0 ] 2>/dev/null && [ "$_ex_epoch" -lt "$(date +%s)" ]; then
+            _out+="истёк ${_ex_fmt}"
+        else
+            _out+="до ${_ex_fmt}"
+        fi
+    fi
+
+    [ -n "$_out" ] && echo "$_out" || echo "—"
+}
+
 secret_list() {
     load_secrets
     if [ ${#SECRETS_LABELS[@]} -eq 0 ]; then
@@ -272,8 +311,10 @@ secret_list() {
     echo ""
     draw_header "СЕКРЕТЫ"
     echo ""
-    printf "  ${BOLD}%-4s %-16s %-10s %-10s %-12s %-12s${NC}\n" "#" "МЕТКА" "СТАТУС" "СОЗДАН" "СКАЧАНО" "ОТПРАВЛЕНО"
-    echo -e "  ${DIM}$(_repeat '─' 70)${NC}"
+    # Ширины считаем в символах (_pad), а не байтах: с printf %-Ns
+    # кириллица в шапке разъезжалась относительно строк.
+    echo -e "  ${BOLD}$(_pad '#' 3) $(_pad 'МЕТКА' 16) $(_pad 'СТАТУС' 9) $(_pad 'СОЗДАН' 11) $(_pad 'СКАЧАНО' 11) $(_pad 'ОТПРАВЛЕНО' 11) ЛИМИТЫ${NC}"
+    echo -e "  ${DIM}$(_repeat '─' 100)${NC}"
 
     local i
     for i in "${!SECRETS_LABELS[@]}"; do
@@ -281,8 +322,12 @@ secret_list() {
         local enabled="${SECRETS_ENABLED[$i]}"
         local created="${SECRETS_CREATED[$i]}"
 
-        local status_text
-        [ "$enabled" = "true" ] && status_text="${GREEN}активен${NC}" || status_text="${RED}выключен${NC}"
+        local status_plain status_color
+        if [ "$enabled" = "true" ]; then
+            status_plain="активен"; status_color="$GREEN"
+        else
+            status_plain="выключен"; status_color="$RED"
+        fi
 
         local created_fmt
         created_fmt=$(printf '%(%Y-%m-%d)T' "$created" 2>/dev/null) || \
@@ -291,11 +336,11 @@ secret_list() {
         local u_in=0 u_out=0 u_conns=0
         read -r u_in u_out u_conns <<< "$(get_persistent_user_stats "$label" 2>/dev/null)" || true
 
-        printf "  %-4s %-16s %-18b %-10s %-12s %-12s\n" \
-            "$((i+1))" "$label" "$status_text" "$created_fmt" \
-            "$(format_bytes "${u_in:-0}")" "$(format_bytes "${u_out:-0}")"
+        local _limits; _limits=$(_secret_limits_text "$i" "$(( ${u_in:-0} + ${u_out:-0} ))")
 
-        [ -n "${SECRETS_NOTES[$i]:-}" ] && echo -e "       ${DIM}📝 ${SECRETS_NOTES[$i]}${NC}"
+        echo -e "  $(_pad "$((i+1))" 3) $(_pad "$(_ellipsis "$label" 16)" 16) ${status_color}$(_pad "$status_plain" 9)${NC} $(_pad "$created_fmt" 11) $(_pad "$(format_bytes "${u_in:-0}")" 11) $(_pad "$(format_bytes "${u_out:-0}")" 11) ${DIM}${_limits}${NC}"
+
+        [ -n "${SECRETS_NOTES[$i]:-}" ] && echo -e "      ${DIM}📝 ${SECRETS_NOTES[$i]}${NC}"
     done
     echo ""
 }

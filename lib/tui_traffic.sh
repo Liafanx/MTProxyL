@@ -34,9 +34,22 @@ tui_traffic_menu() {
 
         echo -e "  ${BOLD}По пользователям${NC}"
         echo -e "  ${DIM}$(_repeat '─' 60)${NC}"
-        local i; for i in "${!SECRETS_LABELS[@]}"; do
-            [ "${SECRETS_ENABLED[$i]}" = "true" ] || continue
-            local label="${SECRETS_LABELS[$i]}"
+        # В режиме супер эксперта пользователи заданы в конфиге пользователя,
+        # а не в secrets.conf — иначе показали бы только «своих».
+        local _labels=()
+        if _superexpert_active; then
+            local _su _sk
+            while IFS='|' read -r _su _sk; do
+                [ -n "$_su" ] && _labels+=("$_su")
+            done <<< "$(_superexpert_users)"
+        else
+            local i
+            for i in "${!SECRETS_LABELS[@]}"; do
+                [ "${SECRETS_ENABLED[$i]}" = "true" ] && _labels+=("${SECRETS_LABELS[$i]}")
+            done
+        fi
+        local label
+        for label in "${_labels[@]}"; do
             local u_in u_out u_conns
             read -r u_in u_out u_conns <<< "$(get_persistent_user_stats "$label")"
             local su_in su_out su_conns
