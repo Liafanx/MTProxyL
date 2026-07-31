@@ -73,9 +73,9 @@ tui_geoblock_menu() {
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
             1) echo -e "  ${DIM}Коды: US DE NL FR GB SG JP CN RU IR${NC}"
-               echo -en "  ${BOLD}Код:${NC} "; local cc; read -er cc
+               echo -en "  ${BOLD}Код:${NC} "; local cc; read_line cc
                [ -n "$cc" ] && handle_geoblock_command add "$cc"; press_any_key ;;
-            2) echo -en "  ${BOLD}Код:${NC} "; local cc; read -er cc
+            2) echo -en "  ${BOLD}Код:${NC} "; local cc; read_line cc
                [ -n "$cc" ] && handle_geoblock_command remove "$cc"; press_any_key ;;
             3) handle_geoblock_command reapply; press_any_key ;;
             4) handle_geoblock_command clear; press_any_key ;;
@@ -95,20 +95,20 @@ tui_upstream_menu() {
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
-            1) echo -en "  ${BOLD}Имя:${NC} "; local n; read -er n
+            1) echo -en "  ${BOLD}Имя:${NC} "; local n; read_line n
                echo -e "  ${DIM}[1] SOCKS5  [2] SOCKS4  [3] Direct${NC}"
                local tc; read -erp "  > " tc
                local t; case "$tc" in 1) t="socks5" ;; 2) t="socks4" ;; *) t="direct" ;; esac
                local a="" us="" ps=""
                if [ "$t" != "direct" ]; then
-                   echo -en "  ${BOLD}Адрес:${NC} "; read -er a
-                   echo -en "  ${BOLD}Логин:${NC} "; read -er us
-                   echo -en "  ${BOLD}Пароль:${NC} "; read -er ps; fi
-               echo -en "  ${BOLD}Вес [10]:${NC} "; local w; read -er w; w="${w:-10}"
+                   echo -en "  ${BOLD}Адрес:${NC} "; read_line a
+                   echo -en "  ${BOLD}Логин:${NC} "; read_line us
+                   echo -en "  ${BOLD}Пароль:${NC} "; read_line ps; fi
+               echo -en "  ${BOLD}Вес [10]:${NC} "; local w; read_line w; w="${w:-10}"
                upstream_add "$n" "$t" "$a" "$us" "$ps" "$w" || true; press_any_key ;;
-            2) echo -en "  ${BOLD}Имя:${NC} "; local n; read -er n; [ -n "$n" ] && upstream_remove "$n" || true; press_any_key ;;
-            3) echo -en "  ${BOLD}Имя:${NC} "; local n; read -er n; [ -n "$n" ] && upstream_toggle "$n" || true; press_any_key ;;
-            4) echo -en "  ${BOLD}Имя:${NC} "; local n; read -er n; [ -n "$n" ] && upstream_test "$n" || true; press_any_key ;;
+            2) echo -en "  ${BOLD}Имя:${NC} "; local n; read_line n; [ -n "$n" ] && upstream_remove "$n" || true; press_any_key ;;
+            3) echo -en "  ${BOLD}Имя:${NC} "; local n; read_line n; [ -n "$n" ] && upstream_toggle "$n" || true; press_any_key ;;
+            4) echo -en "  ${BOLD}Имя:${NC} "; local n; read_line n; [ -n "$n" ] && upstream_test "$n" || true; press_any_key ;;
             0|"") return ;;
         esac
     done

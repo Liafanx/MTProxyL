@@ -38,7 +38,7 @@ tui_settings_menu() {
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
             1)
-                echo -en "  ${BOLD}Новый порт:${NC} "; local p; read -er p
+                echo -en "  ${BOLD}Новый порт:${NC} "; local p; read_line p
                 if validate_port "$p"; then
                     PROXY_PORT="$p"; save_settings; log_success "Порт: ${p}"
                     is_proxy_running && { load_secrets; restart_proxy_container || true; }
@@ -52,7 +52,7 @@ tui_settings_menu() {
                 echo ""
                 echo -en "  ${BOLD}IP/домен [${CUSTOM_IP:-авто}]:${NC} "
                 local ip=""
-                read -er ip
+                read_line ip
                 case "$ip" in
                     auto|clear|AUTO|CLEAR)
                         CUSTOM_IP=""
@@ -98,7 +98,7 @@ tui_settings_menu() {
                     4)
                         echo -en "  ${BOLD}Домен:${NC} "
                         local cd=""
-                        read -er cd
+                        read_line cd
                         if [ -z "$cd" ]; then
                             log_info "Отменено"
                             press_any_key
@@ -132,7 +132,7 @@ tui_settings_menu() {
                         echo -e "  ${YELLOW}Маскировка включена. Mask backend сейчас: ${_cur_mask:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}${NC}"
                         echo -en "  ${BOLD}Обновить mask backend на ${PROXY_DOMAIN}? [Y/n]:${NC} "
                         local _mask_yn=""
-                        read -er _mask_yn
+                        read_line _mask_yn
                         if [[ ! "$_mask_yn" =~ ^[nN]$ ]]; then
                             MASKING_HOST="$PROXY_DOMAIN"
                             save_settings
@@ -144,9 +144,9 @@ tui_settings_menu() {
                 is_proxy_running && { load_secrets; restart_proxy_container || true; }
                 press_any_key ;;
             4)
-                echo -en "  ${BOLD}CPU [${PROXY_CPUS:-∞}]:${NC} "; local c; read -er c
+                echo -en "  ${BOLD}CPU [${PROXY_CPUS:-∞}]:${NC} "; local c; read_line c
                 [ -n "$c" ] && PROXY_CPUS="$c"
-                echo -en "  ${BOLD}RAM (напр. 256m, 1g) [${PROXY_MEMORY:-∞}]:${NC} "; local m; read -er m
+                echo -en "  ${BOLD}RAM (напр. 256m, 1g) [${PROXY_MEMORY:-∞}]:${NC} "; local m; read_line m
                 [ -n "$m" ] && PROXY_MEMORY="$m"
                 save_settings; log_success "Ресурсы обновлены"
                 press_any_key ;;
@@ -162,15 +162,15 @@ tui_settings_menu() {
                     continue
                 fi
                 echo -e "  ${DIM}Текущий: ${MASKING_HOST:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}${NC}"
-                echo -en "  ${BOLD}Хост:${NC} "; local mh; read -er mh
-                echo -en "  ${BOLD}Порт [${MASKING_PORT:-443}]:${NC} "; local mp; read -er mp
+                echo -en "  ${BOLD}Хост:${NC} "; local mh; read_line mh
+                echo -en "  ${BOLD}Порт [${MASKING_PORT:-443}]:${NC} "; local mp; read_line mp
                 [ -n "$mh" ] && MASKING_HOST="$mh"
                 [ -n "$mp" ] && [[ "$mp" =~ ^[0-9]+$ ]] && MASKING_PORT="$mp"
                 save_settings; log_success "Mask backend: ${MASKING_HOST:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}"
                 is_proxy_running && { load_secrets; restart_proxy_container || true; }
                 press_any_key ;;
             7)
-                echo -en "  ${BOLD}Рекл. метка (32 hex, 'remove'):${NC} "; local at; read -er at
+                echo -en "  ${BOLD}Рекл. метка (32 hex, 'remove'):${NC} "; local at; read_line at
                 if [ "$at" = "remove" ]; then AD_TAG=""; log_success "Метка удалена"
                 elif [[ "$at" =~ ^[0-9a-fA-F]{32}$ ]]; then AD_TAG="$at"; log_success "Метка установлена"
                 elif [ -n "$at" ]; then log_error "Нужно 32 hex-символа"; fi
@@ -186,7 +186,7 @@ tui_settings_menu() {
             9)
                 [ "$PROXY_PROTOCOL" = "true" ] && PROXY_PROTOCOL="false" || PROXY_PROTOCOL="true"
                 if [ "$PROXY_PROTOCOL" = "true" ]; then
-                    echo -en "  ${BOLD}Доверенные CIDR (через запятую):${NC} "; local cidrs; read -er cidrs
+                    echo -en "  ${BOLD}Доверенные CIDR (через запятую):${NC} "; local cidrs; read_line cidrs
                     PROXY_PROTOCOL_TRUSTED_CIDRS="$cidrs"
                 else PROXY_PROTOCOL_TRUSTED_CIDRS=""; fi
                 save_settings; log_success "PROXY protocol: ${PROXY_PROTOCOL}"
@@ -200,7 +200,7 @@ tui_settings_menu() {
                 echo ""
                 while true; do
                     echo -en "  ${BOLD}Новый порт метрик [${PROXY_METRICS_PORT:-9090}]:${NC} "
-                    local _mp; read -er _mp
+                    local _mp; read_line _mp
                     [ -z "$_mp" ] && break
                     if validate_port "$_mp"; then
                         if is_port_available "$_mp"; then
@@ -235,7 +235,7 @@ tui_settings_menu() {
                     1)
                         echo -e "  ${DIM}[1] secret  [2] config-v4  [3] config-v6${NC}"
                         local uf; uf=$(read_choice "выбор" "1")
-                        echo -en "  ${BOLD}URL:${NC} "; local uv; read -er uv
+                        echo -en "  ${BOLD}URL:${NC} "; local uv; read_line uv
                         if [ -n "$uv" ] && [[ "$uv" =~ ^https?:// ]]; then
                             case "$uf" in
                                 1) PROXY_SECRET_URL="$uv" ;;

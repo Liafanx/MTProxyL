@@ -45,10 +45,10 @@ run_tune_wizard() {
     echo -e "  ${DIM}[1] Установить  [2] Очистить  [3] Очистить все  [0] Назад${NC}"
     local tc; tc=$(read_choice "выбор" "0")
     case "$tc" in
-        1) echo -en "  ${BOLD}Параметр:${NC} "; local tp; read -er tp
-           echo -en "  ${BOLD}Значение:${NC} "; local tv; read -er tv
+        1) echo -en "  ${BOLD}Параметр:${NC} "; local tp; read_line tp
+           echo -en "  ${BOLD}Значение:${NC} "; local tv; read_line tv
            [ -n "$tp" ] && [ -n "$tv" ] && handle_tune_command set "$tp" "$tv" ;;
-        2) echo -en "  ${BOLD}Параметр:${NC} "; local tp; read -er tp
+        2) echo -en "  ${BOLD}Параметр:${NC} "; local tp; read_line tp
            [ -n "$tp" ] && handle_tune_command clear "$tp" ;;
         3) handle_tune_command clear all ;;
     esac
@@ -104,7 +104,7 @@ handle_tune_command() {
             log_success "${param} = ${value}"
             if [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
                 if is_proxy_running; then
-                    echo -en "  ${DIM}Перезапустить? [Y/n]:${NC} "; local r; read -er r 2>/dev/null || r="y"
+                    echo -en "  ${DIM}Перезапустить? [Y/n]:${NC} "; local r; read_line r 2>/dev/null || r="y"
                     [[ ! "$r" =~ ^[nN] ]] && { load_secrets; restart_proxy_container || true; }
                 fi
             else
@@ -330,7 +330,7 @@ TOML_EOF
 # заблуждение — движок продолжает работать со старым значением.
 _expert_apply_prompt() {
     echo -en "  ${BOLD}Пересобрать конфиг и применить сейчас? [Y/n]:${NC} "
-    local _yn; read -er _yn
+    local _yn; read_line _yn
     [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Позже: mtproxyl config или меню → Режим эксперта → Пересобрать"; return 0; }
     generate_telemt_config || { log_error "Ошибка генерации конфига"; return 1; }
     log_success "Конфиг обновлён"

@@ -46,7 +46,7 @@ restore_backup() {
     fi
 
     echo -en "  ${YELLOW}Текущая конфигурация будет перезаписана. Продолжить? [y/N]:${NC} "
-    local confirm; read -er confirm
+    local confirm; read_line confirm
     [[ "$confirm" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     # Бэкап текущего состояния перед восстановлением
@@ -75,7 +75,7 @@ restore_backup() {
     # Предложение перезапуска
     if is_proxy_running; then
         echo -en "  ${BOLD}Перезапустить прокси для применения? [Y/n]:${NC} "
-        local yn; read -er yn
+        local yn; read_line yn
         if [[ ! "$yn" =~ ^[nN]$ ]]; then
             restart_proxy_container || true
         else

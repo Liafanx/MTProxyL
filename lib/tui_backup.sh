@@ -50,7 +50,7 @@ tui_backup_menu() {
                 fi
                 echo ""
                 echo -en "  ${BOLD}Номер бэкапа или полный путь:${NC} "
-                local _sel; read -er _sel
+                local _sel; read_line _sel
                 local _file=""
                 if [[ "$_sel" =~ ^[0-9]+$ ]] && [ "$_sel" -ge 1 ] && [ "$_sel" -le "$_idx" ]; then
                     _file="${_backups[$((_sel - 1))]}"
@@ -64,14 +64,14 @@ tui_backup_menu() {
             4) _require_manager_mode && list_backups; press_any_key ;;
             5) _require_manager_mode && { backup_create_encrypted || true; }; press_any_key ;;
             6) _require_manager_mode || { press_any_key; continue; }
-               echo -en "  ${BOLD}Файл:${NC} "; local f; read -er f
+               echo -en "  ${BOLD}Файл:${NC} "; local f; read_line f
                [ -n "$f" ] && backup_restore_encrypted "$f" || true; press_any_key ;;
             7) _require_manager_mode && { migrate_export || true; }; press_any_key ;;
             8) _require_manager_mode || { press_any_key; continue; }
-               echo -en "  ${BOLD}Файл:${NC} "; local f; read -er f
+               echo -en "  ${BOLD}Файл:${NC} "; local f; read_line f
                [ -n "$f" ] && migrate_import "$f" || true; press_any_key ;;
             9) _require_manager_mode || { press_any_key; continue; }
-               echo -en "  ${BOLD}Удалить старше дней [${BACKUP_RETENTION_DAYS:-30}]:${NC} "; local d; read -er d
+               echo -en "  ${BOLD}Удалить старше дней [${BACKUP_RETENTION_DAYS:-30}]:${NC} "; local d; read_line d
                backup_autoclean "${d:-${BACKUP_RETENTION_DAYS:-30}}" || true; press_any_key ;;
             0|"") return ;;
         esac

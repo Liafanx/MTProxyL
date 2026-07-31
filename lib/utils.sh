@@ -255,6 +255,17 @@ press_any_key() {
     echo ""
 }
 
+# Чтение строки после приглашения, напечатанного отдельным echo.
+# Нужна из-за readline: если ввод пустой (пользователь просто нажал Enter),
+# readline завершает строку одним \r без перевода строки, и следующая же
+# строка вывода затирает приглашение прямо на экране.
+read_line() {
+    local __var="$1" __ans=""
+    IFS= read -er __ans || true
+    [ -z "$__ans" ] && [ -t 0 ] && echo ""
+    printf -v "$__var" '%s' "$__ans"
+}
+
 read_choice() {
     local prompt="${1:-выбор}"
     local default="${2:-}"
@@ -505,7 +516,7 @@ handle_domain_command() {
             local _cur_mask="${MASKING_HOST:-$_old_domain}"
             if [ "$_cur_mask" = "$_old_domain" ] || [ -z "$MASKING_HOST" ]; then
                 echo -en "  ${BOLD}Обновить mask backend на ${PROXY_DOMAIN}? [Y/n]:${NC} "
-                local _mask_yn; read -er _mask_yn
+                local _mask_yn; read_line _mask_yn
                 if [[ ! "$_mask_yn" =~ ^[nN]$ ]]; then
                     MASKING_HOST="$PROXY_DOMAIN"
                     save_settings

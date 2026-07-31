@@ -78,7 +78,7 @@ run_installer() {
     while true; do
         echo -en "  ${DIM}Порт [${PROXY_PORT:-443}]:${NC} "
         local port_input=""
-        read -er port_input
+        read_line port_input
         # Пустой ввод — это выбор порта по умолчанию, его тоже надо проверить
         # на занятость, иначе контейнер молча упадёт после установки.
         [ -z "$port_input" ] && port_input="${PROXY_PORT:-443}"
@@ -115,11 +115,11 @@ run_installer() {
         echo -e "  ${YELLOW}Порт ${PROXY_METRICS_PORT} занят, рекомендуем выбрать другой${NC}"
     fi
     echo -en "  ${BOLD}Оставить порт метрик ${PROXY_METRICS_PORT}? [Y/n]:${NC} "
-    local metrics_keep; read -er metrics_keep
+    local metrics_keep; read_line metrics_keep
     if [[ "$metrics_keep" =~ ^[nN]$ ]]; then
         while true; do
             echo -en "  ${BOLD}Введите порт метрик [${PROXY_METRICS_PORT}]:${NC} "
-            local metrics_input; read -er metrics_input
+            local metrics_input; read_line metrics_input
             [ -z "$metrics_input" ] && break
             if validate_port "$metrics_input"; then
                 if is_port_available "$metrics_input"; then
@@ -144,7 +144,7 @@ run_installer() {
     echo ""
     echo -en "  ${BOLD}IP/домен [${_det_ip:-авто}]:${NC} "
     local ip_input=""
-    read -er ip_input
+    read_line ip_input
     if [ -n "$ip_input" ]; then
         if validate_ip_literal "$ip_input"; then
             CUSTOM_IP="$ip_input"
@@ -166,7 +166,7 @@ run_installer() {
     case "$d" in
         2) PROXY_DOMAIN="m.beboo.ru" ;;
         3) PROXY_DOMAIN="twitch.tv" ;;
-        4) echo -en "  Домен: "; local cd; read -er cd
+        4) echo -en "  Домен: "; local cd; read_line cd
            [ -n "$cd" ] && validate_domain "$cd" && PROXY_DOMAIN="$cd" ;;
         *) PROXY_DOMAIN="autoscout24.ru" ;;
     esac
@@ -180,15 +180,15 @@ run_installer() {
     echo ""
     echo -e "  ${BOLD}Маскировка трафика${NC}"
     echo -en "  ${DIM}Включить? [Y/n]:${NC} "
-    local mask_input; read -er mask_input
+    local mask_input; read_line mask_input
     [[ "$mask_input" =~ ^[nN] ]] && MASKING_ENABLED="false" || MASKING_ENABLED="true"
 
     # Ресурсы
     echo ""
     echo -e "  ${BOLD}Ресурсы${NC}"
-    echo -en "  ${DIM}CPU (напр. 1 (1 ядро)) [Enter без ограничений]:${NC} "; local cpu; read -er cpu
+    echo -en "  ${DIM}CPU (напр. 1 (1 ядро)) [Enter без ограничений]:${NC} "; local cpu; read_line cpu
     [ -n "$cpu" ] && PROXY_CPUS="$cpu"
-    echo -en "  ${DIM}RAM (напр. 256m, 1g) [Enter без ограничений]:${NC} "; local mem; read -er mem
+    echo -en "  ${DIM}RAM (напр. 256m, 1g) [Enter без ограничений]:${NC} "; local mem; read_line mem
     [ -n "$mem" ] && PROXY_MEMORY="$mem"
 
     # Первый секрет
@@ -196,7 +196,7 @@ run_installer() {
     draw_header "СЕКРЕТ"
     echo ""
     echo -en "  ${DIM}Метка (имя пользователя) [по умолчанию default]:${NC} "
-    local first_label; read -er first_label
+    local first_label; read_line first_label
     [ -z "$first_label" ] && first_label="default"
     [[ "$first_label" =~ ^[a-zA-Z0-9_-]+$ ]] || first_label="default"
 
@@ -277,7 +277,7 @@ run_fix_arsenal_wizard() {
     echo -e "  ${DIM}При установке заменяет SYN limiter.${NC}"
     echo ""
     echo -en "  ${BOLD}Установить Zapret2 MTProto fix? [Y/n]:${NC} "
-    local _yn_zapret2; read -er _yn_zapret2
+    local _yn_zapret2; read_line _yn_zapret2
     local _zapret2_installed="false"
     if [[ ! "$_yn_zapret2" =~ ^[nN]$ ]]; then
         load_nft_settings 2>/dev/null || true
@@ -336,7 +336,7 @@ run_fix_arsenal_wizard() {
     echo -e "    ${DIM}[0]${NC} Не применять"
     echo ""
     echo -en "  ${BOLD}Применить NFT limiter? [1 по умолчанию]:${NC} "
-    local _nft_choice; read -er _nft_choice
+    local _nft_choice; read_line _nft_choice
 
     case "$_nft_choice" in
         2) apply_nft_preset classic ;;
@@ -402,7 +402,7 @@ run_fix_arsenal_wizard() {
     echo -e "  ${DIM}Текущие значения ядра будут сохранены для отката.${NC}"
     echo ""
     echo -en "  ${BOLD}Применить оптимизацию By-MEKO? [Y/n]:${NC} "
-    local _meko_choice; read -er _meko_choice
+    local _meko_choice; read_line _meko_choice
     if [[ ! "$_meko_choice" =~ ^[nN]$ ]]; then
         load_nft_settings 2>/dev/null || true
         meko_opt_apply || log_warn "Не удалось применить оптимизацию By-MEKO"
@@ -469,12 +469,12 @@ uninstall() {
     echo ""
 
     echo -en "  ${BOLD}Введите 'yes' для подтверждения:${NC} "
-    local confirm; read -er confirm
+    local confirm; read_line confirm
     [ "$confirm" != "yes" ] && { log_info "Отменено"; return; }
 
     # Экспорт секретов
     echo -en "  ${BOLD}Сохранить секреты перед удалением? [y/N]:${NC} "
-    local export_choice; read -er export_choice
+    local export_choice; read_line export_choice
     if [[ "$export_choice" =~ ^[yY] ]]; then
         local export_file="${HOME}/mtproxyl-secrets-backup.txt"
         if [ -f "$SECRETS_FILE" ]; then
@@ -492,7 +492,7 @@ uninstall() {
         echo -e "  ${BOLD}Обнаружен Selfmask / PQ nginx${NC}"
         echo -en "  ${BOLD}Удалить PQ nginx и отключить selfmask? [Y/n]:${NC} "
         local _sm_yn
-        read -er _sm_yn
+        read_line _sm_yn
         if [[ ! "$_sm_yn" =~ ^[nN]$ ]]; then
             log_info "Удаление selfmask и PQ nginx..."
             _selfmask_cleanup_for_uninstall 2>/dev/null || true
