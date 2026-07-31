@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -44,16 +45,55 @@ type UsersConfig struct {
 }
 
 type Config struct {
-	Path     string       `toml:"-"` // config file path, set after loading
-	Listen   string       `toml:"listen"`
-	BasePath string       `toml:"base_path"`
-	DataDir  string       `toml:"data_dir"`
-	Telemt   TelemtConfig `toml:"telemt"`
-	Panel    PanelConfig  `toml:"panel"`
-	Auth     AuthConfig   `toml:"auth"`
-	TLS      TLSConfig    `toml:"tls"`
-	GeoIP    GeoIPConfig  `toml:"geoip"`
-	Users    UsersConfig  `toml:"users"`
+	Path     string         `toml:"-"` // config file path, set after loading
+	Listen   string         `toml:"listen"`
+	BasePath string         `toml:"base_path"`
+	DataDir  string         `toml:"data_dir"`
+	Telemt   TelemtConfig   `toml:"telemt"`
+	Panel    PanelConfig    `toml:"panel"`
+	Mtproxyl MtproxylConfig `toml:"mtproxyl"`
+	Auth     AuthConfig     `toml:"auth"`
+	TLS      TLSConfig      `toml:"tls"`
+	GeoIP    GeoIPConfig    `toml:"geoip"`
+	Users    UsersConfig    `toml:"users"`
+}
+
+// MtproxylConfig describes how to reach the MTProxyL bash CLI. The panel
+// shells out to it for host-level operations (mode switching, selfmask,
+// backups) that telemt's own REST API does not cover.
+type MtproxylConfig struct {
+	// Enabled turns the MTProxyL bridge on. When false the /api/mtproxyl/*
+	// routes report the feature as unavailable instead of failing per-call.
+	Enabled bool `toml:"enabled"`
+	// ScriptPath is the mtproxyl.sh entry point.
+	ScriptPath string `toml:"script_path"`
+	// InstallDir holds MTProxyL's state files (settings.conf, backups/).
+	InstallDir string `toml:"install_dir"`
+	// UseSudo runs every command through sudo. Required when the panel runs
+	// unprivileged, since most mtproxyl subcommands call check_root.
+	UseSudo bool `toml:"use_sudo"`
+	// CommandTimeout bounds a single CLI invocation (Go duration string).
+	CommandTimeout string `toml:"command_timeout"`
+}
+
+// BackupDir returns the directory MTProxyL writes backup archives to.
+func (m MtproxylConfig) BackupDir() string {
+	return filepath.Join(m.InstallDir, "backups")
+}
+
+// Timeout returns the per-command timeout, falling back to 10 minutes when
+// unset or unparseable. Setup flows (selfmask provisioning, mode switching
+// with an install) legitimately run for minutes.
+func (m MtproxylConfig) Timeout() time.Duration {
+	const defaultTimeout = 10 * time.Minute
+	if m.CommandTimeout == "" {
+		return defaultTimeout
+	}
+	d, err := time.ParseDuration(m.CommandTimeout)
+	if err != nil || d <= 0 {
+		return defaultTimeout
+	}
+	return d
 }
 
 type GeoIPConfig struct {
@@ -157,6 +197,18 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Panel.GithubRepo == "" {
 		cfg.Panel.GithubRepo = "Liafanx/MTProxyL"
+	}
+
+	if cfg.Mtproxyl.ScriptPath == "" {
+		cfg.Mtproxyl.ScriptPath = "/opt/mtproxyl/mtproxyl.sh"
+	}
+	if cfg.Mtproxyl.InstallDir == "" {
+		cfg.Mtproxyl.InstallDir = "/opt/mtproxyl"
+	}
+	if cfg.Mtproxyl.Enabled && cfg.Mtproxyl.CommandTimeout != "" {
+		if _, err := time.ParseDuration(cfg.Mtproxyl.CommandTimeout); err != nil {
+			return nil, fmt.Errorf("mtproxyl.command_timeout: invalid duration: %w", err)
+		}
 	}
 
 	// Validate auto-update intervals
