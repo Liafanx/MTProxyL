@@ -74,10 +74,10 @@ ZAPRET2_FWMARK="0x40000000"
 ZAPRET2_QNUM="200"
 ZAPRET2_OUT_RANGE="a"
 ZAPRET2_IN_RANGE="a"
-ZAPRET2_SPLIT_LEN="200"
+ZAPRET2_SPLIT_LEN="400"
 ZAPRET2_DEBUG="false"
 ZAPRET2_DEBUG_LOG="/var/log/mtproxyl-nfqws2.log"
-ZAPRET2_WIN_SYNACK="1280"
+ZAPRET2_WIN_SYNACK="1400"
 ZAPRET2_WIN_ACK="10"
 # Доп. порты/диапазоны для --filter-tcp, через запятую (напр. "8443,9000-9100").
 # Порт прокси добавляется автоматически и здесь не нужен.
