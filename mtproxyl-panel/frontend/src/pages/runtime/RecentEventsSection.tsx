@@ -9,7 +9,7 @@ export function RecentEventsSection({ data }: RecentEventsSectionProps) {
   if (!data?.events) return null;
 
   return (
-    <CollapsibleSection title="Recent Events">
+    <CollapsibleSection title="Последние события">
       <div className="max-h-72 overflow-y-auto space-y-0.5 font-mono text-xs">
         {data.events.length === 0 ? (
           <p className="text-text-secondary py-4 text-center font-sans">No recent events</p>

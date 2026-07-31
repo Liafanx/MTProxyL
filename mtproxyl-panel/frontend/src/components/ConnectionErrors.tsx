@@ -8,15 +8,15 @@ export interface ClassCount {
 // Friendly names for the classes telemt currently emits; unknown classes fall
 // back to a generic humanizer so new backend classes still render sensibly.
 const KNOWN_LABELS: Record<string, string> = {
-  timeout: 'Timeout',
-  other: 'Other',
-  unknown_tls_sni: 'Unknown TLS SNI',
-  tls_clienthello_len_out_of_bounds: 'TLS ClientHello length out of bounds',
-  tls_clienthello_read_error: 'TLS ClientHello read error',
-  tls_clienthello_truncated: 'TLS ClientHello truncated',
+  timeout: 'Таймаут',
+  other: 'Прочее',
+  unknown_tls_sni: 'Неизвестный TLS SNI',
+  tls_clienthello_len_out_of_bounds: 'Недопустимая длина TLS ClientHello',
+  tls_clienthello_read_error: 'Ошибка чтения TLS ClientHello',
+  tls_clienthello_truncated: 'Обрезанный TLS ClientHello',
   tls_handshake_bad_client: 'TLS handshake — bad client',
   tls_mtproto_bad_client: 'TLS MTProto — bad client',
-  eof: 'Early EOF',
+  eof: 'Преждевременный EOF',
 };
 
 function humanizeClass(cls: string): string {
@@ -80,9 +80,9 @@ export function ConnectionErrors({ badByClass, handshakeFailuresByClass }: Conne
 
   return (
     <div className="bg-surface border border-border rounded-lg p-3 lg:p-4 space-y-4">
-      <h3 className="text-xs lg:text-sm font-medium text-text-secondary">Connection Errors</h3>
-      <ErrorSection title="Bad connections" items={bad} />
-      <ErrorSection title="Handshake failures" items={handshake} />
+      <h3 className="text-xs lg:text-sm font-medium text-text-secondary">Ошибки соединений</h3>
+      <ErrorSection title="Ошибочные соединения" items={bad} />
+      <ErrorSection title="Сбои рукопожатия" items={handshake} />
     </div>
   );
 }

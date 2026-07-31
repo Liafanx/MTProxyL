@@ -10,7 +10,7 @@ export function StatisticsZeroSection({ data }: StatisticsZeroSectionProps) {
   if (!data || Object.keys(data).length === 0) return null;
 
   return (
-    <CollapsibleSection title="Statistics (zero/all)" defaultOpen={false}>
+    <CollapsibleSection title="Статистика (нулевая/полная)" defaultOpen={false}>
       <div className="space-y-4">
         {Object.entries(data).map(([section, value]) => {
           if (value == null || typeof value !== 'object') return null;

@@ -54,7 +54,7 @@ export function ConfigPage() {
       setConfigHash(data.hash ?? '');
       setHasChanges(false);
     } catch (err: any) {
-      setError(err.message || 'Failed to load config');
+      setError(err.message || 'Не удалось загрузить конфиг');
     } finally {
       setLoading(false);
     }
@@ -77,7 +77,7 @@ export function ConfigPage() {
       if (result?.new_hash) setConfigHash(result.new_hash);
 
       const restarted = restart || result?.restart_required;
-      alert(restarted ? 'Config saved and Telemt restarting...' : 'Config saved successfully');
+      alert(restarted ? 'Конфиг сохранён, Telemt перезапускается…' : 'Конфиг сохранён');
     } catch (err: any) {
       if (err?.code === 'revision_conflict') {
         setError('Config changed on the server. Reloading…');
@@ -85,8 +85,8 @@ export function ConfigPage() {
         alert('The Telemt config changed since you opened it. Your edits were not saved — the latest version was reloaded.');
         return;
       }
-      setError(err.message || 'Failed to save config');
-      alert('Error: ' + (err.message || 'Failed to save config'));
+      setError(err.message || 'Не удалось сохранить конфиг');
+      alert('Ошибка: ' + (err.message || 'Не удалось сохранить конфиг'));
     } finally {
       setSaving(false);
     }
@@ -94,7 +94,7 @@ export function ConfigPage() {
 
   const handleDiscard = () => {
     if (!hasChanges) return;
-    if (confirm('Discard all changes?')) {
+    if (confirm('Отменить все изменения?')) {
       setCurrentContent(originalContent);
       setHasChanges(false);
     }
@@ -133,7 +133,7 @@ export function ConfigPage() {
         <div className="flex items-center gap-3">
           <Settings className="w-5 h-5 text-primary" />
           <div>
-            <h1 className="text-lg font-semibold text-text-primary">Telemt Configuration</h1>
+            <h1 className="text-lg font-semibold text-text-primary">Конфигурация Telemt</h1>
             <p className="text-sm text-text-secondary">{configPath}</p>
           </div>
         </div>
@@ -156,7 +156,7 @@ export function ConfigPage() {
             className="px-3 py-1.5 text-sm rounded-lg bg-primary text-white hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
           >
             <Save className="w-4 h-4" />
-            {saving ? 'Saving...' : 'Save'}
+            {saving ? 'Сохранение…' : 'Сохранить'}
           </button>
 
           <button
@@ -165,7 +165,7 @@ export function ConfigPage() {
             className="px-3 py-1.5 text-sm rounded-lg bg-orange-600 text-white hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
           >
             <RotateCw className="w-4 h-4" />
-            {saving ? 'Saving...' : 'Save & Restart'}
+            {saving ? 'Сохранение…' : 'Сохранить и перезапустить'}
           </button>
         </div>
       </div>

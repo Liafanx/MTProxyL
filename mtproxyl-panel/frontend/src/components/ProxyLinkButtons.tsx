@@ -27,7 +27,7 @@ function ProxyLinkGroupButtons({ group }: { group: ProxyLinkGroup }) {
         <select
           value={idx}
           onChange={(e) => setIdx(Number(e.target.value))}
-          aria-label="Select TLS proxy domain"
+          aria-label="Выбор TLS-домена прокси"
           className="max-w-[200px] min-w-0 truncate rounded-md border border-border bg-background px-2 py-1 font-mono text-xs text-text-primary focus:border-accent focus:outline-none"
         >
           {group.links.map((l, i) => (
@@ -43,7 +43,7 @@ function ProxyLinkGroupButtons({ group }: { group: ProxyLinkGroup }) {
 
 export function ProxyLinkButtons({ links }: { links: ProxyLinkGroup[] }) {
   if (links.length === 0) {
-    return <span className="text-text-secondary text-xs">No links</span>;
+    return <span className="text-text-secondary text-xs">Нет ссылок</span>;
   }
   return (
     <div className="flex flex-col items-start gap-2">

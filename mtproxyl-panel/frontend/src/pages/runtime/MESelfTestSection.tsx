@@ -12,7 +12,7 @@ export function MESelfTestSection({ data }: MESelfTestSectionProps) {
   const { kdf, timeskew, bnd, ip, pid, upstreams } = data.data;
 
   return (
-    <CollapsibleSection title="ME Self-Test">
+    <CollapsibleSection title="Самопроверка ME">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {/* KDF */}
         {kdf && (
@@ -34,11 +34,11 @@ export function MESelfTestSection({ data }: MESelfTestSectionProps) {
                 <span className="text-text-primary font-medium">{kdf.ewma_errors_per_min.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-text-secondary">Threshold</span>
+                <span className="text-text-secondary">Порог</span>
                 <span className="text-text-primary font-medium">{kdf.threshold_errors_per_min.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-text-secondary">Total errors</span>
+                <span className="text-text-secondary">Всего ошибок</span>
                 <span className="text-text-primary font-medium">{formatNumber(kdf.errors_total)}</span>
               </div>
             </div>
@@ -49,7 +49,7 @@ export function MESelfTestSection({ data }: MESelfTestSectionProps) {
         {timeskew && (
           <div className="bg-background rounded p-3 border border-border/50">
             <div className="flex items-center justify-between mb-2">
-              <h4 className="text-xs font-semibold text-accent uppercase tracking-wide">Time Skew</h4>
+              <h4 className="text-xs font-semibold text-accent uppercase tracking-wide">Расхождение времени</h4>
               <span className={cn(
                 'text-xs font-medium px-2 py-0.5 rounded',
                 timeskew.state === 'ok'
@@ -71,14 +71,14 @@ export function MESelfTestSection({ data }: MESelfTestSectionProps) {
                 <span className="text-text-primary font-medium">{timeskew.samples_15m}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-text-secondary">Last skew</span>
+                <span className="text-text-secondary">Последнее расхождение</span>
                 <span className="text-text-primary font-medium">
                   {timeskew.last_skew_secs != null ? `${timeskew.last_skew_secs}s` : '-'}
                 </span>
               </div>
               {timeskew.last_source && (
                 <div className="flex justify-between">
-                  <span className="text-text-secondary">Source</span>
+                  <span className="text-text-secondary">Источник</span>
                   <span className="text-text-primary font-medium">{timeskew.last_source}</span>
                 </div>
               )}
@@ -112,14 +112,14 @@ export function MESelfTestSection({ data }: MESelfTestSectionProps) {
             </div>
             <div className="space-y-1 text-xs">
               <div className="flex justify-between">
-                <span className="text-text-secondary">Last addr</span>
+                <span className="text-text-secondary">Последний адрес</span>
                 <span className="text-text-primary font-medium font-mono">
                   {bnd.last_addr ?? '-'}
                 </span>
               </div>
               {bnd.last_seen_age_secs != null && (
                 <div className="flex justify-between">
-                  <span className="text-text-secondary">Last seen</span>
+                  <span className="text-text-secondary">Последняя активность</span>
                   <span className="text-text-primary font-medium">{bnd.last_seen_age_secs}s ago</span>
                 </div>
               )}
@@ -196,7 +196,7 @@ export function MESelfTestSection({ data }: MESelfTestSectionProps) {
       {/* Upstream Self-Test */}
       {upstreams && upstreams.length > 0 && (
         <div className="mt-4">
-          <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Upstreams</h4>
+          <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Апстримы</h4>
           <div className="grid grid-cols-1 gap-2">
             {upstreams.map((u) => (
               <div key={u.upstream_id} className="bg-background rounded p-3 border border-border/50">

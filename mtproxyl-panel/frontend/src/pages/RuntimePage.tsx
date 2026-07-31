@@ -49,7 +49,7 @@ export function RuntimePage() {
 
   return (
     <div>
-      <Header title="Runtime" refreshing={!connected} onRefresh={refresh} />
+      <Header title="Телеметрия" refreshing={!connected} onRefresh={refresh} />
 
       <div className="p-4 lg:p-6 space-y-4">
         {firstError && <ErrorAlert message={firstError} onRetry={refresh} />}

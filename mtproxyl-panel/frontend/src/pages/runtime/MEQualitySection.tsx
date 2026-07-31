@@ -11,20 +11,20 @@ export function MEQualitySection({ data }: MEQualitySectionProps) {
   if (!data?.data) return null;
 
   return (
-    <CollapsibleSection title="ME Quality">
+    <CollapsibleSection title="Качество ME">
       <div className="space-y-4">
         {/* DC RTT Table */}
         {data.data.dc_rtt.length > 0 && (
           <div>
-            <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Datacenter Status</h4>
+            <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Состояние дата-центров</h4>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-border">
                     <th className="text-left py-2 px-2 text-text-secondary font-medium">DC</th>
                     <th className="text-right py-2 px-2 text-text-secondary font-medium">RTT</th>
-                    <th className="text-right py-2 px-2 text-text-secondary font-medium">Writers</th>
-                    <th className="text-right py-2 px-2 text-text-secondary font-medium">Coverage</th>
+                    <th className="text-right py-2 px-2 text-text-secondary font-medium">Писатели</th>
+                    <th className="text-right py-2 px-2 text-text-secondary font-medium">Покрытие</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -57,7 +57,7 @@ export function MEQualitySection({ data }: MEQualitySectionProps) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {data.data.counters && (
             <div className="bg-background rounded p-3 border border-border/50">
-              <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Counters</h4>
+              <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Счётчики</h4>
               <div className="grid grid-cols-2 gap-2">
                 {Object.entries(data.data.counters).map(([key, value]) => (
                   <MetricCard
@@ -71,7 +71,7 @@ export function MEQualitySection({ data }: MEQualitySectionProps) {
           )}
           {data.data.route_drops && (
             <div className="bg-background rounded p-3 border border-border/50">
-              <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Route Drops</h4>
+              <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Отброшено маршрутом</h4>
               <div className="grid grid-cols-2 gap-2">
                 {Object.entries(data.data.route_drops).map(([key, value]) => (
                   <MetricCard

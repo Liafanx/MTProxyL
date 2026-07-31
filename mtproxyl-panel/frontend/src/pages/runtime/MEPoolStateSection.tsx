@@ -11,22 +11,22 @@ export function MEPoolStateSection({ data }: MEPoolStateSectionProps) {
   if (!data?.data) return null;
 
   return (
-    <CollapsibleSection title="ME Pool State">
+    <CollapsibleSection title="Состояние пула ME">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-background rounded p-3 border border-border/50">
-          <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Generations</h4>
+          <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Поколения</h4>
           <div className="space-y-1 text-xs">
             <div className="flex justify-between">
-              <span className="text-text-secondary">Active</span>
+              <span className="text-text-secondary">Активные</span>
               <span className="text-text-primary font-medium">{data.data.generations.active_generation}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-text-secondary">Warm</span>
+              <span className="text-text-secondary">Прогретые</span>
               <span className="text-text-primary font-medium">{data.data.generations.warm_generation}</span>
             </div>
             {data.data.generations.pending_hardswap_generation != null && (
               <div className="flex justify-between">
-                <span className="text-text-secondary">Pending Hardswap</span>
+                <span className="text-text-secondary">Ожидает hardswap</span>
                 <span className="text-text-primary font-medium">{data.data.generations.pending_hardswap_generation}</span>
               </div>
             )}
@@ -36,32 +36,32 @@ export function MEPoolStateSection({ data }: MEPoolStateSectionProps) {
           <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Contour</h4>
           <div className="space-y-1 text-xs">
             <div className="flex justify-between">
-              <span className="text-text-secondary">Active</span>
+              <span className="text-text-secondary">Активные</span>
               <span className="text-text-primary font-medium">{data.data.writers.contour.active}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-text-secondary">Warm</span>
+              <span className="text-text-secondary">Прогретые</span>
               <span className="text-text-primary font-medium">{data.data.writers.contour.warm}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-text-secondary">Draining</span>
+              <span className="text-text-secondary">Выводимые</span>
               <span className="text-text-primary font-medium">{data.data.writers.contour.draining}</span>
             </div>
           </div>
         </div>
         <div className="bg-background rounded p-3 border border-border/50">
-          <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Writers Health</h4>
+          <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Здоровье писателей</h4>
           <div className="space-y-1 text-xs">
             <div className="flex justify-between">
-              <span className="text-text-secondary">Healthy</span>
+              <span className="text-text-secondary">Здоровые</span>
               <span className="text-text-primary font-medium">{data.data.writers.health.healthy}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-text-secondary">Degraded</span>
+              <span className="text-text-secondary">Деградировавшие</span>
               <span className="text-text-primary font-medium">{data.data.writers.health.degraded}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-text-secondary">Draining</span>
+              <span className="text-text-secondary">Выводимые</span>
               <span className="text-text-primary font-medium">{data.data.writers.health.draining}</span>
             </div>
           </div>
@@ -69,10 +69,10 @@ export function MEPoolStateSection({ data }: MEPoolStateSectionProps) {
       </div>
       {data.data.refill.inflight_endpoints_total > 0 && (
         <div className="bg-background rounded p-3 border border-border/50 mt-4">
-          <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Refill</h4>
+          <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Пополнение</h4>
           <div className="grid grid-cols-2 gap-2 mb-3">
-            <MetricCard label="Inflight Endpoints" value={formatNumber(data.data.refill.inflight_endpoints_total)} />
-            <MetricCard label="Inflight DC" value={formatNumber(data.data.refill.inflight_dc_total)} />
+            <MetricCard label="Точки в работе" value={formatNumber(data.data.refill.inflight_endpoints_total)} />
+            <MetricCard label="DC в работе" value={formatNumber(data.data.refill.inflight_dc_total)} />
           </div>
           {data.data.refill.by_dc.length > 0 && (
             <div className="flex flex-wrap gap-1">

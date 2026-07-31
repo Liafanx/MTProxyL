@@ -88,7 +88,7 @@ function IPTable({ ips, geoData, hasGeo }: IPTableProps) {
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-secondary" />
           <input
             type="text"
-            placeholder="Search IP, country, city, ASN..."
+            placeholder="Поиск по IP, стране, городу, ASN…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full pl-8 pr-3 py-1.5 text-sm rounded-md border border-border bg-background text-text-primary placeholder:text-text-secondary focus:outline-none focus:ring-1 focus:ring-accent"
@@ -104,9 +104,9 @@ function IPTable({ ips, geoData, hasGeo }: IPTableProps) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>IP Address</TableHead>
-                {hasGeo && <TableHead>Country</TableHead>}
-                {hasGeo && <TableHead>City</TableHead>}
+                <TableHead>IP-адрес</TableHead>
+                {hasGeo && <TableHead>Страна</TableHead>}
+                {hasGeo && <TableHead>Город</TableHead>}
                 {hasGeo && <TableHead>ASN</TableHead>}
               </TableRow>
             </TableHeader>
@@ -114,7 +114,7 @@ function IPTable({ ips, geoData, hasGeo }: IPTableProps) {
               {pageIps.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={hasGeo ? 4 : 1} className="text-center text-text-secondary py-6">
-                    {search ? 'No IPs match your search' : 'No IPs'}
+                    {search ? 'Ничего не найдено' : 'Нет IP-адресов'}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -229,7 +229,7 @@ export function UserDetailPage() {
       refresh();
       refreshQuota();
     } catch (err) {
-      setResetError(err instanceof ApiError ? err.message : 'Reset failed');
+      setResetError(err instanceof ApiError ? err.message : 'Не удалось сбросить');
     } finally {
       setResetting(false);
     }
@@ -268,7 +268,7 @@ export function UserDetailPage() {
       })
       .catch((err) => {
         if (cancelled) return;
-        setGeoError(err instanceof Error ? err.message : 'GeoIP lookup failed');
+        setGeoError(err instanceof Error ? err.message : 'Не удалось выполнить GeoIP-запрос');
       })
       .finally(() => {
         if (!cancelled) setGeoLoading(false);
@@ -281,7 +281,7 @@ export function UserDetailPage() {
 
   return (
     <div className="min-h-screen">
-      <Header title={user ? user.username : 'User Details'} refreshing={loading} onRefresh={refresh} />
+      <Header title={user ? user.username : 'Пользователь'} refreshing={loading} onRefresh={refresh} />
 
       <div className="p-4 lg:p-6 space-y-4">
         <Link
@@ -302,13 +302,13 @@ export function UserDetailPage() {
           <>
             {/* Metric cards */}
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-              <MetricCard label="Connections" value={String(user.current_connections)} />
-              <MetricCard label="Active IPs" value={`${user.active_unique_ips}${user.max_unique_ips ? ` / ${user.max_unique_ips}` : ''}`} />
-              <MetricCard label="Recent IPs" value={String(user.recent_unique_ips)} />
-              <MetricCard label="Traffic" value={formatBytes(user.total_octets)} />
-              <MetricCard label="Quota" value={user.data_quota_bytes ? formatBytes(user.data_quota_bytes) : '—'} />
+              <MetricCard label="Соединения" value={String(user.current_connections)} />
+              <MetricCard label="Активные IP" value={`${user.active_unique_ips}${user.max_unique_ips ? ` / ${user.max_unique_ips}` : ''}`} />
+              <MetricCard label="Недавние IP" value={String(user.recent_unique_ips)} />
+              <MetricCard label="Трафик" value={formatBytes(user.total_octets)} />
+              <MetricCard label="Квота" value={user.data_quota_bytes ? formatBytes(user.data_quota_bytes) : '—'} />
               <MetricCard
-                label="Expiration"
+                label="Срок действия"
                 value={user.expiration_rfc3339 ? new Date(user.expiration_rfc3339).toLocaleDateString() : '—'}
               />
             </div>
@@ -317,18 +317,18 @@ export function UserDetailPage() {
             {quotaSupported && quota && quota.data_quota_bytes > 0 && (
               <div className="bg-surface border border-border rounded-lg p-4 space-y-3">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="font-medium text-text-primary">Data quota</span>
+                  <span className="font-medium text-text-primary">Квота трафика</span>
                   <Button variant="outline" size="sm" onClick={() => setResetOpen(true)}>
                     <RotateCcw size={14} className="mr-1.5" />
-                    Reset
+                    Сбросить
                   </Button>
                 </div>
                 <QuotaBar used={quota.used_bytes} limit={quota.data_quota_bytes} />
                 <div className="text-xs text-text-secondary">
-                  Last reset:{' '}
+                  Последний сброс:{' '}
                   {quota.last_reset_epoch_secs > 0
                     ? new Date(quota.last_reset_epoch_secs * 1000).toLocaleString()
-                    : 'never'}
+                    : 'никогда'}
                 </div>
               </div>
             )}
@@ -339,17 +339,17 @@ export function UserDetailPage() {
             {geoError && (
               <div className="flex items-center gap-2 p-3 rounded-lg border border-yellow-500/30 bg-yellow-500/10 text-sm text-yellow-200">
                 <AlertTriangle size={16} className="shrink-0" />
-                <span>GeoIP not available: {geoError}. Showing IP addresses without geo data.</span>
+                <span>GeoIP недоступен: {geoError}. IP-адреса показаны без геоданных.</span>
               </div>
             )}
 
             {geoLoading && (
-              <div className="text-sm text-text-secondary">Loading GeoIP data...</div>
+              <div className="text-sm text-text-secondary">Загрузка данных GeoIP…</div>
             )}
 
             {/* IP sections */}
             <CollapsibleSection
-              title="Active IPs"
+              title="Активные IP"
               count={user.active_unique_ips_list?.length ?? 0}
               defaultOpen={true}
             >
@@ -361,7 +361,7 @@ export function UserDetailPage() {
             </CollapsibleSection>
 
             <CollapsibleSection
-              title="Recent IPs"
+              title="Недавние IP"
               count={user.recent_unique_ips_list?.length ?? 0}
             >
               <IPTable
@@ -378,10 +378,10 @@ export function UserDetailPage() {
         open={resetOpen}
         onClose={() => setResetOpen(false)}
         onConfirm={handleResetQuota}
-        title="Reset quota"
+        title="Сброс квоты"
         message={`Reset the data-quota counter for "${username}"? Used traffic will be set back to zero.`}
-        confirmLabel="Reset"
-        loadingLabel="Resetting..."
+        confirmLabel="Сбросить"
+        loadingLabel="Сброс…"
         confirmVariant="default"
         loading={resetting}
       />

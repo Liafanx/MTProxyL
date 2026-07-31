@@ -12,7 +12,7 @@ export function NATSTUNSection({ data }: NATSTUNSectionProps) {
     <CollapsibleSection title="NAT / STUN">
       <div className="space-y-3">
         <div>
-          <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Configured Servers</h4>
+          <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Настроенные серверы</h4>
           <div className="flex flex-wrap gap-2">
             {data.data.servers.configured.map((server: string, i: number) => (
               <span key={i} className="bg-background px-3 py-1.5 rounded text-sm text-text-primary font-mono border border-border/50">
@@ -23,7 +23,7 @@ export function NATSTUNSection({ data }: NATSTUNSectionProps) {
         </div>
         {data.data.reflection && (data.data.reflection.v4 || data.data.reflection.v6) && (
           <div>
-            <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Detected IPs</h4>
+            <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Определённые IP</h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
               {data.data.reflection.v4 && (
                 <div className="flex justify-between bg-background rounded p-2 border border-border/50">

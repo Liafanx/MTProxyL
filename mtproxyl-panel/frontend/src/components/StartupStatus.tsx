@@ -32,7 +32,7 @@ export function StartupStatus({ status, stage, progressPct }: StartupStatusProps
     <>
       <div className="bg-surface border border-border rounded-lg p-4">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-medium text-text-primary">Service Status</h3>
+          <h3 className="text-sm font-medium text-text-primary">Состояние сервиса</h3>
           <Button
             variant="outline"
             onClick={() => setShowConfirm(true)}
@@ -88,9 +88,9 @@ export function StartupStatus({ status, stage, progressPct }: StartupStatusProps
       <ConfirmDialog
         open={showConfirm}
         onClose={() => setShowConfirm(false)}
-        title="Restart Telemt Service"
-        message="Are you sure you want to restart the Telemt service? Active connections will be dropped."
-        confirmLabel="Restart"
+        title="Перезапуск сервиса Telemt"
+        message="Перезапустить сервис Telemt? Активные соединения будут разорваны."
+        confirmLabel="Перезапустить"
         onConfirm={handleRestart}
       />
     </>

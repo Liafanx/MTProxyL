@@ -30,10 +30,10 @@ export function CopyButton({ text, label }: { text: string; label?: string }) {
     <button
       onClick={handleCopy}
       className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs bg-background hover:bg-surface-hover text-text-secondary hover:text-text-primary transition-colors"
-      title={label || 'Copy'}
+      title={label || 'Копировать'}
     >
       {copied ? <Check size={12} className="text-green-500" /> : <Copy size={12} />}
-      {label && <span>{copied ? 'Copied' : label}</span>}
+      {label && <span>{copied ? 'Скопировано' : label}</span>}
     </button>
   );
 }

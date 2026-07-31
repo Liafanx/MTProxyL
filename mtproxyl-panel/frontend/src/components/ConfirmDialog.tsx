@@ -19,8 +19,8 @@ export function ConfirmDialog({
   onConfirm,
   title,
   message,
-  confirmLabel = 'Delete',
-  loadingLabel = 'Deleting...',
+  confirmLabel = 'Удалить',
+  loadingLabel = 'Удаление…',
   confirmVariant = 'danger',
   loading,
 }: ConfirmDialogProps) {
@@ -33,7 +33,7 @@ export function ConfirmDialog({
         <p className="text-sm text-text-secondary py-4">{message}</p>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={loading}>
-            Cancel
+            Отмена
           </Button>
           <Button variant={confirmVariant} onClick={onConfirm} disabled={loading}>
             {loading ? loadingLabel : confirmLabel}

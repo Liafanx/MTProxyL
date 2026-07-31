@@ -77,7 +77,7 @@ export function UserFormDialog({ open, onClose, onSubmit, initialData, mode }: U
       await onSubmit(payload);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed');
+      setError(err instanceof Error ? err.message : 'Ошибка');
     } finally {
       setLoading(false);
     }
@@ -90,7 +90,7 @@ export function UserFormDialog({ open, onClose, onSubmit, initialData, mode }: U
     <Dialog open={open} onClose={onClose}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{mode === 'create' ? 'Create User' : 'Edit User'}</DialogTitle>
+          <DialogTitle>{mode === 'create' ? 'Создание пользователя' : 'Редактирование пользователя'}</DialogTitle>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4 py-4">
@@ -132,7 +132,7 @@ export function UserFormDialog({ open, onClose, onSubmit, initialData, mode }: U
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="max_tcp">Max TCP Conns</Label>
+              <Label htmlFor="max_tcp">Макс. TCP-соединений</Label>
               <Input
                 id="max_tcp"
                 type="number"
@@ -142,7 +142,7 @@ export function UserFormDialog({ open, onClose, onSubmit, initialData, mode }: U
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="max_ips">Max Unique IPs</Label>
+              <Label htmlFor="max_ips">Макс. уникальных IP</Label>
               <Input
                 id="max_ips"
                 type="number"
@@ -181,7 +181,7 @@ export function UserFormDialog({ open, onClose, onSubmit, initialData, mode }: U
               Cancel
             </Button>
             <Button type="submit" disabled={loading}>
-              {loading ? 'Saving...' : mode === 'create' ? 'Create' : 'Save'}
+              {loading ? 'Сохранение…' : mode === 'create' ? 'Создать' : 'Сохранить'}
             </Button>
           </DialogFooter>
         </form>

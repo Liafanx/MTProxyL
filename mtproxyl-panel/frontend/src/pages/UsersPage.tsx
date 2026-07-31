@@ -168,7 +168,7 @@ export function UsersPage() {
       setDeleteUser(null);
       refresh();
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'Delete failed');
+      setActionError(err instanceof ApiError ? err.message : 'Не удалось удалить');
     } finally {
       setDeleting(false);
     }
@@ -184,7 +184,7 @@ export function UsersPage() {
       refresh();
       refreshQuota();
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'Reset failed');
+      setActionError(err instanceof ApiError ? err.message : 'Не удалось сбросить');
     } finally {
       setResetting(false);
     }
@@ -219,7 +219,7 @@ export function UsersPage() {
 
   return (
     <div className="min-h-screen">
-      <Header title="Users" refreshing={loading} onRefresh={refresh} />
+      <Header title="Пользователи" refreshing={loading} onRefresh={refresh} />
 
       <div className="p-4 lg:p-6 space-y-4">
         {error && <ErrorAlert message={error.message} onRetry={refresh} />}
@@ -230,7 +230,7 @@ export function UsersPage() {
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary" />
             <input
               type="text"
-              placeholder="Search users..."
+              placeholder="Поиск пользователей…"
               value={search}
               onChange={(e) => handleSearchChange(e.target.value)}
               className="w-full pl-9 pr-3 py-2 min-h-[44px] rounded-lg border border-border bg-surface text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:ring-2 focus:ring-accent/50"
@@ -240,14 +240,14 @@ export function UsersPage() {
             {quotaSupported && quotaUsers.length > 0 && (
               <Button variant="outline" onClick={() => setResetAllOpen(true)}>
                 <RotateCcw size={16} className="mr-1.5" />
-                <span className="hidden sm:inline">Reset all quotas</span>
-                <span className="sm:hidden">Reset all</span>
+                <span className="hidden sm:inline">Сбросить все квоты</span>
+                <span className="sm:hidden">Сбросить всё</span>
               </Button>
             )}
             <Button onClick={() => setCreateOpen(true)}>
               <Plus size={16} className="mr-1.5" />
-              <span className="hidden sm:inline">Create User</span>
-              <span className="sm:hidden">Create</span>
+              <span className="hidden sm:inline">Создать пользователя</span>
+              <span className="sm:hidden">Создать</span>
             </Button>
           </div>
         </div>
@@ -259,20 +259,20 @@ export function UsersPage() {
             <select
               value={sortKey}
               onChange={(e) => toggleSort(e.target.value as SortKey)}
-              aria-label="Sort by"
+              aria-label="Сортировка"
               className="flex-1 min-w-0 min-h-[44px] bg-background text-text-primary rounded-md px-2 py-1.5 text-sm border border-border focus:border-accent focus:outline-none"
             >
-              <option value="username">Username</option>
-              <option value="current_connections">Connections</option>
-              <option value="active_unique_ips">Active IPs</option>
-              <option value="total_octets">Traffic</option>
-              <option value="expiration_rfc3339">Expiration</option>
+              <option value="username">Имя</option>
+              <option value="current_connections">Соединения</option>
+              <option value="active_unique_ips">Активные IP</option>
+              <option value="total_octets">Трафик</option>
+              <option value="expiration_rfc3339">Срок действия</option>
             </select>
           </div>
           <button
             onClick={() => toggleSort(sortKey)}
-            aria-label={sortDir === 'asc' ? 'Sort Descending' : 'Sort Ascending'}
-            title={sortDir === 'asc' ? 'Sort Descending' : 'Sort Ascending'}
+            aria-label={sortDir === 'asc' ? 'Сортировать по убыванию' : 'Сортировать по возрастанию'}
+            title={sortDir === 'asc' ? 'Сортировать по убыванию' : 'Сортировать по возрастанию'}
             className="p-2.5 rounded-md border border-border bg-background hover:bg-surface-hover text-text-secondary transition-colors flex-shrink-0"
           >
             {sortDir === 'asc' ? <ArrowUp size={16} /> : <ArrowDown size={16} />}
@@ -287,44 +287,44 @@ export function UsersPage() {
                 <TableRow>
                   <TableHead className="cursor-pointer select-none" onClick={() => toggleSort('username')}>
                     <span className="inline-flex items-center gap-1">
-                      Username
+                      Имя
                       {sortKey === 'username' ? (sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={12} className="text-text-secondary/40" />}
                     </span>
                   </TableHead>
-                  <TableHead>Proxy Links</TableHead>
+                  <TableHead>Ссылки</TableHead>
                   <TableHead className="cursor-pointer select-none" onClick={() => toggleSort('current_connections')}>
                     <span className="inline-flex items-center gap-1">
-                      Connections
+                      Соединения
                       {sortKey === 'current_connections' ? (sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={12} className="text-text-secondary/40" />}
                     </span>
                   </TableHead>
                   <TableHead className="cursor-pointer select-none" onClick={() => toggleSort('active_unique_ips')}>
                     <span className="inline-flex items-center gap-1">
-                      Active IPs
+                      Активные IP
                       {sortKey === 'active_unique_ips' ? (sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={12} className="text-text-secondary/40" />}
                     </span>
                   </TableHead>
                   <TableHead className="cursor-pointer select-none" onClick={() => toggleSort('total_octets')}>
                     <span className="inline-flex items-center gap-1">
-                      Traffic
+                      Трафик
                       {sortKey === 'total_octets' ? (sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={12} className="text-text-secondary/40" />}
                     </span>
                   </TableHead>
-                  <TableHead>Quota</TableHead>
+                  <TableHead>Квота</TableHead>
                   <TableHead className="cursor-pointer select-none" onClick={() => toggleSort('expiration_rfc3339')}>
                     <span className="inline-flex items-center gap-1">
-                      Expiration
+                      Срок действия
                       {sortKey === 'expiration_rfc3339' ? (sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={12} className="text-text-secondary/40" />}
                     </span>
                   </TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead className="text-right">Действия</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {pagedUsers.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={8} className="text-center text-text-secondary py-8">
-                      {search ? 'No users found' : 'No users configured'}
+                      {search ? 'Пользователи не найдены' : 'Пользователи не заданы'}
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -368,7 +368,7 @@ export function UsersPage() {
                             {quotaSupported && !!u.data_quota_bytes && (
                               <button
                                 onClick={() => setResetUser(u.username)}
-                                title="Reset quota"
+                                title="Сбросить квоту"
                                 className="p-1.5 rounded text-text-secondary hover:text-accent hover:bg-surface-hover"
                               >
                                 <RotateCcw size={14} />
@@ -401,7 +401,7 @@ export function UsersPage() {
         <div className="lg:hidden space-y-3">
           {pagedUsers.length === 0 ? (
             <div className="text-center text-text-secondary py-8 bg-surface border border-border rounded-lg">
-              {search ? 'No users found' : 'No users configured'}
+              {search ? 'Пользователи не найдены' : 'Пользователи не заданы'}
             </div>
           ) : (
             pagedUsers.map((u) => {
@@ -434,7 +434,7 @@ export function UsersPage() {
         {sortedUsers.length > 0 && (
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-text-secondary">
             <div className="flex items-center gap-2">
-              <span>Show</span>
+              <span>Показывать</span>
               <select
                 value={perPage}
                 onChange={(e) => handlePerPageChange(Number(e.target.value))}
@@ -444,7 +444,7 @@ export function UsersPage() {
                   <option key={n} value={n}>{n}</option>
                 ))}
               </select>
-              <span>of {sortedUsers.length}{search && ` (filtered from ${users?.length ?? 0})`}</span>
+              <span>из {sortedUsers.length}{search && ` (отфильтровано из ${users?.length ?? 0})`}</span>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -487,8 +487,8 @@ export function UsersPage() {
         open={!!deleteUser}
         onClose={() => setDeleteUser(null)}
         onConfirm={handleDelete}
-        title="Delete User"
-        message={`Are you sure you want to delete user "${deleteUser}"? This action cannot be undone.`}
+        title="Удаление пользователя"
+        message={`Удалить пользователя «${deleteUser}»? Действие необратимо.`}
         loading={deleting}
       />
 
@@ -496,10 +496,10 @@ export function UsersPage() {
         open={!!resetUser}
         onClose={() => setResetUser(null)}
         onConfirm={handleResetQuota}
-        title="Reset quota"
-        message={`Reset the data-quota counter for "${resetUser}"? Used traffic will be set back to zero.`}
-        confirmLabel="Reset"
-        loadingLabel="Resetting..."
+        title="Сбросить квоту"
+        message={`Сбросить счётчик квоты для «${resetUser}»? Израсходованный трафик обнулится.`}
+        confirmLabel="Сбросить"
+        loadingLabel="Сброс…"
         confirmVariant="default"
         loading={resetting}
       />
@@ -508,10 +508,10 @@ export function UsersPage() {
         open={resetAllOpen}
         onClose={() => setResetAllOpen(false)}
         onConfirm={handleResetAllQuotas}
-        title="Reset all quotas"
-        message={`Reset the data-quota counter for all ${quotaUsers.length} user(s) with a quota? Used traffic will be set back to zero for each. This sends one request per user.`}
-        confirmLabel="Reset all"
-        loadingLabel="Resetting..."
+        title="Сброс всех квот"
+        message={`Сбросить счётчик квоты у всех пользователей с квотой (${quotaUsers.length})? Израсходованный трафик обнулится у каждого. Отправляется по одному запросу на пользователя.`}
+        confirmLabel="Сбросить всё"
+        loadingLabel="Сброс…"
         confirmVariant="default"
         loading={resettingAll}
       />

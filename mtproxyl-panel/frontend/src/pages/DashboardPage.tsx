@@ -75,7 +75,7 @@ export function DashboardPage() {
 
   return (
     <div>
-      <Header title="Dashboard" refreshing={!connected} onRefresh={refresh} />
+      <Header title="Дашборд" refreshing={!connected} onRefresh={refresh} />
 
       <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
         {firstError && <ErrorAlert message={firstError} onRetry={refresh} />}
@@ -94,16 +94,16 @@ export function DashboardPage() {
             animated={!connected}
           />
           <span className={`font-medium ${isHealthy ? 'text-success' : 'text-danger'}`}>
-            {isHealthy ? 'Telemt is running' : 'Telemt is unreachable'}
+            {isHealthy ? 'Telemt работает' : 'Telemt недоступен'}
           </span>
           {!connected && (
             <span className="ml-auto text-xs text-warning bg-warning/15 px-2 py-1 rounded shrink-0">
-              WS reconnecting...
+              Переподключение WS…
             </span>
           )}
           {health?.read_only && (
             <span className="ml-auto text-xs text-warning bg-warning/15 px-2 py-1 rounded shrink-0">
-              READ-ONLY
+              ТОЛЬКО ЧТЕНИЕ
             </span>
           )}
         </div>
@@ -121,34 +121,34 @@ export function DashboardPage() {
         {summary && (
           <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 lg:gap-4">
             <MetricCard
-              label="Uptime"
+              label="Время работы"
               value={formatUptime(summary.uptime_seconds)}
               icon={<Clock size={14} className="lg:w-4 lg:h-4" />}
             />
             <MetricCard
-              label="Total Connections"
+              label="Всего соединений"
               value={formatNumber(summary.connections_total)}
               icon={<Activity size={14} className="lg:w-4 lg:h-4" />}
               variant="success"
             />
             <MetricCard
-              label="Bad Connections"
+              label="Ошибочных соединений"
               value={formatNumber(summary.connections_bad_total)}
               variant={summary.connections_bad_total > 0 ? 'warning' : 'default'}
               status={summary.connections_bad_total > 0 ? 'warn' : 'ok'}
             />
             <MetricCard
-              label="Configured Users"
+              label="Пользователей"
               value={summary.configured_users}
               icon={<Users size={14} className="lg:w-4 lg:h-4" />}
             />
             <MetricCard
-              label="Active IPs"
+              label="Активных IP"
               value={formatNumber(totalActiveIPs)}
               icon={<Globe size={14} className="lg:w-4 lg:h-4" />}
             />
             <MetricCard
-              label="Total Traffic"
+              label="Всего трафика"
               value={formatBytes(totalTraffic)}
               icon={<ArrowUpDown size={14} className="lg:w-4 lg:h-4" />}
             />
@@ -165,7 +165,7 @@ export function DashboardPage() {
 
         {/* System Info */}
         {system && (
-          <CollapsibleSection title="System Info" description="Информация о системе">
+          <CollapsibleSection title="Информация о системе">
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2 lg:gap-3">
               {Object.entries(system).map(([key, value]) => (
                 <div key={key}>

@@ -195,7 +195,7 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
     return (
       <div className="p-4">
         <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg text-red-600">
-          <p className="font-semibold">Failed to parse TOML</p>
+          <p className="font-semibold">Не удалось разобрать TOML</p>
           <p className="text-sm mt-1">{parseError}</p>
           <p className="text-sm mt-2">Please use Advanced Editor to fix syntax errors.</p>
         </div>
@@ -208,11 +208,11 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
       {/* Server Settings */}
       {mode === 'file' && (
         <Section
-          title="Server Settings"
+          title="Настройки сервера"
           expanded={expandedSections.server}
           onToggle={() => toggleSection('server')}
         >
-          <Field label="Port" description="TCP port to listen on (443 recommended)">
+          <Field label="Порт" description="TCP-порт для входящих подключений (рекомендуется 443)">
             <input
               type="number"
               value={formValues['server.port'] ?? ''}
@@ -222,7 +222,7 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
             />
           </Field>
 
-          <Field label="IPv4 Listen Address" description="IPv4 bind address">
+          <Field label="Адрес IPv4" description="Адрес привязки IPv4">
             <input
               type="text"
               value={formValues['server.listen_addr_ipv4'] ?? ''}
@@ -232,7 +232,7 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
             />
           </Field>
 
-          <Field label="IPv6 Listen Address" description="IPv6 bind address">
+          <Field label="Адрес IPv6" description="Адрес привязки IPv6">
             <input
               type="text"
               value={formValues['server.listen_addr_ipv6'] ?? ''}
@@ -250,7 +250,7 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
         expanded={expandedSections.middleProxy}
         onToggle={() => toggleSection('middleProxy')}
       >
-        <Field label="Use Middle Proxy" description="Connect via Telegram Middle-End servers (required for ad_tag)">
+        <Field label="Использовать Middle Proxy" description="Подключение через серверы Telegram Middle-End (обязательно для ad_tag)">
           <input
             type="checkbox"
             checked={formValues['general.use_middle_proxy'] ?? false}
@@ -259,7 +259,7 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
           />
         </Field>
 
-        <Field label="Ad Tag" description="32-char hex Ad-Tag from @MTProxybot">
+        <Field label="Ad Tag" description="32-символьный hex Ad-Tag от @MTProxybot">
           <input
             type="text"
             value={formValues['general.ad_tag'] ?? ''}
@@ -270,17 +270,17 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
           />
         </Field>
 
-        <Field label="NAT IP" description="Your server's public IPv4 address (leave empty for auto-detect)">
+        <Field label="NAT IP" description="Публичный IPv4-адрес сервера (пусто — определить автоматически)">
           <input
             type="text"
             value={formValues['general.middle_proxy_nat_ip'] ?? ''}
             onChange={(e) => handleFieldChange('general.middle_proxy_nat_ip', e.target.value || undefined)}
-            placeholder="Auto-detect via STUN"
+            placeholder="Автоопределение через STUN"
             className="input"
           />
         </Field>
 
-        <Field label="NAT Probe" description="Auto-detect public IP via STUN servers">
+        <Field label="NAT Probe" description="Автоопределение публичного IP через STUN-серверы">
           <input
             type="checkbox"
             checked={formValues['general.middle_proxy_nat_probe'] ?? false}
@@ -292,11 +292,11 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
 
       {/* Censorship & Masking */}
       <Section
-        title="Censorship & Masking"
+        title="Обход цензуры и маскировка"
         expanded={expandedSections.censorship}
         onToggle={() => toggleSection('censorship')}
       >
-        <Field label="TLS Domain" description="SNI domain for FakeTLS (choose popular unblocked site)">
+        <Field label="TLS-домен" description="SNI-домен для FakeTLS (выберите популярный незаблокированный сайт)">
           <input
             type="text"
             value={formValues['censorship.tls_domain'] ?? ''}
@@ -306,7 +306,7 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
           />
         </Field>
 
-        <Field label="Masking" description="Forward failed handshakes to real website">
+        <Field label="Маскировка" description="Перенаправлять неудачные рукопожатия на настоящий сайт">
           <input
             type="checkbox"
             checked={formValues['censorship.mask'] ?? false}
@@ -315,17 +315,17 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
           />
         </Field>
 
-        <Field label="Mask Host" description="Target host for masking (defaults to tls_domain)">
+        <Field label="Хост маскировки" description="Целевой хост для маскировки (по умолчанию tls_domain)">
           <input
             type="text"
             value={formValues['censorship.mask_host'] ?? ''}
             onChange={(e) => handleFieldChange('censorship.mask_host', e.target.value || undefined)}
-            placeholder="Same as TLS Domain"
+            placeholder="Как TLS-домен"
             className="input"
           />
         </Field>
 
-        <Field label="TLS Emulation" description="Fetch and replicate real TLS certificate chain">
+        <Field label="Эмуляция TLS" description="Загружать и повторять настоящую цепочку TLS-сертификатов">
           <input
             type="checkbox"
             checked={formValues['censorship.tls_emulation'] ?? false}
@@ -338,11 +338,11 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
       {/* Network */}
       {mode === 'file' && (
         <Section
-          title="Network"
+          title="Сеть"
           expanded={expandedSections.network}
           onToggle={() => toggleSection('network')}
         >
-          <Field label="IPv4" description="Enable IPv4 for outbound connections">
+          <Field label="IPv4" description="Использовать IPv4 для исходящих соединений">
             <input
               type="checkbox"
               checked={formValues['network.ipv4'] ?? false}
@@ -351,7 +351,7 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
             />
           </Field>
 
-          <Field label="IPv6" description="Enable IPv6 for outbound connections">
+          <Field label="IPv6" description="Использовать IPv6 для исходящих соединений">
             <input
               type="checkbox"
               checked={formValues['network.ipv6'] ?? false}
@@ -360,13 +360,13 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
             />
           </Field>
 
-          <Field label="Prefer" description="Prefer IPv4 (4) or IPv6 (6)">
+          <Field label="Приоритет" description="Предпочитать IPv4 (4) или IPv6 (6)">
             <select
               value={formValues['network.prefer'] ?? ''}
               onChange={(e) => handleFieldChange('network.prefer', e.target.value ? parseInt(e.target.value) : undefined)}
               className="input"
             >
-              <option value="">Not set</option>
+              <option value="">Не задано</option>
               <option value="4">IPv4</option>
               <option value="6">IPv6</option>
             </select>
@@ -376,11 +376,11 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
 
       {/* Timeouts */}
       <Section
-        title="Timeouts (seconds)"
+        title="Таймауты (секунды)"
         expanded={expandedSections.timeouts}
         onToggle={() => toggleSection('timeouts')}
       >
-        <Field label="Client Handshake" description="Max time for client to complete handshake">
+        <Field label="Рукопожатие клиента" description="Максимальное время на завершение рукопожатия">
           <input
             type="number"
             value={formValues['timeouts.client_handshake'] ?? ''}
@@ -390,7 +390,7 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
           />
         </Field>
 
-        <Field label="Telegram Connect" description="Max time to establish TCP connection to Telegram">
+        <Field label="Подключение к Telegram" description="Максимальное время установки TCP-соединения с Telegram">
           <input
             type="number"
             value={formValues['timeouts.tg_connect'] ?? ''}
@@ -400,7 +400,7 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
           />
         </Field>
 
-        <Field label="Client ACK" description="Max client inactivity before dropping connection">
+        <Field label="ACK клиента" description="Максимальное бездействие клиента до разрыва соединения">
           <input
             type="number"
             value={formValues['timeouts.client_ack'] ?? ''}

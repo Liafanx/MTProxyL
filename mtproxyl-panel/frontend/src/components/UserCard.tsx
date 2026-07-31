@@ -131,7 +131,7 @@ export function UserCard({
           <button
             onClick={onResetQuota}
             className="p-2.5 text-text-secondary hover:text-accent hover:bg-surface-hover rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
-            title="Reset quota"
+            title="Сбросить квоту"
           >
             <RotateCcw size={14} />
           </button>
@@ -139,14 +139,14 @@ export function UserCard({
         <button
           onClick={onEdit}
           className="p-2.5 text-text-secondary hover:text-text-primary hover:bg-surface-hover rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
-          title="Edit"
+          title="Изменить"
         >
           <Pencil size={14} />
         </button>
         <button
           onClick={onDelete}
           className="p-2.5 text-text-secondary hover:text-danger hover:bg-danger/10 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
-          title="Delete"
+          title="Удалить"
         >
           <Trash2 size={14} />
         </button>

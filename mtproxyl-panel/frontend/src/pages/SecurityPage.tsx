@@ -53,25 +53,25 @@ export function SecurityPage() {
 
   return (
     <div>
-      <Header title="Security" refreshing={!connected} onRefresh={refresh} />
+      <Header title="Безопасность" refreshing={!connected} onRefresh={refresh} />
 
       <div className="p-4 lg:p-6 space-y-6">
         {firstError && <ErrorAlert message={firstError} onRetry={refresh} />}
 
         {posture && (
           <div className="bg-surface border border-border rounded-lg p-4">
-            <h3 className="text-sm font-medium text-text-secondary mb-4">Security Posture</h3>
+            <h3 className="text-sm font-medium text-text-secondary mb-4">Состояние безопасности</h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
               <div>
                 <div className="text-xs text-text-secondary mb-1">API Read-Only</div>
                 <StatusBadge status={posture.api_read_only} labelOn="Enabled" labelOff="Disabled" />
               </div>
               <div>
-                <div className="text-xs text-text-secondary mb-1">API Whitelist</div>
+                <div className="text-xs text-text-secondary mb-1">Белый список API</div>
                 <StatusBadge status={posture.api_whitelist_enabled} labelOn={`Enabled (${posture.api_whitelist_entries})`} labelOff="Disabled" />
               </div>
               <div>
-                <div className="text-xs text-text-secondary mb-1">API Auth Header</div>
+                <div className="text-xs text-text-secondary mb-1">Заголовок авторизации API</div>
                 <StatusBadge status={posture.api_auth_header_enabled} labelOn="Enabled" labelOff="Disabled" />
               </div>
               <div>
@@ -79,19 +79,19 @@ export function SecurityPage() {
                 <StatusBadge status={posture.proxy_protocol_enabled} labelOn="Enabled" labelOff="Disabled" />
               </div>
               <div>
-                <div className="text-xs text-text-secondary mb-1">Log Level</div>
+                <div className="text-xs text-text-secondary mb-1">Уровень логирования</div>
                 <span className="text-sm text-text-primary font-medium">{posture.log_level}</span>
               </div>
               <div>
-                <div className="text-xs text-text-secondary mb-1">Telemetry Core</div>
+                <div className="text-xs text-text-secondary mb-1">Телеметрия: ядро</div>
                 <StatusBadge status={posture.telemetry_core_enabled} labelOn="Enabled" labelOff="Disabled" />
               </div>
               <div>
-                <div className="text-xs text-text-secondary mb-1">Telemetry User</div>
+                <div className="text-xs text-text-secondary mb-1">Телеметрия: пользователи</div>
                 <StatusBadge status={posture.telemetry_user_enabled} labelOn="Enabled" labelOff="Disabled" />
               </div>
               <div>
-                <div className="text-xs text-text-secondary mb-1">Telemetry ME Level</div>
+                <div className="text-xs text-text-secondary mb-1">Телеметрия: уровень ME</div>
                 <span className="text-sm text-text-primary font-medium">{posture.telemetry_me_level}</span>
               </div>
             </div>
@@ -99,7 +99,7 @@ export function SecurityPage() {
         )}
 
         <div>
-          <h3 className="text-sm font-medium text-text-secondary mb-3">Whitelist</h3>
+          <h3 className="text-sm font-medium text-text-secondary mb-3">Белый список</h3>
           {whitelist && whitelist.entries.length > 0 ? (
             <div className="bg-surface border border-border rounded-lg p-4">
               <div className="flex flex-wrap gap-2">
@@ -119,7 +119,7 @@ export function SecurityPage() {
 
         {limits && (
           <div className="bg-surface border border-border rounded-lg p-4">
-            <h3 className="text-sm font-medium text-text-secondary mb-3">Effective Limits</h3>
+            <h3 className="text-sm font-medium text-text-secondary mb-3">Действующие лимиты</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {Object.entries(flatLimits).map(([key, value]) => (
                 <div key={key} className="min-w-0 flex justify-between items-center gap-2 py-1.5 px-2 rounded hover:bg-surface-hover">

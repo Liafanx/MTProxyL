@@ -12,7 +12,7 @@ export function UpstreamQualitySection({ data }: UpstreamQualitySectionProps) {
   if (!data) return null;
 
   return (
-    <CollapsibleSection title="Upstream Quality">
+    <CollapsibleSection title="Качество апстримов">
       <div className="space-y-3">
         {data.summary && (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-2">

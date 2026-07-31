@@ -23,7 +23,7 @@ export function LoginPage() {
     try {
       await login(user, password);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed');
+      setError(err instanceof Error ? err.message : 'Не удалось войти');
     } finally {
       setLoading(false);
     }
@@ -34,7 +34,7 @@ export function LoginPage() {
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
           <h1 className="text-2xl font-bold text-text-primary">MTProxyL-Panel</h1>
-          <p className="text-sm text-text-secondary mt-1">MTProxy Management</p>
+          <p className="text-sm text-text-secondary mt-1">Управление MTProxy</p>
         </div>
 
         <form
@@ -42,7 +42,7 @@ export function LoginPage() {
           className="bg-surface border border-border rounded-lg p-6 space-y-4"
         >
           <div className="space-y-2">
-            <Label htmlFor="username">Username</Label>
+            <Label htmlFor="username">Имя пользователя</Label>
             <Input
               id="username"
               value={user}
@@ -54,7 +54,7 @@ export function LoginPage() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="password">Password</Label>
+            <Label htmlFor="password">Пароль</Label>
             <Input
               id="password"
               type="password"
@@ -70,7 +70,7 @@ export function LoginPage() {
           )}
 
           <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? 'Signing in...' : 'Sign In'}
+            {loading ? 'Вход…' : 'Войти'}
           </Button>
         </form>
       </div>

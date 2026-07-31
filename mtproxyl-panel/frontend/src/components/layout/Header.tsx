@@ -15,7 +15,7 @@ export function Header({ title, refreshing, onRefresh }: HeaderProps) {
         <button
           onClick={onRefresh}
           className="p-2 rounded-md text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-colors"
-          title="Refresh"
+          title="Обновить"
         >
           <RefreshCw size={16} className={cn(refreshing && 'animate-spin')} />
         </button>

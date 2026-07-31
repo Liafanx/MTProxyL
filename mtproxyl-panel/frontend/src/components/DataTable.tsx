@@ -24,7 +24,7 @@ export function DataTable<T extends Record<string, unknown>>({
   columns,
   data,
   keyField = 'id',
-  emptyMessage = 'No data',
+  emptyMessage = 'Нет данных',
 }: DataTableProps<T>) {
   return (
     <div className="border border-border rounded-lg overflow-hidden">

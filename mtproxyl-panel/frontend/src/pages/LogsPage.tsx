@@ -99,12 +99,12 @@ function renderLogLine(raw: string): React.ReactNode {
 
 const LINE_OPTIONS = [100, 200, 500, 1000];
 const SINCE_OPTIONS = [
-  { value: '1h', label: 'Last hour' },
-  { value: '2h', label: '2 hours' },
-  { value: '12h', label: '12 hours' },
-  { value: '24h', label: '24 hours' },
-  { value: '7d', label: '7 days' },
-  { value: 'all', label: 'All available' },
+  { value: '1h', label: 'Последний час' },
+  { value: '2h', label: '2 часа' },
+  { value: '12h', label: '12 часов' },
+  { value: '24h', label: '24 часа' },
+  { value: '7d', label: '7 дней' },
+  { value: 'all', label: 'Всё доступное' },
 ];
 
 export function LogsPage() {
@@ -179,7 +179,7 @@ export function LogsPage() {
   if (statusLoading) {
     return (
       <div className="p-6">
-        <h1 className="text-xl font-semibold text-text-primary mb-4">Logs</h1>
+        <h1 className="text-xl font-semibold text-text-primary mb-4">Логи</h1>
         <div className="text-text-secondary">Loading...</div>
       </div>
     );
@@ -188,9 +188,9 @@ export function LogsPage() {
   if (status && !status.available) {
     return (
       <div className="p-6">
-        <h1 className="text-xl font-semibold text-text-primary mb-4">Logs</h1>
+        <h1 className="text-xl font-semibold text-text-primary mb-4">Логи</h1>
         <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-sm text-red-400">
-          <div className="font-medium mb-1">Log source unavailable</div>
+          <div className="font-medium mb-1">Источник логов недоступен</div>
           <div>{status.error}</div>
         </div>
       </div>
@@ -201,7 +201,7 @@ export function LogsPage() {
     <div className="p-6 flex flex-col h-[calc(100vh-var(--header-height,64px))]">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold text-text-primary">Logs</h1>
+          <h1 className="text-xl font-semibold text-text-primary">Логи</h1>
           {status && (
             <span className="text-xs px-2 py-1 rounded bg-surface-secondary text-text-secondary">
               {status.source}: {status.target}
@@ -226,7 +226,7 @@ export function LogsPage() {
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700"
           >
             <Square className="w-3.5 h-3.5" />
-            Stop
+            Остановить
           </button>
         )}
 
@@ -236,7 +236,7 @@ export function LogsPage() {
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-surface-secondary text-text-primary rounded hover:bg-surface-secondary/80"
           >
             <Pause className="w-3.5 h-3.5" />
-            {paused ? `Resume (${bufferedCount})` : 'Pause'}
+            {paused ? `Продолжить (${bufferedCount})` : 'Пауза'}
           </button>
         )}
 
@@ -266,7 +266,7 @@ export function LogsPage() {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-secondary" />
           <input
             type="text"
-            placeholder="Filter logs..."
+            placeholder="Фильтр логов…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full pl-8 pr-3 py-1.5 text-sm bg-surface-secondary text-text-primary rounded border border-border placeholder:text-text-secondary"
@@ -278,7 +278,7 @@ export function LogsPage() {
             onClick={handleDownload}
             disabled={lines.length === 0}
             className="p-1.5 text-text-secondary hover:text-text-primary rounded disabled:opacity-30"
-            title="Download logs"
+            title="Скачать логи"
           >
             <Download className="w-4 h-4" />
           </button>
@@ -286,7 +286,7 @@ export function LogsPage() {
             onClick={clear}
             disabled={lines.length === 0}
             className="p-1.5 text-text-secondary hover:text-text-primary rounded disabled:opacity-30"
-            title="Clear"
+            title="Очистить"
           >
             <Trash2 className="w-4 h-4" />
           </button>
@@ -309,8 +309,8 @@ export function LogsPage() {
         {filteredLines.length === 0 && !streaming ? (
           <div className="text-text-secondary text-center py-8">
             {lines.length === 0
-              ? 'Press Start to begin streaming logs'
-              : 'No lines match the filter'}
+              ? 'Нажмите «Запустить», чтобы начать поток логов'
+              : 'Нет строк, подходящих под фильтр'}
           </div>
         ) : (
           filteredLines.map((line) => (

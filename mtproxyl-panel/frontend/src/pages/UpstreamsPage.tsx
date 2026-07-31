@@ -65,14 +65,14 @@ export function UpstreamsPage() {
 
   return (
     <div>
-      <Header title="Upstreams & DCs" refreshing={!connected} onRefresh={refresh} />
+      <Header title="Апстримы и DC" refreshing={!connected} onRefresh={refresh} />
 
       <div className="p-6 space-y-6">
         {firstError && <ErrorAlert message={firstError} onRetry={refresh} />}
 
         {upstreams && (
           <div className="space-y-4">
-            <h3 className="text-sm font-medium text-text-secondary">Upstream Servers</h3>
+            <h3 className="text-sm font-medium text-text-secondary">Серверы-апстримы</h3>
 
             {!upstreams.enabled && (
               <div className="bg-warning/10 border border-warning/30 rounded-lg p-3 text-sm text-warning">
@@ -119,7 +119,7 @@ export function UpstreamsPage() {
 
         {dcs?.dcs && (
           <div className="space-y-4">
-            <h3 className="text-sm font-medium text-text-secondary">DC Status</h3>
+            <h3 className="text-sm font-medium text-text-secondary">Состояние DC</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {dcs.dcs.map((dc) => (
                 <div key={dc.dc_id} className="bg-surface border border-border rounded-lg p-4">
@@ -164,7 +164,7 @@ export function UpstreamsPage() {
 
         {meWriters && (
           <div className="space-y-4">
-            <h3 className="text-sm font-medium text-text-secondary">ME Writers</h3>
+            <h3 className="text-sm font-medium text-text-secondary">Писатели ME</h3>
 
             {meWriters.enabled === false && (
               <div className="bg-warning/10 border border-warning/30 rounded-lg p-3 text-sm text-warning">

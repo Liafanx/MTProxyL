@@ -575,7 +575,7 @@ export function UpdatePage() {
 
   return (
     <div className="min-h-screen">
-      <Header title="Update" onRefresh={() => { fetchReleases(); fetchPanelReleases(); }} />
+      <Header title="Обновление" onRefresh={() => { fetchReleases(); fetchPanelReleases(); }} />
       <div className="p-4 lg:p-6 space-y-4 lg:space-y-6 max-w-3xl">
 
         {/* Auto-update settings */}
@@ -600,7 +600,7 @@ export function UpdatePage() {
         {/* Panel Update Section */}
         <div className="bg-surface rounded-lg p-4 lg:p-5 border border-border">
           <div className="flex items-center justify-between mb-3 lg:mb-4">
-            <h2 className="text-xs lg:text-sm font-semibold text-text-primary">Panel Version</h2>
+            <h2 className="text-xs lg:text-sm font-semibold text-text-primary">Версия панели</h2>
             <button
               onClick={fetchPanelReleases}
               disabled={panelReleasesLoading || !!isPanelUpdating}
@@ -727,7 +727,7 @@ export function UpdatePage() {
 
         <div className="bg-surface rounded-lg p-4 lg:p-5 border border-border">
           <div className="flex items-center justify-between mb-3 lg:mb-4">
-            <h2 className="text-xs lg:text-sm font-semibold text-text-primary">Telemt Version</h2>
+            <h2 className="text-xs lg:text-sm font-semibold text-text-primary">Версия Telemt</h2>
             <button
               onClick={fetchReleases}
               disabled={releasesLoading || !!isUpdating}
