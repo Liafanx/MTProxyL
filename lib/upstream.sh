@@ -227,7 +227,13 @@ handle_upstream_command() {
     local subcmd="${1:-list}"; shift 2>/dev/null || true
     _require_manager_mode || return 1
     case "$subcmd" in
-        list)    upstream_list ;;
+        list)
+            if [ "${1:-}" = "--json" ]; then
+                upstream_list_json
+            else
+                upstream_list
+            fi
+            ;;
         add)     check_root; upstream_add "$@" ;;
         remove)  check_root; upstream_remove "$1" ;;
         enable)  check_root; upstream_toggle "$1" enable ;;
@@ -243,4 +249,27 @@ handle_upstream_command() {
             echo -e "    ${GREEN}upstream test${NC} <имя>                       Проверить"
             ;;
     esac
+}
+
+# Машинный список маршрутов для панели.
+# Пароли наружу не отдаём — панели они не нужны, а утечка в лог браузера
+# или в историю запросов нежелательна.
+upstream_list_json() {
+    load_upstreams
+    local i _first=1
+    printf '['
+    for i in "${!UPSTREAM_NAMES[@]}"; do
+        [ $_first -eq 1 ] || printf ','
+        _first=0
+        printf '{"name":"%s","type":"%s","address":"%s","user":"%s","has_password":%s,"weight":%d,"iface":"%s","enabled":%s}' \
+            "$(json_escape "${UPSTREAM_NAMES[$i]}")" \
+            "$(json_escape "${UPSTREAM_TYPES[$i]}")" \
+            "$(json_escape "${UPSTREAM_ADDRS[$i]}")" \
+            "$(json_escape "${UPSTREAM_USERS[$i]}")" \
+            "$([ -n "${UPSTREAM_PASSES[$i]}" ] && echo true || echo false)" \
+            "${UPSTREAM_WEIGHTS[$i]:-0}" \
+            "$(json_escape "${UPSTREAM_IFACES[$i]}")" \
+            "$([ "${UPSTREAM_ENABLED[$i]}" = "true" ] && echo true || echo false)"
+    done
+    printf ']\n'
 }

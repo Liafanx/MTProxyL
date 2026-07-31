@@ -212,6 +212,10 @@ handle_geoblock_command() {
                 || log_error "Правила применить не удалось"
             ;;
         list|"")
+            if [ "${2:-}" = "--json" ]; then
+                geoblock_list_json
+                return 0
+            fi
             echo -e "  ${BOLD}Заблокированные страны:${NC} ${BLOCKLIST_COUNTRIES:-${DIM}нет${NC}}"
             echo -e "  ${BOLD}Режим:${NC} ${GEOBLOCK_MODE}"
             if [ -n "$BLOCKLIST_COUNTRIES" ]; then
@@ -238,4 +242,20 @@ handle_geoblock_command() {
             echo -e "    ${GREEN}geoblock clear${NC}         Очистить все"
             ;;
     esac
+}
+
+# Машинный список заблокированных стран для панели.
+geoblock_list_json() {
+    local _c _first=1
+    printf '{"countries":['
+    if [ -n "${BLOCKLIST_COUNTRIES:-}" ]; then
+        IFS=',' read -ra _arr <<< "$BLOCKLIST_COUNTRIES"
+        for _c in "${_arr[@]}"; do
+            [ -n "$_c" ] || continue
+            [ $_first -eq 1 ] || printf ','
+            _first=0
+            printf '"%s"' "$(json_escape "$_c")"
+        done
+    fi
+    printf ']}\n'
 }

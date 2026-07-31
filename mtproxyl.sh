@@ -297,6 +297,17 @@ cli_main() {
                 zapret2-stop)  check_root; load_nft_settings; zapret2_stop ;;
                 zapret2-rm)    check_root; load_nft_settings; zapret2_remove ;;
                 zapret2-wscale) load_nft_settings; zapret2_check_wscale "true" ;;
+                set)      check_root; nft_set_param "$2" "$3" ;;
+                settable) nft_settable_json ;;
+                status)
+                    if [ "${2:-}" = "--json" ]; then
+                        nft_status_json
+                    else
+                        echo -e "  ${BOLD}Лимитер:${NC}   $(nft_status_line)"
+                        echo -e "  ${BOLD}iOS Fix:${NC}   $(ios_fix_status_line)"
+                        echo -e "  ${BOLD}iOS Fix v2:${NC} $(ios2_fix_status_line)"
+                    fi
+                    ;;
                 *)
                     echo -e "  ${BOLD}NFT SYN Limiter:${NC}"
                     echo -e "    ${GREEN}nft apply${NC}        Применить правила"
@@ -311,6 +322,9 @@ cli_main() {
                     echo -e "    ${GREEN}nft ios2-off${NC}     Откатить iOS Fix v2"
                     echo -e "    ${GREEN}nft extra-add${NC}    Доп. правило"
                     echo -e "    ${GREEN}nft extra-rm${NC} N   Удалить доп. правило"
+                    echo -e "    ${GREEN}nft status${NC}       Состояние (--json для машинного вывода)"
+                    echo -e "    ${GREEN}nft set${NC} K V      Изменить параметр"
+                    echo -e "    ${GREEN}nft settable${NC}     Список изменяемых параметров (JSON)"
                     echo ""
                     echo -e "  ${BOLD}Zapret2:${NC}"
                     echo -e "    ${GREEN}nft zapret2${NC}      Установить / переустановить Zapret2 fix"

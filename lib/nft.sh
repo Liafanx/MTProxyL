@@ -120,8 +120,6 @@ NFT_IOS_RATE='${NFT_IOS_RATE}'
 NFT_IOS_BURST='${NFT_IOS_BURST}'
 NFT_OTHER_RATE='${NFT_OTHER_RATE}'
 NFT_OTHER_BURST='${NFT_OTHER_BURST}'
-NFT_OTHER_RATE='${NFT_OTHER_RATE}'
-NFT_OTHER_BURST='${NFT_OTHER_BURST}'
 NFT_IOS_LIMIT_ENABLED='${NFT_IOS_LIMIT_ENABLED}'
 NFT_OTHER_LIMIT_ENABLED='${NFT_OTHER_LIMIT_ENABLED}'
 NFT_IOS_DETECT='${NFT_IOS_DETECT}'
@@ -2207,4 +2205,152 @@ ios2_fix_status_line() {
             echo -e "${DIM}не применён${NC}"
         fi
     fi
+}
+
+# ── Настраиваемые параметры для внешней панели ───────────────────────────────
+# Формат: КЛЮЧ|валидатор|описание
+# Валидаторы те же, что в экспертном каталоге (_expert_validate).
+#
+# Здесь только то, что пользователь задаёт осознанно. Производное состояние
+# (*_ENABLED, *_APPLIED, *_ORIG_*, NFT_TABLE, NFT_SERVER_IP, NFT_EXTRA_COUNT,
+# MEKO_*) не выставляется вручную: им управляют сами команды применения,
+# и правка извне рассинхронизировала бы конфиг с реальными правилами ядра.
+_NFT_SETTABLE=(
+    "NFT_RATE|custom:_validate_nft_rate|Лимит SYN в classic-режиме"
+    "NFT_BURST|range:1:65535|Всплеск в classic-режиме"
+    "NFT_METER_TIMEOUT|custom:_validate_nft_timeout|Время жизни записи счётчика"
+    "NFT_IOS_RATE|custom:_validate_nft_rate|Лимит SYN для iOS (Smart)"
+    "NFT_IOS_BURST|range:1:65535|Всплеск для iOS (Smart)"
+    "NFT_OTHER_RATE|custom:_validate_nft_rate|Лимит SYN для прочих (Smart)"
+    "NFT_OTHER_BURST|range:1:65535|Всплеск для прочих (Smart)"
+    "NFT_IOS_LIMIT_ENABLED|bool|Ограничивать iOS"
+    "NFT_OTHER_LIMIT_ENABLED|bool|Ограничивать прочих"
+    "NFT_IOS_DETECT|enum:fingerprint,ttl|Способ определения iOS"
+    "NFT_OTHER_ACTION|enum:icmp-host-unreachable,reject,drop|Действие при превышении"
+    "NFT_REJECT_MODE|enum:reset,icmp|Вид отказа"
+    "IOS_KA_TIME|range:1:86400|tcp_keepalive_time (сек)"
+    "IOS_KA_INTVL|range:1:3600|tcp_keepalive_intvl (сек)"
+    "IOS_KA_PROBES|range:1:100|tcp_keepalive_probes"
+    "IOS2_EXTERNAL_PORT|range:1:65535|Внешний порт iOS Fix v2"
+    "IOS2_TARGET_PORT|custom:_validate_nft_optional_port|Целевой порт iOS Fix v2 (пусто = порт прокси)"
+    "IOS2_MSS|range:1:65535|MSS для iOS Fix v2"
+    "ZAPRET2_SPLIT_LEN|range:1:65535|Смещение разрыва ClientHello"
+    "ZAPRET2_WIN_SYNACK|range:1:65535|Окно в SYN+ACK"
+    "ZAPRET2_WIN_ACK|range:1:65535|Окно в ACK"
+    "ZAPRET2_QNUM|range:0:65535|Номер очереди NFQUEUE"
+    "ZAPRET2_FWMARK|custom:_validate_nft_fwmark|fwmark для пропуска обработанных пакетов"
+    "ZAPRET2_EXTRA_PORTS|custom:_validate_nft_ports|Дополнительные порты/диапазоны"
+    "ZAPRET2_DEBUG|bool|Подробный лог Zapret2"
+)
+
+# nftables принимает лимит в виде ЧИСЛО/ЕДИНИЦА.
+_validate_nft_rate() {
+    [[ "$1" =~ ^[0-9]+/(second|minute|hour|day)$ ]] && return 0
+    echo "Формат: ЧИСЛО/second|minute|hour|day (например 15/second)"; return 1
+}
+
+_validate_nft_timeout() {
+    [[ "$1" =~ ^[0-9]+(s|m|h)$ ]] && return 0
+    echo "Формат: ЧИСЛО с суффиксом s/m/h (например 60s)"; return 1
+}
+
+# Пустое значение допустимо — оно означает «взять порт прокси».
+_validate_nft_optional_port() {
+    [ -z "$1" ] && return 0
+    _validate_range "$1" 1 65535
+}
+
+_validate_nft_fwmark() {
+    [[ "$1" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]] && return 0
+    echo "Формат: десятичное число или 0x-шестнадцатеричное"; return 1
+}
+
+# Список портов и диапазонов через запятую: 443,8443,9000-9100
+_validate_nft_ports() {
+    [ -z "$1" ] && return 0
+    local _p
+    IFS=',' read -ra _arr <<< "$1"
+    for _p in "${_arr[@]}"; do
+        [[ "$_p" =~ ^[0-9]+(-[0-9]+)?$ ]] || {
+            echo "Формат: порты и диапазоны через запятую (443,9000-9100)"; return 1; }
+    done
+    return 0
+}
+
+_nft_find_settable() {
+    local _key="$1" _entry
+    for _entry in "${_NFT_SETTABLE[@]}"; do
+        [ "${_entry%%|*}" = "$_key" ] && { echo "$_entry"; return 0; }
+    done
+    return 1
+}
+
+# mtproxyl nft set <КЛЮЧ> <значение>
+# Меняет только сохранённое значение. Правила ядра не трогаются, поэтому после
+# правки нужно переприменить их (nft apply / nft smart) — так же, как это
+# работает в интерактивном меню.
+nft_set_param() {
+    local _key="$1" _val="$2" _entry
+    if [ -z "$_key" ]; then
+        log_error "Использование: mtproxyl nft set <ключ> <значение>"
+        return 1
+    fi
+    if ! _entry=$(_nft_find_settable "$_key"); then
+        log_error "Параметр '${_key}' недоступен для изменения"
+        log_info "Список: mtproxyl nft settable"
+        return 1
+    fi
+    local _rest="${_entry#*|}"
+    local _validator="${_rest%%|*}"
+
+    local _err
+    if ! _err=$(_expert_validate "$_validator" "$_val" 2>&1); then
+        log_error "Недопустимое значение для ${_key}: ${_err}"
+        return 1
+    fi
+
+    printf -v "$_key" '%s' "$_val"
+    save_nft_settings
+    log_success "${_key} = ${_val}"
+    log_info "Примените правила заново, чтобы значение вступило в силу"
+}
+
+# Список изменяемых параметров с текущими значениями (для UI панели).
+nft_settable_json() {
+    local _entry _key _validator _desc _first=1
+    printf '['
+    for _entry in "${_NFT_SETTABLE[@]}"; do
+        _key="${_entry%%|*}"
+        local _rest="${_entry#*|}"
+        _validator="${_rest%%|*}"
+        _desc="${_rest#*|}"
+        [ $_first -eq 1 ] || printf ','
+        _first=0
+        printf '{"key":"%s","validator":"%s","description":"%s","value":"%s"}' \
+            "$(json_escape "$_key")" "$(json_escape "$_validator")" \
+            "$(json_escape "$_desc")" "$(json_escape "${!_key:-}")"
+    done
+    printf ']\n'
+}
+
+# Полное состояние NFT/iOS/Zapret2 одним документом.
+nft_status_json() {
+    local _syn_active="false" _zapret_active="false"
+    systemctl is-active "$NFT_SYSTEMD_UNIT" &>/dev/null && _syn_active="true"
+    systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null && _zapret_active="true"
+
+    printf '{"nft":{"enabled":%s,"mode":"%s","service_active":%s},' \
+        "$([ "${NFT_ENABLED:-false}" = "true" ] && echo true || echo false)" \
+        "$(json_escape "${NFT_MODE:-classic}")" "$_syn_active"
+    printf '"ios_fix_v1":{"enabled":%s},"ios_fix_v2":{"enabled":%s},' \
+        "$([ "${IOS_FIX_ENABLED:-false}" = "true" ] && echo true || echo false)" \
+        "$([ "${IOS2_FIX_ENABLED:-false}" = "true" ] && echo true || echo false)"
+    printf '"zapret2":{"applied":%s,"service_active":%s},' \
+        "$([ "${ZAPRET2_APPLIED:-false}" = "true" ] && echo true || echo false)" \
+        "$_zapret_active"
+    printf '"meko_opt":{"applied":%s},' \
+        "$([ "${MEKO_OPT_APPLIED:-false}" = "true" ] && echo true || echo false)"
+    printf '"params":'
+    nft_settable_json | tr -d '\n'
+    printf '}\n'
 }
