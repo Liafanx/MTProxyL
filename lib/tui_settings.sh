@@ -2,6 +2,20 @@
 # MTProxyL — подменю: настройки
 
 tui_settings_menu() {
+    if _superexpert_active; then
+        clear_screen
+        draw_header "НАСТРОЙКИ"
+        echo ""
+        log_warn "Включён режим супер эксперта — настройки движка задаёте вы"
+        echo -e "  ${DIM}Порт, домен, маскировка и всё остальное берутся из вашего конфига:${NC}"
+        echo -e "  ${BOLD}${SUPEREXPERT_FILE}${NC}"
+        echo -e "  ${DIM}Правка: главное меню → Режим супер эксперта → Редактировать конфиг${NC}"
+        echo ""
+        echo -e "  ${DIM}Настройки хоста (NFT, Zapret2, selfmask, гео-блокировка, бэкапы)${NC}"
+        echo -e "  ${DIM}работают как обычно — они не про config.toml.${NC}"
+        press_any_key
+        return
+    fi
     while true; do
         clear_screen
         draw_header "НАСТРОЙКИ"

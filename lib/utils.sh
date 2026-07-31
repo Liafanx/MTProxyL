@@ -21,6 +21,16 @@ _require_manager_mode() {
     return 1
 }
 
+# Гвард для операций, которые пишут в config.toml: в режиме супер эксперта
+# конфиг ведёт пользователь, и любые правки менеджера всё равно были бы
+# затёрты его файлом при следующем запуске.
+_require_no_superexpert() {
+    _superexpert_active 2>/dev/null || return 0
+    log_error "Недоступно: включён режим супер эксперта — конфигом управляете вы"
+    log_info "Правьте ${SUPEREXPERT_FILE} и перезапускайте прокси (или выключите режим)"
+    return 1
+}
+
 detect_os() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
@@ -445,6 +455,7 @@ handle_port_command() {
         return 0
     fi
     _require_manager_mode || return 1
+    _require_no_superexpert || return 1
     check_root
     if validate_port "$new_port"; then
         local _port_before="${PROXY_PORT}"
@@ -503,6 +514,7 @@ handle_domain_command() {
         return 0
     fi
     _require_manager_mode || return 1
+    _require_no_superexpert || return 1
     check_root
     if validate_domain "$new_domain"; then
         local _old_domain="$PROXY_DOMAIN"
@@ -545,6 +557,7 @@ handle_mask_backend() {
         return 0
     fi
     _require_manager_mode || return 1
+    _require_no_superexpert || return 1
     check_root
     # Парсим host:port или только host
     local new_host new_port
@@ -618,6 +631,7 @@ show_cli_help() {
     echo -e "  ${BOLD}Настройки:${NC}      port | ip | domain | mask-backend | config"
     echo -e "  ${BOLD}Движок:${NC}         engine status|list|update|rollback|rebuild"
     echo -e "  ${BOLD}Эксперт:${NC}        expert list|set|clear|edit"
+    echo -e "  ${BOLD}Супер эксперт:${NC}  superexpert status|on|off|edit"
     echo -e "  ${BOLD}NFT:${NC}            nft apply|remove|service|drop|preset|smart|zapret2|zapret2-stop|zapret2-rm|zapret2-wscale"
     echo -e "  ${BOLD}Selfmask:${NC}       selfmask status|setup|verify|disable|menu"
     echo -e "  ${BOLD}PQ проверка:${NC}    pq-check [домен[:порт]]"

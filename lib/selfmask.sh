@@ -895,8 +895,14 @@ _selfmask_show_links_tail() {
 
     echo ""
     draw_header "НОВЫЕ ССЫЛКИ (SNI: ${SELFMASK_DOMAIN})"
-    if _wait_target_api 10; then
+    # Ждём не просто ответа API, а появления самих ссылок: после рестарта
+    # telemt отдаёт пользователей раньше, чем заполняет [general.links].
+    if _wait_target_links 15; then
         show_target_links_ipv4 || true
+    elif _get_telemt_users_json >/dev/null 2>&1; then
+        log_warn "Цель отвечает, но ссылок в ответе пока нет"
+        echo -e "  ${DIM}Посмотреть позже: главное меню → Ссылки на прокси${NC}"
+        echo -e "  ${DIM}Если цель отдаёт только IPv6 — задайте [general.links] public_host${NC}"
     else
         log_warn "Ссылки недоступны: $(_telemt_api_unavailable_reason)"
         echo -e "  ${DIM}Позже: главное меню → Ссылки на прокси${NC}"

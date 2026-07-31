@@ -40,7 +40,7 @@
 - [NFT Smart By-MEKO — подробнее](#nft-smart)
 - [Selfmask — подробнее](#selfmask-details)
 - [Устаревшие iOS фиксы](#ios-fixes)
-- [Режим эксперта — подробнее](#expert-details)
+- [Режим эксперта и супер эксперта — подробнее](#expert-details)
 - [Модульная архитектура](#architecture)
 - [Требования](#requirements)
 - [Удаление](#uninstall)
@@ -333,6 +333,10 @@ mtproxyl expert set server client_mss tspu
 mtproxyl expert list
 mtproxyl expert clear all
 mtproxyl expert edit
+
+mtproxyl superexpert status    # свой config.toml вместо генерируемого
+mtproxyl superexpert on|off
+mtproxyl superexpert edit
 ```
 
 <a id="cli-nft"></a>
@@ -657,6 +661,25 @@ TCP keepalive 45s, BBR, расширенные очереди. Меню: `[7] �
 Приоритет: `config.toml → tunings.conf → expert.conf`
 
 Поддерживаемые секции: `general`, `general.modes`, `general.links`, `general.telemetry`, `network`, `server`, `server.listeners`, `server.conntrack_control`, `server.api`, `timeouts`, `censorship`, `censorship.tls_fetch`, `access`, `logging`
+
+### Режим супер эксперта
+
+Крайняя форма: конфиг движка вы ведёте сами, MTProxyL его не генерирует.
+
+Включается в главном меню («Режим супер эксперта») или командой `mtproxyl superexpert on`.
+При первом включении `/opt/mtproxyl/superexpert.toml` создаётся копией текущего рабочего
+конфига — дальше правите файл вручную. Перед каждым запуском прокси он копируется на место
+`config.toml`, поэтому изменения применяются обычным перезапуском.
+
+Пока режим включён, менеджер в конфиг ничего не дописывает: «Управление секретами»,
+«Настройки», «Режим эксперта», `tune set` и `expert set` блокируются — пользователи,
+порт, домен и всё остальное задаются в вашем файле. Настройки хоста (NFT, Zapret2,
+selfmask, гео-блокировка, бэкапы) работают как обычно, а порт из вашего конфига
+подхватывается в настройки MTProxyL, чтобы правила и ссылки остались на нужном порту.
+
+При выключении файл сохраняется: при следующем включении используется он же. Файл
+попадает в бэкапы и в миграцию. В главном меню при включённом режиме выводится
+«Режим супер эксперта включён».
 
 ---
 

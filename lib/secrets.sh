@@ -428,6 +428,10 @@ secret_show_limits() {
 handle_secret_command() {
     local subcmd="${1:-list}"; shift 2>/dev/null || true
     _require_manager_mode || return 1
+    case "${1:-}" in
+        list|link|qr|"") ;;
+        *) _require_no_superexpert || return 1 ;;
+    esac
     case "$subcmd" in
         add)      check_root; secret_add "$@" ;;
         remove)   check_root; secret_remove "$1" ;;

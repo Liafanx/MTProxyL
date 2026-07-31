@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-#  MTProxyL v1.3.1 — Telegram MTProto Proxy Manager
+#  MTProxyL v1.3.2 — Telegram MTProto Proxy Manager
 #  https://github.com/Liafanx/MTProxyL
 #  by LiafanX
 # ═══════════════════════════════════════════════════════════════
@@ -8,7 +8,7 @@
 set -o pipefail
 export LC_NUMERIC=C
 
-VERSION="1.3.1"
+VERSION="1.3.2"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -169,6 +169,11 @@ cli_main() {
         expert)
             load_settings; load_secrets; load_upstreams
             handle_expert_command "$@"
+            ;;
+
+        superexpert)
+            load_settings; load_secrets
+            handle_superexpert_command "$@"
             ;;
 
         engine)

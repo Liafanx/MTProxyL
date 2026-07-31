@@ -385,6 +385,28 @@ _wait_target_metrics() {
     return 1
 }
 
+# Ссылки появляются в ответе API не сразу: telemt сначала поднимает API,
+# и только потом заполняет [general.links] (нужен публичный IP). Сразу
+# после рестарта запрос отдавал пользователей без ссылок, и это выглядело
+# как «IPv4-ссылки не найдены».
+_wait_target_links() {
+    local _timeout="${1:-15}" _i=0 _json
+    _telemt_api_enabled || return 1
+    while [ "$_i" -lt "$_timeout" ]; do
+        _json=$(_get_telemt_users_json 2>/dev/null) \
+            && [ -n "$(_target_links_ipv4 "$_json")" ] && {
+                [ "$_i" -gt 0 ] && echo ""
+                return 0
+            }
+        [ "$_i" -eq 0 ] && echo -en "  ${DIM}Ждём, пока цель отдаст ссылки${NC}"
+        echo -en "${DIM}.${NC}"
+        sleep 1
+        _i=$((_i + 1))
+    done
+    echo ""
+    return 1
+}
+
 # После рестарта цель поднимает API не мгновенно: запрос ссылок или
 # статистики сразу после restart упирался в «API не отвечает». Ждём, пока
 # API ответит, но не дольше _timeout секунд.
@@ -459,6 +481,14 @@ _current_sni_domain() {
         local _d; _d=$(_target_tls_domain 2>/dev/null)
         if [ -n "$_d" ]; then
             echo "$_d"
+            return 0
+        fi
+    elif _superexpert_active 2>/dev/null; then
+        # Конфиг ведёт пользователь — домен берём из его файла, а не из
+        # настроек менеджера, которые на движок больше не влияют.
+        local _sd; _sd=$(_toml_get_string_in_section "censorship" "tls_domain" "$SUPEREXPERT_FILE" 2>/dev/null)
+        if [ -n "$_sd" ]; then
+            echo "$_sd"
             return 0
         fi
     fi

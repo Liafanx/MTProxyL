@@ -2,6 +2,19 @@
 # MTProxyL — подменю: секреты (полное)
 
 tui_secrets_menu() {
+    if _superexpert_active; then
+        clear_screen
+        draw_header "УПРАВЛЕНИЕ СЕКРЕТАМИ"
+        echo ""
+        log_warn "Включён режим супер эксперта — пользователями управляете вы"
+        echo -e "  ${DIM}Секреты живут в секции [access.users] вашего конфига:${NC}"
+        echo -e "  ${BOLD}${SUPEREXPERT_FILE}${NC}"
+        echo -e "  ${DIM}Добавьте/удалите строки вида ${BOLD}имя = \"32 hex\"${NC}${DIM} и перезапустите прокси.${NC}"
+        echo ""
+        echo -e "  ${DIM}Ссылки для подключения: главное меню → Ссылки на прокси${NC}"
+        press_any_key
+        return
+    fi
     while true; do
         clear_screen
         secret_list

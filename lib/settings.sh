@@ -28,6 +28,10 @@ AUTO_UPDATE_ENABLED="true"
 SECRET_AUTO_ROTATE_DAYS="0"
 BACKUP_RETENTION_DAYS="30"
 
+# Режим супер эксперта: конфиг движка ведёт пользователь вручную,
+# менеджер только копирует его файл на место config.toml
+SUPEREXPERT_ENABLED="false"
+
 # Selfmask (локальный nginx + Let's Encrypt либо самоподписанный сертификат)
 SELFMASK_ENABLED="false"
 SELFMASK_DOMAIN=""
@@ -107,6 +111,9 @@ SELFMASK_NGINX_SITE_NAME='${SELFMASK_NGINX_SITE_NAME}'
 SELFMASK_AUTO_RENEW='${SELFMASK_AUTO_RENEW}'
 SELFMASK_TLS_PROTOCOLS='${SELFMASK_TLS_PROTOCOLS}'
 SELFMASK_CERT_MODE='${SELFMASK_CERT_MODE}'
+
+# Режим супер эксперта
+SUPEREXPERT_ENABLED='${SUPEREXPERT_ENABLED}'
 
 # Порты, запомненные за режимами
 PORT_PROFILE_MANAGER='${PORT_PROFILE_MANAGER}'
@@ -249,6 +256,7 @@ load_settings() {
             SELFMASK_ENABLED|SELFMASK_DOMAIN|SELFMASK_SITE_SOURCE|SELFMASK_SITE_DIR|\
             SELFMASK_NGINX_BACKEND_PORT|SELFMASK_CERT_EMAIL|SELFMASK_NGINX_SITE_NAME|\
             SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS|SELFMASK_CERT_MODE|\
+            SUPEREXPERT_ENABLED|\
             PORT_PROFILE_MANAGER|PORT_PROFILE_REANIMATOR)
                 printf -v "$key" '%s' "$val"
                 ;;
@@ -286,4 +294,6 @@ load_settings() {
         letsencrypt|selfsigned) ;;
         *) SELFMASK_CERT_MODE="letsencrypt" ;;
     esac
+
+    [ "$SUPEREXPERT_ENABLED" = "true" ] || SUPEREXPERT_ENABLED="false"
 }

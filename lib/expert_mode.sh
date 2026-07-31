@@ -372,6 +372,17 @@ tui_expert_key_menu() {
 
 # ── Главное меню режима эксперта ──────────────────────────────
 tui_expert_menu() {
+    if _superexpert_active; then
+        clear_screen
+        draw_header "РЕЖИМ ЭКСПЕРТА"
+        echo ""
+        log_warn "Включён режим супер эксперта — override поверх config.toml не применяются"
+        echo -e "  ${DIM}Конфиг целиком берётся из вашего файла:${NC}"
+        echo -e "  ${BOLD}${SUPEREXPERT_FILE}${NC}"
+        echo -e "  ${DIM}Правьте параметры прямо в нём.${NC}"
+        press_any_key
+        return
+    fi
     while true; do
         clear_screen
         draw_header "РЕЖИМ ЭКСПЕРТА"

@@ -89,6 +89,7 @@ handle_tune_command() {
                 [ -n "$v" ] && echo "  ${param} = ${v}" || echo -e "  ${DIM}${param}: не задан${NC}"
             fi ;;
         set)
+            [ "${MTPROXYL_MODE:-manager}" = "manager" ] && { _require_no_superexpert || return 1; }
             check_root
             local param="$1" value="$2"
             [ -z "$param" ] && { log_error "Использование: tune set <параметр> <значение>"; return 1; }
@@ -125,9 +126,257 @@ handle_tune_command() {
     esac
 }
 
+# ── Режим супер эксперта ──────────────────────────────────────
+# Пользователь ведёт конфиг движка сам: MTProxyL перестаёт его
+# генерировать и только копирует файл пользователя на место
+# config.toml. Ни секреты, ни настройки, ни expert/tune-правки в этот
+# файл не попадают — всё правится вручную, применяется перезапуском.
+SUPEREXPERT_FILE="${INSTALL_DIR}/superexpert.toml"
+
+_superexpert_active() {
+    [ "${SUPEREXPERT_ENABLED:-false}" = "true" ] && [ -f "$SUPEREXPERT_FILE" ]
+}
+
+superexpert_status_line() {
+    if _superexpert_active; then
+        echo -e "${YELLOW}включён${NC} ${DIM}(${SUPEREXPERT_FILE})${NC}"
+    elif [ "${SUPEREXPERT_ENABLED:-false}" = "true" ]; then
+        echo -e "${RED}включён, но файл не найден${NC} ${DIM}(${SUPEREXPERT_FILE})${NC}"
+    else
+        echo -e "${DIM}выключен${NC}"
+    fi
+}
+
+# Порт прокси живёт в конфиге пользователя, а на него завязаны NFT-правила,
+# Zapret2 и ссылки. Держим PROXY_PORT в согласии с файлом.
+_superexpert_sync_port() {
+    local _p
+    _p=$(_toml_get_string_in_section "server" "port" "$SUPEREXPERT_FILE" 2>/dev/null)
+    [[ "$_p" =~ ^[0-9]+$ ]] || return 0
+    [ "$_p" = "${PROXY_PORT:-}" ] && return 0
+    local _old="${PROXY_PORT:-не задан}"
+    PROXY_PORT="$_p"
+    save_settings
+    log_warn "Порт из вашего конфига: ${_old} → ${PROXY_PORT}"
+    log_info "Правила NFT/Zapret2 наложены на прежний порт — переприменить: меню NFT"
+}
+
+# Пользователи из конфига супер эксперта (секция [access.users])
+_superexpert_users() {
+    [ -f "$SUPEREXPERT_FILE" ] || return 1
+    awk '
+        /^[[:space:]]*\[access\.users\]/ { insect=1; next }
+        /^[[:space:]]*\[/ { insect=0 }
+        insect {
+            line=$0
+            sub(/[[:space:]]*#.*$/, "", line)
+            sub(/^[[:space:]]+/, "", line)
+            if (line ~ /^[A-Za-z0-9_.-]+[[:space:]]*=/) {
+                split(line, a, "=")
+                name=a[1]; val=a[2]
+                gsub(/[[:space:]]/, "", name)
+                gsub(/[[:space:]"]/, "", val)
+                if (name != "" && val != "") print name "|" val
+            }
+        }
+    ' "$SUPEREXPERT_FILE" 2>/dev/null
+}
+
+superexpert_show_rules() {
+    echo -e "  ${BOLD}Как это работает:${NC}"
+    echo -e "  ${DIM}• Конфиг движка — ваш файл ${SUPEREXPERT_FILE}${NC}"
+    echo -e "  ${DIM}• Перед каждым запуском он копируется на место config.toml${NC}"
+    echo -e "  ${DIM}• MTProxyL ничего в него не дописывает: ни секреты, ни настройки,${NC}"
+    echo -e "  ${DIM}  ни expert-override, ни tune${NC}"
+    echo -e "  ${DIM}• Меню «Управление секретами», «Настройки», «Режим эксперта» и${NC}"
+    echo -e "  ${DIM}  команды tune/expert set становятся недоступны${NC}"
+    echo -e "  ${DIM}• Изменения применяются перезапуском прокси${NC}"
+    echo -e "  ${DIM}• NFT/Zapret2, selfmask, гео-блокировка и бэкапы работают как обычно${NC}"
+}
+
+superexpert_enable() {
+    _require_manager_mode || return 1
+    check_root
+
+    if [ "${SUPEREXPERT_ENABLED:-false}" = "true" ]; then
+        log_info "Режим супер эксперта уже включён"
+        return 0
+    fi
+
+    echo ""
+    draw_header "РЕЖИМ СУПЕР ЭКСПЕРТА"
+    echo ""
+    superexpert_show_rules
+    echo ""
+
+    if [ -f "$SUPEREXPERT_FILE" ]; then
+        log_info "Найден сохранённый конфиг супер эксперта — он и будет использован"
+        echo -e "  ${DIM}Файл сохраняется при выключении режима и переиспользуется при включении.${NC}"
+    else
+        echo -e "  ${DIM}Файл будет создан копией текущего рабочего конфига.${NC}"
+    fi
+    echo ""
+    echo -en "  ${BOLD}Включить режим супер эксперта? [y/N]:${NC} "
+    local _yn; read_line _yn
+    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
+
+    if [ ! -f "$SUPEREXPERT_FILE" ]; then
+        # Копию делаем с действующего конфига; если его ещё нет — генерируем
+        if [ ! -f "${CONFIG_DIR}/config.toml" ]; then
+            log_info "Рабочего конфига пока нет — генерируем его из текущих настроек"
+            generate_telemt_config || { log_error "Не удалось сгенерировать конфиг"; return 1; }
+        fi
+        mkdir -p "$INSTALL_DIR"
+        cp "${CONFIG_DIR}/config.toml" "$SUPEREXPERT_FILE" || {
+            log_error "Не удалось создать ${SUPEREXPERT_FILE}"; return 1; }
+        chmod 600 "$SUPEREXPERT_FILE"
+        log_success "Создан ваш конфиг: ${SUPEREXPERT_FILE}"
+    fi
+
+    SUPEREXPERT_ENABLED="true"
+    save_settings
+    log_success "Режим супер эксперта включён"
+    echo ""
+    echo -e "  ${BOLD}Правьте файл:${NC} ${SUPEREXPERT_FILE}"
+    echo -e "  ${DIM}Применить изменения: перезапуск прокси (меню «Управление прокси»)${NC}"
+    echo ""
+    echo -en "  ${BOLD}Открыть файл в редакторе сейчас? [Y/n]:${NC} "
+    local _e; read_line _e
+    [[ "$_e" =~ ^[nN] ]] || superexpert_edit
+    return 0
+}
+
+superexpert_disable() {
+    _require_manager_mode || return 1
+    check_root
+
+    if [ "${SUPEREXPERT_ENABLED:-false}" != "true" ]; then
+        log_info "Режим супер эксперта не включён"
+        return 0
+    fi
+
+    echo ""
+    log_warn "Конфиг снова будет генерировать MTProxyL — из своих настроек и секретов"
+    echo -e "  ${DIM}Ваш файл ${SUPEREXPERT_FILE} не удаляется: при повторном включении${NC}"
+    echo -e "  ${DIM}режима будет использован он же, а не новая копия.${NC}"
+    echo ""
+    echo -en "  ${BOLD}Выключить режим супер эксперта? [y/N]:${NC} "
+    local _yn; read_line _yn
+    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
+
+    SUPEREXPERT_ENABLED="false"
+    save_settings
+    log_success "Режим супер эксперта выключен (файл сохранён)"
+
+    generate_telemt_config && log_success "Конфиг пересобран из настроек MTProxyL" \
+        || log_error "Ошибка генерации конфига"
+    superexpert_offer_restart
+}
+
+superexpert_edit() {
+    _require_manager_mode || return 1
+    check_root
+
+    if [ ! -f "$SUPEREXPERT_FILE" ]; then
+        log_error "Файл ${SUPEREXPERT_FILE} не найден — сначала включите режим"
+        return 1
+    fi
+
+    local _editor="${EDITOR:-nano}"
+    command -v "$_editor" &>/dev/null || _editor="vi"
+    local _before; _before=$(md5sum "$SUPEREXPERT_FILE" 2>/dev/null | awk '{print $1}')
+    "$_editor" "$SUPEREXPERT_FILE"
+    local _after; _after=$(md5sum "$SUPEREXPERT_FILE" 2>/dev/null | awk '{print $1}')
+
+    if [ "$_before" = "$_after" ]; then
+        log_info "Файл не изменён"
+        return 0
+    fi
+    log_success "Файл изменён"
+
+    if _superexpert_active; then
+        generate_telemt_config || { log_error "Не удалось применить конфиг"; return 1; }
+        superexpert_offer_restart
+    fi
+}
+
+superexpert_offer_restart() {
+    is_proxy_running || { log_info "Прокси не запущен — изменения применятся при запуске"; return 0; }
+    echo -en "  ${BOLD}Перезапустить прокси, чтобы применить? [Y/n]:${NC} "
+    local _r; read_line _r
+    [[ "$_r" =~ ^[nN] ]] && { log_info "Позже: меню «Управление прокси» → Перезапустить"; return 0; }
+    load_secrets 2>/dev/null || true
+    restart_proxy_container || true
+}
+
+# Пересоздать файл супер эксперта из конфига, который сгенерировал бы сам
+# менеджер (текущие настройки + секреты). Полезно, когда пользователь
+# «заигрался» и хочет начать с чистой рабочей базы.
+superexpert_recreate() {
+    _require_manager_mode || return 1
+    check_root
+
+    echo ""
+    if [ -f "$SUPEREXPERT_FILE" ]; then
+        log_warn "Текущий ${SUPEREXPERT_FILE} будет перезаписан"
+        echo -e "  ${DIM}Копия старого файла останется рядом с суффиксом .bak${NC}"
+    fi
+    echo -e "  ${DIM}Новый файл будет собран из настроек и секретов MTProxyL.${NC}"
+    echo -en "  ${BOLD}Пересоздать? [y/N]:${NC} "
+    local _yn; read_line _yn
+    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
+
+    # Генерируем эталонный конфиг менеджера во временный файл: включённый
+    # режим супер эксперта иначе просто скопировал бы сам себя.
+    local _saved="${SUPEREXPERT_ENABLED:-false}"
+    SUPEREXPERT_ENABLED="false"
+    generate_telemt_config || { SUPEREXPERT_ENABLED="$_saved"; log_error "Не удалось сгенерировать конфиг"; return 1; }
+    SUPEREXPERT_ENABLED="$_saved"
+
+    [ -f "$SUPEREXPERT_FILE" ] && cp "$SUPEREXPERT_FILE" "${SUPEREXPERT_FILE}.bak" 2>/dev/null
+    cp "${CONFIG_DIR}/config.toml" "$SUPEREXPERT_FILE" || { log_error "Не удалось записать ${SUPEREXPERT_FILE}"; return 1; }
+    chmod 600 "$SUPEREXPERT_FILE"
+    log_success "Файл пересоздан: ${SUPEREXPERT_FILE}"
+
+    if _superexpert_active; then
+        generate_telemt_config || true
+        superexpert_offer_restart
+    fi
+}
+
+handle_superexpert_command() {
+    local _sub="${1:-status}"
+    case "$_sub" in
+        on|enable)   superexpert_enable ;;
+        off|disable) superexpert_disable ;;
+        edit)        superexpert_edit ;;
+        status|"")
+            echo -e "  ${BOLD}Режим супер эксперта:${NC} $(superexpert_status_line)"
+            [ -f "$SUPEREXPERT_FILE" ] && echo -e "  ${BOLD}Файл:${NC} ${SUPEREXPERT_FILE}" ;;
+        *)
+            echo -e "  ${BOLD}Режим супер эксперта:${NC}"
+            echo -e "    ${GREEN}superexpert status${NC}   Текущее состояние"
+            echo -e "    ${GREEN}superexpert on${NC}       Включить (создать/взять свой конфиг)"
+            echo -e "    ${GREEN}superexpert off${NC}      Выключить (файл сохраняется)"
+            echo -e "    ${GREEN}superexpert edit${NC}     Правка конфига в \$EDITOR/nano" ;;
+    esac
+}
+
 # ── Генерация config.toml ────────────────────────────────────
 generate_telemt_config() {
     mkdir -p "$CONFIG_DIR"; chmod 700 "$CONFIG_DIR"
+
+    # Режим супер эксперта: конфиг ведёт пользователь, мы только кладём его
+    # файл на место config.toml. Ни настройки, ни секреты, ни override не
+    # применяются — это и есть смысл режима.
+    if _superexpert_active; then
+        cp "$SUPEREXPERT_FILE" "${CONFIG_DIR}/config.toml" || {
+            log_error "Не удалось применить ${SUPEREXPERT_FILE}"; return 1; }
+        chmod 644 "${CONFIG_DIR}/config.toml"
+        log_info "Режим супер эксперта: конфиг взят из ${SUPEREXPERT_FILE}"
+        _superexpert_sync_port
+        return 0
+    fi
 
     local domain="${PROXY_DOMAIN:-cloudflare.com}"
     local mask_enabled="${MASKING_ENABLED:-true}"
@@ -345,6 +594,7 @@ _expert_apply_prompt() {
 handle_expert_command() {
     local subcmd="${1:-list}"; shift 2>/dev/null || true
     [ "$subcmd" = "list" ] || _require_manager_mode || return 1
+    [ "$subcmd" = "list" ] || _require_no_superexpert || return 1
     case "$subcmd" in
         list)  show_expert_overrides ;;
         set)

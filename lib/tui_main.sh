@@ -46,6 +46,9 @@ show_main_menu() {
             conns="${TARGET_STATS_CONNS:-0}"
             active="${TARGET_STATS_ACTIVE:-0}"
             disabled="${TARGET_STATS_DISABLED:-0}"
+        elif _superexpert_active; then
+            # Пользователи заданы в конфиге супер эксперта, а не в secrets.conf
+            active=$(_superexpert_users 2>/dev/null | grep -c . || echo 0)
         else
             for i in "${!SECRETS_ENABLED[@]}"; do
                 [ "${SECRETS_ENABLED[$i]}" = "true" ] && active=$((active+1)) || disabled=$((disabled+1))
@@ -62,6 +65,12 @@ show_main_menu() {
             fi
         else
             echo -e "  ${BOLD}Движок:${NC}      telemt v$(get_telemt_version)  ${BOLD}Статус:${NC} ${status_str}"
+            # Показываем только когда режим включён — выключенный не упоминаем
+            if _superexpert_active; then
+                echo -e "  ${YELLOW}${BOLD}Режим супер эксперта включён${NC} ${DIM}(конфиг: ${SUPEREXPERT_FILE})${NC}"
+            elif [ "${SUPEREXPERT_ENABLED:-false}" = "true" ]; then
+                echo -e "  ${RED}${BOLD}Режим супер эксперта включён, но файл не найден${NC}"
+            fi
             # Контейнер есть, но не работает (например, порт занят и он
             # падает в цикле) — показываем причину, а не просто «ОСТАНОВЛЕН».
             if [ "$_running" != "true" ]; then
@@ -85,6 +94,9 @@ show_main_menu() {
                 echo -e "  ${BOLD}Трафик:${NC}      ${DIM}н/д — ${_api_why:-API цели недоступен}${NC}"
                 echo -e "  ${BOLD}Секреты:${NC}     ${DIM}н/д${NC}"
             fi
+        elif _superexpert_active; then
+            echo -e "  ${BOLD}Трафик:${NC}      ${SYM_DOWN} $(format_bytes "$t_in")  ${SYM_UP} $(format_bytes "$t_out")  ${BOLD}Соед.:${NC} ${conns}"
+            echo -e "  ${BOLD}Секреты:${NC}     ${active} ${DIM}(из вашего конфига)${NC}"
         else
             echo -e "  ${BOLD}Трафик:${NC}      ${SYM_DOWN} $(format_bytes "$t_in")  ${SYM_UP} $(format_bytes "$t_out")  ${BOLD}Соед.:${NC} ${conns}"
             echo -e "  ${BOLD}Секреты:${NC}     ${active} активных / ${disabled} выключенных"
@@ -181,12 +193,13 @@ show_main_menu() {
             echo -e "  ${BRIGHT_CYAN}[8]${NC}   Движок Telemt"
             echo -e "  ${BRIGHT_CYAN}[9]${NC}   Обновление и бэкапы"
             echo -e "  ${BRIGHT_CYAN}[10]${NC}  Режим эксперта (override поверх config.toml)"
-            echo -e "  ${BRIGHT_CYAN}[11]${NC}  Дополнения (утилиты)"
-            echo -e "  ${BRIGHT_CYAN}[12]${NC}  Цель / режим (Manager ⇄ Reanimator)"
-            echo -e "  ${BRIGHT_CYAN}[13]${NC}  Информация"
+            echo -e "  ${BRIGHT_CYAN}[11]${NC}  Режим супер эксперта (свой config.toml)"
+            echo -e "  ${BRIGHT_CYAN}[12]${NC}  Дополнения (утилиты)"
+            echo -e "  ${BRIGHT_CYAN}[13]${NC}  Цель / режим (Manager ⇄ Reanimator)"
+            echo -e "  ${BRIGHT_CYAN}[14]${NC}  Информация"
             echo ""
-            echo -e "  ${BRIGHT_CYAN}[14]${NC}  Установка / переустановка"
-            echo -e "  ${RED}[15]${NC}  Удаление"
+            echo -e "  ${BRIGHT_CYAN}[15]${NC}  Установка / переустановка"
+            echo -e "  ${RED}[16]${NC}  Удаление"
             echo -e "  ${BRIGHT_CYAN}[0]${NC}   Выход"
             echo ""
             choice=$(read_choice "выбор" "0")
@@ -201,11 +214,12 @@ show_main_menu() {
                 8)  tui_engine_menu ;;
                 9)  tui_backup_menu ;;
                 10) tui_expert_menu ;;
-                11) tui_addons_menu ;;
-                12) tui_target_menu ;;
-                13) show_server_info; press_any_key ;;
-                14) run_installer ;;
-                15) uninstall; exit 0 ;;
+                11) tui_superexpert_menu ;;
+                12) tui_addons_menu ;;
+                13) tui_target_menu ;;
+                14) show_server_info; press_any_key ;;
+                15) run_installer ;;
+                16) uninstall; exit 0 ;;
                 0)  exit 0 ;;
             esac
         fi
