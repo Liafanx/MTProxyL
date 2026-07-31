@@ -104,7 +104,12 @@ panel_install() {
 
     echo ""
     log_info "Панель можно собрать из исходников ветки ${GITHUB_BRANCH}"
-    log_info "Потребуются git, Go 1.25+ и Node.js 20+, сборка займёт несколько минут"
+    if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+        log_info "Сборка пойдёт в Docker — тулчейн на сервере не останется"
+    else
+        log_warn "Docker недоступен: понадобятся Go 1.25+ и Node.js 20+ на сервере"
+    fi
+    log_info "Нужен git; сборка занимает несколько минут"
     echo -en "  ${BOLD}Собрать из исходников? [y/N]:${NC} "
     local _yn; read_line _yn
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 1; }

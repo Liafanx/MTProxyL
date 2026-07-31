@@ -682,8 +682,9 @@ sh install-panel.sh install
 
 > Панель выпускается отдельно от MTProxyL — её релизы помечены тегом
 > `mtproxyl-panel-vX.Y.Z`. Пока такого релиза нет, панель можно собрать прямо
-> из ветки: `sh install-panel.sh install --from-source=dev` (нужны `git`,
-> Go 1.25+ и Node.js 20+). `mtproxyl panel install` предложит это сам.
+> из ветки: `sh install-panel.sh install --from-source=dev`. При наличии Docker
+> сборка идёт в нём и не оставляет тулчейн на сервере; иначе понадобятся
+> Go 1.25+ и Node.js 20+. `mtproxyl panel install` предложит это сам.
 
 ### Управление
 

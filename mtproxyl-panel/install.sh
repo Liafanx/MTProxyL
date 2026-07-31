@@ -695,10 +695,8 @@ do_purge() {
 build_from_source() {
   _branch="${1:-main}"
 
-  for _cmd in git go npm; do
-    command -v "$_cmd" >/dev/null 2>&1 \
-      || die "Building from source needs '$_cmd'. Install Go 1.25+, Node.js 20+ and git, or use a published release."
-  done
+  command -v git >/dev/null 2>&1 \
+    || die "Building from source needs 'git'. Install it and re-run."
 
   ensure_temp_dir
   _src="$TEMP_DIR/src"
@@ -709,17 +707,66 @@ build_from_source() {
 
   [ -d "$_src/mtproxyl-panel" ] || die "Branch '$_branch' has no mtproxyl-panel/ directory"
 
+  # Docker — предпочтительный путь: тулчейн живёт в контейнере и не остаётся
+  # на сервере. MTProxyL так же собирает telemt, поэтому Docker обычно уже есть.
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    build_in_docker "$_src/mtproxyl-panel" "$_branch"
+  elif command -v go >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+    build_natively "$_src/mtproxyl-panel" "$_branch"
+  else
+    say "Neither Docker nor a Go/Node toolchain is available."
+    say "Pick one:"
+    say "  - install Docker (MTProxyL can do it: mtproxyl install), or"
+    say "  - install Go 1.25+ and Node.js 20+, or"
+    say "  - publish a ${RELEASE_TAG_PREFIX}X.Y.Z release and install from it"
+    die "No way to build from source"
+  fi
+}
+
+build_in_docker() {
+  _dir="$1"
+  _branch="$2"
+  _img="mtproxyl-panel-build:${_branch}"
+  # Собираем только стадию с бинарником — рантайм-образ нам не нужен.
+  _arch=$(detect_arch)
+  case "$_arch" in
+    x86_64)  _goarch="amd64" ;;
+    aarch64) _goarch="arm64" ;;
+    *)       die "Unsupported architecture for build: $_arch" ;;
+  esac
+
+  say "Building in Docker (this takes a few minutes)..."
+  docker build --target backend \
+    --build-arg "TARGETARCH=${_goarch}" \
+    --build-arg "VERSION=source-${_branch}" \
+    -t "$_img" "$_dir" \
+    || die "Docker build failed"
+
+  # Бинарник достаём из промежуточного контейнера: запускать его не нужно.
+  _cid=$(docker create "$_img") || die "Could not create build container"
+  docker cp "${_cid}:/app/mtproxyl-panel" "$_dir/mtproxyl-panel" \
+    || { docker rm -f "$_cid" >/dev/null 2>&1; die "Could not extract the binary"; }
+  docker rm -f "$_cid" >/dev/null 2>&1 || true
+  docker rmi "$_img" >/dev/null 2>&1 || true
+
+  install_binary "$_dir/mtproxyl-panel" "$PANEL_BINARY_PATH"
+  say "Installed $PANEL_BINARY_PATH (built from $_branch in Docker)"
+}
+
+build_natively() {
+  _dir="$1"
+  _branch="$2"
+
   say "Building frontend (this takes a few minutes)..."
-  ( cd "$_src/mtproxyl-panel/frontend" && npm ci --no-audit --no-fund && npm run build ) \
+  ( cd "$_dir/frontend" && npm ci --no-audit --no-fund && npm run build ) \
     || die "Frontend build failed"
 
   say "Building binary..."
-  # Собираем ровно так же, как релизный Makefile: статический бинарник со
-  # встроенным фронтендом.
-  ( cd "$_src/mtproxyl-panel" && CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=source" -o mtproxyl-panel . ) \
+  # Как в релизном Makefile: статический бинарник со встроенным фронтендом.
+  ( cd "$_dir" && CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=source-${_branch}" -o mtproxyl-panel . ) \
     || die "Backend build failed"
 
-  install_binary "$_src/mtproxyl-panel/mtproxyl-panel" "$PANEL_BINARY_PATH"
+  install_binary "$_dir/mtproxyl-panel" "$PANEL_BINARY_PATH"
   say "Installed $PANEL_BINARY_PATH (built from $_branch)"
 }
 
