@@ -18,13 +18,15 @@ const navItems = [
 
 // Shown only when the MTProxyL bridge is enabled: on a plain telemt install
 // these pages have nothing to talk to.
+// managerOnly — разделы, которые MTProxyL отклоняет в режиме реаниматора:
+// они требуют владения конфигом движка.
 const mtproxylNavItems = [
-  { to: '/mode', icon: ToggleLeft, label: 'Режим работы' },
-  { to: '/selfmask', icon: Globe, label: 'Selfmask' },
-  { to: '/backups', icon: Archive, label: 'Бэкапы' },
-  { to: '/nft', icon: ShieldAlert, label: 'Лимитер и защита' },
-  { to: '/geoblock', icon: MapPin, label: 'Блокировка стран' },
-  { to: '/routes', icon: Route, label: 'Маршруты' },
+  { to: '/mode', icon: ToggleLeft, label: 'Режим работы', managerOnly: false },
+  { to: '/selfmask', icon: Globe, label: 'Selfmask', managerOnly: false },
+  { to: '/nft', icon: ShieldAlert, label: 'Лимитер и защита', managerOnly: false },
+  { to: '/geoblock', icon: MapPin, label: 'Блокировка стран', managerOnly: false },
+  { to: '/backups', icon: Archive, label: 'Бэкапы', managerOnly: true },
+  { to: '/routes', icon: Route, label: 'Маршруты', managerOnly: true },
 ];
 
 interface SidebarProps {
@@ -35,7 +37,7 @@ interface SidebarProps {
 export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
   const { logout, username } = useAuth();
   const { theme, toggle: toggleTheme } = useTheme();
-  const { enabled: mtproxylEnabled } = useMtproxyl();
+  const { enabled: mtproxylEnabled, mode: mtproxylMode } = useMtproxyl();
 
   return (
     <>
@@ -91,7 +93,9 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
               <div className="pt-3 pb-1 px-3 text-xs font-medium text-text-secondary/70 uppercase tracking-wide">
                 MTProxyL
               </div>
-              {mtproxylNavItems.map(({ to, icon: Icon, label }) => (
+              {mtproxylNavItems
+                .filter((i) => !i.managerOnly || mtproxylMode === 'manager')
+                .map(({ to, icon: Icon, label }) => (
                 <NavLink
                   key={to}
                   to={to}

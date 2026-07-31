@@ -26,19 +26,42 @@ panel_status_line() {
         return
     fi
     local _ver; _ver=$(panel_version)
+    # Префикс "v" только для номерных версий: "vsource-dev" выглядит опечаткой.
+    local _vs=""
+    if [ -n "$_ver" ]; then
+        case "$_ver" in
+            [0-9]*) _vs=" (v${_ver})" ;;
+            *)      _vs=" (${_ver})" ;;
+        esac
+    fi
     if systemctl is-active "$PANEL_SERVICE" &>/dev/null; then
-        echo -e "${GREEN}работает${NC}${_ver:+ (v${_ver})}"
+        echo -e "${GREEN}работает${NC}${_vs}"
     else
-        echo -e "${YELLOW}установлена, не запущена${NC}${_ver:+ (v${_ver})}"
+        echo -e "${YELLOW}установлена, не запущена${NC}${_vs}"
     fi
 }
 
 # Адрес, по которому панель отвечает — читаем из её конфига, чтобы не гадать.
+# 0.0.0.0 означает «на всех интерфейсах», поэтому подставляем реальный IP
+# сервера: ссылка вида http://:8080 никуда не ведёт.
 panel_listen_addr() {
     local _cfg="${PANEL_CONFIG_DIR}/config.toml"
     [ -f "$_cfg" ] || return 1
-    grep -oE '^[[:space:]]*listen[[:space:]]*=[[:space:]]*"[^"]+"' "$_cfg" 2>/dev/null \
-        | head -1 | sed 's/.*"\([^"]*\)".*/\1/'
+    local _listen
+    _listen=$(grep -oE '^[[:space:]]*listen[[:space:]]*=[[:space:]]*"[^"]+"' "$_cfg" 2>/dev/null \
+        | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+    [ -n "$_listen" ] || return 1
+
+    local _host="${_listen%:*}" _port="${_listen##*:}"
+    case "$_host" in
+        ""|"0.0.0.0"|"::"|"[::]")
+            local _ip; _ip=$(get_public_ip 2>/dev/null)
+            [ -n "$_ip" ] || _ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+            [ -n "$_ip" ] || _ip="<адрес-сервера>"
+            echo "${_ip}:${_port}"
+            ;;
+        *) echo "$_listen" ;;
+    esac
 }
 
 panel_install() {
@@ -98,10 +121,6 @@ panel_install() {
     # панели ещё нет; в этом случае можно собрать её прямо из ветки.
     echo ""
     log_warn "Установка из релиза не удалась (причина выше)"
-    if panel_installed; then
-        return 1
-    fi
-
     echo ""
     log_info "Панель можно собрать из исходников ветки ${GITHUB_BRANCH}"
     if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
@@ -124,7 +143,7 @@ _panel_install_report() {
     if panel_installed; then
         log_success "Панель установлена"
         local _addr; _addr=$(panel_listen_addr)
-        [ -n "$_addr" ] && log_info "Адрес: http://${_addr#0.0.0.0}"
+        [ -n "$_addr" ] && log_info "Адрес: http://${_addr}"
     fi
 }
 
@@ -133,15 +152,25 @@ panel_uninstall() {
     panel_installed || { log_info "Панель не установлена"; return 0; }
 
     echo ""
-    log_warn "Панель, её конфиг и права sudo будут удалены"
+    log_warn "Панель, служба и права sudo будут удалены"
     echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
     local _yn; read_line _yn
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
+    # Конфиг хранит логин, хеш пароля и настройки. Если его оставить, повторная
+    # установка пропустит мастер и пароль останется прежним — спрашиваем явно.
+    echo ""
+    echo -e "  ${DIM}Конфиг ${PANEL_CONFIG_DIR}/config.toml хранит логин и пароль.${NC}"
+    echo -e "  ${DIM}Если оставить, при новой установке мастер будет пропущен.${NC}"
+    echo -en "  ${BOLD}Удалить конфиг и данные тоже? [y/N]:${NC} "
+    local _purge; read_line _purge
+    local _cmd="uninstall"
+    [[ "$_purge" =~ ^[yY] ]] && _cmd="purge"
+
     local _tmp; _tmp=$(_mktemp) || return 1
     if curl -fsSL "$PANEL_INSTALLER_URL" -o "$_tmp"; then
         chmod +x "$_tmp"
-        sh "$_tmp" uninstall || log_warn "Установщик вернул ошибку при удалении"
+        sh "$_tmp" "$_cmd" || log_warn "Установщик вернул ошибку при удалении"
     else
         log_warn "Установщик недоступен, удаляем вручную"
         systemctl disable --now "$PANEL_SERVICE" &>/dev/null || true
@@ -150,6 +179,52 @@ panel_uninstall() {
         systemctl daemon-reload &>/dev/null || true
     fi
     log_success "Панель удалена"
+}
+
+# Смена пароля администратора панели.
+#
+# Установщик пропускает мастер, если конфиг уже есть, поэтому после
+# переустановки пароль иначе было бы не поменять.
+panel_password() {
+    check_root || return 1
+    panel_installed || { log_error "Панель не установлена"; return 1; }
+
+    local _cfg="${PANEL_CONFIG_DIR}/config.toml"
+    [ -f "$_cfg" ] || { log_error "Конфиг не найден: ${_cfg}"; return 1; }
+
+    echo ""
+    echo -en "  ${BOLD}Новый пароль администратора:${NC} "
+    local _p1; read -rs _p1; echo ""
+    [ -n "$_p1" ] || { log_error "Пароль не может быть пустым"; return 1; }
+    echo -en "  ${BOLD}Повторите пароль:${NC} "
+    local _p2; read -rs _p2; echo ""
+    [ "$_p1" = "$_p2" ] || { log_error "Пароли не совпадают"; return 1; }
+
+    # Хеш считает сама панель — тем же кодом, что проверяет его при входе.
+    local _hash
+    _hash=$(printf '%s\n' "$_p1" | "$PANEL_BINARY" hash-password 2>/dev/null) \
+        || { log_error "Не удалось вычислить хеш пароля"; return 1; }
+    [ -n "$_hash" ] || { log_error "Пустой хеш пароля"; return 1; }
+
+    # Пишем через временный файл, чтобы не оставить конфиг битым при сбое.
+    local _tmp; _tmp=$(_mktemp) || return 1
+    if ! awk -v h="$_hash" '
+        /^[[:space:]]*password_hash[[:space:]]*=/ && !done { print "password_hash = \"" h "\""; done=1; next }
+        { print }
+        END { if (!done) exit 3 }
+    ' "$_cfg" > "$_tmp"; then
+        log_error "В конфиге нет строки password_hash — правьте ${_cfg} вручную"
+        return 1
+    fi
+
+    cat "$_tmp" > "$_cfg"
+    chown mtproxyl-panel:mtproxyl-panel "$_cfg" 2>/dev/null || true
+    chmod 600 "$_cfg"
+    log_success "Пароль изменён"
+
+    systemctl restart "$PANEL_SERVICE" &>/dev/null \
+        && log_info "Панель перезапущена, войдите с новым паролем" \
+        || log_warn "Перезапустите панель вручную: mtproxyl panel restart"
 }
 
 panel_restart() {
@@ -167,7 +242,7 @@ panel_show_status() {
     echo -e "  ${BOLD}Состояние:${NC} $(panel_status_line)"
     if panel_installed; then
         local _addr; _addr=$(panel_listen_addr)
-        [ -n "$_addr" ] && echo -e "  ${BOLD}Адрес:${NC}     http://${_addr#0.0.0.0}"
+        [ -n "$_addr" ] && echo -e "  ${BOLD}Адрес:${NC}     http://${_addr}"
         echo -e "  ${BOLD}Бинарник:${NC}  ${PANEL_BINARY}"
         echo -e "  ${BOLD}Конфиг:${NC}    ${PANEL_CONFIG_DIR}/config.toml"
         echo -e "  ${BOLD}Логи:${NC}      journalctl -u ${PANEL_SERVICE} -f"
@@ -183,12 +258,14 @@ handle_panel_command() {
         install)   panel_install ;;
         uninstall) panel_uninstall ;;
         restart)   panel_restart ;;
+        password)  panel_password ;;
         status)    panel_show_status ;;
         *)
             echo -e "  ${BOLD}MTProxyL-Panel (веб-панель):${NC}"
             echo -e "    ${GREEN}panel status${NC}     Состояние"
             echo -e "    ${GREEN}panel install${NC}    Установить / переустановить"
             echo -e "    ${GREEN}panel restart${NC}    Перезапустить"
+            echo -e "    ${GREEN}panel password${NC}   Сменить пароль администратора"
             echo -e "    ${GREEN}panel uninstall${NC}  Удалить"
             ;;
     esac
@@ -203,8 +280,9 @@ tui_panel_menu() {
         if panel_installed; then
             echo -e "  ${CYAN}[1]${NC}  Перезапустить"
             echo -e "  ${CYAN}[2]${NC}  Переустановить / перенастроить"
-            echo -e "  ${CYAN}[3]${NC}  Показать логи"
-            echo -e "  ${CYAN}[4]${NC}  Удалить"
+            echo -e "  ${CYAN}[3]${NC}  Сменить пароль администратора"
+            echo -e "  ${CYAN}[4]${NC}  Показать логи"
+            echo -e "  ${CYAN}[5]${NC}  Удалить"
         else
             echo -e "  ${CYAN}[1]${NC}  Установить"
             echo ""
@@ -220,8 +298,9 @@ tui_panel_menu() {
             case "$choice" in
                 1) panel_restart; press_any_key ;;
                 2) panel_install; press_any_key ;;
-                3) journalctl -u "$PANEL_SERVICE" -n 50 --no-pager; press_any_key ;;
-                4) panel_uninstall; press_any_key ;;
+                3) panel_password; press_any_key ;;
+                4) journalctl -u "$PANEL_SERVICE" -n 50 --no-pager; press_any_key ;;
+                5) panel_uninstall; press_any_key ;;
                 0|"") return ;;
             esac
         else

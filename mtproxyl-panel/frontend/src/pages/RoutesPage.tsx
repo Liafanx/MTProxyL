@@ -7,6 +7,8 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { ManagerOnlyNotice } from '@/components/ManagerOnlyNotice';
+import { useManagerOnly } from '@/hooks/useMtproxyl';
 import { mtproxylNetApi, type Upstream, type UpstreamSpec } from '@/lib/api';
 
 const EMPTY_SPEC: UpstreamSpec = {
@@ -31,7 +33,14 @@ export function RoutesPage() {
   const [testOutput, setTestOutput] = useState<{ name: string; output: string } | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
 
+  const { allowed, loading: modeLoading } = useManagerOnly();
+
   const load = useCallback(async () => {
+    // В реаниматоре маршруты недоступны — MTProxyL не владеет конфигом цели.
+    if (!allowed) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       setRoutes(await mtproxylNetApi.upstreams());
@@ -41,7 +50,7 @@ export function RoutesPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [allowed]);
 
   useEffect(() => {
     void load();
@@ -113,9 +122,13 @@ export function RoutesPage() {
             «Апстримы и DC» — там показаны дата-центры самого движка.
           </p>
         </div>
-        <Button onClick={() => setAddOpen(true)}>Добавить маршрут</Button>
+        {allowed && <Button onClick={() => setAddOpen(true)}>Добавить маршрут</Button>}
       </div>
 
+      {!modeLoading && !allowed && <ManagerOnlyNotice feature="Исходящие маршруты" />}
+
+      {allowed && (
+        <>
       {error && <ErrorAlert message={error} onRetry={load} />}
 
       <Card>
@@ -195,6 +208,8 @@ export function RoutesPage() {
           )}
         </CardContent>
       </Card>
+        </>
+      )}
 
       <Dialog open={addOpen} onClose={() => setAddOpen(false)}>
         <DialogContent>

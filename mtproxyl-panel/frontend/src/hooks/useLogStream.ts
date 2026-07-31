@@ -88,7 +88,7 @@ export function useLogStream() {
           }));
           break;
         case 'error':
-          setState((prev) => ({ ...prev, error: msg.message ?? 'Unknown error' }));
+          setState((prev) => ({ ...prev, error: msg.message ?? 'Неизвестная ошибка' }));
           break;
       }
     };

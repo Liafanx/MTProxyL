@@ -25,8 +25,8 @@ LEGACY_CONFIG_DIR="/opt/etc/mtproxyl-panel"
 # Conventional installation paths with a non-root service user
 
 # ── Utilities ────────────────────────────────────────────────────────────────
-say()  { printf '[INFO]  %s\n' "$*"; }
-die()  { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
+say()  { printf '[ИНФО]  %s\n' "$*"; }
+die()  { printf '[ОШИБКА] %s\n' "$*" >&2; exit 1; }
 
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then
@@ -53,7 +53,7 @@ ensure_temp_dir() {
 
 command_path() {
   _path=$(command -v "$1" 2>/dev/null || true)
-  [ -n "$_path" ] || die "Required command '$1' not found. Install it and re-run."
+  [ -n "$_path" ] || die "Не найдена команда '$1'. Установите её и повторите запуск."
   echo "$_path"
 }
 
@@ -91,7 +91,7 @@ detect_arch() {
   case "$_arch" in
     x86_64)  echo "x86_64"  ;;
     aarch64) echo "aarch64" ;;
-    *)       die "Unsupported architecture: $_arch" ;;
+    *)       die "Неподдерживаемая архитектура: $_arch" ;;
   esac
 }
 
@@ -121,12 +121,12 @@ install_binary() {
 # ── Create system user ───────────────────────────────────────────────────────
 create_system_user() {
   if id "$SYSTEM_USER" >/dev/null 2>&1; then
-    say "System user '$SYSTEM_USER' already exists"
+    say "Системный пользователь '$SYSTEM_USER' уже существует"
   else
     $SUDO useradd --system --shell /usr/sbin/nologin --home /nonexistent "$SYSTEM_USER" 2>/dev/null \
       || $SUDO adduser --system --shell /usr/sbin/nologin --home /nonexistent --disabled-password "$SYSTEM_USER" 2>/dev/null \
-      || die "Failed to create system user '$SYSTEM_USER'. Create it manually and re-run."
-    say "Created system user '$SYSTEM_USER'"
+      || die "Не удалось создать пользователя '$SYSTEM_USER'. Создайте его вручную и повторите."
+    say "Создан системный пользователь '$SYSTEM_USER'"
   fi
 }
 
@@ -148,33 +148,33 @@ join_telemt_group() {
 
   if [ -n "$_telemt_group" ] && [ "$_telemt_group" != "root" ]; then
     if id -nG "$SYSTEM_USER" 2>/dev/null | tr ' ' '\n' | grep -qx "$_telemt_group"; then
-      say "User '$SYSTEM_USER' already in group '$_telemt_group'"
+      say "Пользователь '$SYSTEM_USER' уже в группе '$_telemt_group'"
     else
       $SUDO usermod -aG "$_telemt_group" "$SYSTEM_USER" 2>/dev/null \
         || $SUDO adduser "$SYSTEM_USER" "$_telemt_group" 2>/dev/null \
-        || { say "WARNING: Could not add '$SYSTEM_USER' to group '$_telemt_group' — add manually for telemt config access"; return; }
-      say "Added '$SYSTEM_USER' to group '$_telemt_group' for telemt config access"
+        || { say "ВНИМАНИЕ: не удалось добавить '$SYSTEM_USER' в группу '$_telemt_group' — добавьте вручную для доступа к конфигу telemt"; return; }
+      say "Пользователь '$SYSTEM_USER' добавлен в группу '$_telemt_group' для доступа к конфигу telemt"
     fi
   else
-    say "WARNING: telemt group not found — panel won't have access to telemt config"
-    say "After installing telemt, re-run this installer or: sudo usermod -aG telemt $SYSTEM_USER"
+    say "ВНИМАНИЕ: группа telemt не найдена — панель не получит доступ к конфигу telemt"
+    say "После установки telemt повторите установку или выполните: sudo usermod -aG telemt $SYSTEM_USER"
   fi
 }
 
 # ── Check required commands ──────────────────────────────────────────────────
 check_deps() {
   for _cmd in curl tar openssl systemctl; do
-    command -v "$_cmd" >/dev/null 2>&1 || die "Required command '$_cmd' not found. Install it and re-run."
+    command -v "$_cmd" >/dev/null 2>&1 || die "Не найдена команда '$_cmd'. Установите её и повторите запуск."
   done
   # sha256sum is optional (used for checksum verification)
   if ! command -v sha256sum >/dev/null 2>&1; then
-    say "WARNING: sha256sum not found - checksum verification will be skipped"
+    say "ВНИМАНИЕ: sha256sum не найден — проверка контрольной суммы будет пропущена"
   fi
 }
 
 # ── Set up directories ──────────────────────────────────────────────────────
 setup_directories() {
-  say "Setting up directories..."
+  say "Создание каталогов..."
   $SUDO mkdir -p "$BIN_DIR"
   $SUDO mkdir -p "$CONFIG_DIR"
   $SUDO mkdir -p "$DATA_DIR/staging"
@@ -185,9 +185,9 @@ setup_directories() {
 
 warn_legacy_install() {
   if [ -e "$LEGACY_BIN_DIR/$BINARY_NAME" ] || [ -d "$LEGACY_CONFIG_DIR" ]; then
-    say "WARNING: Legacy /opt installation detected."
-    say "This installer now uses $PANEL_BINARY_PATH and $CONFIG_FILE."
-    say "Review and remove old /opt paths manually after confirming the new installation works."
+    say "ВНИМАНИЕ: обнаружена старая установка в /opt."
+    say "Установщик теперь использует $PANEL_BINARY_PATH и $CONFIG_FILE."
+    say "Удалите старые пути в /opt вручную, убедившись что новая установка работает."
   fi
 }
 
@@ -215,7 +215,7 @@ install_sudoers_dropin() {
   _telemt_tmp="${_telemt_dir}/.${_telemt_name}.tmp"
   _telemt_backup="${DATA_DIR}/staging/${_telemt_name}.bak"
 
-  say "Installing sudoers drop-in for updater operations..."
+  say "Установка прав sudo для обновления..."
   ensure_temp_dir
   _tmp="$TEMP_DIR/sudoers"
   cat >"$_tmp" <<EOF
@@ -241,12 +241,12 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_tee $_telemt_config
 EOF
 
   if [ -n "$_visudo" ]; then
-    $SUDO "$_visudo" -cf "$_tmp" >/dev/null || die "Generated sudoers file is invalid"
+    $SUDO "$_visudo" -cf "$_tmp" >/dev/null || die "Сгенерированный файл sudoers некорректен"
   fi
 
   $SUDO mkdir -p "$(dirname "$SUDOERS_FILE")"
   $SUDO install -m 0440 "$_tmp" "$SUDOERS_FILE"
-  say "Sudoers drop-in installed to $SUDOERS_FILE"
+  say "Права sudo установлены: $SUDOERS_FILE"
 }
 
 # ── Sudoers for the MTProxyL bridge ─────────────────────────────────────────
@@ -262,7 +262,7 @@ install_mtproxyl_sudoers() {
 
   _visudo=$(command -v visudo 2>/dev/null || true)
 
-  say "Installing sudoers drop-in for MTProxyL commands..."
+  say "Установка прав sudo для команд MTProxyL..."
   ensure_temp_dir
   _tmp="$TEMP_DIR/sudoers-mtproxyl"
 
@@ -318,12 +318,12 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script upstream test [A-Za-z0-9]*
 EOF
 
   if [ -n "$_visudo" ]; then
-    $SUDO "$_visudo" -cf "$_tmp" >/dev/null || die "Generated MTProxyL sudoers file is invalid"
+    $SUDO "$_visudo" -cf "$_tmp" >/dev/null || die "Сгенерированный файл sudoers для MTProxyL некорректен"
   fi
 
   $SUDO mkdir -p "$(dirname "$MTPROXYL_SUDOERS_FILE")"
   $SUDO install -m 0440 "$_tmp" "$MTPROXYL_SUDOERS_FILE"
-  say "MTProxyL sudoers drop-in installed to $MTPROXYL_SUDOERS_FILE"
+  say "Права sudo для MTProxyL установлены: $MTPROXYL_SUDOERS_FILE"
 }
 
 # ── Systemd unit (non-root service with sudoers-backed updates) ─────────────
@@ -377,31 +377,33 @@ prompt_secret() {
 # ── Usage ────────────────────────────────────────────────────────────────────
 usage() {
   cat <<EOF
-MTProxyL-Panel Installer (standard layout, non-root service)
+Установщик MTProxyL-Panel
 
-Creates a dedicated system user '$SYSTEM_USER', installs into standard
-Linux paths, and configures a narrow sudoers drop-in for updater actions.
+Создаёт отдельного системного пользователя '$SYSTEM_USER', ставит панель в
+стандартные пути Linux и настраивает узкие права sudo для обновления и
+для команд MTProxyL.
 
-Usage: $0 <command> [options]
+Использование: $0 <команда> [параметры]
 
-Commands:
-  install [version]   Install or update (default: latest release)
-  uninstall           Remove binary, service, and sudoers drop-in
-  purge               Remove everything including config, data, and user
-  --help              Show this help
+Команды:
+  install [версия]        Установить или обновить (по умолчанию — последний релиз)
+  install --from-source[=ветка]
+                          Собрать из исходников (Docker либо Go+Node)
+  uninstall               Удалить бинарник, службу и права sudo
+  purge                   Удалить всё, включая конфиг, данные и пользователя
+  --help                  Показать эту справку
 
-Examples:
-  $0                  Install latest version
-  $0 install v1.2.0  Install specific version
-  $0 uninstall        Remove service and binary
-  $0 purge            Remove everything
+Примеры:
+  $0 install                            Последний релиз панели
+  $0 install ${RELEASE_TAG_PREFIX}0.1.0        Конкретная версия
+  $0 install --from-source=dev          Сборка из ветки dev
+  $0 uninstall                          Удалить службу и бинарник
+  $0 purge                              Удалить всё
 
-Directories:
-  Binary:   $PANEL_BINARY_PATH
-  Config:   $CONFIG_FILE
-  Data:     $DATA_DIR/
-  Service:  $SERVICE_FILE
-  Sudoers:  $SUDOERS_FILE
+Каталоги:
+  Бинарник: $PANEL_BINARY_PATH
+  Конфиг:   $CONFIG_FILE
+  Данные:   $DATA_DIR
 EOF
 }
 
@@ -411,7 +413,7 @@ EOF
 do_install() {
   _version="${1:-}"
 
-  printf '\n  MTProxyL-Panel Installer (standard layout)\n\n'
+  printf '\n  Установка MTProxyL-Panel\n\n'
 
   # ── Stage 0: Check dependencies ────────────────────────────────────────
   check_deps
@@ -423,9 +425,9 @@ do_install() {
   setup_directories
 
   # ── Stage 2: Detect architecture ─────────────────────────────────────────
-  say "Detecting architecture..."
+  say "Определение архитектуры..."
   ARCH=$(detect_arch)
-  say "Architecture: $ARCH"
+  say "Архитектура: $ARCH"
 
   # ── Stage 3: Obtain the binary ───────────────────────────────────────────
   FROM_SOURCE=false
@@ -437,28 +439,28 @@ do_install() {
     build_from_source "${_branch:-main}"
   elif [ -n "$_version" ]; then
     TAG="$_version"
-    say "Requested version: $TAG"
+    say "Запрошенная версия: $TAG"
   else
-    say "Fetching latest release..."
+    say "Поиск последнего релиза..."
     # The panel shares a repository with MTProxyL, so /releases/latest would
     # return an MTProxyL release that carries no panel assets. Pick the newest
     # tag with the panel prefix instead.
     _releases=$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=100") \
-      || die "Could not reach the GitHub API"
+      || die "Не удалось обратиться к API GitHub"
     # Пустой результат — это «релизов панели пока нет», а не сбой сети:
     # grep вернул бы ненулевой код и увёл в неверное сообщение.
     TAG=$(printf '%s\n' "$_releases" | grep '"tag_name"' | cut -d'"' -f4 \
       | grep "^${RELEASE_TAG_PREFIX}" | head -1 || true)
     if [ -z "$TAG" ]; then
-      say "No ${RELEASE_TAG_PREFIX}* release found in $REPO."
-      say "The panel is released separately from MTProxyL: publish a"
-      say "'${RELEASE_TAG_PREFIX}X.Y.Z' tag, or pass a version explicitly:"
+      say "Релизов ${RELEASE_TAG_PREFIX}* в $REPO не найдено."
+      say "Панель выпускается отдельно от MTProxyL. Опубликуйте тег"
+      say "'${RELEASE_TAG_PREFIX}X.Y.Z' либо укажите версию явно:"
       say "  sh install.sh install ${RELEASE_TAG_PREFIX}0.1.0"
-      say "Or build straight from a branch:"
+      say "Либо соберите прямо из ветки:"
       say "  sh install.sh install --from-source=dev"
-      die "No panel release available"
+      die "Нет доступного релиза панели"
     fi
-    say "Latest version: $TAG"
+    say "Последняя версия: $TAG"
   fi
 
   if [ "$FROM_SOURCE" = "false" ]; then
@@ -467,42 +469,42 @@ do_install() {
   ensure_temp_dir
   TMP_TAR="$TEMP_DIR/$TARBALL"
 
-  say "Downloading $TARBALL..."
+  say "Скачивание $TARBALL..."
   curl -fSL "$URL" -o "$TMP_TAR" \
-    || die "Download failed. Check that version $TAG exists."
+    || die "Скачивание не удалось. Проверьте, что версия $TAG существует."
 
   # Verify SHA256 checksum if available
   if command -v sha256sum >/dev/null 2>&1; then
     CHECKSUM_URL="https://github.com/$REPO/releases/download/$TAG/checksums.txt"
     TMP_CHECKSUMS="$TEMP_DIR/checksums.txt"
     if curl -fsSL "$CHECKSUM_URL" -o "$TMP_CHECKSUMS" 2>/dev/null; then
-      say "Verifying SHA256 checksum..."
+      say "Проверка контрольной суммы SHA256..."
       EXPECTED=$(grep "$TARBALL" "$TMP_CHECKSUMS" | awk '{print $1}')
       if [ -n "$EXPECTED" ]; then
         ACTUAL=$(sha256sum "$TMP_TAR" | awk '{print $1}')
         if [ "$EXPECTED" != "$ACTUAL" ]; then
-          die "Checksum mismatch! Expected: $EXPECTED, Got: $ACTUAL"
+          die "Контрольная сумма не совпала! Ожидалась: $EXPECTED, получена: $ACTUAL"
         fi
-        say "Checksum OK"
+        say "Контрольная сумма верна"
       else
-        say "WARNING: Checksum file found but no entry for $TARBALL - skipping verification"
+        say "ВНИМАНИЕ: в файле сумм нет записи для $TARBALL — проверка пропущена"
       fi
     else
-      say "WARNING: Checksum file not available - skipping verification"
+      say "ВНИМАНИЕ: файл контрольных сумм недоступен — проверка пропущена"
     fi
   fi
 
-  say "Extracting..."
+  say "Распаковка..."
   tar -xzf "$TMP_TAR" -C "$TEMP_DIR"
   EXTRACTED="$TEMP_DIR/mtproxyl-panel-${ARCH}-linux"
 
   install_binary "$EXTRACTED" "$PANEL_BINARY_PATH"
-  say "Installed $PANEL_BINARY_PATH ($TAG)"
+  say "Установлено: $PANEL_BINARY_PATH ($TAG)"
   fi
 
   # ── Stage 4: Configure ──────────────────────────────────────────────────
   if [ -f "$CONFIG_FILE" ]; then
-    say "Config already exists at $CONFIG_FILE - skipping"
+    say "Конфиг уже существует ($CONFIG_FILE) — мастер настройки пропущен"
     TELEMT_PATH=$(toml_value "$CONFIG_FILE" telemt binary_path || true)
     TELEMT_SERVICE=$(toml_value "$CONFIG_FILE" telemt service_name || true)
     [ -n "${TELEMT_PATH:-}" ] || TELEMT_PATH=$(detect_telemt)
@@ -518,36 +520,36 @@ do_install() {
     $SUDO chown "$SYSTEM_USER:$SYSTEM_USER" "$CONFIG_FILE"
     $SUDO chmod 600 "$CONFIG_FILE"
   else
-    say "Setting up initial configuration..."
+    say "Первичная настройка..."
     echo ""
 
-    TELEMT_URL=$(prompt "Telemt API URL" "http://127.0.0.1:9091")
-    TELEMT_AUTH=$(prompt "Telemt API auth header (leave empty if none)" "")
-    ADMIN_USER=$(prompt "Admin username" "admin")
-    ADMIN_PASS=$(prompt_secret "Admin password")
+    TELEMT_URL=$(prompt "Адрес API telemt" "http://127.0.0.1:9091")
+    TELEMT_AUTH=$(prompt "Заголовок авторизации API telemt (пусто, если нет)" "")
+    ADMIN_USER=$(prompt "Логин администратора" "admin")
+    ADMIN_PASS=$(prompt_secret "Пароль администратора")
 
-    [ -n "$ADMIN_PASS" ] || die "Password cannot be empty"
+    [ -n "$ADMIN_PASS" ] || die "Пароль не может быть пустым"
 
     TELEMT_DETECTED=$(detect_telemt)
-    TELEMT_PATH=$(prompt "Telemt binary path" "$TELEMT_DETECTED")
+    TELEMT_PATH=$(prompt "Путь к бинарнику telemt" "$TELEMT_DETECTED")
 
-    TELEMT_SERVICE=$(prompt "Telemt systemd service name" "telemt")
+    TELEMT_SERVICE=$(prompt "Имя systemd-службы telemt" "telemt")
 
     # MTProxyL integration is optional and only offered when it is actually
     # installed here, so a standalone panel install is not bothered by it.
     MTPROXYL_ENABLED="false"
     if [ -x "$MTPROXYL_SCRIPT" ]; then
-      say "MTProxyL detected at $MTPROXYL_SCRIPT"
-      _answer=$(prompt "Enable MTProxyL integration (mode/selfmask/backups)? [y/N]" "y")
+      say "Обнаружен MTProxyL: $MTPROXYL_SCRIPT"
+      _answer=$(prompt "Включить интеграцию с MTProxyL (режим, Selfmask, лимитер)? [y/N]" "y")
       case "$_answer" in
         [yY]*) MTPROXYL_ENABLED="true" ;;
       esac
     fi
 
-    say "Generating password hash..."
+    say "Вычисление хеша пароля..."
     # Use printf to pipe password to avoid heredoc indentation issues
     PASS_HASH=$(printf '%s\n' "$ADMIN_PASS" | "$PANEL_BINARY_PATH" hash-password) \
-      || die "Failed to generate password hash"
+      || die "Не удалось вычислить хеш пароля"
 
     JWT_SECRET=$(openssl rand -hex 32)
 
@@ -586,7 +588,7 @@ session_ttl = \"24h\""
     printf '%s\n' "$_cfg" | write_root "$CONFIG_FILE"
     $SUDO chown "$SYSTEM_USER:$SYSTEM_USER" "$CONFIG_FILE"
     $SUDO chmod 600 "$CONFIG_FILE"
-    say "Config saved to $CONFIG_FILE"
+    say "Конфиг сохранён: $CONFIG_FILE"
   fi
 
   install_sudoers_dropin "$TELEMT_PATH" "$TELEMT_SERVICE" "/etc/telemt/telemt.toml"
@@ -599,27 +601,27 @@ session_ttl = \"24h\""
   fi
 
   # ── Stage 5: Install service ─────────────────────────────────────────────
-  say "Installing systemd service..."
+  say "Установка systemd-службы..."
   generate_service | write_root "$SERVICE_FILE"
   $SUDO systemctl daemon-reload
   $SUDO systemctl enable "$SERVICE_NAME"
   $SUDO systemctl start "$SERVICE_NAME"
-  say "Service $SERVICE_NAME started and enabled"
+  say "Служба $SERVICE_NAME запущена и включена в автозагрузку"
 
   # ── Stage 6: Done ───────────────────────────────────────────────────────
   _ip=$(hostname -I 2>/dev/null | awk '{print $1}') || _ip="<server-ip>"
   printf '\n'
-  say "Installation complete!"
+  say "Установка завершена"
   printf '\n'
-  printf '  Panel URL:     http://%s:8080\n' "$_ip"
-  printf '  System user:   %s\n' "$SYSTEM_USER"
-  printf '  Binary:        %s\n' "$PANEL_BINARY_PATH"
-  printf '  Config:        %s\n' "$CONFIG_FILE"
-  printf '  Data:          %s\n' "$DATA_DIR"
-  printf '  Sudoers:       %s\n' "$SUDOERS_FILE"
-  printf '  Service:       %s\n' "$SERVICE_NAME"
+  printf '  Адрес панели:  http://%s:8080\n' "$_ip"
+  printf '  Пользователь:  %s\n' "$SYSTEM_USER"
+  printf '  Бинарник:      %s\n' "$PANEL_BINARY_PATH"
+  printf '  Конфиг:        %s\n' "$CONFIG_FILE"
+  printf '  Данные:        %s\n' "$DATA_DIR"
+  printf '  Права sudo:    %s\n' "$SUDOERS_FILE"
+  printf '  Служба:        %s\n' "$SERVICE_NAME"
   printf '\n'
-  printf '  Useful commands:\n'
+  printf '  Полезные команды:\n'
   printf '    sudo systemctl status  %s\n' "$SERVICE_NAME"
   printf '    sudo systemctl restart %s\n' "$SERVICE_NAME"
   printf '    sudo journalctl -u %s -f\n' "$SERVICE_NAME"
@@ -630,42 +632,42 @@ session_ttl = \"24h\""
 #  UNINSTALL
 # ═════════════════════════════════════════════════════════════════════════════
 do_uninstall() {
-  printf '\n  MTProxyL-Panel Uninstaller\n\n'
+  printf '\n  Удаление MTProxyL-Panel\n\n'
 
   if [ -f "$SERVICE_FILE" ]; then
-    say "Stopping service..."
+    say "Остановка службы..."
     $SUDO systemctl stop "$SERVICE_NAME" 2>/dev/null || true
     $SUDO systemctl disable "$SERVICE_NAME" 2>/dev/null || true
     $SUDO rm -f "$SERVICE_FILE"
     $SUDO systemctl daemon-reload
-    say "Service removed"
+    say "Служба удалена"
   else
-    say "Service not found - skipping"
+    say "Служба не найдена — пропускаем"
   fi
 
   if [ -f "$BIN_DIR/$BINARY_NAME" ]; then
     $SUDO rm -f "$PANEL_BINARY_PATH"
-    say "Binary removed"
+    say "Бинарник удалён"
   else
-    say "Binary not found - skipping"
+    say "Бинарник не найден — пропускаем"
   fi
 
   if [ -f "$SUDOERS_FILE" ]; then
     $SUDO rm -f "$SUDOERS_FILE"
-    say "Sudoers drop-in removed"
+    say "Права sudo удалены"
   fi
 
   # Leaving this behind would keep granting root commands to a user that is
   # about to be removed.
   if [ -f "$MTPROXYL_SUDOERS_FILE" ]; then
     $SUDO rm -f "$MTPROXYL_SUDOERS_FILE"
-    say "MTProxyL sudoers drop-in removed"
+    say "Права sudo для MTProxyL удалены"
   fi
 
   printf '\n'
-  say "Uninstall complete"
-  say "Config ($CONFIG_DIR) and data ($DATA_DIR) were preserved"
-  say "Run '$0 purge' to remove everything including user '$SYSTEM_USER'"
+  say "Удаление завершено"
+  say "Конфиг ($CONFIG_DIR) и данные ($DATA_DIR) сохранены"
+  say "Полное удаление вместе с пользователем '$SYSTEM_USER': $0 purge"
   printf '\n'
 }
 
@@ -675,17 +677,17 @@ do_uninstall() {
 do_purge() {
   do_uninstall
 
-  say "Removing config and data..."
+  say "Удаление конфига и данных..."
   $SUDO rm -rf "$CONFIG_DIR"
   $SUDO rm -rf "$DATA_DIR"
 
   # Remove system user if no other processes depend on it
   if id "$SYSTEM_USER" >/dev/null 2>&1; then
-    say "Removing system user '$SYSTEM_USER'..."
+    say "Удаление пользователя '$SYSTEM_USER'..."
     $SUDO userdel "$SYSTEM_USER" 2>/dev/null || true
   fi
 
-  say "Purge complete - all mtproxyl-panel files removed"
+  say "Полное удаление завершено — файлы mtproxyl-panel удалены"
   printf '\n'
 }
 
@@ -696,16 +698,16 @@ build_from_source() {
   _branch="${1:-main}"
 
   command -v git >/dev/null 2>&1 \
-    || die "Building from source needs 'git'. Install it and re-run."
+    || die "Для сборки из исходников нужен git. Установите его и повторите."
 
   ensure_temp_dir
   _src="$TEMP_DIR/src"
 
-  say "Cloning $REPO (branch: $_branch)..."
+  say "Клонирование $REPO (ветка: $_branch)..."
   git clone --depth 1 --branch "$_branch" "https://github.com/${REPO}.git" "$_src" \
-    || die "Clone failed. Check the branch name and network access."
+    || die "Клонирование не удалось. Проверьте имя ветки и доступ к сети."
 
-  [ -d "$_src/mtproxyl-panel" ] || die "Branch '$_branch' has no mtproxyl-panel/ directory"
+  [ -d "$_src/mtproxyl-panel" ] || die "В ветке '$_branch' нет каталога mtproxyl-panel/"
 
   # Docker — предпочтительный путь: тулчейн живёт в контейнере и не остаётся
   # на сервере. MTProxyL так же собирает telemt, поэтому Docker обычно уже есть.
@@ -714,12 +716,12 @@ build_from_source() {
   elif command -v go >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
     build_natively "$_src/mtproxyl-panel" "$_branch"
   else
-    say "Neither Docker nor a Go/Node toolchain is available."
-    say "Pick one:"
-    say "  - install Docker (MTProxyL can do it: mtproxyl install), or"
-    say "  - install Go 1.25+ and Node.js 20+, or"
-    say "  - publish a ${RELEASE_TAG_PREFIX}X.Y.Z release and install from it"
-    die "No way to build from source"
+    say "Не найдены ни Docker, ни Go/Node."
+    say "Выберите один из вариантов:"
+    say "  - установить Docker (MTProxyL умеет это сам), либо"
+    say "  - установить Go 1.25+ и Node.js 20+, либо"
+    say "  - опубликовать релиз ${RELEASE_TAG_PREFIX}X.Y.Z и ставить из него"
+    die "Нет способа собрать из исходников"
   fi
 }
 
@@ -732,42 +734,42 @@ build_in_docker() {
   case "$_arch" in
     x86_64)  _goarch="amd64" ;;
     aarch64) _goarch="arm64" ;;
-    *)       die "Unsupported architecture for build: $_arch" ;;
+    *)       die "Неподдерживаемая архитектура для сборки: $_arch" ;;
   esac
 
-  say "Building in Docker (this takes a few minutes)..."
+  say "Сборка в Docker (несколько минут)..."
   docker build --target backend \
     --build-arg "TARGETARCH=${_goarch}" \
     --build-arg "VERSION=source-${_branch}" \
     -t "$_img" "$_dir" \
-    || die "Docker build failed"
+    || die "Сборка в Docker не удалась"
 
   # Бинарник достаём из промежуточного контейнера: запускать его не нужно.
-  _cid=$(docker create "$_img") || die "Could not create build container"
+  _cid=$(docker create "$_img") || die "Не удалось создать контейнер сборки"
   docker cp "${_cid}:/app/mtproxyl-panel" "$_dir/mtproxyl-panel" \
-    || { docker rm -f "$_cid" >/dev/null 2>&1; die "Could not extract the binary"; }
+    || { docker rm -f "$_cid" >/dev/null 2>&1; die "Не удалось извлечь бинарник"; }
   docker rm -f "$_cid" >/dev/null 2>&1 || true
   docker rmi "$_img" >/dev/null 2>&1 || true
 
   install_binary "$_dir/mtproxyl-panel" "$PANEL_BINARY_PATH"
-  say "Installed $PANEL_BINARY_PATH (built from $_branch in Docker)"
+  say "Установлено: $PANEL_BINARY_PATH (собрано из ветки $_branch в Docker)"
 }
 
 build_natively() {
   _dir="$1"
   _branch="$2"
 
-  say "Building frontend (this takes a few minutes)..."
+  say "Сборка фронтенда (несколько минут)..."
   ( cd "$_dir/frontend" && npm ci --no-audit --no-fund && npm run build ) \
-    || die "Frontend build failed"
+    || die "Сборка фронтенда не удалась"
 
-  say "Building binary..."
+  say "Сборка бинарника..."
   # Как в релизном Makefile: статический бинарник со встроенным фронтендом.
   ( cd "$_dir" && CGO_ENABLED=0 go build -ldflags="-s -w -X main.version=source-${_branch}" -o mtproxyl-panel . ) \
-    || die "Backend build failed"
+    || die "Сборка бэкенда не удалась"
 
   install_binary "$_dir/mtproxyl-panel" "$PANEL_BINARY_PATH"
-  say "Installed $PANEL_BINARY_PATH (built from $_branch)"
+  say "Установлено: $PANEL_BINARY_PATH (собрано из ветки $_branch)"
 }
 
 # ═════════════════════════════════════════════════════════════════════════════

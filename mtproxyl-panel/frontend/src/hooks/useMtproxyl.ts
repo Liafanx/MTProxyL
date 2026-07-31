@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { mtproxylApi, type MtproxylOperation } from '@/lib/api';
+import { mtproxylApi, type MtproxylMode, type MtproxylOperation } from '@/lib/api';
 
 /**
  * Tracks whether the MTProxyL bridge is available.
@@ -9,35 +9,66 @@ import { mtproxylApi, type MtproxylOperation } from '@/lib/api';
  */
 export function useMtproxylAvailability() {
   const [enabled, setEnabled] = useState(false);
+  const [mode, setMode] = useState<MtproxylMode | ''>('');
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    let cancelled = false;
-    mtproxylApi
-      .status()
-      .then((s) => {
-        if (!cancelled) setEnabled(s.enabled);
-      })
-      .catch(() => {
-        if (!cancelled) setEnabled(false);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+  const refresh = useCallback(async () => {
+    try {
+      const s = await mtproxylApi.status();
+      setEnabled(s.enabled);
+      setMode(s.mode);
+    } catch {
+      setEnabled(false);
+      setMode('');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  return { enabled, loading };
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  return { enabled, mode, loading, refresh };
 }
 
-export const MtproxylContext = createContext<{ enabled: boolean; loading: boolean }>({
+interface MtproxylState {
+  enabled: boolean;
+  mode: MtproxylMode | '';
+  loading: boolean;
+  refresh?: () => Promise<void>;
+}
+
+export const MtproxylContext = createContext<MtproxylState>({
   enabled: false,
+  mode: '',
   loading: true,
 });
 
 export const useMtproxyl = () => useContext(MtproxylContext);
+
+/**
+ * Часть возможностей MTProxyL существует только в режиме manager: бэкапы и
+ * исходящие маршруты завязаны на владение конфигом, и в реаниматоре сам
+ * MTProxyL их отклоняет. Прятать их надёжнее, чем показывать заведомо
+ * падающие кнопки.
+ */
+export const useManagerOnly = () => {
+  const { mode, loading } = useMtproxyl();
+  return { allowed: mode === 'manager', mode, loading };
+};
+
+/**
+ * Относится ли операция к текущей странице.
+ *
+ * Имя операции строится как "область:действие" (mode:manager, selfmask:setup,
+ * backup:restore, nft:apply). Страница без указанной области принимает любые.
+ */
+function belongsHere(op: MtproxylOperation, scope?: string[]): boolean {
+  if (!scope || scope.length === 0) return true;
+  if (!op.name) return op.phase === 'idle';
+  return scope.some((prefix) => op.name!.startsWith(prefix));
+}
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -47,13 +78,15 @@ const POLL_INTERVAL_MS = 2000;
  * Mode switches, selfmask setup and restores run in the background on the
  * server, so the UI has to poll rather than await a response.
  */
-export function useMtproxylOperation(onFinished?: () => void) {
+export function useMtproxylOperation(onFinished?: () => void, scope?: string[]) {
   const [operation, setOperation] = useState<MtproxylOperation | null>(null);
   const timer = useRef<number | null>(null);
   // Kept in a ref so restarting the poll loop does not depend on a changing
   // callback identity.
   const finishedRef = useRef(onFinished);
   finishedRef.current = onFinished;
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
 
   const stop = useCallback(() => {
     if (timer.current !== null) {
@@ -87,12 +120,16 @@ export function useMtproxylOperation(onFinished?: () => void) {
 
   // Pick up an operation started elsewhere (another tab, or a page reload
   // mid-run) so the UI does not look idle while the server is busy.
+  //
+  // The operation slot is shared server-side, so a page only adopts one that
+  // belongs to it — otherwise the backups page would display the output of a
+  // selfmask setup that finished minutes ago.
   useEffect(() => {
     let cancelled = false;
     mtproxylApi
       .status()
       .then((s) => {
-        if (cancelled) return;
+        if (cancelled || !belongsHere(s.operation, scopeRef.current)) return;
         setOperation(s.operation);
         if (s.operation.phase === 'running') {
           timer.current = window.setInterval(poll, POLL_INTERVAL_MS);

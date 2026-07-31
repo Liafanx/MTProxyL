@@ -45,7 +45,7 @@ export function GeoblockPage() {
     }
   }, []);
 
-  const { operation, start, running } = useMtproxylOperation(load);
+  const { operation, start, running } = useMtproxylOperation(load, ['geoblock:']);
 
   useEffect(() => {
     void load();

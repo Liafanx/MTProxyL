@@ -22,12 +22,12 @@ async function request<T>(base: string, path: string, options?: RequestInit): Pr
 
   if (res.status === 401 && base === TELEMT_BASE) {
     window.location.href = `${BASE}/login`;
-    throw new ApiError('unauthorized', 'Session expired');
+    throw new ApiError('unauthorized', 'Сессия истекла');
   }
 
   const json = await res.json();
   if (!json.ok) {
-    const message = json.error?.message || 'Unknown error';
+    const message = json.error?.message || 'Неизвестная ошибка';
     throw new ApiError(json.error?.code || 'unknown', `${message} (${options?.method || 'GET'} ${path})`);
   }
 
@@ -112,6 +112,8 @@ export interface MtproxylOperation {
 
 export interface MtproxylAvailability {
   enabled: boolean;
+  /** Пусто, если режим не удалось прочитать. */
+  mode: MtproxylMode | '';
   operation: MtproxylOperation;
 }
 

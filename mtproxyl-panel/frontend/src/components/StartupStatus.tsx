@@ -22,7 +22,7 @@ export function StartupStatus({ status, stage, progressPct }: StartupStatusProps
     try {
       await panelApi.post('/telemt/restart');
     } catch (err) {
-      console.error('Restart failed:', err);
+      console.error('Не удалось перезапустить:', err);
     } finally {
       setTimeout(() => setRestarting(false), 5000);
     }
@@ -41,12 +41,12 @@ export function StartupStatus({ status, stage, progressPct }: StartupStatusProps
             {restarting ? (
               <>
                 <Loader2 size={14} className="animate-spin mr-1.5" />
-                Restarting...
+                Перезапуск…
               </>
             ) : (
               <>
                 <RotateCw size={14} className="mr-1.5" />
-                Restart
+                Перезапустить
               </>
             )}
           </Button>
@@ -55,16 +55,16 @@ export function StartupStatus({ status, stage, progressPct }: StartupStatusProps
         {!isReady && (
           <div className="space-y-2">
             <div className="flex justify-between text-xs">
-              <span className="text-text-secondary">Status:</span>
-              <span className="text-text-primary font-medium">{status || 'unknown'}</span>
+              <span className="text-text-secondary">Статус:</span>
+              <span className="text-text-primary font-medium">{status || 'неизвестно'}</span>
             </div>
             <div className="flex justify-between text-xs">
-              <span className="text-text-secondary">Stage:</span>
-              <span className="text-text-primary font-medium">{stage || 'unknown'}</span>
+              <span className="text-text-secondary">Этап:</span>
+              <span className="text-text-primary font-medium">{stage || 'неизвестно'}</span>
             </div>
             <div className="space-y-1">
               <div className="flex justify-between text-xs">
-                <span className="text-text-secondary">Progress:</span>
+                <span className="text-text-secondary">Прогресс:</span>
                 <span className="text-text-primary font-medium">{progressPct?.toFixed(0) || 0}%</span>
               </div>
               <div className="w-full bg-background rounded-full h-2 overflow-hidden">
@@ -80,7 +80,7 @@ export function StartupStatus({ status, stage, progressPct }: StartupStatusProps
         {isReady && (
           <div className="flex items-center gap-2 text-sm text-success">
             <div className="w-2 h-2 bg-success rounded-full animate-pulse" />
-            Service is ready
+            Сервис готов
           </div>
         )}
       </div>

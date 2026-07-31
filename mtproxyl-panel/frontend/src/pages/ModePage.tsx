@@ -57,7 +57,7 @@ export function ModePage() {
     }
   }, []);
 
-  const { operation, start, running } = useMtproxylOperation(load);
+  const { operation, start, running } = useMtproxylOperation(load, ['mode:']);
 
   useEffect(() => {
     void load();

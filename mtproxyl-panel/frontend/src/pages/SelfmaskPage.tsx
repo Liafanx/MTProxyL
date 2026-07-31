@@ -42,7 +42,7 @@ export function SelfmaskPage() {
     }
   }, []);
 
-  const { operation, start, running } = useMtproxylOperation(load);
+  const { operation, start, running } = useMtproxylOperation(load, ['selfmask:']);
 
   useEffect(() => {
     void load();

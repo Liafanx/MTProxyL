@@ -107,7 +107,7 @@ export function NftPage() {
     }
   }, []);
 
-  const { operation, start, running } = useMtproxylOperation(load);
+  const { operation, start, running } = useMtproxylOperation(load, ['nft:']);
 
   useEffect(() => {
     void load();

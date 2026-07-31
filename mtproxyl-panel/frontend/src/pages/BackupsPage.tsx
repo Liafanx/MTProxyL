@@ -6,8 +6,9 @@ import { ErrorAlert } from '@/components/ErrorAlert';
 import { OperationProgress } from '@/components/OperationProgress';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { mtproxylApi, type MtproxylBackup } from '@/lib/api';
-import { useMtproxylOperation } from '@/hooks/useMtproxyl';
+import { useManagerOnly, useMtproxylOperation } from '@/hooks/useMtproxyl';
 import { formatBytes } from '@/lib/utils';
+import { ManagerOnlyNotice } from '@/components/ManagerOnlyNotice';
 
 function formatDate(unixSeconds: number): string {
   if (!unixSeconds) return '—';
@@ -21,7 +22,14 @@ export function BackupsPage() {
   const [creating, setCreating] = useState(false);
   const [restoreTarget, setRestoreTarget] = useState<MtproxylBackup | null>(null);
 
+  const { allowed, loading: modeLoading } = useManagerOnly();
+
   const load = useCallback(async () => {
+    // В реаниматоре MTProxyL отклонит команду — не дёргаем её вовсе.
+    if (!allowed) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       setBackups(await mtproxylApi.backups());
@@ -31,9 +39,9 @@ export function BackupsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [allowed]);
 
-  const { operation, start, running } = useMtproxylOperation(load);
+  const { operation, start, running } = useMtproxylOperation(load, ['backup:']);
 
   useEffect(() => {
     void load();
@@ -74,11 +82,17 @@ export function BackupsPage() {
             Конфиг движка в архив не входит — он генерируется заново при восстановлении.
           </p>
         </div>
-        <Button onClick={createBackup} disabled={creating || running}>
-          {creating ? 'Создание…' : 'Создать бэкап'}
-        </Button>
+        {allowed && (
+          <Button onClick={createBackup} disabled={creating || running}>
+            {creating ? 'Создание…' : 'Создать бэкап'}
+          </Button>
+        )}
       </div>
 
+      {!modeLoading && !allowed && <ManagerOnlyNotice feature="Бэкапы" />}
+
+      {allowed && (
+        <>
       {error && <ErrorAlert message={error} onRetry={load} />}
       <OperationProgress operation={operation} />
 
@@ -140,6 +154,8 @@ export function BackupsPage() {
           )}
         </CardContent>
       </Card>
+        </>
+      )}
 
       <Dialog open={restoreTarget !== null} onClose={() => setRestoreTarget(null)}>
         <DialogContent>

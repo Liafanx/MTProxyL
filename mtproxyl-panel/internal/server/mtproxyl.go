@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -48,11 +49,25 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	}
 
 	// ── Availability ────────────────────────────────────────────────────────
+	// The mode travels with this probe because several MTProxyL features are
+	// manager-only (backups, outbound routes): the UI hides them in reanimator
+	// mode rather than offering buttons that are guaranteed to fail.
 	mux.Handle("GET /api/mtproxyl/status", protected(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
+		resp := map[string]any{
 			"enabled":   client.Enabled(),
 			"operation": runner.Status(),
-		}})
+			"mode":      "",
+		}
+		if client.Enabled() {
+			// A failure here must not break the probe: the UI still needs to
+			// know the bridge is on, even if the mode could not be read.
+			if st, err := client.GetMode(r.Context()); err == nil {
+				resp["mode"] = string(st.Mode)
+			} else {
+				log.Printf("[mtproxyl] could not read mode: %s", err)
+			}
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: resp})
 	}))
 
 	// ── Mode ────────────────────────────────────────────────────────────────
