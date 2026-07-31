@@ -16,6 +16,9 @@ import { LogsPage } from '@/pages/LogsPage';
 import { ModePage } from '@/pages/ModePage';
 import { SelfmaskPage } from '@/pages/SelfmaskPage';
 import { BackupsPage } from '@/pages/BackupsPage';
+import { NftPage } from '@/pages/NftPage';
+import { GeoblockPage } from '@/pages/GeoblockPage';
+import { RoutesPage } from '@/pages/RoutesPage';
 import { MtproxylContext, useMtproxylAvailability } from '@/hooks/useMtproxyl';
 
 function AuthenticatedApp() {
@@ -52,6 +55,9 @@ function AuthenticatedApp() {
           <Route path="/mode" element={<ModePage />} />
           <Route path="/selfmask" element={<SelfmaskPage />} />
           <Route path="/backups" element={<BackupsPage />} />
+          <Route path="/nft" element={<NftPage />} />
+          <Route path="/geoblock" element={<GeoblockPage />} />
+          <Route path="/routes" element={<RoutesPage />} />
         </Route>
       </Routes>
       </MtproxylContext.Provider>

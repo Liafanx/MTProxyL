@@ -147,3 +147,98 @@ export const mtproxylApi = {
   downloadUrl: (name: string) =>
     `${MTPROXYL_BASE}/backups/${encodeURIComponent(name)}/download`,
 };
+
+// ── MTProxyL: лимитер, Zapret2, geoblock, маршруты ──────────────────────────
+
+export interface NftParam {
+  key: string;
+  validator: string;
+  description: string;
+  value: string;
+}
+
+export interface NftStatus {
+  nft: { enabled: boolean; mode: string; service_active: boolean };
+  ios_fix_v1: { enabled: boolean };
+  ios_fix_v2: { enabled: boolean };
+  zapret2: { applied: boolean; service_active: boolean };
+  meko_opt: { applied: boolean };
+  params: NftParam[];
+}
+
+export type NftAction =
+  | 'apply' | 'remove' | 'service' | 'smart'
+  | 'ios1' | 'ios1-off' | 'ios2' | 'ios2-off'
+  | 'zapret2' | 'zapret2-start' | 'zapret2-stop' | 'zapret2-rm' | 'zapret2-wscale'
+  | 'drop';
+
+export interface Upstream {
+  name: string;
+  type: string;
+  address: string;
+  user: string;
+  has_password: boolean;
+  weight: number;
+  iface: string;
+  enabled: boolean;
+}
+
+export interface UpstreamSpec {
+  name: string;
+  type: string;
+  address: string;
+  user: string;
+  password: string;
+  weight: number;
+  iface: string;
+}
+
+export const mtproxylNetApi = {
+  nft: () => request<NftStatus>(MTPROXYL_BASE, '/nft'),
+  setNftParam: (key: string, value: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/nft/params', {
+      method: 'POST',
+      body: JSON.stringify({ key, value }),
+    }),
+  nftAction: (action: NftAction) =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/nft/action', {
+      method: 'POST',
+      body: JSON.stringify({ action }),
+    }),
+  nftPreset: (preset: 'classic' | 'smart') =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/nft/preset', {
+      method: 'POST',
+      body: JSON.stringify({ preset }),
+    }),
+
+  geoblock: () => request<{ countries: string[] }>(MTPROXYL_BASE, '/geoblock'),
+  geoblockAdd: (country: string) =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/geoblock', {
+      method: 'POST',
+      body: JSON.stringify({ country }),
+    }),
+  geoblockRemove: (country: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/geoblock/${encodeURIComponent(country)}`, {
+      method: 'DELETE',
+    }),
+
+  upstreams: () => request<Upstream[]>(MTPROXYL_BASE, '/upstreams'),
+  upstreamAdd: (spec: UpstreamSpec) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/upstreams', {
+      method: 'POST',
+      body: JSON.stringify(spec),
+    }),
+  upstreamRemove: (name: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/upstreams/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    }),
+  upstreamToggle: (name: string, enabled: boolean) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/upstreams/${encodeURIComponent(name)}/toggle`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    }),
+  upstreamTest: (name: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/upstreams/${encodeURIComponent(name)}/test`, {
+      method: 'POST',
+    }),
+};

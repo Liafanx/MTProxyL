@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, LogOut, X, Sun, Moon, ToggleLeft, Globe, Archive } from 'lucide-react';
+import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, LogOut, X, Sun, Moon, ToggleLeft, Globe, Archive, ShieldAlert, MapPin, Route } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
@@ -22,6 +22,9 @@ const mtproxylNavItems = [
   { to: '/mode', icon: ToggleLeft, label: 'Режим работы' },
   { to: '/selfmask', icon: Globe, label: 'Selfmask' },
   { to: '/backups', icon: Archive, label: 'Бэкапы' },
+  { to: '/nft', icon: ShieldAlert, label: 'Лимитер и защита' },
+  { to: '/geoblock', icon: MapPin, label: 'Блокировка стран' },
+  { to: '/routes', icon: Route, label: 'Маршруты' },
 ];
 
 interface SidebarProps {
