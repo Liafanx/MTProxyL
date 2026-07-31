@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Header } from '@/components/layout/Header';
+import { useMtproxyl } from '@/hooks/useMtproxyl';
 import { MetricCard } from '@/components/MetricCard';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { panelApi } from '@/lib/api';
@@ -570,6 +571,11 @@ export function UpdatePage() {
     };
   }, []);
 
+  // MTProxyL manager mode runs telemt in Docker, while this updater assumes a
+  // systemd-managed binary. Rather than ship a flow that would fail, the telemt
+  // sections are hidden and updates are deferred to MTProxyL itself.
+  const { enabled: mtproxylEnabled } = useMtproxyl();
+
   const currentStep = status ? PHASE_STEPS.indexOf(status.phase) : -1;
   const panelCurrentStep = panelStatus ? PHASE_STEPS.indexOf(panelStatus.phase) : -1;
 
@@ -588,11 +594,13 @@ export function UpdatePage() {
                 state={autoStatus.panel}
                 onSave={(cfg) => handleAutoUpdateConfig('panel', cfg)}
               />
-              <AutoUpdateCard
-                title="Telemt"
-                state={autoStatus.telemt}
-                onSave={(cfg) => handleAutoUpdateConfig('telemt', cfg)}
-              />
+              {!mtproxylEnabled && (
+                <AutoUpdateCard
+                  title="Telemt"
+                  state={autoStatus.telemt}
+                  onSave={(cfg) => handleAutoUpdateConfig('telemt', cfg)}
+                />
+              )}
             </div>
           </div>
         )}
@@ -723,6 +731,17 @@ export function UpdatePage() {
         )}
 
         {/* Telemt Update Section */}
+        {mtproxylEnabled ? (
+          <div className="bg-surface rounded-lg p-4 lg:p-5 border border-border">
+            <h2 className="text-xs lg:text-sm font-semibold text-text-primary mb-2">Версия Telemt</h2>
+            <p className="text-sm text-text-secondary">
+              Движком telemt управляет MTProxyL — в режиме Manager он запускается в Docker,
+              а не как systemd-сервис, поэтому встроенный механизм обновления здесь неприменим.
+              Обновляйте движок через MTProxyL: <code className="font-mono text-text-primary">mtproxyl engine</code>.
+            </p>
+          </div>
+        ) : (
+        <>
         {error && <ErrorAlert message={error} />}
 
         <div className="bg-surface rounded-lg p-4 lg:p-5 border border-border">
@@ -847,7 +866,6 @@ export function UpdatePage() {
           </div>
         )}
 
-        {/* Confirm Modals */}
         {showConfirm && selectedRelease && (
           <ConfirmModal
             release={selectedRelease}
@@ -855,6 +873,10 @@ export function UpdatePage() {
             onCancel={() => setShowConfirm(false)}
           />
         )}
+        </>
+        )}
+
+        {/* Confirm Modals */}
         {panelShowConfirm && panelSelectedRelease && (
           <ConfirmModal
             release={panelSelectedRelease}
