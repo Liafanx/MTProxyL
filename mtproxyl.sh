@@ -22,10 +22,9 @@ CONTAINER_NAME="mtproxyl"
 DOCKER_IMAGE_BASE="mtproxyl-telemt"
 GITHUB_REPO="Liafanx/MTProxyL"
 # Ветка, из которой берутся обновления и библиотеки при self-update.
-# На ветке dev держим dev; ПЕРЕД МЕРЖЕМ В main вернуть на main, иначе
-# пользователи начнут обновляться из ветки разработки.
-# Разово переопределяется: MTPROXYL_BRANCH=main mtproxyl update
-GITHUB_BRANCH="${MTPROXYL_BRANCH:-dev}"
+# Релизная — main. Для тестов ветки разработки:
+#   MTPROXYL_BRANCH=dev mtproxyl update
+GITHUB_BRANCH="${MTPROXYL_BRANCH:-main}"
 GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
 REGISTRY_IMAGE="ghcr.io/liafanx/mtproxyl-telemt"
 TELEMT_GITHUB="telemt/telemt"

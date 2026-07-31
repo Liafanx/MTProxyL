@@ -10,9 +10,9 @@ set -e
 
 REPO="Liafanx/MTProxyL"
 INSTALL_DIR="/opt/mtproxyl"
-# Ветка установки. На dev — dev; перед мержем в main вернуть на main.
-# Разово: MTPROXYL_BRANCH=main bash install.sh
-BRANCH="${MTPROXYL_BRANCH:-dev}"
+# Ветка установки. Релизная — main.
+# Для установки ветки разработки: MTPROXYL_BRANCH=dev bash install.sh
+BRANCH="${MTPROXYL_BRANCH:-main}"
 SCRIPT_URL="https://raw.githubusercontent.com/${REPO}/${BRANCH}"
 INSTALL_LOG="/tmp/mtproxyl-install.log"
 

@@ -31,7 +31,7 @@
 - Удаление Zapret2 (и `mtproxyl uninstall`) не убирало watcher Docker bridge: служба `mtproxyl-bridge-watch.service` и её скрипт оставались в системе и продолжали переналагать правила несуществующей таблицы.
 - `mtproxyl status`, `status --json` и `traffic` в режиме Reanimator показывали данные менеджера: версию своего движка, домен из своих настроек и нулевой трафик. Теперь берут цель, её SNI-домен и статистику из её API; в JSON добавлены `mode`, `target`, `config`.
 - Пустой вывод `tput cols` (например, при `TERM=dumb`) приводил к ошибкам сравнения при старте и пустой ширине терминала.
-- Ветка обновления вынесена в переменную `GITHUB_BRANCH` (`MTPROXYL_BRANCH` для разового переопределения) — и в `mtproxyl.sh`, и в `install.sh`.
+- Ветка обновления и установки вынесена в переменную `GITHUB_BRANCH`/`BRANCH` (`mtproxyl.sh` и `install.sh`). Релизная — `main`; ветку разработки можно взять разово: `MTPROXYL_BRANCH=dev mtproxyl update`.
 
 ### Работа с целью
 
