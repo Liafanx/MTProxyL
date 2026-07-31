@@ -28,6 +28,7 @@
   - [NFT SYN Limiter](#cli-nft)
   - [Zapret2 MTProto fix](#cli-zapret2)
   - [Selfmask](#cli-selfmask)
+  - [Веб-панель](#cli-panel)
   - [PQ проверка](#cli-pqcheck)
   - [Безопасность](#cli-security)
   - [Мониторинг](#cli-monitoring)
@@ -39,6 +40,7 @@
 - [NFT SYN Limiter — подробнее](#nft-details)
 - [NFT Smart By-MEKO — подробнее](#nft-smart)
 - [Selfmask — подробнее](#selfmask-details)
+- [Веб-панель MTProxyL-Panel](#panel)
 - [Устаревшие iOS фиксы](#ios-fixes)
 - [Режим эксперта и супер эксперта — подробнее](#expert-details)
 - [Модульная архитектура](#architecture)
@@ -430,6 +432,19 @@ mtproxyl restore file.tar.gz  # Восстановить
 mtproxyl update               # Обновить MTProxyL
 ```
 
+<a id="cli-panel"></a>
+
+### Веб-панель
+
+```bash
+mtproxyl panel status         # Состояние панели
+mtproxyl panel install        # Установить / переустановить
+mtproxyl panel restart        # Перезапустить
+mtproxyl panel uninstall      # Удалить
+```
+
+---
+
 <a id="cli-system"></a>
 
 ### Система
@@ -634,6 +649,66 @@ mask-backend, поэтому «снаружи» домен не открывае
 
 ---
 
+<a id="panel"></a>
+
+## Веб-панель MTProxyL-Panel
+
+Опциональный веб-интерфейс ко всему, что умеет MTProxyL: пользователи, трафик,
+переключение режимов, Selfmask, лимитер, Zapret2, блокировка стран, маршруты и
+бэкапы. Интерфейс на русском, ставится одним бинарником.
+
+Панель не заменяет MTProxyL, а работает поверх него — CLI и меню остаются
+основным способом управления.
+
+### Установка
+
+Ставится **после** того, как прокси поднят: панели нужен работающий движок
+с доступным API.
+
+```bash
+mtproxyl panel install
+```
+
+Либо через меню: **Дополнения → Веб-панель MTProxyL-Panel**.
+
+Отдельно, без MTProxyL:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/main/mtproxyl-panel/install.sh -o install-panel.sh
+sh install-panel.sh
+```
+
+После установки панель доступна на `http://<ваш-сервер>:8080`.
+
+### Управление
+
+```bash
+mtproxyl panel status      # состояние
+mtproxyl panel restart     # перезапуск
+mtproxyl panel uninstall   # удаление
+```
+
+### Права
+
+Панель работает под собственным непривилегированным пользователем
+`mtproxyl-panel`. Для команд, которым нужен root, установщик создаёт
+`/etc/sudoers.d/mtproxyl-panel-mtproxyl` — список **конкретных** разрешённых
+команд, а не право запускать `mtproxyl` целиком. При отключении интеграции или
+удалении панели файл убирается.
+
+### Ограничения
+
+- Обновление движка telemt из панели недоступно: встроенный механизм рассчитан
+  на systemd-сервис, а в режиме Manager движок работает в Docker. Используйте
+  `mtproxyl engine`.
+- Настройка Selfmask из панели идёт со значениями по умолчанию — домен и шаблон
+  заглушки задаются в MTProxyL.
+- Один администратор, без ролей и 2FA.
+
+Подробности — [mtproxyl-panel/README.md](mtproxyl-panel/README.md).
+
+---
+
 <a id="ios-fixes"></a>
 
 ## Устаревшие iOS фиксы
@@ -708,6 +783,7 @@ selfmask, гео-блокировка, бэкапы) работают как о�
 │   ├── backup.sh                # Бэкапы
 │   ├── nft.sh                   # NFT limiter + Zapret2 fix + iOS фиксы
 │   ├── selfmask.sh              # Selfmask (PQ nginx + LE / самоподписанный cert)
+│   ├── panel.sh                 # Установка и управление веб-панелью
 │   ├── expert_catalog.sh        # Каталог параметров telemt
 │   ├── expert_mode.sh           # Режим эксперта
 │   ├── tui_main.sh              # Главное меню
@@ -732,6 +808,11 @@ selfmask, гео-блокировка, бэкапы) работают как о�
 ├── nft-rules.conf               # NFT настройки (включая Zapret2)
 └── backups/
 ```
+
+Веб-панель — отдельный компонент в каталоге `mtproxyl-panel/` этого
+репозитория: Go + React, собирается в один бинарник со встроенным фронтендом,
+ставится своим установщиком. MTProxyL вызывает её установщик и показывает
+состояние, но логику установки не дублирует.
 
 ---
 

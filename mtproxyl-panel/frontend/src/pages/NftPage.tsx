@@ -118,7 +118,13 @@ export function NftPage() {
     [edits, status],
   );
 
-  const saveChanged = async () => {
+  // saveChanged writes the edited parameters and, when asked, reapplies the
+  // rules so the new values take effect in one step.
+  //
+  // Which action to apply depends on the active preset: the smart limiter is
+  // built by its own command, so running plain `apply` there would rebuild the
+  // classic ruleset and silently change behaviour.
+  const saveChanged = async (thenApply: boolean) => {
     if (dirty.length === 0) return;
     setSaving(true);
     setNotice(null);
@@ -128,11 +134,17 @@ export function NftPage() {
       for (const key of dirty) {
         await mtproxylNetApi.setNftParam(key, edits[key]);
       }
-      setNotice(
-        `Сохранено параметров: ${dirty.length}. Чтобы значения вступили в силу, примените правила заново.`,
-      );
       setError(null);
-      await load();
+
+      if (thenApply) {
+        const action: NftAction = status?.nft.mode === 'smart' ? 'smart' : 'apply';
+        start(await mtproxylNetApi.nftAction(action));
+      } else {
+        setNotice(
+          `Сохранено параметров: ${dirty.length}. Чтобы значения вступили в силу, примените правила заново.`,
+        );
+        await load();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось сохранить параметры');
     } finally {
@@ -173,8 +185,9 @@ export function NftPage() {
       <div>
         <h1 className="text-xl font-semibold text-text-primary">Лимитер и защита</h1>
         <p className="text-sm text-text-secondary mt-1">
-          Ограничение SYN-флуда, фиксы для iOS и обход DPI через Zapret2. Параметры сначала
-          сохраняются, затем правила применяются — как и в самом MTProxyL.
+          Ограничение SYN-флуда, фиксы для iOS и обход DPI через Zapret2. Изменённые
+          параметры можно сохранить и сразу применить одной кнопкой либо сохранить
+          отдельно и применить правила позже.
         </p>
       </div>
 
@@ -347,11 +360,14 @@ export function NftPage() {
                 <span className="text-sm text-text-primary flex-1">
                   Изменено параметров: {dirty.length}
                 </span>
-                <Button variant="outline" onClick={() => setEdits({})} disabled={saving}>
+                <Button variant="outline" onClick={() => setEdits({})} disabled={saving || running}>
                   Сбросить
                 </Button>
-                <Button onClick={saveChanged} disabled={saving}>
-                  {saving ? 'Сохранение…' : 'Сохранить'}
+                <Button variant="outline" onClick={() => saveChanged(false)} disabled={saving || running}>
+                  {saving ? 'Сохранение…' : 'Только сохранить'}
+                </Button>
+                <Button onClick={() => saveChanged(true)} disabled={saving || running}>
+                  {saving ? 'Сохранение…' : 'Сохранить и применить'}
                 </Button>
               </div>
             )}

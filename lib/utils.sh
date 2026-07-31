@@ -436,7 +436,7 @@ self_update() {
     if [ -z "$_lib_list" ]; then
         log_warn "Не удалось извлечь список библиотек из нового скрипта"
         log_info "Используем резервный список"
-        _lib_list="colors utils settings secrets config docker engine traffic geoblock upstream backup nft selfmask detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode install"
+        _lib_list="colors utils settings secrets config docker engine traffic geoblock upstream backup nft selfmask panel detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode install"
     fi
 
     local _total=0 _ok=0 _failed=0 _skipped=0
@@ -685,6 +685,7 @@ show_cli_help() {
     echo -e "  ${BOLD}Супер эксперт:${NC}  superexpert status|on|off|edit"
     echo -e "  ${BOLD}NFT:${NC}            nft apply|remove|service|drop|preset|smart|zapret2|zapret2-stop|zapret2-rm|zapret2-wscale"
     echo -e "  ${BOLD}Selfmask:${NC}       selfmask status|setup|verify|disable|menu"
+    echo -e "  ${BOLD}Веб-панель:${NC}     panel status|install|restart|uninstall"
     echo -e "  ${BOLD}PQ проверка:${NC}    pq-check [домен[:порт]]"
     echo -e "  ${BOLD}Безопасность:${NC}   geoblock add|remove|list | upstream list|add|remove | sni-policy"
     echo -e "  ${BOLD}Мониторинг:${NC}     traffic | connections | metrics [live] | logs | health | info"
