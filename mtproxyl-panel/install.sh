@@ -284,6 +284,34 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask disable
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup list --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script restore ${_install_dir}/backups/mtproxyl-[0-9]*.tar.gz
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script nft status --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script nft settable
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script nft set [A-Z]* *
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script nft apply
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script nft remove
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script nft service
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script nft smart
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script nft drop
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script nft preset classic
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script nft preset smart
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script nft ios1
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script nft ios1-off
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script nft ios2
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script nft ios2-off
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script nft zapret2
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script nft zapret2-start
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script nft zapret2-stop
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script nft zapret2-rm
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script nft zapret2-wscale
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script geoblock list --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script geoblock add [a-z][a-z]
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script geoblock remove [a-z][a-z]
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script upstream list --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script upstream add [A-Za-z0-9]* * * * * * *
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script upstream remove [A-Za-z0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script upstream enable [A-Za-z0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script upstream disable [A-Za-z0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script upstream test [A-Za-z0-9]*
 EOF
 
   if [ -n "$_visudo" ]; then
