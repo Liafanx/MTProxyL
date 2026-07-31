@@ -13,6 +13,9 @@ CONFIG_FILE="${CONFIG_DIR}/config.toml"
 DATA_DIR="/var/lib/mtproxyl-panel"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 SUDOERS_FILE="/etc/sudoers.d/${SERVICE_NAME}"
+MTPROXYL_SUDOERS_FILE="/etc/sudoers.d/${SERVICE_NAME}-mtproxyl"
+MTPROXYL_SCRIPT="/opt/mtproxyl/mtproxyl.sh"
+MTPROXYL_INSTALL_DIR="/opt/mtproxyl"
 LEGACY_BIN_DIR="/opt/bin/telemt"
 LEGACY_CONFIG_DIR="/opt/etc/mtproxyl-panel"
 
@@ -243,6 +246,55 @@ EOF
   say "Sudoers drop-in installed to $SUDOERS_FILE"
 }
 
+# ── Sudoers for the MTProxyL bridge ─────────────────────────────────────────
+# Separate drop-in from the updater one: MTProxyL is optional, so this is only
+# written when the integration is enabled, and removing it disables the feature
+# without touching update permissions.
+install_mtproxyl_sudoers() {
+  _script="$1"
+  _install_dir="$2"
+
+  [ -n "$_script" ] || _script="/opt/mtproxyl/mtproxyl.sh"
+  [ -n "$_install_dir" ] || _install_dir="/opt/mtproxyl"
+
+  _visudo=$(command -v visudo 2>/dev/null || true)
+
+  say "Installing sudoers drop-in for MTProxyL commands..."
+  ensure_temp_dir
+  _tmp="$TEMP_DIR/sudoers-mtproxyl"
+
+  # Only the exact subcommands the panel calls are permitted; `mtproxyl` as a
+  # whole is not. The restore rule is the one wildcard, and it is pinned to the
+  # backup directory and archive naming scheme. The panel additionally
+  # validates the filename before building this argument.
+  #
+  # env_keep is required: sudo resets the environment, which would strip
+  # MTPROXYL_ASSUME_YES and leave the script waiting on a prompt forever.
+  cat >"$_tmp" <<EOF
+Defaults:$SYSTEM_USER env_keep += "MTPROXYL_ASSUME_YES"
+
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script mode
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script mode --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script mode manager
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script mode reanimator
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask status --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask setup
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask verify
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask disable
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script backup
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script backup list --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script restore ${_install_dir}/backups/mtproxyl-[0-9]*.tar.gz
+EOF
+
+  if [ -n "$_visudo" ]; then
+    $SUDO "$_visudo" -cf "$_tmp" >/dev/null || die "Generated MTProxyL sudoers file is invalid"
+  fi
+
+  $SUDO mkdir -p "$(dirname "$MTPROXYL_SUDOERS_FILE")"
+  $SUDO install -m 0440 "$_tmp" "$MTPROXYL_SUDOERS_FILE"
+  say "MTProxyL sudoers drop-in installed to $MTPROXYL_SUDOERS_FILE"
+}
+
 # ── Systemd unit (non-root service with sudoers-backed updates) ─────────────
 generate_service() {
   cat <<EOF
@@ -401,6 +453,14 @@ do_install() {
     TELEMT_SERVICE=$(toml_value "$CONFIG_FILE" telemt service_name || true)
     [ -n "${TELEMT_PATH:-}" ] || TELEMT_PATH=$(detect_telemt)
     [ -n "${TELEMT_SERVICE:-}" ] || TELEMT_SERVICE="telemt"
+    # Honour whatever the existing config says rather than re-prompting, so a
+    # re-run does not silently grant or revoke MTProxyL permissions.
+    MTPROXYL_ENABLED=$(toml_value "$CONFIG_FILE" mtproxyl enabled || true)
+    [ -n "${MTPROXYL_ENABLED:-}" ] || MTPROXYL_ENABLED="false"
+    _cfg_script=$(toml_value "$CONFIG_FILE" mtproxyl script_path || true)
+    [ -n "${_cfg_script:-}" ] && MTPROXYL_SCRIPT="$_cfg_script"
+    _cfg_dir=$(toml_value "$CONFIG_FILE" mtproxyl install_dir || true)
+    [ -n "${_cfg_dir:-}" ] && MTPROXYL_INSTALL_DIR="$_cfg_dir"
     $SUDO chown "$SYSTEM_USER:$SYSTEM_USER" "$CONFIG_FILE"
     $SUDO chmod 600 "$CONFIG_FILE"
   else
@@ -418,6 +478,17 @@ do_install() {
     TELEMT_PATH=$(prompt "Telemt binary path" "$TELEMT_DETECTED")
 
     TELEMT_SERVICE=$(prompt "Telemt systemd service name" "telemt")
+
+    # MTProxyL integration is optional and only offered when it is actually
+    # installed here, so a standalone panel install is not bothered by it.
+    MTPROXYL_ENABLED="false"
+    if [ -x "$MTPROXYL_SCRIPT" ]; then
+      say "MTProxyL detected at $MTPROXYL_SCRIPT"
+      _answer=$(prompt "Enable MTProxyL integration (mode/selfmask/backups)? [y/N]" "y")
+      case "$_answer" in
+        [yY]*) MTPROXYL_ENABLED="true" ;;
+      esac
+    fi
 
     say "Generating password hash..."
     # Use printf to pipe password to avoid heredoc indentation issues
@@ -446,6 +517,12 @@ service_name = \"$TELEMT_SERVICE\"
 binary_path = \"$PANEL_BINARY_PATH\"
 service_name = \"$SERVICE_NAME\"
 
+[mtproxyl]
+enabled = $MTPROXYL_ENABLED
+script_path = \"$MTPROXYL_SCRIPT\"
+install_dir = \"$MTPROXYL_INSTALL_DIR\"
+use_sudo = true
+
 [auth]
 username = \"$ADMIN_USER\"
 password_hash = \"$PASS_HASH\"
@@ -459,6 +536,13 @@ session_ttl = \"24h\""
   fi
 
   install_sudoers_dropin "$TELEMT_PATH" "$TELEMT_SERVICE" "/etc/telemt/telemt.toml"
+
+  if [ "${MTPROXYL_ENABLED:-false}" = "true" ]; then
+    install_mtproxyl_sudoers "$MTPROXYL_SCRIPT" "$MTPROXYL_INSTALL_DIR"
+  else
+    # Drop stale permissions if the integration was turned off.
+    $SUDO rm -f "$MTPROXYL_SUDOERS_FILE"
+  fi
 
   # ── Stage 5: Install service ─────────────────────────────────────────────
   say "Installing systemd service..."
@@ -515,6 +599,13 @@ do_uninstall() {
   if [ -f "$SUDOERS_FILE" ]; then
     $SUDO rm -f "$SUDOERS_FILE"
     say "Sudoers drop-in removed"
+  fi
+
+  # Leaving this behind would keep granting root commands to a user that is
+  # about to be removed.
+  if [ -f "$MTPROXYL_SUDOERS_FILE" ]; then
+    $SUDO rm -f "$MTPROXYL_SUDOERS_FILE"
+    say "MTProxyL sudoers drop-in removed"
   fi
 
   printf '\n'
