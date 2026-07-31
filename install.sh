@@ -5,14 +5,36 @@
 #
 # Или одной строкой:
 #   bash <(curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/main/install.sh)
+#
+# Ветка разработки (любой из вариантов):
+#   bash <(curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/dev/install.sh) --branch dev
+#   curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/dev/install.sh | sudo bash -s -- --branch dev
+#   curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/dev/install.sh | sudo MTPROXYL_BRANCH=dev bash
 
 set -e
 
 REPO="Liafanx/MTProxyL"
 INSTALL_DIR="/opt/mtproxyl"
-# Ветка установки. Релизная — main.
-# Для установки ветки разработки: MTPROXYL_BRANCH=dev bash install.sh
+# Ветка, из которой скачиваются скрипт и библиотеки. Релизная — main;
+# сам файл install.sh взят из той ветки, по ссылке на которую вы его
+# запустили, а вот содержимое установки задаётся здесь.
 BRANCH="${MTPROXYL_BRANCH:-main}"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -b|--branch)
+            [ -n "${2:-}" ] || { echo "ОШИБКА: --branch требует имя ветки" >&2; exit 1; }
+            BRANCH="$2"; shift 2 ;;
+        --branch=*) BRANCH="${1#*=}"; shift ;;
+        -h|--help)
+            echo "Использование: install.sh [--branch <ветка>]"
+            echo "  --branch, -b   ветка репозитория (по умолчанию: main)"
+            echo "  переменная окружения MTPROXYL_BRANCH делает то же самое"
+            exit 0 ;;
+        *) echo "ОШИБКА: неизвестный аргумент: $1" >&2; exit 1 ;;
+    esac
+done
+
 SCRIPT_URL="https://raw.githubusercontent.com/${REPO}/${BRANCH}"
 INSTALL_LOG="/tmp/mtproxyl-install.log"
 
@@ -86,6 +108,7 @@ fi
 echo ""
 echo "  MTProxyL — установка"
 echo "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Ветка: ${BRANCH}"
 echo ""
 
 mkdir -p "${INSTALL_DIR}/lib" "${INSTALL_DIR}/mtproxy" "${INSTALL_DIR}/backups"
@@ -111,6 +134,16 @@ for lib in colors utils settings secrets config docker engine traffic geoblock u
     fi
     sleep 0.2
 done
+
+# Ветку запоминаем, только если ставили не релизную: тогда и обновления
+# (mtproxyl update) продолжат приходить из неё, а не из main.
+if [ "$BRANCH" = "main" ]; then
+    rm -f "${INSTALL_DIR}/.branch"
+else
+    echo "$BRANCH" > "${INSTALL_DIR}/.branch"
+    chmod 600 "${INSTALL_DIR}/.branch"
+    echo "  → обновления будут браться из ветки ${BRANCH}"
+fi
 
 # Симлинк
 ln -sf "${INSTALL_DIR}/mtproxyl.sh" /usr/local/bin/mtproxyl

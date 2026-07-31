@@ -22,9 +22,14 @@ CONTAINER_NAME="mtproxyl"
 DOCKER_IMAGE_BASE="mtproxyl-telemt"
 GITHUB_REPO="Liafanx/MTProxyL"
 # Ветка, из которой берутся обновления и библиотеки при self-update.
-# Релизная — main. Для тестов ветки разработки:
-#   MTPROXYL_BRANCH=dev mtproxyl update
-GITHUB_BRANCH="${MTPROXYL_BRANCH:-main}"
+# Релизная — main. Если ставили из другой ветки (install.sh --branch dev),
+# её имя лежит в ${INSTALL_DIR}/.branch — обновления идут оттуда же.
+# Разово: MTPROXYL_BRANCH=dev mtproxyl update
+GITHUB_BRANCH="${MTPROXYL_BRANCH:-}"
+if [ -z "$GITHUB_BRANCH" ] && [ -r "${INSTALL_DIR}/.branch" ]; then
+    GITHUB_BRANCH=$(tr -cd 'A-Za-z0-9._/-' < "${INSTALL_DIR}/.branch" 2>/dev/null)
+fi
+[ -n "$GITHUB_BRANCH" ] || GITHUB_BRANCH="main"
 GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
 REGISTRY_IMAGE="ghcr.io/liafanx/mtproxyl-telemt"
 TELEMT_GITHUB="telemt/telemt"
@@ -355,6 +360,8 @@ cli_main() {
             else
                 echo -e "  ${DIM}Движок: telemt v$(get_telemt_version) (Rust)${NC}"
             fi
+            # Если стоим не на релизной ветке — это важно видеть сразу
+            [ "$GITHUB_BRANCH" != "main" ] && echo -e "  ${YELLOW}Ветка обновлений: ${GITHUB_BRANCH}${NC}"
             echo -e "  ${DIM}by LiafanX${NC}"
             ;;
 
