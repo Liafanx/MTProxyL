@@ -1,0 +1,19 @@
+[Unit]
+Description=MTProxyL-Panel
+After=network.target
+
+[Service]
+Type=simple
+User=mtproxyl-panel
+ExecStart=/usr/local/bin/mtproxyl-panel --config /etc/mtproxyl-panel/config.toml
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+# Hardening compatible with sudo-based updater operations
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/etc/mtproxyl-panel /var/lib/mtproxyl-panel
+
+[Install]
+WantedBy=multi-user.target

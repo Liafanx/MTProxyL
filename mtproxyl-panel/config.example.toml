@@ -1,0 +1,108 @@
+# MTProxyL-Panel Configuration
+
+# Address and port the panel listens on
+listen = "0.0.0.0:8080"
+
+# Base path for running behind a reverse proxy (e.g. "/panel123")
+# The panel strips this prefix from incoming requests internally.
+# Your proxy config stays simple — just forward the path as-is:
+#
+#   Caddy:  handle /panel123* { reverse_proxy 127.0.0.1:8080 }
+#   nginx:  location /panel123/ { proxy_pass http://127.0.0.1:8080/panel123/; }
+#
+# base_path = "/panel123"
+
+[telemt]
+# Telemt API base URL (no trailing slash)
+url = "http://127.0.0.1:9091"
+# Authorization header value sent to Telemt API
+auth_header = "your-telemt-api-secret"
+# Path to telemt binary (default: /bin/telemt)
+# For standard system installs: binary_path = "/bin/telemt"
+# binary_path = "/bin/telemt"
+# Systemd service name (default: telemt)
+# service_name = "telemt"
+# GitHub repository for update checks (default: telemt/telemt)
+# github_repo = "telemt/telemt"
+# Path to Telemt config file (optional, for Docker or custom setups)
+# If not set, the path is obtained from Telemt API automatically
+# config_path = "/etc/telemt/config.toml"
+# Docker container name (if Telemt runs in Docker)
+# container_name = "telemt"
+# How the panel edits Telemt's config:
+#   "api"  (default) — via Telemt's HTTP API; never touches the file; works in
+#                      Docker / shared-volume / non-root setups; cannot edit
+#                      server/network or user secrets, and cannot delete keys.
+#   "file"           — edits the raw file directly (full control); on systemd
+#                      hosts needs the NOPASSWD tee sudoers line from install.sh.
+config_edit_mode = "api"
+
+# [telemt.auto_update]
+# enabled = false
+# check_interval = "1h"  # Go duration: 5m, 30m, 1h, 6h, 24h (min: 5m)
+# auto_apply = true       # automatically install stable updates
+
+[panel]
+# Path to mtproxyl-panel binary (default: /usr/local/bin/mtproxyl-panel)
+# binary_path = "/usr/local/bin/mtproxyl-panel"
+# Systemd service name (default: mtproxyl-panel)
+# service_name = "mtproxyl-panel"
+# GitHub repository for update checks (default: Liafanx/MTProxyL)
+# github_repo = "Liafanx/MTProxyL"
+#
+# GitHub API token (optional, but recommended).
+# Without a token, GitHub API allows only 60 requests/hour per IP — shared
+# across all tools on the server. With a token the limit rises to 5000/hour.
+# Use a fine-grained Personal Access Token with no scopes (read-only metadata
+# is enough for public repositories):
+#   https://github.com/settings/personal-access-tokens/new
+# github_token = "ghp_xxxxxxxxxxxxxxxxxxxx"
+
+# [panel.auto_update]
+# enabled = false
+# check_interval = "1h"
+# auto_apply = false      # panel restart kills sessions, use with caution
+# Maximum number of newer/older releases shown in update selector (default: 10)
+# max_newer_releases = 10
+# max_older_releases = 10
+
+[tls]
+# Option 1: Custom certificates
+# cert_file = "/path/to/cert.pem"
+# key_file = "/path/to/key.pem"
+
+# Option 2: Automatic Let's Encrypt (requires port 443 + port 80 for challenges)
+# acme_domain = "panel.example.com"
+# acme_cache_dir = "/var/lib/mtproxyl-panel/certs"  # default
+
+# Note: cert_file and acme_domain are mutually exclusive.
+# If neither is set, the panel runs on plain HTTP.
+
+[geoip]
+# Path to MaxMind GeoLite2 City database (.mmdb)
+# Download from: https://dev.maxmind.com/geoip/geolite2-free-geolocation-data
+# If not set, GeoIP features are disabled (IP lists shown without geo data)
+# db_path = "/var/lib/mtproxyl-panel/GeoLite2-City.mmdb"
+# Optional: GeoLite2 ASN database for autonomous system number lookups
+# asn_db_path = "/var/lib/mtproxyl-panel/GeoLite2-ASN.mmdb"
+
+[auth]
+# Panel admin credentials
+username = "admin"
+# Generate with: mtproxyl-panel hash-password
+password_hash = "$2a$10$CHANGE_ME"
+# Secret key for JWT signing (use a random string, min 32 chars)
+jwt_secret = "change-me-to-a-random-string-at-least-32-chars"
+# Session duration
+session_ttl = "24h"
+
+[users]
+# Default values for new user creation form.
+# These are pre-filled when clicking "Create User".
+# A value of 0 means "not set" — the form field will be empty.
+# (Do NOT set 0 for max_tcp_conns etc. in telemt, where 0 = "block user".)
+# ad_tag = ""
+# max_tcp_conns = 5
+# data_quota_bytes = 1073741824
+# max_unique_ips = 3
+# expiration = "2027-12-31T23:59:59Z"

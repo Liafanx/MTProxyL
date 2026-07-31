@@ -1,0 +1,32 @@
+# Binary
+mtproxyl-panel
+mtproxyl-panel.exe
+release/
+
+# Frontend build output
+dist/
+
+# Dependencies
+frontend/node_modules/
+
+# Config with secrets
+config.toml
+
+# IDE / tools
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+
+# TypeScript build cache
+frontend/tsconfig.tsbuildinfo
