@@ -409,6 +409,9 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: autoMgr.GetStatus()})
 	})))
 
+	// MTProxyL host-level endpoints (mode, selfmask, backups)
+	s.registerMtproxylRoutes(mux, jwtSecret)
+
 	// Telemt service restart endpoint
 	mux.Handle("POST /api/telemt/restart", auth.RequireAuth(jwtSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := updater.RestartService(s.cfg.Telemt.ServiceName); err != nil {

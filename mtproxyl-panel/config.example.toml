@@ -66,6 +66,25 @@ config_edit_mode = "api"
 # max_newer_releases = 10
 # max_older_releases = 10
 
+# ── MTProxyL integration ─────────────────────────────────────────────────────
+# Host-level features that telemt's own API does not cover: manager/reanimator
+# mode switching, the Selfmask decoy site and MTProxyL's settings backups.
+# Requires MTProxyL to be installed on the same host.
+[mtproxyl]
+# Turn the integration on. When false, the panel hides these features.
+enabled = false
+# MTProxyL entry point (default: /opt/mtproxyl/mtproxyl.sh)
+# script_path = "/opt/mtproxyl/mtproxyl.sh"
+# MTProxyL state directory, holds settings.conf and backups/ (default: /opt/mtproxyl)
+# install_dir = "/opt/mtproxyl"
+# Run commands via sudo. Required when the panel runs as its own unprivileged
+# user, since most mtproxyl subcommands need root. install.sh writes a
+# sudoers drop-in limited to the exact commands the panel uses.
+use_sudo = true
+# Per-command timeout (default: 10m). Selfmask setup and mode switches that
+# trigger an install legitimately take minutes.
+# command_timeout = "10m"
+
 [tls]
 # Option 1: Custom certificates
 # cert_file = "/path/to/cert.pem"
