@@ -125,6 +125,13 @@ export interface MtproxylAvailability {
   enabled: boolean;
   /** Пусто, если режим не удалось прочитать. */
   mode: MtproxylMode | '';
+  /**
+   * Заполнено, когда панель опрашивает не тот движок, которым владеет текущий
+   * режим. Готовое сообщение на русском — его и показываем.
+   */
+  api_mismatch?: string;
+  api_expected_port?: number;
+  api_enabled?: boolean;
   operation: MtproxylOperation;
 }
 

@@ -174,7 +174,11 @@ func (h *Handler) fetchAndSend(endpoint string, send func(ServerMessage)) {
 
 	resp, err := h.client.Do(req)
 	if err != nil {
-		send(ServerMessage{Type: "error", Endpoint: endpoint, Error: "telemt unreachable"})
+		// Обычная причина — движок перезапускается: несколько секунд он не
+		// отвечает, и пользователь видит эту строку сразу после кнопки
+		// «Перезапустить». Пишем так, чтобы это не выглядело поломкой.
+		send(ServerMessage{Type: "error", Endpoint: endpoint,
+			Error: "Движок telemt не отвечает — возможно, он перезапускается"})
 		return
 	}
 	defer resp.Body.Close()

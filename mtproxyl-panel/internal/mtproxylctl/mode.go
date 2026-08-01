@@ -32,6 +32,18 @@ type ModeStatus struct {
 	DetectedMode   string `json:"detected_mode"`
 	DetectedConfig string `json:"detected_config"`
 	Port           int    `json:"port"`
+	// EngineConfig is the config file that belongs to the *current* mode: the
+	// foreign target's in reanimator, MTProxyL's own in manager.
+	EngineConfig string `json:"engine_config"`
+	// APIPort is where that engine exposes its REST API, and APIEnabled whether
+	// it is turned on there at all.
+	//
+	// The panel is pointed at one fixed telemt URL when it is installed. Nothing
+	// updates it on a mode switch, so it can keep polling the previous mode's
+	// engine and present another instance's users and traffic as the current
+	// one's. Reporting the mode's real endpoint lets the UI catch that.
+	APIPort    int  `json:"api_port"`
+	APIEnabled bool `json:"api_enabled"`
 }
 
 // GetMode returns the current mode and, in reanimator mode, what was detected.

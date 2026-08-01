@@ -10,6 +10,7 @@ import { mtproxylApi, type MtproxylMode, type MtproxylOperation } from '@/lib/ap
 export function useMtproxylAvailability() {
   const [enabled, setEnabled] = useState(false);
   const [mode, setMode] = useState<MtproxylMode | ''>('');
+  const [apiMismatch, setApiMismatch] = useState<string>('');
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
@@ -17,9 +18,11 @@ export function useMtproxylAvailability() {
       const s = await mtproxylApi.status();
       setEnabled(s.enabled);
       setMode(s.mode);
+      setApiMismatch(s.api_mismatch ?? '');
     } catch {
       setEnabled(false);
       setMode('');
+      setApiMismatch('');
     } finally {
       setLoading(false);
     }
@@ -29,12 +32,14 @@ export function useMtproxylAvailability() {
     void refresh();
   }, [refresh]);
 
-  return { enabled, mode, loading, refresh };
+  return { enabled, mode, apiMismatch, loading, refresh };
 }
 
 interface MtproxylState {
   enabled: boolean;
   mode: MtproxylMode | '';
+  /** Сообщение о том, что панель смотрит на движок другого режима. */
+  apiMismatch?: string;
   loading: boolean;
   refresh?: () => Promise<void>;
 }
@@ -42,6 +47,7 @@ interface MtproxylState {
 export const MtproxylContext = createContext<MtproxylState>({
   enabled: false,
   mode: '',
+  apiMismatch: '',
   loading: true,
 });
 

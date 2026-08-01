@@ -22,6 +22,7 @@ import (
 func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	client := mtproxylctl.New(s.cfg.Mtproxyl)
 	runner := mtproxylctl.NewRunner()
+	telemtURL := s.cfg.Telemt.URL
 
 	protected := func(h http.HandlerFunc) http.Handler {
 		return auth.RequireAuth(jwtSecret, h)
@@ -75,8 +76,17 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		if client.Enabled() {
 			// A failure here must not break the probe: the UI still needs to
 			// know the bridge is on, even if the mode could not be read.
-			if st, err := client.GetMode(r.Context()); err == nil {
+			if st, err := cachedMode(r.Context(), client); err == nil {
 				resp["mode"] = string(st.Mode)
+				// The panel talks to one fixed telemt URL, chosen at install
+				// time. A mode switch changes which engine is authoritative but
+				// not this URL, so the dashboard can end up showing the other
+				// engine's users and traffic as if they were the current one's.
+				if mismatch := apiEndpointMismatch(telemtURL, st); mismatch != "" {
+					resp["api_mismatch"] = mismatch
+					resp["api_expected_port"] = st.APIPort
+				}
+				resp["api_enabled"] = st.APIEnabled
 			} else {
 				log.Printf("[mtproxyl] could not read mode: %s", err)
 			}
@@ -117,6 +127,11 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		// Switching modes rewrites settings and may remove a container or start
 		// a full install, so it runs in the background.
 		started := runner.Start("mode:"+string(mode), func(ctx context.Context) (string, error) {
+			// The cached mode is stale the moment the switch begins, and the UI
+			// polls this endpoint throughout — leaving it would report the old
+			// mode for seconds after the switch landed.
+			defer invalidateModeCache()
+			invalidateModeCache()
 			return "", client.SwitchMode(ctx, mode)
 		})
 		if !started {

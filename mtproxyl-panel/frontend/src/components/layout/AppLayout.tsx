@@ -2,11 +2,15 @@ import { useState } from 'react';
 import { Outlet, Navigate } from 'react-router-dom';
 import { Sidebar, BottomNav } from './Sidebar';
 import { useAuth } from '@/hooks/useAuth';
-import { Menu } from 'lucide-react';
+import { useMtproxyl } from '@/hooks/useMtproxyl';
+import { Menu, AlertTriangle } from 'lucide-react';
 
 export function AppLayout() {
   const { username, loading } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Показываем на всех страницах, а не только на дашборде: несоответствие
+  // адреса API одинаково искажает и пользователей, и телеметрию, и статус.
+  const { apiMismatch } = useMtproxyl();
 
   if (loading) {
     return (
@@ -37,6 +41,16 @@ export function AppLayout() {
             MTProxyL-Panel
           </h1>
         </div>
+
+        {apiMismatch && (
+          <div className="m-4 rounded-lg border border-danger/40 bg-danger/10 p-4 flex items-start gap-3">
+            <AlertTriangle size={18} className="text-danger shrink-0 mt-0.5" />
+            <div className="min-w-0 space-y-1">
+              <p className="text-sm text-text-primary">Данные могут быть от другого движка</p>
+              <p className="text-sm text-text-secondary break-words">{apiMismatch}</p>
+            </div>
+          </div>
+        )}
 
         <Outlet />
       </main>

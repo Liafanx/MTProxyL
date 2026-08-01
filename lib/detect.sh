@@ -129,7 +129,11 @@ _toml_get_string_in_section() {
             if (line ~ ("^" k "[[:space:]]*=")) {
                 sub(("^" k "[[:space:]]*=[[:space:]]*"), "", line)
                 sub(/[[:space:]]*#.*$/, "", line)
-                gsub(/"/, "", line)
+                # TOML знает и "строку", и '"'"'строку'"'"' — telemt пишет вторую,
+                # так что снимать только двойные кавычки нельзя: значение
+                # уезжало вместе с ними и, например, порт API из listen
+                # переставал разбираться.
+                gsub(/["'"'"']/, "", line)
                 gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
                 print line
                 exit

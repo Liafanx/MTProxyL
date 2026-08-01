@@ -212,11 +212,24 @@ cli_main() {
                 manager)    switch_to_manager_mode ;;
                 reanimator) switch_to_reanimator_mode ;;
                 --json)
-                    printf '{"mode":"%s","detected_mode":"%s","detected_config":"%s","port":%d}\n' \
+                    # API движка живёт в конфиге того режима, который сейчас
+                    # активен: у реаниматора это конфиг чужой цели, у менеджера
+                    # — свой. Панель настроена на один фиксированный адрес и
+                    # после смены режима может продолжить опрашивать движок
+                    # прежнего режима, показывая чужие данные как свои.
+                    _mode_cfg="${CONFIG_DIR}/config.toml"
+                    [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && _mode_cfg="${DETECTED_CONFIG_PATH:-}"
+                    _api_port=$(_get_telemt_api_port "$_mode_cfg" 2>/dev/null || echo "")
+                    _api_on="false"
+                    _telemt_api_enabled "$_mode_cfg" 2>/dev/null && _api_on="true"
+                    printf '{"mode":"%s","detected_mode":"%s","detected_config":"%s","port":%d,"engine_config":"%s","api_port":%d,"api_enabled":%s}\n' \
                         "$(json_escape "${MTPROXYL_MODE:-manager}")" \
                         "$(json_escape "${DETECTED_MODE:-unknown}")" \
                         "$(json_escape "${DETECTED_CONFIG_PATH:-}")" \
-                        "${PROXY_PORT:-0}"
+                        "${PROXY_PORT:-0}" \
+                        "$(json_escape "${_mode_cfg}")" \
+                        "${_api_port:-0}" \
+                        "$_api_on"
                     ;;
                 "")         echo -e "  ${BOLD}Текущий режим:${NC} ${MTPROXYL_MODE:-manager}" ;;
                 *)          log_error "Использование: mtproxyl mode [manager|reanimator|--json]" ;;

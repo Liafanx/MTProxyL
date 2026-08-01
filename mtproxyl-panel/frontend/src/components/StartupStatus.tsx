@@ -10,6 +10,31 @@ interface StartupStatusProps {
   progressPct?: number;
 }
 
+// Движок отдаёт эти значения по-английски и одним словом — переводим,
+// незнакомое показываем как есть, чтобы не прятать новые состояния.
+const STATUS_LABELS: Record<string, string> = {
+  ready: 'готов',
+  starting: 'запускается',
+  degraded: 'работает с ограничениями',
+  failed: 'ошибка запуска',
+  stopped: 'остановлен',
+};
+
+const STAGE_LABELS: Record<string, string> = {
+  init: 'инициализация',
+  config: 'чтение конфигурации',
+  bind: 'открытие портов',
+  dc_connect: 'подключение к дата-центрам Telegram',
+  warmup: 'прогрев',
+  ready: 'готово',
+  done: 'готово',
+};
+
+function translate(map: Record<string, string>, raw?: string): string {
+  if (!raw) return 'неизвестно';
+  return map[raw.toLowerCase()] ?? raw;
+}
+
 export function StartupStatus({ status, stage, progressPct }: StartupStatusProps) {
   const [restarting, setRestarting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -56,11 +81,11 @@ export function StartupStatus({ status, stage, progressPct }: StartupStatusProps
           <div className="space-y-2">
             <div className="flex justify-between text-xs">
               <span className="text-text-secondary">Статус:</span>
-              <span className="text-text-primary font-medium">{status || 'неизвестно'}</span>
+              <span className="text-text-primary font-medium">{translate(STATUS_LABELS, status)}</span>
             </div>
             <div className="flex justify-between text-xs">
               <span className="text-text-secondary">Этап:</span>
-              <span className="text-text-primary font-medium">{stage || 'неизвестно'}</span>
+              <span className="text-text-primary font-medium">{translate(STAGE_LABELS, stage)}</span>
             </div>
             <div className="space-y-1">
               <div className="flex justify-between text-xs">
