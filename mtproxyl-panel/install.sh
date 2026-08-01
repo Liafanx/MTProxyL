@@ -318,6 +318,17 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script upstream remove [A-Za-z0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script upstream enable [A-Za-z0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script upstream disable [A-Za-z0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script upstream test [A-Za-z0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script expert list --catalog
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script expert list --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script expert set [a-z]* [a-z]* *
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script expert clear [a-z]* [a-z]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script superexpert status --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script superexpert show
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script superexpert write
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script superexpert on
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script superexpert off
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script pq-check
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script pq-check [A-Za-z0-9]*
 EOF
 
   if [ -n "$_visudo" ]; then

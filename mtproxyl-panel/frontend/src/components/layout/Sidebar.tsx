@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, LogOut, X, Sun, Moon, ToggleLeft, Globe, Archive, ShieldAlert, MapPin, Route } from 'lucide-react';
+import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, LogOut, X, Sun, Moon, ToggleLeft, Globe, Archive, ShieldAlert, MapPin, Route, SlidersHorizontal, FileCode, Puzzle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
@@ -27,6 +27,9 @@ const mtproxylNavItems = [
   { to: '/geoblock', icon: MapPin, label: 'Блокировка стран', managerOnly: false },
   { to: '/backups', icon: Archive, label: 'Бэкапы', managerOnly: true },
   { to: '/routes', icon: Route, label: 'Маршруты', managerOnly: true },
+  { to: '/expert', icon: SlidersHorizontal, label: 'Экспертные параметры', managerOnly: true },
+  { to: '/superexpert', icon: FileCode, label: 'Супер эксперт', managerOnly: true },
+  { to: '/addons', icon: Puzzle, label: 'Дополнения', managerOnly: false },
 ];
 
 interface SidebarProps {

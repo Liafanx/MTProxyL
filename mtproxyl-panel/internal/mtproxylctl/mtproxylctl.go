@@ -66,6 +66,14 @@ func (e *CommandError) Unwrap() error { return e.Err }
 // stderr is captured separately: MTProxyL prints progress and log lines to it,
 // so mixing the two would corrupt --json output on stdout.
 func (c *Client) run(ctx context.Context, args ...string) (string, error) {
+	return c.runWithStdin(ctx, "", args...)
+}
+
+// runWithStdin is run() with data piped to the command's standard input.
+//
+// Used where a value is too large or too structured for a command-line
+// argument — the hand-authored engine config, for instance.
+func (c *Client) runWithStdin(ctx context.Context, stdin string, args ...string) (string, error) {
 	if !c.cfg.Enabled {
 		return "", ErrDisabled
 	}
@@ -88,6 +96,10 @@ func (c *Client) run(ctx context.Context, args ...string) (string, error) {
 	cmd.Env = []string{
 		assumeYesEnv,
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+	}
+
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
 	}
 
 	var stdout, stderr bytes.Buffer

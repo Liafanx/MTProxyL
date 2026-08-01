@@ -1,11 +1,13 @@
 import { Input } from '@/components/ui/input';
 
-/** Параметр MTProxyL с валидатором из его каталога. */
+/**
+ * Минимум, который нужен полю: строка валидатора из каталога MTProxyL.
+ *
+ * Каталоги разные (NFT, Selfmask, экспертный) и поля у записей отличаются,
+ * поэтому требуем только то, что действительно используется.
+ */
 export interface CatalogParam {
-  key: string;
   validator: string;
-  description: string;
-  value: string;
 }
 
 /**

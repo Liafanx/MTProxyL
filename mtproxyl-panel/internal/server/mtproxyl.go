@@ -503,6 +503,161 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 
+	// ── Expert catalog ──────────────────────────────────────────────────────
+	mux.Handle("GET /api/mtproxyl/expert", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		list, err := client.ExpertCatalog(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: list})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/expert", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		var req struct {
+			Section string `json:"section"`
+			Key     string `json:"key"`
+			Value   string `json:"value"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		if err := mtproxylctl.ValidateExpertParam(req.Section, req.Key, req.Value); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_param", "Недопустимый параметр или значение")
+			return
+		}
+		out, err := client.SetExpertParam(r.Context(), req.Section, req.Key, req.Value)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	mux.Handle("DELETE /api/mtproxyl/expert/{section}/{key}", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		section, key := r.PathValue("section"), r.PathValue("key")
+		if err := mtproxylctl.ValidateExpertTarget(section, key); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_param", "Недопустимый параметр")
+			return
+		}
+		out, err := client.ClearExpertParam(r.Context(), section, key)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	// ── Addons ──────────────────────────────────────────────────────────────
+	// PQ-проверка домена: единственное дополнение, которое имеет смысл в
+	// панели. censorcheck намеренно не перенесён — он выполняет сторонний
+	// скрипт с сети, и делать это по нажатию в вебе не стоит.
+	mux.Handle("POST /api/mtproxyl/pq-check", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		var req struct {
+			Domain string `json:"domain"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		if err := mtproxylctl.ValidatePQDomain(req.Domain); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_domain", "Недопустимый домен")
+			return
+		}
+		out, err := client.PQCheck(r.Context(), req.Domain)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	// ── Super expert ────────────────────────────────────────────────────────
+	mux.Handle("GET /api/mtproxyl/superexpert", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		st, err := client.SuperExpertStatus(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: st})
+	}))
+
+	mux.Handle("GET /api/mtproxyl/superexpert/config", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		content, err := client.SuperExpertRead(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"content": content}})
+	}))
+
+	mux.Handle("PUT /api/mtproxyl/superexpert/config", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		var req struct {
+			Content string `json:"content"`
+		}
+		// The engine config can be sizeable; cap it so a runaway body cannot be
+		// buffered without bound.
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		out, err := client.SuperExpertWrite(r.Context(), req.Content)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/superexpert/toggle", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		var req struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		var (
+			out string
+			err error
+		)
+		if req.Enabled {
+			out, err = client.SuperExpertEnable(r.Context())
+		} else {
+			out, err = client.SuperExpertDisable(r.Context())
+		}
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
 	mux.Handle("GET /api/mtproxyl/backups/{name}/download", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
 			return

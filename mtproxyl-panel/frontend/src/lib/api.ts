@@ -257,3 +257,70 @@ export const mtproxylNetApi = {
       method: 'POST',
     }),
 };
+
+// ── MTProxyL: экспертный режим ──────────────────────────────────────────────
+
+export interface ExpertParam {
+  section: string;
+  key: string;
+  type: string;
+  default: string;
+  hot_reload: boolean;
+  validator: string;
+  hint: string;
+  description: string;
+  override: string;
+  has_override: boolean;
+}
+
+export interface SuperExpertStatus {
+  enabled: boolean;
+  active: boolean;
+  file: string;
+  file_exists: boolean;
+  size: number;
+  mtime: number;
+}
+
+export const mtproxylExpertApi = {
+  catalog: () => request<ExpertParam[]>(MTPROXYL_BASE, '/expert'),
+  set: (section: string, key: string, value: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/expert', {
+      method: 'POST',
+      body: JSON.stringify({ section, key, value }),
+    }),
+  clear: (section: string, key: string) =>
+    request<{ output: string }>(
+      MTPROXYL_BASE,
+      `/expert/${encodeURIComponent(section)}/${encodeURIComponent(key)}`,
+      { method: 'DELETE' },
+    ),
+
+  superExpert: () => request<SuperExpertStatus>(MTPROXYL_BASE, '/superexpert'),
+  superExpertConfig: () => request<{ content: string }>(MTPROXYL_BASE, '/superexpert/config'),
+  saveSuperExpertConfig: (content: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/superexpert/config', {
+      method: 'PUT',
+      body: JSON.stringify({ content }),
+    }),
+  toggleSuperExpert: (enabled: boolean) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/superexpert/toggle', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    }),
+};
+
+/**
+ * PQ-проверка домена. Пустой домен означает текущий SNI.
+ *
+ * censorcheck из меню MTProxyL сюда намеренно не перенесён: он запускает
+ * сторонний скрипт, скачанный из сети, и делать это по нажатию кнопки в
+ * вебе не стоит — команда остаётся в CLI.
+ */
+export const mtproxylAddonsApi = {
+  pqCheck: (domain: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/pq-check', {
+      method: 'POST',
+      body: JSON.stringify({ domain }),
+    }),
+};
