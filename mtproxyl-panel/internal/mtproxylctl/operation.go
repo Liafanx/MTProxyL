@@ -25,6 +25,12 @@ type OperationStatus struct {
 	Error     string    `json:"error,omitempty"`
 	StartedAt time.Time `json:"started_at,omitempty"`
 	EndedAt   time.Time `json:"ended_at,omitempty"`
+	// Progress is what the command has printed so far. Present while running,
+	// so the UI can show the current step instead of a bare spinner.
+	Progress string `json:"progress,omitempty"`
+	// ElapsedSeconds lets the UI say how long this has been going without
+	// depending on the browser clock agreeing with the server's.
+	ElapsedSeconds int `json:"elapsed_seconds,omitempty"`
 }
 
 // Runner serializes long-running MTProxyL operations.
@@ -34,8 +40,9 @@ type OperationStatus struct {
 // Only one may run at a time: concurrent invocations would race over the same
 // settings.conf and container.
 type Runner struct {
-	mu     sync.Mutex
-	status OperationStatus
+	mu       sync.Mutex
+	status   OperationStatus
+	progress *Progress
 }
 
 func NewRunner() *Runner {
@@ -45,8 +52,25 @@ func NewRunner() *Runner {
 // Status returns the current operation snapshot.
 func (r *Runner) Status() OperationStatus {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.status
+	prog := r.progress
+	st := r.status
+	r.mu.Unlock()
+
+	// Read the progress buffer outside the runner lock: it has its own, and the
+	// running command writes into it constantly.
+	if prog != nil {
+		st.Progress = prog.String()
+	}
+	if !st.StartedAt.IsZero() {
+		end := st.EndedAt
+		if st.Phase == PhaseRunning {
+			end = time.Now()
+		}
+		if !end.IsZero() {
+			st.ElapsedSeconds = int(end.Sub(st.StartedAt).Seconds())
+		}
+	}
+	return st
 }
 
 // Busy reports whether an operation is in flight.
@@ -71,10 +95,12 @@ func (r *Runner) Start(name string, fn func(ctx context.Context) (string, error)
 		Name:      name,
 		StartedAt: time.Now(),
 	}
+	prog := &Progress{}
+	r.progress = prog
 	r.mu.Unlock()
 
 	go func() {
-		out, err := fn(context.Background())
+		out, err := fn(WithProgress(context.Background(), prog))
 
 		r.mu.Lock()
 		defer r.mu.Unlock()

@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 
@@ -105,6 +106,13 @@ func (c *Client) runWithStdin(ctx context.Context, stdin string, args ...string)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	// A long operation can mirror its output somewhere the UI can read while it
+	// is still running. The buffers stay authoritative for parsing; the sink is
+	// only for display, so a slow reader cannot corrupt the result.
+	if sink := progressFrom(ctx); sink != nil {
+		cmd.Stdout = io.MultiWriter(&stdout, sink)
+		cmd.Stderr = io.MultiWriter(&stderr, sink)
+	}
 
 	err := cmd.Run()
 	if err != nil {

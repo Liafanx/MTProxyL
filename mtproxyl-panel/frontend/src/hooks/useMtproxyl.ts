@@ -98,8 +98,17 @@ export function useMtproxylOperation(onFinished?: () => void, scope?: string[]) 
   const poll = useCallback(async () => {
     try {
       const status = await mtproxylApi.status();
-      setOperation(status.operation);
-      if (status.operation.phase !== 'running') {
+      // Без этой проверки отсутствующее поле operation роняет обработчик в
+      // catch ниже — и спиннер остаётся крутиться навсегда, хотя операция
+      // давно завершилась.
+      const op = status?.operation;
+      if (!op || typeof op.phase !== 'string') {
+        stop();
+        finishedRef.current?.();
+        return;
+      }
+      setOperation(op);
+      if (op.phase !== 'running') {
         stop();
         finishedRef.current?.();
       }
@@ -129,9 +138,11 @@ export function useMtproxylOperation(onFinished?: () => void, scope?: string[]) 
     mtproxylApi
       .status()
       .then((s) => {
-        if (cancelled || !belongsHere(s.operation, scopeRef.current)) return;
-        setOperation(s.operation);
-        if (s.operation.phase === 'running') {
+        const op = s?.operation;
+        if (cancelled || !op || typeof op.phase !== 'string') return;
+        if (!belongsHere(op, scopeRef.current)) return;
+        setOperation(op);
+        if (op.phase === 'running') {
           timer.current = window.setInterval(poll, POLL_INTERVAL_MS);
         }
       })

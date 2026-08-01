@@ -7,6 +7,12 @@
 
 set -o pipefail
 export LC_NUMERIC=C
+# apt не должен ничего спрашивать. Без этого установка зависимостей (selfmask,
+# nftables, ipset) может встать намертво на диалоге debconf или needrestart —
+# особенно когда MTProxyL запущен из панели, где терминала нет вовсе и ответ
+# ждать неоткуда.
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
 
 VERSION="1.3.2"
 SCRIPT_NAME="mtproxyl"

@@ -65,3 +65,25 @@ export function buildProxyLinks(links: UserLinks | undefined, username: string):
 
   return result;
 }
+
+/**
+ * Достаёт секрет пользователя из его же ссылки tg://.
+ *
+ * Список пользователей секрет не отдаёт, но в ссылках он есть — в TLS-ссылках
+ * с префиксом ee и именем домена в hex, в classic — как есть. Берём classic
+ * или secure: там секрет лежит без обвеса.
+ */
+export function extractSecret(links: UserLinks | undefined): string | undefined {
+  const raw = links?.classic?.[0] ?? links?.secure?.[0];
+  if (!raw) return undefined;
+  const secret = (() => {
+    try {
+      return new URL(raw).searchParams.get('secret') ?? '';
+    } catch {
+      return raw.match(/[?&]secret=([^&]*)/)?.[1] ?? '';
+    }
+  })();
+  // secure-ссылки несут тот же секрет с префиксом dd — для показа он лишний.
+  const bare = secret.replace(/^dd/, '');
+  return /^[0-9a-fA-F]{32}$/.test(bare) ? bare : undefined;
+}

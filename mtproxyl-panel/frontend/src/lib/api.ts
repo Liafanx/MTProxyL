@@ -115,6 +115,10 @@ export interface MtproxylOperation {
   error?: string;
   started_at?: string;
   ended_at?: string;
+  /** Вывод команды на текущий момент — чтобы было видно, на каком она шаге. */
+  progress?: string;
+  /** Сколько операция уже идёт, по часам сервера. */
+  elapsed_seconds?: number;
 }
 
 export interface MtproxylAvailability {

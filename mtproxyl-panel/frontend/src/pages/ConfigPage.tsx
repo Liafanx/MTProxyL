@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Settings, Save, RotateCw, X } from 'lucide-react';
+import { Settings, Save, RotateCw, X, Info, AlertTriangle } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { panelApi } from '@/lib/api';
 import { QuickSettingsTab } from '@/components/config/QuickSettingsTab';
 import { AdvancedEditorTab } from '@/components/config/AdvancedEditorTab';
+import { useMtproxyl } from '@/hooks/useMtproxyl';
 
 type Tab = 'quick' | 'advanced';
 
@@ -25,6 +27,12 @@ export function ConfigPage() {
   const [hasChanges, setHasChanges] = useState(false);
   const [mode, setMode] = useState<'api' | 'file'>('api');
   const [configHash, setConfigHash] = useState('');
+
+  // В режиме manager конфигом движка владеет MTProxyL: он пересобирает
+  // config.toml из своих настроек и экспертных правок. Правка здесь переживёт
+  // только до ближайшей пересборки, поэтому об этом надо сказать прямо.
+  const { enabled: mtproxylEnabled, mode: mtproxylMode } = useMtproxyl();
+  const configOwnedByMtproxyl = mtproxylEnabled && mtproxylMode === 'manager';
 
   useEffect(() => {
     loadConfig();
@@ -80,9 +88,12 @@ export function ConfigPage() {
       alert(restarted ? 'Конфиг сохранён, Telemt перезапускается…' : 'Конфиг сохранён');
     } catch (err: any) {
       if (err?.code === 'revision_conflict') {
-        setError('Config changed on the server. Reloading…');
+        setError('Конфиг изменился на сервере, перезагружаем…');
         await loadConfig();
-        alert('The Telemt config changed since you opened it. Your edits were not saved — the latest version was reloaded.');
+        alert(
+          'Конфиг Telemt изменился с тех пор, как вы его открыли. Правки не сохранены — ' +
+            'загружена актуальная версия.',
+        );
         return;
       }
       setError(err.message || 'Не удалось сохранить конфиг');
@@ -108,7 +119,7 @@ export function ConfigPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
-        <div className="text-text-secondary">Loading configuration...</div>
+        <div className="text-text-secondary">Загрузка конфигурации…</div>
       </div>
     );
   }
@@ -123,22 +134,57 @@ export function ConfigPage() {
 
   return (
     <div className="flex flex-col h-full">
+      {configOwnedByMtproxyl && (
+        <div className="px-4 py-3 bg-warning/10 border-b border-warning/30 text-sm flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-warning" />
+          <div className="space-y-1 text-text-secondary">
+            <p className="text-text-primary">
+              В режиме Manager конфигом движка управляет MTProxyL.
+            </p>
+            <p>
+              Он пересобирает <code>config.toml</code> из своих настроек, и правки, сделанные
+              здесь, будут затёрты при ближайшем изменении настроек, порта или секретов.
+              Чтобы изменения пережили пересборку, правьте{' '}
+              <Link to="/expert" className="text-accent hover:underline">
+                экспертные параметры
+              </Link>{' '}
+              или возьмите конфиг под себя целиком в{' '}
+              <Link to="/superexpert" className="text-accent hover:underline">
+                супер эксперте
+              </Link>
+              .
+            </p>
+          </div>
+        </div>
+      )}
       {mode === 'api' && (
-        <div className="px-4 py-2 bg-blue-500/10 border-b border-blue-500/20 text-sm text-blue-600">
-          API mode — main sections only. For full-file access set <code>config_edit_mode = "file"</code>.
+        <div className="px-4 py-3 bg-accent/10 border-b border-accent/20 text-sm flex items-start gap-2">
+          <Info className="w-4 h-4 shrink-0 mt-0.5 text-accent" />
+          <div className="space-y-1 text-text-secondary">
+            <p className="text-text-primary">
+              Значения читаются через API движка — показаны все, включая заводские.
+            </p>
+            <p>
+              Поэтому в списке много строк, которых вы не задавали: это действующие значения
+              telemt по умолчанию, а не что-то, что записала панель. Но при сохранении они
+              будут записаны в конфиг явно и перестанут следовать за обновлениями движка —
+              меняйте только то, что нужно. Чтобы работать с файлом как есть, задайте{' '}
+              <code>config_edit_mode = "file"</code> в конфиге панели.
+            </p>
+          </div>
         </div>
       )}
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-border">
-        <div className="flex items-center gap-3">
-          <Settings className="w-5 h-5 text-primary" />
-          <div>
+      <div className="flex flex-col gap-3 p-4 border-b border-border sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3 min-w-0">
+          <Settings className="w-5 h-5 text-primary shrink-0" />
+          <div className="min-w-0">
             <h1 className="text-lg font-semibold text-text-primary">Конфигурация Telemt</h1>
-            <p className="text-sm text-text-secondary">{configPath}</p>
+            <p className="text-sm text-text-secondary truncate">{configPath}</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           {hasChanges && (
             <button
               onClick={handleDiscard}
@@ -146,7 +192,7 @@ export function ConfigPage() {
               className="px-3 py-1.5 text-sm rounded-lg border border-border hover:bg-surface-hover transition-colors flex items-center gap-2"
             >
               <X className="w-4 h-4" />
-              Discard
+              Отменить
             </button>
           )}
 
@@ -180,7 +226,7 @@ export function ConfigPage() {
               : 'text-text-secondary hover:text-text-primary'
           }`}
         >
-          Quick Settings
+          Быстрые настройки
         </button>
         <button
           onClick={() => setActiveTab('advanced')}
@@ -190,7 +236,7 @@ export function ConfigPage() {
               : 'text-text-secondary hover:text-text-primary'
           }`}
         >
-          Advanced Editor
+          Редактор конфига
         </button>
       </div>
 
@@ -212,7 +258,7 @@ export function ConfigPage() {
 
       {hasChanges && (
         <div className="px-4 py-2 bg-yellow-500/10 border-t border-yellow-500/20 text-sm text-yellow-600">
-          You have unsaved changes
+          Есть несохранённые изменения
         </div>
       )}
     </div>

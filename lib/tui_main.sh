@@ -60,8 +60,18 @@ show_main_menu() {
             echo -e "  ${BOLD}Цель:${NC}        ${DETECTED_MODE:-unknown}$([ -n "$DETECTED_CONTAINER" ] && echo " (${DETECTED_CONTAINER})")"
             echo -e "  ${BOLD}Конфиг цели:${NC} ${DETECTED_CONFIG_PATH:-${DIM}не найден${NC}}"
             if _no_telemt_target; then
-                echo -e "  ${YELLOW}⚠ telemt на сервере не найден — чинить нечего${NC}"
-                echo -e "  ${DIM}  Поставить оригинальный telemt: пункт «Установить telemt» ниже${NC}"
+                # Различаем «на сервере пусто» и «конфиг остался, а движка нет»:
+                # во втором случае строка выше показывает путь к конфигу, и
+                # сообщение «не найден» без уточнения выглядит противоречиво.
+                if [ -n "${DETECTED_CONFIG_PATH:-}" ] && [ -f "${DETECTED_CONFIG_PATH}" ]; then
+                    echo -e "  ${YELLOW}⚠ Конфиг остался, но самого telemt нет${NC}"
+                    echo -e "  ${DIM}  Ни службы, ни контейнера, ни бинарника — чинить нечего${NC}"
+                    echo -e "  ${DIM}  Поставить telemt заново: пункт «Установить telemt» ниже${NC}"
+                    echo -e "  ${DIM}  Настройки из конфига установщик подхватит${NC}"
+                else
+                    echo -e "  ${YELLOW}⚠ telemt на сервере не найден — чинить нечего${NC}"
+                    echo -e "  ${DIM}  Поставить оригинальный telemt: пункт «Установить telemt» ниже${NC}"
+                fi
             fi
         else
             echo -e "  ${BOLD}Движок:${NC}      telemt v$(get_telemt_version)  ${BOLD}Статус:${NC} ${status_str}"

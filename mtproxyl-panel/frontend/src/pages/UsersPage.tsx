@@ -17,7 +17,7 @@ import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, ArrowUpDown, Search, ChevronL
 import { formatBytes } from '@/lib/utils';
 import { useQuota, resetUserQuota, type QuotaEntry } from '@/hooks/useQuota';
 import { QuotaBar } from '@/components/QuotaBar';
-import { buildProxyLinks, type UserLinks } from './usersPage.helpers';
+import { buildProxyLinks, extractSecret, type UserLinks } from './usersPage.helpers';
 
 type SortKey = 'username' | 'current_connections' | 'active_unique_ips' | 'total_octets' | 'expiration_rfc3339';
 type SortDir = 'asc' | 'desc';
@@ -481,6 +481,7 @@ export function UsersPage() {
         onSubmit={handleEdit}
         initialData={editUser ?? undefined}
         mode="edit"
+        currentSecret={extractSecret(editUser?.links)}
       />
 
       <ConfirmDialog
