@@ -12,7 +12,7 @@ declare -a UPSTREAM_ENABLED=()
 
 save_upstreams() {
     mkdir -p "$INSTALL_DIR"
-    local tmp; tmp=$(_mktemp) || return 1
+    local tmp; tmp=$(_mktemp "$INSTALL_DIR") || return 1
 
     echo "# MTProxyL — upstream-маршруты v${VERSION}" > "$tmp"
     echo "# Формат: NAME|TYPE|ADDR|USER|PASS|WEIGHT|IFACE|ENABLED" >> "$tmp"

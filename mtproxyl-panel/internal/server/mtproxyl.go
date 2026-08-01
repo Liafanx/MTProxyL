@@ -38,6 +38,20 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		return true
 	}
 
+	// busy rejects a state-changing request while a background operation runs.
+	//
+	// Those operations rewrite MTProxyL's settings files — a restore replaces
+	// them wholesale — so a concurrent write would either be lost or corrupt the
+	// result. Read-only checks are deliberately not gated.
+	busy := func(w http.ResponseWriter) bool {
+		if runner.Busy() {
+			writeError(w, http.StatusConflict, "operation_busy",
+				"Дождитесь завершения текущей операции MTProxyL")
+			return true
+		}
+		return false
+	}
+
 	// writeCLIError maps a bridge failure onto an HTTP response.
 	writeCLIError := func(w http.ResponseWriter, code string, err error) {
 		if errors.Is(err, mtproxylctl.ErrDisabled) {
@@ -140,7 +154,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	}))
 
 	mux.Handle("POST /api/mtproxyl/selfmask/params", protected(func(w http.ResponseWriter, r *http.Request) {
-		if !guard(w) {
+		if !guard(w) || busy(w) {
 			return
 		}
 		var req struct {
@@ -192,7 +206,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	}))
 
 	mux.Handle("POST /api/mtproxyl/selfmask/disable", protected(func(w http.ResponseWriter, r *http.Request) {
-		if !guard(w) {
+		if !guard(w) || busy(w) {
 			return
 		}
 		out, err := client.SelfmaskDisable(r.Context())
@@ -217,7 +231,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	}))
 
 	mux.Handle("POST /api/mtproxyl/backups", protected(func(w http.ResponseWriter, r *http.Request) {
-		if !guard(w) {
+		if !guard(w) || busy(w) {
 			return
 		}
 		name, err := client.CreateBackup(r.Context())
@@ -274,7 +288,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	// Parameters are stored, not applied: the caller runs an action afterwards,
 	// mirroring how MTProxyL's own menu separates the two steps.
 	mux.Handle("POST /api/mtproxyl/nft/params", protected(func(w http.ResponseWriter, r *http.Request) {
-		if !guard(w) {
+		if !guard(w) || busy(w) {
 			return
 		}
 		var req struct {
@@ -395,7 +409,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	}))
 
 	mux.Handle("DELETE /api/mtproxyl/geoblock/{country}", protected(func(w http.ResponseWriter, r *http.Request) {
-		if !guard(w) {
+		if !guard(w) || busy(w) {
 			return
 		}
 		code := r.PathValue("country")
@@ -425,7 +439,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	}))
 
 	mux.Handle("POST /api/mtproxyl/upstreams", protected(func(w http.ResponseWriter, r *http.Request) {
-		if !guard(w) {
+		if !guard(w) || busy(w) {
 			return
 		}
 		var spec mtproxylctl.UpstreamSpec
@@ -446,7 +460,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	}))
 
 	mux.Handle("DELETE /api/mtproxyl/upstreams/{name}", protected(func(w http.ResponseWriter, r *http.Request) {
-		if !guard(w) {
+		if !guard(w) || busy(w) {
 			return
 		}
 		name := r.PathValue("name")
@@ -463,7 +477,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	}))
 
 	mux.Handle("POST /api/mtproxyl/upstreams/{name}/toggle", protected(func(w http.ResponseWriter, r *http.Request) {
-		if !guard(w) {
+		if !guard(w) || busy(w) {
 			return
 		}
 		name := r.PathValue("name")
@@ -517,7 +531,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	}))
 
 	mux.Handle("POST /api/mtproxyl/expert", protected(func(w http.ResponseWriter, r *http.Request) {
-		if !guard(w) {
+		if !guard(w) || busy(w) {
 			return
 		}
 		var req struct {
@@ -542,7 +556,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	}))
 
 	mux.Handle("DELETE /api/mtproxyl/expert/{section}/{key}", protected(func(w http.ResponseWriter, r *http.Request) {
-		if !guard(w) {
+		if !guard(w) || busy(w) {
 			return
 		}
 		section, key := r.PathValue("section"), r.PathValue("key")
@@ -587,7 +601,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 
 	// Applying rebuilds the engine config once for a whole batch of edits.
 	mux.Handle("POST /api/mtproxyl/expert/apply", protected(func(w http.ResponseWriter, r *http.Request) {
-		if !guard(w) {
+		if !guard(w) || busy(w) {
 			return
 		}
 		out, err := client.ApplyExpert(r.Context())
@@ -624,7 +638,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	}))
 
 	mux.Handle("PUT /api/mtproxyl/superexpert/config", protected(func(w http.ResponseWriter, r *http.Request) {
-		if !guard(w) {
+		if !guard(w) || busy(w) {
 			return
 		}
 		var req struct {
@@ -645,7 +659,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	}))
 
 	mux.Handle("POST /api/mtproxyl/superexpert/toggle", protected(func(w http.ResponseWriter, r *http.Request) {
-		if !guard(w) {
+		if !guard(w) || busy(w) {
 			return
 		}
 		var req struct {

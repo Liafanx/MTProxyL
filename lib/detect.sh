@@ -14,7 +14,11 @@ DETECT_BRIDGE_STRATEGY="simple"  # simple|precise
 
 save_detect_settings() {
     mkdir -p "$INSTALL_DIR"
-    cat > "$DETECT_CONF" << EOF
+    # Через временный файл: панель читает состояние цели ('mode --json')
+    # параллельно с пересканированием.
+    local _tmp
+    _tmp=$(_mktemp "$INSTALL_DIR") || { log_error "Не удалось создать временный файл"; return 1; }
+    cat > "$_tmp" << EOF
 # MTProxyL Reanimator — обнаруженная цель
 DETECTED_MODE='${DETECTED_MODE}'
 DETECTED_CONTAINER='${DETECTED_CONTAINER}'
@@ -24,7 +28,8 @@ DETECTED_PORT='${DETECTED_PORT}'
 DETECTED_NETWORK_MODE='${DETECTED_NETWORK_MODE}'
 DETECT_BRIDGE_STRATEGY='${DETECT_BRIDGE_STRATEGY}'
 EOF
-    chmod 600 "$DETECT_CONF"
+    chmod 600 "$_tmp"
+    mv "$_tmp" "$DETECT_CONF"
 }
 
 load_detect_settings() {

@@ -266,10 +266,18 @@ install_mtproxyl_sudoers() {
   ensure_temp_dir
   _tmp="$TEMP_DIR/sudoers-mtproxyl"
 
-  # Only the exact subcommands the panel calls are permitted; `mtproxyl` as a
-  # whole is not. The restore rule is the one wildcard, and it is pinned to the
-  # backup directory and archive naming scheme. The panel additionally
-  # validates the filename before building this argument.
+  # Only the subcommands the panel calls are permitted; `mtproxyl` as a whole
+  # is not. The restore rule is pinned to the backup directory and the archive
+  # naming scheme, and the panel validates the filename before building that
+  # argument.
+  #
+  # What these rules do NOT do is pin arity: a trailing `*` in sudoers is
+  # greedy and matches across argument boundaries, so a rule ending in `*`
+  # also admits extra trailing arguments (verified against sudo directly).
+  # That is contained rather than prevented here — the subcommand itself is
+  # always literal, and MTProxyL validates every key and value against its own
+  # catalog, so surplus positional arguments are ignored by the script. Do not
+  # read the argument patterns below as a strict signature.
   #
   # env_keep is required: sudo resets the environment, which would strip
   # MTPROXYL_ASSUME_YES and leave the script waiting on a prompt forever.

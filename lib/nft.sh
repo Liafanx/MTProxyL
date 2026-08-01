@@ -106,7 +106,12 @@ NFT_EXTRA_COUNT=0
 # ── Сохранение / загрузка настроек ────────────────────────────
 save_nft_settings() {
     mkdir -p "$INSTALL_DIR"
-    cat > "$NFT_CONF" << EOF
+    # Пишем во временный файл рядом с целевым и подменяем одним mv: панель
+    # опрашивает 'nft status --json' параллельно и не должна прочитать файл,
+    # записанный наполовину.
+    local _tmp
+    _tmp=$(_mktemp "$INSTALL_DIR") || { log_error "Не удалось создать временный файл"; return 1; }
+    cat > "$_tmp" << EOF
 # MTProxyL NFT — настройки
 NFT_ENABLED='${NFT_ENABLED}'
 NFT_MODE='${NFT_MODE}'
@@ -161,14 +166,15 @@ ZAPRET2_DEBUG='${ZAPRET2_DEBUG}'
 EOF
     local _i
     for _i in $(seq 1 "$NFT_EXTRA_COUNT"); do
-        cat >> "$NFT_CONF" << EOF
+        cat >> "$_tmp" << EOF
 NFT_EXTRA_${_i}_PORT='${NFT_EXTRA_PORT[$_i]:-}'
 NFT_EXTRA_${_i}_IP='${NFT_EXTRA_IP[$_i]:-}'
 NFT_EXTRA_${_i}_RATE='${NFT_EXTRA_RATE[$_i]:-1/second}'
 NFT_EXTRA_${_i}_BURST='${NFT_EXTRA_BURST[$_i]:-1}'
 EOF
     done
-    chmod 600 "$NFT_CONF"
+    chmod 600 "$_tmp"
+    mv "$_tmp" "$NFT_CONF"
 }
 
 load_nft_settings() {

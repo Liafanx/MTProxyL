@@ -98,7 +98,7 @@ handle_tune_command() {
             [ -z "$value" ] && { log_error "Требуется значение"; return 1; }
             [[ "$value" =~ $regex ]] || { log_error "Некорректное значение (ожидается: ${regex})"; return 1; }
             mkdir -p "$INSTALL_DIR"; touch "$_TUNE_FILE"; chmod 600 "$_TUNE_FILE"
-            local tmp; tmp=$(_mktemp) || return 1
+            local tmp; tmp=$(_mktemp "$INSTALL_DIR") || return 1
             grep -v "^${param}|" "$_TUNE_FILE" > "$tmp" 2>/dev/null || true
             echo "${param}|${value}" >> "$tmp"
             mv "$tmp" "$_TUNE_FILE"; chmod 600 "$_TUNE_FILE"
@@ -118,7 +118,7 @@ handle_tune_command() {
             [ ! -f "$_TUNE_FILE" ] && { log_info "Нет параметров"; return 0; }
             if [ "$param" = "all" ]; then rm -f "$_TUNE_FILE"; log_success "Все параметры очищены"
             else
-                local tmp; tmp=$(_mktemp) || return 1
+                local tmp; tmp=$(_mktemp "$INSTALL_DIR") || return 1
                 grep -v "^${param}|" "$_TUNE_FILE" > "$tmp" 2>/dev/null || true
                 mv "$tmp" "$_TUNE_FILE"; chmod 600 "$_TUNE_FILE"
                 log_success "${param} очищен"
@@ -731,22 +731,25 @@ superexpert_write_file() {
     mkdir -p "$(dirname "$SUPEREXPERT_FILE")"
 
     # Пишем во временный файл: оборванная передача не должна оставить
-    # обрезанный конфиг, по которому движок потом не поднимется.
-    local _tmp; _tmp=$(_mktemp) || return 1
+    # обрезанный конфиг, по которому движок потом не поднимется. Временный
+    # файл кладём рядом с целевым, чтобы подменить его одним mv.
+    local _tmp; _tmp=$(_mktemp "$(dirname "$SUPEREXPERT_FILE")") || return 1
     cat > "$_tmp"
 
     if [ ! -s "$_tmp" ]; then
+        rm -f "$_tmp"
         log_error "Пустой конфиг отклонён"
         return 1
     fi
     # Минимальная проверка: у telemt-конфига обязательно есть секции.
     if ! grep -qE '^\[[a-z]' "$_tmp"; then
+        rm -f "$_tmp"
         log_error "Не похоже на TOML движка — нет ни одной секции"
         return 1
     fi
 
-    cat "$_tmp" > "$SUPEREXPERT_FILE"
-    chmod 600 "$SUPEREXPERT_FILE"
+    chmod 600 "$_tmp"
+    mv "$_tmp" "$SUPEREXPERT_FILE"
     log_success "Конфиг сохранён: ${SUPEREXPERT_FILE}"
     log_info "Перезапустите прокси, чтобы применить: mtproxyl restart"
 }

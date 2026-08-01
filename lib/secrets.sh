@@ -15,7 +15,7 @@ declare -a SECRETS_NOTES=()
 save_secrets() {
     mkdir -p "$INSTALL_DIR"
     local tmp
-    tmp=$(_mktemp) || { log_error "Не удалось создать временный файл"; return 1; }
+    tmp=$(_mktemp "$INSTALL_DIR") || { log_error "Не удалось создать временный файл"; return 1; }
 
     echo "# MTProxyL — база секретов v${VERSION}" > "$tmp"
     echo "# Формат: LABEL|SECRET|CREATED_TS|ENABLED|MAX_CONNS|MAX_IPS|QUOTA_BYTES|EXPIRES|NOTES" >> "$tmp"

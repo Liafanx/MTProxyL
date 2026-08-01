@@ -12,7 +12,9 @@ save_expert_override() {
     local section="$1" key="$2" value="$3"
     mkdir -p "$INSTALL_DIR"
     touch "$EXPERT_OVERRIDES_FILE"; chmod 600 "$EXPERT_OVERRIDES_FILE"
-    local tmp; tmp=$(_mktemp) || return 1
+    # Временный файл рядом с целевым, иначе mv через /tmp (tmpfs) — это
+    # copy+truncate, а не подмена целиком.
+    local tmp; tmp=$(_mktemp "$INSTALL_DIR") || return 1
     grep -v "^${section}|${key}|" "$EXPERT_OVERRIDES_FILE" > "$tmp" 2>/dev/null || true
     echo "${section}|${key}|${value}" >> "$tmp"
     mv "$tmp" "$EXPERT_OVERRIDES_FILE"; chmod 600 "$EXPERT_OVERRIDES_FILE"
@@ -21,7 +23,7 @@ save_expert_override() {
 delete_expert_override() {
     local section="$1" key="$2"
     [ -f "$EXPERT_OVERRIDES_FILE" ] || return 0
-    local tmp; tmp=$(_mktemp) || return 1
+    local tmp; tmp=$(_mktemp "$INSTALL_DIR") || return 1
     grep -v "^${section}|${key}|" "$EXPERT_OVERRIDES_FILE" > "$tmp" 2>/dev/null || true
     mv "$tmp" "$EXPERT_OVERRIDES_FILE"; chmod 600 "$EXPERT_OVERRIDES_FILE"
 }
