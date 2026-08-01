@@ -585,6 +585,22 @@ TOML_EOF
 # Override сам по себе ничего не меняет: он попадает в конфиг только при
 # его генерации. Предлагаем это сразу, иначе «сохранено» вводит в
 # заблуждение — движок продолжает работать со старым значением.
+# Пересборка конфига и hot-reload — отдельным шагом.
+#
+# Панель сохраняет параметры пачкой, и пересобирать конфиг после каждого
+# было бы и медленно, и шумно: на десять правок пришлось бы десять
+# перезагрузок движка.
+expert_apply_now() {
+    generate_telemt_config || { log_error "Ошибка генерации конфига"; return 1; }
+    log_success "Конфиг обновлён"
+    if is_proxy_running; then
+        reload_target_config &>/dev/null || true
+        log_success "Hot-reload отправлен"
+    else
+        log_warn "Прокси не запущен — значения применятся при запуске"
+    fi
+}
+
 _expert_apply_prompt() {
     echo -en "  ${BOLD}Пересобрать конфиг и применить сейчас? [Y/n]:${NC} "
     local _yn; read_line _yn
@@ -632,6 +648,7 @@ handle_expert_command() {
             fi
             save_expert_override "$_sec" "$_key" "$_val" || return 1
             log_success "Override сохранён: [${_sec}] ${_key} = ${_val}"
+            [ "${4:-}" = "--no-apply" ] && return 0
             _expert_apply_prompt ;;
         clear)
             check_root
@@ -656,8 +673,12 @@ handle_expert_command() {
                     fi
                     delete_expert_override "$_what" "$_key" || return 1
                     log_success "Override удалён: [${_what}] ${_key}"
+                    [ "${3:-}" = "--no-apply" ] && return 0
                     _expert_apply_prompt ;;
             esac ;;
+        apply)
+            check_root
+            expert_apply_now ;;
         edit)
             check_root
             local config="${CONFIG_DIR}/config.toml"
@@ -674,6 +695,8 @@ handle_expert_command() {
             echo -e "    ${GREEN}expert list --catalog${NC}                  Весь каталог с валидаторами (JSON)"
             echo -e "    ${GREEN}expert set${NC} <секция> <ключ> <значение>   Добавить"
             echo -e "    ${GREEN}expert clear${NC} <секция> <ключ> | all      Удалить"
+            echo -e "    ${GREEN}expert apply${NC}                           Пересобрать конфиг и применить"
+            echo -e "    ${DIM}У set/clear есть --no-apply: отложить применение${NC}"
             echo -e "    ${GREEN}expert edit${NC}                            Редактор" ;;
     esac
 }

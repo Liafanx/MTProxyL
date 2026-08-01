@@ -21,17 +21,19 @@ export function ParamField({
   param,
   value,
   onChange,
+  disabled,
 }: {
   param: CatalogParam;
   value: string;
   onChange: (v: string) => void;
+  disabled?: boolean;
 }) {
   const selectClass =
-    'rounded border border-border bg-surface px-2 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/50';
+    'rounded border border-border bg-surface px-2 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 disabled:opacity-50 disabled:cursor-not-allowed';
 
   if (param.validator === 'bool') {
     return (
-      <select value={value} onChange={(e) => onChange(e.target.value)} className={selectClass}>
+      <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} className={selectClass}>
         <option value="true">включено</option>
         <option value="false">выключено</option>
       </select>
@@ -41,7 +43,7 @@ export function ParamField({
   if (param.validator.startsWith('enum:')) {
     const options = param.validator.slice('enum:'.length).split(',');
     return (
-      <select value={value} onChange={(e) => onChange(e.target.value)} className={selectClass}>
+      <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} className={selectClass}>
         {options.map((o) => (
           <option key={o} value={o}>
             {o}
@@ -55,6 +57,7 @@ export function ParamField({
   return (
     <Input
       value={value}
+      disabled={disabled}
       type={range ? 'number' : 'text'}
       min={range?.[1]}
       max={range?.[2]}

@@ -41,8 +41,18 @@ if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
     exit 1
 fi
 
-# Защита stdin при curl | bash (только если это не фоновый/systemd запуск)
-if [[ ! -t 0 ]] && [[ -e /dev/tty ]] && ps -p $$ -o stat= | grep -q "+"; then
+# Защита stdin при curl | bash (только если это не фоновый/systemd запуск).
+#
+# Не трогаем stdin, если он нужен самой команде: `superexpert write` читает
+# конфиг из пайпа, и переоткрытие /dev/tty подменило бы его вводом с
+# терминала — конфиг молча потерялся бы. То же в неинтерактивном режиме:
+# там терминала быть не должно по определению.
+_stdin_is_payload="false"
+[ "${MTPROXYL_ASSUME_YES:-}" = "1" ] && _stdin_is_payload="true"
+[ "${1:-}" = "superexpert" ] && [ "${2:-}" = "write" ] && _stdin_is_payload="true"
+
+if [ "$_stdin_is_payload" != "true" ] \
+   && [[ ! -t 0 ]] && [[ -e /dev/tty ]] && ps -p $$ -o stat= | grep -q "+"; then
     exec < /dev/tty 2>/dev/null || true
 fi
 

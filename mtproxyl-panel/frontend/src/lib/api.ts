@@ -295,6 +295,9 @@ export const mtproxylExpertApi = {
       `/expert/${encodeURIComponent(section)}/${encodeURIComponent(key)}`,
       { method: 'DELETE' },
     ),
+  // Правки сохраняются без пересборки конфига, применение — одним вызовом
+  // на всю пачку.
+  apply: () => request<{ output: string }>(MTPROXYL_BASE, '/expert/apply', { method: 'POST' }),
 
   superExpert: () => request<SuperExpertStatus>(MTPROXYL_BASE, '/superexpert'),
   superExpertConfig: () => request<{ content: string }>(MTPROXYL_BASE, '/superexpert/config'),

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { RotateCcw, Search, Zap } from 'lucide-react';
+import { Lock, RotateCcw, Search, Zap } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,7 +8,7 @@ import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { ParamField } from '@/components/ParamField';
 import { ManagerOnlyNotice } from '@/components/ManagerOnlyNotice';
 import { useManagerOnly } from '@/hooks/useMtproxyl';
-import { mtproxylExpertApi, type ExpertParam } from '@/lib/api';
+import { mtproxylExpertApi, type ExpertParam, type SuperExpertStatus } from '@/lib/api';
 
 /** Совпадает ли параметр со строкой поиска. */
 function matches(p: ExpertParam, q: string): boolean {
@@ -30,6 +30,9 @@ export function ExpertPage() {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [onlyOverridden, setOnlyOverridden] = useState(false);
+  // Пока конфигом владеет пользователь, MTProxyL отклоняет expert set/clear:
+  // его правки всё равно были бы затёрты файлом супер эксперта.
+  const [superExpert, setSuperExpert] = useState<SuperExpertStatus | null>(null);
 
   const { allowed, loading: modeLoading } = useManagerOnly();
 
@@ -42,7 +45,14 @@ export function ExpertPage() {
     }
     setLoading(true);
     try {
-      setParams(await mtproxylExpertApi.catalog());
+      const [catalog, se] = await Promise.all([
+        mtproxylExpertApi.catalog(),
+        // Статус читаем отдельно: сам каталог доступен и в режиме супер
+        // эксперта, а вот запись — нет.
+        mtproxylExpertApi.superExpert().catch(() => null),
+      ]);
+      setParams(catalog);
+      setSuperExpert(se);
       setEdits({});
       setError(null);
     } catch (e) {
@@ -85,6 +95,7 @@ export function ExpertPage() {
   }, [visible]);
 
   const overriddenCount = params.filter((p) => p.has_override).length;
+  const readOnly = superExpert?.active ?? false;
 
   const save = async () => {
     if (dirty.length === 0) return;
@@ -95,12 +106,14 @@ export function ExpertPage() {
       for (const p of dirty) {
         await mtproxylExpertApi.set(p.section, p.key, edits[idOf(p)]);
       }
+      // Конфиг пересобирается один раз на всю пачку, а не после каждой правки.
+      await mtproxylExpertApi.apply();
       const needsRestart = dirty.some((p) => !p.hot_reload);
       setNotice(
-        `Сохранено параметров: ${dirty.length}.` +
+        `Сохранено параметров: ${dirty.length}, конфиг пересобран.` +
           (needsRestart
-            ? ' Часть из них применяется только после перезапуска прокси.'
-            : ' Все применяются на лету.'),
+            ? ' Часть значений вступит в силу только после перезапуска прокси.'
+            : ' Все значения применены на лету.'),
       );
       setError(null);
       await load();
@@ -114,6 +127,7 @@ export function ExpertPage() {
   const clearOne = async (p: ExpertParam) => {
     try {
       await mtproxylExpertApi.clear(p.section, p.key);
+      await mtproxylExpertApi.apply();
       setNotice(`Значение [${p.section}] ${p.key} возвращено к сгенерированному`);
       setError(null);
       await load();
@@ -136,6 +150,20 @@ export function ExpertPage() {
 
       {allowed && (
         <>
+          {readOnly && (
+            <div className="bg-warning/10 border border-warning/30 rounded-lg p-4 flex items-start gap-3">
+              <Lock size={18} className="text-warning shrink-0 mt-0.5" />
+              <div className="text-sm text-text-secondary space-y-1">
+                <p className="text-text-primary">Правка недоступна: включён режим супер эксперта.</p>
+                <p>
+                  Конфигурацией движка сейчас управляете вы через свой файл, и MTProxyL
+                  отклоняет точечные правки — они всё равно были бы затёрты. Значения ниже
+                  показаны только для справки.
+                </p>
+              </div>
+            </div>
+          )}
+
           {error && <ErrorAlert message={error} onRetry={load} />}
           {notice && (
             <div className="bg-accent/10 border border-accent/30 rounded-lg p-3 text-sm text-text-primary">
@@ -218,9 +246,10 @@ export function ExpertPage() {
                           <ParamField
                             param={p}
                             value={valueOf(p)}
+                            disabled={readOnly}
                             onChange={(v) => setEdits((prev) => ({ ...prev, [idOf(p)]: v }))}
                           />
-                          {p.has_override && (
+                          {p.has_override && !readOnly && (
                             <Button
                               size="sm"
                               variant="outline"
@@ -239,7 +268,7 @@ export function ExpertPage() {
             </div>
           )}
 
-          {dirty.length > 0 && (
+          {dirty.length > 0 && !readOnly && (
             <div className="sticky bottom-4 bg-surface border border-accent/40 rounded-lg p-3 flex items-center gap-3 flex-wrap shadow-lg">
               <span className="text-sm text-text-primary flex-1">
                 Изменено параметров: {dirty.length}

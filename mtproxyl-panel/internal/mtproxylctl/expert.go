@@ -102,6 +102,10 @@ func (c *Client) ExpertOverrides(ctx context.Context) ([]ExpertOverride, error) 
 }
 
 // SetExpertParam stores an override for one engine parameter.
+//
+// The write is deferred: rebuilding the engine config after every parameter
+// would regenerate it and reload the proxy once per value. Callers save a batch
+// and then call ApplyExpert once.
 func (c *Client) SetExpertParam(ctx context.Context, section, key, value string) (string, error) {
 	if err := ValidateExpertParam(section, key, value); err != nil {
 		return "", err
@@ -109,16 +113,23 @@ func (c *Client) SetExpertParam(ctx context.Context, section, key, value string)
 	if value == "" {
 		return "", fmt.Errorf("value must not be empty")
 	}
-	out, err := c.run(ctx, "expert", "set", section, key, value)
+	out, err := c.run(ctx, "expert", "set", section, key, value, "--no-apply")
 	return stripANSI(out), err
 }
 
 // ClearExpertParam removes one override, restoring the generated value.
+// Like SetExpertParam it defers the rebuild.
 func (c *Client) ClearExpertParam(ctx context.Context, section, key string) (string, error) {
 	if err := ValidateExpertTarget(section, key); err != nil {
 		return "", err
 	}
-	out, err := c.run(ctx, "expert", "clear", section, key)
+	out, err := c.run(ctx, "expert", "clear", section, key, "--no-apply")
+	return stripANSI(out), err
+}
+
+// ApplyExpert regenerates the engine config and hot-reloads the proxy.
+func (c *Client) ApplyExpert(ctx context.Context) (string, error) {
+	out, err := c.run(ctx, "expert", "apply")
 	return stripANSI(out), err
 }
 

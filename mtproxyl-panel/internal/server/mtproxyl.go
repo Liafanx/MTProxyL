@@ -585,6 +585,19 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 
+	// Applying rebuilds the engine config once for a whole batch of edits.
+	mux.Handle("POST /api/mtproxyl/expert/apply", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		out, err := client.ApplyExpert(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
 	// ── Super expert ────────────────────────────────────────────────────────
 	mux.Handle("GET /api/mtproxyl/superexpert", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
