@@ -354,7 +354,27 @@ mtproxyl nft remove           # Удалить правила
 mtproxyl nft service          # Systemd-служба
 mtproxyl nft drop             # Счётчик правил (live)
 mtproxyl nft extra-add 8443   # Доп. правило
+mtproxyl nft status           # Состояние (--json для машинного вывода)
 ```
+
+**Параметры лимитера, iOS-фиксов и Zapret2** задаются без интерактивного меню —
+25 значений с проверкой при записи. Так работает веб-панель:
+
+```bash
+mtproxyl nft settable         # Список параметров с текущими значениями (JSON)
+
+mtproxyl nft set NFT_IOS_RATE 20/second
+mtproxyl nft set NFT_OTHER_RATE 54/minute
+mtproxyl nft set NFT_IOS_DETECT fingerprint   # fingerprint|ttl
+mtproxyl nft set IOS_KA_TIME 45
+mtproxyl nft set ZAPRET2_SPLIT_LEN 400
+
+mtproxyl nft apply            # Переприменить правила (classic)
+mtproxyl nft smart            # Переприменить правила (smart)
+```
+
+Сохранение параметра не меняет правила ядра — их нужно переприменить, как и
+в меню.
 
 <a id="cli-zapret2"></a>
 
@@ -372,12 +392,31 @@ mtproxyl nft zapret2-wscale   # Проверить wscale / win ACK
 ### Selfmask
 
 ```bash
-mtproxyl selfmask status      # Статус
-mtproxyl selfmask setup       # Настроить / переустановить
+mtproxyl selfmask status      # Статус (--json для машинного вывода)
+mtproxyl selfmask setup       # Настроить через мастер (интерактивно)
 mtproxyl selfmask verify      # Проверить
 mtproxyl selfmask disable     # Отключить
 mtproxyl selfmask menu        # Открыть меню
 ```
+
+**Без мастера** — параметры задаются по отдельности и применяются одной
+командой. Так работает веб-панель, и так же можно настраивать из скриптов:
+
+```bash
+mtproxyl selfmask settable    # Список параметров с текущими значениями (JSON)
+
+mtproxyl selfmask set SELFMASK_DOMAIN example.com
+mtproxyl selfmask set SELFMASK_CERT_MODE selfsigned      # letsencrypt|selfsigned
+mtproxyl selfmask set SELFMASK_SITE_SOURCE mekorunner    # stub|filemanager|catrunner|mekorunner|URL
+mtproxyl selfmask set SELFMASK_CERT_EMAIL admin@example.com
+mtproxyl selfmask set SELFMASK_NGINX_BACKEND_PORT 8444
+mtproxyl selfmask set SELFMASK_AUTO_RENEW true
+
+mtproxyl selfmask apply       # Развернуть сайт и выпустить сертификат
+```
+
+Значения проверяются при записи: домен, email, порт и шаблон должны быть
+корректными, иначе команда откажет.
 
 <a id="cli-pqcheck"></a>
 
@@ -707,8 +746,8 @@ mtproxyl panel uninstall   # удаление
 - Обновление движка telemt из панели недоступно: встроенный механизм рассчитан
   на systemd-сервис, а в режиме Manager движок работает в Docker. Используйте
   `mtproxyl engine`.
-- Настройка Selfmask из панели идёт со значениями по умолчанию — домен и шаблон
-  заглушки задаются в MTProxyL.
+- Интерактивный мастер `selfmask setup` остаётся только в CLI: из панели
+  параметры задаются по отдельности и применяются командой `selfmask apply`.
 - Один администратор, без ролей и 2FA.
 
 Подробности — [mtproxyl-panel/README.md](mtproxyl-panel/README.md).

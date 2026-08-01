@@ -126,13 +126,51 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: st})
 	}))
 
-	// Setup provisions nginx and possibly issues a certificate — minutes, so
-	// it is asynchronous like the mode switch.
-	mux.Handle("POST /api/mtproxyl/selfmask/setup", protected(func(w http.ResponseWriter, r *http.Request) {
+	// Settable parameters: the UI edits them, then applies.
+	mux.Handle("GET /api/mtproxyl/selfmask/params", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
 			return
 		}
-		started := runner.Start("selfmask:setup", client.SelfmaskSetup)
+		list, err := client.SelfmaskParams(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: list})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/selfmask/params", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		var req struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		if err := mtproxylctl.ValidateSelfmaskParam(req.Key, req.Value); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_param", "Недопустимый параметр или значение")
+			return
+		}
+		out, err := client.SetSelfmaskParam(r.Context(), req.Key, req.Value)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	// Applying provisions nginx and may issue a certificate — minutes, so it is
+	// asynchronous like the mode switch. It uses the stored parameters rather
+	// than MTProxyL's interactive wizard, which would ignore them.
+	mux.Handle("POST /api/mtproxyl/selfmask/apply", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		started := runner.Start("selfmask:apply", client.SelfmaskApply)
 		if !started {
 			writeError(w, http.StatusConflict, "operation_busy",
 				"Другая операция MTProxyL уже выполняется")

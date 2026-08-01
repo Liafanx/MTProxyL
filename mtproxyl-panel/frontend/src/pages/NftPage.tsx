@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { ParamField } from '@/components/ParamField';
 import { StatusBadge } from '@/components/StatusBadge';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -31,57 +31,6 @@ function groupOf(key: string): string {
     if (g.prefixes.some((p) => key === p || key.startsWith(p))) return g.title;
   }
   return 'Прочее';
-}
-
-/** Renders the right control for a parameter based on its validator. */
-function ParamField({
-  param,
-  value,
-  onChange,
-}: {
-  param: NftParam;
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  if (param.validator === 'bool') {
-    return (
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="rounded border border-border bg-surface px-2 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/50"
-      >
-        <option value="true">включено</option>
-        <option value="false">выключено</option>
-      </select>
-    );
-  }
-  if (param.validator.startsWith('enum:')) {
-    const options = param.validator.slice('enum:'.length).split(',');
-    return (
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="rounded border border-border bg-surface px-2 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/50"
-      >
-        {options.map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-      </select>
-    );
-  }
-  const range = param.validator.match(/^range:(\d+):(\d+)$/);
-  return (
-    <Input
-      value={value}
-      type={range ? 'number' : 'text'}
-      min={range?.[1]}
-      max={range?.[2]}
-      onChange={(e) => onChange(e.target.value)}
-      className="max-w-[220px]"
-    />
-  );
 }
 
 export function NftPage() {

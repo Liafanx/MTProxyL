@@ -1253,16 +1253,160 @@ handle_selfmask_command() {
             fi
             ;;
         setup)   selfmask_setup ;;
+        apply)   selfmask_apply ;;
+        set)     selfmask_set_param "$1" "$2" ;;
+        settable) selfmask_settable_json ;;
         verify)  selfmask_verify ;;
         disable) selfmask_disable ;;
         menu)    tui_selfmask_menu ;;
         *)
             echo -e "  ${BOLD}Selfmask:${NC}"
             echo -e "    ${GREEN}selfmask status${NC}   Статус"
-            echo -e "    ${GREEN}selfmask setup${NC}    Настроить / переустановить"
+            echo -e "    ${GREEN}selfmask setup${NC}    Настроить через мастер"
+            echo -e "    ${GREEN}selfmask apply${NC}    Применить по сохранённым параметрам"
+            echo -e "    ${GREEN}selfmask set${NC} K V   Изменить параметр"
+            echo -e "    ${GREEN}selfmask settable${NC} Список параметров (JSON)"
             echo -e "    ${GREEN}selfmask verify${NC}   Проверка"
             echo -e "    ${GREEN}selfmask disable${NC}  Отключить"
             echo -e "    ${GREEN}selfmask menu${NC}     Открыть меню"
             ;;
     esac
+}
+
+# ── Настраиваемые параметры для внешней панели ───────────────────────────────
+# Формат: КЛЮЧ|валидатор|описание — как в каталоге NFT, через тот же
+# _expert_validate.
+#
+# Выведено только то, что спрашивает мастер. Производное состояние
+# (SELFMASK_ENABLED) и внутренние пути (SITE_DIR, NGINX_SITE_NAME,
+# TLS_PROTOCOLS) не выставляются: ими управляет сама установка.
+_SELFMASK_SETTABLE=(
+    "SELFMASK_DOMAIN|custom:_validate_selfmask_domain|Домен сайта-заглушки"
+    "SELFMASK_CERT_MODE|enum:letsencrypt,selfsigned|Тип сертификата"
+    "SELFMASK_CERT_EMAIL|custom:_validate_selfmask_email|Email для Let's Encrypt"
+    "SELFMASK_SITE_SOURCE|custom:_validate_selfmask_template|Шаблон сайта или URL на index.html"
+    "SELFMASK_NGINX_BACKEND_PORT|range:1:65535|Порт локального nginx"
+    "SELFMASK_AUTO_RENEW|bool|Автопродление сертификата"
+)
+
+_validate_selfmask_domain() {
+    validate_domain "$1" && return 0
+    echo "Домен вида example.com"; return 1
+}
+
+# Пустой email допустим — установка подставит admin@<домен>.
+_validate_selfmask_email() {
+    [ -z "$1" ] && return 0
+    [[ "$1" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] && return 0
+    echo "Адрес вида user@example.com"; return 1
+}
+
+# Либо имя встроенного шаблона, либо ссылка на свой index.html.
+_validate_selfmask_template() {
+    case "$1" in
+        stub|filemanager|catrunner|mekorunner) return 0 ;;
+        http://*|https://*) return 0 ;;
+    esac
+    echo "Допустимо: stub, filemanager, catrunner, mekorunner или http(s)://... "
+    return 1
+}
+
+_selfmask_find_settable() {
+    local _key="$1" _entry
+    for _entry in "${_SELFMASK_SETTABLE[@]}"; do
+        [ "${_entry%%|*}" = "$_key" ] && { echo "$_entry"; return 0; }
+    done
+    return 1
+}
+
+# mtproxyl selfmask set <КЛЮЧ> <значение>
+#
+# Меняет только сохранённое значение. Сайт и сертификат перевыпускаются
+# отдельной командой (selfmask apply) — так же, как параметры и правила
+# разделены у лимитера.
+selfmask_set_param() {
+    local _key="$1" _val="$2" _entry
+    if [ -z "$_key" ]; then
+        log_error "Использование: mtproxyl selfmask set <ключ> <значение>"
+        return 1
+    fi
+    if ! _entry=$(_selfmask_find_settable "$_key"); then
+        log_error "Параметр '${_key}' недоступен для изменения"
+        log_info "Список: mtproxyl selfmask settable"
+        return 1
+    fi
+    local _rest="${_entry#*|}"
+    local _validator="${_rest%%|*}"
+
+    local _err
+    if ! _err=$(_expert_validate "$_validator" "$_val" 2>&1); then
+        log_error "Недопустимое значение для ${_key}: ${_err}"
+        return 1
+    fi
+
+    printf -v "$_key" '%s' "$_val"
+    save_selfmask_settings
+    log_success "${_key} = ${_val}"
+    log_info "Примените настройку заново: mtproxyl selfmask apply"
+}
+
+selfmask_settable_json() {
+    local _entry _key _validator _desc _first=1
+    printf '['
+    for _entry in "${_SELFMASK_SETTABLE[@]}"; do
+        _key="${_entry%%|*}"
+        local _rest="${_entry#*|}"
+        _validator="${_rest%%|*}"
+        _desc="${_rest#*|}"
+        [ $_first -eq 1 ] || printf ','
+        _first=0
+        printf '{"key":"%s","validator":"%s","description":"%s","value":"%s"}' \
+            "$(json_escape "$_key")" "$(json_escape "$_validator")" \
+            "$(json_escape "$_desc")" "$(json_escape "${!_key:-}")"
+    done
+    printf ']\n'
+}
+
+# Неинтерактивная установка по уже сохранённым параметрам.
+#
+# selfmask_setup запускает мастер и потому не годится для панели: под обходом
+# подтверждений он берёт значения по умолчанию, а введённые в интерфейсе — нет.
+# Здесь тот же конвейер установки, но параметры читаются из настроек.
+selfmask_apply() {
+    check_root
+
+    if ! selfmask_supported_os; then
+        log_error "Selfmask пока поддерживается только на Debian/Ubuntu"
+        return 1
+    fi
+
+    if ! validate_domain "${SELFMASK_DOMAIN:-}"; then
+        log_error "Домен не задан или некорректен"
+        log_info "Задайте его: mtproxyl selfmask set SELFMASK_DOMAIN example.com"
+        return 1
+    fi
+
+    # Мастер подставляет email сам, здесь делаем то же явно.
+    if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "letsencrypt" ] && [ -z "${SELFMASK_CERT_EMAIL:-}" ]; then
+        SELFMASK_CERT_EMAIL="admin@${SELFMASK_DOMAIN}"
+    fi
+
+    log_info "Домен:   ${SELFMASK_DOMAIN}"
+    log_info "Шаблон:  $(_selfmask_template_label "${SELFMASK_SITE_SOURCE:-stub}")"
+    log_info "Сертификат: ${SELFMASK_CERT_MODE:-letsencrypt}"
+
+    _selfmask_install_deps         || return 1
+    _selfmask_install_pq_nginx     || return 1
+    _selfmask_deploy_site          || return 1
+    if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "selfsigned" ]; then
+        _selfmask_generate_selfsigned_cert || return 1
+    else
+        _selfmask_obtain_cert      || { _selfmask_restore_system_nginx; return 1; }
+    fi
+    _selfmask_configure_nginx      || { _selfmask_restore_system_nginx; return 1; }
+    _selfmask_apply_mtproxyl_settings || { _selfmask_restore_system_nginx; return 1; }
+    [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "letsencrypt" ] && { _selfmask_setup_renewal || true; }
+
+    echo ""
+    log_success "Selfmask настроен"
 }

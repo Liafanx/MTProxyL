@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strings"
 )
 
 // SelfmaskStatus is the output of `mtproxyl selfmask status --json`.
@@ -50,13 +52,71 @@ func (c *Client) SelfmaskDisable(ctx context.Context) (string, error) {
 	return stripANSI(out), err
 }
 
-// SelfmaskSetup provisions (or re-provisions) the decoy site.
+// SelfmaskParam is one entry of the settable-parameter catalog.
+type SelfmaskParam struct {
+	Key         string `json:"key"`
+	Validator   string `json:"validator"`
+	Description string `json:"description"`
+	Value       string `json:"value"`
+}
+
+// selfmaskKeyRe bounds parameter names, which become CLI arguments.
+var selfmaskKeyRe = regexp.MustCompile(`^SELFMASK_[A-Z0-9_]{1,63}$`)
+
+// selfmaskValueRe allows what real values look like: domains, emails, URLs,
+// template names, ports and booleans.
+var selfmaskValueRe = regexp.MustCompile(`^[A-Za-z0-9_.:/@%+-]*$`)
+
+// ValidateSelfmaskParam checks a key/value pair before it reaches the CLI.
+func ValidateSelfmaskParam(key, value string) error {
+	if !selfmaskKeyRe.MatchString(key) {
+		return fmt.Errorf("invalid parameter name %q", key)
+	}
+	if len(value) > 512 {
+		return fmt.Errorf("value too long")
+	}
+	if !selfmaskValueRe.MatchString(value) {
+		return fmt.Errorf("value contains unsupported characters")
+	}
+	// A leading dash would be read as an option rather than as the value.
+	if strings.HasPrefix(value, "-") {
+		return fmt.Errorf("value must not start with a dash")
+	}
+	return nil
+}
+
+// SelfmaskParams returns the settable parameters with their current values.
+func (c *Client) SelfmaskParams(ctx context.Context) ([]SelfmaskParam, error) {
+	out, err := c.run(ctx, "selfmask", "settable")
+	if err != nil {
+		return nil, err
+	}
+	var list []SelfmaskParam
+	if err := json.Unmarshal([]byte(firstJSONLine(out)), &list); err != nil {
+		return nil, fmt.Errorf("parse selfmask params: %w", err)
+	}
+	if list == nil {
+		list = []SelfmaskParam{}
+	}
+	return list, nil
+}
+
+// SetSelfmaskParam stores a parameter without reprovisioning the site.
+func (c *Client) SetSelfmaskParam(ctx context.Context, key, value string) (string, error) {
+	if err := ValidateSelfmaskParam(key, value); err != nil {
+		return "", err
+	}
+	out, err := c.run(ctx, "selfmask", "set", key, value)
+	return stripANSI(out), err
+}
+
+// SelfmaskApply provisions the decoy site from the stored parameters.
 //
-// Setup is a wizard: with MTPROXYL_ASSUME_YES it takes every prompt's default
-// rather than any values chosen in the UI. Callers must treat this as
-// "install with defaults", and a caller wanting specific settings should
-// configure them through MTProxyL directly until the script grows flags.
-func (c *Client) SelfmaskSetup(ctx context.Context) (string, error) {
-	out, err := c.run(ctx, "selfmask", "setup")
+// This is the non-interactive counterpart of MTProxyL's `selfmask setup`
+// wizard: the wizard would take its own defaults under the assume-yes bypass
+// and ignore whatever was chosen in the UI, so the panel sets parameters first
+// and applies them here.
+func (c *Client) SelfmaskApply(ctx context.Context) (string, error) {
+	out, err := c.run(ctx, "selfmask", "apply")
 	return stripANSI(out), err
 }

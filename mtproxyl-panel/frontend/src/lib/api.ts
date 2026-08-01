@@ -93,6 +93,13 @@ export interface SelfmaskStatus {
   pq_nginx_active: boolean;
 }
 
+export interface SelfmaskParam {
+  key: string;
+  validator: string;
+  description: string;
+  value: string;
+}
+
 export interface MtproxylBackup {
   name: string;
   size: number;
@@ -130,8 +137,14 @@ export const mtproxylApi = {
     }),
 
   selfmask: () => request<SelfmaskStatus>(MTPROXYL_BASE, '/selfmask'),
-  selfmaskSetup: () =>
-    request<MtproxylOperation>(MTPROXYL_BASE, '/selfmask/setup', { method: 'POST' }),
+  selfmaskParams: () => request<SelfmaskParam[]>(MTPROXYL_BASE, '/selfmask/params'),
+  setSelfmaskParam: (key: string, value: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/selfmask/params', {
+      method: 'POST',
+      body: JSON.stringify({ key, value }),
+    }),
+  selfmaskApply: () =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/selfmask/apply', { method: 'POST' }),
   selfmaskVerify: () =>
     request<{ output: string }>(MTPROXYL_BASE, '/selfmask/verify', { method: 'POST' }),
   selfmaskDisable: () =>

@@ -77,3 +77,39 @@ func TestNftPresetRejectsUnknown(t *testing.T) {
 		t.Error("unknown preset accepted")
 	}
 }
+
+func TestValidateSelfmaskParam(t *testing.T) {
+	good := []struct{ key, value string }{
+		{"SELFMASK_DOMAIN", "example.com"},
+		{"SELFMASK_CERT_MODE", "selfsigned"},
+		{"SELFMASK_CERT_EMAIL", "admin@example.com"},
+		{"SELFMASK_SITE_SOURCE", "mekorunner"},
+		{"SELFMASK_SITE_SOURCE", "https://example.com/index.html"},
+		{"SELFMASK_NGINX_BACKEND_PORT", "8444"},
+		{"SELFMASK_AUTO_RENEW", "true"},
+		{"SELFMASK_CERT_EMAIL", ""},
+	}
+	for _, c := range good {
+		if err := ValidateSelfmaskParam(c.key, c.value); err != nil {
+			t.Errorf("ValidateSelfmaskParam(%q, %q) = %v, want nil", c.key, c.value, err)
+		}
+	}
+
+	// Key and value both become arguments to a sudo-invoked command.
+	bad := []struct{ key, value string }{
+		{"NFT_IOS_RATE", "x"},    // wrong prefix
+		{"selfmask_domain", "x"}, // lowercase
+		{"SELFMASK_DOMAIN; id", "x"},
+		{"SELFMASK_DOMAIN", "a; id"},
+		{"SELFMASK_DOMAIN", "$(id)"},
+		{"SELFMASK_DOMAIN", "a b"},
+		{"SELFMASK_DOMAIN", "a\nb"},
+		{"SELFMASK_DOMAIN", "--flag"},
+		{"SELFMASK_SITE_SOURCE", "https://x|id"},
+	}
+	for _, c := range bad {
+		if err := ValidateSelfmaskParam(c.key, c.value); err == nil {
+			t.Errorf("ValidateSelfmaskParam(%q, %q) = nil, want error", c.key, c.value)
+		}
+	}
+}

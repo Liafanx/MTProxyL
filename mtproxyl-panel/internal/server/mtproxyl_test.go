@@ -289,3 +289,19 @@ func TestUpstreamRejectsBadSpec(t *testing.T) {
 		t.Errorf("delete: got %d, want 400", rec.Code)
 	}
 }
+
+func TestSelfmaskParamRejectsInjection(t *testing.T) {
+	mux := newMtproxylMux(t, config.MtproxylConfig{Enabled: true, InstallDir: t.TempDir()})
+	for _, body := range []string{
+		`{"key":"SELFMASK_DOMAIN","value":"a; id"}`,
+		`{"key":"SELFMASK_DOMAIN; id","value":"a"}`,
+		`{"key":"NFT_IOS_RATE","value":"1/second"}`,
+		`{"key":"SELFMASK_DOMAIN","value":"--flag"}`,
+	} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, authedRequest(t, http.MethodPost, "/api/mtproxyl/selfmask/params", body))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("params %s: got %d, want 400", body, rec.Code)
+		}
+	}
+}
