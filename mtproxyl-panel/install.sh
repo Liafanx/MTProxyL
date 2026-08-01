@@ -111,6 +111,40 @@ detect_telemt() {
   echo "/bin/telemt"
 }
 
+# Имя systemd-службы движка. Оно не всегда "telemt": установки бывают под
+# разными именами, а панель по этому имени перезапускает движок — ошибиться
+# здесь значит получить нерабочую кнопку перезапуска.
+detect_telemt_service() {
+  for _unit in telemt mtproxy-telemt telemt-server; do
+    if systemctl list-unit-files "${_unit}.service" 2>/dev/null | grep -q "^${_unit}.service"; then
+      echo "$_unit"
+      return
+    fi
+  done
+  echo ""
+}
+
+# Живой ли API по указанному адресу. Проверяем до записи конфига: иначе
+# неверный адрес всплывёт только пустым дашбордом после установки.
+probe_telemt_api() {
+  _url="$1"
+  _auth="$2"
+  command -v curl >/dev/null 2>&1 || return 0  # нечем проверить — не мешаем
+  if [ -n "$_auth" ]; then
+    _body=$(curl -fsS --max-time 4 --connect-timeout 2 --noproxy '*' \
+      -H "Authorization: $_auth" "${_url%/}/v1/health" 2>/dev/null) || return 1
+  else
+    _body=$(curl -fsS --max-time 4 --connect-timeout 2 --noproxy '*' \
+      "${_url%/}/v1/health" 2>/dev/null) || return 1
+  fi
+  # Движок отвечает конвертом {"ok":true,"data":{...}}; довольно самого факта
+  # валидного ответа — версии отличаются составом полей.
+  case "$_body" in
+    *'"ok"'*|*'"status"'*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # ── Install helper ───────────────────────────────────────────────────────────
 install_binary() {
   _src="$1"
@@ -392,14 +426,95 @@ prompt() {
   echo "${_val:-$_default}"
 }
 
+# Возвращает 1 при EOF, чтобы вызывающий отличил «ничего не ввели» от
+# «терминал кончился»: иначе цикл переспрашивания крутился бы вечно на
+# неинтерактивном запуске.
 prompt_secret() {
   _prompt="$1"
   printf '%s: ' "$_prompt" >&2
   stty -echo 2>/dev/null || true
   read -r _val < /dev/tty
+  _rc=$?
   stty echo 2>/dev/null || true
   printf '\n' >&2
   echo "$_val"
+  return $_rc
+}
+
+# Пароль вводится вслепую, поэтому опечатка обнаружилась бы только на экране
+# входа — и чинить её пришлось бы отдельной командой. Спрашиваем дважды и
+# переспрашиваем, пока не совпадёт.
+#
+# Число попыток ограничено: без этого запуск без терминала (EOF на каждом
+# чтении) превращался бы в бесконечный цикл вместо внятной ошибки.
+prompt_password_confirmed() {
+  _tries=0
+  while [ "$_tries" -lt 5 ]; do
+    _tries=$((_tries + 1))
+    if ! _p1=$(prompt_secret "Пароль администратора"); then
+      die "Ввод прерван — установщику нужен терминал"
+    fi
+    if [ -z "$_p1" ]; then
+      printf '  Пароль не может быть пустым\n' >&2
+      continue
+    fi
+    # Меряем байтами: wc -m считает символы только при UTF-8 локали, а какая
+    # локаль на сервере — заранее неизвестно. Поэтому и в тексте не обещаем
+    # «символов»: для латиницы это одно и то же, для кириллицы порог мягче.
+    if [ "$(printf '%s' "$_p1" | wc -c)" -lt 8 ]; then
+      printf '  Слишком короткий пароль — сделайте подлиннее\n' >&2
+      continue
+    fi
+    if ! _p2=$(prompt_secret "Повторите пароль"); then
+      die "Ввод прерван — установщику нужен терминал"
+    fi
+    if [ "$_p1" = "$_p2" ]; then
+      echo "$_p1"
+      return 0
+    fi
+    printf '  Пароли не совпадают, попробуйте ещё раз\n' >&2
+  done
+  die "Не удалось задать пароль за 5 попыток"
+}
+
+# ── Автоопределение параметров у установленного MTProxyL ─────────────────────
+#
+# Адрес API движка зависит от режима: у менеджера это его собственный конфиг,
+# у реаниматора — конфиг чужой цели, и порт там свой. Спрашивать его «вслепую»
+# со значением по умолчанию 9091 означает, что половина установок в режиме
+# реаниматора получит панель, смотрящую не туда.
+#
+# Заполняет MTPROXYL_MODE_DETECTED, API_PORT_DETECTED, API_ENABLED_DETECTED.
+detect_from_mtproxyl() {
+  MTPROXYL_MODE_DETECTED=""
+  API_PORT_DETECTED=""
+  API_ENABLED_DETECTED=""
+
+  [ -x "$MTPROXYL_SCRIPT" ] || return 1
+
+  _json=$(MTPROXYL_ASSUME_YES=1 $SUDO "$MTPROXYL_SCRIPT" mode --json 2>/dev/null) || return 1
+  # Берём первую строку, похожую на JSON: скрипт может напечатать лог раньше.
+  _json=$(printf '%s\n' "$_json" | grep -m1 '^{' ) || return 1
+  [ -n "$_json" ] || return 1
+
+  MTPROXYL_MODE_DETECTED=$(printf '%s' "$_json" | sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  API_PORT_DETECTED=$(printf '%s' "$_json" | sed -n 's/.*"api_port"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')
+  API_ENABLED_DETECTED=$(printf '%s' "$_json" | sed -n 's/.*"api_enabled"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p')
+  ENGINE_CONFIG_DETECTED=$(printf '%s' "$_json" | sed -n 's/.*"engine_config"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+
+  # Заголовок авторизации читаем прямо из конфига движка, а не из вывода
+  # 'mode --json': панель опрашивает его постоянно, и секрету незачем
+  # оказываться в чужих логах.
+  API_AUTH_DETECTED=""
+  if [ -n "$ENGINE_CONFIG_DETECTED" ] && $SUDO test -f "$ENGINE_CONFIG_DETECTED" 2>/dev/null; then
+    API_AUTH_DETECTED=$($SUDO sh -c "cat '$ENGINE_CONFIG_DETECTED'" 2>/dev/null \
+      | sed -n "/^[[:space:]]*\[server\.api\]/,/^[[:space:]]*\[/p" \
+      | sed -n "s/^[[:space:]]*auth_header[[:space:]]*=[[:space:]]*['\"]\(.*\)['\"].*/\1/p" \
+      | head -1)
+  fi
+
+  [ -n "$API_PORT_DETECTED" ] || return 1
+  return 0
 }
 
 # ── Usage ────────────────────────────────────────────────────────────────────
@@ -551,17 +666,75 @@ do_install() {
     say "Первичная настройка..."
     echo ""
 
-    TELEMT_URL=$(prompt "Адрес API telemt" "http://127.0.0.1:9091")
-    TELEMT_AUTH=$(prompt "Заголовок авторизации API telemt (пусто, если нет)" "")
+    # Всё, что можно определить самим, определяем и показываем на подтверждение
+    # — параметры зависят от режима MTProxyL, и угадать их «по умолчанию»
+    # нельзя: в реаниматоре порт API берётся из конфига чужой цели.
+    API_URL_DEFAULT="http://127.0.0.1:9091"
+    if detect_from_mtproxyl; then
+      API_URL_DEFAULT="http://127.0.0.1:${API_PORT_DETECTED}"
+      say "Обнаружен MTProxyL, режим: ${MTPROXYL_MODE_DETECTED:-неизвестен}"
+      printf '  API движка этого режима: %s\n' "$API_URL_DEFAULT"
+      if [ "$API_ENABLED_DETECTED" = "false" ]; then
+        printf '  ВНИМАНИЕ: в конфиге движка [server.api] enabled = false — панель не получит данных\n'
+        printf '            включите API и перезапустите движок, иначе панель будет пустой\n'
+      fi
+    fi
+    TELEMT_URL=$(prompt "Адрес API telemt" "$API_URL_DEFAULT")
+
+    if [ -n "$API_AUTH_DETECTED" ]; then
+      printf '  В конфиге движка задан заголовок авторизации — подставлен\n'
+    fi
+    TELEMT_AUTH=$(prompt "Заголовок авторизации API telemt (пусто, если нет)" "$API_AUTH_DETECTED")
+
+    # Проверяем уже с заголовком — без него API с авторизацией ответил бы 401,
+    # и проверка ругалась бы на совершенно верный адрес. Делаем это до записи
+    # конфига: иначе ошибка всплывёт только пустым дашбордом после установки.
+    if ! probe_telemt_api "$TELEMT_URL" "$TELEMT_AUTH"; then
+      printf '  API по этому адресу не отвечает.\n'
+      if [ "$API_ENABLED_DETECTED" = "false" ]; then
+        printf '  Причина, скорее всего, известна: [server.api] enabled = false в конфиге движка.\n'
+      fi
+      _answer=$(prompt "Всё равно продолжить? [y/N]" "n")
+      case "$_answer" in
+        [yY]*) ;;
+        *) die "Установка прервана — поправьте адрес API и запустите заново" ;;
+      esac
+    else
+      say "API движка отвечает"
+    fi
+
+    echo ""
+    say "Учётная запись администратора панели"
     ADMIN_USER=$(prompt "Логин администратора" "admin")
-    ADMIN_PASS=$(prompt_secret "Пароль администратора")
+    ADMIN_PASS=$(prompt_password_confirmed)
 
-    [ -n "$ADMIN_PASS" ] || die "Пароль не может быть пустым"
+    # В режиме менеджера движок живёт в Docker: ни бинарника на хосте, ни
+    # systemd-службы у него нет, и спрашивать про них — сбивать с толку.
+    # Встроенное обновление telemt там всё равно недоступно (см. README).
+    if [ "$MTPROXYL_MODE_DETECTED" = "manager" ]; then
+      say "Режим Manager: движок работает в Docker под управлением MTProxyL"
+      printf '  Путь к бинарнику и systemd-служба не спрашиваются — их нет.\n'
+      printf '  Обновление движка: mtproxyl engine\n'
+      TELEMT_PATH=""
+      TELEMT_SERVICE=""
+    else
+      TELEMT_DETECTED=$(detect_telemt)
+      if [ -x "$TELEMT_DETECTED" ]; then
+        printf '  Найден бинарник telemt: %s\n' "$TELEMT_DETECTED"
+      else
+        printf '  Бинарник telemt не найден — укажите путь, если он есть\n'
+      fi
+      TELEMT_PATH=$(prompt "Путь к бинарнику telemt" "$TELEMT_DETECTED")
 
-    TELEMT_DETECTED=$(detect_telemt)
-    TELEMT_PATH=$(prompt "Путь к бинарнику telemt" "$TELEMT_DETECTED")
-
-    TELEMT_SERVICE=$(prompt "Имя systemd-службы telemt" "telemt")
+      TELEMT_SERVICE_DETECTED=$(detect_telemt_service)
+      if [ -n "$TELEMT_SERVICE_DETECTED" ]; then
+        printf '  Найдена systemd-служба: %s\n' "$TELEMT_SERVICE_DETECTED"
+      else
+        TELEMT_SERVICE_DETECTED="telemt"
+        printf '  systemd-служба telemt не найдена\n'
+      fi
+      TELEMT_SERVICE=$(prompt "Имя systemd-службы telemt" "$TELEMT_SERVICE_DETECTED")
+    fi
 
     # HTTPS по умолчанию: панель принимает пароль администратора и выдаёт токен
     # сессии, а сервер с прокси почти всегда торчит в интернет. По HTTP и то и
@@ -642,9 +815,18 @@ url = \"$TELEMT_URL\""
 auth_header = \"$TELEMT_AUTH\""
     fi
 
-    _cfg="$_cfg
+    if [ "$MTPROXYL_MODE_DETECTED" = "manager" ]; then
+      # Движком владеет MTProxyL и держит его в Docker: systemd-службы нет,
+      # а логи надо читать из контейнера, иначе журнал будет пустым.
+      _cfg="$_cfg
+container_name = \"mtproxyl\""
+    else
+      _cfg="$_cfg
 binary_path = \"$TELEMT_PATH\"
-service_name = \"$TELEMT_SERVICE\"
+service_name = \"$TELEMT_SERVICE\""
+    fi
+
+    _cfg="$_cfg
 
 [panel]
 binary_path = \"$PANEL_BINARY_PATH\"

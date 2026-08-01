@@ -167,11 +167,16 @@ _get_telemt_metrics_port() {
     echo "$_port"
 }
 
+# У telemt [server.api] enabled по умолчанию true, и конфиг, который
+# генерирует сам MTProxyL, секцию [server.api] не пишет вовсе. Считать
+# отсутствие ключа за «выключено» — значит объявлять API выключенным на
+# любой обычной установке в режиме менеджера. Выключенным считаем только
+# явное false.
 _telemt_api_enabled() {
     local _cfg="${1:-$DETECTED_CONFIG_PATH}"
     [ -n "$_cfg" ] && [ -f "$_cfg" ] || return 1
     local _en; _en=$(_toml_get_string_in_section "server.api" "enabled" "$_cfg")
-    [ "$_en" = "true" ]
+    [ "$_en" != "false" ]
 }
 
 # Забирает JSON с /v1/users API цели (список пользователей + их

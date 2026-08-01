@@ -79,3 +79,19 @@ func TestPortOf(t *testing.T) {
 		}
 	}
 }
+
+// Конфиг, который MTProxyL генерирует в режиме менеджера, секции [server.api]
+// не содержит — движок берёт своё умолчание enabled = true. Панель не должна
+// на этом основании объявлять API выключенным: ровно так и появлялось ложное
+// предупреждение «REST API выключен» на нормальной установке.
+func TestManagerDefaultAPIIsNotReportedDisabled(t *testing.T) {
+	st := &mtproxylctl.ModeStatus{
+		Mode:         mtproxylctl.ModeManager,
+		APIPort:      9091,
+		APIEnabled:   true, // то, что теперь отдаёт mode --json без [server.api]
+		EngineConfig: "/opt/mtproxyl/mtproxy/config.toml",
+	}
+	if got := apiEndpointMismatch("http://127.0.0.1:9091", st); got != "" {
+		t.Fatalf("ожидалась тишина, получено: %q", got)
+	}
+}
