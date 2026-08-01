@@ -682,7 +682,7 @@ show_cli_help() {
     echo -e "  ${BOLD}Настройки:${NC}      port | ip | domain | mask-backend | config"
     echo -e "  ${BOLD}Движок:${NC}         engine status|list|update|rollback|rebuild"
     echo -e "  ${BOLD}Эксперт:${NC}        expert list|set|clear|edit"
-    echo -e "  ${BOLD}Супер эксперт:${NC}  superexpert status|on|off|edit"
+    echo -e "  ${BOLD}Супер эксперт:${NC}  superexpert status|on|off|edit|show|write"
     echo -e "  ${BOLD}NFT:${NC}            nft apply|remove|service|drop|preset|smart|zapret2|zapret2-stop|zapret2-rm|zapret2-wscale"
     echo -e "  ${BOLD}Selfmask:${NC}       selfmask status|setup|apply|set|settable|verify|disable|menu"
     echo -e "  ${BOLD}Веб-панель:${NC}     panel status|install|restart|password|uninstall"

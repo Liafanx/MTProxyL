@@ -351,14 +351,22 @@ handle_superexpert_command() {
         off|disable) superexpert_disable ;;
         edit)        superexpert_edit ;;
         status|"")
-            echo -e "  ${BOLD}Режим супер эксперта:${NC} $(superexpert_status_line)"
-            [ -f "$SUPEREXPERT_FILE" ] && echo -e "  ${BOLD}Файл:${NC} ${SUPEREXPERT_FILE}" ;;
+            if [ "${2:-}" = "--json" ]; then
+                superexpert_status_json
+            else
+                echo -e "  ${BOLD}Режим супер эксперта:${NC} $(superexpert_status_line)"
+                [ -f "$SUPEREXPERT_FILE" ] && echo -e "  ${BOLD}Файл:${NC} ${SUPEREXPERT_FILE}"
+            fi ;;
+        show)        superexpert_show_file ;;
+        write)       superexpert_write_file ;;
         *)
             echo -e "  ${BOLD}Режим супер эксперта:${NC}"
             echo -e "    ${GREEN}superexpert status${NC}   Текущее состояние"
             echo -e "    ${GREEN}superexpert on${NC}       Включить (создать/взять свой конфиг)"
             echo -e "    ${GREEN}superexpert off${NC}      Выключить (файл сохраняется)"
-            echo -e "    ${GREEN}superexpert edit${NC}     Правка конфига в \$EDITOR/nano" ;;
+            echo -e "    ${GREEN}superexpert edit${NC}     Правка конфига в \$EDITOR/nano"
+            echo -e "    ${GREEN}superexpert show${NC}     Вывести конфиг"
+            echo -e "    ${GREEN}superexpert write${NC}    Записать конфиг из stdin" ;;
     esac
 }
 
@@ -596,7 +604,12 @@ handle_expert_command() {
     [ "$subcmd" = "list" ] || _require_manager_mode || return 1
     [ "$subcmd" = "list" ] || _require_no_superexpert || return 1
     case "$subcmd" in
-        list)  show_expert_overrides ;;
+        list)
+            case "${1:-}" in
+                --json)      expert_overrides_json ;;
+                --catalog)   expert_catalog_json ;;
+                *)           show_expert_overrides ;;
+            esac ;;
         set)
             check_root
             local _sec="${1:-}" _key="${2:-}" _val="${3:-}"
@@ -657,8 +670,60 @@ handle_expert_command() {
         *)
             echo -e "  ${BOLD}Режим эксперта:${NC}"
             echo -e "    ${GREEN}expert list${NC}                            Параметры"
+            echo -e "    ${GREEN}expert list --json${NC}                     Заданные override (JSON)"
+            echo -e "    ${GREEN}expert list --catalog${NC}                  Весь каталог с валидаторами (JSON)"
             echo -e "    ${GREEN}expert set${NC} <секция> <ключ> <значение>   Добавить"
             echo -e "    ${GREEN}expert clear${NC} <секция> <ключ> | all      Удалить"
             echo -e "    ${GREEN}expert edit${NC}                            Редактор" ;;
     esac
+}
+
+# Машинное состояние режима супер эксперта для панели.
+superexpert_status_json() {
+    local _size=0 _mtime=0
+    if [ -f "$SUPEREXPERT_FILE" ]; then
+        _size=$(stat -c '%s' "$SUPEREXPERT_FILE" 2>/dev/null || echo 0)
+        _mtime=$(stat -c '%Y' "$SUPEREXPERT_FILE" 2>/dev/null || echo 0)
+    fi
+    printf '{"enabled":%s,"active":%s,"file":"%s","file_exists":%s,"size":%d,"mtime":%d}\n' \
+        "$([ "${SUPEREXPERT_ENABLED:-false}" = "true" ] && echo true || echo false)" \
+        "$(_superexpert_active && echo true || echo false)" \
+        "$(json_escape "$SUPEREXPERT_FILE")" \
+        "$([ -f "$SUPEREXPERT_FILE" ] && echo true || echo false)" \
+        "${_size:-0}" "${_mtime:-0}"
+}
+
+# Содержимое пользовательского конфига — панель показывает его в редакторе.
+superexpert_show_file() {
+    [ -f "$SUPEREXPERT_FILE" ] || { log_error "Файл не найден: ${SUPEREXPERT_FILE}"; return 1; }
+    cat "$SUPEREXPERT_FILE"
+}
+
+# Запись конфига из stdin.
+#
+# Через stdin, а не аргументом: TOML многострочный и содержит кавычки —
+# передавать его в командной строке было бы и неудобно, и опасно.
+superexpert_write_file() {
+    check_root || return 1
+    mkdir -p "$(dirname "$SUPEREXPERT_FILE")"
+
+    # Пишем во временный файл: оборванная передача не должна оставить
+    # обрезанный конфиг, по которому движок потом не поднимется.
+    local _tmp; _tmp=$(_mktemp) || return 1
+    cat > "$_tmp"
+
+    if [ ! -s "$_tmp" ]; then
+        log_error "Пустой конфиг отклонён"
+        return 1
+    fi
+    # Минимальная проверка: у telemt-конфига обязательно есть секции.
+    if ! grep -qE '^\[[a-z]' "$_tmp"; then
+        log_error "Не похоже на TOML движка — нет ни одной секции"
+        return 1
+    fi
+
+    cat "$_tmp" > "$SUPEREXPERT_FILE"
+    chmod 600 "$SUPEREXPERT_FILE"
+    log_success "Конфиг сохранён: ${SUPEREXPERT_FILE}"
+    log_info "Перезапустите прокси, чтобы применить: mtproxyl restart"
 }
