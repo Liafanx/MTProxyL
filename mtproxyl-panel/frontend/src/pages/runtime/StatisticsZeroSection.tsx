@@ -1,6 +1,7 @@
 import { StatusBadge } from '@/components/StatusBadge';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { formatNumber } from '@/lib/utils';
+import { fieldMeta } from '@/lib/telemetryLabels';
 
 interface StatisticsZeroSectionProps {
   data: Record<string, unknown> | null;
@@ -10,7 +11,8 @@ export function StatisticsZeroSection({ data }: StatisticsZeroSectionProps) {
   if (!data || Object.keys(data).length === 0) return null;
 
   return (
-    <CollapsibleSection title="Статистика (нулевая/полная)" defaultOpen={false}>
+    <CollapsibleSection title="Статистика (нулевая/полная)" defaultOpen={false}
+      description="Полный дамп счётчиков движка, включая нулевые. Пригодится, чтобы убедиться, что счётчик существует, но пока не сработал.">
       <div className="space-y-4">
         {Object.entries(data).map(([section, value]) => {
           if (value == null || typeof value !== 'object') return null;
@@ -24,7 +26,7 @@ export function StatisticsZeroSection({ data }: StatisticsZeroSectionProps) {
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
                 {entries.map(([key, val]) => {
                   if (val == null || typeof val === 'object') return null;
-                  const label = key.replace(/_total$/, '').replace(/_/g, ' ');
+                  const label = fieldMeta(key.replace(/_total$/, '')).label;
                   let display = String(val);
                   if (typeof val === 'number') {
                     display = key.includes('seconds') || key.includes('_secs')
@@ -52,7 +54,7 @@ export function StatisticsZeroSection({ data }: StatisticsZeroSectionProps) {
               {/* Render nested arrays (e.g. handshake_error_codes) */}
               {entries.filter(([, v]) => Array.isArray(v) && (v as unknown[]).length > 0).map(([key, val]) => (
                 <div key={key} className="mt-2">
-                  <span className="text-xs text-text-secondary">{key.replace(/_/g, ' ')}:</span>
+                  <span className="text-xs text-text-secondary">{fieldMeta(key).label}:</span>
                   <div className="flex flex-wrap gap-1 mt-1">
                     {(val as Array<Record<string, unknown>>).map((item, i) => (
                       <span key={i} className="bg-surface px-2 py-0.5 rounded text-[10px] border border-border/30">

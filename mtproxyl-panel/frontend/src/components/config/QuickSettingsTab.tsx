@@ -197,7 +197,7 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
         <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg text-red-600">
           <p className="font-semibold">Не удалось разобрать TOML</p>
           <p className="text-sm mt-1">{parseError}</p>
-          <p className="text-sm mt-2">Please use Advanced Editor to fix syntax errors.</p>
+          <p className="text-sm mt-2">Исправьте синтаксис в редакторе конфига — быстрые настройки недоступны, пока файл не разбирается.</p>
         </div>
       </div>
     );

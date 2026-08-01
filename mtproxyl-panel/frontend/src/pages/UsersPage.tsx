@@ -255,7 +255,7 @@ export function UsersPage() {
         {/* Mobile Sort Bar */}
         <div className="lg:hidden flex items-center justify-between gap-2 bg-surface p-2 sm:p-3 rounded-lg border border-border">
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            <span className="text-sm font-medium text-text-secondary whitespace-nowrap">Sort by:</span>
+            <span className="text-sm font-medium text-text-secondary whitespace-nowrap">Сортировка:</span>
             <select
               value={sortKey}
               onChange={(e) => toggleSort(e.target.value as SortKey)}

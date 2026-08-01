@@ -12,7 +12,8 @@ export function MESelfTestSection({ data }: MESelfTestSectionProps) {
   const { kdf, timeskew, bnd, ip, pid, upstreams } = data.data;
 
   return (
-    <CollapsibleSection title="Самопроверка ME">
+    <CollapsibleSection title="Самопроверка ME"
+      description="Движок сам проверяет, что видит сеть и промежуточные серверы правильно: адреса, интерфейсы, доступность.">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {/* KDF */}
         {kdf && (
@@ -165,7 +166,7 @@ export function MESelfTestSection({ data }: MESelfTestSectionProps) {
                 </div>
               )}
               {!ip.v4 && !ip.v6 && (
-                <span className="text-text-secondary">No interface data</span>
+                <span className="text-text-secondary">Нет данных по интерфейсам</span>
               )}
             </div>
           </div>

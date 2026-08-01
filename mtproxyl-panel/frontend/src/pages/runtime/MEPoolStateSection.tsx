@@ -11,7 +11,8 @@ export function MEPoolStateSection({ data }: MEPoolStateSectionProps) {
   if (!data?.data) return null;
 
   return (
-    <CollapsibleSection title="Состояние пула ME">
+    <CollapsibleSection title="Состояние пула ME"
+      description="ME — промежуточные серверы Telegram. Прокси держит их пул и обновляет поколениями: прогретое поколение подменяет активное без разрыва соединений.">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-background rounded p-3 border border-border/50">
           <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Поколения</h4>
@@ -33,7 +34,7 @@ export function MEPoolStateSection({ data }: MEPoolStateSectionProps) {
           </div>
         </div>
         <div className="bg-background rounded p-3 border border-border/50">
-          <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Contour</h4>
+          <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Контур</h4>
           <div className="space-y-1 text-xs">
             <div className="flex justify-between">
               <span className="text-text-secondary">Активные</span>

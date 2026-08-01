@@ -11,7 +11,8 @@ export function ConnectionsSection({ data }: ConnectionsSectionProps) {
   if (!data?.totals) return null;
 
   return (
-    <CollapsibleSection title="Соединения">
+    <CollapsibleSection title="Соединения"
+      description="Сколько клиентов сейчас подключено и как они распределены между прямым путём и промежуточными серверами Telegram.">
       <div className="space-y-4">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
           <MetricCard label="Всего соединений" value={formatNumber(data.totals.current_connections)} />

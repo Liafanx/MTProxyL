@@ -2,6 +2,7 @@ import { MetricCard } from '@/components/MetricCard';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { formatNumber, cn } from '@/lib/utils';
 import type { MeQualityData } from '@/types/runtime';
+import { fieldMeta } from '@/lib/telemetryLabels';
 
 interface MEQualitySectionProps {
   data: MeQualityData | null;
@@ -11,7 +12,8 @@ export function MEQualitySection({ data }: MEQualitySectionProps) {
   if (!data?.data) return null;
 
   return (
-    <CollapsibleSection title="Качество ME">
+    <CollapsibleSection title="Качество ME"
+      description="Задержки и ошибки промежуточных серверов. По этим числам движок решает, через какой из них пускать трафик.">
       <div className="space-y-4">
         {/* DC RTT Table */}
         {data.data.dc_rtt.length > 0 && (
@@ -62,7 +64,7 @@ export function MEQualitySection({ data }: MEQualitySectionProps) {
                 {Object.entries(data.data.counters).map(([key, value]) => (
                   <MetricCard
                     key={key}
-                    label={key.replace(/_total$/, '').replace(/_/g, ' ')}
+                    label={fieldMeta(key.replace(/_total$/, '')).label}
                     value={formatNumber(value)}
                   />
                 ))}
@@ -76,7 +78,7 @@ export function MEQualitySection({ data }: MEQualitySectionProps) {
                 {Object.entries(data.data.route_drops).map(([key, value]) => (
                   <MetricCard
                     key={key}
-                    label={key.replace(/_total$/, '').replace(/_/g, ' ')}
+                    label={fieldMeta(key.replace(/_total$/, '')).label}
                     value={formatNumber(value)}
                   />
                 ))}

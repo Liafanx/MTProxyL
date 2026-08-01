@@ -3,6 +3,7 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { MetricCard } from '@/components/MetricCard';
 import { useWsSubscription, useEndpoint } from '@/hooks/useWebSocket';
+import { fieldMeta, formatFieldValue } from '@/lib/telemetryLabels';
 
 interface UpstreamStatus {
   address?: string;
@@ -72,18 +73,24 @@ export function UpstreamsPage() {
 
         {upstreams && (
           <div className="space-y-4">
-            <h3 className="text-sm font-medium text-text-secondary">Серверы-апстримы</h3>
+            <div>
+              <h3 className="text-sm font-medium text-text-secondary">Серверы-апстримы</h3>
+              <p className="text-xs text-text-secondary/70 mt-0.5">
+                Промежуточные серверы Telegram, через которые движок отдаёт трафик. Для каждого
+                видно задержку и долю ошибок — по ним выбирается маршрут.
+              </p>
+            </div>
 
             {!upstreams.enabled && (
               <div className="bg-warning/10 border border-warning/30 rounded-lg p-3 text-sm text-warning">
-                Upstream runtime data unavailable: {upstreams.reason || 'feature disabled'}
+                Данные по апстримам недоступны: {upstreams.reason || 'функция выключена в конфиге движка'}
               </div>
             )}
 
             {upstreams.zero && (
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 {Object.entries(upstreams.zero).map(([key, value]) => (
-                  <MetricCard key={key} label={key.replace(/_/g, ' ')} value={String(value ?? 0)} />
+                  <MetricCard key={key} label={fieldMeta(key).label} value={formatFieldValue(key, value)} />
                 ))}
               </div>
             )}
@@ -103,7 +110,7 @@ export function UpstreamsPage() {
                         .filter(([k]) => !['address', 'enabled'].includes(k))
                         .map(([key, value]) => (
                           <div key={key}>
-                            <span className="text-text-secondary">{key.replace(/_/g, ' ')}: </span>
+                            <span className="text-text-secondary">{fieldMeta(key).label}: </span>
                             <span className="text-text-primary">
                               {typeof value === 'boolean' ? (value ? 'Yes' : 'No') : formatValue(value)}
                             </span>
@@ -119,7 +126,13 @@ export function UpstreamsPage() {
 
         {dcs?.dcs && (
           <div className="space-y-4">
-            <h3 className="text-sm font-medium text-text-secondary">Состояние DC</h3>
+            <div>
+              <h3 className="text-sm font-medium text-text-secondary">Состояние DC</h3>
+              <p className="text-xs text-text-secondary/70 mt-0.5">
+                Дата-центры Telegram (DC 1–5) и связь с каждым из них. Клиент сам выбирает свой
+                DC, поэтому недоступность одного задевает только часть пользователей.
+              </p>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {dcs.dcs.map((dc) => (
                 <div key={dc.dc_id} className="bg-surface border border-border rounded-lg p-4">
@@ -131,7 +144,7 @@ export function UpstreamsPage() {
                       .filter(([k]) => k !== 'dc_id')
                       .map(([key, value]) => (
                         <div key={key} className={Array.isArray(value) || (typeof value === 'object' && value !== null && typeof value !== 'boolean') ? 'col-span-2' : ''}>
-                          <span className="text-text-secondary">{key.replace(/_/g, ' ')}: </span>
+                          <span className="text-text-secondary">{fieldMeta(key).label}: </span>
                           {typeof value === 'boolean' ? (
                             <StatusBadge status={value} />
                           ) : Array.isArray(value) ? (
@@ -164,11 +177,17 @@ export function UpstreamsPage() {
 
         {meWriters && (
           <div className="space-y-4">
-            <h3 className="text-sm font-medium text-text-secondary">Писатели ME</h3>
+            <div>
+              <h3 className="text-sm font-medium text-text-secondary">Писатели ME</h3>
+              <p className="text-xs text-text-secondary/70 mt-0.5">
+                Соединения, через которые движок пишет в промежуточные серверы. Если живых
+                меньше, чем требуется, пул считается неполным и трафик идёт хуже.
+              </p>
+            </div>
 
             {meWriters.enabled === false && (
               <div className="bg-warning/10 border border-warning/30 rounded-lg p-3 text-sm text-warning">
-                ME Writers data unavailable: {meWriters.reason || 'feature disabled'}
+                Данные по писателям ME недоступны: {meWriters.reason || 'функция выключена в конфиге движка'}
               </div>
             )}
 
@@ -177,7 +196,7 @@ export function UpstreamsPage() {
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   {Object.entries(meWriters.summary).map(([key, value]) => (
                     <div key={key}>
-                      <div className="text-xs text-text-secondary">{key.replace(/_/g, ' ')}</div>
+                      <div className="text-xs text-text-secondary">{fieldMeta(key).label}</div>
                       <div className="text-sm text-text-primary font-medium">
                         {typeof value === 'number' && key.includes('pct')
                           ? `${(value as number).toFixed(1)}%`

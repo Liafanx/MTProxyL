@@ -3,6 +3,7 @@ import { MetricCard } from '@/components/MetricCard';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { formatNumber } from '@/lib/utils';
 import type { UpstreamQualityData } from '@/types/runtime';
+import { fieldMeta } from '@/lib/telemetryLabels';
 
 interface UpstreamQualitySectionProps {
   data: UpstreamQualityData | null;
@@ -12,14 +13,15 @@ export function UpstreamQualitySection({ data }: UpstreamQualitySectionProps) {
   if (!data) return null;
 
   return (
-    <CollapsibleSection title="Качество апстримов">
+    <CollapsibleSection title="Качество апстримов"
+      description="Задержки и доля ошибок по каждому исходящему маршруту. Апстрим с ошибками выше порога выводится из ротации.">
       <div className="space-y-3">
         {data.summary && (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
             {Object.entries(data.summary).map(([key, value]) => (
               <MetricCard
                 key={key}
-                label={key.replace(/_total$/, '').replace(/_/g, ' ')}
+                label={fieldMeta(key.replace(/_total$/, '')).label}
                 value={formatNumber(value)}
               />
             ))}

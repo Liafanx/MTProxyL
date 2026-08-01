@@ -9,7 +9,8 @@ export function NATSTUNSection({ data }: NATSTUNSectionProps) {
   if (!data?.data) return null;
 
   return (
-    <CollapsibleSection title="NAT / STUN">
+    <CollapsibleSection title="NAT / STUN"
+      description="Как сервер выглядит снаружи: какой у него внешний адрес и порт, и не подменяет ли их NAT. Расхождение часов ломает handshake с Telegram.">
       <div className="space-y-3">
         <div>
           <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Настроенные серверы</h4>

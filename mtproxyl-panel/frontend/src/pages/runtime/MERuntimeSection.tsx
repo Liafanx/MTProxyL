@@ -1,5 +1,6 @@
 import { StatusBadge } from '@/components/StatusBadge';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
+import { fieldMeta } from '@/lib/telemetryLabels';
 
 interface MERuntimeSectionProps {
   data: Record<string, unknown> | null;
@@ -9,11 +10,12 @@ export function MERuntimeSection({ data }: MERuntimeSectionProps) {
   if (!data || Object.keys(data).length === 0) return null;
 
   return (
-    <CollapsibleSection title="Среда выполнения ME" defaultOpen={false}>
+    <CollapsibleSection title="Среда выполнения ME" defaultOpen={false}
+      description="Внутренние счётчики работы с пулом ME. Нужны в основном при разборе проблем.">
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
         {Object.entries(data).map(([key, value]) => {
           if (value == null || typeof value === 'object') return null;
-          const label = key.replace(/_/g, ' ');
+          const label = fieldMeta(key).label;
           if (typeof value === 'boolean') {
             return (
               <div key={key} className="min-w-0 flex items-center justify-between gap-2 bg-background rounded p-2 border border-border/50 text-xs">
