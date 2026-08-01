@@ -80,12 +80,18 @@ ZAPRET2_DEFAULT_IN_RANGE="a"
 ZAPRET2_DEFAULT_SPLIT_LEN="400"
 ZAPRET2_DEFAULT_WIN_SYNACK="1400"
 ZAPRET2_DEFAULT_WIN_ACK="10"
-
+# Без явного --uid nfqws2 в некоторых окружениях (unprivileged LXC)
+# падает с "setgroups: Invalid argument" при попытке дропа привилегий
+# по умолчанию. nobody:nogroup — безопасный кросс-дистрибутивный выбор.
+ZAPRET2_DEFAULT_UID="65534"
+ZAPRET2_DEFAULT_GID="65534"
 ZAPRET2_FWMARK="$ZAPRET2_DEFAULT_FWMARK"
 ZAPRET2_QNUM="$ZAPRET2_DEFAULT_QNUM"
 ZAPRET2_OUT_RANGE="$ZAPRET2_DEFAULT_OUT_RANGE"
 ZAPRET2_IN_RANGE="$ZAPRET2_DEFAULT_IN_RANGE"
 ZAPRET2_SPLIT_LEN="$ZAPRET2_DEFAULT_SPLIT_LEN"
+ZAPRET2_UID="$ZAPRET2_DEFAULT_UID"
+ZAPRET2_GID="$ZAPRET2_DEFAULT_GID"
 ZAPRET2_DEBUG="false"
 ZAPRET2_DEBUG_LOG="/var/log/mtproxyl-nfqws2.log"
 ZAPRET2_WIN_SYNACK="$ZAPRET2_DEFAULT_WIN_SYNACK"
@@ -1459,6 +1465,7 @@ zapret2_write_conf() {
 --qnum ${ZAPRET2_QNUM}
 --fwmark=${ZAPRET2_FWMARK}
 --server
+--uid=${ZAPRET2_UID}:${ZAPRET2_GID}
 ${_debug_line}
 --lua-init=@${ZAPRET2_LUA_DIR}/zapret-lib.lua
 --lua-init=@${ZAPRET2_LUA_DIR}/zapret-antidpi.lua
