@@ -178,9 +178,14 @@ setup_directories() {
   $SUDO mkdir -p "$BIN_DIR"
   $SUDO mkdir -p "$CONFIG_DIR"
   $SUDO mkdir -p "$DATA_DIR/staging"
+  # Сюда панель кладёт самоподписанный сертификат и кеш ACME. Приватный ключ
+  # не должен читаться никем, кроме неё.
+  $SUDO mkdir -p "$DATA_DIR/certs"
   $SUDO chown "$SYSTEM_USER:$SYSTEM_USER" "$CONFIG_DIR"
   $SUDO chown "$SYSTEM_USER:$SYSTEM_USER" "$DATA_DIR"
   $SUDO chown "$SYSTEM_USER:$SYSTEM_USER" "$DATA_DIR/staging"
+  $SUDO chown "$SYSTEM_USER:$SYSTEM_USER" "$DATA_DIR/certs"
+  $SUDO chmod 700 "$DATA_DIR/certs"
 }
 
 warn_legacy_install() {
@@ -558,6 +563,55 @@ do_install() {
 
     TELEMT_SERVICE=$(prompt "Имя systemd-службы telemt" "telemt")
 
+    # HTTPS по умолчанию: панель принимает пароль администратора и выдаёт токен
+    # сессии, а сервер с прокси почти всегда торчит в интернет. По HTTP и то и
+    # другое уходит открытым текстом.
+    echo ""
+    say "Шифрование соединения с панелью"
+    printf '  1) Самоподписанный сертификат — работает сразу, браузер один раз предупредит\n'
+    printf '  2) Let'"'"'s Encrypt — нужен домен с A-записью на этот сервер и свободный порт 80\n'
+    printf '  3) Готовый сертификат — свои файлы .crt и .key\n'
+    printf '  4) Без шифрования (HTTP) — пароль пойдёт открытым текстом\n'
+    TLS_CHOICE=$(prompt "Вариант" "1")
+
+    TLS_BLOCK=""
+    PANEL_SCHEME="https"
+    case "$TLS_CHOICE" in
+      2)
+        TLS_DOMAIN=$(prompt "Домен панели" "")
+        [ -n "$TLS_DOMAIN" ] || die "Для Let's Encrypt нужен домен"
+        TLS_BLOCK="
+[tls]
+acme_domain = \"$TLS_DOMAIN\"
+acme_cache_dir = \"$DATA_DIR/certs\""
+        ;;
+      3)
+        TLS_CERT=$(prompt "Путь к файлу сертификата" "")
+        TLS_KEY=$(prompt "Путь к файлу ключа" "")
+        [ -n "$TLS_CERT" ] && [ -n "$TLS_KEY" ] || die "Нужны оба пути"
+        TLS_BLOCK="
+[tls]
+cert_file = \"$TLS_CERT\"
+key_file = \"$TLS_KEY\""
+        ;;
+      4)
+        PANEL_SCHEME="http"
+        say "ВНИМАНИЕ: пароль и токен сессии будут передаваться открытым текстом"
+        ;;
+      *)
+        # Кладём в сертификат внешний адрес сервера, иначе браузер ругается ещё
+        # и на несовпадение имени, а не только на недоверенность.
+        _host_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+        TLS_HOSTS=$(prompt "Адрес или домен, по которому будете открывать панель" "${_host_ip:-127.0.0.1}")
+        TLS_BLOCK="
+[tls]
+self_signed = true
+cert_file = \"$DATA_DIR/certs/panel.crt\"
+key_file = \"$DATA_DIR/certs/panel.key\"
+self_signed_hosts = [\"$TLS_HOSTS\"]"
+        ;;
+    esac
+
     # MTProxyL integration is optional and only offered when it is actually
     # installed here, so a standalone panel install is not bothered by it.
     MTPROXYL_ENABLED="false"
@@ -606,7 +660,7 @@ use_sudo = true
 username = \"$ADMIN_USER\"
 password_hash = \"$PASS_HASH\"
 jwt_secret = \"$JWT_SECRET\"
-session_ttl = \"24h\""
+session_ttl = \"24h\"${TLS_BLOCK}"
 
     printf '%s\n' "$_cfg" | write_root "$CONFIG_FILE"
     $SUDO chown "$SYSTEM_USER:$SYSTEM_USER" "$CONFIG_FILE"
@@ -636,7 +690,22 @@ session_ttl = \"24h\""
   printf '\n'
   say "Установка завершена"
   printf '\n'
-  printf '  Адрес панели:  http://%s:8080\n' "$_ip"
+  # Схему берём из конфига, а не из ответов мастера: при переустановке поверх
+  # существующего конфига мастер не спрашивал ничего, и переменные пусты.
+  _scheme="http"
+  _selfsigned=""
+  if [ -f "$CONFIG_FILE" ]; then
+    _tls_cert=$($SUDO sh -c "cat '$CONFIG_FILE'" 2>/dev/null | sed -n 's/^[[:space:]]*cert_file[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' | head -1)
+    _tls_acme=$($SUDO sh -c "cat '$CONFIG_FILE'" 2>/dev/null | sed -n 's/^[[:space:]]*acme_domain[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' | head -1)
+    _selfsigned=$($SUDO sh -c "cat '$CONFIG_FILE'" 2>/dev/null | sed -n 's/^[[:space:]]*self_signed[[:space:]]*=[[:space:]]*\(true\).*/\1/p' | head -1)
+    { [ -n "$_tls_cert" ] || [ -n "$_tls_acme" ]; } && _scheme="https"
+  fi
+  printf '  Адрес панели:  %s://%s:8080\n' "$_scheme" "$_ip"
+  if [ "$_selfsigned" = "true" ]; then
+    printf '                 браузер предупредит о недоверенном сертификате — это ожидаемо\n'
+  elif [ "$_scheme" = "http" ]; then
+    printf '                 без шифрования: пароль и токен идут открытым текстом\n'
+  fi
   printf '  Пользователь:  %s\n' "$SYSTEM_USER"
   printf '  Бинарник:      %s\n' "$PANEL_BINARY_PATH"
   printf '  Конфиг:        %s\n' "$CONFIG_FILE"

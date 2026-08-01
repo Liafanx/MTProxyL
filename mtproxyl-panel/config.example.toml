@@ -86,16 +86,33 @@ use_sudo = true
 # command_timeout = "10m"
 
 [tls]
-# Option 1: Custom certificates
+# Панель принимает пароль администратора и выдаёт токен сессии. Без TLS и то
+# и другое уходит открытым текстом, а cookie сессии не получает флаг Secure.
+# По умолчанию установщик предлагает вариант 1.
+
+# Вариант 1: самоподписанный сертификат — работает сразу, ничего не нужно.
+# Панель создаст его сама при первом запуске, если файлов ещё нет, и больше
+# не будет трогать: перезапуск не меняет сертификат, браузер предупредит один
+# раз. Адреса и домены из self_signed_hosts попадут в сертификат, чтобы
+# браузер не ругался ещё и на несовпадение имени.
+# self_signed = true
+# cert_file = "/var/lib/mtproxyl-panel/certs/panel.crt"
+# key_file = "/var/lib/mtproxyl-panel/certs/panel.key"
+# self_signed_hosts = ["203.0.113.10", "panel.example.com"]
+
+# Вариант 2: свой сертификат — сюда же подходят файлы Let's Encrypt, которые
+# уже выпустил selfmask: /etc/letsencrypt/live/<домен>/. Пользователю панели
+# нужен доступ на чтение к ним.
 # cert_file = "/path/to/cert.pem"
 # key_file = "/path/to/key.pem"
 
-# Option 2: Automatic Let's Encrypt (requires port 443 + port 80 for challenges)
+# Вариант 3: Let's Encrypt автоматически — нужен домен с A-записью на этот
+# сервер и свободный порт 80 для проверки.
 # acme_domain = "panel.example.com"
-# acme_cache_dir = "/var/lib/mtproxyl-panel/certs"  # default
+# acme_cache_dir = "/var/lib/mtproxyl-panel/certs"  # по умолчанию
 
-# Note: cert_file and acme_domain are mutually exclusive.
-# If neither is set, the panel runs on plain HTTP.
+# acme_domain и cert_file вместе не используются: acme_domain имеет приоритет.
+# Если не задано ничего, панель работает по обычному HTTP.
 
 [geoip]
 # Path to MaxMind GeoLite2 City database (.mmdb)

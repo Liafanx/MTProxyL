@@ -106,6 +106,17 @@ type TLSConfig struct {
 	KeyFile      string `toml:"key_file"`
 	AcmeDomain   string `toml:"acme_domain"`
 	AcmeCacheDir string `toml:"acme_cache_dir"`
+	// SelfSigned makes the panel generate its own certificate when cert_file
+	// and key_file point at files that do not exist yet.
+	//
+	// Without it HTTPS needs a certificate obtained beforehand, so a plain
+	// install falls back to HTTP — and the admin password and session token
+	// then cross the network in the clear. A self-signed certificate warns in
+	// the browser but still encrypts, which is strictly better than nothing.
+	SelfSigned bool `toml:"self_signed"`
+	// SelfSignedHosts are extra names and addresses to put in the certificate,
+	// so the browser at least matches the host being used.
+	SelfSignedHosts []string `toml:"self_signed_hosts"`
 }
 
 type TelemtConfig struct {

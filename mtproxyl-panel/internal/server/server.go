@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -667,14 +668,31 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 		return srv.ListenAndServeTLS("", "")
 	}
 
+	// TLS: self-signed, generated on first start when the files are absent.
+	// Checked before the custom-certificate branch because it uses the same
+	// cert_file/key_file pair — it only fills them in.
+	if s.cfg.TLS.SelfSigned && s.cfg.TLS.CertFile != "" {
+		if err := ensureSelfSignedCert(
+			s.cfg.TLS.CertFile, s.cfg.TLS.KeyFile, s.cfg.TLS.SelfSignedHosts,
+		); err != nil {
+			return fmt.Errorf("self-signed TLS: %w", err)
+		}
+		log.Printf("MTProxyL-Panel listening on %s (TLS, самоподписанный сертификат)", s.cfg.Listen)
+		log.Printf("Браузер предупредит о недоверенном сертификате — это ожидаемо")
+		return srv.ListenAndServeTLS(s.cfg.TLS.CertFile, s.cfg.TLS.KeyFile)
+	}
+
 	// TLS: custom certificates
 	if s.cfg.TLS.CertFile != "" {
 		log.Printf("MTProxyL-Panel listening on %s (TLS)", s.cfg.Listen)
 		return srv.ListenAndServeTLS(s.cfg.TLS.CertFile, s.cfg.TLS.KeyFile)
 	}
 
-	// Plain HTTP
-	log.Printf("MTProxyL-Panel listening on %s", s.cfg.Listen)
+	// Plain HTTP: пароль администратора и токен сессии уходят открытым
+	// текстом, поэтому это стоит сказать вслух, а не молча слушать :8080.
+	log.Printf("MTProxyL-Panel listening on %s (HTTP, без шифрования)", s.cfg.Listen)
+	log.Printf("ВНИМАНИЕ: пароль и токен сессии передаются открытым текстом. " +
+		"Включить HTTPS: self_signed = true в секции [tls] конфига панели")
 	return srv.ListenAndServe()
 }
 

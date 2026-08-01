@@ -64,6 +64,19 @@ panel_listen_addr() {
     esac
 }
 
+# Схема, по которой панель отвечает: она умеет HTTPS с самоподписанным
+# сертификатом, Let's Encrypt и своим сертификатом. Подсказывать http, когда
+# слушается https, — значит отправить пользователя по нерабочей ссылке.
+panel_scheme() {
+    local _cfg="${PANEL_CONFIG_DIR}/config.toml"
+    [ -f "$_cfg" ] || { echo "http"; return 0; }
+    if grep -qE '^[[:space:]]*(cert_file|acme_domain)[[:space:]]*=' "$_cfg" 2>/dev/null; then
+        echo "https"
+    else
+        echo "http"
+    fi
+}
+
 panel_install() {
     check_root || return 1
 
@@ -143,7 +156,7 @@ _panel_install_report() {
     if panel_installed; then
         log_success "Панель установлена"
         local _addr; _addr=$(panel_listen_addr)
-        [ -n "$_addr" ] && log_info "Адрес: http://${_addr}"
+        [ -n "$_addr" ] && log_info "Адрес: $(panel_scheme)://${_addr}"
     fi
 }
 
@@ -242,7 +255,7 @@ panel_show_status() {
     echo -e "  ${BOLD}Состояние:${NC} $(panel_status_line)"
     if panel_installed; then
         local _addr; _addr=$(panel_listen_addr)
-        [ -n "$_addr" ] && echo -e "  ${BOLD}Адрес:${NC}     http://${_addr}"
+        [ -n "$_addr" ] && echo -e "  ${BOLD}Адрес:${NC}     $(panel_scheme)://${_addr}"
         echo -e "  ${BOLD}Бинарник:${NC}  ${PANEL_BINARY}"
         echo -e "  ${BOLD}Конфиг:${NC}    ${PANEL_CONFIG_DIR}/config.toml"
         echo -e "  ${BOLD}Логи:${NC}      journalctl -u ${PANEL_SERVICE} -f"
