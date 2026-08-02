@@ -5,6 +5,10 @@
 MTPROXYL_MODE="manager"
 PROXY_PORT=443
 PROXY_METRICS_PORT=9090
+# REST API движка. MTProxyL включает его явно и вешает на localhost:
+# у telemt по умолчанию listen = "0.0.0.0:9091", то есть без явной
+# записи API смотрел бы в интернет.
+PROXY_API_PORT=9091
 PROXY_DOMAIN="autoscout24.ru"
 PROXY_CONCURRENCY=8192
 PROXY_CPUS=""
@@ -68,6 +72,7 @@ MTPROXYL_MODE='${MTPROXYL_MODE}'
 # Конфигурация прокси
 PROXY_PORT='${PROXY_PORT}'
 PROXY_METRICS_PORT='${PROXY_METRICS_PORT}'
+PROXY_API_PORT='${PROXY_API_PORT}'
 PROXY_DOMAIN='${PROXY_DOMAIN}'
 PROXY_CONCURRENCY='${PROXY_CONCURRENCY}'
 PROXY_CPUS='${PROXY_CPUS}'
@@ -254,7 +259,7 @@ load_settings() {
 
             case "$key" in
                 MTPROXYL_MODE|\
-                PROXY_PORT|PROXY_METRICS_PORT|PROXY_DOMAIN|PROXY_CONCURRENCY|\
+                PROXY_PORT|PROXY_METRICS_PORT|PROXY_API_PORT|PROXY_DOMAIN|PROXY_CONCURRENCY|\
                 PROXY_CPUS|PROXY_MEMORY|CUSTOM_IP|FAKE_CERT_LEN|\
                 PROXY_PROTOCOL|PROXY_PROTOCOL_TRUSTED_CIDRS|\
                 AD_TAG|GEOBLOCK_MODE|BLOCKLIST_COUNTRIES|\
@@ -280,6 +285,7 @@ load_settings() {
     esac
     [[ "$PROXY_PORT" =~ ^[0-9]+$ ]] && [ "$PROXY_PORT" -ge 1 ] && [ "$PROXY_PORT" -le 65535 ] || PROXY_PORT=443
     [[ "$PROXY_METRICS_PORT" =~ ^[0-9]+$ ]] && [ "$PROXY_METRICS_PORT" -ge 1 ] && [ "$PROXY_METRICS_PORT" -le 65535 ] || PROXY_METRICS_PORT=9090
+    [[ "$PROXY_API_PORT" =~ ^[0-9]+$ ]] && [ "$PROXY_API_PORT" -ge 1 ] && [ "$PROXY_API_PORT" -le 65535 ] || PROXY_API_PORT=9091
     [[ "$MASKING_PORT" =~ ^[0-9]+$ ]] && [ "$MASKING_PORT" -ge 1 ] && [ "$MASKING_PORT" -le 65535 ] || MASKING_PORT=443
     [[ "$FAKE_CERT_LEN" =~ ^[0-9]+$ ]] && [ "$FAKE_CERT_LEN" -ge 512 ] || FAKE_CERT_LEN=2048
     [[ "$PROXY_CONCURRENCY" =~ ^[0-9]+$ ]] || PROXY_CONCURRENCY=8192

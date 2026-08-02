@@ -393,6 +393,7 @@ generate_telemt_config() {
     local ad_tag="${AD_TAG:-}"
     local port="${PROXY_PORT:-443}"
     local metrics_port="${PROXY_METRICS_PORT:-9090}"
+    local api_port="${PROXY_API_PORT:-9091}"
 
     local tmp; tmp=$(_mktemp "$CONFIG_DIR") || return 1
 
@@ -422,6 +423,13 @@ listen_addr_ipv6 = "::"
 proxy_protocol = ${PROXY_PROTOCOL:-false}
 metrics_listen = "127.0.0.1:${metrics_port}"
 metrics_whitelist = ["127.0.0.1", "::1"]
+
+# REST API движка — из него панель берёт пользователей, статистику и конфиг.
+# Пишем секцию явно: у telemt listen по умолчанию "0.0.0.0:9091", то есть без
+# этих строк API слушал бы все интерфейсы и был бы доступен из интернета.
+[server.api]
+enabled = true
+listen = "127.0.0.1:${api_port}"
 
 [timeouts]
 client_handshake = ${MTPROXYL_CLIENT_HANDSHAKE}

@@ -502,6 +502,26 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 				writeError(w, http.StatusBadRequest, "invalid_toml", err.Error())
 				return
 			}
+			// Отправляем только изменённые секции. Редактор заполняется
+			// действующей конфигурацией движка — со всеми заводскими
+			// значениями, — и отправка её целиком записала бы эти значения в
+			// файл явно, зафиксировав их на сегодняшнем уровне.
+			if current, _, err := telemtProxy.GetManagedConfig(); err == nil {
+				sections = telemt_config.ChangedSections(sections, current)
+				if len(sections) == 0 {
+					writeJSON(w, http.StatusOK, jsonResponse{
+						OK: true,
+						Data: map[string]interface{}{
+							"success": true, "new_hash": req.Hash, "changed": false,
+						},
+					})
+					return
+				}
+			} else {
+				// Не смогли прочитать текущее состояние — отправляем как есть:
+				// потерять правку хуже, чем записать лишние значения.
+				log.Printf("[config] не удалось прочитать текущий конфиг для сравнения: %s", err)
+			}
 			res, err := telemtProxy.PatchManagedConfig(sections, req.Hash)
 			if err != nil {
 				var apiErr *proxy.TelemtAPIError

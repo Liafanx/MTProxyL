@@ -135,6 +135,45 @@ run_installer() {
         done
     fi
 
+    # Порт REST API — из него панель берёт пользователей и статистику.
+    # Выбираем так же, как порт метрик: свободный по умолчанию, с проверкой.
+    # Не спросить нельзя: 9091 занимают и другие сервисы, а движок с занятым
+    # портом API просто не поднимет его — панель осталась бы пустой.
+    echo ""
+    local _api_default
+    _api_default=$(find_free_metrics_port "${PROXY_API_PORT:-9091}" 9199) || _api_default="${PROXY_API_PORT:-9091}"
+    PROXY_API_PORT="$_api_default"
+    echo -e "  ${BOLD}Порт REST API движка (только localhost)${NC}"
+    echo -e "  ${DIM}Через него работает веб-панель: пользователи, статистика, конфиг.${NC}"
+    if is_port_available "$PROXY_API_PORT" 2>/dev/null; then
+        echo -e "  ${DIM}Автоматически выбран свободный порт: ${PROXY_API_PORT}${NC}"
+    else
+        echo -e "  ${YELLOW}Порт ${PROXY_API_PORT} занят, рекомендуем выбрать другой${NC}"
+    fi
+    echo -en "  ${BOLD}Оставить порт API ${PROXY_API_PORT}? [Y/n]:${NC} "
+    local api_keep; read_line api_keep
+    if [[ "$api_keep" =~ ^[nN]$ ]]; then
+        while true; do
+            echo -en "  ${BOLD}Введите порт API [${PROXY_API_PORT}]:${NC} "
+            local api_input; read_line api_input
+            [ -z "$api_input" ] && break
+            if ! validate_port "$api_input"; then
+                log_error "Некорректный порт"
+                continue
+            fi
+            if [ "$api_input" = "${PROXY_METRICS_PORT:-9090}" ] || [ "$api_input" = "${PROXY_PORT:-443}" ]; then
+                log_error "Этот порт уже занят самим прокси или метриками"
+                continue
+            fi
+            if is_port_available "$api_input"; then
+                PROXY_API_PORT="$api_input"
+                log_success "Порт API: ${PROXY_API_PORT}"
+                break
+            fi
+            log_error "Порт ${api_input} уже занят, попробуйте другой"
+        done
+    fi
+
     # IP
     echo ""
     local _det_ip; _det_ip=$(CUSTOM_IP="" get_public_ip)

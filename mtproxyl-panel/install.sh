@@ -124,6 +124,48 @@ detect_telemt_service() {
   echo ""
 }
 
+# Слушает ли кто-нибудь этот порт. Отличает «движок стоит» от «движок жив, но
+# API отвечает не так, как мы ждём» — диагнозы разные, и лечатся по-разному.
+#
+# Коды: 0 — слушается, 1 — нет, 2 — проверить нечем. Второе и третье путать
+# нельзя: на минимальном образе без ss и netstat «не смог проверить» иначе
+# превратилось бы в уверенное «порт закрыт».
+port_is_listening() {
+  _p="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${_p}\$" && return 0
+    return 1
+  fi
+  if command -v netstat >/dev/null 2>&1; then
+    netstat -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${_p}\$" && return 0
+    return 1
+  fi
+  # Ни ss, ни netstat — пробуем подключиться. curl отдаёт код 7 именно на
+  # «соединение не установлено», а любой ответ означает, что порт занят.
+  if command -v curl >/dev/null 2>&1; then
+    curl -s -o /dev/null --max-time 3 --connect-timeout 2 --noproxy '*' \
+      "http://127.0.0.1:${_p}/" 2>/dev/null
+    [ "$?" -eq 7 ] && return 1
+    return 0
+  fi
+  return 2
+}
+
+# Работает ли движок вообще: в режиме менеджера это контейнер Docker, иначе
+# systemd-служба. Нужно, чтобы сказать «включите движок», а не просто
+# «API не отвечает».
+engine_looks_running() {
+  if [ "$MTPROXYL_MODE_DETECTED" = "manager" ]; then
+    command -v docker >/dev/null 2>&1 || return 2
+    $SUDO docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "mtproxyl" && return 0
+    return 1
+  fi
+  [ -n "${TELEMT_SERVICE:-}" ] || return 2
+  command -v systemctl >/dev/null 2>&1 || return 2
+  $SUDO systemctl is-active --quiet "$TELEMT_SERVICE" 2>/dev/null && return 0
+  return 1
+}
+
 # Живой ли API по указанному адресу. Проверяем до записи конфига: иначе
 # неверный адрес всплывёт только пустым дашбордом после установки.
 probe_telemt_api() {
@@ -691,8 +733,31 @@ do_install() {
     # конфига: иначе ошибка всплывёт только пустым дашбордом после установки.
     if ! probe_telemt_api "$TELEMT_URL" "$TELEMT_AUTH"; then
       printf '  API по этому адресу не отвечает.\n'
+      # Называем конкретную причину, а не общий отказ: «API выключен в
+      # конфиге», «порт никто не слушает» и «движок стоит» лечатся по-разному.
+      _probe_port=$(printf '%s' "$TELEMT_URL" | sed -n 's|.*:\([0-9]\{1,5\}\)/*$|\1|p')
       if [ "$API_ENABLED_DETECTED" = "false" ]; then
-        printf '  Причина, скорее всего, известна: [server.api] enabled = false в конфиге движка.\n'
+        printf '  Причина: [server.api] enabled = false в конфиге движка.\n'
+        printf '           Включите API и перезапустите движок.\n'
+      else
+        port_is_listening "${_probe_port:-0}"
+        case "$?" in
+          1)
+            printf '  Порт %s никто не слушает.\n' "${_probe_port:-?}"
+            engine_looks_running
+            # 0 — работает, 1 — остановлен, 2 — проверить нечем: в последнем
+            # случае молчим, а не гадаем.
+            case "$?" in
+              0) printf '           Движок работает, но API на этом порту не поднят —\n'
+                 printf '           проверьте [server.api] listen в конфиге движка.\n' ;;
+              1) printf '           Движок не запущен. Запустите его и повторите установку.\n' ;;
+            esac
+            ;;
+          0)
+            printf '  Порт %s слушается, но ответ не похож на API telemt —\n' "${_probe_port:-?}"
+            printf '           возможно, там другой сервис или нужен заголовок авторизации.\n'
+            ;;
+        esac
       fi
       _answer=$(prompt "Всё равно продолжить? [y/N]" "n")
       case "$_answer" in
