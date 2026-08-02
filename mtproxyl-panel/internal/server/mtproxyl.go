@@ -751,6 +751,21 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	// PQ-проверка домена: единственное дополнение, которое имеет смысл в
 	// панели. censorcheck намеренно не перенесён — он выполняет сторонний
 	// скрипт с сети, и делать это по нажатию в вебе не стоит.
+	// Установка инструментов PQ отдельно от мастера Selfmask: скачивание,
+	// поэтому асинхронно, как и остальные долгие операции.
+	mux.Handle("POST /api/mtproxyl/pq-install", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		started := runner.Start("selfmask:pq-install", client.InstallPQTools)
+		if !started {
+			writeError(w, http.StatusConflict, "operation_busy",
+				"Другая операция MTProxyL уже выполняется")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
+	}))
+
 	mux.Handle("POST /api/mtproxyl/pq-check", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
 			return

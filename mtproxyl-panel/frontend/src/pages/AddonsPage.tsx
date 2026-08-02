@@ -1,15 +1,44 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ErrorAlert } from '@/components/ErrorAlert';
-import { mtproxylAddonsApi } from '@/lib/api';
+import { OperationProgress } from '@/components/OperationProgress';
+import { mtproxylAddonsApi, mtproxylApi, type SelfmaskStatus } from '@/lib/api';
+import { useMtproxylOperation } from '@/hooks/useMtproxyl';
 
 export function AddonsPage() {
   const [domain, setDomain] = useState('');
   const [output, setOutput] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Чем проверять домен: системным OpenSSL 3.5.0+, нашей сборкой, или нечем —
+  // тогда предлагаем поставить её прямо отсюда, а не отправляем в CLI.
+  const [pq, setPq] = useState<Pick<SelfmaskStatus, 'pq_source' | 'pq_available' | 'pq_system'> | null>(null);
+
+  const loadPq = useCallback(async () => {
+    try {
+      const st = await mtproxylApi.selfmask();
+      setPq({ pq_source: st.pq_source, pq_available: st.pq_available, pq_system: st.pq_system });
+    } catch {
+      setPq(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadPq();
+  }, [loadPq]);
+
+  const { operation, start, running } = useMtproxylOperation(loadPq, ['selfmask:pq-install']);
+
+  const installPq = async () => {
+    try {
+      start(await mtproxylAddonsApi.pqInstall());
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось запустить установку');
+    }
+  };
 
   const check = async () => {
     setChecking(true);
@@ -59,13 +88,38 @@ export function AddonsPage() {
               placeholder="Пусто — текущий SNI-домен"
               className="max-w-[320px]"
             />
-            <Button type="submit" disabled={checking}>
+            <Button type="submit" disabled={checking || pq?.pq_available === false}>
               {checking ? 'Проверка…' : 'Проверить'}
             </Button>
           </form>
+
+          <OperationProgress operation={operation} />
+
+          {pq?.pq_available === false ? (
+            <div className="bg-warning/10 border border-warning/30 rounded-lg p-3 space-y-2">
+              <p className="text-sm text-text-primary">
+                Проверять нечем: нужен OpenSSL с постквантовым обменом ключами.
+              </p>
+              <p className="text-xs text-text-secondary">
+                Системный OpenSSL 3.5.0 и новее умеет это сам — тогда ничего ставить не надо.
+                Здесь он старее, поэтому можно поставить сборку из состава MTProxyL: она
+                встанет отдельно и не тронет системный пакет.
+              </p>
+              <Button onClick={installPq} disabled={running}>
+                {running ? 'Установка…' : 'Установить PQ OpenSSL'}
+              </Button>
+            </div>
+          ) : (
+            pq?.pq_source && (
+              <p className="text-xs text-text-secondary">
+                Проверка идёт через: {pq.pq_source}
+                {pq.pq_system && ' — своя сборка не нужна'}
+              </p>
+            )
+          )}
+
           <p className="text-xs text-text-secondary">
-            Можно указать порт: <span className="font-mono">example.com:8443</span>. Проверка
-            требует установленного PQ OpenSSL — он ставится вместе с Selfmask.
+            Можно указать порт: <span className="font-mono">example.com:8443</span>.
           </p>
           {output && (
             <pre className="text-xs text-text-secondary bg-background border border-border rounded-md p-3 whitespace-pre-wrap break-words font-mono max-h-80 overflow-y-auto">

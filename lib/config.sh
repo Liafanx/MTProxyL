@@ -440,10 +440,6 @@ proxy_protocol = ${PROXY_PROTOCOL:-false}
 metrics_listen = "127.0.0.1:${metrics_port}"
 metrics_whitelist = ["127.0.0.1/32", "::1/128"]
 
-# REST API движка — из него панель берёт пользователей, статистику и конфиг.
-# Пишем секцию явно: у telemt listen по умолчанию "0.0.0.0:9091", то есть без
-# этих строк API слушал бы все интерфейсы и был бы доступен из интернета.
-# whitelist сужаем с заводского 127.0.0.0/8 до самого loopback-адреса.
 [server.api]
 enabled = true
 listen = "127.0.0.1:${api_port}"
@@ -743,9 +739,31 @@ superexpert_status_json() {
 }
 
 # Содержимое пользовательского конфига — панель показывает его в редакторе.
+# Вывести конфиг супер эксперта, а если его ещё нет — тот, что действует
+# сейчас.
+#
+# Включение режима копирует текущий рабочий конфиг, так что именно он и станет
+# отправной точкой. Показывать вместо него абстрактный пример из трёх строк —
+# значит предлагать начать с нуля там, где начинать с нуля не нужно: свои
+# секреты, домен и порт пришлось бы вписывать заново руками.
 superexpert_show_file() {
-    [ -f "$SUPEREXPERT_FILE" ] || { log_error "Файл не найден: ${SUPEREXPERT_FILE}"; return 1; }
-    cat "$SUPEREXPERT_FILE"
+    if [ -f "$SUPEREXPERT_FILE" ]; then
+        cat "$SUPEREXPERT_FILE"
+        return 0
+    fi
+    local _live="${CONFIG_DIR}/config.toml"
+    if [ -f "$_live" ]; then
+        cat "$_live"
+        return 0
+    fi
+    # Конфига нет вовсе (прокси ещё не разворачивали) — соберём из текущих
+    # настроек, чтобы показать хоть что-то осмысленное.
+    if generate_telemt_config >/dev/null 2>&1 && [ -f "$_live" ]; then
+        cat "$_live"
+        return 0
+    fi
+    log_error "Конфиг не найден: ни ${SUPEREXPERT_FILE}, ни ${_live}"
+    return 1
 }
 
 # Запись конфига из stdin.

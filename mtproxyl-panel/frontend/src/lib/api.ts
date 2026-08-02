@@ -91,6 +91,11 @@ export interface SelfmaskStatus {
   nginx_conf_exists: boolean;
   cert_found: boolean;
   pq_nginx_active: boolean;
+  /** Чем проверять домен на PQ: описание источника, пусто — нечем. */
+  pq_source: string;
+  pq_available: boolean;
+  /** true — хватает системного OpenSSL, своя сборка не нужна. */
+  pq_system: boolean;
 }
 
 export interface SelfmaskParam {
@@ -420,4 +425,7 @@ export const mtproxylAddonsApi = {
       method: 'POST',
       body: JSON.stringify({ domain }),
     }),
+  /** Поставить PQ OpenSSL, когда системного не хватает. Долгая — операция. */
+  pqInstall: () =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/pq-install', { method: 'POST' }),
 };

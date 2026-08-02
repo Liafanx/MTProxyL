@@ -382,12 +382,10 @@ cli_main() {
 
         pq-check)
             load_settings; load_detect_settings
-            if [ -x "$(_selfmask_pq_openssl_bin)" ]; then
-                _addon_check_pq_domain "${1:-$(_current_sni_domain)}"
-            else
-                log_error "PQ OpenSSL не установлен"
-                log_info "Установите через: mtproxyl selfmask setup"
-            fi
+            # Проверку берёт на себя _addon_check_pq_domain: она сама решает,
+            # чем проверять — системным OpenSSL или нашим — и объясняет, если
+            # не может ничем.
+            _addon_check_pq_domain "${1:-$(_current_sni_domain)}"
             ;;            
 
         panel)

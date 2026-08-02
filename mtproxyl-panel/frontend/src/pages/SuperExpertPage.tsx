@@ -12,6 +12,10 @@ import { useTheme } from '@/hooks/useTheme';
 import { mtproxylExpertApi, type SuperExpertStatus } from '@/lib/api';
 import { formatBytes } from '@/lib/utils';
 
+// Запасной текст на случай, когда конфига нет вовсе — прокси ещё не
+// разворачивали. В обычной ситуации редактор заполняется действующим конфигом:
+// включение режима копирует именно его, и начинать с пустого примера значило бы
+// заново вписывать свои секреты, домен и порт.
 const STARTER_CONFIG = `# Конфигурация движка telemt целиком под вашим контролем.
 # Пока режим включён, MTProxyL не генерирует конфиг и не перезаписывает этот файл.
 
@@ -46,16 +50,13 @@ export function SuperExpertPage() {
     try {
       const st = await mtproxylExpertApi.superExpert();
       setStatus(st);
-      if (st.file_exists) {
-        const cfg = await mtproxylExpertApi.superExpertConfig();
-        setContent(cfg.content);
-        setSavedContent(cfg.content);
-      } else {
-        // Файла ещё нет — показываем заготовку, чтобы не начинать с пустого
-        // экрана, но считаем её несохранённой.
-        setContent(STARTER_CONFIG);
-        setSavedContent('');
-      }
+      // Когда своего файла ещё нет, MTProxyL отдаёт действующий конфиг — тот
+      // самый, который скопируется при включении режима. Показываем его, а не
+      // абстрактный пример: иначе пришлось бы заново вписывать свои секреты,
+      // домен и порт.
+      const cfg = await mtproxylExpertApi.superExpertConfig().catch(() => null);
+      setContent(cfg?.content || STARTER_CONFIG);
+      setSavedContent(st.file_exists && cfg ? cfg.content : '');
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось загрузить конфиг');
@@ -184,6 +185,12 @@ export function SuperExpertPage() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3">
+                    {!status.file_exists && (
+                      <p className="text-xs text-text-secondary">
+                        Показан действующий конфиг движка — тот самый, который станет вашим
+                        при включении режима. Правьте прямо здесь и сохраняйте.
+                      </p>
+                    )}
                     <div className="border border-border rounded-md overflow-hidden">
                       <Editor
                         height="55vh"

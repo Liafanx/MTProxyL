@@ -25,6 +25,12 @@ type SelfmaskStatus struct {
 	NginxConfExists bool   `json:"nginx_conf_exists"`
 	CertFound       bool   `json:"cert_found"`
 	PQNginxActive   bool   `json:"pq_nginx_active"`
+	// PQSource, PQAvailable и PQSystem описывают, чем проверять домен на
+	// постквантовый обмен ключами: системным OpenSSL 3.5.0+, нашей сборкой,
+	// или нечем — тогда панель предлагает её поставить.
+	PQSource    string `json:"pq_source"`
+	PQAvailable bool   `json:"pq_available"`
+	PQSystem    bool   `json:"pq_system"`
 }
 
 // SelfmaskStatus reports the current decoy-site configuration.
@@ -118,5 +124,15 @@ func (c *Client) SetSelfmaskParam(ctx context.Context, key, value string) (strin
 // and applies them here.
 func (c *Client) SelfmaskApply(ctx context.Context) (string, error) {
 	out, err := c.run(ctx, "selfmask", "apply")
+	return stripANSI(out), err
+}
+
+// InstallPQTools installs the bundled PQ OpenSSL/nginx build.
+//
+// Only needed where the system OpenSSL predates 3.5.0 and therefore has no
+// X25519MLKEM768: before this, the only way to get it was to run the whole
+// Selfmask wizard, which is a lot of machinery for one domain check.
+func (c *Client) InstallPQTools(ctx context.Context) (string, error) {
+	out, err := c.run(ctx, "selfmask", "pq-install")
 	return stripANSI(out), err
 }

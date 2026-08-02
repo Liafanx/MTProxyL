@@ -380,6 +380,7 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script mode reanimator
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask status --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask setup
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask apply
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask pq-install
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask settable
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask set SELFMASK_[A-Z_]* *
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask verify

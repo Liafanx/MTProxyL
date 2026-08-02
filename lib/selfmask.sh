@@ -16,6 +16,90 @@ _selfmask_pq_openssl_bin() {
     echo "${SELFMASK_PQ_PREFIX}/bin/openssl"
 }
 
+# Минимальная версия OpenSSL с постквантовым обменом ключами (X25519MLKEM768)
+# из коробки. До 3.5.0 его нет вовсе, и нужен наш собранный.
+SELFMASK_MIN_SYSTEM_OPENSSL="3.5.0"
+
+# Сравнение версий вида 3.5.7: возвращает 0, если $1 >= $2.
+_version_ge() {
+    [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" = "$2" ]
+}
+
+# Умеет ли системный OpenSSL постквантовый обмен ключами.
+#
+# С 3.5.0 X25519MLKEM768 поддерживается штатно, и городить свою сборку незачем:
+# у системного пакета есть обновления безопасности, у нашего — только мы.
+_system_openssl_has_pq() {
+    local _bin; _bin=$(command -v openssl 2>/dev/null) || return 1
+    local _ver; _ver=$("$_bin" version 2>/dev/null | awk '{print $2}')
+    # Версия бывает с суффиксом: "3.5.7", "3.6.0-dev". Берём числовую часть.
+    _ver="${_ver%%-*}"
+    [[ "$_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+    _version_ge "$_ver" "$SELFMASK_MIN_SYSTEM_OPENSSL" || return 1
+    # Версия — необходимое условие, но сборка может быть собрана без ML-KEM.
+    # Спрашиваем сам бинарник, а не полагаемся на номер.
+    "$_bin" list -kem-algorithms 2>/dev/null | grep -qi 'mlkem768\|ml-kem-768' && return 0
+    "$_bin" list -group-algorithms 2>/dev/null | grep -qi 'X25519MLKEM768' && return 0
+    return 1
+}
+
+# Какой openssl использовать для проверок PQ: системный, если он умеет, иначе
+# наш собранный. Пустой вывод означает, что подходящего нет вовсе.
+_pq_openssl_bin() {
+    if _system_openssl_has_pq; then
+        command -v openssl
+        return 0
+    fi
+    local _own; _own=$(_selfmask_pq_openssl_bin)
+    [ -x "$_own" ] && { echo "$_own"; return 0; }
+    return 1
+}
+
+# Умеет ли системный nginx постквантовый обмен ключами.
+#
+# Важно, с чем он слинкован, а не какая версия у CLI openssl: это разные
+# пакеты и они расходятся. Спрашиваем сам nginx через -V.
+_system_nginx_has_pq() {
+    local _bin; _bin=$(command -v nginx 2>/dev/null) || return 1
+    local _ssl
+    _ssl=$("$_bin" -V 2>&1 | grep -oE 'OpenSSL [0-9]+\.[0-9]+\.[0-9]+' | head -1 | awk '{print $2}')
+    [ -n "$_ssl" ] || return 1
+    _version_ge "$_ssl" "$SELFMASK_MIN_SYSTEM_OPENSSL"
+}
+
+# Какой nginx использовать для заглушки.
+#
+# Системный подходит, если слинкован с OpenSSL 3.5.0+: тогда своя сборка не
+# нужна, а обновления безопасности приходят из дистрибутива. Запускаем его всё
+# равно со своим конфигом и под своим юнитом — трогать /etc/nginx/nginx.conf
+# нельзя, там может жить чужой сайт.
+_selfmask_nginx_bin() {
+    if _system_nginx_has_pq; then
+        command -v nginx
+        return 0
+    fi
+    echo "$(_selfmask_pq_nginx_bin)"
+}
+
+_selfmask_nginx_source() {
+    if _system_nginx_has_pq; then
+        echo "системный nginx ($(nginx -V 2>&1 | grep -oE 'OpenSSL [0-9]+\.[0-9]+\.[0-9]+' | head -1))"
+    else
+        echo "nginx из состава MTProxyL (OpenSSL ${SELFMASK_PQ_OPENSSL_VERSION})"
+    fi
+}
+
+# Человекочитаемое описание источника — для вывода и для панели.
+_pq_openssl_source() {
+    if _system_openssl_has_pq; then
+        echo "системный OpenSSL $(openssl version 2>/dev/null | awk '{print $2}')"
+    elif [ -x "$(_selfmask_pq_openssl_bin)" ]; then
+        echo "PQ OpenSSL из состава MTProxyL"
+    else
+        echo ""
+    fi
+}
+
 _selfmask_pq_conf() {
     echo "${SELFMASK_PQ_PREFIX}/conf/nginx.conf"
 }
@@ -113,7 +197,7 @@ selfmask_show_status_json() {
     [ -n "${SELFMASK_DOMAIN:-}" ] && [ -f "$(_selfmask_cert_dir)/fullchain.pem" ] && _cert="true"
     systemctl is-active "${SELFMASK_PQ_SERVICE}" &>/dev/null && _nginx="true"
 
-    printf '{"enabled":%s,"domain":"%s","site_source":"%s","site_dir":"%s","backend_port":%d,"cert_mode":"%s","auto_renew":%s,"nginx_conf":"%s","nginx_conf_exists":%s,"cert_found":%s,"pq_nginx_active":%s}\n' \
+    printf '{"enabled":%s,"domain":"%s","site_source":"%s","site_dir":"%s","backend_port":%d,"cert_mode":"%s","auto_renew":%s,"nginx_conf":"%s","nginx_conf_exists":%s,"cert_found":%s,"pq_nginx_active":%s,"pq_source":"%s","pq_available":%s,"pq_system":%s}\n' \
         "$([ "${SELFMASK_ENABLED:-false}" = "true" ] && echo true || echo false)" \
         "$(json_escape "${SELFMASK_DOMAIN:-}")" \
         "$(json_escape "${SELFMASK_SITE_SOURCE:-stub}")" \
@@ -123,7 +207,10 @@ selfmask_show_status_json() {
         "$([ "${SELFMASK_AUTO_RENEW:-true}" = "true" ] && echo true || echo false)" \
         "$(json_escape "$_conf")" \
         "$([ -f "$_conf" ] && echo true || echo false)" \
-        "$_cert" "$_nginx"
+        "$_cert" "$_nginx" \
+        "$(json_escape "$(_pq_openssl_source)")" \
+        "$(_pq_openssl_bin >/dev/null 2>&1 && echo true || echo false)" \
+        "$(_system_openssl_has_pq && echo true || echo false)"
 }
 
 selfmask_show_requirements() {
@@ -371,6 +458,17 @@ _selfmask_install_deps() {
 _selfmask_install_pq_nginx() {
     local _prefix="${SELFMASK_PQ_PREFIX}"
 
+    # Системный nginx с OpenSSL 3.5.0+ умеет X25519MLKEM768 сам — качать свою
+    # сборку незачем. Каталоги под конфиг и логи всё равно готовим: запускаем
+    # его со своим конфигом, чтобы не трогать чужой /etc/nginx.
+    if _system_nginx_has_pq; then
+        log_success "Используем $(_selfmask_nginx_source)"
+        log_info "Своя сборка nginx не нужна — обновления придут из дистрибутива"
+        mkdir -p /var/log/mtproxyl-nginx /var/lib/mtproxyl-nginx/{body,proxy,fastcgi} /var/lock
+        mkdir -p "${_prefix}/logs" "${_prefix}/conf"
+        return 0
+    fi
+
     if [ -x "$(_selfmask_pq_nginx_bin)" ] && [ -x "$(_selfmask_pq_openssl_bin)" ]; then
         local _ver
         _ver=$("$(_selfmask_pq_openssl_bin)" version 2>/dev/null | awk '{print $2}')
@@ -448,8 +546,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStartPre=$(_selfmask_pq_nginx_bin) -t -c $(_selfmask_pq_conf)
-ExecStart=$(_selfmask_pq_nginx_bin) -c $(_selfmask_pq_conf) -g 'daemon off;'
+ExecStartPre=$(_selfmask_nginx_bin) -t -c $(_selfmask_pq_conf)
+ExecStart=$(_selfmask_nginx_bin) -c $(_selfmask_pq_conf) -g 'daemon off;'
 ExecReload=/bin/kill -HUP \$MAINPID
 ExecStop=/bin/kill -QUIT \$MAINPID
 Restart=on-failure
@@ -671,7 +769,7 @@ EOF
     rm -f /run/mtproxyl-nginx.pid 2>/dev/null || true
 
     local _test_out=""
-    _test_out=$("$(_selfmask_pq_nginx_bin)" -t -c "$(_selfmask_pq_conf)" 2>&1) || {
+    _test_out=$("$(_selfmask_nginx_bin)" -t -c "$(_selfmask_pq_conf)" 2>&1) || {
         log_error "Ошибка временного конфига PQ nginx для ACME"
         echo "$_test_out" | sed 's/^/    /'
         return 1
@@ -787,7 +885,7 @@ ${_http80}
 EOF
 
     local _test_out=""
-    _test_out=$("$(_selfmask_pq_nginx_bin)" -t -c "$(_selfmask_pq_conf)" 2>&1) || {
+    _test_out=$("$(_selfmask_nginx_bin)" -t -c "$(_selfmask_pq_conf)" 2>&1) || {
         log_error "Ошибка итогового конфига PQ nginx"
         echo "$_test_out" | sed 's/^/    /'
         return 1
@@ -958,7 +1056,11 @@ selfmask_verify() {
 
     local _ok=true
 
-    [ -x "$(_selfmask_pq_nginx_bin)" ] && log_success "PQ nginx установлен" || { log_error "PQ nginx не установлен"; _ok=false; }
+    if [ -x "$(_selfmask_nginx_bin)" ]; then
+        log_success "nginx с поддержкой PQ: $(_selfmask_nginx_source)"
+    else
+        log_error "nginx с поддержкой PQ не найден"; _ok=false
+    fi
     [ -x "$(_selfmask_pq_openssl_bin)" ] && log_success "PQ openssl установлен" || { log_error "PQ openssl не установлен"; _ok=false; }
     if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "letsencrypt" ]; then
         command -v certbot &>/dev/null && log_success "certbot установлен" || { log_error "certbot не установлен"; _ok=false; }
@@ -1254,6 +1356,7 @@ handle_selfmask_command() {
             ;;
         setup)   selfmask_setup ;;
         apply)   selfmask_apply ;;
+        pq-install) selfmask_install_pq_tools ;;
         set)     selfmask_set_param "$1" "$2" ;;
         settable) selfmask_settable_json ;;
         verify)  selfmask_verify ;;
@@ -1409,4 +1512,31 @@ selfmask_apply() {
 
     echo ""
     log_success "Selfmask настроен"
+}
+
+# Поставить только инструменты PQ, без настройки самой заглушки.
+#
+# Проверке домена нужен openssl, умеющий X25519MLKEM768. Если системный
+# слишком стар, раньше приходилось идти в мастер Selfmask целиком — ради
+# одной проверки это чересчур.
+selfmask_install_pq_tools() {
+    check_root
+
+    if _system_openssl_has_pq; then
+        log_success "Уже есть: $(_pq_openssl_source)"
+        log_info "Ничего ставить не нужно — системный OpenSSL умеет PQ сам"
+        return 0
+    fi
+    if [ -x "$(_selfmask_pq_openssl_bin)" ]; then
+        log_success "PQ OpenSSL уже установлен"
+        return 0
+    fi
+    if ! selfmask_supported_os; then
+        log_error "Готовая сборка есть только для Debian/Ubuntu"
+        log_info "На других системах поставьте OpenSSL ${SELFMASK_MIN_SYSTEM_OPENSSL}+ средствами дистрибутива"
+        return 1
+    fi
+
+    _selfmask_install_pq_nginx || return 1
+    log_success "Готово: $(_pq_openssl_source)"
 }

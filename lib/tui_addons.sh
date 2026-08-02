@@ -118,7 +118,15 @@ _addon_check_pq_domain() {
     draw_header "ПРОВЕРКА PQ: ${_host}:${_port}"
     echo ""
 
-    local _openssl="$(_selfmask_pq_openssl_bin)"
+    # Системный OpenSSL 3.5.0+ умеет X25519MLKEM768 сам — своя сборка нужна
+    # только там, где он старее.
+    local _openssl; _openssl=$(_pq_openssl_bin) || {
+        log_error "Нет OpenSSL с поддержкой постквантового обмена ключами"
+        log_info "Нужен системный OpenSSL ${SELFMASK_MIN_SYSTEM_OPENSSL}+ либо сборка из состава MTProxyL"
+        log_info "Поставить нашу: mtproxyl selfmask pq-install (или из панели, раздел «Дополнения»)"
+        return 1
+    }
+    echo -e "  ${DIM}Проверяем через: $(_pq_openssl_source)${NC}"
 
     # DNS
     local _ips
