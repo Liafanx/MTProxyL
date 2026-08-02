@@ -125,6 +125,7 @@ _catalog "server" "proxy_protocol"               "bool"   "false" "✘" "bool"  
 _catalog "server" "proxy_protocol_header_timeout_ms" "u64" "500"  "✘" "range:1:60000"                         "миллисекунды > 0"                   "Таймаут чтения PROXY-заголовка"
 _catalog "server" "metrics_port"                 "u16"    ""      "✘" "range:1:65535"                         "1..65535"                           "Порт endpoint метрик Prometheus"
 _catalog "server" "metrics_listen"               "string" ""      "✘" "custom:_validate_ipport"               "IP:PORT"                            "Полный адрес метрик (переопределяет metrics_port)"
+_catalog "server" "metrics_whitelist"            "string[]" "127.0.0.1/32,::1/128" "✘" "custom:_validate_cidr_list" "127.0.0.1/32,::1/128"        "CIDR, которым разрешён доступ к метрикам"
 _catalog "server" "max_connections"              "u32"    "10000" "✘" "range:0:10000000"                      "0 = без ограничений"                "Макс. одновременных клиентских соединений"
 _catalog "server" "accept_permit_timeout_ms"     "u64"    "250"   "✘" "range:0:60000"                         "0 = без ограничений"                "Таймаут ожидания разрешения на подключение"
 _catalog "server" "listen_backlog"               "u32"    "1024"  "✘" "range:0:65535"                         "0 = системный дефолт"               "Значение backlog для listen(2)"
@@ -141,6 +142,7 @@ _catalog "server.conntrack_control" "delete_budget_per_sec"    "u64"   "4096"   
 # ── server.api ────────────────────────────────────────────────
 _catalog "server.api" "enabled"                   "bool"   "true"         "✘" "bool"                          "true/false"                         "Включить REST API"
 _catalog "server.api" "listen"                    "string" "0.0.0.0:9091" "✘" "custom:_validate_ipport"       "IP:PORT"                            "Адрес биндинга API"
+_catalog "server.api" "whitelist"                 "string[]" "127.0.0.0/8" "✘" "custom:_validate_cidr_list"  "127.0.0.1/32,::1/128"               "CIDR, которым разрешён доступ к API"
 _catalog "server.api" "auth_header"               "string" ""             "✘" "any"                           "Bearer TOKEN или пусто"             "Ожидаемый Authorization заголовок"
 _catalog "server.api" "request_body_limit_bytes"  "usize"  "65536"        "✘" "range:1:104857600"             "байты > 0"                          "Макс. размер тела HTTP-запроса"
 _catalog "server.api" "minimal_runtime_enabled"   "bool"   "true"         "✘" "bool"                          "true/false"                         "Включить minimal runtime snapshot"
@@ -295,6 +297,38 @@ _validate_ipport() {
 
 _validate_nonempty() {
     [ -n "$1" ] || { echo "Значение не может быть пустым"; return 1; }
+}
+
+# Список CIDR через запятую: 127.0.0.1/32,::1/128
+#
+# Тип в каталоге — string[]: скобки и кавычки TOML добавляет уже применение
+# override'а. Принимать здесь готовый массив нельзя — он был бы закавычен
+# целиком как строка, и конфиг движка перестал бы разбираться.
+_validate_cidr_list() {
+    local _v="$1"
+    _v="${_v#"${_v%%[![:space:]]*}"}"; _v="${_v%"${_v##*[![:space:]]}"}"
+    case "$_v" in
+        \[*|*\]|*\"*) echo 'Без скобок и кавычек: 127.0.0.1/32,::1/128'; return 1 ;;
+    esac
+    local _inner="${_v//[[:space:]]/}"
+    [ -z "$_inner" ] && return 0
+    local _item
+    IFS=',' read -ra _items <<< "$_inner"
+    for _item in "${_items[@]}"; do
+        [ -n "$_item" ] || { echo "Пустой элемент списка"; return 1; }
+        # Адрес с обязательной длиной префикса: IPv4 или IPv6.
+        local _addr="${_item%/*}" _len="${_item##*/}"
+        [ "$_addr" = "$_item" ] && { echo "Нужна длина префикса: ${_item}/32"; return 1; }
+        [[ "$_len" =~ ^[0-9]+$ ]] || { echo "Некорректная длина префикса: ${_item}"; return 1; }
+        if [[ "$_addr" == *:* ]]; then
+            [ "$_len" -le 128 ] || { echo "Для IPv6 префикс не больше 128: ${_item}"; return 1; }
+            [[ "$_addr" =~ ^[0-9a-fA-F:]+$ ]] || { echo "Некорректный IPv6: ${_item}"; return 1; }
+        else
+            [ "$_len" -le 32 ] || { echo "Для IPv4 префикс не больше 32: ${_item}"; return 1; }
+            _validate_ipv4 "$_addr" >/dev/null || { echo "Некорректный IPv4: ${_item}"; return 1; }
+        fi
+    done
+    return 0
 }
 
 _validate_octal_perm() {

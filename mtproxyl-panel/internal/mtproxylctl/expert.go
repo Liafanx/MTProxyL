@@ -39,6 +39,12 @@ var (
 	expertKeyRe     = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	// Values cover integers, booleans, enum words, domains, URLs, addresses
 	// and comma-separated lists.
+	//
+	// Brackets and quotes stay out deliberately. List-typed parameters
+	// (string[] in MTProxyL's catalog, e.g. [server.api] whitelist) are
+	// entered as a plain comma-separated list — the TOML array syntax is added
+	// when the override is applied. Accepting a quote here would let a plain
+	// string parameter produce key = "va"lue" and break the engine's config.
 	expertValueRe = regexp.MustCompile(`^[A-Za-z0-9_,:/.@%+-]*$`)
 )
 

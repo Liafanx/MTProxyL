@@ -76,3 +76,49 @@ func TestRunWithStdinPipesContent(t *testing.T) {
 		t.Errorf("stdin did not reach the command, got %q", out)
 	}
 }
+
+// Списочные параметры (string[] в каталоге MTProxyL) вводятся как список через
+// запятую — скобки и кавычки добавляет применение override'а.
+func TestExpertValueAllowsCommaSeparatedLists(t *testing.T) {
+	ok := []string{
+		"127.0.0.1/32,::1/128",
+		"127.0.0.0/8",
+		"",
+		"10.0.0.0/8,192.168.0.0/16",
+	}
+	for _, v := range ok {
+		if err := ValidateExpertParam("server.api", "whitelist", v); err != nil {
+			t.Errorf("значение %q отвергнуто: %s", v, err)
+		}
+	}
+}
+
+// Кавычка в значении строкового параметра дала бы key = "va"lue" — движок
+// после такого не поднимется.
+func TestExpertValueRejectsQuotesAndBrackets(t *testing.T) {
+	for _, v := range []string{`["127.0.0.1/32"]`, `va"lue`, "[]"} {
+		if err := ValidateExpertParam("censorship", "tls_domain", v); err == nil {
+			t.Errorf("значение %q должно отвергаться", v)
+		}
+	}
+}
+
+// Символы, которые сломали бы формат "section|key|value" в expert.conf или
+// подставились бы как флаг, остаются под запретом.
+func TestExpertValueStillRejectsDangerous(t *testing.T) {
+	bad := map[string]string{
+		"перевод строки":     "127.0.0.1\n[evil]",
+		"вертикальная черта": "a|b",
+		"ведущий дефис":      "-rf",
+		"возврат каретки":    "a\rb",
+		"обратный слеш":      `C:\evil`,
+		"доллар":             "$(whoami)",
+		"обратные кавычки":   "`id`",
+		"точка с запятой":    "a;b",
+	}
+	for name, v := range bad {
+		if err := ValidateExpertParam("server.api", "whitelist", v); err == nil {
+			t.Errorf("%s: значение %q должно отвергаться", name, v)
+		}
+	}
+}

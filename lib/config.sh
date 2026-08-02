@@ -422,14 +422,16 @@ listen_addr_ipv4 = "0.0.0.0"
 listen_addr_ipv6 = "::"
 proxy_protocol = ${PROXY_PROTOCOL:-false}
 metrics_listen = "127.0.0.1:${metrics_port}"
-metrics_whitelist = ["127.0.0.1", "::1"]
+metrics_whitelist = ["127.0.0.1/32", "::1/128"]
 
 # REST API движка — из него панель берёт пользователей, статистику и конфиг.
 # Пишем секцию явно: у telemt listen по умолчанию "0.0.0.0:9091", то есть без
 # этих строк API слушал бы все интерфейсы и был бы доступен из интернета.
+# whitelist сужаем с заводского 127.0.0.0/8 до самого loopback-адреса.
 [server.api]
 enabled = true
 listen = "127.0.0.1:${api_port}"
+whitelist = ["127.0.0.1/32", "::1/128"]
 
 [timeouts]
 client_handshake = ${MTPROXYL_CLIENT_HANDSHAKE}
