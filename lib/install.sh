@@ -497,6 +497,9 @@ uninstall() {
     echo -e "  ${DIM}- NFT правила и iOS фиксы${NC}"
     echo -e "  ${DIM}- Selfmask и PQ nginx (если установлены)${NC}"
     echo -e "  ${DIM}- /usr/local/bin/mtproxyl${NC}"
+    if panel_installed 2>/dev/null; then
+        echo -e "  ${DIM}- Веб-панель MTProxyL-Panel (спросим отдельно)${NC}"
+    fi
     echo ""
     echo -e "  ${GREEN}НЕ будет удалено:${NC}"
     echo -e "  ${DIM}- Docker (сам движок)${NC}"
@@ -522,6 +525,29 @@ uninstall() {
             log_success "Секреты сохранены: ${export_file}"
         else
             log_warn "Файл секретов не найден — нечего сохранять"
+        fi
+    fi
+
+    # Веб-панель. Спрашиваем до всего остального: если её оставить, надо хотя
+    # бы снять права sudo — они разрешают запуск /opt/mtproxyl/mtproxyl.sh от
+    # root, а сам файл сейчас исчезнет. Висящее разрешение на несуществующий
+    # путь — не то, что стоит оставлять после удаления.
+    if panel_installed 2>/dev/null; then
+        echo ""
+        echo -e "  ${BOLD}Установлена веб-панель MTProxyL-Panel${NC}"
+        echo -e "  ${DIM}Без MTProxyL она останется работать как обычная панель telemt,${NC}"
+        echo -e "  ${DIM}но разделы режима, Selfmask и лимитера в ней перестанут работать.${NC}"
+        echo -en "  ${BOLD}Удалить панель тоже? [Y/n]:${NC} "
+        local _panel_yn; read_line _panel_yn
+        if [[ ! "$_panel_yn" =~ ^[nN]$ ]]; then
+            panel_uninstall || log_warn "Не удалось удалить панель — проверьте вручную"
+        fi
+        # Панель могла остаться и после «удалить»: у panel_uninstall своё
+        # подтверждение, а установщик панели мог не скачаться. В любом случае,
+        # если она на месте — снимаем права sudo на исчезающий скрипт.
+        if panel_installed 2>/dev/null; then
+            log_info "Панель осталась — отключаем интеграцию с MTProxyL"
+            _panel_detach_mtproxyl
         fi
     fi
 
