@@ -11,7 +11,8 @@ import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from '@/components/ui/table';
 import { usePolling } from '@/hooks/usePolling';
-import { telemt, panelApi, ApiError } from '@/lib/api';
+import { telemt, panelApi, ApiError, mtproxylUsersApi } from '@/lib/api';
+import { useMtproxyl } from '@/hooks/useMtproxyl';
 import { Link } from 'react-router-dom';
 import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, ArrowUpDown, Search, ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react';
 import { formatBytes } from '@/lib/utils';
@@ -36,6 +37,25 @@ interface UserInfo {
   active_unique_ips_list?: string[];
   recent_unique_ips_list?: string[];
   links?: UserLinks;
+}
+
+/**
+ * Переносит лимиты из формы пользователя в команду MTProxyL.
+ *
+ * Форма отправляет только заполненные поля, а `secret setlimits` понимает
+ * пустой аргумент как «не менять». Разница в том, что пустое поле в форме
+ * означает «без ограничения», то есть 0 — иначе снять лимит было бы нечем.
+ */
+async function applyMtproxylLimits(label: string, data: Record<string, unknown>) {
+  const num = (v: unknown) => (v === undefined || v === '' ? 0 : Number(v));
+  const expiration = data.expiration_rfc3339 ? String(data.expiration_rfc3339) : '';
+  await mtproxylUsersApi.setLimits(label, {
+    max_conns: num(data.max_tcp_conns),
+    max_ips: num(data.max_unique_ips),
+    quota_bytes: num(data.data_quota_bytes),
+    // MTProxyL принимает ГГГГ-ММ-ДД; из формы приходит полный RFC3339.
+    expires: expiration ? expiration.slice(0, 10) : '0',
+  });
 }
 
 function QuotaCell({ user, entry }: { user: UserInfo; entry?: QuotaEntry }) {
@@ -126,6 +146,13 @@ export function UsersPage() {
   }, []);
 
   const [createOpen, setCreateOpen] = useState(false);
+  // В режиме Manager конфиг движка примонтирован в контейнер только для
+  // чтения — telemt отвечает на запись «Device or resource busy». Владелец
+  // пользователей там MTProxyL, и правим мы их через его CLI. Чтение
+  // статистики остаётся у API движка: трафик и соединения знает только он.
+  const { enabled: mtproxylEnabled, mode: mtproxylMode } = useMtproxyl();
+  const usersOwnedByMtproxyl = mtproxylEnabled && mtproxylMode === 'manager';
+
   const [editUser, setEditUser] = useState<UserInfo | null>(null);
   const [deleteUser, setDeleteUser] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -149,22 +176,40 @@ export function UsersPage() {
   }, []);
 
   const handleCreate = useCallback(async (data: Record<string, unknown>) => {
-    await telemt.post('/v1/users', data);
+    if (usersOwnedByMtproxyl) {
+      await mtproxylUsersApi.create(String(data.username), data.secret ? String(data.secret) : undefined);
+      await applyMtproxylLimits(String(data.username), data);
+    } else {
+      await telemt.post('/v1/users', data);
+    }
     refresh();
-  }, [refresh]);
+  }, [refresh, usersOwnedByMtproxyl]);
 
   const handleEdit = useCallback(async (data: Record<string, unknown>) => {
     if (!editUser) return;
-    await telemt.patch(`/v1/users/${editUser.username}`, data);
+    if (usersOwnedByMtproxyl) {
+      // Смена секрета у MTProxyL — отдельная команда: он его перевыпускает,
+      // задать произвольный при правке нельзя.
+      if (data.secret) {
+        await mtproxylUsersApi.rotate(editUser.username);
+      }
+      await applyMtproxylLimits(editUser.username, data);
+    } else {
+      await telemt.patch(`/v1/users/${editUser.username}`, data);
+    }
     refresh();
-  }, [editUser, refresh]);
+  }, [editUser, refresh, usersOwnedByMtproxyl]);
 
   const handleDelete = useCallback(async () => {
     if (!deleteUser) return;
     setDeleting(true);
     setActionError('');
     try {
-      await telemt.delete(`/v1/users/${deleteUser}`);
+      if (usersOwnedByMtproxyl) {
+        await mtproxylUsersApi.remove(deleteUser);
+      } else {
+        await telemt.delete(`/v1/users/${deleteUser}`);
+      }
       setDeleteUser(null);
       refresh();
     } catch (err) {
@@ -172,7 +217,7 @@ export function UsersPage() {
     } finally {
       setDeleting(false);
     }
-  }, [deleteUser, refresh]);
+  }, [deleteUser, refresh, usersOwnedByMtproxyl]);
 
   const handleResetQuota = useCallback(async () => {
     if (!resetUser) return;
@@ -482,6 +527,7 @@ export function UsersPage() {
         initialData={editUser ?? undefined}
         mode="edit"
         currentSecret={extractSecret(editUser?.links)}
+        secretRotateOnly={usersOwnedByMtproxyl}
       />
 
       <ConfirmDialog

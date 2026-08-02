@@ -70,6 +70,18 @@ export function ConfigPage() {
 
   const handleSave = async (restart: boolean) => {
     if (!hasChanges) return;
+    if (configOwnedByMtproxyl) {
+      // Не отправляем запрос, который заведомо не пройдёт: config.toml
+      // примонтирован в контейнер только для чтения, и движок отвечает
+      // «Device or resource busy».
+      alert(
+        'В режиме Manager движок не может записать свой конфиг: файл ' +
+          'примонтирован в контейнер только для чтения.\n\n' +
+          'Правьте через «Экспертные параметры» — они переживут пересборку, ' +
+          'или возьмите конфиг целиком в «Супер эксперте».',
+      );
+      return;
+    }
 
     try {
       setSaving(true);
@@ -139,12 +151,13 @@ export function ConfigPage() {
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-warning" />
           <div className="space-y-1 text-text-secondary">
             <p className="text-text-primary">
-              В режиме Manager конфигом движка управляет MTProxyL.
+              В режиме Manager сохранение отсюда недоступно — только просмотр.
             </p>
             <p>
-              Он пересобирает <code>config.toml</code> из своих настроек, и правки, сделанные
-              здесь, будут затёрты при ближайшем изменении настроек, порта или секретов.
-              Чтобы изменения пережили пересборку, правьте{' '}
+              Конфиг движка примонтирован в его контейнер только для чтения, поэтому telemt
+              физически не может его записать: любая попытка возвращает «Device or resource
+              busy». Владелец конфига здесь — MTProxyL, он пересобирает{' '}
+              <code>config.toml</code> из своих настроек. Правьте{' '}
               <Link to="/expert" className="text-accent hover:underline">
                 экспертные параметры
               </Link>{' '}
@@ -198,7 +211,7 @@ export function ConfigPage() {
 
           <button
             onClick={() => handleSave(false)}
-            disabled={!hasChanges || saving}
+            disabled={!hasChanges || saving || configOwnedByMtproxyl}
             className="px-3 py-1.5 text-sm rounded-lg bg-primary text-white hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
           >
             <Save className="w-4 h-4" />
@@ -207,7 +220,7 @@ export function ConfigPage() {
 
           <button
             onClick={() => handleSave(true)}
-            disabled={!hasChanges || saving}
+            disabled={!hasChanges || saving || configOwnedByMtproxyl}
             className="px-3 py-1.5 text-sm rounded-lg bg-orange-600 text-white hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
           >
             <RotateCw className="w-4 h-4" />

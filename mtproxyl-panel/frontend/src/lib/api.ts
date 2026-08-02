@@ -174,6 +174,67 @@ export const mtproxylApi = {
     `${MTPROXYL_BASE}/backups/${encodeURIComponent(name)}/download`,
 };
 
+// ── MTProxyL: пользователи (секреты) ────────────────────────────────────────
+//
+// В режиме Manager конфиг движка примонтирован в его контейнер только для
+// чтения: telemt не может записать пользователя и отвечает на POST /v1/users
+// «Device or resource busy». Владелец пользователей там — MTProxyL, поэтому
+// панель правит их через его CLI, а API движка остаётся только для чтения
+// статистики.
+
+export interface MtproxylUser {
+  label: string;
+  secret: string;
+  created: number;
+  enabled: boolean;
+  max_conns: number;
+  max_ips: number;
+  quota_bytes: number;
+  /** "0" — бессрочно, иначе RFC3339. */
+  expires: string;
+  notes: string;
+}
+
+export interface MtproxylUserLimits {
+  max_conns?: number;
+  max_ips?: number;
+  quota_bytes?: number;
+  /** "0" | "never" | "ГГГГ-ММ-ДД"; поле не передано — не менять. */
+  expires?: string;
+}
+
+export const mtproxylUsersApi = {
+  list: () => request<MtproxylUser[]>(MTPROXYL_BASE, '/users'),
+  create: (label: string, secret?: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/users', {
+      method: 'POST',
+      body: JSON.stringify({ label, secret: secret ?? '' }),
+    }),
+  remove: (label: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}`, {
+      method: 'DELETE',
+    }),
+  setLimits: (label: string, limits: MtproxylUserLimits) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/limits`, {
+      method: 'POST',
+      body: JSON.stringify(limits),
+    }),
+  toggle: (label: string, enabled: boolean) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/toggle`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    }),
+  rotate: (label: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/rotate`, {
+      method: 'POST',
+    }),
+  rename: (label: string, to: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/rename`, {
+      method: 'POST',
+      body: JSON.stringify({ to }),
+    }),
+};
+
 // ── MTProxyL: лимитер, Zapret2, geoblock, маршруты ──────────────────────────
 
 export interface NftParam {

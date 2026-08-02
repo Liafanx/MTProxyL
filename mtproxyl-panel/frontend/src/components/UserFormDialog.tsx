@@ -30,6 +30,13 @@ interface UserFormDialogProps {
    * потерялся.
    */
   currentSecret?: string;
+  /**
+   * В режиме Manager пользователями владеет MTProxyL, а он умеет только
+   * перевыпустить секрет — задать произвольный при правке нельзя. Поле ввода
+   * в этом случае заменяется на явный флажок: иначе форма обещает то, чего
+   * не сделает.
+   */
+  secretRotateOnly?: boolean;
 }
 
 /** Байты трудно читать глазами — показываем, сколько это на самом деле. */
@@ -63,6 +70,7 @@ export function UserFormDialog({
   initialData,
   mode,
   currentSecret,
+  secretRotateOnly,
 }: UserFormDialogProps) {
   const [form, setForm] = useState<UserFormData>(emptyForm);
   const [loading, setLoading] = useState(false);
@@ -161,18 +169,40 @@ export function UserFormDialog({
                 </Button>
               </div>
             )}
-            <Input
-              id="secret"
-              value={form.secret}
-              onChange={set('secret')}
-              placeholder={mode === 'edit' ? 'оставьте пустым — секрет не изменится' : 'создастся автоматически'}
-              pattern="[0-9a-fA-F]{32}"
-            />
-            <p className="text-xs text-text-secondary">
-              {mode === 'edit'
-                ? 'Новый секрет — 32 шестнадцатеричных символа. После смены старые ссылки перестанут работать.'
-                : '32 шестнадцатеричных символа. Пустое поле — секрет сгенерируется сам.'}
-            </p>
+            {mode === 'edit' && secretRotateOnly ? (
+              <>
+                <label className="flex items-center gap-2 text-sm text-text-primary cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(form.secret)}
+                    onChange={(e) =>
+                      setForm((prev) => ({ ...prev, secret: e.target.checked ? 'rotate' : '' }))
+                    }
+                    className="accent-[var(--color-accent,#3b82f6)]"
+                  />
+                  Перевыпустить секрет
+                </label>
+                <p className="text-xs text-text-secondary">
+                  MTProxyL сгенерирует новый секрет сам — задать свой при правке нельзя.
+                  После перевыпуска старые ссылки перестанут работать.
+                </p>
+              </>
+            ) : (
+              <>
+                <Input
+                  id="secret"
+                  value={form.secret}
+                  onChange={set('secret')}
+                  placeholder={mode === 'edit' ? 'оставьте пустым — секрет не изменится' : 'создастся автоматически'}
+                  pattern="[0-9a-fA-F]{32}"
+                />
+                <p className="text-xs text-text-secondary">
+                  {mode === 'edit'
+                    ? 'Новый секрет — 32 шестнадцатеричных символа. После смены старые ссылки перестанут работать.'
+                    : '32 шестнадцатеричных символа. Пустое поле — секрет сгенерируется сам.'}
+                </p>
+              </>
+            )}
           </div>
 
           <div className="space-y-1.5">

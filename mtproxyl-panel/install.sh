@@ -385,6 +385,17 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask set SELFMASK_[A-Z_]* *
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask verify
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask disable
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup
+# Пользователи. В режиме Manager конфиг движка примонтирован в контейнер
+# только для чтения, telemt их записать не может — владелец здесь MTProxyL.
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script secret list --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script secret add [A-Za-z0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script secret add [A-Za-z0-9]* [0-9a-fA-F]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script secret remove [A-Za-z0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script secret rotate [A-Za-z0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script secret enable [A-Za-z0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script secret disable [A-Za-z0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script secret rename [A-Za-z0-9]* [A-Za-z0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script secret setlimits [A-Za-z0-9]* * * * *
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup list --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup cat mtproxyl-[0-9]*.tar.gz
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script restore ${_install_dir}/backups/mtproxyl-[0-9]*.tar.gz

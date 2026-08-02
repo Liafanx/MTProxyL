@@ -300,6 +300,36 @@ _secret_limits_text() {
     [ -n "$_out" ] && echo "$_out" || echo "—"
 }
 
+# Машинный список секретов для панели.
+#
+# В режиме менеджера config.toml примонтирован в контейнер только для чтения:
+# движок физически не может записать нового пользователя, и POST /v1/users
+# отвечает «Device or resource busy». Владелец пользователей здесь —
+# MTProxyL, поэтому панель и читает, и правит их через этот CLI.
+#
+# Сам секрет отдаём: панель показывает ссылки tg://, а собрать их без него
+# нельзя. Команда доступна только root и только через строку sudoers.
+secret_list_json() {
+    load_secrets
+    local _i _first=1
+    printf '['
+    for _i in "${!SECRETS_LABELS[@]}"; do
+        [ $_first -eq 1 ] || printf ','
+        _first=0
+        printf '{"label":"%s","secret":"%s","created":%s,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"%s"}' \
+            "$(json_escape "${SECRETS_LABELS[$_i]}")" \
+            "$(json_escape "${SECRETS_KEYS[$_i]}")" \
+            "${SECRETS_CREATED[$_i]:-0}" \
+            "$([ "${SECRETS_ENABLED[$_i]}" = "true" ] && echo true || echo false)" \
+            "${SECRETS_MAX_CONNS[$_i]:-0}" \
+            "${SECRETS_MAX_IPS[$_i]:-0}" \
+            "${SECRETS_QUOTA[$_i]:-0}" \
+            "$(json_escape "${SECRETS_EXPIRES[$_i]:-0}")" \
+            "$(json_escape "${SECRETS_NOTES[$_i]:-}")"
+    done
+    printf ']\n'
+}
+
 secret_list() {
     load_secrets
     if [ ${#SECRETS_LABELS[@]} -eq 0 ]; then
@@ -480,7 +510,12 @@ handle_secret_command() {
     case "$subcmd" in
         add)      check_root; secret_add "$@" ;;
         remove)   check_root; secret_remove "$1" ;;
-        list)     secret_list ;;
+        list)
+            if [ "${1:-}" = "--json" ]; then
+                secret_list_json
+            else
+                secret_list
+            fi ;;
         rotate)   check_root; secret_rotate "$1" ;;
         enable)   check_root; secret_toggle "$1" enable ;;
         disable)  check_root; secret_toggle "$1" disable ;;
