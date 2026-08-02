@@ -219,7 +219,9 @@ cli_main() {
             check_root; load_settings; load_detect_settings
             case "${1:-}" in
                 manager)    switch_to_manager_mode ;;
-                reanimator) switch_to_reanimator_mode ;;
+                # Второй аргумент — судьба своего контейнера: remove, stop или
+                # keep. Без него вопрос задаётся интерактивно.
+                reanimator) switch_to_reanimator_mode "${2:-}" ;;
                 --json)
                     # API движка живёт в конфиге того режима, который сейчас
                     # активен: у реаниматора это конфиг чужой цели, у менеджера
@@ -231,14 +233,20 @@ cli_main() {
                     _api_port=$(_get_telemt_api_port "$_mode_cfg" 2>/dev/null || echo "")
                     _api_on="false"
                     _telemt_api_enabled "$_mode_cfg" 2>/dev/null && _api_on="true"
-                    printf '{"mode":"%s","detected_mode":"%s","detected_config":"%s","port":%d,"engine_config":"%s","api_port":%d,"api_enabled":%s}\n' \
+                    # Состояние своего контейнера нужно панели до переключения:
+                    # уходя в реаниматор, она обязана спросить, что с ним
+                    # делать, а спрашивать не о чем, когда контейнера нет.
+                    _own_state=$(own_container_state 2>/dev/null || echo unknown)
+                    printf '{"mode":"%s","detected_mode":"%s","detected_config":"%s","port":%d,"engine_config":"%s","api_port":%d,"api_enabled":%s,"own_container":"%s","running":%s}\n' \
                         "$(json_escape "${MTPROXYL_MODE:-manager}")" \
                         "$(json_escape "${DETECTED_MODE:-unknown}")" \
                         "$(json_escape "${DETECTED_CONFIG_PATH:-}")" \
                         "${PROXY_PORT:-0}" \
                         "$(json_escape "${_mode_cfg}")" \
                         "${_api_port:-0}" \
-                        "$_api_on"
+                        "$_api_on" \
+                        "$(json_escape "${_own_state}")" \
+                        "$(is_proxy_running 2>/dev/null && echo true || echo false)"
                     ;;
                 "")         echo -e "  ${BOLD}Текущий режим:${NC} ${MTPROXYL_MODE:-manager}" ;;
                 *)          log_error "Использование: mtproxyl mode [manager|reanimator|--json]" ;;

@@ -44,6 +44,34 @@ type ModeStatus struct {
 	// one's. Reporting the mode's real endpoint lets the UI catch that.
 	APIPort    int  `json:"api_port"`
 	APIEnabled bool `json:"api_enabled"`
+	// OwnContainer is the state of MTProxyL's own container ("running",
+	// "exited", "absent", ...). Leaving for reanimator has to decide what to do
+	// with it, and there is nothing to ask about when it is "absent".
+	OwnContainer string `json:"own_container"`
+	// Running reports whether the engine of the current mode is up, so the UI
+	// can offer start or stop rather than both.
+	Running bool `json:"running"`
+}
+
+// ContainerDisposition says what to do with MTProxyL's own container when
+// leaving manager mode.
+//
+// The CLI asks this interactively. The panel cannot answer an interactive
+// prompt, and MTPROXYL_ASSUME_YES would silently pick the default — deleting
+// the container without asking — so the choice is passed explicitly.
+type ContainerDisposition string
+
+const (
+	// ContainerRemove stops and deletes the container (the CLI's default).
+	ContainerRemove ContainerDisposition = "remove"
+	// ContainerStop stops it but keeps it, so switching back is quick.
+	ContainerStop ContainerDisposition = "stop"
+	// ContainerKeep leaves it running; it will keep holding the port.
+	ContainerKeep ContainerDisposition = "keep"
+)
+
+func (d ContainerDisposition) Valid() bool {
+	return d == ContainerRemove || d == ContainerStop || d == ContainerKeep
 }
 
 // GetMode returns the current mode and, in reanimator mode, what was detected.
@@ -61,15 +89,49 @@ func (c *Client) GetMode(ctx context.Context) (*ModeStatus, error) {
 
 // SwitchMode switches MTProxyL between manager and reanimator.
 //
-// This is a destructive host-level operation: switching to reanimator offers to
-// remove the panel's own container, and switching to manager may kick off a
-// full install. It can therefore run for minutes.
-func (c *Client) SwitchMode(ctx context.Context, m Mode) error {
+// This is a destructive host-level operation: switching to reanimator disposes
+// of the panel's own container, and switching to manager may kick off a full
+// install. It can therefore run for minutes.
+//
+// disposition applies only when switching to reanimator and must be set there:
+// without it the CLI would fall back to its own default and delete the
+// container, which is the one outcome the user has to choose deliberately.
+func (c *Client) SwitchMode(ctx context.Context, m Mode, disposition ContainerDisposition) error {
 	if !m.Valid() {
 		return fmt.Errorf("unknown mode %q", m)
 	}
+	if m == ModeReanimator {
+		if !disposition.Valid() {
+			return fmt.Errorf("switching to reanimator needs a container disposition")
+		}
+		_, err := c.run(ctx, "mode", string(m), string(disposition))
+		return err
+	}
 	_, err := c.run(ctx, "mode", string(m))
 	return err
+}
+
+// ProxyAction controls the engine of whichever mode is active: MTProxyL's own
+// container in manager mode, the detected target in reanimator mode.
+type ProxyAction string
+
+const (
+	ProxyStart   ProxyAction = "start"
+	ProxyStop    ProxyAction = "stop"
+	ProxyRestart ProxyAction = "restart"
+)
+
+func (a ProxyAction) Valid() bool {
+	return a == ProxyStart || a == ProxyStop || a == ProxyRestart
+}
+
+// ControlProxy starts, stops or restarts the engine.
+func (c *Client) ControlProxy(ctx context.Context, a ProxyAction) (string, error) {
+	if !a.Valid() {
+		return "", fmt.Errorf("unknown proxy action %q", a)
+	}
+	out, err := c.run(ctx, string(a))
+	return stripANSI(out), err
 }
 
 // firstJSONLine extracts the first line that parses as a JSON document.

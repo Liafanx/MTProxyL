@@ -119,7 +119,9 @@ func TestAgainstStubCLI(t *testing.T) {
 		t.Errorf("name = %q", name)
 	}
 
-	if err := c.SwitchMode(ctx, ModeManager); err != nil {
+	// Manager mode takes no container disposition — that decision only exists
+	// when leaving manager.
+	if err := c.SwitchMode(ctx, ModeManager, ""); err != nil {
 		t.Errorf("SwitchMode: %v", err)
 	}
 }

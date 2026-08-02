@@ -110,8 +110,33 @@ func TestDisabledClientRefusesToRun(t *testing.T) {
 
 func TestSwitchModeRejectsUnknownMode(t *testing.T) {
 	c := New(config.MtproxylConfig{Enabled: true, ScriptPath: "/nonexistent"})
-	if err := c.SwitchMode(context.Background(), Mode("root")); err == nil {
+	if err := c.SwitchMode(context.Background(), Mode("root"), ContainerRemove); err == nil {
 		t.Error("expected error for unknown mode")
+	}
+}
+
+// Going to reanimator without saying what to do with the container must fail
+// rather than fall through to the CLI, whose default deletes it.
+func TestSwitchToReanimatorRequiresDisposition(t *testing.T) {
+	c := New(config.MtproxylConfig{Enabled: true, ScriptPath: "/nonexistent"})
+	if err := c.SwitchMode(context.Background(), ModeReanimator, ""); err == nil {
+		t.Error("expected error when the container disposition is missing")
+	}
+	if err := c.SwitchMode(context.Background(), ModeReanimator, "delete"); err == nil {
+		t.Error("expected error for an unknown container disposition")
+	}
+}
+
+func TestProxyActionValid(t *testing.T) {
+	for _, a := range []ProxyAction{ProxyStart, ProxyStop, ProxyRestart} {
+		if !a.Valid() {
+			t.Errorf("%q rejected", a)
+		}
+	}
+	for _, a := range []ProxyAction{"", "reload", "start; id", "../start"} {
+		if ProxyAction(a).Valid() {
+			t.Errorf("%q accepted", a)
+		}
 	}
 }
 

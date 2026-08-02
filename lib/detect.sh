@@ -1073,11 +1073,50 @@ switch_to_manager_mode() {
     run_installer
 }
 
+# Что сделать со своим контейнером при уходе в реаниматор.
+#
+# Вынесено из switch_to_reanimator_mode, чтобы решение можно было передать
+# аргументом: панель спрашивает пользователя сама и не может отвечать на
+# интерактивный вопрос, а MTPROXYL_ASSUME_YES молча выбрал бы вариант по
+# умолчанию — то есть удалил контейнер, ничего не спросив.
+_dispose_own_container() {
+    local _choice="$1"
+    case "$_choice" in
+        remove)
+            remove_own_container ;;
+        stop)
+            docker update --restart=no "$CONTAINER_NAME" &>/dev/null || true
+            docker stop --timeout 10 "$CONTAINER_NAME" &>/dev/null \
+                && log_success "Контейнер остановлен (не удалён)" \
+                || log_warn "Не удалось остановить контейнер" ;;
+        keep)
+            log_info "Контейнер оставлен как есть"
+            log_warn "Он продолжит занимать порт ${PROXY_PORT:-443} — цель реаниматора может не запуститься" ;;
+        *)
+            log_error "Неизвестное решение по контейнеру: ${_choice}"
+            return 1 ;;
+    esac
+}
+
+# switch_to_reanimator_mode [remove|stop|keep]
+#
+# Аргумент задаёт судьбу своего контейнера. Без него вопрос задаётся
+# интерактивно — как и раньше.
 switch_to_reanimator_mode() {
+    local _container_choice="${1:-}"
+
     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
         log_info "Уже в режиме reanimator"
         return 0
     fi
+
+    if [ -n "$_container_choice" ]; then
+        case "$_container_choice" in
+            remove|stop|keep) ;;
+            *) log_error "Использование: mode reanimator [remove|stop|keep]"; return 1 ;;
+        esac
+    fi
+
     echo ""
     log_warn "Переход в режим Reanimator. Свой контейнер/конфиг MTProxyL больше не будет управляться из меню."
     echo -en "  ${BOLD}Введите 'yes' для подтверждения:${NC} "
@@ -1091,19 +1130,19 @@ switch_to_reanimator_mode() {
         echo ""
         echo -e "  ${BOLD}Свой контейнер ${CONTAINER_NAME}:${NC} ${_own_state}"
         echo -e "  ${DIM}Он занимает порт ${PROXY_PORT:-443} и будет мешать цели реаниматора.${NC}"
-        echo ""
-        echo -e "  ${DIM}[1]${NC} Остановить и удалить контейнер ${DIM}(рекомендуется)${NC}"
-        echo -e "  ${DIM}[2]${NC} Только остановить, контейнер оставить"
-        echo -e "  ${DIM}[3]${NC} Не трогать"
-        local _oc; _oc=$(read_choice "выбор" "1")
-        case "$_oc" in
-            1) remove_own_container ;;
-            2) docker update --restart=no "$CONTAINER_NAME" &>/dev/null || true
-               docker stop --timeout 10 "$CONTAINER_NAME" &>/dev/null \
-                   && log_success "Контейнер остановлен (не удалён)" \
-                   || log_warn "Не удалось остановить контейнер" ;;
-            *) log_info "Контейнер оставлен как есть" ;;
-        esac
+        if [ -z "$_container_choice" ]; then
+            echo ""
+            echo -e "  ${DIM}[1]${NC} Остановить и удалить контейнер ${DIM}(рекомендуется)${NC}"
+            echo -e "  ${DIM}[2]${NC} Только остановить, контейнер оставить"
+            echo -e "  ${DIM}[3]${NC} Не трогать"
+            local _oc; _oc=$(read_choice "выбор" "1")
+            case "$_oc" in
+                1) _container_choice="remove" ;;
+                2) _container_choice="stop" ;;
+                *) _container_choice="keep" ;;
+            esac
+        fi
+        _dispose_own_container "$_container_choice"
     fi
 
     switch_port_profile "reanimator" || true

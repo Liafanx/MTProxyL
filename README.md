@@ -557,7 +557,10 @@ mtproxyl tune clear all
 ```bash
 mtproxyl mode                 # текущий режим (manager|reanimator)
 mtproxyl mode manager         # переключиться в Manager
-mtproxyl mode reanimator      # переключиться в Reanimator
+mtproxyl mode reanimator      # переключиться в Reanimator (спросит про контейнер)
+mtproxyl mode reanimator remove  # ...и сразу удалить свой контейнер
+mtproxyl mode reanimator stop    # ...остановить, но оставить
+mtproxyl mode reanimator keep    # ...не трогать (порт останется занят)
 mtproxyl detect               # (пере)обнаружить существующую установку telemt
 mtproxyl edit-config          # открыть конфиг цели в $EDITOR/nano + предложить рестарт
 mtproxyl install-telemt       # официальный установщик telemt: установка/обновление, выбор версии

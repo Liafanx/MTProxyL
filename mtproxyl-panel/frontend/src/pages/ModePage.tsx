@@ -6,7 +6,12 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { OperationProgress } from '@/components/OperationProgress';
-import { mtproxylApi, type MtproxylMode, type MtproxylModeStatus } from '@/lib/api';
+import {
+  mtproxylApi,
+  type ContainerDisposition,
+  type MtproxylMode,
+  type MtproxylModeStatus,
+} from '@/lib/api';
 import { useMtproxylOperation } from '@/hooks/useMtproxyl';
 
 /** Word the user must type to confirm, mirroring MTProxyL's own CLI prompt. */
@@ -20,6 +25,39 @@ const DETECTED_MODE_LABELS: Record<string, string> = {
   manual: 'Указано вручную',
   unknown: 'Не определено',
 };
+
+const CONTAINER_STATE_LABELS: Record<string, string> = {
+  running: 'работает',
+  restarting: 'перезапускается',
+  exited: 'остановлен',
+  created: 'создан, но не запущен',
+  paused: 'приостановлен',
+  dead: 'в состоянии dead',
+};
+
+/**
+ * Судьба своего контейнера при уходе в реаниматор.
+ *
+ * Те же три варианта, что задаёт CLI. Панель раньше не спрашивала, а
+ * MTPROXYL_ASSUME_YES выбирал за пользователя первый — контейнер удалялся молча.
+ */
+const CONTAINER_CHOICES: { id: ContainerDisposition; title: string; hint: string }[] = [
+  {
+    id: 'remove',
+    title: 'Остановить и удалить (рекомендуется)',
+    hint: 'Порт освобождается полностью. Настройки MTProxyL остаются — при возврате в Manager контейнер создаётся заново.',
+  },
+  {
+    id: 'stop',
+    title: 'Только остановить, контейнер оставить',
+    hint: 'Порт освобождается, контейнер остаётся на диске. Автозапуск снимается, чтобы он не поднялся после перезагрузки.',
+  },
+  {
+    id: 'keep',
+    title: 'Не трогать',
+    hint: 'Контейнер продолжит работать и держать порт — цель реаниматора на этом порту не запустится.',
+  },
+];
 
 const MODES: { id: MtproxylMode; title: string; icon: typeof Server; description: string }[] = [
   {
@@ -44,6 +82,9 @@ export function ModePage() {
   const [loading, setLoading] = useState(true);
   const [target, setTarget] = useState<MtproxylMode | null>(null);
   const [confirmText, setConfirmText] = useState('');
+  // Умолчание совпадает с рекомендацией CLI, но теперь это видимый выбор, а не
+  // то, что произойдёт молча.
+  const [disposition, setDisposition] = useState<ContainerDisposition>('remove');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -66,12 +107,15 @@ export function ModePage() {
   const closeDialog = () => {
     setTarget(null);
     setConfirmText('');
+    setDisposition('remove');
   };
 
   const confirmSwitch = async () => {
     if (!target) return;
     try {
-      start(await mtproxylApi.switchMode(target));
+      start(
+        await mtproxylApi.switchMode(target, target === 'reanimator' ? disposition : undefined),
+      );
       setError(null);
       closeDialog();
     } catch (e) {
@@ -81,6 +125,11 @@ export function ModePage() {
   };
 
   const current = status?.mode;
+  // Спрашивать про контейнер имеет смысл, только когда он есть.
+  const hasOwnContainer =
+    status?.own_container !== undefined &&
+    status.own_container !== 'absent' &&
+    status.own_container !== 'unknown';
 
   return (
     <div className="space-y-4">
@@ -162,8 +211,36 @@ export function ModePage() {
             <p className="text-sm text-text-secondary">
               {target === 'manager'
                 ? 'MTProxyL начнёт устанавливать и обслуживать собственный telemt. Если своей установки ещё нет, будет запущен установщик.'
-                : 'Управление собственным контейнером из меню прекратится, а сам контейнер может быть остановлен и удалён, чтобы освободить порт для цели.'}
+                : 'Управление собственным контейнером из меню прекратится. Конфиг цели MTProxyL не переписывает — применяет только хостовые фиксы.'}
             </p>
+
+            {target === 'reanimator' && hasOwnContainer && (
+              <div className="space-y-2 border border-border rounded-lg p-3">
+                <div className="text-sm text-text-primary">
+                  Что сделать со своим контейнером?
+                </div>
+                <p className="text-xs text-text-secondary">
+                  Сейчас он {CONTAINER_STATE_LABELS[status?.own_container ?? ''] ?? status?.own_container} и
+                  занимает порт {status?.port}. Тот же порт нужен цели реаниматора.
+                </p>
+                {CONTAINER_CHOICES.map(({ id, title, hint }) => (
+                  <label key={id} className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="container-disposition"
+                      className="mt-1 shrink-0"
+                      checked={disposition === id}
+                      onChange={() => setDisposition(id)}
+                    />
+                    <span className="min-w-0">
+                      <span className="text-sm text-text-primary">{title}</span>
+                      <span className="block text-xs text-text-secondary">{hint}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+
             <p className="text-sm text-text-secondary">
               Операция затрагивает состояние сервера. Введите{' '}
               <code className="font-mono text-text-primary">{CONFIRM_WORD}</code> для подтверждения.
