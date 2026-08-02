@@ -294,17 +294,21 @@ export interface Upstream {
   has_password: boolean;
   weight: number;
   iface: string;
+  /** Теги маршрута через запятую; пусто — маршрут для запросов без scope. */
+  scopes: string;
   enabled: boolean;
 }
 
 export interface UpstreamSpec {
   name: string;
   type: string;
+  /** host:port для socks4/socks5, ss://-URL для shadowsocks. */
   address: string;
   user: string;
   password: string;
   weight: number;
   iface: string;
+  scopes: string;
 }
 
 export const mtproxylNetApi = {

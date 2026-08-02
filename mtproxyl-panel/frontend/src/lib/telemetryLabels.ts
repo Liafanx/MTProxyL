@@ -89,14 +89,114 @@ const FIELDS: Record<string, FieldMeta> = {
   },
   max_skew_secs_15m: { label: 'Макс. расхождение за 15 мин, с' },
 
+  // ── Попытки подключения к апстримам ─────────────────────────────────────
+  connect_attempt_total: { label: 'Попыток подключения' },
+  connect_success_total: { label: 'Успешных подключений' },
+  connect_fail_total: { label: 'Неудачных подключений' },
+  connect_failfast_hard_error_total: {
+    label: 'Отказов без повтора',
+    hint: 'Ошибки, при которых повторять бессмысленно — движок сдаётся сразу',
+  },
+
+  // ── Пул ME: писатели и пороги ───────────────────────────────────────────
+  active_writers: { label: 'Активных писателей' },
+  fresh_alive_writers: {
+    label: 'Живых писателей (свежих)',
+    hint: 'Те, что подтвердили жизнеспособность недавно',
+  },
+  fresh_coverage_pct: { label: 'Свежее покрытие, %' },
+  floor_target: { label: 'Целевое число писателей', hint: 'Сколько движок старается держать' },
+  floor_min: { label: 'Минимум писателей' },
+  floor_max: { label: 'Максимум писателей' },
+  floor_capped: {
+    label: 'Упёрлись в потолок',
+    hint: 'Пул хотел бы больше писателей, но достиг максимума',
+  },
+  configured_dc_groups: { label: 'Групп дата-центров' },
+  configured_endpoints: { label: 'Точек подключения в конфиге' },
+  available_endpoints: { label: 'Доступных точек' },
+  available_pct: { label: 'Доступность точек, %' },
+  endpoint: { label: 'Точка подключения' },
+  endpoints: { label: 'Точки подключения' },
+  endpoint_writers: { label: 'Писатели по точкам' },
+  load: { label: 'Загрузка', hint: 'Сколько запросов сейчас обслуживает' },
+  rtt_ms: { label: 'Задержка (RTT), мс' },
+
+  // ── Маршруты и здоровье ─────────────────────────────────────────────────
+  dc: {
+    label: 'Дата-центр',
+    hint: 'Номер ДЦ Telegram; отрицательный — тестовая инфраструктура',
+  },
+  healthy: { label: 'Исправен' },
+  fails: { label: 'Отказов' },
+  scopes: {
+    label: 'Область применения',
+    hint: 'Теги маршрута: запрос со scope идёт только через маршруты с этим тегом, запрос без scope — только через маршруты с пустой областью',
+  },
+  weight: {
+    label: 'Вес',
+    hint: 'Приоритет при случайном выборе апстрима: чем больше, тем чаще выбирается',
+  },
+
   // ── Handshake ───────────────────────────────────────────────────────────
   handshake_error_codes: { label: 'Коды ошибок handshake' },
 };
+
+/**
+ * Имена-шаблоны, которых в словаре нет и быть не должно.
+ *
+ * Гистограммы движок отдаёт десятками ключей вида
+ * connect_duration_success_bucket_101_500ms — перечислять каждый значило бы
+ * держать список, который устареет с первой же новой корзиной. Разбираем
+ * структуру имени.
+ */
+function patternMeta(key: string): FieldMeta | null {
+  // <что>_bucket_<диапазон>
+  const bucket = key.match(/^(.*)_bucket_(.+)$/);
+  if (bucket) {
+    const [, what, range] = bucket;
+    const base = BUCKET_SUBJECTS[what] ?? what.replace(/_/g, ' ');
+    return { label: `${base}: ${humanRange(range)}`, hint: 'Столбец гистограммы' };
+  }
+  // "<известное>_total" — счётчик того же самого. Применяем только когда
+  // основа действительно известна: иначе получился бы полуперевод вида
+  // "unknown field, всего", который выглядит как настоящая подпись, но ею
+  // не является.
+  if (key.endsWith('_total')) {
+    const base = key.slice(0, -'_total'.length);
+    if (base in FIELDS) {
+      const inner = FIELDS[base];
+      return { label: `${inner.label}, всего`, hint: inner.hint };
+    }
+  }
+  return null;
+}
+
+const BUCKET_SUBJECTS: Record<string, string> = {
+  connect_attempts: 'Подключений с попытки',
+  connect_duration_success: 'Время успешного подключения',
+  connect_duration_fail: 'Время неудачного подключения',
+};
+
+/** "101_500ms" → "101–500 мс", "gt_4" → "больше 4", "le_100ms" → "до 100 мс". */
+function humanRange(raw: string): string {
+  const unit = raw.endsWith('ms') ? ' мс' : '';
+  const r = raw.replace(/ms$/, '');
+  let m = r.match(/^gt_(.+)$/);
+  if (m) return `больше ${m[1]}${unit}`;
+  m = r.match(/^(?:le|lt)_(.+)$/);
+  if (m) return `до ${m[1]}${unit}`;
+  m = r.match(/^(\d+)_(\d+)$/);
+  if (m) return `${m[1]}–${m[2]}${unit}`;
+  return r.replace(/_/g, '–') + unit;
+}
 
 /** Возвращает подпись и пояснение, либо машинное имя, если поле незнакомо. */
 export function fieldMeta(key: string): FieldMeta {
   const known = FIELDS[key];
   if (known) return known;
+  const byPattern = patternMeta(key);
+  if (byPattern) return byPattern;
   // Единственная безопасная обработка незнакомого ключа — сделать его
   // читаемым, не притворяясь, что мы знаем его смысл.
   return { label: key.replace(/_/g, ' ') };
@@ -104,7 +204,7 @@ export function fieldMeta(key: string): FieldMeta {
 
 /** Есть ли у поля перевод — разделам полезно знать, что показывать сырым. */
 export function isKnownField(key: string): boolean {
-  return key in FIELDS;
+  return key in FIELDS || patternMeta(key) !== null;
 }
 
 const SECONDS_SUFFIXES = ['_secs', '_seconds'];

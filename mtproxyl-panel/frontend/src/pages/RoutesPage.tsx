@@ -19,7 +19,40 @@ const EMPTY_SPEC: UpstreamSpec = {
   password: '',
   weight: 10,
   iface: '',
+  scopes: '',
 };
+
+/** Вес движок читает как u16 — та же граница, что и в CLI. */
+const MAX_WEIGHT = 65535;
+
+/**
+ * Что означает каждый тип маршрута и что от него требуется.
+ *
+ * Один список типов без пояснений заставляет угадывать, чем socks4 отличается
+ * от socks5 и почему у shadowsocks вместо адреса URL.
+ */
+const TYPE_INFO: Record<string, { hint: string; addressLabel?: string; addressHint?: string }> = {
+  socks5: {
+    hint: 'SOCKS5-прокси. Логин и пароль — если прокси их требует.',
+    addressLabel: 'Адрес (host:port)',
+    addressHint: 'Привязка к интерфейсу сработает, только если адрес задан как IP:port.',
+  },
+  socks4: {
+    hint: 'SOCKS4-прокси. Пароля в протоколе нет — только user_id.',
+    addressLabel: 'Адрес (host:port)',
+    addressHint: 'Привязка к интерфейсу сработает, только если адрес задан как IP:port.',
+  },
+  direct: {
+    hint: 'Прямое соединение без прокси. Адрес не нужен.',
+  },
+  shadowsocks: {
+    hint: 'Shadowsocks-туннель. Требует выключенного режима ME (general.use_middle_proxy = false); плагины не поддерживаются.',
+    addressLabel: 'ss-URL',
+    addressHint: 'Метод шифрования и пароль уже внутри URL — отдельные поля не нужны.',
+  },
+};
+
+const TYPE_ORDER = ['socks5', 'socks4', 'direct', 'shadowsocks'];
 
 export function RoutesPage() {
   const [routes, setRoutes] = useState<Upstream[]>([]);
@@ -34,6 +67,16 @@ export function RoutesPage() {
   const [testing, setTesting] = useState<string | null>(null);
 
   const { allowed, loading: modeLoading } = useManagerOnly();
+
+  const typeInfo = TYPE_INFO[spec.type] ?? TYPE_INFO.direct;
+
+  // Маршрут со scopes не обслуживает запросы без scope. Если такой окажется
+  // единственным включённым, конфиг останется валидным, а трафик — без выхода;
+  // предупреждаем до отправки, а не после.
+  const scopesWouldStrandTraffic =
+    spec.scopes.trim() !== '' &&
+    routes.length > 0 &&
+    routes.every((r) => !r.enabled || (r.scopes ?? '').trim() !== '');
 
   const load = useCallback(async () => {
     // В реаниматоре маршруты недоступны — MTProxyL не владеет конфигом цели.
@@ -117,8 +160,9 @@ export function RoutesPage() {
         <div>
           <h1 className="text-xl font-semibold text-text-primary">Исходящие маршруты</h1>
           <p className="text-sm text-text-secondary mt-1">
-            Куда прокси отправляет трафик наружу: напрямую или через SOCKS5 (например WARP).
-            Вес задаёт долю трафика между включёнными маршрутами. Это не то же самое, что
+            Куда прокси отправляет трафик наружу: напрямую, через SOCKS4/SOCKS5 (например WARP)
+            или через Shadowsocks. Вес задаёт долю трафика между включёнными маршрутами,
+            область — для каких запросов маршрут вообще применим. Это не то же самое, что
             «Апстримы и DC» — там показаны дата-центры самого движка.
           </p>
         </div>
@@ -151,6 +195,7 @@ export function RoutesPage() {
                     <th className="py-2 pr-4 font-medium">Тип</th>
                     <th className="py-2 pr-4 font-medium">Адрес</th>
                     <th className="py-2 pr-4 font-medium">Вес</th>
+                    <th className="py-2 pr-4 font-medium">Область</th>
                     <th className="py-2 pr-4 font-medium">Состояние</th>
                     <th className="py-2 font-medium text-right">Действия</th>
                   </tr>
@@ -168,6 +213,13 @@ export function RoutesPage() {
                         )}
                       </td>
                       <td className="py-2 pr-4 text-text-secondary">{r.weight}</td>
+                      <td className="py-2 pr-4 text-text-secondary">
+                        {r.scopes ? (
+                          <span className="font-mono text-xs break-all">{r.scopes}</span>
+                        ) : (
+                          <span title="Обслуживает запросы без scope">все</span>
+                        )}
+                      </td>
                       <td className="py-2 pr-4">
                         <StatusBadge status={r.enabled} labelOn="ВКЛ" labelOff="ВЫКЛ" />
                       </td>
@@ -235,41 +287,63 @@ export function RoutesPage() {
                 onChange={(e) => setSpec({ ...spec, type: e.target.value })}
                 className="w-full rounded border border-border bg-surface px-2 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/50"
               >
-                <option value="socks5">socks5</option>
-                <option value="direct">direct</option>
+                {TYPE_ORDER.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
               </select>
+              <p className="text-xs text-text-secondary">{typeInfo.hint}</p>
             </div>
+            {spec.type !== 'direct' && (
+              <div className="space-y-1.5">
+                <Label htmlFor="r-addr">{typeInfo.addressLabel ?? 'Адрес'}</Label>
+                <Input
+                  id="r-addr"
+                  value={spec.address}
+                  onChange={(e) => setSpec({ ...spec, address: e.target.value })}
+                  placeholder={
+                    spec.type === 'shadowsocks'
+                      ? 'ss://2022-blake3-aes-256-gcm:ПАРОЛЬ@127.0.0.1:8388'
+                      : '127.0.0.1:1080'
+                  }
+                />
+                {typeInfo.addressHint && (
+                  <p className="text-xs text-text-secondary">{typeInfo.addressHint}</p>
+                )}
+              </div>
+            )}
             {spec.type === 'socks5' && (
-              <>
+              <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <Label htmlFor="r-addr">Адрес</Label>
+                  <Label htmlFor="r-user">Логин</Label>
                   <Input
-                    id="r-addr"
-                    value={spec.address}
-                    onChange={(e) => setSpec({ ...spec, address: e.target.value })}
-                    placeholder="127.0.0.1:1080"
+                    id="r-user"
+                    value={spec.user}
+                    onChange={(e) => setSpec({ ...spec, user: e.target.value })}
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="r-user">Логин</Label>
-                    <Input
-                      id="r-user"
-                      value={spec.user}
-                      onChange={(e) => setSpec({ ...spec, user: e.target.value })}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="r-pass">Пароль</Label>
-                    <Input
-                      id="r-pass"
-                      type="password"
-                      value={spec.password}
-                      onChange={(e) => setSpec({ ...spec, password: e.target.value })}
-                    />
-                  </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="r-pass">Пароль</Label>
+                  <Input
+                    id="r-pass"
+                    type="password"
+                    value={spec.password}
+                    onChange={(e) => setSpec({ ...spec, password: e.target.value })}
+                  />
                 </div>
-              </>
+              </div>
+            )}
+            {spec.type === 'socks4' && (
+              <div className="space-y-1.5">
+                <Label htmlFor="r-user">user_id</Label>
+                <Input
+                  id="r-user"
+                  value={spec.user}
+                  onChange={(e) => setSpec({ ...spec, user: e.target.value })}
+                  placeholder="необязательно"
+                />
+              </div>
             )}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
@@ -278,10 +352,13 @@ export function RoutesPage() {
                   id="r-weight"
                   type="number"
                   min={0}
-                  max={10000}
+                  max={MAX_WEIGHT}
                   value={spec.weight}
                   onChange={(e) => setSpec({ ...spec, weight: Number(e.target.value) })}
                 />
+                <p className="text-xs text-text-secondary">
+                  0–{MAX_WEIGHT}. Чем больше, тем чаще выбирается маршрут.
+                </p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="r-iface">Интерфейс</Label>
@@ -291,7 +368,30 @@ export function RoutesPage() {
                   onChange={(e) => setSpec({ ...spec, iface: e.target.value })}
                   placeholder="необязательно"
                 />
+                <p className="text-xs text-text-secondary">
+                  Имя интерфейса или локальный IP для исходящих соединений.
+                </p>
               </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="r-scopes">Область (scopes)</Label>
+              <Input
+                id="r-scopes"
+                value={spec.scopes}
+                onChange={(e) => setSpec({ ...spec, scopes: e.target.value })}
+                placeholder="необязательно, например me,fetch,dc2"
+              />
+              <p className="text-xs text-text-secondary">
+                Теги через запятую. Запрос со scope идёт только через маршруты с этим тегом,
+                а запрос без scope — только через маршруты с пустой областью. Оставьте пустым,
+                если маршрут должен обслуживать обычный трафик.
+              </p>
+              {scopesWouldStrandTraffic && (
+                <p className="text-xs text-warning">
+                  После добавления ни один включённый маршрут не останется без области —
+                  обычному трафику будет некуда идти.
+                </p>
+              )}
             </div>
           </div>
           <DialogFooter>

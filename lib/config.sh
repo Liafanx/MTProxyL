@@ -526,13 +526,32 @@ TOML_EOF
     fi
 
     # Upstreams
+    #
+    # Shadowsocks-апстрим движок принимает только при выключенном Middle-End.
+    # Запреты стоят в upstream_add/upstream_toggle, но ME можно выключить и
+    # включить обратно через режим эксперта уже после — тогда конфиг соберётся
+    # заведомо нерабочим, и понять почему по логам telemt будет непросто.
+    local _ss_enabled=0
+    for i in "${!UPSTREAM_NAMES[@]}"; do
+        [ "${UPSTREAM_ENABLED[$i]}" = "true" ] || continue
+        [ "${UPSTREAM_TYPES[$i]}" = "shadowsocks" ] && _ss_enabled=1
+    done
+    if [ "$_ss_enabled" -eq 1 ] && [ "$(get_expert_override_value general use_middle_proxy 2>/dev/null)" != "false" ]; then
+        log_warn "Включён shadowsocks-апстрим, но ME (use_middle_proxy) не выключен — движок отвергнет такой маршрут"
+    fi
+
     for i in "${!UPSTREAM_NAMES[@]}"; do
         [ "${UPSTREAM_ENABLED[$i]}" = "true" ] || continue
         echo "" >> "$tmp"; echo "[[upstreams]]" >> "$tmp"
         echo "type = \"${UPSTREAM_TYPES[$i]}\"" >> "$tmp"
         echo "weight = ${UPSTREAM_WEIGHTS[$i]}" >> "$tmp"
-        [ "${UPSTREAM_TYPES[$i]}" != "direct" ] && [ -n "${UPSTREAM_ADDRS[$i]}" ] && \
+        # У shadowsocks адрес, метод шифрования и пароль приходят одним
+        # ss-URL — движок ждёт его в поле url, а не address.
+        if [ "${UPSTREAM_TYPES[$i]}" = "shadowsocks" ]; then
+            [ -n "${UPSTREAM_ADDRS[$i]}" ] && echo "url = \"${UPSTREAM_ADDRS[$i]}\"" >> "$tmp"
+        elif [ "${UPSTREAM_TYPES[$i]}" != "direct" ] && [ -n "${UPSTREAM_ADDRS[$i]}" ]; then
             echo "address = \"${UPSTREAM_ADDRS[$i]}\"" >> "$tmp"
+        fi
         if [ "${UPSTREAM_TYPES[$i]}" = "socks5" ]; then
             [ -n "${UPSTREAM_USERS[$i]}" ] && echo "username = \"${UPSTREAM_USERS[$i]}\"" >> "$tmp"
             [ -n "${UPSTREAM_PASSES[$i]}" ] && echo "password = \"${UPSTREAM_PASSES[$i]}\"" >> "$tmp"
@@ -540,6 +559,7 @@ TOML_EOF
             echo "user_id = \"${UPSTREAM_USERS[$i]}\"" >> "$tmp"
         fi
         [ -n "${UPSTREAM_IFACES[$i]}" ] && echo "interface = \"${UPSTREAM_IFACES[$i]}\"" >> "$tmp"
+        [ -n "${UPSTREAM_SCOPES[$i]:-}" ] && echo "scopes = \"${UPSTREAM_SCOPES[$i]}\"" >> "$tmp"
     done
 
     # Engine tunings

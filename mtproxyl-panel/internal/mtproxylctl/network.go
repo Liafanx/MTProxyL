@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -75,7 +76,10 @@ type Upstream struct {
 	HasPassword bool   `json:"has_password"`
 	Weight      int    `json:"weight"`
 	Iface       string `json:"iface"`
-	Enabled     bool   `json:"enabled"`
+	// Scopes is the engine's comma-separated route tag list. Empty means the
+	// route serves requests that carry no scope — see UpstreamSpec.Scopes.
+	Scopes  string `json:"scopes"`
+	Enabled bool   `json:"enabled"`
 }
 
 // upstreamNameRe bounds route names, which become CLI arguments.
@@ -85,15 +89,43 @@ var upstreamNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 // free-form fields (address, credentials, interface).
 var upstreamFieldRe = regexp.MustCompile(`^[A-Za-z0-9_.:@/+=-]*$`)
 
+// upstreamScopesRe matches the normalized tag list: comma-separated, no spaces.
+var upstreamScopesRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+(,[A-Za-z0-9_.-]+)*$`)
+
+// upstreamMaxWeight mirrors the engine's u16 weight field.
+const upstreamMaxWeight = 65535
+
+// UpstreamTypes lists the transports the engine accepts for a route.
+var UpstreamTypes = []string{"direct", "socks5", "socks4", "shadowsocks"}
+
 // UpstreamSpec describes a route to create.
 type UpstreamSpec struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+	// Address carries host:port for socks4/socks5 and the ss:// URL for
+	// shadowsocks — the CLI picks the right config key from the type.
 	Address  string `json:"address"`
 	User     string `json:"user"`
 	Password string `json:"password"`
 	Weight   int    `json:"weight"`
 	Iface    string `json:"iface"`
+	// Scopes filters which requests may use this route. A request carrying a
+	// scope only reaches routes tagged with it; a request without one only
+	// reaches routes with empty Scopes.
+	Scopes string `json:"scopes"`
+}
+
+// NormalizeScopes turns "me, fetch" into "me,fetch". The engine trims spaces
+// when matching, but the stored value should not depend on how it was typed.
+func NormalizeScopes(raw string) string {
+	parts := strings.Split(raw, ",")
+	out := parts[:0]
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, ",")
 }
 
 // Validate checks every field that becomes a command argument.
@@ -101,10 +133,10 @@ func (s UpstreamSpec) Validate() error {
 	if !upstreamNameRe.MatchString(s.Name) {
 		return fmt.Errorf("invalid upstream name %q", s.Name)
 	}
-	if s.Type != "direct" && s.Type != "socks5" {
-		return fmt.Errorf("type must be direct or socks5")
+	if !slices.Contains(UpstreamTypes, s.Type) {
+		return fmt.Errorf("type must be one of %s", strings.Join(UpstreamTypes, ", "))
 	}
-	if s.Weight < 0 || s.Weight > 10000 {
+	if s.Weight < 0 || s.Weight > upstreamMaxWeight {
 		return fmt.Errorf("weight out of range")
 	}
 	for label, v := range map[string]string{
@@ -125,8 +157,28 @@ func (s UpstreamSpec) Validate() error {
 			return fmt.Errorf("%s must not start with a dash", label)
 		}
 	}
-	if s.Type == "socks5" && s.Address == "" {
-		return fmt.Errorf("socks5 upstream needs an address")
+	if s.Scopes != "" {
+		if len(s.Scopes) > 256 {
+			return fmt.Errorf("scopes too long")
+		}
+		if !upstreamScopesRe.MatchString(s.Scopes) {
+			return fmt.Errorf("scopes must be comma-separated tags of A-Z, 0-9, _, ., -")
+		}
+	}
+	switch s.Type {
+	case "socks4", "socks5":
+		if s.Address == "" {
+			return fmt.Errorf("%s upstream needs an address", s.Type)
+		}
+	case "shadowsocks":
+		// The CLI enforces the same rule, but rejecting here keeps the panel
+		// from reporting a generic command failure for a fixable input.
+		if !strings.HasPrefix(s.Address, "ss://") {
+			return fmt.Errorf("shadowsocks upstream needs an ss:// URL")
+		}
+		if strings.Contains(s.Address, "plugin=") {
+			return fmt.Errorf("shadowsocks plugins are not supported")
+		}
 	}
 	return nil
 }
@@ -157,12 +209,14 @@ func (c *Client) UpstreamList(ctx context.Context) ([]Upstream, error) {
 
 // UpstreamAdd creates a route.
 func (c *Client) UpstreamAdd(ctx context.Context, s UpstreamSpec) (string, error) {
+	s.Scopes = NormalizeScopes(s.Scopes)
 	if err := s.Validate(); err != nil {
 		return "", err
 	}
-	// Positional order matches the CLI: name type address [user] [pass] [weight] [iface]
+	// Positional order matches the CLI:
+	// name type address [user] [pass] [weight] [iface] [scopes]
 	out, err := c.run(ctx, "upstream", "add", s.Name, s.Type, s.Address,
-		s.User, s.Password, strconv.Itoa(s.Weight), s.Iface)
+		s.User, s.Password, strconv.Itoa(s.Weight), s.Iface, s.Scopes)
 	return stripANSI(out), err
 }
 

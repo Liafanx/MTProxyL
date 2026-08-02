@@ -107,16 +107,28 @@ tui_upstream_menu() {
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
             1) echo -en "  ${BOLD}Имя:${NC} "; local n; read_line n
-               echo -e "  ${DIM}[1] SOCKS5  [2] SOCKS4  [3] Direct${NC}"
+               echo -e "  ${DIM}[1] SOCKS5  [2] SOCKS4  [3] Direct  [4] Shadowsocks${NC}"
                local tc; read -erp "  > " tc
-               local t; case "$tc" in 1) t="socks5" ;; 2) t="socks4" ;; *) t="direct" ;; esac
-               local a="" us="" ps=""
-               if [ "$t" != "direct" ]; then
-                   echo -en "  ${BOLD}Адрес:${NC} "; read_line a
-                   echo -en "  ${BOLD}Логин:${NC} "; read_line us
-                   echo -en "  ${BOLD}Пароль:${NC} "; read_line ps; fi
+               local t; case "$tc" in 1) t="socks5" ;; 2) t="socks4" ;; 4) t="shadowsocks" ;; *) t="direct" ;; esac
+               local a="" us="" ps="" ifc=""
+               case "$t" in
+                   shadowsocks)
+                       echo -e "  ${DIM}ss://МЕТОД:ПАРОЛЬ@host:port — метод и пароль уже внутри URL${NC}"
+                       echo -en "  ${BOLD}ss-URL:${NC} "; read_line a ;;
+                   socks4)
+                       echo -en "  ${BOLD}Адрес (host:port):${NC} "; read_line a
+                       echo -en "  ${BOLD}user_id:${NC} "; read_line us ;;
+                   socks5)
+                       echo -en "  ${BOLD}Адрес (host:port):${NC} "; read_line a
+                       echo -en "  ${BOLD}Логин:${NC} "; read_line us
+                       echo -en "  ${BOLD}Пароль:${NC} "; read_line ps ;;
+                   direct)
+                       echo -en "  ${BOLD}Интерфейс или локальный IP (можно пусто):${NC} "; read_line ifc ;;
+               esac
                echo -en "  ${BOLD}Вес [10]:${NC} "; local w; read_line w; w="${w:-10}"
-               upstream_add "$n" "$t" "$a" "$us" "$ps" "$w" || true; press_any_key ;;
+               echo -e "  ${DIM}Область — теги через запятую. Пусто = маршрут для всего трафика.${NC}"
+               echo -en "  ${BOLD}Область (можно пусто):${NC} "; local sc; read_line sc
+               upstream_add "$n" "$t" "$a" "$us" "$ps" "$w" "$ifc" "$sc" || true; press_any_key ;;
             2) echo -en "  ${BOLD}Имя:${NC} "; local n; read_line n; [ -n "$n" ] && upstream_remove "$n" || true; press_any_key ;;
             3) echo -en "  ${BOLD}Имя:${NC} "; local n; read_line n; [ -n "$n" ] && upstream_toggle "$n" || true; press_any_key ;;
             4) echo -en "  ${BOLD}Имя:${NC} "; local n; read_line n; [ -n "$n" ] && upstream_test "$n" || true; press_any_key ;;

@@ -1,6 +1,10 @@
 package mtproxylctl
 
-import "testing"
+import (
+	"slices"
+	"strings"
+	"testing"
+)
 
 func TestValidateCountryCode(t *testing.T) {
 	for _, c := range []string{"us", "DE", "ir"} {
@@ -22,29 +26,82 @@ func TestUpstreamSpecValidate(t *testing.T) {
 		t.Fatalf("valid spec rejected: %v", err)
 	}
 
-	direct := UpstreamSpec{Name: "direct", Type: "direct", Weight: 1}
-	if err := direct.Validate(); err != nil {
-		t.Errorf("direct spec rejected: %v", err)
+	// Every shape the engine documents must survive validation, or the panel
+	// silently offers fewer route types than MTProxyL supports.
+	good := map[string]UpstreamSpec{
+		"direct":            {Name: "direct", Type: "direct", Weight: 1},
+		"socks4 with id":    {Name: "s4", Type: "socks4", Address: "10.0.0.1:1080", User: "telemt"},
+		"shadowsocks":       {Name: "ss", Type: "shadowsocks", Address: "ss://2022-blake3-aes-256-gcm:UEFTUw==@10.0.0.1:8388"},
+		"max engine weight": {Name: "w", Type: "direct", Weight: 65535},
+		"zero weight":       {Name: "z", Type: "direct", Weight: 0},
+		"scoped":            {Name: "sc", Type: "direct", Scopes: "me,fetch,dc2"},
+	}
+	for label, spec := range good {
+		if err := spec.Validate(); err != nil {
+			t.Errorf("%s: rejected (%v), want accepted", label, err)
+		}
 	}
 
 	bad := map[string]UpstreamSpec{
-		"empty name":        {Name: "", Type: "direct"},
-		"name injection":    {Name: "a; id", Type: "direct"},
-		"name leading dash": {Name: "-rf", Type: "direct"},
-		"name with slash":   {Name: "../etc", Type: "direct"},
-		"unknown type":      {Name: "x", Type: "http"},
-		"negative weight":   {Name: "x", Type: "direct", Weight: -1},
-		"huge weight":       {Name: "x", Type: "direct", Weight: 10001},
-		"addr injection":    {Name: "x", Type: "socks5", Address: "1.2.3.4:1080; id"},
-		"addr space":        {Name: "x", Type: "socks5", Address: "1.2.3.4 1080"},
-		"pass injection":    {Name: "x", Type: "socks5", Address: "1.2.3.4:1080", Password: "$(id)"},
-		"iface injection":   {Name: "x", Type: "socks5", Address: "1.2.3.4:1080", Iface: "eth0|id"},
-		"socks5 no address": {Name: "x", Type: "socks5"},
+		"empty name":         {Name: "", Type: "direct"},
+		"name injection":     {Name: "a; id", Type: "direct"},
+		"name leading dash":  {Name: "-rf", Type: "direct"},
+		"name with slash":    {Name: "../etc", Type: "direct"},
+		"unknown type":       {Name: "x", Type: "http"},
+		"negative weight":    {Name: "x", Type: "direct", Weight: -1},
+		"weight above u16":   {Name: "x", Type: "direct", Weight: 65536},
+		"addr injection":     {Name: "x", Type: "socks5", Address: "1.2.3.4:1080; id"},
+		"addr space":         {Name: "x", Type: "socks5", Address: "1.2.3.4 1080"},
+		"pass injection":     {Name: "x", Type: "socks5", Address: "1.2.3.4:1080", Password: "$(id)"},
+		"iface injection":    {Name: "x", Type: "socks5", Address: "1.2.3.4:1080", Iface: "eth0|id"},
+		"socks5 no address":  {Name: "x", Type: "socks5"},
+		"socks4 no address":  {Name: "x", Type: "socks4"},
+		"shadowsocks no url": {Name: "x", Type: "shadowsocks", Address: "10.0.0.1:8388"},
+		"shadowsocks plugin": {Name: "x", Type: "shadowsocks", Address: "ss://m:p@10.0.0.1:8388?plugin=obfs"},
+		"scopes injection":   {Name: "x", Type: "direct", Scopes: "me;id"},
+		"scopes with space":  {Name: "x", Type: "direct", Scopes: "me fetch"},
 	}
 	for label, spec := range bad {
 		if err := spec.Validate(); err == nil {
 			t.Errorf("%s: accepted, want error", label)
 		}
+	}
+}
+
+func TestNormalizeScopes(t *testing.T) {
+	cases := map[string]string{
+		"me, fetch , dc2": "me,fetch,dc2",
+		" a ,, b , ":      "a,b",
+		"":                "",
+		",,,":             "",
+		"me":              "me",
+	}
+	for in, want := range cases {
+		if got := NormalizeScopes(in); got != want {
+			t.Errorf("NormalizeScopes(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// UpstreamAdd normalizes before validating, so a list typed with spaces must
+// reach the CLI rather than be rejected as malformed. The argument positions
+// matter beyond that: the CLI reads scopes as the eighth argument after "add",
+// so an omitted empty field would silently land the tags in "iface".
+func TestUpstreamAddArguments(t *testing.T) {
+	c := newStubClient(t)
+	out, err := c.UpstreamAdd(t.Context(), UpstreamSpec{
+		Name: "sc", Type: "direct", Weight: 10, Scopes: "me, fetch",
+	})
+	if err != nil {
+		t.Fatalf("UpstreamAdd with spaced scopes failed: %v", err)
+	}
+	var args []string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		args = append(args, strings.TrimPrefix(strings.TrimSpace(line), "arg="))
+	}
+	want := []string{"upstream", "add", "sc", "direct", "", "", "", "10", "", "me,fetch"}
+	if !slices.Equal(args, want) {
+		t.Errorf("args = %q, want %q", args, want)
 	}
 }
 
