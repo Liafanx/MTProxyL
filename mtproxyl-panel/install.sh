@@ -377,6 +377,7 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script mode
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script mode --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script mode manager
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script mode reanimator
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script traffic --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask status --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask setup
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask apply

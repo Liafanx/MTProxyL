@@ -337,6 +337,156 @@ show_traffic() {
     echo ""
 }
 
+# ── Машинный список трафика для панели ────────────────────────
+#
+# Один документ на оба режима. Форма ответа одинаковая, но честность данных
+# разная, поэтому в нём два флага:
+#   directional — разделён ли трафик на входящий и исходящий. API цели отдаёт
+#                 только сумму, и подставлять её в обе колонки нельзя;
+#   persistent  — переживают ли числа перезапуск движка. Своя база есть только
+#                 у менеджера; у цели мы читаем её же счётчики, которые
+#                 обнуляются вместе с ней.
+
+# Пары "пользователь|in|out|conns" из Prometheus одним проходом.
+# lbl() написан на переносимом awk: match() с третьим аргументом есть только
+# в gawk, а на сервере может стоять mawk.
+_metrics_user_table() {
+    local m
+    m=$(_fetch_metrics 2>/dev/null) || return 1
+    printf '%s\n' "$m" | awk '
+        function lbl(s, k,    p, q) {
+            p = index(s, k "=\""); if (!p) return ""
+            s = substr(s, p + length(k) + 2)
+            q = index(s, "\""); return q ? substr(s, 1, q-1) : ""
+        }
+        /^telemt_user_octets_from_client\{/ { u=lbl($0,"user"); if(u){rx[u]+=$NF; seen[u]=1} }
+        /^telemt_user_octets_to_client\{/   { u=lbl($0,"user"); if(u){tx[u]+=$NF; seen[u]=1} }
+        /^telemt_user_connections_current\{/{ u=lbl($0,"user"); if(u){cn[u]+=$NF; seen[u]=1} }
+        END { for (u in seen) printf "%s|%.0f|%.0f|%.0f\n", u, rx[u]+0, tx[u]+0, cn[u]+0 }
+    '
+}
+
+_traffic_json_user() {
+    # user in out session_in session_out conns unique_ips enabled
+    printf '{"user":"%s","in":%s,"out":%s,"total":%s,"session_in":%s,"session_out":%s,"connections":%s,"unique_ips":%s,"enabled":%s}' \
+        "$(json_escape "$1")" "${2:-0}" "${3:-0}" "$(( ${2:-0} + ${3:-0} ))" \
+        "${4:-0}" "${5:-0}" "${6:-0}" "${7:-0}" "$8"
+}
+
+_traffic_json_manager() {
+    local t_in t_out conns s_in s_out s_conns
+    read -r t_in t_out conns <<< "$(get_persistent_stats)"
+    read -r s_in s_out s_conns <<< "$(get_proxy_stats)"
+
+    # Список пользователей — тот же, что показывает экран трафика: в режиме
+    # супер эксперта он живёт в конфиге пользователя, иначе в наших секретах.
+    local _labels=() label
+    if _superexpert_active; then
+        local _su _sk
+        while IFS='|' read -r _su _sk; do
+            [ -n "$_su" ] && _labels+=("$_su")
+        done <<< "$(_superexpert_users)"
+    else
+        local i
+        for i in "${!SECRETS_LABELS[@]}"; do
+            _labels+=("${SECRETS_LABELS[$i]}")
+        done
+    fi
+
+    printf '{"mode":"manager","source":"db","directional":true,"persistent":true,'
+    printf '"totals":{"in":%d,"out":%d,"total":%d,"session_in":%d,"session_out":%d,"connections":%d},' \
+        "${t_in:-0}" "${t_out:-0}" "$(( ${t_in:-0} + ${t_out:-0} ))" \
+        "${s_in:-0}" "${s_out:-0}" "${conns:-0}"
+    printf '"users":['
+
+    local _first=1 _idx=0
+    for label in "${_labels[@]}"; do
+        local u_in u_out u_conns su_in su_out su_conns
+        read -r u_in u_out u_conns <<< "$(get_persistent_user_stats "$label")"
+        read -r su_in su_out su_conns <<< "$(get_user_stats "$label")"
+
+        local _en="true"
+        if ! _superexpert_active; then
+            _en="false"
+            for _idx in "${!SECRETS_LABELS[@]}"; do
+                [ "${SECRETS_LABELS[$_idx]}" = "$label" ] && { _en="${SECRETS_ENABLED[$_idx]}"; break; }
+            done
+        fi
+        [ "$_en" = "true" ] || _en="false"
+
+        [ $_first -eq 1 ] || printf ','
+        _first=0
+        _traffic_json_user "$label" "${u_in:-0}" "${u_out:-0}" \
+            "${su_in:-0}" "${su_out:-0}" "${su_conns:-0}" 0 "$_en"
+    done
+    printf ']}\n'
+}
+
+_traffic_json_reanimator() {
+    # Метрики точнее API: они разделяют направления. Но у цели они по
+    # умолчанию выключены, поэтому это именно первый выбор, а не единственный.
+    local _table
+    if _table=$(_metrics_user_table) && [ -n "$_table" ]; then
+        local _ti=0 _to=0 _tc=0
+        local _u _i _o _c
+        while IFS='|' read -r _u _i _o _c; do
+            [ -z "$_u" ] && continue
+            _ti=$(( _ti + ${_i:-0} )); _to=$(( _to + ${_o:-0} )); _tc=$(( _tc + ${_c:-0} ))
+        done <<< "$_table"
+
+        printf '{"mode":"reanimator","source":"metrics","directional":true,"persistent":false,'
+        printf '"totals":{"in":%d,"out":%d,"total":%d,"session_in":%d,"session_out":%d,"connections":%d},' \
+            "$_ti" "$_to" "$(( _ti + _to ))" "$_ti" "$_to" "$_tc"
+        printf '"users":['
+        local _first=1
+        while IFS='|' read -r _u _i _o _c; do
+            [ -z "$_u" ] && continue
+            [ $_first -eq 1 ] || printf ','
+            _first=0
+            _traffic_json_user "$_u" "${_i:-0}" "${_o:-0}" "${_i:-0}" "${_o:-0}" "${_c:-0}" 0 true
+        done <<< "$_table"
+        printf ']}\n'
+        return 0
+    fi
+
+    local _json _rc
+    _json=$(_get_telemt_users_json 2>/dev/null); _rc=$?
+    if [ $_rc -ne 0 ]; then
+        printf '{"mode":"reanimator","source":"none","directional":false,"persistent":false,'
+        printf '"error":"%s","totals":{"in":0,"out":0,"total":0,"session_in":0,"session_out":0,"connections":0},"users":[]}\n' \
+            "$(json_escape "$(_telemt_api_unavailable_reason)")"
+        return 0
+    fi
+
+    printf '{"mode":"reanimator","source":"api","directional":false,"persistent":false,'
+    printf '"totals":{"in":0,"out":0,"total":%d,"session_in":0,"session_out":0,"connections":%d},' \
+        "$(_json_sum_field "$_json" "total_octets")" "$(_json_sum_field "$_json" "current_connections")"
+    printf '"users":['
+    local _u _en _c _ips _oct _first=1
+    while IFS='|' read -r _u _en _c _ips _oct; do
+        [ -z "$_u" ] && continue
+        [ $_first -eq 1 ] || printf ','
+        _first=0
+        # in/out нулевые намеренно: направлений в этом источнике нет, и
+        # флаг directional=false говорит панели не показывать эти колонки.
+        printf '{"user":"%s","in":0,"out":0,"total":%s,"session_in":0,"session_out":0,"connections":%s,"unique_ips":%s,"enabled":%s}' \
+            "$(json_escape "$_u")" "${_oct:-0}" "${_c:-0}" "${_ips:-0}" \
+            "$([ "$_en" = "false" ] && echo false || echo true)"
+    done <<< "$(_target_user_stats "$_json")"
+    printf ']}\n'
+}
+
+traffic_list_json() {
+    # Снимок в базу здесь намеренно не пишем: get_persistent_* и так
+    # прибавляют несохранённую дельту к накопленному, а панель опрашивает
+    # раздел часто — каждый опрос превращался бы в запись на диск.
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        _traffic_json_reanimator
+    else
+        _traffic_json_manager
+    fi
+}
+
 show_connections() {
     local m
     if ! m=$(_fetch_metrics 2>/dev/null); then

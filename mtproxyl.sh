@@ -178,7 +178,11 @@ cli_main() {
 
         traffic)
             load_settings; load_secrets; load_detect_settings
-            show_traffic
+            if [ "${1:-}" = "--json" ]; then
+                traffic_list_json
+            else
+                show_traffic
+            fi
             ;;
 
         connections)

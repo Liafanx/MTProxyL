@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, LogOut, X, Sun, Moon, ToggleLeft, Globe, Archive, ShieldAlert, MapPin, Route, SlidersHorizontal, FileCode, Puzzle } from 'lucide-react';
+import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, LogOut, X, Sun, Moon, ToggleLeft, Globe, Archive, ShieldAlert, MapPin, Route, SlidersHorizontal, Gauge, FileCode, Puzzle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
@@ -24,6 +24,7 @@ const mtproxylNavItems = [
   { to: '/mode', icon: ToggleLeft, label: 'Режим работы', managerOnly: false },
   { to: '/proxy-settings', icon: SlidersHorizontal, label: 'Настройки прокси', managerOnly: true },
   { to: '/selfmask', icon: Globe, label: 'Selfmask', managerOnly: false },
+  { to: '/traffic', icon: Gauge, label: 'Трафик', managerOnly: false },
   { to: '/nft', icon: ShieldAlert, label: 'Лимитер и защита', managerOnly: false },
   { to: '/geoblock', icon: MapPin, label: 'Блокировка стран', managerOnly: false },
   { to: '/backups', icon: Archive, label: 'Бэкапы', managerOnly: true },

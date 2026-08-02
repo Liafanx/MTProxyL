@@ -311,7 +311,41 @@ export interface UpstreamSpec {
   scopes: string;
 }
 
+export interface TrafficUser {
+  user: string;
+  /** Осмысленны только при directional; иначе весь объём лежит в total. */
+  in: number;
+  out: number;
+  total: number;
+  session_in: number;
+  session_out: number;
+  connections: number;
+  unique_ips: number;
+  enabled: boolean;
+}
+
+export interface TrafficReport {
+  mode: 'manager' | 'reanimator';
+  /** db — своя база менеджера, metrics/api — счётчики цели, none — нет данных. */
+  source: 'db' | 'metrics' | 'api' | 'none';
+  /** Разделён ли трафик на входящий и исходящий. */
+  directional: boolean;
+  /** Переживают ли числа перезапуск движка. */
+  persistent: boolean;
+  error?: string;
+  totals: {
+    in: number;
+    out: number;
+    total: number;
+    session_in: number;
+    session_out: number;
+    connections: number;
+  };
+  users: TrafficUser[];
+}
+
 export const mtproxylNetApi = {
+  traffic: () => request<TrafficReport>(MTPROXYL_BASE, '/traffic'),
   nft: () => request<NftStatus>(MTPROXYL_BASE, '/nft'),
   setNftParam: (key: string, value: string) =>
     request<{ output: string }>(MTPROXYL_BASE, '/nft/params', {

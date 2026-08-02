@@ -37,6 +37,10 @@ case "$1 $2 $3" in
   "mode manager ")
     echo "  [✓] Режим: manager"
     ;;
+  "traffic --json ")
+    echo "  [i] чтение базы трафика"
+    echo '{"mode":"manager","source":"db","directional":true,"persistent":true,"totals":{"in":2460700,"out":211900000,"total":214360700,"session_in":190600,"session_out":14040000,"connections":1},"users":[{"user":"default","in":370700,"out":32430000,"total":32800700,"session_in":190600,"session_out":14040000,"connections":1,"unique_ips":0,"enabled":true}]}'
+    ;;
   "upstream add "*)
     # Печатаем каждый аргумент отдельной строкой: тест следит за позициями,
     # потому что пустой пропущенный аргумент сдвинул бы все следующие.

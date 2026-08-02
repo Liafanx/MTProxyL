@@ -600,6 +600,22 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 
+	// ── Traffic ─────────────────────────────────────────────────────────────
+	//
+	// Работает в обоих режимах, поэтому проверки на менеджера здесь нет:
+	// в реаниматоре CLI берёт те же числа у цели, из метрик или из её API.
+	mux.Handle("GET /api/mtproxyl/traffic", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		rep, err := client.Traffic(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: rep})
+	}))
+
 	// ── Upstream routes ─────────────────────────────────────────────────────
 	mux.Handle("GET /api/mtproxyl/upstreams", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {

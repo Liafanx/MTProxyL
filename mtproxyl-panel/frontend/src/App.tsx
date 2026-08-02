@@ -20,6 +20,7 @@ import { BackupsPage } from '@/pages/BackupsPage';
 import { NftPage } from '@/pages/NftPage';
 import { GeoblockPage } from '@/pages/GeoblockPage';
 import { RoutesPage } from '@/pages/RoutesPage';
+import { TrafficPage } from '@/pages/TrafficPage';
 import { ExpertPage } from '@/pages/ExpertPage';
 import { SuperExpertPage } from '@/pages/SuperExpertPage';
 import { AddonsPage } from '@/pages/AddonsPage';
@@ -63,6 +64,7 @@ function AuthenticatedApp() {
           <Route path="/nft" element={<NftPage />} />
           <Route path="/geoblock" element={<GeoblockPage />} />
           <Route path="/routes" element={<RoutesPage />} />
+          <Route path="/traffic" element={<TrafficPage />} />
           <Route path="/expert" element={<ExpertPage />} />
           <Route path="/superexpert" element={<SuperExpertPage />} />
           <Route path="/addons" element={<AddonsPage />} />
