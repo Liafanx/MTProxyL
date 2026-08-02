@@ -173,6 +173,42 @@ func checkFileReadable(field, path string) error {
 	return nil
 }
 
+// geoipCityCandidates lists where a GeoLite2/GeoIP2 city database usually ends
+// up: the panel's own data directory first, then the paths used by the
+// geoipupdate tool and the distribution packages.
+func geoipCityCandidates(dataDir string) []string {
+	return []string{
+		filepath.Join(dataDir, "GeoLite2-City.mmdb"),
+		"/var/lib/GeoIP/GeoLite2-City.mmdb",
+		"/usr/share/GeoIP/GeoLite2-City.mmdb",
+		"/usr/local/share/GeoIP/GeoLite2-City.mmdb",
+		"/var/lib/GeoIP/GeoIP2-City.mmdb",
+		"/usr/share/GeoIP/GeoIP2-City.mmdb",
+	}
+}
+
+func geoipASNCandidates(dataDir string) []string {
+	return []string{
+		filepath.Join(dataDir, "GeoLite2-ASN.mmdb"),
+		"/var/lib/GeoIP/GeoLite2-ASN.mmdb",
+		"/usr/share/GeoIP/GeoLite2-ASN.mmdb",
+		"/usr/local/share/GeoIP/GeoLite2-ASN.mmdb",
+	}
+}
+
+// findFirstReadable returns the first path the panel can actually open.
+// Existence alone is not enough: the panel runs unprivileged, and a database
+// it cannot read is the same as no database at all.
+func findFirstReadable(paths []string) string {
+	for _, p := range paths {
+		if f, err := os.Open(p); err == nil {
+			f.Close()
+			return p
+		}
+	}
+	return ""
+}
+
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -228,6 +264,17 @@ func Load(path string) (*Config, error) {
 
 	if cfg.DataDir == "" {
 		cfg.DataDir = "/var/lib/mtproxyl-panel"
+	}
+
+	// Базу GeoIP ставят системным пакетом или geoipupdate, и она уже лежит в
+	// одном из стандартных мест. Раньше панель этого не замечала и требовала
+	// прописать путь руками — на экране пользователя это выглядело как
+	// поломка, хотя база на сервере есть.
+	if cfg.GeoIP.DBPath == "" {
+		cfg.GeoIP.DBPath = findFirstReadable(geoipCityCandidates(cfg.DataDir))
+	}
+	if cfg.GeoIP.ASNDBPath == "" {
+		cfg.GeoIP.ASNDBPath = findFirstReadable(geoipASNCandidates(cfg.DataDir))
 	}
 
 	// Validate user defaults

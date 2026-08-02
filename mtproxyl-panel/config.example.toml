@@ -117,7 +117,11 @@ use_sudo = true
 [geoip]
 # Path to MaxMind GeoLite2 City database (.mmdb)
 # Download from: https://dev.maxmind.com/geoip/geolite2-free-geolocation-data
-# If not set, GeoIP features are disabled (IP lists shown without geo data)
+#
+# Can be left unset: the panel looks for GeoLite2-City.mmdb in data_dir and in
+# the usual system locations (/var/lib/GeoIP, /usr/share/GeoIP), so a database
+# installed by geoipupdate or a distribution package is picked up on its own.
+# When nothing is found, IP lists are simply shown without geo data.
 # db_path = "/var/lib/mtproxyl-panel/GeoLite2-City.mmdb"
 # Optional: GeoLite2 ASN database for autonomous system number lookups
 # asn_db_path = "/var/lib/mtproxyl-panel/GeoLite2-ASN.mmdb"

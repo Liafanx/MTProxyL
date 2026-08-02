@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -118,4 +119,97 @@ expiration = "not-a-valid-rfc3339"
 	if err == nil {
 		t.Fatal("Expected error for invalid expiration, got nil")
 	}
+}
+
+func TestGeoIPAutodetect(t *testing.T) {
+	dir := t.TempDir()
+	db := filepath.Join(dir, "GeoLite2-City.mmdb")
+	if err := os.WriteFile(db, []byte("stub"), 0o644); err != nil {
+		t.Fatalf("write db: %v", err)
+	}
+
+	// data_dir содержит базу — путь должен подставиться сам.
+	cfg := writeAndLoad(t, `
+listen = "0.0.0.0:8080"
+data_dir = "`+dir+`"
+[telemt]
+url = "http://127.0.0.1:9091"
+auth_header = "test"
+[auth]
+username = "admin"
+password_hash = "$2a$10$abcdefghijklmnopqrstuvwxABCDEFGHIJ"
+jwt_secret = "test-secret-that-is-at-least-32-characters"
+`)
+	if cfg.GeoIP.DBPath != db {
+		t.Errorf("db_path = %q, want %q", cfg.GeoIP.DBPath, db)
+	}
+	// ASN-базы в каталоге нет, а системных путей на тестовой машине быть не
+	// должно; главное — что автоподбор не выдумывает несуществующий файл.
+	if cfg.GeoIP.ASNDBPath != "" && !fileReadable(cfg.GeoIP.ASNDBPath) {
+		t.Errorf("asn_db_path = %q, but the file cannot be read", cfg.GeoIP.ASNDBPath)
+	}
+
+	// Явно заданный путь автоподбор не трогает.
+	explicit := filepath.Join(dir, "custom.mmdb")
+	if err := os.WriteFile(explicit, []byte("stub"), 0o644); err != nil {
+		t.Fatalf("write db: %v", err)
+	}
+	cfg = writeAndLoad(t, `
+listen = "0.0.0.0:8080"
+data_dir = "`+dir+`"
+[telemt]
+url = "http://127.0.0.1:9091"
+auth_header = "test"
+[geoip]
+db_path = "`+explicit+`"
+[auth]
+username = "admin"
+password_hash = "$2a$10$abcdefghijklmnopqrstuvwxABCDEFGHIJ"
+jwt_secret = "test-secret-that-is-at-least-32-characters"
+`)
+	if cfg.GeoIP.DBPath != explicit {
+		t.Errorf("explicit db_path overridden: got %q, want %q", cfg.GeoIP.DBPath, explicit)
+	}
+}
+
+// Нечитаемый файл для панели равнозначен отсутствующему — она работает без
+// root и просто не сможет его открыть.
+func TestGeoIPAutodetectSkipsUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads any file, so the permission case cannot be exercised")
+	}
+	dir := t.TempDir()
+	db := filepath.Join(dir, "GeoLite2-City.mmdb")
+	if err := os.WriteFile(db, []byte("stub"), 0o000); err != nil {
+		t.Fatalf("write db: %v", err)
+	}
+	if got := findFirstReadable([]string{db}); got != "" {
+		t.Errorf("findFirstReadable returned %q for an unreadable file", got)
+	}
+}
+
+func fileReadable(p string) bool {
+	f, err := os.Open(p)
+	if err != nil {
+		return false
+	}
+	f.Close()
+	return true
+}
+
+func writeAndLoad(t *testing.T, toml string) *Config {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "config-*.toml")
+	if err != nil {
+		t.Fatalf("temp file: %v", err)
+	}
+	if _, err := f.WriteString(toml); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	f.Close()
+	cfg, err := Load(f.Name())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	return cfg
 }

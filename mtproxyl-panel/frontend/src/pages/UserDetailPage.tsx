@@ -237,6 +237,7 @@ export function UserDetailPage() {
 
   const [geoData, setGeoData] = useState<Map<string, GeoIPInfo>>(new Map());
   const [geoError, setGeoError] = useState<string | null>(null);
+  const [geoUnavailable, setGeoUnavailable] = useState(false);
   const [geoLoading, setGeoLoading] = useState(false);
 
   const user = useMemo(
@@ -268,6 +269,15 @@ export function UserDetailPage() {
       })
       .catch((err) => {
         if (cancelled) return;
+        // Отсутствие базы GeoIP — это не сбой: панель работает без неё, просто
+        // без страны и провайдера у адресов. Разделяем два случая, потому что
+        // предупреждение об ошибке там, где всё исправно, заставляет искать
+        // поломку, которой нет.
+        if (err instanceof ApiError && err.code === 'geoip_disabled') {
+          setGeoUnavailable(true);
+          setGeoError(null);
+          return;
+        }
         setGeoError(err instanceof Error ? err.message : 'Не удалось выполнить GeoIP-запрос');
       })
       .finally(() => {
@@ -340,6 +350,16 @@ export function UserDetailPage() {
               <div className="flex items-center gap-2 p-3 rounded-lg border border-yellow-500/30 bg-yellow-500/10 text-sm text-yellow-200">
                 <AlertTriangle size={16} className="shrink-0" />
                 <span>GeoIP недоступен: {geoError}. IP-адреса показаны без геоданных.</span>
+              </div>
+            )}
+
+            {geoUnavailable && (
+              <div className="p-3 rounded-lg border border-border bg-surface text-xs text-text-secondary">
+                База GeoIP не установлена — адреса показаны без страны и провайдера. Чтобы
+                включить: положите файл <code className="font-mono">GeoLite2-City.mmdb</code> в{' '}
+                <code className="font-mono">/var/lib/mtproxyl-panel/</code> и перезапустите панель.
+                Панель также подхватит базу из <code className="font-mono">/var/lib/GeoIP/</code>{' '}
+                или <code className="font-mono">/usr/share/GeoIP/</code>, если её ставит система.
               </div>
             )}
 

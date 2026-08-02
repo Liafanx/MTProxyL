@@ -591,6 +591,11 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 			log.Printf("GeoIP: databases loaded successfully")
 			defer func() { _ = geoipLookup.Close() }()
 		}
+	} else {
+		// Молчание здесь читалось как «всё в порядке», а в интерфейсе при этом
+		// появлялось предупреждение о недоступном GeoIP.
+		log.Printf("GeoIP: база не найдена — адреса будут показаны без страны и провайдера; " +
+			"положите GeoLite2-City.mmdb в data_dir или задайте geoip.db_path")
 	}
 
 	mux.Handle("POST /api/geoip/lookup", auth.RequireAuth(jwtSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
