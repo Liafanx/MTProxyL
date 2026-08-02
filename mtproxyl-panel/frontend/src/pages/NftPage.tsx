@@ -12,15 +12,17 @@ import { useMtproxylOperation } from '@/hooks/useMtproxyl';
 
 // Parameters are grouped so the form does not read as one flat list of 25 keys.
 const GROUPS: { title: string; prefixes: string[] }[] = [
-  { title: 'Classic-режим', prefixes: ['NFT_RATE', 'NFT_BURST', 'NFT_METER_TIMEOUT'] },
+  // Smart идёт первым: это рекомендуемый режим, а classic оставлен для
+  // простых случаев и совместимости со старыми настройками.
   {
-    title: 'Smart-режим (By-MEKO)',
+    title: 'Smart-режим (By-MEKO) — рекомендуемый',
     prefixes: [
       'NFT_IOS_RATE', 'NFT_IOS_BURST', 'NFT_IOS_LIMIT_ENABLED', 'NFT_IOS_DETECT',
       'NFT_OTHER_RATE', 'NFT_OTHER_BURST', 'NFT_OTHER_LIMIT_ENABLED',
       'NFT_OTHER_ACTION', 'NFT_REJECT_MODE',
     ],
   },
+  { title: 'Classic-режим', prefixes: ['NFT_RATE', 'NFT_BURST', 'NFT_METER_TIMEOUT'] },
   { title: 'iOS Fix v1 (keepalive)', prefixes: ['IOS_KA_'] },
   { title: 'iOS Fix v2 (MSS + редирект)', prefixes: ['IOS2_'] },
   { title: 'Zapret2', prefixes: ['ZAPRET2_'] },
@@ -180,21 +182,23 @@ export function NftPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div>
-                  <div className="text-xs text-text-secondary mb-2">Режим лимитера</div>
+                  <div className="text-xs text-text-secondary mb-2">
+                    Режим лимитера — рекомендуется Smart
+                  </div>
                   <div className="flex flex-wrap gap-2">
-                    <Button
-                      variant={status.nft.mode === 'classic' ? 'default' : 'outline'}
-                      disabled={running}
-                      onClick={() => runPreset('classic')}
-                    >
-                      Classic
-                    </Button>
                     <Button
                       variant={status.nft.mode === 'smart' ? 'default' : 'outline'}
                       disabled={running}
                       onClick={() => runPreset('smart')}
                     >
                       Smart (By-MEKO)
+                    </Button>
+                    <Button
+                      variant={status.nft.mode === 'classic' ? 'default' : 'outline'}
+                      disabled={running}
+                      onClick={() => runPreset('classic')}
+                    >
+                      Classic
                     </Button>
                   </div>
                 </div>

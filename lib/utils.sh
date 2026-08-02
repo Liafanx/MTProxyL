@@ -580,7 +580,7 @@ handle_domain_command() {
             if [ "$_cur_mask" = "$_old_domain" ] || [ -z "$MASKING_HOST" ]; then
                 echo -en "  ${BOLD}Обновить mask backend на ${PROXY_DOMAIN}? [Y/n]:${NC} "
                 local _mask_yn; read_line _mask_yn
-                if [[ ! "$_mask_yn" =~ ^[nN]$ ]]; then
+                if [[ ! "$_mask_yn" =~ ^[nN] ]]; then
                     MASKING_HOST="$PROXY_DOMAIN"
                     save_settings
                     log_success "Mask backend: ${MASKING_HOST}:${MASKING_PORT:-443}"

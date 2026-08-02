@@ -160,25 +160,33 @@ _panel_install_report() {
     fi
 }
 
+# panel_uninstall [--no-confirm]
+#
+# --no-confirm пропускает вопрос «продолжить»: его задаёт вызывающий, когда
+# согласие уже получено. Без этого при удалении MTProxyL пользователя
+# спрашивают об одном и том же три раза подряд.
 panel_uninstall() {
     check_root || return 1
     panel_installed || { log_info "Панель не установлена"; return 0; }
 
-    echo ""
-    log_warn "Панель, служба и права sudo будут удалены"
-    echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
-    local _yn; read_line _yn
-    [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
+    if [ "${1:-}" != "--no-confirm" ]; then
+        echo ""
+        log_warn "Панель, служба и права sudo будут удалены"
+        echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
+        local _yn; read_line _yn
+        [[ "$_yn" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
+    fi
 
     # Конфиг хранит логин, хеш пароля и настройки. Если его оставить, повторная
     # установка пропустит мастер и пароль останется прежним — спрашиваем явно.
     echo ""
     echo -e "  ${DIM}Конфиг ${PANEL_CONFIG_DIR}/config.toml хранит логин и пароль.${NC}"
-    echo -e "  ${DIM}Если оставить, при новой установке мастер будет пропущен.${NC}"
-    echo -en "  ${BOLD}Удалить конфиг и данные тоже? [y/N]:${NC} "
+    echo -e "  ${DIM}Если оставить, при новой установке мастер будет пропущен${NC}"
+    echo -e "  ${DIM}и пароль останется прежним.${NC}"
+    echo -en "  ${BOLD}Удалить конфиг и данные тоже? [Y/n]:${NC} "
     local _purge; read_line _purge
-    local _cmd="uninstall"
-    [[ "$_purge" =~ ^[yY] ]] && _cmd="purge"
+    local _cmd="purge"
+    [[ "$_purge" =~ ^[nN] ]] && _cmd="uninstall"
 
     local _tmp; _tmp=$(_mktemp) || return 1
     if curl -fsSL "$PANEL_INSTALLER_URL" -o "$_tmp"; then

@@ -253,7 +253,7 @@ prompt_apply_nft_rules() {
     echo ""
     echo -en "  ${BOLD}Применить новые NFT-правила сейчас? [Y/n]:${NC} "
     local _yn; read_line _yn
-    if [[ ! "$_yn" =~ ^[nN]$ ]]; then
+    if [[ ! "$_yn" =~ ^[nN] ]]; then
         apply_nft_rules || true
         [ "${NFT_ENABLED:-false}" = "true" ] && install_nft_service || true
     fi
@@ -644,7 +644,7 @@ enable_smart_mode() {
 
     echo -en "  ${BOLD}Включить Smart режим? [Y/n]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Отменено"; return 0; }
+    [[ "$_yn" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     # Отключаем iOS Fix v2 если был
     if [ "${IOS2_FIX_ENABLED:-false}" = "true" ]; then
@@ -1901,13 +1901,13 @@ zapret2_install() {
         echo -e "  ${YELLOW}Zapret2 уже установлен. Переустановить?${NC}"
         echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
         local _yn; read_line _yn
-        [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Отменено"; return 0; }
+        [[ "$_yn" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
         _reinstall="true"
     fi
 
     echo -en "  ${BOLD}Скачать и установить zapret2? [Y/n]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Отменено"; return 0; }
+    [[ "$_yn" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     # Свой экземпляр снимаем до проверки очереди в любом случае: и при
     # переустановке, и когда настройки говорят «не установлен», а служба
@@ -1948,7 +1948,7 @@ zapret2_install() {
         echo -e "  ${YELLOW}⚠ SYN limiter активен — zapret2 его заменит.${NC}"
         echo -en "  ${BOLD}Отключить SYN limiter? [Y/n]:${NC} "
         local _yn_syn; read_line _yn_syn
-        if [[ ! "$_yn_syn" =~ ^[nN]$ ]]; then
+        if [[ ! "$_yn_syn" =~ ^[nN] ]]; then
             remove_nft_rules 2>/dev/null || true
             remove_nft_service 2>/dev/null || true
             log_success "SYN limiter отключён"
@@ -2004,7 +2004,7 @@ zapret2_remove() {
     echo ""
     echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
+    [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     zapret2_stop
     systemctl disable "$ZAPRET2_SERVICE" 2>/dev/null || true
@@ -2100,7 +2100,7 @@ zapret2_check_wscale() {
             echo -e "  ${BOLD}Необходимо изменить win ACK: ${_current_win_ack} → ${_win_ack_rec}${NC}"
             echo -en "  Применить? [Y/n]: "
             local _yn; read_line _yn
-            if [[ ! "$_yn" =~ ^[nN]$ ]]; then
+            if [[ ! "$_yn" =~ ^[nN] ]]; then
                 ZAPRET2_WIN_ACK="$_win_ack_rec"
                 save_nft_settings
                 log_success "win ACK установлен: ${_win_ack_rec} (реальное окно: ${_real_win} байт)"
@@ -2112,7 +2112,7 @@ zapret2_check_wscale() {
             echo -e "  ${DIM}win ACK ${_current_win_ack} (${_current_real} байт) → ${_win_ack_rec} (${_real_win} байт)${NC}"
             echo -en "  Оптимизировать? [y/N]: "
             local _yn; read_line _yn
-            if [[ "$_yn" =~ ^[yY]$ ]]; then
+            if [[ "$_yn" =~ ^[yY] ]]; then
                 ZAPRET2_WIN_ACK="$_win_ack_rec"
                 save_nft_settings
                 log_success "win ACK установлен: ${_win_ack_rec}"

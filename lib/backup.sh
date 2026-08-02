@@ -76,7 +76,7 @@ restore_backup() {
     if is_proxy_running; then
         echo -en "  ${BOLD}Перезапустить прокси для применения? [Y/n]:${NC} "
         local yn; read_line yn
-        if [[ ! "$yn" =~ ^[nN]$ ]]; then
+        if [[ ! "$yn" =~ ^[nN] ]]; then
             restart_proxy_container || true
         else
             log_info "Выполните 'mtproxyl restart' для применения"
@@ -230,12 +230,33 @@ migrate_import() {
     fi
 }
 
+# Отдать архив в stdout.
+#
+# Бэкапы лежат root:600 — панель их создаёт (через sudo), но прочитать сама не
+# может, и кнопка «скачать» упиралась в permission denied. Читаем через ту же
+# привилегированную команду, что и создаём.
+# Коды возврата различаются, чтобы вызывающий отвечал 400 и 404 по-разному, а
+# не сваливал всё в одну ошибку шлюза: 2 — негодное имя, 3 — файла нет.
+backup_cat() {
+    local _name="$1"
+    # Только имя файла, только наша схема именования: путь приходит снаружи.
+    case "$_name" in
+        */*|*..*) log_error "Недопустимое имя файла" >&2; return 2 ;;
+    esac
+    [[ "$_name" =~ ^mtproxyl-[0-9]{8}-[0-9]{6}\.tar\.gz(\.enc)?$ ]] \
+        || { log_error "Недопустимое имя файла" >&2; return 2; }
+    local _path="${BACKUP_DIR}/${_name}"
+    [ -f "$_path" ] || { log_error "Бэкап не найден" >&2; return 3; }
+    cat "$_path"
+}
+
 handle_backup_command() {
     _require_manager_mode || return 1
     case "${1:-}" in
         --encrypt|encrypt) backup_create_encrypted ;;
         restore-encrypted) backup_restore_encrypted "$2" ;;
         autoclean)         backup_autoclean "${2:-${BACKUP_RETENTION_DAYS:-30}}" ;;
+        cat)               backup_cat "${2:-}" ;;
         list)
             if [ "${2:-}" = "--json" ]; then
                 list_backups_json

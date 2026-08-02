@@ -256,5 +256,16 @@ function describeSystemField(
     return { label, text: `${value.slice(0, 12)}…`, hint: 'меняется при правке конфига' };
   }
 
+  // В режиме Manager движок работает в контейнере, и путь он сообщает свой,
+  // внутренний. На хосте файла по этому пути нет — без пояснения это сбивает
+  // с толку при попытке его открыть.
+  if (key === 'config_path' && value === '/etc/telemt.toml') {
+    return {
+      label,
+      text: String(value),
+      hint: 'путь внутри контейнера; на хосте — /opt/mtproxyl/mtproxy/config.toml',
+    };
+  }
+
   return { label, text: String(value), hint };
 }

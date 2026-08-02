@@ -346,7 +346,7 @@ offer_enable_target_metrics() {
     echo ""
     echo -en "  ${BOLD}Включить метрики в конфиге цели на 127.0.0.1:${_port}? [y/N]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Пропущено"; return 0; }
+    [[ "$_yn" =~ ^[yY] ]] || { log_info "Пропущено"; return 0; }
 
     backup_target_config "metrics" "true" || true
 
@@ -778,7 +778,7 @@ apply_target_tuning() {
         log_warn "Секция [${section}] отсутствует в ${_cfg}"
         echo -en "  ${BOLD}Создать секцию и применить? [Y/n]:${NC} "
         local _cr; read_line _cr
-        if [[ ! "$_cr" =~ ^[nN]$ ]]; then
+        if [[ ! "$_cr" =~ ^[nN] ]]; then
             printf '\n[%s]\n%s = %s\n' "$section" "$param" "$_tv_out" >> "$_cfg"
             log_success "Секция [${section}] создана"
         else
@@ -838,7 +838,7 @@ run_reanimator_tuning_wizard() {
 
     echo -en "  ${BOLD}Применить эти значения в конфиге цели? [Y/n]:${NC} "
     local _yn; read_line _yn
-    if [[ "$_yn" =~ ^[nN]$ ]]; then
+    if [[ "$_yn" =~ ^[nN] ]]; then
         log_info "Тюнинг пропущен. Позже: mtproxyl tune set <параметр> <значение>"
         return 0
     fi
@@ -997,7 +997,7 @@ offer_reapply_fixes() {
     log_warn "Правила фиксов наложены на порт ${_old} — их нужно переприменить"
     echo -en "  ${BOLD}Переприменить сейчас? [Y/n]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Переприменить позже: меню NFT/Zapret2"; return 0; }
+    [[ "$_yn" =~ ^[nN] ]] && { log_info "Переприменить позже: меню NFT/Zapret2"; return 0; }
 
     if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
         zapret2_update_config || log_warn "Не удалось обновить zapret2"
@@ -1066,7 +1066,7 @@ switch_to_manager_mode() {
     echo ""
     echo -en "  ${BOLD}Запустить установку сейчас? [Y/n]:${NC} "
     local _yn; read_line _yn
-    if [[ "$_yn" =~ ^[nN]$ ]]; then
+    if [[ "$_yn" =~ ^[nN] ]]; then
         log_info "Установку можно запустить позже: mtproxyl install"
         return 0
     fi
@@ -1447,7 +1447,7 @@ install_original_telemt() {
     echo ""
     echo -en "  ${BOLD}Запустить установщик telemt? [y/N]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 1; }
+    [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 1; }
 
     # Версию выбираем до запуска: установщик принимает её первым аргументом
     _telemt_pick_version
@@ -1554,7 +1554,7 @@ offer_install_original_telemt() {
     echo -e "  ${DIM}Можно поставить оригинальный telemt официальным установщиком проекта${NC}"
     echo -en "  ${BOLD}Установить telemt сейчас? [Y/n]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Позже: меню «Цель / режим» → «Установить telemt»"; return 1; }
+    [[ "$_yn" =~ ^[nN] ]] && { log_info "Позже: меню «Цель / режим» → «Установить telemt»"; return 1; }
     # Тюнинг предложит сам мастер установки реаниматора — здесь не дублируем
     install_original_telemt "false"
 }
@@ -1592,7 +1592,7 @@ run_reanimator_installer() {
         echo ""
         echo -en "  ${BOLD}Указать другой путь к конфигу? [y/N]:${NC} "
         local _override; read_line _override
-        if [[ "$_override" =~ ^[yY]$ ]]; then
+        if [[ "$_override" =~ ^[yY] ]]; then
             echo -en "  ${DIM}Путь:${NC} "
             local _p; read_line _p
             [ -n "$_p" ] && [ -f "$_p" ] && DETECTED_CONFIG_PATH="$_p"

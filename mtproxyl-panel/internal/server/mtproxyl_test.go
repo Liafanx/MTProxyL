@@ -117,7 +117,7 @@ func TestDownloadServesValidBackup(t *testing.T) {
 	cfg := config.MtproxylConfig{Enabled: true, InstallDir: dir}
 	mustWriteBackup(t, cfg.BackupDir(), "mtproxyl-20260101-101010.tar.gz", "payload")
 
-	mux := newMtproxylMux(t, cfg)
+	mux := newMtproxylMux(t, withBackupCatScript(t, cfg))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, authedRequest(t, http.MethodGet,
 		"/api/mtproxyl/backups/mtproxyl-20260101-101010.tar.gz/download", ""))
@@ -134,7 +134,8 @@ func TestDownloadServesValidBackup(t *testing.T) {
 }
 
 func TestDownloadMissingBackupIs404(t *testing.T) {
-	mux := newMtproxylMux(t, config.MtproxylConfig{Enabled: true, InstallDir: t.TempDir()})
+	mux := newMtproxylMux(t, withBackupCatScript(t,
+		config.MtproxylConfig{Enabled: true, InstallDir: t.TempDir()}))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, authedRequest(t, http.MethodGet,
 		"/api/mtproxyl/backups/mtproxyl-20991231-235959.tar.gz/download", ""))
@@ -190,6 +191,35 @@ func TestEscapedTraversalCannotEscapeBackupDir(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("got %d, want 400 (body: %s)", rec.Code, rec.Body.String())
 	}
+}
+
+// withBackupCatScript points the config at a stub that implements the one
+// command the download handler now uses.
+//
+// The handler no longer opens the archive itself: backups are written
+// root-owned with mode 600, so it reads them through MTProxyL's privileged
+// CLI. Tests have to go the same way, or they would prove nothing about the
+// path that actually runs.
+func withBackupCatScript(t *testing.T, cfg config.MtproxylConfig) config.MtproxylConfig {
+	t.Helper()
+	script := filepath.Join(t.TempDir(), "mtproxyl.sh")
+	body := `#!/bin/bash
+if [ "$1" = backup ] && [ "$2" = cat ]; then
+  case "$3" in
+    */*|*..*) exit 2 ;;
+  esac
+  [[ "$3" =~ ^mtproxyl-[0-9]{8}-[0-9]{6}\.tar\.gz$ ]] || exit 2
+  f="` + cfg.BackupDir() + `/$3"
+  [ -f "$f" ] || exit 3
+  exec cat "$f"
+fi
+exit 1
+`
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg.ScriptPath = script
+	return cfg
 }
 
 // mustWriteBackup creates a backup file with the given contents.

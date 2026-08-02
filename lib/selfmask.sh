@@ -248,14 +248,14 @@ _selfmask_collect_params() {
                 echo -en "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
                 local _dns_yn
                 read_line _dns_yn
-                [[ "$_dns_yn" =~ ^[yY]$ ]] || return 1
+                [[ "$_dns_yn" =~ ^[yY] ]] || return 1
             fi
         else
             log_warn "Не удалось определить A-запись домена"
             echo -en "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
             local _dns_yn
             read_line _dns_yn
-            [[ "$_dns_yn" =~ ^[yY]$ ]] || return 1
+            [[ "$_dns_yn" =~ ^[yY] ]] || return 1
         fi
     else
         log_info "Самоподписанный сертификат — проверка A-записи не требуется"
@@ -339,7 +339,7 @@ _selfmask_collect_params() {
     echo -en "  ${BOLD}Продолжить настройку? [Y/n]:${NC} "
     local _yn
     read_line _yn
-    [[ "$_yn" =~ ^[nN]$ ]] && return 1
+    [[ "$_yn" =~ ^[nN] ]] && return 1
 
     return 0
 }
@@ -508,7 +508,7 @@ _selfmask_free_ports() {
         echo -en "  ${BOLD}Временно остановить системный nginx? [y/N]:${NC} "
         local _yn
         read_line _yn
-        if [[ "$_yn" =~ ^[yY]$ ]]; then
+        if [[ "$_yn" =~ ^[yY] ]]; then
             SELFMASK_SYSTEM_NGINX_WAS_ACTIVE="true"
             systemctl stop nginx &>/dev/null || {
                 log_error "Не удалось остановить системный nginx"
@@ -877,7 +877,7 @@ _selfmask_apply_target_settings() {
 
     echo -en "  ${BOLD}Применить в ${DETECTED_CONFIG_PATH} и перезапустить цель? [Y/n]:${NC} "
     local _yn; read_line _yn
-    if [[ "$_yn" =~ ^[nN]$ ]]; then
+    if [[ "$_yn" =~ ^[nN] ]]; then
         log_info "Пропущено — примените параметры вручную и перезапустите цель"
         return 0
     fi
@@ -1069,7 +1069,7 @@ selfmask_setup() {
         echo -en "  ${BOLD}Переустановить / обновить настройку? [y/N]:${NC} "
         local _re
         read_line _re
-        [[ "$_re" =~ ^[yY]$ ]] || return 0
+        [[ "$_re" =~ ^[yY] ]] || return 0
     fi
 
     _selfmask_collect_params       || return 1
@@ -1113,7 +1113,7 @@ selfmask_disable() {
     echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
     local _yn
     read_line _yn
-    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
+    [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     systemctl disable --now "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
     rm -f "/etc/systemd/system/${SELFMASK_PQ_SERVICE}" 2>/dev/null || true
@@ -1167,7 +1167,7 @@ selfmask_remove_pq_nginx() {
     echo -en "  ${BOLD}Удалить PQ nginx? [y/N]:${NC} "
     local _yn
     read_line _yn
-    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
+    [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     # Сначала отключаем selfmask если активен
     if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then

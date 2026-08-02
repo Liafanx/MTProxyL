@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 
@@ -704,36 +703,31 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		if !guard(w) {
 			return
 		}
-		path, err := client.ResolveBackupPath(r.PathValue("name"))
+		name := r.PathValue("name")
+		// Читаем через привилегированную команду: архив лежит root:600, и
+		// прямое открытие файла из-под пользователя панели упиралось в
+		// permission denied — кнопка «скачать» отдавала только ошибку.
+		data, err := client.ReadBackup(r.Context(), name)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_backup_name",
-				"Недопустимое имя файла бэкапа")
-			return
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			if os.IsNotExist(err) {
+			if errors.Is(err, mtproxylctl.ErrInvalidBackupName) {
+				writeError(w, http.StatusBadRequest, "invalid_backup_name",
+					"Недопустимое имя файла бэкапа")
+				return
+			}
+			if errors.Is(err, mtproxylctl.ErrBackupNotFound) {
 				writeError(w, http.StatusNotFound, "not_found", "Бэкап не найден")
 				return
 			}
-			// Backups are chmod 600 and owned by root; an unprivileged panel
-			// cannot read them directly even though it can create them.
-			writeError(w, http.StatusForbidden, "read_failed",
-				"Нет доступа к файлу бэкапа: "+err.Error())
-			return
-		}
-		defer f.Close()
-
-		info, err := f.Stat()
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "stat_failed", err.Error())
+			writeCLIError(w, "read_failed", err)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/gzip")
-		w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 		w.Header().Set("Content-Disposition",
-			`attachment; filename="`+filepath.Base(path)+`"`)
-		http.ServeContent(w, r, filepath.Base(path), info.ModTime(), f)
+			`attachment; filename="`+filepath.Base(name)+`"`)
+		if _, err := w.Write(data); err != nil {
+			log.Printf("[mtproxyl] не удалось отдать бэкап %s: %s", name, err)
+		}
 	}))
 }

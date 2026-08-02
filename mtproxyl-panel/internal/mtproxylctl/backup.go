@@ -3,7 +3,9 @@ package mtproxylctl
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -25,10 +27,17 @@ type Backup struct {
 // outright instead of trying to enumerate what is dangerous.
 var backupNameRe = regexp.MustCompile(`^mtproxyl-\d{8}-\d{6}\.tar\.gz$`)
 
+// ErrInvalidBackupName marks a rejected archive name, so handlers can answer
+// 400 rather than reporting it as a CLI failure.
+var ErrInvalidBackupName = errors.New("invalid backup name")
+
+// ErrBackupNotFound lets handlers answer 404 for a missing archive.
+var ErrBackupNotFound = errors.New("backup not found")
+
 // ValidateBackupName reports whether name is a well-formed backup archive name.
 func ValidateBackupName(name string) error {
 	if !backupNameRe.MatchString(name) {
-		return fmt.Errorf("invalid backup name %q", name)
+		return fmt.Errorf("%w: %q", ErrInvalidBackupName, name)
 	}
 	return nil
 }
@@ -85,4 +94,30 @@ func (c *Client) ResolveBackupPath(name string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(c.cfg.BackupDir(), name), nil
+}
+
+// ReadBackup returns an archive's bytes.
+//
+// The panel creates backups through sudo but cannot read them back: they are
+// written root-owned with mode 600, so opening the file directly fails with
+// permission denied and the download button did nothing but show an error.
+// Reading goes through the same privileged CLI that wrote them.
+//
+// Output is returned raw — the archive is gzip, and running it through the
+// ANSI stripper other commands use would corrupt it.
+func (c *Client) ReadBackup(ctx context.Context, name string) ([]byte, error) {
+	if err := ValidateBackupName(name); err != nil {
+		return nil, err
+	}
+	out, err := c.run(ctx, "backup", "cat", name)
+	if err != nil {
+		// MTProxyL различает «нет такого файла» кодом 3, чтобы панель могла
+		// ответить 404, а не «шлюз не смог» на обычное отсутствие бэкапа.
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 3 {
+			return nil, fmt.Errorf("%w: %s", ErrBackupNotFound, name)
+		}
+		return nil, err
+	}
+	return []byte(out), nil
 }

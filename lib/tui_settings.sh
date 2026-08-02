@@ -148,7 +148,7 @@ tui_settings_menu() {
                         echo -en "  ${BOLD}Обновить mask backend на ${PROXY_DOMAIN}? [Y/n]:${NC} "
                         local _mask_yn=""
                         read_line _mask_yn
-                        if [[ ! "$_mask_yn" =~ ^[nN]$ ]]; then
+                        if [[ ! "$_mask_yn" =~ ^[nN] ]]; then
                             MASKING_HOST="$PROXY_DOMAIN"
                             save_settings
                             log_success "Mask backend обновлён: ${MASKING_HOST}:${MASKING_PORT:-443}"

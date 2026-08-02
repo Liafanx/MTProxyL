@@ -287,6 +287,9 @@ install_sudoers_dropin() {
   _tee=$(command_path tee)
   _systemctl=$(command_path systemctl)
   _journalctl=$(command_path journalctl)
+  # docker может отсутствовать (режим Reanimator без контейнера) — тогда
+  # правило просто не пишем, а не валим установку.
+  _docker=$(command -v docker 2>/dev/null || echo /usr/bin/docker)
   _visudo=$(command -v visudo 2>/dev/null || true)
 
   _panel_tmp="${BIN_DIR}/.${BINARY_NAME}.tmp"
@@ -315,6 +318,11 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_systemctl restart $_telemt_service
 $SYSTEM_USER ALL=(root) NOPASSWD: $_systemctl start $SERVICE_NAME
 $SYSTEM_USER ALL=(root) NOPASSWD: $_systemctl start $_telemt_service
 $SYSTEM_USER ALL=(root) NOPASSWD: $_journalctl -u $_telemt_service -n * --no-pager -o short-iso
+# Логи движка в режиме Manager лежат в контейнере Docker. Членство в группе
+# docker равносильно root на хосте, поэтому вместо него — ровно эти две
+# команды: чтение логов и проверка, что контейнер вообще есть.
+$SYSTEM_USER ALL=(root) NOPASSWD: $_docker logs *
+$SYSTEM_USER ALL=(root) NOPASSWD: $_docker ps --quiet --filter name=*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_journalctl -u $_telemt_service -n * --since * --no-pager -o short-iso
 $SYSTEM_USER ALL=(root) NOPASSWD: $_journalctl -u $_telemt_service -f --no-pager -o short-iso
 $SYSTEM_USER ALL=(root) NOPASSWD: $_journalctl -u $_telemt_service -f --since * --no-pager -o short-iso
@@ -378,6 +386,7 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask verify
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask disable
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup list --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script backup cat mtproxyl-[0-9]*.tar.gz
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script restore ${_install_dir}/backups/mtproxyl-[0-9]*.tar.gz
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script nft status --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script nft settable
@@ -850,15 +859,14 @@ self_signed_hosts = [\"$TLS_HOSTS\"]"
         ;;
     esac
 
-    # MTProxyL integration is optional and only offered when it is actually
-    # installed here, so a standalone panel install is not bothered by it.
+    # Панель делалась под MTProxyL: если он на месте, интеграция включается
+    # без вопросов — отказ от неё оставил бы половину разделов пустыми и ни
+    # разу не был осмысленным выбором. Отключить её при необходимости можно в
+    # конфиге: [mtproxyl] enabled = false.
     MTPROXYL_ENABLED="false"
     if [ -x "$MTPROXYL_SCRIPT" ]; then
-      say "Обнаружен MTProxyL: $MTPROXYL_SCRIPT"
-      _answer=$(prompt "Включить интеграцию с MTProxyL (режим, Selfmask, лимитер)? [y/N]" "y")
-      case "$_answer" in
-        [yY]*) MTPROXYL_ENABLED="true" ;;
-      esac
+      MTPROXYL_ENABLED="true"
+      say "Обнаружен MTProxyL — интеграция включена: $MTPROXYL_SCRIPT"
     fi
 
     say "Вычисление хеша пароля..."
@@ -1004,16 +1012,22 @@ do_uninstall() {
   fi
 
   printf '\n'
-  say "Удаление завершено"
-  say "Конфиг ($CONFIG_DIR) и данные ($DATA_DIR) сохранены"
-  say "Полное удаление вместе с пользователем '$SYSTEM_USER': $0 purge"
-  printf '\n'
+  # При purge эти строки печатать нельзя: конфиг и данные будут удалены
+  # следующим же шагом, и «сохранены» противоречит тому, что происходит
+  # дальше на экране.
+  if [ "${PURGING:-false}" != "true" ]; then
+    say "Удаление завершено"
+    say "Конфиг ($CONFIG_DIR) и данные ($DATA_DIR) сохранены"
+    say "Полное удаление вместе с пользователем '$SYSTEM_USER': $0 purge"
+    printf '\n'
+  fi
 }
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  PURGE
 # ═════════════════════════════════════════════════════════════════════════════
 do_purge() {
+  PURGING=true
   do_uninstall
 
   say "Удаление конфига и данных..."

@@ -92,9 +92,39 @@ func dockerSinceUnixArg(v string) string {
 	return strconv.FormatInt(time.Now().Add(-d).Unix(), 10)
 }
 
+// dockerCommand builds a `docker logs` invocation, optionally through sudo.
+//
+// The panel runs as an unprivileged user that is deliberately not in the
+// docker group — membership there is equivalent to root on the host. Without a
+// fallback the log viewer just reported "permission denied while trying to
+// connect to the Docker API", which is accurate and useless. The installer
+// grants exactly this one command through sudoers instead.
+func dockerCommand(ctx context.Context, args []string, useSudo bool) *exec.Cmd {
+	if useSudo {
+		return exec.CommandContext(ctx, "sudo", append([]string{"-n", "docker"}, args...)...)
+	}
+	return exec.CommandContext(ctx, "docker", args...)
+}
+
+// dockerPermissionDenied reports whether the failure is the socket permission
+// error, which is the only one retrying under sudo can fix.
+func dockerPermissionDenied(output string) bool {
+	return strings.Contains(output, "permission denied") &&
+		strings.Contains(output, "docker.sock")
+}
+
 func (s *dockerSource) tailViaCLI(ctx context.Context, n int, opts LogOptions) ([]string, error) {
-	cmd := exec.CommandContext(ctx, "docker", dockerLogArgs(s.containerName, false, n, opts)...)
-	out, err := cmd.CombinedOutput()
+	args := dockerLogArgs(s.containerName, false, n, opts)
+	out, err := dockerCommand(ctx, args, false).CombinedOutput()
+	if err != nil && dockerPermissionDenied(string(out)) {
+		sudoOut, sudoErr := dockerCommand(ctx, args, true).CombinedOutput()
+		if sudoErr != nil {
+			return nil, fmt.Errorf(
+				"docker logs: %s; через sudo тоже не удалось: %s",
+				strings.TrimSpace(string(out)), strings.TrimSpace(string(sudoOut)))
+		}
+		out, err = sudoOut, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("docker logs: %s", strings.TrimSpace(string(out)))
 	}
@@ -106,7 +136,16 @@ func (s *dockerSource) tailViaCLI(ctx context.Context, n int, opts LogOptions) (
 }
 
 func (s *dockerSource) streamViaCLI(ctx context.Context, opts LogOptions) (<-chan string, error) {
-	cmd := exec.CommandContext(ctx, "docker", dockerLogArgs(s.containerName, true, 0, opts)...)
+	args := dockerLogArgs(s.containerName, true, 0, opts)
+	// Права проверяем коротким пробным запуском: у потока ошибка пришла бы
+	// уже внутрь канала, и подменить команду было бы поздно.
+	useSudo := false
+	if probe, probeErr := dockerCommand(ctx, []string{"ps", "--quiet", "--filter",
+		"name=" + s.containerName}, false).CombinedOutput(); probeErr != nil &&
+		dockerPermissionDenied(string(probe)) {
+		useSudo = true
+	}
+	cmd := dockerCommand(ctx, args, useSudo)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("docker pipe: %w", err)

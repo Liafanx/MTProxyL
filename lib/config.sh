@@ -218,7 +218,7 @@ superexpert_enable() {
     echo ""
     echo -en "  ${BOLD}Включить режим супер эксперта? [y/N]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
+    [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     if [ ! -f "$SUPEREXPERT_FILE" ]; then
         # Копию делаем с действующего конфига; если его ещё нет — генерируем
@@ -240,6 +240,12 @@ superexpert_enable() {
     echo -e "  ${BOLD}Правьте файл:${NC} ${SUPEREXPERT_FILE}"
     echo -e "  ${DIM}Применить изменения: перезапуск прокси (меню «Управление прокси»)${NC}"
     echo ""
+    # Редактор запускаем только человеку за терминалом. Под обходом
+    # подтверждений (панель, скрипты) он бы стартовал без tty и висел до
+    # таймаута — а редактировать файл панель умеет сама.
+    if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ]; then
+        return 0
+    fi
     echo -en "  ${BOLD}Открыть файл в редакторе сейчас? [Y/n]:${NC} "
     local _e; read_line _e
     [[ "$_e" =~ ^[nN] ]] || superexpert_edit
@@ -262,7 +268,7 @@ superexpert_disable() {
     echo ""
     echo -en "  ${BOLD}Выключить режим супер эксперта? [y/N]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
+    [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     SUPEREXPERT_ENABLED="false"
     save_settings
@@ -279,6 +285,16 @@ superexpert_edit() {
 
     if [ ! -f "$SUPEREXPERT_FILE" ]; then
         log_error "Файл ${SUPEREXPERT_FILE} не найден — сначала включите режим"
+        return 1
+    fi
+
+    # Без терминала редактор запускать нельзя: он либо повиснет в ожидании
+    # ввода, либо испортит вывод управляющими последовательностями. Панель
+    # правит этот файл через 'superexpert write'.
+    if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ] || [ ! -t 0 ]; then
+        log_error "Редактор недоступен без терминала"
+        log_info "Из панели правьте файл в разделе «Супер эксперт»"
+        log_info "Из скрипта: mtproxyl superexpert write < файл.toml"
         return 1
     fi
 
@@ -324,7 +340,7 @@ superexpert_recreate() {
     echo -e "  ${DIM}Новый файл будет собран из настроек и секретов MTProxyL.${NC}"
     echo -en "  ${BOLD}Пересоздать? [y/N]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
+    [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     # Генерируем эталонный конфиг менеджера во временный файл: включённый
     # режим супер эксперта иначе просто скопировал бы сам себя.
@@ -614,7 +630,7 @@ expert_apply_now() {
 _expert_apply_prompt() {
     echo -en "  ${BOLD}Пересобрать конфиг и применить сейчас? [Y/n]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Позже: mtproxyl config или меню → Режим эксперта → Пересобрать"; return 0; }
+    [[ "$_yn" =~ ^[nN] ]] && { log_info "Позже: mtproxyl config или меню → Режим эксперта → Пересобрать"; return 0; }
     generate_telemt_config || { log_error "Ошибка генерации конфига"; return 1; }
     log_success "Конфиг обновлён"
     if is_proxy_running; then

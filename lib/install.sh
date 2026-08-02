@@ -116,7 +116,7 @@ run_installer() {
     fi
     echo -en "  ${BOLD}Оставить порт метрик ${PROXY_METRICS_PORT}? [Y/n]:${NC} "
     local metrics_keep; read_line metrics_keep
-    if [[ "$metrics_keep" =~ ^[nN]$ ]]; then
+    if [[ "$metrics_keep" =~ ^[nN] ]]; then
         while true; do
             echo -en "  ${BOLD}Введите порт метрик [${PROXY_METRICS_PORT}]:${NC} "
             local metrics_input; read_line metrics_input
@@ -152,7 +152,7 @@ run_installer() {
     fi
     echo -en "  ${BOLD}Оставить порт API ${PROXY_API_PORT}? [Y/n]:${NC} "
     local api_keep; read_line api_keep
-    if [[ "$api_keep" =~ ^[nN]$ ]]; then
+    if [[ "$api_keep" =~ ^[nN] ]]; then
         while true; do
             echo -en "  ${BOLD}Введите порт API [${PROXY_API_PORT}]:${NC} "
             local api_input; read_line api_input
@@ -318,7 +318,7 @@ run_fix_arsenal_wizard() {
     echo -en "  ${BOLD}Установить Zapret2 MTProto fix? [Y/n]:${NC} "
     local _yn_zapret2; read_line _yn_zapret2
     local _zapret2_installed="false"
-    if [[ ! "$_yn_zapret2" =~ ^[nN]$ ]]; then
+    if [[ ! "$_yn_zapret2" =~ ^[nN] ]]; then
         load_nft_settings 2>/dev/null || true
         zapret2_download_bundle
         if [ $? -eq 0 ]; then
@@ -442,7 +442,7 @@ run_fix_arsenal_wizard() {
     echo ""
     echo -en "  ${BOLD}Применить оптимизацию By-MEKO? [Y/n]:${NC} "
     local _meko_choice; read_line _meko_choice
-    if [[ ! "$_meko_choice" =~ ^[nN]$ ]]; then
+    if [[ ! "$_meko_choice" =~ ^[nN] ]]; then
         load_nft_settings 2>/dev/null || true
         meko_opt_apply || log_warn "Не удалось применить оптимизацию By-MEKO"
     fi
@@ -539,8 +539,8 @@ uninstall() {
         echo -e "  ${DIM}но разделы режима, Selfmask и лимитера в ней перестанут работать.${NC}"
         echo -en "  ${BOLD}Удалить панель тоже? [Y/n]:${NC} "
         local _panel_yn; read_line _panel_yn
-        if [[ ! "$_panel_yn" =~ ^[nN]$ ]]; then
-            panel_uninstall || log_warn "Не удалось удалить панель — проверьте вручную"
+        if [[ ! "$_panel_yn" =~ ^[nN] ]]; then
+            panel_uninstall --no-confirm || log_warn "Не удалось удалить панель — проверьте вручную"
         fi
         # Панель могла остаться и после «удалить»: у panel_uninstall своё
         # подтверждение, а установщик панели мог не скачаться. В любом случае,
@@ -558,7 +558,7 @@ uninstall() {
         echo -en "  ${BOLD}Удалить PQ nginx и отключить selfmask? [Y/n]:${NC} "
         local _sm_yn
         read_line _sm_yn
-        if [[ ! "$_sm_yn" =~ ^[nN]$ ]]; then
+        if [[ ! "$_sm_yn" =~ ^[nN] ]]; then
             log_info "Удаление selfmask и PQ nginx..."
             _selfmask_cleanup_for_uninstall 2>/dev/null || true
             log_success "Selfmask и PQ nginx удалены"
