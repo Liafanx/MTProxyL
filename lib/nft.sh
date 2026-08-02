@@ -642,6 +642,17 @@ enable_smart_mode() {
         echo ""
     fi
 
+    # Zapret2 и лимитер — взаимоисключающие способы защиты одного и того же
+    # трафика. zapret2_install уже снимает лимитер при установке; обратная
+    # сторона до сих пор отсутствовала, и включение Smart оставляло оба
+    # работающими одновременно.
+    local _zapret_was_running="false"
+    if zapret2_is_running; then
+        _zapret_was_running="true"
+        echo -e "  ${YELLOW}⚠ Zapret2 сейчас работает — Smart режим его заменяет.${NC}"
+        echo ""
+    fi
+
     echo -en "  ${BOLD}Включить Smart режим? [Y/n]:${NC} "
     local _yn; read_line _yn
     [[ "$_yn" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
@@ -653,9 +664,30 @@ enable_smart_mode() {
         log_info "iOS Fix v2 отключён (Smart режим его заменяет)"
     fi
 
+    if [ "$_zapret_was_running" = "true" ]; then
+        echo -en "  ${BOLD}Остановить Zapret2? [Y/n]:${NC} "
+        local _yn_z; read_line _yn_z
+        if [[ ! "$_yn_z" =~ ^[nN] ]]; then
+            zapret2_stop
+        else
+            _zapret_was_running="false"
+            log_warn "Zapret2 оставлен работать вместе с лимитером — они мешают друг другу"
+        fi
+    fi
+
     apply_nft_preset smart
     save_nft_settings
-    apply_nft_rules || { log_error "Не удалось применить правила"; return 1; }
+    if ! apply_nft_rules; then
+        log_error "Не удалось применить правила"
+        # Симметрично откату в zapret2_install: если Smart не поднялся,
+        # возвращаем то, что ради него остановили, а не оставляем сервер
+        # вообще без защиты.
+        if [ "$_zapret_was_running" = "true" ]; then
+            log_info "Возвращаю Zapret2..."
+            zapret2_start_existing || true
+        fi
+        return 1
+    fi
     install_nft_service || true
 
     echo ""
@@ -1248,6 +1280,18 @@ zapret2_queue_in_use() {
     local _q="${1:-200}"
     modprobe nfnetlink_queue 2>/dev/null || true
     awk -v q="$_q" '$1 == q { found=1 } END { exit found ? 0 : 1 }' /proc/net/netfilter/nfnetlink_queue 2>/dev/null
+}
+
+# Работает ли zapret2 прямо сейчас.
+#
+# Отличается от zapret2_has_residue, который отвечает «есть ли следы» и
+# срабатывает даже на пустой каталог от прошлой установки: для решения
+# «останавливать ли перед включением лимитера» нужен именно живой процесс.
+zapret2_is_running() {
+    systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null 2>&1 && return 0
+    nft list table ip "${ZAPRET2_NFT_TABLE}" &>/dev/null 2>&1 && return 0
+    pgrep -f "$ZAPRET2_BIN" >/dev/null 2>&1 && return 0
+    return 1
 }
 
 zapret2_has_residue() {
