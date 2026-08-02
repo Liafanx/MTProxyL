@@ -1,6 +1,6 @@
 import { Header } from '@/components/layout/Header';
-import { StatusBadge } from '@/components/StatusBadge';
 import { ErrorAlert } from '@/components/ErrorAlert';
+import { TelemetryField } from '@/components/TelemetryField';
 import { useWsSubscription, useEndpoint } from '@/hooks/useWebSocket';
 
 interface SecurityPostureData {
@@ -41,6 +41,25 @@ function flattenObject(obj: Record<string, unknown>, prefix = ''): Record<string
 
 const ENDPOINTS = ['/v1/security/posture', '/v1/security/whitelist', '/v1/limits/effective'];
 
+/**
+ * Порядок вывода состояния безопасности.
+ *
+ * Перечислен явно, а не через Object.entries: доступ к API идёт первым, потому
+ * что открытый наружу API опаснее любой строчки ниже, а порядок ключей в JSON
+ * движка меняться не обязан.
+ */
+const POSTURE_ORDER: (keyof SecurityPostureData)[] = [
+  'api_read_only',
+  'api_whitelist_enabled',
+  'api_whitelist_entries',
+  'api_auth_header_enabled',
+  'proxy_protocol_enabled',
+  'log_level',
+  'telemetry_core_enabled',
+  'telemetry_user_enabled',
+  'telemetry_me_level',
+];
+
 export function SecurityPage() {
   const { data: wsData, errors, connected, refresh } = useWsSubscription('security', ENDPOINTS, 10);
 
@@ -60,46 +79,29 @@ export function SecurityPage() {
 
         {posture && (
           <div className="bg-surface border border-border rounded-lg p-4">
-            <h3 className="text-sm font-medium text-text-secondary mb-4">Состояние безопасности</h3>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-              <div>
-                <div className="text-xs text-text-secondary mb-1">API Read-Only</div>
-                <StatusBadge status={posture.api_read_only} labelOn="Enabled" labelOff="Disabled" />
-              </div>
-              <div>
-                <div className="text-xs text-text-secondary mb-1">Белый список API</div>
-                <StatusBadge status={posture.api_whitelist_enabled} labelOn={`Enabled (${posture.api_whitelist_entries})`} labelOff="Disabled" />
-              </div>
-              <div>
-                <div className="text-xs text-text-secondary mb-1">Заголовок авторизации API</div>
-                <StatusBadge status={posture.api_auth_header_enabled} labelOn="Enabled" labelOff="Disabled" />
-              </div>
-              <div>
-                <div className="text-xs text-text-secondary mb-1">Proxy Protocol</div>
-                <StatusBadge status={posture.proxy_protocol_enabled} labelOn="Enabled" labelOff="Disabled" />
-              </div>
-              <div>
-                <div className="text-xs text-text-secondary mb-1">Уровень логирования</div>
-                <span className="text-sm text-text-primary font-medium">{posture.log_level}</span>
-              </div>
-              <div>
-                <div className="text-xs text-text-secondary mb-1">Телеметрия: ядро</div>
-                <StatusBadge status={posture.telemetry_core_enabled} labelOn="Enabled" labelOff="Disabled" />
-              </div>
-              <div>
-                <div className="text-xs text-text-secondary mb-1">Телеметрия: пользователи</div>
-                <StatusBadge status={posture.telemetry_user_enabled} labelOn="Enabled" labelOff="Disabled" />
-              </div>
-              <div>
-                <div className="text-xs text-text-secondary mb-1">Телеметрия: уровень ME</div>
-                <span className="text-sm text-text-primary font-medium">{posture.telemetry_me_level}</span>
-              </div>
+            <h3 className="text-sm font-medium text-text-secondary mb-1">Состояние безопасности</h3>
+            <p className="text-xs text-text-secondary/70 mb-4">
+              Как движок сейчас настроен относительно доступа к API и сбора телеметрии.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+              {POSTURE_ORDER.map((key) => (
+                <TelemetryField
+                  key={key}
+                  fieldKey={key}
+                  value={posture[key]}
+                  variant="row"
+                />
+              ))}
             </div>
           </div>
         )}
 
         <div>
-          <h3 className="text-sm font-medium text-text-secondary mb-3">Белый список</h3>
+          <h3 className="text-sm font-medium text-text-secondary mb-1">Белый список API</h3>
+          <p className="text-xs text-text-secondary/70 mb-3">
+            Адреса и подсети, которым движок отвечает на запросы к API. Пустой список при
+            включённой проверке означает, что не пройдёт никто.
+          </p>
           {whitelist && whitelist.entries.length > 0 ? (
             <div className="bg-surface border border-border rounded-lg p-4">
               <div className="flex flex-wrap gap-2">
@@ -112,28 +114,27 @@ export function SecurityPage() {
             </div>
           ) : (
             <div className="bg-surface border border-border rounded-lg p-6 text-center text-text-secondary text-sm">
-              No whitelist entries configured
+              Список пуст
             </div>
           )}
         </div>
 
         {limits && (
           <div className="bg-surface border border-border rounded-lg p-4">
-            <h3 className="text-sm font-medium text-text-secondary mb-3">Действующие лимиты</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              {Object.entries(flatLimits).map(([key, value]) => (
-                <div key={key} className="min-w-0 flex justify-between items-center gap-2 py-1.5 px-2 rounded hover:bg-surface-hover">
-                  <span className="text-xs text-text-secondary font-mono truncate">{key}</span>
-                  <span className="text-sm text-text-primary font-medium shrink-0">
-                    {typeof value === 'boolean' ? (
-                      <StatusBadge status={value} />
-                    ) : (
-                      String(value ?? '-')
-                    )}
-                  </span>
-                </div>
-              ))}
-            </div>
+            <h3 className="text-sm font-medium text-text-secondary mb-1">Действующие лимиты</h3>
+            <p className="text-xs text-text-secondary/70 mb-3">
+              То, что движок применяет прямо сейчас, с учётом персональных настроек
+              пользователей и правил по подсетям. Ноль означает «без ограничения».
+            </p>
+            {Object.keys(flatLimits).length === 0 ? (
+              <div className="text-sm text-text-secondary">Лимиты не заданы</div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+                {Object.entries(flatLimits).map(([key, value]) => (
+                  <TelemetryField key={key} fieldKey={key} value={value} variant="row" />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -140,6 +140,69 @@ const FIELDS: Record<string, FieldMeta> = {
 
   // ── Handshake ───────────────────────────────────────────────────────────
   handshake_error_codes: { label: 'Коды ошибок handshake' },
+
+  // ── Состояние безопасности ──────────────────────────────────────────────
+  api_read_only: {
+    label: 'API только на чтение',
+    hint: 'Через API нельзя менять настройки — только читать',
+  },
+  api_whitelist_enabled: {
+    label: 'Белый список API',
+    hint: 'API отвечает только адресам из списка; выключен — отвечает всем, кто дотянулся до порта',
+  },
+  api_whitelist_entries: { label: 'Записей в белом списке API' },
+  api_auth_header_enabled: {
+    label: 'Заголовок авторизации API',
+    hint: 'Запросы без нужного заголовка отклоняются',
+  },
+  proxy_protocol_enabled: {
+    label: 'PROXY protocol',
+    hint: 'Реальный IP клиента берётся из заголовка балансировщика, а не из соединения',
+  },
+  log_level: { label: 'Уровень логирования' },
+  telemetry_core_enabled: { label: 'Телеметрия: ядро' },
+  telemetry_user_enabled: {
+    label: 'Телеметрия: пользователи',
+    hint: 'Разбивка метрик по пользователям',
+  },
+  telemetry_me_level: { label: 'Телеметрия: уровень ME' },
+  entries_total: { label: 'Всего записей' },
+  generated_at_epoch_secs: { label: 'Собрано' },
+
+  // ── Лимиты ──────────────────────────────────────────────────────────────
+  up_bps: { label: 'Отдача', hint: 'Ограничение скорости от клиента, бит/с' },
+  down_bps: { label: 'Загрузка', hint: 'Ограничение скорости к клиенту, бит/с' },
+  user_rate_limits: { label: 'Лимиты скорости по пользователям' },
+  cidr_rate_limits: {
+    label: 'Лимиты скорости по подсетям',
+    hint: 'Применяются поверх пользовательских; точный CIDR важнее шаблона',
+  },
+  user_max_tcp_conns: { label: 'Лимит TCP-соединений на пользователя' },
+  user_max_tcp_conns_global_each: {
+    label: 'Лимит TCP-соединений по умолчанию',
+    hint: 'Для всех, у кого нет персонального значения; 0 — без лимита',
+  },
+  user_max_unique_ips: { label: 'Лимит уникальных IP на пользователя' },
+  user_max_unique_ips_global_each: {
+    label: 'Лимит уникальных IP по умолчанию',
+    hint: 'Для всех, у кого нет персонального значения; 0 — без лимита',
+  },
+  user_max_unique_ips_mode: {
+    label: 'Как считаются уникальные IP',
+    hint: 'active_window — по активным сейчас, time_window — за окно времени, combined — оба',
+  },
+  user_max_unique_ips_window_secs: { label: 'Окно подсчёта уникальных IP' },
+  user_data_quota: { label: 'Квота трафика на пользователя' },
+  user_expirations: { label: 'Сроки действия пользователей' },
+  replay_check_len: {
+    label: 'Размер защиты от повторов',
+    hint: 'Сколько недавних handshake движок помнит, чтобы отклонить повторный',
+  },
+  replay_window_secs: { label: 'Окно защиты от повторов' },
+  ignore_time_skew: {
+    label: 'Игнорировать расхождение часов',
+    hint: 'Включено — handshake принимается даже при разъехавшемся времени',
+  },
 };
 
 /**
@@ -169,7 +232,35 @@ function patternMeta(key: string): FieldMeta | null {
       return { label: `${inner.label}, всего`, hint: inner.hint };
     }
   }
+  // Действующие лимиты приходят вложенными таблицами, и раздел разворачивает
+  // их в точечные ключи. Осмысленное имя стоит то в конце пути
+  // ("user_rate_limits.alice.up_bps"), то в начале ("user_max_tcp_conns.alice"),
+  // а остальное — имя пользователя или подсеть, которые переводить нечем.
+  const known = semanticKey(key);
+  if (known !== key) {
+    const inner = FIELDS[known];
+    const context = key.startsWith(known + '.')
+      ? key.slice(known.length + 1)
+      : key.slice(0, key.length - known.length - 1);
+    return { label: `${context} · ${inner.label}`, hint: inner.hint };
+  }
   return null;
+}
+
+/**
+ * Сегмент точечного ключа, который несёт смысл.
+ *
+ * Нужен и подписи, и форматированию: "user_data_quota.bob" кончается на имя
+ * пользователя, поэтому проверка суффикса по полному ключу не сработала бы и
+ * квота осталась бы голым числом байт.
+ */
+function semanticKey(key: string): string {
+  if (!key.includes('.')) return key;
+  const tail = key.slice(key.lastIndexOf('.') + 1);
+  if (tail in FIELDS) return tail;
+  const head = key.slice(0, key.indexOf('.'));
+  if (head in FIELDS) return head;
+  return key;
 }
 
 const BUCKET_SUBJECTS: Record<string, string> = {
@@ -219,16 +310,44 @@ export function formatFieldValue(key: string, value: unknown): string {
   if (value === null || value === undefined || value === '') return '—';
   if (typeof value !== 'number') return String(value);
 
-  if (key === 'ts_epoch_secs' && value > 1_000_000_000) {
+  // По суффиксу смотрим осмысленный сегмент, а не весь путь: у ключа
+  // "user_data_quota.bob" на конце имя пользователя, а не единица измерения.
+  const k = semanticKey(key);
+
+  if (k === 'ts_epoch_secs' && value > 1_000_000_000) {
     return new Date(value * 1000).toLocaleString('ru-RU');
   }
-  if (SECONDS_SUFFIXES.some((s) => key.endsWith(s))) {
+  if (SECONDS_SUFFIXES.some((s) => k.endsWith(s))) {
     return humanSeconds(value);
   }
-  if (key.endsWith('_pct')) return `${value.toFixed(1)} %`;
-  if (key.endsWith('_ms')) return `${value.toFixed(value < 10 ? 1 : 0)} мс`;
+  if (k.endsWith('_pct')) return `${value.toFixed(1)} %`;
+  if (k.endsWith('_ms')) return `${value.toFixed(value < 10 ? 1 : 0)} мс`;
+  // Лимиты скорости движок отдаёт в битах в секунду. 0 у него означает «без
+  // ограничения», а не «запрещено», — иначе строка читается ровно наоборот.
+  if (k.endsWith('_bps')) return value === 0 ? 'без лимита' : humanBps(value);
+  if (k.endsWith('_quota') || k.endsWith('_bytes')) {
+    return value === 0 ? 'без лимита' : humanBytes(value);
+  }
   if (Number.isInteger(value)) return value.toLocaleString('ru-RU');
   return value.toFixed(2);
+}
+
+function humanBps(bps: number): string {
+  if (bps >= 1_000_000_000) return `${(bps / 1_000_000_000).toFixed(1)} Гбит/с`;
+  if (bps >= 1_000_000) return `${(bps / 1_000_000).toFixed(1)} Мбит/с`;
+  if (bps >= 1_000) return `${(bps / 1_000).toFixed(1)} кбит/с`;
+  return `${bps} бит/с`;
+}
+
+function humanBytes(bytes: number): string {
+  const units = ['Б', 'КиБ', 'МиБ', 'ГиБ', 'ТиБ'];
+  let v = bytes;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${i === 0 ? v : v.toFixed(1)} ${units[i]}`;
 }
 
 function humanSeconds(total: number): string {
