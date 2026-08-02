@@ -387,6 +387,11 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask disable
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup
 # Пользователи. В режиме Manager конфиг движка примонтирован в контейнер
 # только для чтения, telemt их записать не может — владелец здесь MTProxyL.
+# Настройки MTProxyL: порт, домен, маскировка. В конфиге движка их не
+# поменять — он примонтирован в контейнер только для чтения.
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script settings list --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script settings set [A-Z]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script settings set [A-Z]* *
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script secret list --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script secret add [A-Za-z0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script secret add [A-Za-z0-9]* [0-9a-fA-F]*

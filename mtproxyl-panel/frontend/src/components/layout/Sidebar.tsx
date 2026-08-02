@@ -22,6 +22,7 @@ const navItems = [
 // они требуют владения конфигом движка.
 const mtproxylNavItems = [
   { to: '/mode', icon: ToggleLeft, label: 'Режим работы', managerOnly: false },
+  { to: '/proxy-settings', icon: SlidersHorizontal, label: 'Настройки прокси', managerOnly: true },
   { to: '/selfmask', icon: Globe, label: 'Selfmask', managerOnly: false },
   { to: '/nft', icon: ShieldAlert, label: 'Лимитер и защита', managerOnly: false },
   { to: '/geoblock', icon: MapPin, label: 'Блокировка стран', managerOnly: false },

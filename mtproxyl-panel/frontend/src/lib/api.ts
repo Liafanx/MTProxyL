@@ -174,6 +174,28 @@ export const mtproxylApi = {
     `${MTPROXYL_BASE}/backups/${encodeURIComponent(name)}/download`,
 };
 
+// ── MTProxyL: собственные настройки прокси ──────────────────────────────────
+//
+// Порт, домен FakeTLS, маскировка и прочее живут в settings.conf MTProxyL, а
+// не в конфиге движка: в режиме Manager тот примонтирован в контейнер только
+// для чтения, и telemt изменить их не может.
+
+export interface MtproxylSetting {
+  key: string;
+  validator: string;
+  description: string;
+  value: string;
+}
+
+export const mtproxylSettingsApi = {
+  list: () => request<MtproxylSetting[]>(MTPROXYL_BASE, '/settings'),
+  set: (key: string, value: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/settings', {
+      method: 'POST',
+      body: JSON.stringify({ key, value }),
+    }),
+};
+
 // ── MTProxyL: пользователи (секреты) ────────────────────────────────────────
 //
 // В режиме Manager конфиг движка примонтирован в его контейнер только для

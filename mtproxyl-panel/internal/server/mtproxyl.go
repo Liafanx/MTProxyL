@@ -231,6 +231,47 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 
+	// ── Настройки MTProxyL ──────────────────────────────────────────────────
+	//
+	// Порт, домен FakeTLS, маскировка и прочее живут в settings.conf, а не в
+	// конфиге движка: в режиме Manager тот примонтирован в контейнер только для
+	// чтения, и telemt не может изменить ничего из этого сам.
+	mux.Handle("GET /api/mtproxyl/settings", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		list, err := client.Settings(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: list})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/settings", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		if err := mtproxylctl.ValidateSetting(req.Key, req.Value); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_param", "Недопустимый параметр или значение")
+			return
+		}
+		out, err := client.SetSetting(r.Context(), req.Key, req.Value)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
 	// ── Пользователи (секреты MTProxyL) ─────────────────────────────────────
 	//
 	// В режиме Manager конфиг движка примонтирован в контейнер только для

@@ -436,7 +436,7 @@ self_update() {
     if [ -z "$_lib_list" ]; then
         log_warn "Не удалось извлечь список библиотек из нового скрипта"
         log_info "Используем резервный список"
-        _lib_list="colors utils settings secrets config docker engine traffic geoblock upstream backup nft selfmask panel detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode install"
+        _lib_list="colors utils settings secrets config docker engine traffic geoblock upstream backup nft selfmask panel detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode settings_cli install"
     fi
 
     local _total=0 _ok=0 _failed=0 _skipped=0
@@ -679,7 +679,7 @@ show_cli_help() {
     echo ""
     echo -e "  ${BOLD}Прокси:${NC}         start | stop | restart | status [--json]"
     echo -e "  ${BOLD}Секреты:${NC}        secret add|remove|list|rotate|enable|disable|limits|link|qr|clone|rename"
-    echo -e "  ${BOLD}Настройки:${NC}      port | ip | domain | mask-backend | config"
+    echo -e "  ${BOLD}Настройки:${NC}      port | ip | domain | mask-backend | config | settings list|set"
     echo -e "  ${BOLD}Движок:${NC}         engine status|list|update|rollback|rebuild"
     echo -e "  ${BOLD}Эксперт:${NC}        expert list|set|clear|edit"
     echo -e "  ${BOLD}Супер эксперт:${NC}  superexpert status|on|off|edit|show|write"
