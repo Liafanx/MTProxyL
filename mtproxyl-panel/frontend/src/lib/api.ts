@@ -77,7 +77,16 @@ export interface MtproxylModeStatus {
   detected_mode: string;
   detected_config: string;
   port: number;
+  /** Состояние своего контейнера MTProxyL: running, exited, absent и т.п. */
+  own_container?: string;
+  /** Запущен ли движок текущего режима. */
+  running?: boolean;
 }
+
+/** Что сделать со своим контейнером при уходе из режима менеджера. */
+export type ContainerDisposition = 'remove' | 'stop' | 'keep';
+
+export type ProxyAction = 'start' | 'stop' | 'restart';
 
 export interface SelfmaskStatus {
   enabled: boolean;
@@ -146,11 +155,16 @@ export const mtproxylApi = {
   status: () => request<MtproxylAvailability>(MTPROXYL_BASE, '/status'),
 
   getMode: () => request<MtproxylModeStatus>(MTPROXYL_BASE, '/mode'),
-  switchMode: (mode: MtproxylMode) =>
+  // container обязателен при переходе в реаниматор: без него CLI выберет
+  // умолчание и удалит контейнер, а это решение пользователя.
+  switchMode: (mode: MtproxylMode, container?: ContainerDisposition) =>
     request<MtproxylOperation>(MTPROXYL_BASE, '/mode', {
       method: 'POST',
-      body: JSON.stringify({ mode }),
+      body: JSON.stringify({ mode, container }),
     }),
+
+  proxyAction: (action: ProxyAction) =>
+    request<MtproxylOperation>(MTPROXYL_BASE, `/proxy/${action}`, { method: 'POST' }),
 
   selfmask: () => request<SelfmaskStatus>(MTPROXYL_BASE, '/selfmask'),
   selfmaskParams: () => request<SelfmaskParam[]>(MTPROXYL_BASE, '/selfmask/params'),

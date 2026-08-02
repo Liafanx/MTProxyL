@@ -112,6 +112,10 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		}
 		var req struct {
 			Mode string `json:"mode"`
+			// Container says what to do with MTProxyL's own container when
+			// leaving manager mode. Required for reanimator: the CLI's own
+			// default deletes it, and that has to be the user's decision.
+			Container string `json:"container"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
@@ -123,6 +127,12 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 				"Режим должен быть manager или reanimator")
 			return
 		}
+		disposition := mtproxylctl.ContainerDisposition(req.Container)
+		if mode == mtproxylctl.ModeReanimator && !disposition.Valid() {
+			writeError(w, http.StatusBadRequest, "invalid_container_disposition",
+				"Укажите, что делать со своим контейнером: remove, stop или keep")
+			return
+		}
 		// Switching modes rewrites settings and may remove a container or start
 		// a full install, so it runs in the background.
 		started := runner.Start("mode:"+string(mode), func(ctx context.Context) (string, error) {
@@ -131,7 +141,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 			// mode for seconds after the switch landed.
 			defer invalidateModeCache()
 			invalidateModeCache()
-			return "", client.SwitchMode(ctx, mode)
+			return "", client.SwitchMode(ctx, mode, disposition)
 		})
 		if !started {
 			writeError(w, http.StatusConflict, "operation_busy",
@@ -598,6 +608,36 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 			return
 		}
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	// ── Proxy control ───────────────────────────────────────────────────────
+	//
+	// Работает в обоих режимах: CLI сам решает, что запускать — свой контейнер
+	// у менеджера или обнаруженную цель у реаниматора. Унаследованный от
+	// telemt_panel /api/telemt/restart делает systemctl restart telemt.service
+	// и в режиме менеджера бесполезен: движок там живёт в Docker.
+	mux.Handle("POST /api/mtproxyl/proxy/{action}", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		action := mtproxylctl.ProxyAction(r.PathValue("action"))
+		if !action.Valid() {
+			writeError(w, http.StatusBadRequest, "invalid_action",
+				"Действие должно быть start, stop или restart")
+			return
+		}
+		started := runner.Start("proxy:"+string(action), func(ctx context.Context) (string, error) {
+			// Состояние движка меняется — закэшированный ответ mode --json
+			// сообщал бы прежнее running ещё несколько секунд.
+			defer invalidateModeCache()
+			return client.ControlProxy(ctx, action)
+		})
+		if !started {
+			writeError(w, http.StatusConflict, "operation_busy",
+				"Другая операция MTProxyL уже выполняется")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
 	}))
 
 	// ── Traffic ─────────────────────────────────────────────────────────────

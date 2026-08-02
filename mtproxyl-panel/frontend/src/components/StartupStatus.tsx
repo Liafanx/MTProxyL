@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { RotateCw, Loader2 } from 'lucide-react';
 import { panelApi } from '@/lib/api';
+import { useMtproxyl } from '@/hooks/useMtproxyl';
 import { ConfirmDialog } from './ConfirmDialog';
 
 interface StartupStatusProps {
@@ -38,16 +39,27 @@ function translate(map: Record<string, string>, raw?: string): string {
 export function StartupStatus({ status, stage, progressPct }: StartupStatusProps) {
   const [restarting, setRestarting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { enabled: mtproxylEnabled } = useMtproxyl();
 
   const isReady = status === 'ready' && progressPct === 100;
+
+  // Эта кнопка делает systemctl restart telemt.service. При включённом мосте
+  // MTProxyL движок может жить в Docker, и тогда systemctl ни при чём — там
+  // перезапуском занимается блок «Управление прокси», который знает режим.
+  // Две кнопки перезапуска рядом, из которых одна не работает, хуже одной.
+  const showRestart = !mtproxylEnabled;
 
   const handleRestart = async () => {
     setShowConfirm(false);
     setRestarting(true);
+    setError(null);
     try {
       await panelApi.post('/telemt/restart');
     } catch (err) {
-      console.error('Не удалось перезапустить:', err);
+      // Раньше ошибка уходила только в консоль: пользователь жал кнопку и не
+      // получал ни перезапуска, ни объяснения.
+      setError(err instanceof Error ? err.message : 'Не удалось перезапустить сервис');
     } finally {
       setTimeout(() => setRestarting(false), 5000);
     }
@@ -58,24 +70,28 @@ export function StartupStatus({ status, stage, progressPct }: StartupStatusProps
       <div className="bg-surface border border-border rounded-lg p-4">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-medium text-text-primary">Состояние сервиса</h3>
-          <Button
-            variant="outline"
-            onClick={() => setShowConfirm(true)}
-            disabled={restarting}
-          >
-            {restarting ? (
-              <>
-                <Loader2 size={14} className="animate-spin mr-1.5" />
-                Перезапуск…
-              </>
-            ) : (
-              <>
-                <RotateCw size={14} className="mr-1.5" />
-                Перезапустить
-              </>
-            )}
-          </Button>
+          {showRestart && (
+            <Button
+              variant="outline"
+              onClick={() => setShowConfirm(true)}
+              disabled={restarting}
+            >
+              {restarting ? (
+                <>
+                  <Loader2 size={14} className="animate-spin mr-1.5" />
+                  Перезапуск…
+                </>
+              ) : (
+                <>
+                  <RotateCw size={14} className="mr-1.5" />
+                  Перезапустить
+                </>
+              )}
+            </Button>
+          )}
         </div>
+
+        {error && <div className="mb-3 text-sm text-danger">{error}</div>}
 
         {!isReady && (
           <div className="space-y-2">

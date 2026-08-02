@@ -5,6 +5,7 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { StartupStatus } from '@/components/StartupStatus';
+import { ProxyControls } from '@/components/ProxyControls';
 import { ConnectionErrors, type ClassCount } from '@/components/ConnectionErrors';
 import { useWsSubscription, useEndpoint } from '@/hooks/useWebSocket';
 import { usePolling } from '@/hooks/usePolling';
@@ -116,6 +117,10 @@ export function DashboardPage() {
             progressPct={gates.startup_progress_pct}
           />
         )}
+
+        {/* Запуск/перезапуск/остановка движка — только при включённом мосте
+            MTProxyL: он знает, контейнер это или чужая цель. */}
+        <ProxyControls />
 
         {/* Metric Cards */}
         {summary && (
