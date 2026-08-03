@@ -143,6 +143,9 @@ cli_main() {
 
         secret)
             load_settings; load_secrets
+            # В реаниматоре пользователи живут в конфиге цели, а путь к нему
+            # знает только обнаружение.
+            [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && load_detect_settings
             handle_secret_command "$@"
             ;;
 
