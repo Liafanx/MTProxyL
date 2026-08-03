@@ -950,6 +950,94 @@ edit_target_config() {
     fi
 }
 
+# ── Конфиг цели для панели ─────────────────────────────────────
+# Панель работает под непривилегированным пользователем, а конфиг цели
+# принадлежит ей самой (у systemd-цели это telemt:telemt, каталог 750) —
+# прочитать и тем более записать его напрямую панель не может. Здесь тот же
+# путь, что у superexpert show/write для своего конфига: читаем и пишем от
+# root через CLI, содержимое передаётся по stdin.
+show_target_config() {
+    if [ -z "${DETECTED_CONFIG_PATH:-}" ] || [ ! -f "$DETECTED_CONFIG_PATH" ]; then
+        log_error "Конфиг цели не найден — выполните 'mtproxyl detect'"
+        return 1
+    fi
+    cat "$DETECTED_CONFIG_PATH"
+}
+
+write_target_config() {
+    local _restart="${1:-false}"
+
+    if [ -z "${DETECTED_CONFIG_PATH:-}" ] || [ ! -f "$DETECTED_CONFIG_PATH" ]; then
+        log_error "Конфиг цели не найден — выполните 'mtproxyl detect'"
+        return 1
+    fi
+
+    local _new; _new=$(cat)
+    if [ -z "${_new//[[:space:]]/}" ]; then
+        log_error "Пустой конфиг — запись отменена"
+        return 1
+    fi
+
+    local _tmp; _tmp=$(_mktemp "$(dirname "$DETECTED_CONFIG_PATH")") || {
+        log_error "Не удалось создать временный файл рядом с конфигом цели"
+        return 1
+    }
+    printf '%s' "$_new" > "$_tmp"
+    # Перенос строки в конце: движок читает файл построчно, а редактор в
+    # браузере последнюю пустую строку не сохраняет.
+    [ "${_new: -1}" = $'\n' ] || printf '\n' >> "$_tmp"
+
+    if ! _looks_like_telemt_config "$_tmp"; then
+        log_error "Текст не похож на конфиг telemt — запись отменена"
+        rm -f "$_tmp"
+        return 1
+    fi
+
+    backup_target_config "panel" "true" || true
+
+    # Владельца и права держим от исходного файла: движок читает конфиг под
+    # своим пользователем, и запись от root сменила бы их на root:root.
+    chown --reference="$DETECTED_CONFIG_PATH" "$_tmp" 2>/dev/null || true
+    chmod --reference="$DETECTED_CONFIG_PATH" "$_tmp" 2>/dev/null || true
+
+    if ! mv -f "$_tmp" "$DETECTED_CONFIG_PATH"; then
+        log_error "Не удалось записать конфиг цели"
+        rm -f "$_tmp"
+        return 1
+    fi
+    log_success "Конфиг цели записан: ${DETECTED_CONFIG_PATH}"
+    [ -n "${TARGET_CONFIG_BACKUP:-}" ] && log_info "Резервная копия: ${TARGET_CONFIG_BACKUP}"
+
+    if [ "$_restart" = "true" ]; then
+        restart_target
+        sleep 1
+        if is_proxy_running; then
+            log_success "Цель перезапущена"
+        else
+            log_error "Цель не поднялась после перезапуска — проверьте правки и логи"
+            return 1
+        fi
+    fi
+    return 0
+}
+
+handle_target_config_command() {
+    case "${1:-}" in
+        show)  show_target_config ;;
+        write)
+            case "${2:-}" in
+                --restart) write_target_config "true" ;;
+                "")        write_target_config "false" ;;
+                *)         log_error "Использование: mtproxyl target-config write [--restart]"; return 1 ;;
+            esac
+            ;;
+        *)
+            log_error "Использование: mtproxyl target-config show|write [--restart]"
+            return 1
+            ;;
+    esac
+}
+
 # ── Переключение режима работы ─────────────────────────────────
 # В reanimator-режиме порт цели — источник истины: на него навешиваются
 # zapret2/NFT-правила. Если PROXY_PORT остался от менеджера, фиксы уйдут

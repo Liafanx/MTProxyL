@@ -52,16 +52,6 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		return false
 	}
 
-	// writeCLIError maps a bridge failure onto an HTTP response.
-	writeCLIError := func(w http.ResponseWriter, code string, err error) {
-		if errors.Is(err, mtproxylctl.ErrDisabled) {
-			writeError(w, http.StatusServiceUnavailable, "mtproxyl_disabled",
-				"Интеграция с MTProxyL отключена в конфигурации панели")
-			return
-		}
-		writeError(w, http.StatusBadGateway, code, err.Error())
-	}
-
 	// ── Availability ────────────────────────────────────────────────────────
 	// The mode travels with this probe because several MTProxyL features are
 	// manager-only (backups, outbound routes): the UI hides them in reanimator

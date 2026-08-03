@@ -477,10 +477,20 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 				return
 			}
 		}
-		content, hash, err := telemt_config.ReadConfig(configPath)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "read_config_failed", err.Error())
-			return
+		var content, hash string
+		if target.Reanimator {
+			raw, err := mtproxylForConfig.TargetConfigShow(r.Context())
+			if err != nil {
+				writeCLIError(w, "read_config_failed", err)
+				return
+			}
+			content, hash = raw, telemt_config.Hash(raw)
+		} else {
+			var err error
+			if content, hash, err = telemt_config.ReadConfig(configPath); err != nil {
+				writeError(w, http.StatusInternalServerError, "read_config_failed", err.Error())
+				return
+			}
 		}
 		data := map[string]string{
 			"content": content,
@@ -488,7 +498,7 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 			"hash":    hash,
 			"mode":    "file",
 		}
-		if target.ForcedByMode {
+		if target.Reanimator {
 			// Панель показывает это как причину, почему баннер про заводские
 			// значения не появился и правится именно файл.
 			data["mode_reason"] = "reanimator"
@@ -564,6 +574,20 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 		}
 
 		// file mode
+		if target.Reanimator {
+			// Перезапуск тоже за MTProxyL: цель может быть контейнером или
+			// юнитом, а панель настроена на имя службы своего движка.
+			if _, err := mtproxylForConfig.TargetConfigWrite(r.Context(), req.Content, req.Restart); err != nil {
+				writeCLIError(w, "save_failed", err)
+				return
+			}
+			writeJSON(w, http.StatusOK, jsonResponse{
+				OK:   true,
+				Data: map[string]interface{}{"success": true, "new_hash": telemt_config.Hash(req.Content)},
+			})
+			return
+		}
+
 		configPath := target.Path
 		if configPath == "" {
 			var ok bool

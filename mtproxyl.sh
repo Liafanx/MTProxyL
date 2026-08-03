@@ -302,6 +302,15 @@ cli_main() {
             fi
             ;;
 
+        target-config)
+            check_root; load_settings; load_detect_settings
+            if [ "${MTPROXYL_MODE:-manager}" != "reanimator" ]; then
+                log_error "Доступно только в режиме reanimator (свой конфиг: mtproxyl superexpert)"
+                exit 1
+            fi
+            handle_target_config_command "$@"
+            ;;
+
         geoblock)
             load_settings
             handle_geoblock_command "$@"

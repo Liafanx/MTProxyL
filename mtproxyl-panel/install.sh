@@ -449,6 +449,12 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script superexpert show
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script superexpert write
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script superexpert on
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script superexpert off
+# Конфиг цели реаниматора. Он принадлежит самой цели (у systemd-установки это
+# telemt:telemt в каталоге 750), поэтому непривилегированная панель читает и
+# пишет его только через MTProxyL.
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script target-config show
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script target-config write
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script target-config write --restart
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script pq-check
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script pq-check [A-Za-z0-9]*
 EOF

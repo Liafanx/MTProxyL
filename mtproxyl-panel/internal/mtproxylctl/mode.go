@@ -121,6 +121,37 @@ func (c *Client) SwitchMode(ctx context.Context, m Mode, disposition ContainerDi
 	return err
 }
 
+// TargetConfigShow returns the reanimator target's config file verbatim.
+//
+// The panel runs unprivileged and the target's config belongs to the target —
+// for a systemd install that is telemt:telemt in a 750 directory, which the
+// panel cannot even open. MTProxyL reads it as root, the same way superexpert
+// show serves the manager's own config.
+//
+// The output is returned unchanged: stripping ANSI here would corrupt a config
+// that legitimately contains such sequences.
+func (c *Client) TargetConfigShow(ctx context.Context) (string, error) {
+	return c.run(ctx, "target-config", "show")
+}
+
+// TargetConfigWrite replaces the reanimator target's config file.
+//
+// The content goes over stdin rather than as an argument: it is multi-line TOML
+// with quotes, which would be both awkward and risky to pass on a command line.
+// MTProxyL backs the old file up and keeps its owner and mode, so the target can
+// still read what it is given.
+func (c *Client) TargetConfigWrite(ctx context.Context, content string, restart bool) (string, error) {
+	if strings.TrimSpace(content) == "" {
+		return "", fmt.Errorf("config must not be empty")
+	}
+	args := []string{"target-config", "write"}
+	if restart {
+		args = append(args, "--restart")
+	}
+	out, err := c.runWithStdin(ctx, content, args...)
+	return stripANSI(out), err
+}
+
 // ProxyAction controls the engine of whichever mode is active: MTProxyL's own
 // container in manager mode, the detected target in reanimator mode.
 type ProxyAction string

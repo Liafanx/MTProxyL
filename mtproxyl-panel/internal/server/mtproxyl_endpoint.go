@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"strconv"
 	"sync"
@@ -122,6 +124,16 @@ func invalidateModeCache() {
 	modeCache.mu.Unlock()
 }
 
+// writeCLIError maps a bridge failure onto an HTTP response.
+func writeCLIError(w http.ResponseWriter, code string, err error) {
+	if errors.Is(err, mtproxylctl.ErrDisabled) {
+		writeError(w, http.StatusServiceUnavailable, "mtproxyl_disabled",
+			"Интеграция с MTProxyL отключена в конфигурации панели")
+		return
+	}
+	writeError(w, http.StatusBadGateway, code, err.Error())
+}
+
 // ConfigEditTarget says how the panel should edit the engine's configuration
 // and which file that is.
 type ConfigEditTarget struct {
@@ -132,6 +144,11 @@ type ConfigEditTarget struct {
 	// ForcedByMode is set when reanimator mode overrode the configured value,
 	// so the UI can explain why it is not editing through the API.
 	ForcedByMode bool
+	// Reanimator marks the file as the foreign target's. It belongs to that
+	// target, not to the panel, so it is read and written through MTProxyL
+	// rather than directly: the panel runs unprivileged and a systemd target
+	// keeps its config where only its own user may look.
+	Reanimator bool
 }
 
 // resolveConfigEditTarget picks between editing the engine's config file and
@@ -172,5 +189,6 @@ func resolveConfigEditTarget(ctx context.Context, cfg config.TelemtConfig, c *mt
 		Mode:         "file",
 		Path:         path,
 		ForcedByMode: cfg.EffectiveConfigEditMode() != "file",
+		Reanimator:   true,
 	}
 }
