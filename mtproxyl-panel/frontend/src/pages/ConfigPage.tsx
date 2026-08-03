@@ -13,6 +13,8 @@ interface ConfigData {
   path: string;
   hash: string;
   mode: 'api' | 'file';
+  /** "reanimator" — файловый режим навязан текущим режимом MTProxyL. */
+  mode_reason?: string;
 }
 
 export function ConfigPage() {
@@ -26,6 +28,7 @@ export function ConfigPage() {
   const [configPath, setConfigPath] = useState('');
   const [hasChanges, setHasChanges] = useState(false);
   const [mode, setMode] = useState<'api' | 'file'>('api');
+  const [modeReason, setModeReason] = useState<string | undefined>();
   const [configHash, setConfigHash] = useState('');
 
   // В режиме manager конфигом движка владеет MTProxyL: он пересобирает
@@ -59,6 +62,7 @@ export function ConfigPage() {
       setCurrentContent(data.content);
       setConfigPath(data.path);
       setMode(data.mode ?? 'file');
+      setModeReason(data.mode_reason);
       setConfigHash(data.hash ?? '');
       setHasChanges(false);
     } catch (err: any) {
@@ -172,6 +176,16 @@ export function ConfigPage() {
               </Link>
               .
             </p>
+          </div>
+        </div>
+      )}
+      {mode === 'file' && modeReason === 'reanimator' && (
+        <div className="px-4 py-3 bg-surface border-b border-border text-sm flex items-start gap-2">
+          <Info className="w-4 h-4 shrink-0 mt-0.5 text-text-secondary" />
+          <div className="text-text-secondary">
+            Режим реаниматора: правится файл цели как есть. В конфиг попадёт только то, что
+            вы здесь напишете — заводские значения движка не подставляются и от обновлений
+            telemt не отвязываются.
           </div>
         </div>
       )}

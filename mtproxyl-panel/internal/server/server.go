@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"github.com/Liafanx/mtproxyl-panel/internal/config"
 	"github.com/Liafanx/mtproxyl-panel/internal/geoip"
 	"github.com/Liafanx/mtproxyl-panel/internal/logs"
+	"github.com/Liafanx/mtproxyl-panel/internal/mtproxylctl"
 	"github.com/Liafanx/mtproxyl-panel/internal/panel_updater"
 	"github.com/Liafanx/mtproxyl-panel/internal/proxy"
 	"github.com/Liafanx/mtproxyl-panel/internal/spa"
@@ -422,6 +424,11 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"status": "restarting"}})
 	})))
 
+	// Один клиент MTProxyL на маршруты конфига: по нему определяется, не
+	// обслуживаем ли мы сейчас чужую цель, конфиг которой править через API
+	// нельзя.
+	mtproxylForConfig := mtproxylctl.New(s.cfg.Mtproxyl)
+
 	// Helper: resolve Telemt config path from panel config or Telemt API
 	getTelemtConfigPath := func(w http.ResponseWriter) (string, bool) {
 		if s.cfg.Telemt.ConfigPath != "" {
@@ -437,9 +444,9 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 
 	// Telemt config endpoints
 	mux.Handle("GET /api/telemt/config/raw", auth.RequireAuth(jwtSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mode := s.cfg.Telemt.EffectiveConfigEditMode()
+		target := resolveConfigEditTarget(r.Context(), s.cfg.Telemt, mtproxylForConfig)
 
-		if mode == "api" {
+		if target.Mode == "api" {
 			sections, revision, err := telemtProxy.GetManagedConfig()
 			if err != nil {
 				writeError(w, http.StatusBadGateway, "telemt_api_error", err.Error())
@@ -463,24 +470,30 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 		}
 
 		// file mode
-		configPath, ok := getTelemtConfigPath(w)
-		if !ok {
-			return
+		configPath := target.Path
+		if configPath == "" {
+			var ok bool
+			if configPath, ok = getTelemtConfigPath(w); !ok {
+				return
+			}
 		}
 		content, hash, err := telemt_config.ReadConfig(configPath)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "read_config_failed", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, jsonResponse{
-			OK: true,
-			Data: map[string]string{
-				"content": content,
-				"path":    configPath,
-				"hash":    hash,
-				"mode":    "file",
-			},
-		})
+		data := map[string]string{
+			"content": content,
+			"path":    configPath,
+			"hash":    hash,
+			"mode":    "file",
+		}
+		if target.ForcedByMode {
+			// Панель показывает это как причину, почему баннер про заводские
+			// значения не появился и правится именно файл.
+			data["mode_reason"] = "reanimator"
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: data})
 	})))
 
 	mux.Handle("POST /api/telemt/config/save", auth.RequireAuth(jwtSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -494,9 +507,9 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 			return
 		}
 
-		mode := s.cfg.Telemt.EffectiveConfigEditMode()
+		target := resolveConfigEditTarget(r.Context(), s.cfg.Telemt, mtproxylForConfig)
 
-		if mode == "api" {
+		if target.Mode == "api" {
 			sections, err := telemt_config.TOMLToSections(req.Content)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, "invalid_toml", err.Error())
@@ -551,9 +564,12 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 		}
 
 		// file mode
-		configPath, ok := getTelemtConfigPath(w)
-		if !ok {
-			return
+		configPath := target.Path
+		if configPath == "" {
+			var ok bool
+			if configPath, ok = getTelemtConfigPath(w); !ok {
+				return
+			}
 		}
 		backupDir := filepath.Join(os.TempDir(), "mtproxyl-panel-config-backups")
 		if s.cfg.DataDir != "" {
@@ -623,27 +639,42 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 	})))
 
 	// Logs
-	logStatus := logs.CheckStatus(s.cfg.Telemt.ServiceName, s.cfg.Telemt.ContainerName)
-	var logsWsHandler http.Handler
-	if logStatus.Available {
-		logSource, err := logs.DetectSource(s.cfg.Telemt.ServiceName, s.cfg.Telemt.ContainerName)
-		if err != nil {
-			log.Printf("WARN: log source init failed: %v", err)
-		} else {
-			logsWsHandler = logs.NewWsHandler(logSource, 2)
-			log.Printf("Log source: %s (%s)", logSource.Name(), logStatus.Target)
+	//
+	// Источник определяется на каждое подключение, а не один раз при старте:
+	// какой движок логировать, зависит от текущего режима MTProxyL, а он
+	// меняется на ходу. Раньше панель до перезапуска держала контейнер,
+	// записанный при установке, и после ухода в реаниматор читала логи
+	// несуществующего контейнера.
+	logTarget := func() (service, container string) {
+		service, container = s.cfg.Telemt.ServiceName, s.cfg.Telemt.ContainerName
+		if !mtproxylForConfig.Enabled() {
+			return
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		st, err := cachedMode(ctx, mtproxylForConfig)
+		if err != nil || st == nil || st.LogTarget == "" {
+			return
+		}
+		switch st.LogKind {
+		case "docker":
+			return "", st.LogTarget
+		case "service":
+			return st.LogTarget, ""
+		}
+		return
 	}
 
-	// Log status endpoint — always registered (frontend needs it to show unavailable state)
 	mux.Handle("GET /api/logs/status", auth.RequireAuth(jwtSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: logStatus})
+		service, container := logTarget()
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: logs.CheckStatus(service, container)})
 	})))
 
-	// Log WebSocket — only if source is available
-	if logsWsHandler != nil {
-		mux.Handle("/api/ws/logs", auth.RequireAuth(jwtSecret, logsWsHandler))
-	}
+	logsWsHandler := logs.NewDynamicWsHandler(func() (logs.LogSource, error) {
+		service, container := logTarget()
+		return logs.DetectSource(service, container)
+	}, 2)
+	mux.Handle("/api/ws/logs", auth.RequireAuth(jwtSecret, logsWsHandler))
 
 	// Telemt connectivity check (diagnostic endpoint)
 	mux.Handle("GET /api/telemt/connectivity", auth.RequireAuth(jwtSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

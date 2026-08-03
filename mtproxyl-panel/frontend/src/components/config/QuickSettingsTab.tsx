@@ -33,8 +33,12 @@ interface FormValues {
 
   // Timeouts
   'timeouts.client_handshake'?: number;
-  'timeouts.tg_connect'?: number;
   'timeouts.client_ack'?: number;
+  // Таймаут подключения к Telegram движок держит в [general], а не в
+  // [timeouts]: раньше поле читалось и писалось в несуществующий
+  // timeouts.tg_connect — на экране всегда пусто, а заданное значение уходило
+  // в чужую секцию, где движок его не ищет.
+  'general.tg_connect'?: number;
 }
 
 // Convert inline empty tables like `key = {}` to proper TOML sections like `[parent.key]`
@@ -95,6 +99,7 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
         if (parsed.general.ad_tag) values['general.ad_tag'] = parsed.general.ad_tag;
         if (parsed.general.middle_proxy_nat_ip) values['general.middle_proxy_nat_ip'] = parsed.general.middle_proxy_nat_ip;
         if (parsed.general.middle_proxy_nat_probe !== undefined) values['general.middle_proxy_nat_probe'] = parsed.general.middle_proxy_nat_probe;
+        if (parsed.general.tg_connect !== undefined) values['general.tg_connect'] = parsed.general.tg_connect;
       }
 
       if (parsed.censorship) {
@@ -112,7 +117,6 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
 
       if (parsed.timeouts) {
         if (parsed.timeouts.client_handshake !== undefined) values['timeouts.client_handshake'] = parsed.timeouts.client_handshake;
-        if (parsed.timeouts.tg_connect !== undefined) values['timeouts.tg_connect'] = parsed.timeouts.tg_connect;
         if (parsed.timeouts.client_ack !== undefined) values['timeouts.client_ack'] = parsed.timeouts.client_ack;
       }
 
@@ -159,9 +163,10 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
       const allKeys: (keyof FormValues)[] = [
         'server.port', 'server.listen_addr_ipv4', 'server.listen_addr_ipv6',
         'general.use_middle_proxy', 'general.ad_tag', 'general.middle_proxy_nat_ip', 'general.middle_proxy_nat_probe',
+        'general.tg_connect',
         'censorship.tls_domain', 'censorship.mask', 'censorship.mask_host', 'censorship.tls_emulation',
         'network.ipv4', 'network.ipv6', 'network.prefer',
-        'timeouts.client_handshake', 'timeouts.tg_connect', 'timeouts.client_ack',
+        'timeouts.client_handshake', 'timeouts.client_ack',
       ];
 
       allKeys.forEach((key) => {
@@ -393,8 +398,8 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
         <Field label="Подключение к Telegram" description="Максимальное время установки TCP-соединения с Telegram">
           <input
             type="number"
-            value={formValues['timeouts.tg_connect'] ?? ''}
-            onChange={(e) => handleFieldChange('timeouts.tg_connect', e.target.value ? parseInt(e.target.value) : undefined)}
+            value={formValues['general.tg_connect'] ?? ''}
+            onChange={(e) => handleFieldChange('general.tg_connect', e.target.value ? parseInt(e.target.value) : undefined)}
             placeholder="10"
             className="input"
           />

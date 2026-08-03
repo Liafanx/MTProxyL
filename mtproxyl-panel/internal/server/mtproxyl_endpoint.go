@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Liafanx/mtproxyl-panel/internal/config"
 	"github.com/Liafanx/mtproxyl-panel/internal/mtproxylctl"
 )
 
@@ -119,4 +120,57 @@ func invalidateModeCache() {
 	modeCache.at = time.Time{}
 	modeCache.val, modeCache.err = nil, nil
 	modeCache.mu.Unlock()
+}
+
+// ConfigEditTarget says how the panel should edit the engine's configuration
+// and which file that is.
+type ConfigEditTarget struct {
+	// Mode is "api" or "file".
+	Mode string
+	// Path is the file to edit in file mode; empty in api mode.
+	Path string
+	// ForcedByMode is set when reanimator mode overrode the configured value,
+	// so the UI can explain why it is not editing through the API.
+	ForcedByMode bool
+}
+
+// resolveConfigEditTarget picks between editing the engine's config file and
+// patching it through the engine's API.
+//
+// In reanimator mode the file always wins, whatever config_edit_mode says. The
+// API reports the engine's *effective* configuration — every factory default
+// included — so a save writes hundreds of values the operator never typed and
+// freezes them at today's defaults. That is precisely what MTProxyL must not do
+// to a config it does not own: in reanimator mode it edits the target's file
+// and touches nothing else.
+//
+// The path also comes from MTProxyL there: it detected the target and knows
+// where its config lives, while the panel's own telemt.config_path points at
+// whatever was configured at install time.
+func resolveConfigEditTarget(ctx context.Context, cfg config.TelemtConfig, c *mtproxylctl.Client) ConfigEditTarget {
+	configured := ConfigEditTarget{Mode: cfg.EffectiveConfigEditMode()}
+	if configured.Mode == "file" {
+		configured.Path = cfg.ConfigPath
+	}
+	if c == nil || !c.Enabled() {
+		return configured
+	}
+	st, err := cachedMode(ctx, c)
+	if err != nil || st == nil || st.Mode != mtproxylctl.ModeReanimator {
+		return configured
+	}
+	path := st.EngineConfig
+	if path == "" {
+		path = st.DetectedConfig
+	}
+	if path == "" {
+		// Цель есть, а её конфиг не найден — навязывать файловый режим без
+		// пути нельзя, редактор просто не откроется.
+		return configured
+	}
+	return ConfigEditTarget{
+		Mode:         "file",
+		Path:         path,
+		ForcedByMode: cfg.EffectiveConfigEditMode() != "file",
+	}
 }
