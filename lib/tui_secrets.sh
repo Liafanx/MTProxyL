@@ -1,6 +1,78 @@
 #!/bin/bash
 # MTProxyL — подменю: секреты (полное)
 
+# Пользователи цели в режиме реаниматора. Отдельное меню, а не ветка в
+# tui_secrets_menu: там всё построено на SECRETS_* и нумерации по этому массиву,
+# а здесь источник — [access.users] конфига цели, и выбирать приходится по метке.
+tui_target_users_menu() {
+    while true; do
+        clear_screen
+        target_users_list
+        echo -e "  ${DIM}[1]${NC} Добавить пользователя"
+        echo -e "  ${DIM}[2]${NC} Удалить"
+        echo -e "  ${DIM}[3]${NC} Обновить ключ (ротация)"
+        echo -e "  ${DIM}[4]${NC} Включить"
+        echo -e "  ${DIM}[5]${NC} Выключить"
+        echo -e "  ${DIM}[6]${NC} Лимиты"
+        echo -e "  ${DIM}[7]${NC} Переименовать"
+        echo -e "  ${DIM}[8]${NC} Ссылка и QR-код"
+        echo -e "  ${DIM}[0]${NC} Назад"
+        local choice; choice=$(read_choice "выбор" "0")
+        local l
+        case "$choice" in
+            1)
+                echo -en "  ${BOLD}Метка:${NC} "; read_line l
+                [ -n "$l" ] && { target_user_add "$l" || true; }; press_any_key ;;
+            2)
+                echo -en "  ${BOLD}Метка:${NC} "; read_line l
+                [ -n "$l" ] && { target_user_remove "$l" || true; }; press_any_key ;;
+            3)
+                echo -en "  ${BOLD}Метка:${NC} "; read_line l
+                [ -n "$l" ] && { target_user_rotate "$l" || true; }; press_any_key ;;
+            4)
+                echo -en "  ${BOLD}Метка:${NC} "; read_line l
+                [ -n "$l" ] && { target_user_toggle "$l" enable || true; }; press_any_key ;;
+            5)
+                echo -en "  ${BOLD}Метка:${NC} "; read_line l
+                [ -n "$l" ] && { target_user_toggle "$l" disable || true; }; press_any_key ;;
+            6)
+                echo -en "  ${BOLD}Метка:${NC} "; read_line l
+                if [ -n "$l" ]; then
+                    target_user_show_limits "$l" || { press_any_key; continue; }
+                    echo -e "  ${DIM}0 — снять ограничение${NC}"
+                    echo -en "  ${BOLD}Макс. соединений:${NC} "; local mc; read_line mc
+                    echo -en "  ${BOLD}Макс. уникальных IP:${NC} "; local mi; read_line mi
+                    echo -en "  ${BOLD}Квота, байт:${NC} "; local mq; read_line mq
+                    target_user_setlimits "$l" "${mc:-0}" "${mi:-0}" "${mq:-0}" || true
+                fi
+                press_any_key ;;
+            7)
+                echo -en "  ${BOLD}Текущая метка:${NC} "; read_line l
+                if [ -n "$l" ]; then
+                    echo -en "  ${BOLD}Новая метка:${NC} "; local nl; read_line nl
+                    [ -n "$nl" ] && { target_user_rename "$l" "$nl" || true; }
+                fi
+                press_any_key ;;
+            8)
+                echo -en "  ${BOLD}Метка:${NC} "; read_line l
+                if [ -n "$l" ]; then
+                    local _link; _link=$(target_user_link "$l")
+                    if [ -n "$_link" ]; then
+                        echo ""
+                        command -v qrencode &>/dev/null && \
+                            qrencode -t ANSIUTF8 "$_link" 2>/dev/null | sed 's/^/  /'
+                        echo -e "  ${CYAN}${_link}${NC}"
+                        echo ""
+                    else
+                        log_error "Пользователь '${l}' не найден у цели"
+                    fi
+                fi
+                press_any_key ;;
+            0)  return ;;
+        esac
+    done
+}
+
 tui_secrets_menu() {
     if _superexpert_active; then
         clear_screen

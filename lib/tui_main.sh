@@ -154,20 +154,21 @@ show_main_menu() {
             # Цели на сервере нет — добавляем пункт установки оригинального
             # telemt: чинить пока нечего. Нумерация остаётся сплошной,
             # поэтому номера двух последних пунктов зависят от этого.
-            local _n_telemt="__none__" _n_setup=11 _n_uninstall=12
+            local _n_telemt="__none__" _n_setup=12 _n_uninstall=13
             if _no_telemt_target; then
-                _n_telemt=11; _n_setup=12; _n_uninstall=13
+                _n_telemt=12; _n_setup=13; _n_uninstall=14
             fi
             echo -e "  ${BRIGHT_CYAN}[1]${NC}   Управление прокси"
-            echo -e "  ${BRIGHT_CYAN}[2]${NC}   Ссылки на прокси"
-            echo -e "  ${BRIGHT_CYAN}[3]${NC}   Безопасность и маршрутизация"
-            echo -e "  ${BRIGHT_CYAN}[4]${NC}   Логи и трафик"
-            echo -e "  ${BRIGHT_CYAN}[5]${NC}   NFT лимитер, Zapret2 и фиксы"
-            echo -e "  ${BRIGHT_CYAN}[6]${NC}   Обновление MTProxyL"
-            echo -e "  ${BRIGHT_CYAN}[7]${NC}   Дополнения (утилиты)"
-            echo -e "  ${BRIGHT_CYAN}[8]${NC}   Цель / режим (Manager ⇄ Reanimator)"
-            echo -e "  ${BRIGHT_CYAN}[9]${NC}   Редактировать конфиг цели"
-            echo -e "  ${BRIGHT_CYAN}[10]${NC}  Информация"
+            echo -e "  ${BRIGHT_CYAN}[2]${NC}   Пользователи цели"
+            echo -e "  ${BRIGHT_CYAN}[3]${NC}   Ссылки на прокси"
+            echo -e "  ${BRIGHT_CYAN}[4]${NC}   Безопасность и маршрутизация"
+            echo -e "  ${BRIGHT_CYAN}[5]${NC}   Логи и трафик"
+            echo -e "  ${BRIGHT_CYAN}[6]${NC}   NFT лимитер, Zapret2 и фиксы"
+            echo -e "  ${BRIGHT_CYAN}[7]${NC}   Обновление MTProxyL"
+            echo -e "  ${BRIGHT_CYAN}[8]${NC}   Дополнения (утилиты)"
+            echo -e "  ${BRIGHT_CYAN}[9]${NC}   Цель / режим (Manager ⇄ Reanimator)"
+            echo -e "  ${BRIGHT_CYAN}[10]${NC}  Редактировать конфиг цели"
+            echo -e "  ${BRIGHT_CYAN}[11]${NC}  Информация"
             echo ""
             [ "$_n_telemt" != "__none__" ] && \
                 echo -e "  ${GREEN}[${_n_telemt}]${NC}  Установить telemt (официальный установщик)"
@@ -178,15 +179,16 @@ show_main_menu() {
             choice=$(read_choice "выбор" "0")
             case "$choice" in
                 1)  tui_proxy_menu ;;
-                2)  tui_links_menu ;;
-                3)  tui_security_menu ;;
-                4)  tui_traffic_menu ;;
-                5)  tui_nft_menu ;;
-                6)  tui_backup_menu ;;
-                7)  tui_addons_menu ;;
-                8)  tui_target_menu ;;
-                9)  edit_target_config || true; press_any_key ;;
-                10) show_server_info; press_any_key ;;
+                2)  tui_target_users_menu ;;
+                3)  tui_links_menu ;;
+                4)  tui_security_menu ;;
+                5)  tui_traffic_menu ;;
+                6)  tui_nft_menu ;;
+                7)  tui_backup_menu ;;
+                8)  tui_addons_menu ;;
+                9)  tui_target_menu ;;
+                10) edit_target_config || true; press_any_key ;;
+                11) show_server_info; press_any_key ;;
                 "$_n_telemt")    install_original_telemt || true; press_any_key ;;
                 "$_n_setup")     run_installer ;;
                 "$_n_uninstall") uninstall; exit 0 ;;
