@@ -1860,7 +1860,35 @@ zapret2_start_existing() {
         log_error "Zapret2 не установлен — используйте [1] Установить"
         return 1
     fi
-    zapret2_apply_nft || return 1
+
+    # Лимитер снимаем так же, как это делает установка: Zapret2 и лимитер
+    # фильтруют один и тот же трафик. Запуск уже установленного zapret2 этого
+    # не делал, а с панели кнопка ведёт именно сюда — обе защиты оставались
+    # работать вместе, и «Сейчас защищает» показывала только Zapret2.
+    local _restore_limiter="false" _restore_limiter_service="false"
+    if [ "${NFT_ENABLED:-false}" = "true" ] || nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1; then
+        _restore_limiter="true"
+        [ "${NFT_ENABLED:-false}" = "true" ] && _restore_limiter_service="true"
+
+        echo ""
+        echo -e "  ${YELLOW}⚠ SYN limiter активен — zapret2 его заменит.${NC}"
+        echo -en "  ${BOLD}Отключить SYN limiter? [Y/n]:${NC} "
+        local _yn_syn; read_line _yn_syn
+        if [[ ! "$_yn_syn" =~ ^[nN] ]]; then
+            remove_nft_rules 2>/dev/null || true
+            remove_nft_service 2>/dev/null || true
+            log_success "SYN limiter отключён"
+        else
+            _restore_limiter="false"
+            _restore_limiter_service="false"
+            log_warn "Лимитер оставлен работать вместе с Zapret2 — они мешают друг другу"
+        fi
+    fi
+
+    zapret2_apply_nft || {
+        _zapret2_restore_limiter "$_restore_limiter" "$_restore_limiter_service"
+        return 1
+    }
     systemctl daemon-reload
     systemctl enable "$ZAPRET2_SERVICE" >/dev/null 2>&1 || true
     systemctl start "$ZAPRET2_SERVICE" 2>/dev/null || true
@@ -1872,7 +1900,21 @@ zapret2_start_existing() {
     else
         log_error "zapret2 не запустился"
         journalctl -u "$ZAPRET2_SERVICE" -n 10 --no-pager 2>/dev/null || true
+        # Симметрично откату в enable_smart_mode: если zapret2 не поднялся,
+        # возвращаем то, что ради него сняли, а не оставляем сервер вообще
+        # без защиты.
+        _zapret2_restore_limiter "$_restore_limiter" "$_restore_limiter_service"
         return 1
+    fi
+}
+
+# Возврат лимитера после неудачного запуска zapret2.
+_zapret2_restore_limiter() {
+    [ "${1:-false}" = "true" ] || return 0
+    log_info "Возвращаю SYN limiter..."
+    apply_nft_rules >/dev/null 2>&1 || true
+    if [ "${2:-false}" = "true" ]; then
+        install_nft_service >/dev/null 2>&1 || true
     fi
 }
 
