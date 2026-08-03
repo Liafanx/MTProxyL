@@ -1,6 +1,9 @@
 # Binary
 mtproxyl-panel
 mtproxyl-panel.exe
+# Сборки под другим именем — mtproxyl-panel-new и подобные. Точку не задеваем,
+# иначе под шаблон попал бы mtproxyl-panel.service, который лежит в репозитории.
+mtproxyl-panel-*
 release/
 
 # Frontend build output
