@@ -326,8 +326,16 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_docker ps --quiet --filter name=*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_journalctl -u $_telemt_service -n * --since * --no-pager -o short-iso
 $SYSTEM_USER ALL=(root) NOPASSWD: $_journalctl -u $_telemt_service -f --no-pager -o short-iso
 $SYSTEM_USER ALL=(root) NOPASSWD: $_journalctl -u $_telemt_service -f --since * --no-pager -o short-iso
-$SYSTEM_USER ALL=(root) NOPASSWD: $_tee $_telemt_config
 EOF
+
+  # Прямая запись конфига движка нужна только там, где MTProxyL нет. С ним
+  # панель правит конфиг цели через 'mtproxyl target-config write': тот
+  # проверяет, что текст всё ещё похож на конфиг telemt, делает резервную копию
+  # и сохраняет владельца с правами. Правило на tee обходило всё это разом —
+  # притом путь здесь захардкожен как раз на типовой конфиг чужой цели.
+  if [ "${MTPROXYL_ENABLED:-false}" != "true" ]; then
+    printf '%s\n' "$SYSTEM_USER ALL=(root) NOPASSWD: $_tee $_telemt_config" >>"$_tmp"
+  fi
 
   if [ -n "$_visudo" ]; then
     $SUDO "$_visudo" -cf "$_tmp" >/dev/null || die "Сгенерированный файл sudoers некорректен"
