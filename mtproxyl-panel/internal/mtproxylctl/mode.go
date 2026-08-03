@@ -51,6 +51,16 @@ type ModeStatus struct {
 	// Running reports whether the engine of the current mode is up, so the UI
 	// can offer start or stop rather than both.
 	Running bool `json:"running"`
+	// LogKind and LogTarget say where the current mode's engine logs live:
+	// "docker" with a container name, or "service" with a systemd unit. Empty
+	// when MTProxyL cannot tell.
+	//
+	// The panel is configured with one container name at install time. After a
+	// switch to reanimator that container is gone, and reading logs from it
+	// failed with a permission error that looked like a Docker problem rather
+	// than what it was: the wrong container.
+	LogKind   string `json:"log_kind"`
+	LogTarget string `json:"log_target"`
 }
 
 // ContainerDisposition says what to do with MTProxyL's own container when

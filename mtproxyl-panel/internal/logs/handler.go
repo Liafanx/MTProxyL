@@ -3,6 +3,7 @@ package logs
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -50,6 +51,10 @@ type ServerMsg struct {
 // WsHandler handles WebSocket connections for log streaming.
 type WsHandler struct {
 	source LogSource
+	// resolve, when set, picks the source per connection instead of using the
+	// fixed one. Which engine's logs are the right ones depends on MTProxyL's
+	// current mode, and that changes while the panel runs.
+	resolve func() (LogSource, error)
 
 	mu       sync.Mutex
 	perUser  map[string]int // per-user connection count
@@ -62,6 +67,25 @@ func NewWsHandler(source LogSource, maxConnsPerUser int) *WsHandler {
 		maxConnsPerUser = 2
 	}
 	return &WsHandler{source: source, perUser: make(map[string]int), maxConns: maxConnsPerUser}
+}
+
+// NewDynamicWsHandler resolves the log source on every connection.
+func NewDynamicWsHandler(resolve func() (LogSource, error), maxConnsPerUser int) *WsHandler {
+	if maxConnsPerUser <= 0 {
+		maxConnsPerUser = 2
+	}
+	return &WsHandler{resolve: resolve, perUser: make(map[string]int), maxConns: maxConnsPerUser}
+}
+
+// currentSource returns the source this connection should read from.
+func (h *WsHandler) currentSource() (LogSource, error) {
+	if h.resolve != nil {
+		return h.resolve()
+	}
+	if h.source == nil {
+		return nil, fmt.Errorf("источник логов не настроен")
+	}
+	return h.source, nil
 }
 
 func (h *WsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -149,7 +173,11 @@ func (h *WsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			opts := LogOptions{Since: NormalizeSince(msg.Since)}
 
 			// Send history first
-			history, err := h.source.Tail(connCtx, lines, opts)
+			var history []string
+			src, err := h.currentSource()
+			if err == nil {
+				history, err = src.Tail(connCtx, lines, opts)
+			}
 			if err != nil {
 				send(ServerMsg{Type: "error", Message: err.Error()})
 				continue
@@ -165,7 +193,10 @@ func (h *WsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			streaming = true
 			streamMu.Unlock()
 
-			ch, err := h.source.Stream(ctx, opts)
+			var ch <-chan string
+			if src, err = h.currentSource(); err == nil {
+				ch, err = src.Stream(ctx, opts)
+			}
 			if err != nil {
 				cancel()
 				streamMu.Lock()
@@ -217,7 +248,11 @@ func (h *WsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			lines := ClampLines(msg.Lines)
 			opts := LogOptions{Since: NormalizeSince(msg.Since)}
-			history, err := h.source.Tail(connCtx, lines, opts)
+			var history []string
+			src, err := h.currentSource()
+			if err == nil {
+				history, err = src.Tail(connCtx, lines, opts)
+			}
 			if err != nil {
 				send(ServerMsg{Type: "error", Message: err.Error()})
 				continue

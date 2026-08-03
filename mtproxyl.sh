@@ -237,7 +237,27 @@ cli_main() {
                     # уходя в реаниматор, она обязана спросить, что с ним
                     # делать, а спрашивать не о чем, когда контейнера нет.
                     _own_state=$(own_container_state 2>/dev/null || echo unknown)
-                    printf '{"mode":"%s","detected_mode":"%s","detected_config":"%s","port":%d,"engine_config":"%s","api_port":%d,"api_enabled":%s,"own_container":"%s","running":%s}\n' \
+
+                    # Откуда брать логи движка текущего режима. У менеджера это
+                    # всегда свой контейнер; у цели — как её нашли: контейнер
+                    # Docker или systemd-юнит на хосте. Панель настроена на
+                    # container_name при установке и после смены режима
+                    # продолжала звать 'docker logs mtproxyl' — контейнера уже
+                    # нет, и логи «не работали» без объяснения.
+                    _log_kind="docker"; _log_target="$CONTAINER_NAME"
+                    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+                        case "${DETECTED_MODE:-unknown}" in
+                            docker|mtproxymax)
+                                _log_kind="docker"; _log_target="${DETECTED_CONTAINER:-}" ;;
+                            local|config_only|manual)
+                                _log_kind="service"; _log_target="telemt" ;;
+                            *)
+                                _log_kind=""; _log_target="" ;;
+                        esac
+                        [ -n "$_log_target" ] || { _log_kind=""; _log_target=""; }
+                    fi
+
+                    printf '{"mode":"%s","detected_mode":"%s","detected_config":"%s","port":%d,"engine_config":"%s","api_port":%d,"api_enabled":%s,"own_container":"%s","running":%s,"log_kind":"%s","log_target":"%s"}\n' \
                         "$(json_escape "${MTPROXYL_MODE:-manager}")" \
                         "$(json_escape "${DETECTED_MODE:-unknown}")" \
                         "$(json_escape "${DETECTED_CONFIG_PATH:-}")" \
@@ -246,7 +266,9 @@ cli_main() {
                         "${_api_port:-0}" \
                         "$_api_on" \
                         "$(json_escape "${_own_state}")" \
-                        "$(is_proxy_running 2>/dev/null && echo true || echo false)"
+                        "$(is_proxy_running 2>/dev/null && echo true || echo false)" \
+                        "$(json_escape "${_log_kind}")" \
+                        "$(json_escape "${_log_target}")"
                     ;;
                 "")         echo -e "  ${BOLD}Текущий режим:${NC} ${MTPROXYL_MODE:-manager}" ;;
                 *)          log_error "Использование: mtproxyl mode [manager|reanimator|--json]" ;;
@@ -286,7 +308,8 @@ cli_main() {
             ;;
 
         sni-policy)
-            load_settings; load_secrets
+            # SNI-политика правит [censorship] конфига цели.
+            load_settings; load_secrets; load_detect_settings
             handle_sni_policy "$@"
             ;;
 
@@ -317,7 +340,9 @@ cli_main() {
             ;;
 
         metrics)
-            load_settings
+            # В реаниматоре порт метрик читается из конфига цели —
+            # без load_detect_settings путь пуст и метрики «недоступны».
+            load_settings; load_detect_settings
             handle_metrics_command "$@"
             ;;
 
@@ -388,7 +413,11 @@ cli_main() {
             ;;
 
          selfmask)
-            load_settings
+            # load_detect_settings обязателен: в режиме реаниматора selfmask
+            # дописывает [censorship] в конфиг цели, а путь к нему живёт в
+            # DETECTED_CONFIG_PATH. Без загрузки он пуст, и apply отвечал
+            # «Конфиг цели не найден», хотя цель обнаружена и путь известен.
+            load_settings; load_detect_settings
             handle_selfmask_command "$@"
             ;;
 
