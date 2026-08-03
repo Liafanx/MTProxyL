@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { parse, stringify } from '@iarna/toml';
+import { parse } from '@iarna/toml';
 import { ChevronDown, ChevronUp } from 'lucide-react';
+import { applyEdits } from './QuickSettingsTab.helpers';
 
 interface QuickSettingsTabProps {
   content: string;
@@ -39,36 +40,6 @@ interface FormValues {
   // timeouts.tg_connect — на экране всегда пусто, а заданное значение уходило
   // в чужую секцию, где движок его не ищет.
   'general.tg_connect'?: number;
-}
-
-// Convert inline empty tables like `key = {}` to proper TOML sections like `[parent.key]`
-// Telemt doesn't understand inline empty tables.
-function inlineTablesToSections(toml: string): string {
-  const lines = toml.split('\n');
-  const result: string[] = [];
-  let currentSection = '';
-
-  for (const line of lines) {
-    const sectionMatch = line.match(/^\[([^\]]+)\]$/);
-    if (sectionMatch) {
-      currentSection = sectionMatch[1];
-      result.push(line);
-      continue;
-    }
-
-    const inlineMatch = line.match(/^(\w+)\s*=\s*\{\s*\}$/);
-    if (inlineMatch) {
-      const key = inlineMatch[1];
-      const fullSection = currentSection ? `${currentSection}.${key}` : key;
-      result.push('');
-      result.push(`[${fullSection}]`);
-      continue;
-    }
-
-    result.push(line);
-  }
-
-  return result.join('\n');
 }
 
 export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSettingsTabProps) {
@@ -141,55 +112,33 @@ export function QuickSettingsTab({ content, onChange, mode = 'file' }: QuickSett
   };
 
   const updateContent = (values: FormValues) => {
-    try {
-      const parsed = parse(content) as any;
+    const allKeys: (keyof FormValues)[] = [
+      'server.port', 'server.listen_addr_ipv4', 'server.listen_addr_ipv6',
+      'general.use_middle_proxy', 'general.ad_tag', 'general.middle_proxy_nat_ip', 'general.middle_proxy_nat_probe',
+      'general.tg_connect',
+      'censorship.tls_domain', 'censorship.mask', 'censorship.mask_host', 'censorship.tls_emulation',
+      'network.ipv4', 'network.ipv6', 'network.prefer',
+      'timeouts.client_handshake', 'timeouts.client_ack',
+    ];
 
-      // Apply updates
-      Object.entries(values).forEach(([key, value]) => {
-        const parts = key.split('.');
-        let current = parsed;
+    const changes = new Map<string, Map<string, unknown>>();
+    const removals = new Map<string, Set<string>>();
 
-        for (let i = 0; i < parts.length - 1; i++) {
-          if (!current[parts[i]]) {
-            current[parts[i]] = {};
-          }
-          current = current[parts[i]];
-        }
-
-        current[parts[parts.length - 1]] = value;
-      });
-
-      // Remove deleted keys
-      const allKeys: (keyof FormValues)[] = [
-        'server.port', 'server.listen_addr_ipv4', 'server.listen_addr_ipv6',
-        'general.use_middle_proxy', 'general.ad_tag', 'general.middle_proxy_nat_ip', 'general.middle_proxy_nat_probe',
-        'general.tg_connect',
-        'censorship.tls_domain', 'censorship.mask', 'censorship.mask_host', 'censorship.tls_emulation',
-        'network.ipv4', 'network.ipv6', 'network.prefer',
-        'timeouts.client_handshake', 'timeouts.client_ack',
-      ];
-
-      allKeys.forEach((key) => {
-        if (!(key in values)) {
-          const parts = key.split('.');
-          let current = parsed;
-
-          for (let i = 0; i < parts.length - 1; i++) {
-            if (!current[parts[i]]) return;
-            current = current[parts[i]];
-          }
-
-          delete current[parts[parts.length - 1]];
-        }
-      });
-
-      const newContent = inlineTablesToSections(
-        stringify(parsed).replace(/(\d)_(?=\d)/g, '$1')
-      );
-      onChange(newContent);
-    } catch (err: any) {
-      console.error('Failed to update content:', err);
+    for (const path of allKeys) {
+      const dot = path.indexOf('.');
+      const section = path.slice(0, dot);
+      const key = path.slice(dot + 1);
+      const value = values[path];
+      if (value === undefined) {
+        if (!removals.has(section)) removals.set(section, new Set());
+        removals.get(section)!.add(key);
+      } else {
+        if (!changes.has(section)) changes.set(section, new Map());
+        changes.get(section)!.set(key, value);
+      }
     }
+
+    onChange(applyEdits(content, changes, removals));
   };
 
   const toggleSection = (section: string) => {
