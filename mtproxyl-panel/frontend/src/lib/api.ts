@@ -336,6 +336,8 @@ export interface TrafficUser {
   connections: number;
   unique_ips: number;
   enabled: boolean;
+  /** Сводная строка по пользователям, которых больше нет. */
+  deleted?: boolean;
 }
 
 export interface TrafficReport {

@@ -261,31 +261,62 @@ show_target_traffic() {
     draw_header "ТРАФИК (ЦЕЛЬ)"
     echo ""
 
-    local _json _rc
-    _json=$(_get_telemt_users_json 2>/dev/null); _rc=$?
-    if [ $_rc -ne 0 ]; then
+    flush_target_traffic_to_disk 2>/dev/null || true
+
+    local _cur; _cur=$(_target_current_table 2>/dev/null) || _cur=""
+    local _src; _src=$(_target_table_source "$_cur")
+    if [ -z "$_cur" ] || [ -z "$_src" ]; then
         log_warn "Статистика недоступна: $(_telemt_api_unavailable_reason)"
-        [ $_rc -eq 2 ] && log_info "Включите [server.api] enabled = true в конфиге цели и перезапустите её"
+        log_info "Включите [server.api] enabled = true в конфиге цели и перезапустите её"
         echo ""
         return 1
     fi
 
-    local _tot_oct _tot_conn _tot_ips
-    _tot_oct=$(_json_sum_field "$_json" "total_octets")
-    _tot_conn=$(_json_sum_field "$_json" "current_connections")
-    _tot_ips=$(_json_sum_field "$_json" "active_unique_ips")
-    echo -e "  ${BOLD}Всего по цели${NC} ${DIM}(API 127.0.0.1:$(_get_telemt_api_port))${NC}:"
-    echo -e "    Передано:            $(format_bytes "$_tot_oct")"
-    echo -e "    Активных соединений: ${_tot_conn}"
-    echo -e "    Уникальных IP:       ${_tot_ips}"
+    declare -A _TDB_IN=() _TDB_OUT=() _TDB_TOTAL=()
+    local _TDB_SRC=""
+    _load_target_db
+
+    local _ti=0 _to=0 _tt=0
+    declare -A _SEEN=()
+    local _u _i _o _t
+    while IFS='|' read -r _u _i _o _t; do
+        [ -z "$_u" ] && continue
+        # Первая строка вывода — маркер источника, а не пользователь.
+        [ "$_u" = "SOURCE" ] && continue
+        _SEEN["$_u"]=1
+        _ti=$(( _ti + ${_TDB_IN[$_u]:-0} ))
+        _to=$(( _to + ${_TDB_OUT[$_u]:-0} ))
+        _tt=$(( _tt + ${_TDB_TOTAL[$_u]:-0} ))
+    done <<< "$_cur"
+
+    local _dt=0
+    for _u in "${!_TDB_TOTAL[@]}"; do
+        [ -n "${_SEEN[$_u]:-}" ] && continue
+        _dt=$(( _dt + ${_TDB_TOTAL[$_u]:-0} ))
+    done
+
+    echo -e "  ${BOLD}Всего по цели${NC} ${DIM}(накоплено MTProxyL, источник: ${_src})${NC}:"
+    if [ "$_src" = "metrics" ]; then
+        echo -e "    ${SYM_DOWN} $(format_bytes "$_ti")  ${SYM_UP} $(format_bytes "$_to")"
+    fi
+    echo -e "    Передано:            $(format_bytes "$(( _tt + _dt ))")"
     echo ""
 
-    local _u _en _c _ips _oct _mark
-    while IFS='|' read -r _u _en _c _ips _oct; do
+    while IFS='|' read -r _u _i _o _t; do
         [ -z "$_u" ] && continue
-        [ "$_en" = "false" ] && _mark="${DIM}${SYM_CROSS}${NC}" || _mark="${GREEN}${SYM_OK}${NC}"
-        echo -e "  ${_mark} ${BOLD}${_u}${NC}: $(format_bytes "$_oct")  соед: ${_c}  уник. IP: ${_ips}"
-    done <<< "$(_target_user_stats "$_json")"
+        # Первая строка вывода — маркер источника, а не пользователь.
+        [ "$_u" = "SOURCE" ] && continue
+        if [ "$_src" = "metrics" ]; then
+            echo -e "  ${GREEN}${SYM_OK}${NC} ${BOLD}${_u}${NC}: ${SYM_DOWN} $(format_bytes "${_TDB_IN[$_u]:-0}")  ${SYM_UP} $(format_bytes "${_TDB_OUT[$_u]:-0}")"
+        else
+            echo -e "  ${GREEN}${SYM_OK}${NC} ${BOLD}${_u}${NC}: $(format_bytes "${_TDB_TOTAL[$_u]:-0}")"
+        fi
+    done <<< "$_cur"
+
+    # Трафик тех, кого у цели уже нет, был израсходован — прячем его только
+    # из списка живых, но не из итога.
+    [ "$_dt" -gt 0 ] && \
+        echo -e "  ${DIM}${SYM_CROSS} удалённые пользователи: $(format_bytes "$_dt")${NC}"
     echo ""
 }
 
@@ -334,7 +365,185 @@ show_traffic() {
         read -r su_in su_out su_conns <<< "$(get_user_stats "$label")"
         echo -e "  ${GREEN}${SYM_OK}${NC} ${BOLD}${label}${NC}: ${SYM_DOWN} $(format_bytes "$u_in")  ${SYM_UP} $(format_bytes "$u_out")  соед: ${su_conns}"
     done
+
+    # Удалённые пользователи из списка выпадают, а их трафик остаётся в итоге:
+    # без этой строки сумма по пользователям не сходится с «всего».
+    declare -A _DB_USER_IN=() _DB_USER_OUT=()
+    _DB_TOTAL_IN=0; _DB_TOTAL_OUT=0
+    _load_traffic_db
+    local _gone_in=0 _gone_out=0 _du
+    for _du in "${!_DB_USER_IN[@]}"; do
+        local _live="false" _l
+        for _l in "${_labels[@]}"; do [ "$_l" = "$_du" ] && { _live="true"; break; }; done
+        [ "$_live" = "true" ] && continue
+        _gone_in=$(( _gone_in + ${_DB_USER_IN[$_du]:-0} ))
+        _gone_out=$(( _gone_out + ${_DB_USER_OUT[$_du]:-0} ))
+    done
+    if [ "$_gone_in" -gt 0 ] || [ "$_gone_out" -gt 0 ]; then
+        echo -e "  ${DIM}${SYM_CROSS} удалённые пользователи: ${SYM_DOWN} $(format_bytes "$_gone_in")  ${SYM_UP} $(format_bytes "$_gone_out")${NC}"
+    fi
     echo ""
+}
+
+# ── Накопление трафика цели (режим реаниматора) ───────────────
+#
+# У менеджера накопленное считает своя база: метрики движка обнуляются при
+# перезапуске контейнера, и без базы «всего» означало бы «с последнего
+# рестарта». У цели ровно та же беда, только рестартует её кто-то другой,
+# поэтому база нужна не меньше — просто отдельная: числа от чужого движка
+# нельзя смешивать со своими, иначе после смены режима они сложатся.
+_TARGET_TRAFFIC_DB="${INSTALL_DIR}/relay_stats/target_traffic_db"
+_TARGET_SNAPSHOT="${INSTALL_DIR}/relay_stats/target_session_snapshot"
+
+# Текущие счётчики цели. Первая строка — "SOURCE|<источник>", дальше
+# "user|in|out|total".
+#
+# Источник печатается, а не кладётся в переменную: функцию зовут через $( ),
+# то есть в подоболочке, и присвоение до вызывающего не доживает.
+#
+# Метрики разделяют направления, API — нет. Держим оба варианта в одной форме,
+# чтобы накопление не зависело от источника, но помним, какой это был: при
+# смене источника сырые счётчики меняют смысл, и разницу между ними считать
+# нельзя.
+_target_current_table() {
+    local _table
+    if _table=$(_metrics_user_table 2>/dev/null) && [ -n "$_table" ]; then
+        echo "SOURCE|metrics"
+        local _u _i _o
+        while IFS='|' read -r _u _i _o _; do
+            [ -z "$_u" ] && continue
+            printf '%s|%s|%s|%s\n' "$_u" "${_i:-0}" "${_o:-0}" "$(( ${_i:-0} + ${_o:-0} ))"
+        done <<< "$_table"
+        return 0
+    fi
+
+    local _json
+    _json=$(_get_telemt_users_json 2>/dev/null) || return 1
+    echo "SOURCE|api"
+    local _u _en _c _ips _oct
+    while IFS='|' read -r _u _en _c _ips _oct; do
+        [ -z "$_u" ] && continue
+        printf '%s|0|0|%s\n' "$_u" "${_oct:-0}"
+    done <<< "$(_target_user_stats "$_json")"
+}
+
+# Источник из вывода _target_current_table.
+_target_table_source() {
+    local _t _v
+    while IFS='|' read -r _t _v _; do
+        [ "$_t" = "SOURCE" ] && { printf '%s' "$_v"; return 0; }
+    done <<< "$1"
+    printf ''
+}
+
+# Загрузка накопленного в _TDB_IN/_TDB_OUT/_TDB_TOTAL (объявляются вызывающим).
+_load_target_db() {
+    _TDB_SRC=""
+    [ -f "$_TARGET_TRAFFIC_DB" ] || return 0
+    local _t _a _b _c _d
+    while IFS='|' read -r _t _a _b _c _d; do
+        case "$_t" in
+            SOURCE) _TDB_SRC="${_a:-}" ;;
+            USER)
+                [ -z "$_a" ] && continue
+                _TDB_IN["$_a"]="${_b:-0}"; _TDB_OUT["$_a"]="${_c:-0}"; _TDB_TOTAL["$_a"]="${_d:-0}" ;;
+        esac
+    done < "$_TARGET_TRAFFIC_DB"
+}
+
+_save_target_db() {
+    mkdir -p "${INSTALL_DIR}/relay_stats" 2>/dev/null
+    local _tmp="${_TARGET_TRAFFIC_DB}.tmp.$$"
+    {
+        echo "SOURCE|${_TDB_SRC:-}"
+        local _u
+        for _u in "${!_TDB_TOTAL[@]}"; do
+            echo "USER|${_u}|${_TDB_IN[$_u]:-0}|${_TDB_OUT[$_u]:-0}|${_TDB_TOTAL[$_u]:-0}"
+        done
+    } > "$_tmp" 2>/dev/null
+    mv "$_tmp" "$_TARGET_TRAFFIC_DB" 2>/dev/null
+    chmod 600 "$_TARGET_TRAFFIC_DB" 2>/dev/null
+}
+
+# Дельта от прошлого снимка → в базу. Вызывается перед показом трафика.
+flush_target_traffic_to_disk() {
+    [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] || return 0
+
+    local _cur; _cur=$(_target_current_table) || return 0
+    [ -n "$_cur" ] || return 0
+    local _src; _src=$(_target_table_source "$_cur")
+    [ -n "$_src" ] || return 0
+
+    declare -A _TDB_IN=() _TDB_OUT=() _TDB_TOTAL=()
+    local _TDB_SRC=""
+    _load_target_db
+
+    # Прошлый снимок
+    declare -A _PREV_IN=() _PREV_OUT=() _PREV_TOTAL=()
+    local _prev_src="" _have_prev="false" _t _a _b _c _d
+    if [ -f "$_TARGET_SNAPSHOT" ]; then
+        _have_prev="true"
+        while IFS='|' read -r _t _a _b _c _d; do
+            case "$_t" in
+                SOURCE) _prev_src="${_a:-}" ;;
+                USER)
+                    [ -z "$_a" ] && continue
+                    _PREV_IN["$_a"]="${_b:-0}"; _PREV_OUT["$_a"]="${_c:-0}"; _PREV_TOTAL["$_a"]="${_d:-0}" ;;
+            esac
+        done < "$_TARGET_SNAPSHOT"
+    fi
+
+    # Считать разницу можно только между двумя снимками одного источника.
+    #
+    # Первый опыт — это установка точки отсчёта, а не дельта: цель могла
+    # проработать месяц до того, как мы к ней подключились, и записать её
+    # прошлый трафик себе значило бы объявить чужие терабайты своими.
+    # Смена источника — тот же случай: метрики и API считают разное.
+    local _same_src="true"
+    { [ "$_have_prev" != "true" ] || [ "$_prev_src" != "$_src" ]; } && _same_src="false"
+
+    local _u _i _o _tt
+    while IFS='|' read -r _u _i _o _tt; do
+        [ -z "$_u" ] && continue
+        # Первая строка вывода — маркер источника, а не пользователь.
+        [ "$_u" = "SOURCE" ] && continue
+        if [ "$_same_src" = "true" ]; then
+            local _pi="${_PREV_IN[$_u]:-0}" _po="${_PREV_OUT[$_u]:-0}" _pt="${_PREV_TOTAL[$_u]:-0}"
+            [[ "$_pi" =~ ^[0-9]+$ ]] || _pi=0
+            [[ "$_po" =~ ^[0-9]+$ ]] || _po=0
+            [[ "$_pt" =~ ^[0-9]+$ ]] || _pt=0
+            # Счётчик меньше прошлого — цель перезапустили, дельта = текущее.
+            local _di _do _dt
+            [ "${_i:-0}" -ge "$_pi" ] 2>/dev/null && _di=$(( ${_i:-0} - _pi )) || _di="${_i:-0}"
+            [ "${_o:-0}" -ge "$_po" ] 2>/dev/null && _do=$(( ${_o:-0} - _po )) || _do="${_o:-0}"
+            [ "${_tt:-0}" -ge "$_pt" ] 2>/dev/null && _dt=$(( ${_tt:-0} - _pt )) || _dt="${_tt:-0}"
+            _TDB_IN["$_u"]=$(( ${_TDB_IN[$_u]:-0} + _di ))
+            _TDB_OUT["$_u"]=$(( ${_TDB_OUT[$_u]:-0} + _do ))
+            _TDB_TOTAL["$_u"]=$(( ${_TDB_TOTAL[$_u]:-0} + _dt ))
+        else
+            # Заводим пользователя, если его ещё нет: иначе он появится в базе
+            # только после второго опроса.
+            _TDB_IN["$_u"]="${_TDB_IN[$_u]:-0}"
+            _TDB_OUT["$_u"]="${_TDB_OUT[$_u]:-0}"
+            _TDB_TOTAL["$_u"]="${_TDB_TOTAL[$_u]:-0}"
+        fi
+    done <<< "$_cur"
+
+    _TDB_SRC="$_src"
+    _save_target_db
+
+    mkdir -p "${INSTALL_DIR}/relay_stats" 2>/dev/null
+    {
+        echo "SOURCE|${_src}"
+        while IFS='|' read -r _u _i _o _tt; do
+            [ -z "$_u" ] && continue
+            # Первая строка вывода — маркер источника, а не пользователь.
+            [ "$_u" = "SOURCE" ] && continue
+            echo "USER|${_u}|${_i}|${_o}|${_tt}"
+        done <<< "$_cur"
+    } > "${_TARGET_SNAPSHOT}.tmp.$$" 2>/dev/null
+    mv "${_TARGET_SNAPSHOT}.tmp.$$" "$_TARGET_SNAPSHOT" 2>/dev/null
+    chmod 600 "$_TARGET_SNAPSHOT" 2>/dev/null
 }
 
 # ── Машинный список трафика для панели ────────────────────────
@@ -366,13 +575,6 @@ _metrics_user_table() {
     '
 }
 
-_traffic_json_user() {
-    # user in out session_in session_out conns unique_ips enabled
-    printf '{"user":"%s","in":%s,"out":%s,"total":%s,"session_in":%s,"session_out":%s,"connections":%s,"unique_ips":%s,"enabled":%s}' \
-        "$(json_escape "$1")" "${2:-0}" "${3:-0}" "$(( ${2:-0} + ${3:-0} ))" \
-        "${4:-0}" "${5:-0}" "${6:-0}" "${7:-0}" "$8"
-}
-
 _traffic_json_manager() {
     local t_in t_out conns s_in s_out s_conns
     read -r t_in t_out conns <<< "$(get_persistent_stats)"
@@ -393,14 +595,10 @@ _traffic_json_manager() {
         done
     fi
 
-    printf '{"mode":"manager","source":"db","directional":true,"persistent":true,'
-    printf '"totals":{"in":%d,"out":%d,"total":%d,"session_in":%d,"session_out":%d,"connections":%d},' \
-        "${t_in:-0}" "${t_out:-0}" "$(( ${t_in:-0} + ${t_out:-0} ))" \
-        "${s_in:-0}" "${s_out:-0}" "${conns:-0}"
-    printf '"users":['
-
-    local _first=1 _idx=0
+    local _rows="" _first=1 _idx=0
+    declare -A _KNOWN=()
     for label in "${_labels[@]}"; do
+        _KNOWN["$label"]=1
         local u_in u_out u_conns su_in su_out su_conns
         read -r u_in u_out u_conns <<< "$(get_persistent_user_stats "$label")"
         read -r su_in su_out su_conns <<< "$(get_user_stats "$label")"
@@ -414,66 +612,126 @@ _traffic_json_manager() {
         fi
         [ "$_en" = "true" ] || _en="false"
 
-        [ $_first -eq 1 ] || printf ','
+        [ $_first -eq 1 ] || _rows+=","
         _first=0
-        _traffic_json_user "$label" "${u_in:-0}" "${u_out:-0}" \
-            "${su_in:-0}" "${su_out:-0}" "${su_conns:-0}" 0 "$_en"
+        _rows+=$(printf '{"user":"%s","in":%s,"out":%s,"total":%s,"session_in":%s,"session_out":%s,"connections":%s,"unique_ips":0,"enabled":%s,"deleted":false}' \
+            "$(json_escape "$label")" "${u_in:-0}" "${u_out:-0}" "$(( ${u_in:-0} + ${u_out:-0} ))" \
+            "${su_in:-0}" "${su_out:-0}" "${su_conns:-0}" "$_en")
     done
-    printf ']}\n'
+
+    # Трафик удалённых пользователей никуда не девается: он был израсходован и
+    # учтён в TOTAL. Раньше их строки просто не показывались, и сумма по
+    # пользователям не сходилась с «всего» без объяснения. Собираем остаток в
+    # одну помеченную строку вместо того, чтобы прятать его или чистить базу.
+    declare -A _DB_USER_IN=() _DB_USER_OUT=()
+    _DB_TOTAL_IN=0; _DB_TOTAL_OUT=0
+    _load_traffic_db
+    local _di=0 _do=0 _u
+    for _u in "${!_DB_USER_IN[@]}"; do
+        [ -n "${_KNOWN[$_u]:-}" ] && continue
+        _di=$(( _di + ${_DB_USER_IN[$_u]:-0} ))
+        _do=$(( _do + ${_DB_USER_OUT[$_u]:-0} ))
+    done
+    if [ "$_di" -gt 0 ] || [ "$_do" -gt 0 ]; then
+        [ $_first -eq 1 ] || _rows+=","
+        _first=0
+        _rows+=$(printf '{"user":"%s","in":%d,"out":%d,"total":%d,"session_in":0,"session_out":0,"connections":0,"unique_ips":0,"enabled":false,"deleted":true}' \
+            "Удалённые пользователи" "$_di" "$_do" "$(( _di + _do ))")
+    fi
+
+    printf '{"mode":"manager","source":"db","directional":true,"persistent":true,'
+    printf '"totals":{"in":%d,"out":%d,"total":%d,"session_in":%d,"session_out":%d,"connections":%d},' \
+        "${t_in:-0}" "${t_out:-0}" "$(( ${t_in:-0} + ${t_out:-0} ))" \
+        "${s_in:-0}" "${s_out:-0}" "${conns:-0}"
+    printf '"users":[%s]}\n' "$_rows"
 }
 
 _traffic_json_reanimator() {
-    # Метрики точнее API: они разделяют направления. Но у цели они по
-    # умолчанию выключены, поэтому это именно первый выбор, а не единственный.
-    local _table
-    if _table=$(_metrics_user_table) && [ -n "$_table" ]; then
-        local _ti=0 _to=0 _tc=0
-        local _u _i _o _c
-        while IFS='|' read -r _u _i _o _c; do
-            [ -z "$_u" ] && continue
-            _ti=$(( _ti + ${_i:-0} )); _to=$(( _to + ${_o:-0} )); _tc=$(( _tc + ${_c:-0} ))
-        done <<< "$_table"
+    # Сначала копим: без этого «всего» означало бы «с последнего перезапуска
+    # цели», а перезапускает её кто-то другой и когда угодно.
+    flush_target_traffic_to_disk 2>/dev/null || true
 
-        printf '{"mode":"reanimator","source":"metrics","directional":true,"persistent":false,'
-        printf '"totals":{"in":%d,"out":%d,"total":%d,"session_in":%d,"session_out":%d,"connections":%d},' \
-            "$_ti" "$_to" "$(( _ti + _to ))" "$_ti" "$_to" "$_tc"
-        printf '"users":['
-        local _first=1
-        while IFS='|' read -r _u _i _o _c; do
-            [ -z "$_u" ] && continue
-            [ $_first -eq 1 ] || printf ','
-            _first=0
-            _traffic_json_user "$_u" "${_i:-0}" "${_o:-0}" "${_i:-0}" "${_o:-0}" "${_c:-0}" 0 true
-        done <<< "$_table"
-        printf ']}\n'
-        return 0
-    fi
+    local _cur; _cur=$(_target_current_table 2>/dev/null) || _cur=""
+    local _src; _src=$(_target_table_source "$_cur")
 
-    local _json _rc
-    _json=$(_get_telemt_users_json 2>/dev/null); _rc=$?
-    if [ $_rc -ne 0 ]; then
+    if [ -z "$_cur" ] || [ -z "$_src" ]; then
         printf '{"mode":"reanimator","source":"none","directional":false,"persistent":false,'
         printf '"error":"%s","totals":{"in":0,"out":0,"total":0,"session_in":0,"session_out":0,"connections":0},"users":[]}\n' \
             "$(json_escape "$(_telemt_api_unavailable_reason)")"
         return 0
     fi
 
-    printf '{"mode":"reanimator","source":"api","directional":false,"persistent":false,'
-    printf '"totals":{"in":0,"out":0,"total":%d,"session_in":0,"session_out":0,"connections":%d},' \
-        "$(_json_sum_field "$_json" "total_octets")" "$(_json_sum_field "$_json" "current_connections")"
-    printf '"users":['
-    local _u _en _c _ips _oct _first=1
-    while IFS='|' read -r _u _en _c _ips _oct; do
+    # Соединения и уникальные IP — величины «прямо сейчас», их не копят.
+    declare -A _CONNS=() _IPS=() _ENABLED=()
+    if [ "$_src" = "metrics" ]; then
+        local _u _i _o _c
+        while IFS='|' read -r _u _i _o _c; do
+            [ -n "$_u" ] && _CONNS["$_u"]="${_c:-0}"
+        done <<< "$(_metrics_user_table 2>/dev/null)"
+    else
+        local _json _u _en _c _ips _oct
+        if _json=$(_get_telemt_users_json 2>/dev/null); then
+            while IFS='|' read -r _u _en _c _ips _oct; do
+                [ -z "$_u" ] && continue
+                _CONNS["$_u"]="${_c:-0}"; _IPS["$_u"]="${_ips:-0}"
+                [ "$_en" = "false" ] && _ENABLED["$_u"]="false"
+            done <<< "$(_target_user_stats "$_json")"
+        fi
+    fi
+
+    declare -A _TDB_IN=() _TDB_OUT=() _TDB_TOTAL=()
+    local _TDB_SRC=""
+    _load_target_db
+
+    local _directional="false"
+    [ "$_src" = "metrics" ] && _directional="true"
+
+    local _ti=0 _to=0 _tt=0 _tc=0
+    local _si=0 _so=0
+    local _rows="" _first=1
+    declare -A _SEEN=()
+
+    local _u _i _o _t
+    while IFS='|' read -r _u _i _o _t; do
         [ -z "$_u" ] && continue
-        [ $_first -eq 1 ] || printf ','
+        # Первая строка вывода — маркер источника, а не пользователь.
+        [ "$_u" = "SOURCE" ] && continue
+        _SEEN["$_u"]=1
+        # Накопленное уже включает текущую сессию: flush прошёл выше.
+        local _ai="${_TDB_IN[$_u]:-0}" _ao="${_TDB_OUT[$_u]:-0}" _at="${_TDB_TOTAL[$_u]:-0}"
+        _ti=$(( _ti + _ai )); _to=$(( _to + _ao )); _tt=$(( _tt + _at ))
+        _si=$(( _si + ${_i:-0} )); _so=$(( _so + ${_o:-0} ))
+        _tc=$(( _tc + ${_CONNS[$_u]:-0} ))
+        [ $_first -eq 1 ] || _rows+=","
         _first=0
-        # in/out нулевые намеренно: направлений в этом источнике нет, и
-        # флаг directional=false говорит панели не показывать эти колонки.
-        printf '{"user":"%s","in":0,"out":0,"total":%s,"session_in":0,"session_out":0,"connections":%s,"unique_ips":%s,"enabled":%s}' \
-            "$(json_escape "$_u")" "${_oct:-0}" "${_c:-0}" "${_ips:-0}" \
-            "$([ "$_en" = "false" ] && echo false || echo true)"
-    done <<< "$(_target_user_stats "$_json")"
-    printf ']}\n'
+        _rows+=$(printf '{"user":"%s","in":%s,"out":%s,"total":%s,"session_in":%s,"session_out":%s,"connections":%s,"unique_ips":%s,"enabled":%s,"deleted":false}' \
+            "$(json_escape "$_u")" "$_ai" "$_ao" "$_at" "${_i:-0}" "${_o:-0}" \
+            "${_CONNS[$_u]:-0}" "${_IPS[$_u]:-0}" \
+            "$([ "${_ENABLED[$_u]:-true}" = "false" ] && echo false || echo true)")
+    done <<< "$_cur"
+
+    # Пользователи, которых у цели больше нет: трафик они израсходовали, и
+    # молча вычесть его из итога значило бы показать сумму строк меньше «всего».
+    local _di=0 _do=0 _dt=0
+    for _u in "${!_TDB_TOTAL[@]}"; do
+        [ -n "${_SEEN[$_u]:-}" ] && continue
+        _di=$(( _di + ${_TDB_IN[$_u]:-0} ))
+        _do=$(( _do + ${_TDB_OUT[$_u]:-0} ))
+        _dt=$(( _dt + ${_TDB_TOTAL[$_u]:-0} ))
+    done
+    if [ "$_dt" -gt 0 ] || [ "$_di" -gt 0 ] || [ "$_do" -gt 0 ]; then
+        _ti=$(( _ti + _di )); _to=$(( _to + _do )); _tt=$(( _tt + _dt ))
+        [ $_first -eq 1 ] || _rows+=","
+        _first=0
+        _rows+=$(printf '{"user":"%s","in":%d,"out":%d,"total":%d,"session_in":0,"session_out":0,"connections":0,"unique_ips":0,"enabled":false,"deleted":true}' \
+            "Удалённые пользователи" "$_di" "$_do" "$_dt")
+    fi
+
+    printf '{"mode":"reanimator","source":"%s","directional":%s,"persistent":true,' \
+        "$_src" "$_directional"
+    printf '"totals":{"in":%d,"out":%d,"total":%d,"session_in":%d,"session_out":%d,"connections":%d},' \
+        "$_ti" "$_to" "$_tt" "$_si" "$_so" "$_tc"
+    printf '"users":[%s]}\n' "$_rows"
 }
 
 traffic_list_json() {

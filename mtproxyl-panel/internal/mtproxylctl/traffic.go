@@ -22,6 +22,10 @@ type TrafficUser struct {
 	Connections int64 `json:"connections"`
 	UniqueIPs   int64 `json:"unique_ips"`
 	Enabled     bool  `json:"enabled"`
+	// Deleted marks the aggregate row for users that no longer exist. Their
+	// traffic was really spent and stays in the totals, so dropping the row
+	// would make the per-user column stop adding up to "total".
+	Deleted bool `json:"deleted"`
 }
 
 // TrafficTotals aggregates the report across users.

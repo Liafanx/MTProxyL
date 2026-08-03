@@ -22,9 +22,9 @@ function sourceNote(report: TrafficReport): string {
     case 'db':
       return 'Считает MTProxyL: накопленное не сбрасывается при перезапуске движка.';
     case 'metrics':
-      return 'Метрики цели. Счётчики обнуляются при её перезапуске — это трафик с момента запуска.';
+      return 'Метрики цели, накопленные MTProxyL: счётчики самой цели обнуляются при её перезапуске, поэтому разницу мы копим у себя.';
     case 'api':
-      return 'API цели. Направления оно не разделяет, поэтому показан только общий объём; счётчики обнуляются при перезапуске цели.';
+      return 'API цели, накопленное MTProxyL. Направления API не разделяет, поэтому показан только общий объём.';
     default:
       return 'Источник данных недоступен.';
   }
@@ -63,7 +63,10 @@ export function TrafficPage() {
       if (sortKey === 'user') return a.user.localeCompare(b.user, 'ru');
       return Number(a[sortKey]) - Number(b[sortKey]);
     });
-    return asc ? rows : rows.reverse();
+    const ordered = asc ? rows : rows.reverse();
+    // Сводка по удалённым — не пользователь, ей место в конце при любой
+    // сортировке, иначе она встаёт в середину списка живых.
+    return [...ordered.filter((u) => !u.deleted), ...ordered.filter((u) => u.deleted)];
   }, [report, sortKey, asc]);
 
   const toggleSort = (key: SortKey) => {
@@ -117,7 +120,10 @@ export function TrafficPage() {
                       <Metric label="Передано" value={formatBytes(report.totals.total)} />
                     )}
                     <Metric label="Соединений" value={String(report.totals.connections)} />
-                    <Metric label="Пользователей" value={String(report.users.length)} />
+                    <Metric
+                      label="Пользователей"
+                      value={String(report.users.filter((u) => !u.deleted).length)}
+                    />
                   </div>
                   {report.persistent && directional && (
                     <div className="text-xs text-text-secondary">
@@ -210,8 +216,13 @@ function Row({ user, directional }: { user: TrafficUser; directional: boolean })
   return (
     <tr className="border-b border-border last:border-0">
       <td className="py-2 pr-4 text-text-primary">
-        {user.user}
-        {session > 0 && (
+        <span className={user.deleted ? 'text-text-secondary italic' : undefined}>{user.user}</span>
+        {user.deleted && (
+          <div className="text-xs text-text-secondary">
+            Трафик израсходован и остаётся в итоге
+          </div>
+        )}
+        {!user.deleted && session > 0 && (
           <div className="text-xs text-text-secondary">
             за сессию {formatBytes(session)}
           </div>
@@ -228,7 +239,11 @@ function Row({ user, directional }: { user: TrafficUser; directional: boolean })
       </td>
       <td className="py-2 pl-4 text-right text-text-secondary">{user.connections}</td>
       <td className="py-2 pl-4 text-right">
-        <StatusBadge status={user.enabled} labelOn="ВКЛ" labelOff="ВЫКЛ" />
+        {user.deleted ? (
+          <span className="text-xs text-text-secondary">удалён</span>
+        ) : (
+          <StatusBadge status={user.enabled} labelOn="ВКЛ" labelOff="ВЫКЛ" />
+        )}
       </td>
     </tr>
   );
