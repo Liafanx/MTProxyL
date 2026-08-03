@@ -221,7 +221,7 @@ export function ModePage() {
                 </div>
                 <p className="text-xs text-text-secondary">
                   Сейчас он {CONTAINER_STATE_LABELS[status?.own_container ?? ''] ?? status?.own_container} и
-                  занимает порт {status?.port}. Тот же порт нужен цели реаниматора.
+                  занимает порт {status?.port}. Тот же порт возможно нужен цели реаниматора.
                 </p>
                 {CONTAINER_CHOICES.map(({ id, title, hint }) => (
                   <label key={id} className="flex items-start gap-2 cursor-pointer">
