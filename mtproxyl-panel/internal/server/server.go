@@ -19,7 +19,6 @@ import (
 	"github.com/Liafanx/mtproxyl-panel/internal/auth"
 	"github.com/Liafanx/mtproxyl-panel/internal/auto_update"
 	"github.com/Liafanx/mtproxyl-panel/internal/config"
-	"github.com/Liafanx/mtproxyl-panel/internal/geoip"
 	"github.com/Liafanx/mtproxyl-panel/internal/logs"
 	"github.com/Liafanx/mtproxyl-panel/internal/mtproxylctl"
 	"github.com/Liafanx/mtproxyl-panel/internal/panel_updater"
@@ -616,30 +615,20 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 		})
 	})))
 
-	// GeoIP lookup endpoint
-	var geoipLookup *geoip.Lookup
-	if s.cfg.GeoIP.DBPath != "" {
-		log.Printf("GeoIP: loading city database from %s", s.cfg.GeoIP.DBPath)
-		if s.cfg.GeoIP.ASNDBPath != "" {
-			log.Printf("GeoIP: loading ASN database from %s", s.cfg.GeoIP.ASNDBPath)
-		}
-		var geoErr error
-		geoipLookup, geoErr = geoip.New(s.cfg.GeoIP.DBPath, s.cfg.GeoIP.ASNDBPath)
-		if geoErr != nil {
-			log.Printf("WARNING: failed to open GeoIP database: %s (check that db_path and asn_db_path point to valid .mmdb files)", geoErr)
-		} else {
-			log.Printf("GeoIP: databases loaded successfully")
-			defer func() { _ = geoipLookup.Close() }()
-		}
-	} else {
+	// GeoIP lookup endpoint. The database is resolved lazily (see
+	// getGeoIPLookup below) so a database installed later from the panel's
+	// Addons page — or by a system package after the panel started — is
+	// picked up on the next lookup without a restart.
+	if s.cfg.GeoIP.DBPath == "" {
 		// Молчание здесь читалось как «всё в порядке», а в интерфейсе при этом
 		// появлялось предупреждение о недоступном GeoIP.
 		log.Printf("GeoIP: база не найдена — адреса будут показаны без страны и провайдера; " +
-			"положите GeoLite2-City.mmdb в data_dir или задайте geoip.db_path")
+			"установите её из панели (Дополнения) или положите GeoLite2-City.mmdb в data_dir")
 	}
 
 	mux.Handle("POST /api/geoip/lookup", auth.RequireAuth(jwtSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if geoipLookup == nil {
+		lookup := getGeoIPLookup(s.cfg)
+		if lookup == nil {
 			writeError(w, http.StatusServiceUnavailable, "geoip_disabled", "GeoIP database is not configured")
 			return
 		}
@@ -658,7 +647,7 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 			return
 		}
 
-		results := geoipLookup.LookupIPs(req.IPs)
+		results := lookup.LookupIPs(req.IPs)
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: results})
 	})))
 

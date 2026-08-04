@@ -18,9 +18,9 @@ import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, ArrowUpDown, Search, ChevronL
 import { formatBytes } from '@/lib/utils';
 import { useQuota, resetUserQuota, type QuotaEntry } from '@/hooks/useQuota';
 import { QuotaBar } from '@/components/QuotaBar';
-import { buildProxyLinks, extractSecret, type UserLinks } from './usersPage.helpers';
+import { buildProxyLinks, extractSecret, mergeUserStats, type UserLinks } from './usersPage.helpers';
 
-type SortKey = 'username' | 'current_connections' | 'active_unique_ips' | 'total_octets' | 'expiration_rfc3339';
+type SortKey = 'username' | 'current_connections' | 'active_unique_ips' | 'total_octets' | 'total_bytes' | 'expiration_rfc3339';
 type SortDir = 'asc' | 'desc';
 
 interface UserInfo {
@@ -74,6 +74,11 @@ export function UsersPage() {
     () => telemt.get('/v1/users'),
     10000
   );
+  // Живые данные — сессионные, обнуляются при рестарте движка. Накопленный
+  // трафик и историю IP MTProxyL хранит отдельно и отдаёт по тому же label —
+  // мержим, а не показываем как ещё одну независимую таблицу.
+  const { data: mtproxylUsers } = usePolling(() => mtproxylUsersApi.list(), 10000);
+  const mergedUsers = useMemo(() => mergeUserStats(users ?? [], mtproxylUsers), [users, mtproxylUsers]);
   const { quotaByUser, supported: quotaSupported, refresh: refreshQuota } = useQuota(10000);
 
   const [sortKey, setSortKey] = useState<SortKey>('username');
@@ -95,9 +100,9 @@ export function UsersPage() {
 
   const filteredUsers = useMemo(() => {
     if (!users) return [];
-    if (!search.trim()) return users;
+    if (!search.trim()) return mergedUsers;
     const q = search.trim().toLowerCase();
-    return users.filter((u) => u.username.toLowerCase().includes(q));
+    return mergedUsers.filter((u) => u.username.toLowerCase().includes(q));
   }, [users, search]);
 
   const sortedUsers = useMemo(() => {
@@ -115,6 +120,9 @@ export function UsersPage() {
           break;
         case 'total_octets':
           cmp = a.total_octets - b.total_octets;
+          break;
+        case 'total_bytes':
+          cmp = (a.total_bytes ?? 0) - (b.total_bytes ?? 0);
           break;
         case 'expiration_rfc3339': {
           const ta = a.expiration_rfc3339 ? new Date(a.expiration_rfc3339).getTime() : 0;
@@ -310,7 +318,8 @@ export function UsersPage() {
               <option value="username">Имя</option>
               <option value="current_connections">Соединения</option>
               <option value="active_unique_ips">Активные IP</option>
-              <option value="total_octets">Трафик</option>
+              <option value="total_octets">Трафик (сессия)</option>
+              <option value="total_bytes">Накоплено</option>
               <option value="expiration_rfc3339">Срок действия</option>
             </select>
           </div>
@@ -351,8 +360,14 @@ export function UsersPage() {
                   </TableHead>
                   <TableHead className="cursor-pointer select-none" onClick={() => toggleSort('total_octets')}>
                     <span className="inline-flex items-center gap-1">
-                      Трафик
+                      Трафик (сессия)
                       {sortKey === 'total_octets' ? (sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={12} className="text-text-secondary/40" />}
+                    </span>
+                  </TableHead>
+                  <TableHead className="cursor-pointer select-none" onClick={() => toggleSort('total_bytes')}>
+                    <span className="inline-flex items-center gap-1">
+                      Накоплено
+                      {sortKey === 'total_bytes' ? (sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={12} className="text-text-secondary/40" />}
                     </span>
                   </TableHead>
                   <TableHead>Квота</TableHead>
@@ -368,7 +383,7 @@ export function UsersPage() {
               <TableBody>
                 {pagedUsers.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center text-text-secondary py-8">
+                    <TableCell colSpan={9} className="text-center text-text-secondary py-8">
                       {search ? 'Пользователи не найдены' : 'Пользователи не заданы'}
                     </TableCell>
                   </TableRow>
@@ -397,6 +412,13 @@ export function UsersPage() {
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline">{formatBytes(u.total_octets)}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          {u.total_bytes !== undefined ? (
+                            <span className="text-sm">{formatBytes(u.total_bytes)}</span>
+                          ) : (
+                            <span className="text-text-secondary">-</span>
+                          )}
                         </TableCell>
                         <TableCell>
                           <QuotaCell user={u} entry={quotaByUser.get(u.username)} />
@@ -458,6 +480,7 @@ export function UsersPage() {
                   connections={u.current_connections}
                   activeUniqueIps={u.active_unique_ips}
                   totalTraffic={u.total_octets}
+                  accumulatedTraffic={u.total_bytes}
                   online={u.current_connections > 0}
                   links={buildProxyLinks(u.links, u.username)}
                   onEdit={() => setEditUser(u)}

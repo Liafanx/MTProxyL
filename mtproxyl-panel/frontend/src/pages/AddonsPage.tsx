@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { OperationProgress } from '@/components/OperationProgress';
-import { mtproxylAddonsApi, mtproxylApi, type SelfmaskStatus } from '@/lib/api';
+import { mtproxylAddonsApi, mtproxylApi, type GeoIPStatus, type SelfmaskStatus } from '@/lib/api';
 import { useMtproxylOperation } from '@/hooks/useMtproxyl';
 
 export function AddonsPage() {
@@ -15,6 +15,7 @@ export function AddonsPage() {
   // Чем проверять домен: системным OpenSSL 3.5.0+, нашей сборкой, или нечем —
   // тогда предлагаем поставить её прямо отсюда, а не отправляем в CLI.
   const [pq, setPq] = useState<Pick<SelfmaskStatus, 'pq_source' | 'pq_available' | 'pq_system'> | null>(null);
+  const [geoip, setGeoip] = useState<GeoIPStatus | null>(null);
 
   const loadPq = useCallback(async () => {
     try {
@@ -25,15 +26,35 @@ export function AddonsPage() {
     }
   }, []);
 
+  const loadGeoip = useCallback(async () => {
+    try {
+      setGeoip(await mtproxylAddonsApi.geoipStatus());
+    } catch {
+      setGeoip(null);
+    }
+  }, []);
+
   useEffect(() => {
     void loadPq();
-  }, [loadPq]);
+    void loadGeoip();
+  }, [loadPq, loadGeoip]);
 
   const { operation, start, running } = useMtproxylOperation(loadPq, ['selfmask:pq-install']);
+  const { operation: geoipOperation, start: startGeoip, running: geoipRunning } =
+    useMtproxylOperation(loadGeoip, ['geoip:install']);
 
   const installPq = async () => {
     try {
       start(await mtproxylAddonsApi.pqInstall());
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось запустить установку');
+    }
+  };
+
+  const installGeoip = async () => {
+    try {
+      startGeoip(await mtproxylAddonsApi.geoipInstall());
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось запустить установку');
@@ -125,6 +146,47 @@ export function AddonsPage() {
             <pre className="text-xs text-text-secondary bg-background border border-border rounded-md p-3 whitespace-pre-wrap break-words font-mono max-h-80 overflow-y-auto">
               {output}
             </pre>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>База GeoIP</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm text-text-secondary">
+            Страна, город и провайдер для IP-адресов пользователей (страница «Пользователи» и
+            история подключений). Без базы адреса показываются как есть, без геоданных. Работает
+            одинаково в режиме менеджера и реаниматора — база не привязана к конфигу цели.
+          </p>
+
+          <OperationProgress operation={geoipOperation} />
+
+          {geoip?.city_installed ? (
+            <p className="text-sm text-text-primary">
+              <span className="text-success">Установлена</span> в {geoip.dir}
+              {!geoip.asn_installed && ' — без базы ASN (провайдер не определится)'}
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-3"
+                onClick={installGeoip}
+                disabled={geoipRunning}
+              >
+                {geoipRunning ? 'Установка…' : 'Переустановить'}
+              </Button>
+            </p>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-sm text-text-secondary">
+                Не установлена. Базы GeoLite2 (MaxMind) скачиваются с зеркала{' '}
+                <span className="font-mono">github.com/P3TERX/GeoLite.mmdb</span>.
+              </p>
+              <Button onClick={installGeoip} disabled={geoipRunning}>
+                {geoipRunning ? 'Установка…' : 'Установить базу GeoIP'}
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>

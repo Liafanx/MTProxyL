@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Liafanx/mtproxyl-panel/internal/config"
+	"github.com/Liafanx/mtproxyl-panel/internal/geoip"
 	"github.com/Liafanx/mtproxyl-panel/internal/mtproxylctl"
 )
 
@@ -122,6 +124,53 @@ func invalidateModeCache() {
 	modeCache.at = time.Time{}
 	modeCache.val, modeCache.err = nil, nil
 	modeCache.mu.Unlock()
+}
+
+// geoipCache holds the lazily-opened GeoIP database.
+//
+// The panel runs unprivileged and cannot watch the filesystem for a database
+// that shows up after startup — an install triggered from the Addons page
+// writes it as root through the CLI, in a separate process. So instead of
+// opening once at startup, every lookup re-resolves the candidate paths until
+// one succeeds, then caches the result.
+var geoipCache struct {
+	mu     sync.Mutex
+	lookup *geoip.Lookup
+}
+
+// getGeoIPLookup returns the current database, opening it on first success.
+func getGeoIPLookup(cfg *config.Config) *geoip.Lookup {
+	geoipCache.mu.Lock()
+	defer geoipCache.mu.Unlock()
+	if geoipCache.lookup != nil {
+		return geoipCache.lookup
+	}
+
+	dbPath, asnPath := cfg.GeoIP.DBPath, cfg.GeoIP.ASNDBPath
+	if dbPath == "" {
+		dbPath, asnPath = config.ResolveGeoIPPaths(cfg.DataDir)
+		if dbPath == "" {
+			return nil
+		}
+	}
+
+	l, err := geoip.New(dbPath, asnPath)
+	if err != nil {
+		log.Printf("WARNING: failed to open GeoIP database at %s: %s", dbPath, err)
+		return nil
+	}
+	log.Printf("GeoIP: database loaded from %s", dbPath)
+	geoipCache.lookup = l
+	return l
+}
+
+// invalidateGeoIPLookup is called after `geoip install` completes, so the
+// next lookup notices the freshly-downloaded database immediately instead of
+// waiting for whatever triggered the previous failed resolution to retry.
+func invalidateGeoIPLookup() {
+	geoipCache.mu.Lock()
+	defer geoipCache.mu.Unlock()
+	geoipCache.lookup = nil
 }
 
 // writeCLIError maps a bridge failure onto an HTTP response.

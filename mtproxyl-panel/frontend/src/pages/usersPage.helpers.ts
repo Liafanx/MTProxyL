@@ -1,3 +1,27 @@
+import type { MtproxylUser, MtproxylUserIP } from '@/lib/api';
+
+export interface UserStats {
+  /** undefined — у MTProxyL нет записи об этом пользователе (superexpert). */
+  total_bytes?: number;
+  ip_history: MtproxylUserIP[];
+}
+
+/**
+ * Докладывает к живым данным движка (сессионным, обнуляются при рестарте)
+ * накопленный трафик и историю IP из MTProxyL — они на диске и живут дольше.
+ * Оба режима отдают их одинаково через /api/mtproxyl/users, matching по label.
+ */
+export function mergeUserStats<T extends { username: string }>(
+  liveUsers: T[],
+  mtproxylUsers: MtproxylUser[] | undefined
+): (T & UserStats)[] {
+  const byLabel = new Map((mtproxylUsers ?? []).map((u) => [u.label, u]));
+  return liveUsers.map((u) => {
+    const m = byLabel.get(u.username);
+    return { ...u, total_bytes: m?.total_bytes, ip_history: m?.ip_history ?? [] };
+  });
+}
+
 export interface TlsDomainLink {
   domain: string;
   link: string;

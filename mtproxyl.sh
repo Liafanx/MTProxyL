@@ -64,7 +64,7 @@ fi
 
 # Загрузка библиотек
 LIB_DIR="${INSTALL_DIR}/lib"
-for _lib in colors utils settings detect secrets config docker engine traffic geoblock upstream backup nft selfmask panel tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode settings_cli install; do
+for _lib in colors utils settings detect secrets config docker engine traffic geoblock geoip upstream backup nft selfmask panel tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode settings_cli install; do
     if [ -f "${LIB_DIR}/${_lib}.sh" ]; then
         # shellcheck source=/dev/null
         source "${LIB_DIR}/${_lib}.sh"
@@ -317,6 +317,12 @@ cli_main() {
         geoblock)
             load_settings
             handle_geoblock_command "$@"
+            ;;
+
+        geoip)
+            # Не зависит от режима manager/reanimator и от обнаружения цели —
+            # база GeoIP лежит в общесистемном каталоге, а не в конфиге.
+            handle_geoip_command "$@"
             ;;
 
         sni-policy)

@@ -298,6 +298,39 @@ _target_user_stats() {
         done
 }
 
+# IP-адреса пользователей из того же ответа API: "user|ip" построчно, без
+# разделения на active/recent — история копит оба списка одинаково, а живой
+# статус конкретного IP экран решает сам по данным API.
+_target_user_ip_lists() {
+    local _json="$1"
+    printf '%s' "$_json" | tr -d '\n' \
+        | awk '{gsub(/"username"/, "\n\"username\""); print}' \
+        | while IFS= read -r _chunk; do
+            case "$_chunk" in *'"username"'*) ;; *) continue ;; esac
+            local _u; _u=$(sed -nE 's/.*"username"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' <<< "$_chunk")
+            [ -n "$_u" ] || continue
+            local _field _arr _ip
+            for _field in active_unique_ips_list recent_unique_ips_list; do
+                _arr=$(sed -nE "s/.*\"${_field}\"[[:space:]]*:[[:space:]]*\[([^]]*)\].*/\1/p" <<< "$_chunk")
+                [ -n "$_arr" ] || continue
+                printf '%s\n' "$_arr" | grep -oE '"[0-9a-fA-F:.]+"' | tr -d '"' | while IFS= read -r _ip; do
+                    [ -n "$_ip" ] && printf '%s|%s\n' "$_u" "$_ip"
+                done
+            done
+        done
+}
+
+# Конфиг движка текущего режима: у реаниматора это конфиг чужой цели, у
+# менеджера — свой. Тот же выбор, что 'mtproxyl mode --json' делает inline
+# для панели, но как функция — для мест, где нужен просто путь, а не JSON.
+_engine_config_path() {
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        printf '%s' "${DETECTED_CONFIG_PATH:-}"
+    else
+        printf '%s' "${CONFIG_DIR}/config.toml"
+    fi
+}
+
 # Отвечает ли Prometheus-эндпоинт цели. Метрики движка в telemt по
 # умолчанию выключены (metrics_listen/metrics_port закомментированы),
 # поэтому это отдельная от API проверка.

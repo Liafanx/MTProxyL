@@ -178,6 +178,82 @@ flush_traffic_to_disk() {
 }
 
 # Получить накопленный трафик (база + текущая сессия)
+# ── История IP пользователей ────────────────────────────────────
+#
+# API движка отдаёт только «сейчас активен» и «недавно» (короткое окно) — при
+# перезапуске цели или простое пользователя эти списки пустеют. Здесь —
+# отдельная накопительная база: раз увиденный IP остаётся в истории с
+# отметками первого и последнего появления, пока не вытеснится по лимиту.
+_USER_IP_HISTORY_CAP=200
+
+# Мержит "user|ip" пары из stdin в файл истории. Одна функция на оба режима:
+# вызывающий передаёт свой путь к базе.
+_flush_user_ip_history() {
+    local _db_file="$1"
+    [ -n "$_db_file" ] || return 0
+    mkdir -p "${INSTALL_DIR}/relay_stats" 2>/dev/null
+
+    declare -A _FIRST=() _LAST=()
+    if [ -f "$_db_file" ]; then
+        local _t _u _ip _fs _ls
+        while IFS='|' read -r _t _u _ip _fs _ls; do
+            [ "$_t" = "USER" ] || continue
+            [ -z "$_u" ] || [ -z "$_ip" ] && continue
+            _FIRST["${_u}|${_ip}"]="${_fs:-0}"
+            _LAST["${_u}|${_ip}"]="${_ls:-0}"
+        done < "$_db_file"
+    fi
+
+    local _now; _now=$(date +%s)
+    local _u _ip _key
+    while IFS='|' read -r _u _ip; do
+        [ -z "$_u" ] || [ -z "$_ip" ] && continue
+        _key="${_u}|${_ip}"
+        if [ -n "${_FIRST[$_key]:-}" ]; then
+            _LAST["$_key"]="$_now"
+            continue
+        fi
+        # Новый IP этого пользователя — если лимит уже набран, вытесняем тот,
+        # что дольше всех не появлялся, а не первый попавшийся.
+        local _count=0 _k
+        for _k in "${!_FIRST[@]}"; do
+            case "$_k" in "${_u}|"*) _count=$((_count + 1)) ;; esac
+        done
+        if [ "$_count" -ge "$_USER_IP_HISTORY_CAP" ]; then
+            local _oldest_key="" _oldest_ts=""
+            for _k in "${!_FIRST[@]}"; do
+                case "$_k" in "${_u}|"*)
+                    if [ -z "$_oldest_ts" ] || [ "${_LAST[$_k]:-0}" -lt "$_oldest_ts" ]; then
+                        _oldest_ts="${_LAST[$_k]:-0}"; _oldest_key="$_k"
+                    fi ;;
+                esac
+            done
+            [ -n "$_oldest_key" ] && { unset "_FIRST[$_oldest_key]"; unset "_LAST[$_oldest_key]"; }
+        fi
+        _FIRST["$_key"]="$_now"
+        _LAST["$_key"]="$_now"
+    done
+
+    local _tmp="${_db_file}.tmp.$$"
+    local _k
+    for _k in "${!_FIRST[@]}"; do
+        _u="${_k%%|*}"; _ip="${_k#*|}"
+        printf 'USER|%s|%s|%s|%s\n' "$_u" "$_ip" "${_FIRST[$_k]}" "${_LAST[$_k]}"
+    done > "$_tmp" 2>/dev/null
+    mv "$_tmp" "$_db_file" 2>/dev/null
+    chmod 600 "$_db_file" 2>/dev/null
+}
+
+# Строки истории конкретного пользователя как "ip|first_seen|last_seen".
+_user_ip_history() {
+    local _label="$1" _db_file="$2"
+    [ -f "$_db_file" ] || return 0
+    local _t _u _ip _fs _ls
+    while IFS='|' read -r _t _u _ip _fs _ls; do
+        [ "$_t" = "USER" ] && [ "$_u" = "$_label" ] && printf '%s|%s|%s\n' "$_ip" "${_fs:-0}" "${_ls:-0}"
+    done < "$_db_file"
+}
+
 get_persistent_stats() {
     declare -A _DB_USER_IN _DB_USER_OUT
     _DB_TOTAL_IN=0; _DB_TOTAL_OUT=0
@@ -544,6 +620,21 @@ flush_target_traffic_to_disk() {
     } > "${_TARGET_SNAPSHOT}.tmp.$$" 2>/dev/null
     mv "${_TARGET_SNAPSHOT}.tmp.$$" "$_TARGET_SNAPSHOT" 2>/dev/null
     chmod 600 "$_TARGET_SNAPSHOT" 2>/dev/null
+}
+
+# Накопленное у цели для одного пользователя — "in out total". Копит перед
+# чтением: без флаша база отставала бы от текущей сессии на один опрос.
+#
+# total не равен in+out: при источнике api направления неизвестны, in/out
+# остаются нулями, а весь объём копится только в total (как и на экране
+# «Трафик» — см. _traffic_json_reanimator).
+get_persistent_target_user_stats() {
+    local _label="$1"
+    flush_target_traffic_to_disk 2>/dev/null || true
+    declare -A _TDB_IN=() _TDB_OUT=() _TDB_TOTAL=()
+    local _TDB_SRC=""
+    _load_target_db
+    echo "${_TDB_IN[$_label]:-0} ${_TDB_OUT[$_label]:-0} ${_TDB_TOTAL[$_label]:-0}"
 }
 
 # ── Машинный список трафика для панели ────────────────────────

@@ -209,6 +209,15 @@ func findFirstReadable(paths []string) string {
 	return ""
 }
 
+// ResolveGeoIPPaths redoes the same candidate scan as Load(). Exported so the
+// server can retry after Load() found nothing: `mtproxyl geoip install` (or a
+// system package) can populate one of these paths after the panel has already
+// started, and the panel runs unprivileged so it cannot watch the directory —
+// it just checks again on the next lookup.
+func ResolveGeoIPPaths(dataDir string) (dbPath, asnDBPath string) {
+	return findFirstReadable(geoipCityCandidates(dataDir)), findFirstReadable(geoipASNCandidates(dataDir))
+}
+
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

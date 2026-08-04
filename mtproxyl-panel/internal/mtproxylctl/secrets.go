@@ -24,6 +24,22 @@ type Secret struct {
 	// Expires is "0" for no expiry, otherwise an RFC3339 timestamp.
 	Expires string `json:"expires"`
 	Notes   string `json:"notes"`
+	// TotalIn and TotalOut are 0 when the traffic source cannot tell
+	// direction apart (the reanimator's API-only path) — TotalBytes stays
+	// authoritative in that case, same as on the Traffic page.
+	TotalIn    int64      `json:"total_in"`
+	TotalOut   int64      `json:"total_out"`
+	TotalBytes int64      `json:"total_bytes"`
+	IPHistory  []SecretIP `json:"ip_history"`
+}
+
+// SecretIP is one address a user has connected from, with the window during
+// which the engine reported it as active or recent. Unlike the engine's own
+// live view, this survives target restarts and idle periods.
+type SecretIP struct {
+	IP        string `json:"ip"`
+	FirstSeen int64  `json:"first_seen"`
+	LastSeen  int64  `json:"last_seen"`
 }
 
 // secretLabelRe mirrors MTProxyL's own rule for labels, with one tightening:

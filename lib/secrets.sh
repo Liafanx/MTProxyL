@@ -309,14 +309,39 @@ _secret_limits_text() {
 #
 # Сам секрет отдаём: панель показывает ссылки tg://, а собрать их без него
 # нельзя. Команда доступна только root и только через строку sudoers.
+_USER_IPS_DB="${INSTALL_DIR}/relay_stats/user_ips_db"
+_TARGET_USER_IPS_DB="${INSTALL_DIR}/relay_stats/target_user_ips_db"
+
+# Построить массив истории IP одного пользователя как JSON.
+_user_ip_history_json() {
+    local _label="$1" _db_file="$2" _first=1 _ip _fs _ls
+    printf '['
+    while IFS='|' read -r _ip _fs _ls; do
+        [ -n "$_ip" ] || continue
+        [ $_first -eq 1 ] || printf ','
+        _first=0
+        printf '{"ip":"%s","first_seen":%s,"last_seen":%s}' "$(json_escape "$_ip")" "${_fs:-0}" "${_ls:-0}"
+    done < <(_user_ip_history "$_label" "$_db_file")
+    printf ']'
+}
+
 secret_list_json() {
     load_secrets
-    local _i _first=1
+    # Раз увиденный IP остаётся в истории и после того, как сессия
+    # закончилась — сначала копим свежие данные из API движка (если он
+    # отвечает), потом читаем историю уже из файла.
+    local _json
+    if _json=$(_get_telemt_users_json "$(_engine_config_path)" 2>/dev/null); then
+        _target_user_ip_lists "$_json" | _flush_user_ip_history "$_USER_IPS_DB"
+    fi
+
+    local _i _first=1 _uin _uout
     printf '['
     for _i in "${!SECRETS_LABELS[@]}"; do
         [ $_first -eq 1 ] || printf ','
         _first=0
-        printf '{"label":"%s","secret":"%s","created":%s,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"%s"}' \
+        read -r _uin _uout _ <<< "$(get_persistent_user_stats "${SECRETS_LABELS[$_i]}")"
+        printf '{"label":"%s","secret":"%s","created":%s,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"%s","total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":%s}' \
             "$(json_escape "${SECRETS_LABELS[$_i]}")" \
             "$(json_escape "${SECRETS_KEYS[$_i]}")" \
             "${SECRETS_CREATED[$_i]:-0}" \
@@ -325,7 +350,9 @@ secret_list_json() {
             "${SECRETS_MAX_IPS[$_i]:-0}" \
             "${SECRETS_QUOTA[$_i]:-0}" \
             "$(json_escape "${SECRETS_EXPIRES[$_i]:-0}")" \
-            "$(json_escape "${SECRETS_NOTES[$_i]:-}")"
+            "$(json_escape "${SECRETS_NOTES[$_i]:-}")" \
+            "${_uin:-0}" "${_uout:-0}" "$(( ${_uin:-0} + ${_uout:-0} ))" \
+            "$(_user_ip_history_json "${SECRETS_LABELS[$_i]}" "$_USER_IPS_DB")"
     done
     printf ']\n'
 }
@@ -871,20 +898,28 @@ _target_users_set_limit() {
 
 target_users_list_json() {
     _target_users_ready || { printf '[]\n'; return 1; }
-    local _first=1 _row _state _label _secret
+    local _json
+    if _json=$(_get_telemt_users_json "$DETECTED_CONFIG_PATH" 2>/dev/null); then
+        _target_user_ip_lists "$_json" | _flush_user_ip_history "$_TARGET_USER_IPS_DB"
+    fi
+
+    local _first=1 _row _state _label _secret _tin _tout _ttotal
     printf '['
     while IFS='|' read -r _state _label _secret; do
         [ -n "$_label" ] || continue
         [ $_first -eq 1 ] || printf ','
         _first=0
-        printf '{"label":"%s","secret":"%s","created":0,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":""}' \
+        read -r _tin _tout _ttotal <<< "$(get_persistent_target_user_stats "$_label")"
+        printf '{"label":"%s","secret":"%s","created":0,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"","total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":%s}' \
             "$(json_escape "$_label")" \
             "$(json_escape "$_secret")" \
             "$([ "$_state" = "on" ] && echo true || echo false)" \
             "$(_target_user_limit "$_label" "access.user_max_tcp_conns" | grep -E '^[0-9]+$' || echo 0)" \
             "$(_target_user_limit "$_label" "access.user_max_unique_ips" | grep -E '^[0-9]+$' || echo 0)" \
             "$(_target_user_limit "$_label" "access.user_data_quota" | grep -E '^[0-9]+$' || echo 0)" \
-            "$(json_escape "$(_target_user_limit "$_label" "access.user_expirations")")"
+            "$(json_escape "$(_target_user_limit "$_label" "access.user_expirations")")" \
+            "${_tin:-0}" "${_tout:-0}" "${_ttotal:-0}" \
+            "$(_user_ip_history_json "$_label" "$_TARGET_USER_IPS_DB")"
     done < <(_target_section_pairs "access.users")
     printf ']\n'
 }

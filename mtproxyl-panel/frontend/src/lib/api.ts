@@ -223,6 +223,12 @@ export const mtproxylSettingsApi = {
 // панель правит их через его CLI, а API движка остаётся только для чтения
 // статистики.
 
+export interface MtproxylUserIP {
+  ip: string;
+  first_seen: number;
+  last_seen: number;
+}
+
 export interface MtproxylUser {
   label: string;
   secret: string;
@@ -234,6 +240,13 @@ export interface MtproxylUser {
   /** "0" — бессрочно, иначе RFC3339. */
   expires: string;
   notes: string;
+  /** 0, если источник не разделяет направления — тогда актуален total_bytes. */
+  total_in: number;
+  total_out: number;
+  /** Накопленное с первого опроса, переживает перезапуск цели/движка. */
+  total_bytes: number;
+  /** История IP: копится, пока «активные»/«недавние» списки движка живут только сессию. */
+  ip_history: MtproxylUserIP[];
 }
 
 export interface MtproxylUserLimits {
@@ -473,6 +486,12 @@ export const mtproxylExpertApi = {
  * сторонний скрипт, скачанный из сети, и делать это по нажатию кнопки в
  * вебе не стоит — команда остаётся в CLI.
  */
+export interface GeoIPStatus {
+  city_installed: boolean;
+  asn_installed: boolean;
+  dir: string;
+}
+
 export const mtproxylAddonsApi = {
   pqCheck: (domain: string) =>
     request<{ output: string }>(MTPROXYL_BASE, '/pq-check', {
@@ -482,4 +501,12 @@ export const mtproxylAddonsApi = {
   /** Поставить PQ OpenSSL, когда системного не хватает. Долгая — операция. */
   pqInstall: () =>
     request<MtproxylOperation>(MTPROXYL_BASE, '/pq-install', { method: 'POST' }),
+  /**
+   * Не зависит от режима manager/reanimator: база GeoIP живёт в
+   * общесистемном каталоге, а не в конфиге цели или менеджера.
+   */
+  geoipStatus: () => request<GeoIPStatus>(MTPROXYL_BASE, '/geoip-status'),
+  /** Скачивает GeoLite2-City/-ASN с зеркала P3TERX. Долгая — операция. */
+  geoipInstall: () =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/geoip-install', { method: 'POST' }),
 };

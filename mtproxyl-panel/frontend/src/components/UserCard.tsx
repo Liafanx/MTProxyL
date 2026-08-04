@@ -10,6 +10,8 @@ export interface UserCardProps {
   connections: number;
   activeUniqueIps: number;
   totalTraffic: number;
+  /** Накопленное за всё время (переживает рестарт); undefined — MTProxyL об этом пользователе не знает. */
+  accumulatedTraffic?: number;
   online: boolean;
   expiration?: string;
   links?: ProxyLinkGroup[];
@@ -53,6 +55,7 @@ export function UserCard({
   connections,
   activeUniqueIps,
   totalTraffic,
+  accumulatedTraffic,
   online,
   links,
   quotaUsed,
@@ -109,6 +112,9 @@ export function UserCard({
 
         <div className="flex items-center gap-3 text-[11px] text-text-secondary">
           <span>{formatBytes(totalTraffic)}</span>
+          {accumulatedTraffic !== undefined && (
+            <span title="Накоплено за всё время">Σ {formatBytes(accumulatedTraffic)}</span>
+          )}
           {activeUniqueIps > 0 && <span>{activeUniqueIps} IP</span>}
         </div>
 

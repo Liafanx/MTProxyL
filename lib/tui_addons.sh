@@ -20,6 +20,15 @@ tui_addons_menu() {
             echo -e "  ${DIM}Установите через: mtproxyl selfmask setup${NC}"
         fi
 
+        local _geoip_installed="false"
+        geoip_installed && _geoip_installed="true"
+
+        if [ "$_geoip_installed" = "true" ]; then
+            echo -e "  ${BOLD}GeoIP:${NC} ${GREEN}установлен${NC}"
+        else
+            echo -e "  ${BOLD}GeoIP:${NC} ${DIM}не установлен${NC} ${DIM}(страна/город/ASN для истории IP)${NC}"
+        fi
+
         echo ""
         echo -e "  ${CYAN}[1]${NC}  Проверить текущий SNI-домен на PQ"
         echo -e "  ${CYAN}[2]${NC}  Проверить произвольный домен на PQ"
@@ -27,6 +36,7 @@ tui_addons_menu() {
         echo -e "  ${CYAN}[4]${NC}  Проверка ограничений сервера (censorcheck)"
         echo -e "  ${CYAN}[5]${NC}  Selfmask (заглушка + сертификат)"
         echo -e "  ${CYAN}[6]${NC}  Веб-панель MTProxyL-Panel  ${DIM}$(panel_status_line)${NC}"
+        echo -e "  ${CYAN}[7]${NC}  $([ "$_geoip_installed" = "true" ] && echo "Переустановить" || echo "Установить") базу GeoIP"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -72,6 +82,10 @@ tui_addons_menu() {
                 ;;
             6)
                 tui_panel_menu
+                ;;
+            7)
+                geoip_install
+                press_any_key
                 ;;
             0|"") return ;;
         esac

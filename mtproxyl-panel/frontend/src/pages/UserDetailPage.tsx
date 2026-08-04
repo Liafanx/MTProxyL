@@ -11,7 +11,8 @@ import {
 } from '@/components/ui/table';
 import { usePolling } from '@/hooks/usePolling';
 import { useQuota, resetUserQuota } from '@/hooks/useQuota';
-import { telemt, panelApi, ApiError } from '@/lib/api';
+import { telemt, panelApi, mtproxylUsersApi, ApiError, type MtproxylUserIP } from '@/lib/api';
+import { mergeUserStats } from './usersPage.helpers';
 import { formatBytes } from '@/lib/utils';
 import { ArrowLeft, ChevronDown, ChevronRight, Search, AlertTriangle, RotateCcw } from 'lucide-react';
 
@@ -49,13 +50,19 @@ function countryFlag(code: string): string {
 
 const PAGE_SIZE = 50;
 
+function formatSeen(epochSecs: number): string {
+  return epochSecs > 0 ? new Date(epochSecs * 1000).toLocaleString() : '—';
+}
+
 interface IPTableProps {
   ips: string[];
   geoData: Map<string, GeoIPInfo>;
   hasGeo: boolean;
+  /** Заданы только для «Истории IP» — там же первое/последнее появление. */
+  historyByIp?: Map<string, MtproxylUserIP>;
 }
 
-function IPTable({ ips, geoData, hasGeo }: IPTableProps) {
+function IPTable({ ips, geoData, hasGeo, historyByIp }: IPTableProps) {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
 
@@ -108,18 +115,24 @@ function IPTable({ ips, geoData, hasGeo }: IPTableProps) {
                 {hasGeo && <TableHead>Страна</TableHead>}
                 {hasGeo && <TableHead>Город</TableHead>}
                 {hasGeo && <TableHead>ASN</TableHead>}
+                {historyByIp && <TableHead>Впервые</TableHead>}
+                {historyByIp && <TableHead>Последний раз</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
               {pageIps.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={hasGeo ? 4 : 1} className="text-center text-text-secondary py-6">
+                  <TableCell
+                    colSpan={1 + (hasGeo ? 3 : 0) + (historyByIp ? 2 : 0)}
+                    className="text-center text-text-secondary py-6"
+                  >
                     {search ? 'Ничего не найдено' : 'Нет IP-адресов'}
                   </TableCell>
                 </TableRow>
               ) : (
                 pageIps.map((ip) => {
                   const geo = geoData.get(ip);
+                  const hist = historyByIp?.get(ip);
                   return (
                     <TableRow key={ip}>
                       <TableCell className="font-mono text-sm">{ip}</TableCell>
@@ -145,6 +158,16 @@ function IPTable({ ips, geoData, hasGeo }: IPTableProps) {
                               )}
                             </span>
                           ) : '—'}
+                        </TableCell>
+                      )}
+                      {historyByIp && (
+                        <TableCell className="text-sm whitespace-nowrap">
+                          {hist ? formatSeen(hist.first_seen) : '—'}
+                        </TableCell>
+                      )}
+                      {historyByIp && (
+                        <TableCell className="text-sm whitespace-nowrap">
+                          {hist ? formatSeen(hist.last_seen) : '—'}
                         </TableCell>
                       )}
                     </TableRow>
@@ -215,6 +238,15 @@ export function UserDetailPage() {
   const { quotaByUser, supported: quotaSupported, refresh: refreshQuota } = useQuota(10000);
   const quota = username ? quotaByUser.get(username) : undefined;
 
+  // Накопленный трафик и история IP живут отдельно от сессионных данных
+  // движка (см. UsersPage) — MTProxyL хранит их на диске, они переживают
+  // рестарт цели/движка и одинаково доступны в обоих режимах.
+  const { data: mtproxylUsers } = usePolling(() => mtproxylUsersApi.list(), 10000);
+  const mtproxylUser = useMemo(() => {
+    if (!username) return undefined;
+    return mergeUserStats([{ username }], mtproxylUsers)[0];
+  }, [username, mtproxylUsers]);
+
   const [resetOpen, setResetOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [resetError, setResetError] = useState('');
@@ -245,13 +277,20 @@ export function UserDetailPage() {
     [users, username]
   );
 
+  const historyByIp = useMemo(() => {
+    const map = new Map<string, MtproxylUserIP>();
+    for (const entry of mtproxylUser?.ip_history ?? []) map.set(entry.ip, entry);
+    return map;
+  }, [mtproxylUser]);
+
   const allIps = useMemo(() => {
     if (!user) return [];
     const set = new Set<string>();
     for (const ip of user.active_unique_ips_list ?? []) set.add(ip);
     for (const ip of user.recent_unique_ips_list ?? []) set.add(ip);
+    for (const entry of mtproxylUser?.ip_history ?? []) set.add(entry.ip);
     return Array.from(set);
-  }, [user]);
+  }, [user, mtproxylUser]);
 
   useEffect(() => {
     if (allIps.length === 0) return;
@@ -315,7 +354,11 @@ export function UserDetailPage() {
               <MetricCard label="Соединения" value={String(user.current_connections)} />
               <MetricCard label="Активные IP" value={`${user.active_unique_ips}${user.max_unique_ips ? ` / ${user.max_unique_ips}` : ''}`} />
               <MetricCard label="Недавние IP" value={String(user.recent_unique_ips)} />
-              <MetricCard label="Трафик" value={formatBytes(user.total_octets)} />
+              <MetricCard label="Трафик (сессия)" value={formatBytes(user.total_octets)} />
+              <MetricCard
+                label="Накоплено"
+                value={mtproxylUser?.total_bytes !== undefined ? formatBytes(mtproxylUser.total_bytes) : '—'}
+              />
               <MetricCard label="Квота" value={user.data_quota_bytes ? formatBytes(user.data_quota_bytes) : '—'} />
               <MetricCard
                 label="Срок действия"
@@ -355,11 +398,9 @@ export function UserDetailPage() {
 
             {geoUnavailable && (
               <div className="p-3 rounded-lg border border-border bg-surface text-xs text-text-secondary">
-                База GeoIP не установлена — адреса показаны без страны и провайдера. Чтобы
-                включить: положите файл <code className="font-mono">GeoLite2-City.mmdb</code> в{' '}
-                <code className="font-mono">/var/lib/mtproxyl-panel/</code> и перезапустите панель.
-                Панель также подхватит базу из <code className="font-mono">/var/lib/GeoIP/</code>{' '}
-                или <code className="font-mono">/usr/share/GeoIP/</code>, если её ставит система.
+                База GeoIP не установлена — адреса показаны без страны и провайдера. Поставить
+                можно прямо из панели: <Link to="/addons" className="text-accent hover:underline">Дополнения</Link>.
+                Она также подхватит базу, установленную системным пакетом или geoipupdate.
               </div>
             )}
 
@@ -388,6 +429,22 @@ export function UserDetailPage() {
                 ips={user.recent_unique_ips_list ?? []}
                 geoData={geoData}
                 hasGeo={hasGeo}
+              />
+            </CollapsibleSection>
+
+            <CollapsibleSection
+              title="История IP"
+              count={mtproxylUser?.ip_history.length ?? 0}
+            >
+              <p className="text-xs text-text-secondary mb-2">
+                Раз увиденный IP остаётся здесь и после того, как «активные»/«недавние» списки
+                опустели — движок помнит только текущую сессию, а MTProxyL копит историю на диске.
+              </p>
+              <IPTable
+                ips={(mtproxylUser?.ip_history ?? []).map((entry) => entry.ip)}
+                geoData={geoData}
+                hasGeo={hasGeo}
+                historyByIp={historyByIp}
               />
             </CollapsibleSection>
           </>

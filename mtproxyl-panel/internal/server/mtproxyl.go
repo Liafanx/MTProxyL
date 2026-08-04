@@ -835,6 +835,36 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 
+	// GeoIP: databases live in a system directory, not the target's config, so
+	// installing works the same in manager and reanimator mode.
+	mux.Handle("GET /api/mtproxyl/geoip-status", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		st, err := client.GeoIPStatus(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: st})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/geoip-install", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		started := runner.Start("geoip:install", func(ctx context.Context) (string, error) {
+			defer invalidateGeoIPLookup()
+			return client.InstallGeoIP(ctx)
+		})
+		if !started {
+			writeError(w, http.StatusConflict, "operation_busy",
+				"Другая операция MTProxyL уже выполняется")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
+	}))
+
 	// Applying rebuilds the engine config once for a whole batch of edits.
 	mux.Handle("POST /api/mtproxyl/expert/apply", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) || busy(w) {
