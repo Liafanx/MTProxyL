@@ -587,18 +587,32 @@ _selfmask_free_ports() {
     fi
 
     # 2. Проверяем занят ли порт 80 кем-то ещё
+    #
+    # Источник вывода не пайпим напрямую в grep -q ни здесь, ни в шагах 3-4
+    # ниже: если grep находит совпадение раньше, чем ss/systemctl дописал
+    # весь вывод, тот получает SIGPIPE — а под глобальным set -o pipefail
+    # (см. mtproxyl.sh) это делает код всего пайплайна ненулевым, несмотря
+    # на то что grep уже нашёл нужное. На один CPU, да ещё сразу после
+    # apt-get/curl в этой же функции, гонка не гипотетическая: именно из-за
+    # неё проверка mtproxyl-panel.service ниже молча проваливалась в общую
+    # ветку "порт занят чем-то ещё", хотя панель обнаруживалась верно —
+    # grep успевал закрыть пайп раньше, чем systemctl дописывал список.
+    # Сначала забираем вывод целиком в переменную, потом уже ищем в ней.
     local _port80_busy="false"
+    local _listen_out=""
     if command -v ss &>/dev/null; then
-        ss -tln 2>/dev/null | awk '{print $4}' | grep -qE '(^|:|])80$' && _port80_busy="true"
+        _listen_out=$(ss -tln 2>/dev/null)
     elif command -v netstat &>/dev/null; then
-        netstat -tln 2>/dev/null | awk '{print $4}' | grep -qE '(^|:|])80$' && _port80_busy="true"
+        _listen_out=$(netstat -tln 2>/dev/null)
     fi
+    printf '%s\n' "$_listen_out" | awk '{print $4}' | grep -qE '(^|:|])80$' && _port80_busy="true"
 
     # Если порт 80 свободен — отлично
     [ "$_port80_busy" != "true" ] && return 0
 
     # 3. Если активен системный nginx — спрашиваем пользователя
-    if systemctl list-unit-files 2>/dev/null | grep -q '^nginx\.service' && systemctl is-active nginx &>/dev/null 2>&1; then
+    local _unit_files; _unit_files=$(systemctl list-unit-files 2>/dev/null)
+    if printf '%s\n' "$_unit_files" | grep -q '^nginx\.service' && systemctl is-active nginx &>/dev/null 2>&1; then
         echo ""
         log_warn "Обнаружен системный nginx, который использует порт 80"
         echo -e "  ${DIM}Selfmask требует порт 80 для Let's Encrypt и http→https redirect.${NC}"
@@ -625,7 +639,7 @@ _selfmask_free_ports() {
     # собственного Let's Encrypt (AmbientCapabilities=CAP_NET_BIND_SERVICE в
     # её systemd-юните), и делает это постоянно, а не только в момент
     # выпуска. Тот же вопрос, что для системного nginx.
-    if systemctl list-unit-files 2>/dev/null | grep -q '^mtproxyl-panel\.service' && systemctl is-active mtproxyl-panel &>/dev/null 2>&1; then
+    if printf '%s\n' "$_unit_files" | grep -q '^mtproxyl-panel\.service' && systemctl is-active mtproxyl-panel &>/dev/null 2>&1; then
         # Неинтерактивный режим — сюда попадает и сама панель, вызывающая эту
         # команду через sudo -n (internal/mtproxylctl ставит
         # MTPROXYL_ASSUME_YES=1). Останови мы её здесь — systemd убьёт и
