@@ -161,26 +161,26 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 		}
 
 		if !limiter.allow(ip, 5, 1*time.Minute) {
-			writeError(w, http.StatusTooManyRequests, "rate_limited", "too many login attempts, try again later")
+			writeError(w, http.StatusTooManyRequests, "rate_limited", "Слишком много попыток входа, повторите позже")
 			return
 		}
 
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit
 		var req loginRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
+			writeError(w, http.StatusBadRequest, "bad_request", "Некорректное тело запроса")
 			return
 		}
 
 		if req.Username != s.cfg.Auth.Username || !auth.CheckPassword(req.Password, s.cfg.Auth.PasswordHash) {
 			limiter.record(ip)
-			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid credentials")
+			writeError(w, http.StatusUnauthorized, "unauthorized", "Неверный логин или пароль")
 			return
 		}
 
 		token, err := auth.GenerateToken(req.Username, jwtSecret, ttl)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal_error", "failed to generate token")
+			writeError(w, http.StatusInternalServerError, "internal_error", "Не удалось создать токен сессии")
 			return
 		}
 
@@ -387,7 +387,7 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 	mux.Handle("PUT /api/auto-update/config", auth.RequireAuth(jwtSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req auto_update.UpdateConfigRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
+			writeError(w, http.StatusBadRequest, "bad_request", "Некорректное тело запроса")
 			return
 		}
 		autoMgr.UpdateConfig("panel", req.Panel)
@@ -512,7 +512,7 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 			Restart bool   `json:"restart"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
+			writeError(w, http.StatusBadRequest, "bad_request", "Некорректное тело запроса")
 			return
 		}
 
@@ -638,7 +638,7 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 			IPs []string `json:"ips"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
+			writeError(w, http.StatusBadRequest, "bad_request", "Некорректное тело запроса")
 			return
 		}
 
