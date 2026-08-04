@@ -34,7 +34,7 @@ GITHUB_BRANCH="${MTPROXYL_BRANCH:-}"
 if [ -z "$GITHUB_BRANCH" ] && [ -r "${INSTALL_DIR}/.branch" ]; then
     GITHUB_BRANCH=$(tr -cd 'A-Za-z0-9._/-' < "${INSTALL_DIR}/.branch" 2>/dev/null)
 fi
-[ -n "$GITHUB_BRANCH" ] || GITHUB_BRANCH="dev"
+[ -n "$GITHUB_BRANCH" ] || GITHUB_BRANCH="main"
 GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
 REGISTRY_IMAGE="ghcr.io/liafanx/mtproxyl-telemt"
 TELEMT_GITHUB="telemt/telemt"
