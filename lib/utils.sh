@@ -181,6 +181,37 @@ get_public_ip() {
     echo "$ip"
 }
 
+# ── Публичные host/port для tg://-ссылок ───────────────────────
+#
+# [general.links] public_host/public_port — то, что реально идёт в ссылку,
+# отдельно от того, где движок слушает (например, за NAT или пробросом
+# порта). В обычном режиме это expert-override поверх сгенерированного
+# конфига; в супер эксперте — сам конфиг пользователя. Раньше все места,
+# что строят tg://, использовали get_public_ip()/PROXY_PORT напрямую и этот
+# override молча игнорировали.
+proxy_link_host() {
+    local _host=""
+    if _superexpert_active 2>/dev/null; then
+        _host=$(_toml_get_string_in_section "general.links" "public_host" "$SUPEREXPERT_FILE" 2>/dev/null)
+    else
+        _host=$(get_expert_override_value "general.links" "public_host" 2>/dev/null)
+    fi
+    [ -n "$_host" ] || _host=$(get_public_ip)
+    echo "$_host"
+}
+
+proxy_link_port() {
+    local _port=""
+    if _superexpert_active 2>/dev/null; then
+        _port=$(_toml_get_string_in_section "general.links" "public_port" "$SUPEREXPERT_FILE" 2>/dev/null)
+        [ -n "$_port" ] || _port=$(_toml_get_string_in_section "server" "port" "$SUPEREXPERT_FILE" 2>/dev/null)
+    else
+        _port=$(get_expert_override_value "general.links" "public_port" 2>/dev/null)
+    fi
+    [ -n "$_port" ] || _port="${PROXY_PORT}"
+    echo "$_port"
+}
+
 generate_secret() {
     openssl rand -hex 16 2>/dev/null || {
         head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 32
@@ -436,7 +467,7 @@ self_update() {
     if [ -z "$_lib_list" ]; then
         log_warn "Не удалось извлечь список библиотек из нового скрипта"
         log_info "Используем резервный список"
-        _lib_list="colors utils settings secrets config docker engine traffic geoblock upstream backup nft selfmask panel detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode settings_cli install"
+        _lib_list="colors utils settings secrets config docker engine traffic geoblock geoip upstream backup nft selfmask panel detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode settings_cli install"
     fi
 
     local _total=0 _ok=0 _failed=0 _skipped=0

@@ -98,21 +98,22 @@ secret_add() {
     save_secrets
     [ "$no_restart" != "true" ] && reload_proxy_config 2>/dev/null || true
 
-    local full_secret server_ip
+    local full_secret server_ip server_port
     full_secret=$(build_faketls_secret "$raw_secret")
-    server_ip=$(get_public_ip)
+    server_ip=$(proxy_link_host)
+    server_port=$(proxy_link_port)
 
     log_success "Секрет '${label}' создан"
     echo ""
     echo -e "  ${BOLD}Ссылка для Telegram:${NC}"
-    echo -e "  ${CYAN}tg://proxy?server=${server_ip}&port=${PROXY_PORT}&secret=${full_secret}${NC}"
+    echo -e "  ${CYAN}tg://proxy?server=${server_ip}&port=${server_port}&secret=${full_secret}${NC}"
     echo ""
     echo -e "  ${BOLD}Веб-ссылка:${NC}"
-    echo -e "  ${CYAN}https://t.me/proxy?server=${server_ip}&port=${PROXY_PORT}&secret=${full_secret}${NC}"
+    echo -e "  ${CYAN}https://t.me/proxy?server=${server_ip}&port=${server_port}&secret=${full_secret}${NC}"
 
     if command -v qrencode &>/dev/null; then
         echo ""
-        qrencode -t ANSIUTF8 "tg://proxy?server=${server_ip}&port=${PROXY_PORT}&secret=${full_secret}" 2>/dev/null | sed 's/^/  /'
+        qrencode -t ANSIUTF8 "tg://proxy?server=${server_ip}&port=${server_port}&secret=${full_secret}" 2>/dev/null | sed 's/^/  /'
     fi
     echo ""
 }
@@ -172,14 +173,15 @@ secret_rotate() {
     save_secrets
     reload_proxy_config 2>/dev/null || true
 
-    local full_secret server_ip
+    local full_secret server_ip server_port
     full_secret=$(build_faketls_secret "$new_secret")
-    server_ip=$(get_public_ip)
+    server_ip=$(proxy_link_host)
+    server_port=$(proxy_link_port)
 
     log_success "Секрет '${label}' обновлён"
     echo ""
     echo -e "  ${BOLD}Новая ссылка:${NC}"
-    echo -e "  ${CYAN}tg://proxy?server=${server_ip}&port=${PROXY_PORT}&secret=${full_secret}${NC}"
+    echo -e "  ${CYAN}tg://proxy?server=${server_ip}&port=${server_port}&secret=${full_secret}${NC}"
     echo ""
 }
 
@@ -404,8 +406,9 @@ secret_list() {
 # Ссылка для секрета
 get_proxy_link() {
     local label="${1:-}"
-    local server_ip
-    server_ip=$(get_public_ip)
+    local server_ip server_port
+    server_ip=$(proxy_link_host)
+    server_port=$(proxy_link_port)
 
     if [ -z "$label" ]; then
         local i
@@ -423,7 +426,7 @@ get_proxy_link() {
 
     local full_secret
     full_secret=$(build_faketls_secret "${SECRETS_KEYS[$idx]}")
-    echo "tg://proxy?server=${server_ip}&port=${PROXY_PORT}&secret=${full_secret}"
+    echo "tg://proxy?server=${server_ip}&port=${server_port}&secret=${full_secret}"
 }
 
 # Получить список меток включённых секретов для конфига
@@ -466,11 +469,12 @@ secret_clone() {
     save_secrets
     reload_proxy_config 2>/dev/null || true
 
-    local full_secret server_ip
+    local full_secret server_ip server_port
     full_secret=$(build_faketls_secret "${SECRETS_KEYS[-1]}")
-    server_ip=$(get_public_ip)
+    server_ip=$(proxy_link_host)
+    server_port=$(proxy_link_port)
     log_success "Секрет '${new}' клонирован из '${src}'"
-    echo -e "  ${CYAN}tg://proxy?server=${server_ip}&port=${PROXY_PORT}&secret=${full_secret}${NC}"
+    echo -e "  ${CYAN}tg://proxy?server=${server_ip}&port=${server_port}&secret=${full_secret}${NC}"
     echo ""
 }
 
@@ -694,7 +698,7 @@ _target_user_limit() {
 # Ссылка строится по конфигу цели, а не по нашим настройкам: домен и режим
 # маскировки у чужого движка свои.
 target_user_link() {
-    local _label="$1" _raw _domain _mask _full _ip
+    local _label="$1" _raw _domain _mask _full _ip _port
     _raw=$(_target_user_secret "$_label")
     [ -n "$_raw" ] || return 1
     _domain=$(_toml_get_string_in_section "censorship" "tls_domain" "$DETECTED_CONFIG_PATH")
@@ -704,8 +708,14 @@ target_user_link() {
     else
         _full="ee${_raw}$(domain_to_hex "$_domain")"
     fi
-    _ip=$(get_public_ip)
-    printf 'tg://proxy?server=%s&port=%s&secret=%s' "$_ip" "${DETECTED_PORT:-443}" "$_full"
+    # [general.links] public_host/public_port у цели — та же логика, что и
+    # для superexpert: заданы явно — используем их, а не наш определённый
+    # IP и не порт из детекта.
+    _ip=$(_toml_get_string_in_section "general.links" "public_host" "$DETECTED_CONFIG_PATH")
+    [ -n "$_ip" ] || _ip=$(get_public_ip)
+    _port=$(_toml_get_string_in_section "general.links" "public_port" "$DETECTED_CONFIG_PATH")
+    [ -n "$_port" ] || _port="${DETECTED_PORT:-443}"
+    printf 'tg://proxy?server=%s&port=%s&secret=%s' "$_ip" "$_port" "$_full"
 }
 
 # Общий хвост всех правок: цель читает конфиг только при старте.
