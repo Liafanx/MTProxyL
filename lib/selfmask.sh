@@ -563,6 +563,7 @@ EOF
 }
 
 SELFMASK_SYSTEM_NGINX_WAS_ACTIVE="false"
+SELFMASK_PANEL_WAS_ACTIVE="false"
 
 _selfmask_stop_own_nginx() {
     if systemctl is-active "${SELFMASK_PQ_SERVICE}" &>/dev/null 2>&1; then
@@ -620,17 +621,61 @@ _selfmask_free_ports() {
         fi
     fi
 
-    # 4. Если занят не nginx'ом — просто сообщаем
+    # 4. Если активна веб-панель MTProxyL-Panel — она держит порт 80 ради
+    # собственного Let's Encrypt (AmbientCapabilities=CAP_NET_BIND_SERVICE в
+    # её systemd-юните), и делает это постоянно, а не только в момент
+    # выпуска. Тот же вопрос, что для системного nginx.
+    if systemctl list-unit-files 2>/dev/null | grep -q '^mtproxyl-panel\.service' && systemctl is-active mtproxyl-panel &>/dev/null 2>&1; then
+        # Неинтерактивный режим — сюда попадает и сама панель, вызывающая эту
+        # команду через sudo -n (internal/mtproxylctl ставит
+        # MTPROXYL_ASSUME_YES=1). Останови мы её здесь — systemd убьёт и
+        # процесс sudo/mtproxyl.sh, которым панель нас же и вызвала, раньше,
+        # чем сертификат будет получен и панель возвращена: она застрянет
+        # выключенной. Отказываем явно, а не тихим "да" под ASSUME_YES.
+        if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ]; then
+            log_error "Порт 80 занят веб-панелью MTProxyL-Panel — не могу остановить её автоматически"
+            log_info "Остановите панель вручную (sudo systemctl stop mtproxyl-panel), повторите"
+            log_info "selfmask apply, затем запустите панель обратно (sudo systemctl start mtproxyl-panel)"
+            return 1
+        fi
+        echo ""
+        log_warn "Порт 80 занят веб-панелью MTProxyL-Panel (её собственный Let's Encrypt)"
+        echo -e "  ${DIM}Selfmask требует порт 80 для своего Let's Encrypt и http→https redirect.${NC}"
+        echo -e "  ${DIM}Панель будет недоступна на несколько секунд, пока сертификат не выпущен.${NC}"
+        echo ""
+        echo -en "  ${BOLD}Временно остановить панель? [y/N]:${NC} "
+        local _yn
+        read_line _yn
+        if [[ "$_yn" =~ ^[yY] ]]; then
+            SELFMASK_PANEL_WAS_ACTIVE="true"
+            systemctl stop mtproxyl-panel &>/dev/null || {
+                log_error "Не удалось остановить mtproxyl-panel"
+                return 1
+            }
+            log_info "Панель временно остановлена"
+            return 0
+        else
+            log_error "Настройка selfmask отменена: порт 80 занят панелью"
+            return 1
+        fi
+    fi
+
+    # 5. Если занят чем-то ещё — просто сообщаем
     log_error "Порт 80 уже занят другим процессом"
     log_info "Освободите порт 80 и повторите настройку selfmask"
     return 1
 }
 
-_selfmask_restore_system_nginx() {
+_selfmask_restore_port80_holders() {
     if [ "${SELFMASK_SYSTEM_NGINX_WAS_ACTIVE:-false}" = "true" ]; then
         log_info "Возвращаем системный nginx в исходное состояние..."
         systemctl start nginx &>/dev/null || log_warn "Не удалось снова запустить системный nginx"
         SELFMASK_SYSTEM_NGINX_WAS_ACTIVE="false"
+    fi
+    if [ "${SELFMASK_PANEL_WAS_ACTIVE:-false}" = "true" ]; then
+        log_info "Возвращаем веб-панель в исходное состояние..."
+        systemctl start mtproxyl-panel &>/dev/null || log_warn "Не удалось снова запустить mtproxyl-panel"
+        SELFMASK_PANEL_WAS_ACTIVE="false"
     fi
 }
 
@@ -906,7 +951,7 @@ EOF
     systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null || {
         log_error "Не удалось перезапустить PQ nginx"
         journalctl -u "${SELFMASK_PQ_SERVICE}" -n 20 --no-pager 2>/dev/null | sed 's/^/    /'
-        _selfmask_restore_system_nginx
+        _selfmask_restore_port80_holders
         return 1
     }
 
@@ -1181,10 +1226,10 @@ selfmask_setup() {
     if [ "$SELFMASK_CERT_MODE" = "selfsigned" ]; then
         _selfmask_generate_selfsigned_cert || return 1
     else
-        _selfmask_obtain_cert          || { _selfmask_restore_system_nginx; return 1; }
+        _selfmask_obtain_cert          || { _selfmask_restore_port80_holders; return 1; }
     fi
-    _selfmask_configure_nginx      || { _selfmask_restore_system_nginx; return 1; }
-    _selfmask_apply_mtproxyl_settings || { _selfmask_restore_system_nginx; return 1; }
+    _selfmask_configure_nginx      || { _selfmask_restore_port80_holders; return 1; }
+    _selfmask_apply_mtproxyl_settings || { _selfmask_restore_port80_holders; return 1; }
     [ "$SELFMASK_CERT_MODE" = "letsencrypt" ] && { _selfmask_setup_renewal || true; }
     selfmask_verify
 
@@ -1504,10 +1549,10 @@ selfmask_apply() {
     if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "selfsigned" ]; then
         _selfmask_generate_selfsigned_cert || return 1
     else
-        _selfmask_obtain_cert      || { _selfmask_restore_system_nginx; return 1; }
+        _selfmask_obtain_cert      || { _selfmask_restore_port80_holders; return 1; }
     fi
-    _selfmask_configure_nginx      || { _selfmask_restore_system_nginx; return 1; }
-    _selfmask_apply_mtproxyl_settings || { _selfmask_restore_system_nginx; return 1; }
+    _selfmask_configure_nginx      || { _selfmask_restore_port80_holders; return 1; }
+    _selfmask_apply_mtproxyl_settings || { _selfmask_restore_port80_holders; return 1; }
     [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "letsencrypt" ] && { _selfmask_setup_renewal || true; }
 
     echo ""
