@@ -12,11 +12,20 @@ LimitNOFILE=65536
 
 # Let's Encrypt (tls.acme_domain) отвечает на HTTP-01-challenge на порту 80,
 # который непривилегированному User=mtproxyl-panel не забиндить. Даём только
-# эту способность — не root целиком, — и переживает замену бинарника при
+# эту способность — не root целиком, — и она переживает замену бинарника при
 # самообновлении: capability выдаёт systemd при запуске процесса, а не
 # setcap на файле, который потерялся бы при следующей sudo mv.
+#
+# CapabilityBoundingSet НЕ трогаем: он ограничивает не только сам процесс,
+# но и всё, что тот запускает — включая sudo, которым панель вызывает CLI
+# MTProxyL (internal/mtproxylctl). Явный CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+# урезал бы набор до одной этой capability и для sudo тоже, а sudo для
+# смены на root и инициализации audit-плагина нужны свои (setuid/setgid,
+# CAP_AUDIT_WRITE) — без них он падает с "unable to change to root gid" и
+# "error initializing audit plugin sudoers_audit". По умолчанию (директива
+# не задана) systemd оставляет bounding set полным, ambient-capability
+# добавляется поверх него, а не вместо.
 AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
 # Hardening compatible with sudo-based updater operations
 ProtectHome=true
