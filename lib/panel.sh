@@ -43,7 +43,9 @@ panel_status_line() {
 
 # Адрес, по которому панель отвечает — читаем из её конфига, чтобы не гадать.
 # 0.0.0.0 означает «на всех интерфейсах», поэтому подставляем реальный IP
-# сервера: ссылка вида http://:8080 никуда не ведёт.
+# сервера: ссылка вида http://:8080 никуда не ведёт. Let's Encrypt (acme_domain)
+# выпускается на конкретный домен — если он задан, показываем его, а не IP:
+# сертификат домену не соответствует IP, браузер такой ссылке не поверит.
 panel_listen_addr() {
     local _cfg="${PANEL_CONFIG_DIR}/config.toml"
     [ -f "$_cfg" ] || return 1
@@ -53,6 +55,14 @@ panel_listen_addr() {
     [ -n "$_listen" ] || return 1
 
     local _host="${_listen%:*}" _port="${_listen##*:}"
+    local _acme_domain
+    _acme_domain=$(grep -oE '^[[:space:]]*acme_domain[[:space:]]*=[[:space:]]*"[^"]+"' "$_cfg" 2>/dev/null \
+        | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+    if [ -n "$_acme_domain" ]; then
+        echo "${_acme_domain}:${_port}"
+        return 0
+    fi
+
     case "$_host" in
         ""|"0.0.0.0"|"::"|"[::]")
             local _ip; _ip=$(get_public_ip 2>/dev/null)
