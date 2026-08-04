@@ -866,6 +866,16 @@ do_install() {
       TELEMT_SERVICE=$(prompt "Имя systemd-службы telemt" "$TELEMT_SERVICE_DETECTED")
     fi
 
+    echo ""
+    say "Порт панели"
+    PANEL_PORT=$(prompt "Порт, на котором слушает панель" "8080")
+    case "$PANEL_PORT" in
+      ''|*[!0-9]*) die "Порт должен быть числом" ;;
+    esac
+    if [ "$PANEL_PORT" -lt 1 ] || [ "$PANEL_PORT" -gt 65535 ]; then
+      die "Порт должен быть в диапазоне 1-65535"
+    fi
+
     # HTTPS по умолчанию: панель принимает пароль администратора и выдаёт токен
     # сессии, а сервер с прокси почти всегда торчит в интернет. По HTTP и то и
     # другое уходит открытым текстом.
@@ -933,7 +943,7 @@ self_signed_hosts = [\"$TLS_HOSTS\"]"
     JWT_SECRET=$(openssl rand -hex 32)
 
     # Build config with standard paths
-    _cfg="listen = \"0.0.0.0:8080\"
+    _cfg="listen = \"0.0.0.0:$PANEL_PORT\"
 data_dir = \"$DATA_DIR\"
 
 [telemt]
@@ -1001,17 +1011,26 @@ session_ttl = \"24h\"${TLS_BLOCK}"
   printf '\n'
   say "Установка завершена"
   printf '\n'
-  # Схему берём из конфига, а не из ответов мастера: при переустановке поверх
-  # существующего конфига мастер не спрашивал ничего, и переменные пусты.
+  # Схема, порт и домен — из конфига, а не из ответов мастера: при
+  # переустановке поверх существующего конфига мастер не спрашивал ничего,
+  # и переменные вроде PANEL_PORT/TLS_DOMAIN пусты.
   _scheme="http"
   _selfsigned=""
+  _panel_port="8080"
+  _host="$_ip"
   if [ -f "$CONFIG_FILE" ]; then
     _tls_cert=$($SUDO sh -c "cat '$CONFIG_FILE'" 2>/dev/null | sed -n 's/^[[:space:]]*cert_file[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' | head -1)
     _tls_acme=$($SUDO sh -c "cat '$CONFIG_FILE'" 2>/dev/null | sed -n 's/^[[:space:]]*acme_domain[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' | head -1)
     _selfsigned=$($SUDO sh -c "cat '$CONFIG_FILE'" 2>/dev/null | sed -n 's/^[[:space:]]*self_signed[[:space:]]*=[[:space:]]*\(true\).*/\1/p' | head -1)
     { [ -n "$_tls_cert" ] || [ -n "$_tls_acme" ]; } && _scheme="https"
+    # Let's Encrypt выпускается на домен — показываем его, а не IP сервера,
+    # иначе адрес в сообщении не совпадает с тем, на что реально есть сертификат.
+    [ -n "$_tls_acme" ] && _host="$_tls_acme"
+    _listen=$($SUDO sh -c "cat '$CONFIG_FILE'" 2>/dev/null | sed -n 's/^[[:space:]]*listen[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' | head -1)
+    _from_listen=$(printf '%s' "$_listen" | sed -n 's/.*:\([0-9]\{1,5\}\)$/\1/p')
+    [ -n "$_from_listen" ] && _panel_port="$_from_listen"
   fi
-  printf '  Адрес панели:  %s://%s:8080\n' "$_scheme" "$_ip"
+  printf '  Адрес панели:  %s://%s:%s\n' "$_scheme" "$_host" "$_panel_port"
   if [ "$_selfsigned" = "true" ]; then
     printf '                 браузер предупредит о недоверенном сертификате — это ожидаемо\n'
   elif [ "$_scheme" = "http" ]; then
