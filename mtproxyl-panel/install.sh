@@ -493,6 +493,14 @@ Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536
 
+# Let's Encrypt (tls.acme_domain) отвечает на HTTP-01-challenge на порту 80,
+# который непривилегированному пользователю панели не забиндить. Даём
+# только эту способность — не root целиком, — и она переживает замену
+# бинарника при самообновлении: capability выдаёт systemd при запуске
+# процесса, а не setcap на файле, который потерялся бы при следующей sudo mv.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
 # Hardening compatible with sudo-based updater operations
 ProtectHome=true
 PrivateTmp=true
