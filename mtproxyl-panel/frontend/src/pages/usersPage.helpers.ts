@@ -13,7 +13,10 @@ export interface UserStats {
  */
 export function mergeUserStats<T extends { username: string }>(
   liveUsers: T[],
-  mtproxylUsers: MtproxylUser[] | undefined
+  // null — usePolling ещё не получил первый ответ; undefined — вызов без
+  // списка вовсе. Оба означают «данных MTProxyL пока нет», и оба должны
+  // отдавать живых пользователей как есть, а не ронять страницу.
+  mtproxylUsers: MtproxylUser[] | null | undefined
 ): (T & UserStats)[] {
   const byLabel = new Map((mtproxylUsers ?? []).map((u) => [u.label, u]));
   return liveUsers.map((u) => {

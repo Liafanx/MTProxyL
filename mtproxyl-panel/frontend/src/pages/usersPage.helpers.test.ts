@@ -110,7 +110,14 @@ assertDeepEqual(
 );
 
 // Список ещё не загрузился — сливаемся с пустым, а не падаем.
+// usePolling до первого ответа отдаёт null, а не undefined: принимаем оба,
+// иначе страница пользователей не собирается (tsc: TS2345).
 assertDeepEqual(
   mergeUserStats([{ username: 'alice' }], undefined),
+  [{ username: 'alice', total_bytes: undefined, ip_history: [] }],
+);
+
+assertDeepEqual(
+  mergeUserStats([{ username: 'alice' }], null),
   [{ username: 'alice', total_bytes: undefined, ip_history: [] }],
 );
