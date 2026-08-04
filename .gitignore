@@ -1,0 +1,28 @@
+# Конфигурация AI-ассистентов и их инструментов.
+#
+# Это личная обвязка рабочего места, а не часть проекта: у каждого свой набор
+# и свои правила, а в репозитории они только сбивают с толку — читаются как
+# указания проекта, хотя проект о них ничего не знает.
+.clinerules
+.windsurfrules
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+opencode.json
+.claude/
+.cursor/
+.gemini/
+.kiro/
+.aider*
+.github/copilot-instructions.md
+
+# Локальное состояние и временные файлы
+*.swp
+*.swo
+*~
+*.tmp
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
