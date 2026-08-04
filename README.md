@@ -903,8 +903,9 @@ selfmask, гео-блокировка, бэкапы) работают как о�
 │   ├── config.sh                # Генерация config.toml
 │   ├── docker.sh                # Docker
 │   ├── engine.sh                # Версии telemt
-│   ├── traffic.sh               # Метрики, трафик
+│   ├── traffic.sh               # Метрики, трафик, история IP пользователей
 │   ├── geoblock.sh              # Гео-блокировка
+│   ├── geoip.sh                 # База GeoIP: страна, город, провайдер
 │   ├── upstream.sh              # Upstream
 │   ├── backup.sh                # Бэкапы
 │   ├── nft.sh                   # NFT limiter + Zapret2 fix + iOS фиксы
@@ -912,6 +913,7 @@ selfmask, гео-блокировка, бэкапы) работают как о�
 │   ├── panel.sh                 # Установка и управление веб-панелью
 │   ├── expert_catalog.sh        # Каталог параметров telemt
 │   ├── expert_mode.sh           # Режим эксперта
+│   ├── settings_cli.sh          # Машинный вывод настроек для панели
 │   ├── tui_main.sh              # Главное меню
 │   ├── tui_proxy.sh             # Подменю: прокси
 │   ├── tui_secrets.sh           # Подменю: секреты
@@ -921,6 +923,7 @@ selfmask, гео-блокировка, бэкапы) работают как о�
 │   ├── tui_traffic.sh           # Подменю: трафик
 │   ├── tui_engine.sh            # Подменю: движок
 │   ├── tui_backup.sh            # Подменю: обновления и бэкапы
+│   ├── tui_expert.sh            # Подменю: режим эксперта
 │   ├── tui_nft.sh               # Подменю: NFT + Zapret2
 │   ├── tui_selfmask.sh          # Подменю: selfmask
 │   ├── tui_addons.sh            # Подменю: дополнения
@@ -977,6 +980,11 @@ Docker, сертификаты Let's Encrypt и Zapret2 NFT-таблица оч�
 ## Благодарности
 
 - **[MTPROTO-FIX-By-MEKO](https://github.com/Mekotofeuka/MTPR-FIX-By-MEKO)** — идея Smart режима NFT, TCP fingerprint, оптимизация sysctl
+- **[telemt_panel](https://github.com/amirotin/telemt_panel)** — основа веб-панели
+  MTProxyL-Panel. Оттуда взято ядро: авторизация, обновление бинарника,
+  потоковые логи через WebSocket, GeoIP-поиск и редактор TOML. Всё, что
+  касается самого MTProxyL — режимы, Selfmask, лимитер, бэкапы, пользователи —
+  надстроено поверх
 
 ---
 
