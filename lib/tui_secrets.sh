@@ -59,8 +59,11 @@ tui_target_users_menu() {
                     local _link; _link=$(target_user_link "$l")
                     if [ -n "$_link" ]; then
                         echo ""
-                        command -v qrencode &>/dev/null && \
+                        if command -v qrencode &>/dev/null; then
                             qrencode -t ANSIUTF8 "$_link" 2>/dev/null | sed 's/^/  /'
+                        else
+                            echo -e "  ${DIM}qrencode не установлен: apt install qrencode${NC}"
+                        fi
                         echo -e "  ${CYAN}${_link}${NC}"
                         echo ""
                     else
@@ -160,7 +163,12 @@ tui_secrets_menu() {
                     local link; link=$(get_proxy_link "$l") || true
                     if [ -n "$link" ]; then
                         echo -e "  ${CYAN}${link}${NC}"
-                        command -v qrencode &>/dev/null && { echo ""; qrencode -t ANSIUTF8 "$link" | sed 's/^/  /'; }
+                        echo ""
+                        if command -v qrencode &>/dev/null; then
+                            qrencode -t ANSIUTF8 "$link" | sed 's/^/  /'
+                        else
+                            echo -e "  ${DIM}qrencode не установлен: apt install qrencode${NC}"
+                        fi
                     fi
                 fi; press_any_key ;;
             10)
