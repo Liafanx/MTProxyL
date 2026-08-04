@@ -116,7 +116,7 @@ fi
 chmod +x "${INSTALL_DIR}/mtproxyl.sh"
 
 # Библиотеки
-for lib in colors utils settings secrets config docker engine traffic geoblock upstream backup nft selfmask panel detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode settings_cli install; do
+for lib in colors utils settings secrets config docker engine traffic geoblock geoip upstream backup nft selfmask panel detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode settings_cli install; do
     echo "  → lib/${lib}.sh"
     if ! download_file "${SCRIPT_URL}/lib/${lib}.sh" "${INSTALL_DIR}/lib/${lib}.sh" "lib/${lib}.sh"; then
         echo "  Установка прервана. Повторите попытку через 10–30 секунд." >&2
