@@ -50,8 +50,10 @@ jobs:
           go vet ./...
           go test ./...
 
+      # release-binaries, а не release: фронтенд собран шагом выше, и цель
+      # release пересобрала бы его вторым npm ci.
       - name: Build binaries
-        run: make release VERSION=${{ steps.version.outputs.value }}
+        run: make release-binaries VERSION=${{ steps.version.outputs.value }}
 
       # Установщик распаковывает архив и передаёт install(1) путь
       # mtproxyl-panel-<arch>-linux, то есть внутри должен лежать ФАЙЛ с этим

@@ -82,22 +82,40 @@ jobs:
           go-version: '1.25'
           cache-dependency-path: mtproxyl-panel/go.sum
 
-      - name: Build frontend
+      # npm run build — это `tsc -b && vite build`, то есть проверка типов уже
+      # здесь. Отдельного `tsc --noEmit` дальше нет намеренно: он стоял бы
+      # после этого шага и никогда не сработал бы как диагностика — типы
+      # роняют сборку раньше.
+      - name: Build frontend (типы + vite)
         run: |
           cd frontend
           npm ci
           npm run build
-
-      - name: TypeScript check
-        run: |
-          cd frontend
-          npx tsc --noEmit
 
       - name: Build backend
         run: go build -v .
 
       - name: Run tests
         run: go test -v ./...
+
+      # Готовые бинарники с любого коммита, без выпуска релиза.
+      #
+      # Собирать панель на самом сервере — долго: типичный VPS под прокси
+      # тянет один-два ядра, а tsc и Go на них идут минутами и упираются в
+      # память. Здесь сборка уже произошла, поэтому выкладываем её результат:
+      # артефакт можно скачать и поставить как обычный релизный архив.
+      - name: Build release binaries
+        run: make release-binaries VERSION=ci-${{ github.sha }}
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtproxyl-panel-${{ github.sha }}
+          path: |
+            mtproxyl-panel/release/mtproxyl-panel-x86_64-linux
+            mtproxyl-panel/release/mtproxyl-panel-aarch64-linux
+          retention-days: 14
+          if-no-files-found: error
 
   # The bash side of MTProxyL is not covered by the workflows above; a syntax
   # check is cheap insurance for the headless-mode patch the panel depends on.
