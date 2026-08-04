@@ -1,11 +1,25 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-#  MTProxyL v1.3.2 — Telegram MTProto Proxy Manager
+#  MTProxyL v1.4.0 — Telegram MTProto Proxy Manager
 #  https://github.com/Liafanx/MTProxyL
 #  by LiafanX
 # ═══════════════════════════════════════════════════════════════
 
 set -o pipefail
+
+# Почти всё здесь требует root — от /opt/mtproxyl до Docker и nft. Раньше
+# запуск без sudo либо падал на конкретной команде с понятной ошибкой, либо
+# спотыкался глубже (Docker, nft) с непонятной, и пользователь сам должен
+# был догадаться добавить sudo. Поднимаем себя сами, чтобы `mtproxyl` вело
+# себя как `sudo mtproxyl` без этого шага.
+#
+# Пропускается, если уже root — так приходит вызов от панели: она сама
+# делает `sudo -n mtproxyl.sh ...` (internal/mtproxylctl), и к этому моменту
+# id -u уже 0.
+if [ "$(id -u)" -ne 0 ]; then
+    exec sudo -- "$0" "$@"
+fi
+
 export LC_NUMERIC=C
 # apt не должен ничего спрашивать. Без этого установка зависимостей (selfmask,
 # nftables, ipset) может встать намертво на диалоге debconf или needrestart —
