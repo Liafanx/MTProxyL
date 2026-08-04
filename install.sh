@@ -11,7 +11,7 @@ set -e
 REPO="Liafanx/MTProxyL"
 INSTALL_DIR="/opt/mtproxyl"
 # Ветка репозитория, из которой скачиваются скрипт и библиотеки
-BRANCH="${MTPROXYL_BRANCH:-dev}"
+BRANCH="${MTPROXYL_BRANCH:-main}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
