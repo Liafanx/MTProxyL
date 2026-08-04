@@ -778,13 +778,45 @@ _selfmask_open_public_ports() {
     fi
 }
 
+# Годен ли уже лежащий в системе сертификат: оба файла на месте, покрывает
+# наш домен и не истекает в ближайшие 30 дней (тот же порог, по которому
+# certbot решает продлевать). Наличия одного fullchain.pem мало: просроченный
+# файл никуда не девается, и по нему заглушка молча поднималась бы с
+# сертификатом, который браузер и Telegram уже не принимают.
+_selfmask_cert_is_valid() {
+    local _dir="$1" _domain="$2"
+    [ -f "${_dir}/fullchain.pem" ] && [ -f "${_dir}/privkey.pem" ] || return 1
+
+    # Проверить нечем — считаем годным: своей проверкой мы бы только выбросили
+    # рабочий сертификат и упёрлись в недельный лимит Let's Encrypt.
+    command -v openssl &>/dev/null || return 0
+
+    openssl x509 -in "${_dir}/fullchain.pem" -noout -checkend 2592000 &>/dev/null || return 1
+
+    # Домен сверяем по SAN точным совпадением: grep по строке с доменом принял
+    # бы и чужой сертификат, где наш домен — лишь часть другого имени.
+    openssl x509 -in "${_dir}/fullchain.pem" -noout -text 2>/dev/null \
+        | grep -oE 'DNS:[^,[:space:]]+' | cut -d: -f2 | grep -Fxq "$_domain" || return 1
+    return 0
+}
+
 _selfmask_obtain_cert() {
     log_info "Получение сертификата Let's Encrypt..."
 
     local _cert_dir; _cert_dir="$(_selfmask_cert_dir)"
-    if [ -f "${_cert_dir}/fullchain.pem" ]; then
-        log_success "Сертификат уже существует"
+    if _selfmask_cert_is_valid "$_cert_dir" "$SELFMASK_DOMAIN"; then
+        local _until
+        _until=$(openssl x509 -in "${_cert_dir}/fullchain.pem" -noout -enddate 2>/dev/null | cut -d= -f2)
+        log_success "Сертификат для ${SELFMASK_DOMAIN} уже есть в системе — используем его"
+        [ -n "$_until" ] && log_info "Действителен до: ${_until}"
+        log_info "Порт 80 не понадобится: выпускать нечего"
         return 0
+    fi
+
+    # Файлы есть, но не годятся — так бывает после смены домена или когда
+    # сертификат успел истечь. Выпускаем заново, но говорим почему.
+    if [ -f "${_cert_dir}/fullchain.pem" ]; then
+        log_warn "Найден сертификат, но он истёк или выдан на другой домен — выпускаем заново"
     fi
 
     mkdir -p "${SELFMASK_SITE_DIR}/.well-known/acme-challenge"
@@ -1086,11 +1118,155 @@ _selfmask_show_links_tail() {
     fi
 }
 
+# Хук, который certbot выполняет после КАЖДОГО успешного продления —
+# независимо от того, чем запущен renew: systemd-таймером, системным cron
+# certbot или нашей строкой в crontab. Раньше перезагрузка nginx жила в
+# --deploy-hook нашей cron-строки, а она добавлялась только когда ни
+# certbot.timer, ни /etc/cron.d/certbot ещё нет: на системе со штатным
+# таймером (Debian/Ubuntu — это норма) хук не ставился вовсе, и после
+# продления nginx продолжал отдавать старый сертификат до перезапуска.
+SELFMASK_DEPLOY_HOOK="/etc/letsencrypt/renewal-hooks/deploy/mtproxyl-selfmask.sh"
+
+_selfmask_install_deploy_hook() {
+    mkdir -p "$(dirname "$SELFMASK_DEPLOY_HOOK")"
+    cat > "$SELFMASK_DEPLOY_HOOK" << HOOKEOF
+#!/bin/bash
+# MTProxyL — обновление служб после продления сертификата Let's Encrypt.
+# Ставится автоматически (lib/selfmask.sh), правки будут перезаписаны.
+#
+# certbot передаёт каталог продлённого сертификата в RENEWED_LINEAGE и
+# вызывает хук для каждого домена отдельно, поэтому сверяем домен: чужое
+# продление не должно подменять сертификаты нашей заглушки и панели.
+
+_domain=\$(basename "\${RENEWED_LINEAGE:-}" 2>/dev/null)
+[ -n "\$_domain" ] || exit 0
+
+# Домен берём из настроек: в режиме реаниматора selfmask держит свои
+# в отдельном файле, в менеджере — в общем. Читаем через source, а не
+# grep'ом: значения пишутся в одинарных кавычках, и шаблон под двойные
+# молча не находил ничего — хук выходил, не сделав ничего.
+_ours=""
+for _f in "${INSTALL_DIR}/selfmask-reanimator.conf" "${INSTALL_DIR}/settings.conf"; do
+    [ -r "\$_f" ] || continue
+    SELFMASK_DOMAIN=""
+    # shellcheck source=/dev/null
+    . "\$_f" 2>/dev/null || continue
+    [ -n "\$SELFMASK_DOMAIN" ] && { _ours="\$SELFMASK_DOMAIN"; break; }
+done
+[ -n "\$_ours" ] && [ "\$_domain" = "\$_ours" ] || exit 0
+
+# Заглушка selfmask: подхватывает новый сертификат без обрыва соединений.
+systemctl reload ${SELFMASK_PQ_SERVICE} 2>/dev/null || true
+
+# Панель, если она использует этот же сертификат (см.
+# _selfmask_handoff_cert_to_panel): у неё свой непривилегированный
+# пользователь, читать /etc/letsencrypt напрямую он не может, поэтому
+# работаем с копией в её каталоге.
+_panel_cfg="/etc/mtproxyl-panel/config.toml"
+_panel_certs="/var/lib/mtproxyl-panel/certs"
+if [ -f "\$_panel_cfg" ] && grep -q "^cert_file *= *\"\$_panel_certs/panel.crt\"" "\$_panel_cfg" 2>/dev/null; then
+    install -o mtproxyl-panel -g mtproxyl-panel -m 0644 \\
+        "\${RENEWED_LINEAGE}/fullchain.pem" "\$_panel_certs/panel.crt" 2>/dev/null || exit 0
+    install -o mtproxyl-panel -g mtproxyl-panel -m 0600 \\
+        "\${RENEWED_LINEAGE}/privkey.pem" "\$_panel_certs/panel.key" 2>/dev/null || exit 0
+    # Панель читает сертификат один раз при старте, reload она не умеет.
+    systemctl restart mtproxyl-panel 2>/dev/null || true
+fi
+HOOKEOF
+    chmod 700 "$SELFMASK_DEPLOY_HOOK"
+}
+
+# Панель и selfmask на одном домене — это два ACME-клиента за один порт 80.
+# Победить может только один: nginx заглушки держит 80 постоянно, поэтому
+# встроенный ACME панели после установки selfmask не смог бы ни выпустить,
+# ни продлить сертификат. Сертификат для этого домена уже выпущен certbot —
+# отдаём панели его копию и переводим её с acme_domain на готовые файлы.
+# Побочный эффект ровно тот, что нужен: без acme_domain панель больше не
+# слушает порт 80 вовсе (см. internal/server/server.go).
+_selfmask_handoff_cert_to_panel() {
+    local _panel_cfg="/etc/mtproxyl-panel/config.toml"
+    local _panel_certs="/var/lib/mtproxyl-panel/certs"
+    local _cert_dir; _cert_dir="$(_selfmask_cert_dir)"
+
+    [ -f "$_panel_cfg" ] || return 0
+    id mtproxyl-panel &>/dev/null || return 0
+
+    # Трогаем только панель, которая просит Let's Encrypt на наш же домен.
+    # Свой сертификат или самоподписанный — осознанный выбор пользователя.
+    grep -qE "^acme_domain[[:space:]]*=[[:space:]]*\"${SELFMASK_DOMAIN}\"" "$_panel_cfg" 2>/dev/null || return 0
+
+    log_info "Панель использует Let's Encrypt на этом же домене — передаём ей сертификат"
+
+    mkdir -p "$_panel_certs"
+    install -o mtproxyl-panel -g mtproxyl-panel -m 0644 \
+        "${_cert_dir}/fullchain.pem" "${_panel_certs}/panel.crt" 2>/dev/null || {
+        log_warn "Не удалось скопировать сертификат для панели"
+        return 0
+    }
+    install -o mtproxyl-panel -g mtproxyl-panel -m 0600 \
+        "${_cert_dir}/privkey.pem" "${_panel_certs}/panel.key" 2>/dev/null || {
+        log_warn "Не удалось скопировать ключ для панели"
+        return 0
+    }
+
+    # acme_domain убираем, cert_file/key_file добавляем — сохраняя остальной
+    # конфиг как есть: он принадлежит панели, а не нам.
+    local _tmp; _tmp=$(mktemp) || return 0
+    awk -v certs="$_panel_certs" '
+        /^acme_domain[[:space:]]*=/ { next }
+        /^acme_cache_dir[[:space:]]*=/ { next }
+        /^cert_file[[:space:]]*=/ { next }
+        /^key_file[[:space:]]*=/ { next }
+        /^\[tls\]/ {
+            print
+            print "cert_file = \"" certs "/panel.crt\""
+            print "key_file = \"" certs "/panel.key\""
+            next
+        }
+        { print }
+    ' "$_panel_cfg" > "$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 0; }
+
+    if ! grep -q '^cert_file' "$_tmp"; then
+        rm -f "$_tmp"
+        log_warn "Не удалось перенастроить панель — секция [tls] не найдена"
+        return 0
+    fi
+
+    cat "$_tmp" > "$_panel_cfg"
+    rm -f "$_tmp"
+    chown mtproxyl-panel:mtproxyl-panel "$_panel_cfg" 2>/dev/null || true
+    chmod 600 "$_panel_cfg" 2>/dev/null || true
+
+    log_success "Панель переведена на сертификат selfmask — порт 80 ей больше не нужен"
+
+    # Конфиг читается только при старте. Панель, которую мы останавливали ради
+    # порта 80, поднимется дальше в _selfmask_restore_port80_holders уже с
+    # новым — а вот работающую (сертификат нашёлся готовым, останавливать было
+    # незачем) надо перезапустить здесь, иначе она до перезапуска продолжит
+    # жить со старым acme_domain.
+    systemctl is-active mtproxyl-panel &>/dev/null || return 0
+    if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ]; then
+        # Вызов из самой панели: перезапуск оборвал бы HTTP-запрос, которым
+        # нас же и позвали, вместе с sudo-процессом.
+        log_warn "Панель перечитает сертификат после перезапуска:"
+        log_info "  sudo systemctl restart mtproxyl-panel"
+        return 0
+    fi
+    if systemctl restart mtproxyl-panel 2>/dev/null; then
+        log_success "Панель перезапущена с новым сертификатом"
+    else
+        log_warn "Не удалось перезапустить панель — сделайте это вручную"
+    fi
+}
+
 _selfmask_setup_renewal() {
     log_info "Настройка автопродления сертификата..."
 
+    _selfmask_install_deploy_hook
+    log_success "Хук обновления служб установлен (${SELFMASK_DEPLOY_HOOK})"
+
     if systemctl is-enabled certbot.timer &>/dev/null 2>&1; then
-        log_success "certbot.timer уже активен"
+        log_success "certbot.timer уже активен — продление по расписанию системы"
         return 0
     fi
 
@@ -1099,7 +1275,10 @@ _selfmask_setup_renewal() {
         return 0
     fi
 
-    local _cron_line="0 3 * * * certbot renew --quiet --deploy-hook 'systemctl reload ${SELFMASK_PQ_SERVICE}'"
+    # Свой cron нужен только там, где certbot не принёс ни таймера, ни
+    # cron.d. Перезагрузку служб оставляем хуку выше — иначе она была бы
+    # в двух местах и разошлась бы при первой же правке.
+    local _cron_line="0 3 * * * certbot renew --quiet"
     if ! crontab -l 2>/dev/null | grep -q "certbot renew"; then
         (crontab -l 2>/dev/null; echo "$_cron_line") | crontab -
         log_success "Добавлен cron для автопродления"
@@ -1244,7 +1423,18 @@ selfmask_setup() {
     fi
     _selfmask_configure_nginx      || { _selfmask_restore_port80_holders; return 1; }
     _selfmask_apply_mtproxyl_settings || { _selfmask_restore_port80_holders; return 1; }
-    [ "$SELFMASK_CERT_MODE" = "letsencrypt" ] && { _selfmask_setup_renewal || true; }
+    if [ "$SELFMASK_CERT_MODE" = "letsencrypt" ]; then
+        _selfmask_setup_renewal || true
+        # До возврата панели: она читает конфиг только при старте, и поднимать
+        # её со старым acme_domain значило бы разбудить второго претендента на
+        # порт 80, который уже занят нашим nginx.
+        _selfmask_handoff_cert_to_panel || true
+    fi
+    # Порт 80 больше не нужен никому, кроме нашего nginx, — возвращаем всех,
+    # кого останавливали ради выпуска сертификата. Раньше это делалось только
+    # на путях с ошибкой, поэтому после успешной настройки панель так и
+    # оставалась выключенной.
+    _selfmask_restore_port80_holders
     selfmask_verify
 
     echo ""
@@ -1567,7 +1757,11 @@ selfmask_apply() {
     fi
     _selfmask_configure_nginx      || { _selfmask_restore_port80_holders; return 1; }
     _selfmask_apply_mtproxyl_settings || { _selfmask_restore_port80_holders; return 1; }
-    [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "letsencrypt" ] && { _selfmask_setup_renewal || true; }
+    if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "letsencrypt" ]; then
+        _selfmask_setup_renewal || true
+        _selfmask_handoff_cert_to_panel || true
+    fi
+    _selfmask_restore_port80_holders
 
     echo ""
     log_success "Selfmask настроен"
