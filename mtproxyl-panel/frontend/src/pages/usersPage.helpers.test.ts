@@ -1,7 +1,6 @@
 import { buildProxyLinks, mergeUserStats } from './usersPage.helpers';
 import type { MtproxylUser } from '@/lib/api';
 
-const username = 'alice';
 
 function assertDeepEqual(actual: unknown, expected: unknown) {
   const actualJson = JSON.stringify(actual);
@@ -24,7 +23,6 @@ const tlsLinks = buildProxyLinks(
       },
     ],
   },
-  username,
 );
 
 assertDeepEqual(
@@ -43,12 +41,12 @@ assertDeepEqual(
         {
           domain: 'edge.example',
           isDefault: true,
-          url: 'tg://proxy?server=edge.example&port=443&secret=tls-default&comment=alice',
+          url: 'tg://proxy?server=edge.example&port=443&secret=tls-default',
         },
         {
           domain: 'cdn.example',
           isDefault: false,
-          url: 'tg://proxy?server=edge.example&port=443&secret=tls-mask&comment=alice',
+          url: 'tg://proxy?server=edge.example&port=443&secret=tls-mask',
         },
       ],
     },
@@ -60,7 +58,6 @@ assertDeepEqual(
     {
       secure: ['tg://proxy?server=secure.example&port=443&secret=secure-secret'],
     },
-    username,
   ).map((group) => [group.label, group.links.map((link) => [link.domain, link.isDefault])]),
   [['Secure', [['secure.example', true]]]],
 );
@@ -70,7 +67,6 @@ assertDeepEqual(
     {
       classic: ['tg://proxy?server=classic.example&port=443&secret=classic-secret'],
     },
-    username,
   ).map((group) => [group.label, group.links.map((link) => [link.domain, link.isDefault])]),
   [['Classic', [['classic.example', true]]]],
 );
@@ -81,7 +77,6 @@ assertDeepEqual(
       tls: ['tg://proxy?server=edge.example&port=443&secret=tls-default'],
       secure: ['tg://proxy?server=secure.example&port=443&secret=secure-secret'],
     },
-    username,
   ).map((group) => ({
     label: group.label,
     links: group.links.map((link) => link.domain),

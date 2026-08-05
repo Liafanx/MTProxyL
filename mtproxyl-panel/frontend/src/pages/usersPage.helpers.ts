@@ -56,23 +56,15 @@ function getServer(raw: string): string {
   }
 }
 
-function appendComment(raw: string, username: string): string {
-  try {
-    const u = new URL(raw);
-    u.searchParams.set('comment', username);
-    return u.toString();
-  } catch {
-    const sep = raw.includes('?') ? '&' : '?';
-    return raw + sep + 'comment=' + encodeURIComponent(username);
-  }
-}
-
-export function buildProxyLinks(links: UserLinks | undefined, username: string): ProxyLinkGroup[] {
+export function buildProxyLinks(links: UserLinks | undefined): ProxyLinkGroup[] {
   if (!links) return [];
 
   const result: ProxyLinkGroup[] = [];
+  // Ссылку отдаём ровно такой, какой её собрал движок. Раньше сюда дописывался
+  // &comment=<пользователь>: в Telegram это подпись прокси, но метка —
+  // внутреннее имя учётной записи, и попадать к клиенту ей незачем.
   const makeLink = (rawUrl: string, domain: string, isDefault: boolean): ProxyLinkOption => ({
-      url: appendComment(rawUrl, username),
+      url: rawUrl,
       domain,
       isDefault,
   });

@@ -397,7 +397,7 @@ export function UsersPage() {
                           <Link to={`/users/${u.username}`} className="text-accent hover:underline">{u.username}</Link>
                         </TableCell>
                         <TableCell>
-                          <ProxyLinkButtons links={buildProxyLinks(u.links, u.username)} />
+                          <ProxyLinkButtons links={buildProxyLinks(u.links)} />
                         </TableCell>
                         <TableCell>
                           <Badge variant={u.current_connections > 0 ? 'default' : 'outline'}>
@@ -482,7 +482,7 @@ export function UsersPage() {
                   totalTraffic={u.total_octets}
                   accumulatedTraffic={u.total_bytes}
                   online={u.current_connections > 0}
-                  links={buildProxyLinks(u.links, u.username)}
+                  links={buildProxyLinks(u.links)}
                   onEdit={() => setEditUser(u)}
                   onDelete={() => setDeleteUser(u.username)}
                   quotaUsed={quotaByUser.get(u.username)?.used_bytes}
