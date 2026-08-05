@@ -200,6 +200,29 @@ proxy_link_host() {
     echo "$_host"
 }
 
+# Указывает ли домен FakeTLS на этот же сервер.
+#
+# tls_domain — не адрес прокси, а имя, под которое он маскируется, и по
+# умолчанию это чужой сайт (petrovich.ru): подставлять такой домен в ссылки
+# нельзя, клиенты ушли бы на чужой сервер. Но когда домен свой — с A-записью
+# сюда, как при selfmask — ссылка по имени и есть то, что нужно, а IP в ней
+# выглядит поломкой.
+proxy_domain_points_here() {
+    local _domain="${1:-${PROXY_DOMAIN:-}}"
+    [ -n "$_domain" ] || return 1
+
+    # Selfmask уже проверял A-запись при настройке — верим ему и не ходим в DNS.
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ] && [ "$_domain" = "${SELFMASK_DOMAIN:-}" ]; then
+        return 0
+    fi
+
+    local _server_ip _resolved
+    _server_ip=$(get_public_ip 2>/dev/null)
+    [ -n "$_server_ip" ] || return 1
+    _resolved=$(getent ahostsv4 "$_domain" 2>/dev/null | awk '{print $1; exit}')
+    [ -n "$_resolved" ] && [ "$_resolved" = "$_server_ip" ]
+}
+
 proxy_link_port() {
     local _port=""
     if _superexpert_active 2>/dev/null; then

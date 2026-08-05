@@ -1052,6 +1052,8 @@ _selfmask_apply_target_settings() {
     echo -e "    mask_host = \"127.0.0.1\""
     echo -e "    mask_port = ${SELFMASK_NGINX_BACKEND_PORT}"
     echo -e "    unknown_sni_action = \"mask\""
+    echo -e "  ${BOLD}и в секции [general.links]:${NC}"
+    echo -e "    public_host = \"${SELFMASK_DOMAIN}\"  ${DIM}(иначе ссылки будут с IP, а не с доменом)${NC}"
     echo ""
     if [ -n "$_old_domain" ] && [ "$_old_domain" != "${SELFMASK_DOMAIN}" ]; then
         log_warn "Смена SNI-домена меняет FakeTLS-ссылки — старые ee-ссылки перестанут работать"
@@ -1077,6 +1079,10 @@ _selfmask_apply_target_settings() {
     apply_target_tuning "mask_host" "127.0.0.1" "censorship" true || _ok=false
     apply_target_tuning "mask_port" "${SELFMASK_NGINX_BACKEND_PORT}" "censorship" true || _ok=false
     apply_target_tuning "unknown_sni_action" "mask" "censorship" true || _ok=false
+    # Домен selfmask — заведомо наш, с проверенной A-записью сюда. Без
+    # public_host движок подставляет в ссылки определённый им IP, и клиент
+    # получает адрес, по которому FakeTLS-домен не совпадает с именем хоста.
+    apply_target_tuning "public_host" "${SELFMASK_DOMAIN}" "general.links" true || _ok=false
 
     if [ "$_ok" = "true" ]; then
         log_success "Параметры selfmask применены в конфиге цели"
