@@ -100,7 +100,7 @@ mtproxyl
 С версии 1.3.0 MTProxyL умеет работать в двух режимах — выбор происходит на первом шаге мастера установки (`mtproxyl install`):
 
 - **Manager** *(по умолчанию, прежнее поведение)* — MTProxyL сам устанавливает движок telemt (образ из GHCR или сборка из исходников), сам генерирует `config.toml`, управляет секретами/upstream'ами/бэкапами и своим Docker-контейнером.
-- **Reanimator** — вместо установки MTProxyL ищет уже работающую установку telemt на сервере (Docker-контейнер сторонней панели, MTProxyMax, голый процесс/systemd-юнит `telemt.service` или просто конфиг-файл) и применяет к ней тот же арсенал фиксов: NFT SYN limiter, Zapret2 MTProto fix, iOS-фиксы, оптимизацию By-MEKO и точечный тюнинг `config.toml` — не устанавливая ничего и не перезаписывая чужой конфиг целиком.
+- **Reanimator** — вместо установки MTProxyL ищет уже работающую установку telemt на сервере (Docker-контейнер сторонней панели, MTProxyMax, голый процесс/systemd-юнит `telemt.service` или просто конфиг-файл) и применяет к ней тот же арсенал фиксов: NFT SYN limiter, Zapret2 MTProto fix, iOS-фиксы, оптимизацию By-MEKO и точечный тюнинг `config.toml` — не устанавливая ничего и не перезаписывая чужой конфиг целиком. **Если telemt на сервере нет вовсе — предложит поставить оригинальный из официального репозитория [`telemt/telemt`](https://github.com/telemt/telemt)** ([подробнее](#modes)).
 
 Переключение режима в любой момент — при переходе учитывается состояние
 установки: из Reanimator в Manager, если своего telemt ещё нет, сразу
@@ -993,7 +993,7 @@ Docker, сертификаты Let's Encrypt и Zapret2 NFT-таблица оч�
 ## Поддержать автора
 
 - [Cloudtips](https://pay.cloudtips.ru/p/ad2f7e4d)
-- GRAM (TON) ```UQCcJR7546fnGX7jnJeFQdTUVMezVIvxutn074UezGOy_w8n```
+- GRAM (TON) ```UQD1ExjBKk9o1w0IoZtTW6435Nn7XKSqKEz0PFR8jJ-Obv2k```
 - USDT (TRC20) ```TJKiqjDX7nLihV3ACJdJ9cgPwM169L2xmB```
 - USDT (BER20) ```0xBf96ADb7c81eab25E56d7c40Bd414582E5B714A1```
 
