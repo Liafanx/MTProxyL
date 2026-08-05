@@ -58,6 +58,18 @@ detect_os() {
     fi
 }
 
+# Экранирование строки для вставки в JSON-литерал.
+# Нужно для машинного вывода (--json), который разбирает панель.
+json_escape() {
+    local _s="$1"
+    _s="${_s//\\/\\\\}"
+    _s="${_s//\"/\\\"}"
+    _s="${_s//$'\t'/\\t}"
+    _s="${_s//$'\r'/}"
+    _s="${_s//$'\n'/\\n}"
+    printf '%s' "$_s"
+}
+
 format_bytes() {
     local bytes=$1
     [[ "$bytes" =~ ^[0-9]+$ ]] || bytes=0
@@ -167,6 +179,43 @@ get_public_ip() {
     ip=$(curl -s --max-time 3 https://icanhazip.com 2>/dev/null) ||
     ip=""
     echo "$ip"
+}
+
+# ── Публичные host/port для tg://-ссылок ───────────────────────
+# [general.links] public_host/public_port — что идёт в ссылку, отдельно от
+# того, где движок слушает (NAT, проброс порта). Источник зависит от режима:
+# в супер эксперте — конфиг пользователя, иначе expert-override.
+proxy_link_host() {
+    local _host=""
+    if _superexpert_active 2>/dev/null; then
+        _host=$(_toml_get_string_in_section "general.links" "public_host" "$SUPEREXPERT_FILE" 2>/dev/null)
+    else
+        _host=$(get_expert_override_value "general.links" "public_host" 2>/dev/null)
+    fi
+    [ -n "$_host" ] || _host=$(get_public_ip)
+    echo "$_host"
+}
+
+# Домен для [general.links] public_host — из настройки «IP/домен сервера».
+# Пусто (автоопределение) или IP-литерал: движок определит адрес сам.
+proxy_public_host() {
+    local _v="${CUSTOM_IP:-}"
+    [ -n "$_v" ] || return 1
+    validate_ip_literal "$_v" && return 1
+    case "$_v" in *:*) return 1 ;; esac   # IPv6
+    printf '%s' "$_v"
+}
+
+proxy_link_port() {
+    local _port=""
+    if _superexpert_active 2>/dev/null; then
+        _port=$(_toml_get_string_in_section "general.links" "public_port" "$SUPEREXPERT_FILE" 2>/dev/null)
+        [ -n "$_port" ] || _port=$(_toml_get_string_in_section "server" "port" "$SUPEREXPERT_FILE" 2>/dev/null)
+    else
+        _port=$(get_expert_override_value "general.links" "public_port" 2>/dev/null)
+    fi
+    [ -n "$_port" ] || _port="${PROXY_PORT}"
+    echo "$_port"
 }
 
 generate_secret() {
@@ -297,6 +346,13 @@ press_any_key() {
 # строка вывода затирает приглашение прямо на экране.
 read_line() {
     local __var="$1" __ans=""
+    # Неинтерактивный режим (панель, скрипты): подтверждения не спрашиваем.
+    # Отдаём слово, которого ждут все подтверждающие ветки: 'yes' проходит
+    # и строгие проверки [ "$_c" != "yes" ], и мягкие [[ =~ ^[yY] ]].
+    if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ]; then
+        printf -v "$__var" '%s' "yes"
+        return 0
+    fi
     IFS= read -er __ans || true
     [ -z "$__ans" ] && [ -t 0 ] && echo ""
     printf -v "$__var" '%s' "$__ans"
@@ -305,6 +361,12 @@ read_line() {
 read_choice() {
     local prompt="${1:-выбор}"
     local default="${2:-}"
+    # В неинтерактивном режиме берём значение по умолчанию — оно везде
+    # выставлено на рекомендуемый вариант.
+    if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ]; then
+        echo "$default"
+        return 0
+    fi
     fix_tty_input
     # Сброс «набранного вперёд» имеет смысл только на терминале: из пайпа
     # это съело бы реальный ввод.
@@ -411,7 +473,7 @@ self_update() {
     if [ -z "$_lib_list" ]; then
         log_warn "Не удалось извлечь список библиотек из нового скрипта"
         log_info "Используем резервный список"
-        _lib_list="colors utils settings secrets config docker engine traffic geoblock upstream backup nft selfmask detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode install"
+        _lib_list="colors utils settings secrets config docker engine traffic geoblock geoip upstream backup nft selfmask panel detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode settings_cli install"
     fi
 
     local _total=0 _ok=0 _failed=0 _skipped=0
@@ -555,7 +617,7 @@ handle_domain_command() {
             if [ "$_cur_mask" = "$_old_domain" ] || [ -z "$MASKING_HOST" ]; then
                 echo -en "  ${BOLD}Обновить mask backend на ${PROXY_DOMAIN}? [Y/n]:${NC} "
                 local _mask_yn; read_line _mask_yn
-                if [[ ! "$_mask_yn" =~ ^[nN]$ ]]; then
+                if [[ ! "$_mask_yn" =~ ^[nN] ]]; then
                     MASKING_HOST="$PROXY_DOMAIN"
                     save_settings
                     log_success "Mask backend: ${MASKING_HOST}:${MASKING_PORT:-443}"
@@ -654,12 +716,13 @@ show_cli_help() {
     echo ""
     echo -e "  ${BOLD}Прокси:${NC}         start | stop | restart | status [--json]"
     echo -e "  ${BOLD}Секреты:${NC}        secret add|remove|list|rotate|enable|disable|limits|link|qr|clone|rename"
-    echo -e "  ${BOLD}Настройки:${NC}      port | ip | domain | mask-backend | config"
+    echo -e "  ${BOLD}Настройки:${NC}      port | ip | domain | mask-backend | config | settings list|set"
     echo -e "  ${BOLD}Движок:${NC}         engine status|list|update|rollback|rebuild"
     echo -e "  ${BOLD}Эксперт:${NC}        expert list|set|clear|edit"
-    echo -e "  ${BOLD}Супер эксперт:${NC}  superexpert status|on|off|edit"
+    echo -e "  ${BOLD}Супер эксперт:${NC}  superexpert status|on|off|edit|show|write"
     echo -e "  ${BOLD}NFT:${NC}            nft apply|remove|service|drop|preset|smart|zapret2|zapret2-stop|zapret2-rm|zapret2-wscale"
-    echo -e "  ${BOLD}Selfmask:${NC}       selfmask status|setup|verify|disable|menu"
+    echo -e "  ${BOLD}Selfmask:${NC}       selfmask status|setup|apply|set|settable|verify|disable|menu"
+    echo -e "  ${BOLD}Веб-панель:${NC}     panel status|install|restart|password|uninstall"
     echo -e "  ${BOLD}PQ проверка:${NC}    pq-check [домен[:порт]]"
     echo -e "  ${BOLD}Безопасность:${NC}   geoblock add|remove|list | upstream list|add|remove | sni-policy"
     echo -e "  ${BOLD}Мониторинг:${NC}     traffic | connections | metrics [live] | logs | health | info"

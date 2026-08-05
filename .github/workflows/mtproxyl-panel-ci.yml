@@ -1,0 +1,136 @@
+name: MTProxyL-Panel CI
+
+# Scoped to the panel subtree: the rest of the repository is bash and has no
+# Go/Node toolchain, so changes there must not trigger this workflow.
+on:
+  push:
+    branches: [ main, dev ]
+    paths:
+      - 'mtproxyl-panel/**'
+      - '.github/workflows/mtproxyl-panel-ci.yml'
+  pull_request:
+    paths:
+      - 'mtproxyl-panel/**'
+      - '.github/workflows/mtproxyl-panel-ci.yml'
+
+defaults:
+  run:
+    working-directory: mtproxyl-panel
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache-dependency-path: mtproxyl-panel/go.sum
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: mtproxyl-panel/frontend/package-lock.json
+
+      # The Go binary embeds frontend/dist, so it must exist before any Go
+      # command runs — including vet and lint.
+      - name: Build frontend (needed for embed)
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Go format check
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "Files not formatted with gofmt:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+          working-directory: mtproxyl-panel
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: mtproxyl-panel/frontend/package-lock.json
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache-dependency-path: mtproxyl-panel/go.sum
+
+      # npm run build — это `tsc -b && vite build`, то есть проверка типов уже
+      # здесь. Отдельного `tsc --noEmit` дальше нет намеренно: он стоял бы
+      # после этого шага и никогда не сработал бы как диагностика — типы
+      # роняют сборку раньше.
+      - name: Build frontend (типы + vite)
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Build backend
+        run: go build -v .
+
+      - name: Run tests
+        run: go test -v ./...
+
+      # Готовые бинарники с любого коммита, без выпуска релиза.
+      #
+      # Собирать панель на самом сервере — долго: типичный VPS под прокси
+      # тянет один-два ядра, а tsc и Go на них идут минутами и упираются в
+      # память. Здесь сборка уже произошла, поэтому выкладываем её результат:
+      # артефакт можно скачать и поставить как обычный релизный архив.
+      - name: Build release binaries
+        run: make release-binaries VERSION=ci-${{ github.sha }}
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtproxyl-panel-${{ github.sha }}
+          path: |
+            mtproxyl-panel/release/mtproxyl-panel-x86_64-linux
+            mtproxyl-panel/release/mtproxyl-panel-aarch64-linux
+          retention-days: 14
+          if-no-files-found: error
+
+  # The bash side of MTProxyL is not covered by the workflows above; a syntax
+  # check is cheap insurance for the headless-mode patch the panel depends on.
+  shellcheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Bash syntax check
+        run: |
+          for f in mtproxyl.sh lib/*.sh; do
+            bash -n "$f" || exit 1
+          done
+          sh -n mtproxyl-panel/install.sh

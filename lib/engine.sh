@@ -105,7 +105,7 @@ except: print('?')
     if is_proxy_running; then
         echo -en "  ${BOLD}Перезапустить прокси? [Y/n]:${NC} "
         local yn; read_line yn
-        if [[ ! "$yn" =~ ^[nN]$ ]]; then
+        if [[ ! "$yn" =~ ^[nN] ]]; then
             load_secrets
             restart_proxy_container
         fi
@@ -153,7 +153,7 @@ engine_rollback() {
     if is_proxy_running; then
         echo -en "  ${BOLD}Перезапустить прокси? [Y/n]:${NC} "
         local yn; read_line yn
-        if [[ ! "$yn" =~ ^[nN]$ ]]; then
+        if [[ ! "$yn" =~ ^[nN] ]]; then
             load_secrets
             restart_proxy_container
         fi

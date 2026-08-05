@@ -12,7 +12,9 @@ save_expert_override() {
     local section="$1" key="$2" value="$3"
     mkdir -p "$INSTALL_DIR"
     touch "$EXPERT_OVERRIDES_FILE"; chmod 600 "$EXPERT_OVERRIDES_FILE"
-    local tmp; tmp=$(_mktemp) || return 1
+    # Временный файл рядом с целевым, иначе mv через /tmp (tmpfs) — это
+    # copy+truncate, а не подмена целиком.
+    local tmp; tmp=$(_mktemp "$INSTALL_DIR") || return 1
     grep -v "^${section}|${key}|" "$EXPERT_OVERRIDES_FILE" > "$tmp" 2>/dev/null || true
     echo "${section}|${key}|${value}" >> "$tmp"
     mv "$tmp" "$EXPERT_OVERRIDES_FILE"; chmod 600 "$EXPERT_OVERRIDES_FILE"
@@ -21,7 +23,7 @@ save_expert_override() {
 delete_expert_override() {
     local section="$1" key="$2"
     [ -f "$EXPERT_OVERRIDES_FILE" ] || return 0
-    local tmp; tmp=$(_mktemp) || return 1
+    local tmp; tmp=$(_mktemp "$INSTALL_DIR") || return 1
     grep -v "^${section}|${key}|" "$EXPERT_OVERRIDES_FILE" > "$tmp" 2>/dev/null || true
     mv "$tmp" "$EXPERT_OVERRIDES_FILE"; chmod 600 "$EXPERT_OVERRIDES_FILE"
 }
@@ -449,4 +451,49 @@ tui_expert_menu() {
             0|"") return ;;
         esac
     done
+}
+
+# ── Машинный вывод для внешней панели ────────────────────────────────────────
+
+# Каталог параметров движка с текущими override-значениями.
+#
+# Отдаём валидатор и подсказку вместе с записью: панель по ним строит поле
+# ввода и не дублирует правила проверки, которые живут здесь.
+expert_catalog_json() {
+    local _entry _first=1 _ovr
+    printf '['
+    for _entry in "${_EXPERT_CATALOG[@]}"; do
+        _expert_parse "$_entry"
+        _ovr=$(get_expert_override_value "$EXPERT_P_SECTION" "$EXPERT_P_KEY")
+        [ $_first -eq 1 ] || printf ','
+        _first=0
+        printf '{"section":"%s","key":"%s","type":"%s","default":"%s","hot_reload":%s,"validator":"%s","hint":"%s","description":"%s","override":"%s","has_override":%s}' \
+            "$(json_escape "$EXPERT_P_SECTION")" \
+            "$(json_escape "$EXPERT_P_KEY")" \
+            "$(json_escape "$EXPERT_P_TYPE")" \
+            "$(json_escape "$EXPERT_P_DEFAULT")" \
+            "$([ "$EXPERT_P_HOT" = "true" ] && echo true || echo false)" \
+            "$(json_escape "$EXPERT_P_VALIDATOR")" \
+            "$(json_escape "$EXPERT_P_HINT")" \
+            "$(json_escape "$EXPERT_P_DESC")" \
+            "$(json_escape "${_ovr}")" \
+            "$([ -n "$_ovr" ] && echo true || echo false)"
+    done
+    printf ']\n'
+}
+
+# Только заданные override — короткий ответ, когда весь каталог не нужен.
+expert_overrides_json() {
+    local _first=1
+    printf '['
+    if [ -f "$EXPERT_OVERRIDES_FILE" ]; then
+        while IFS='|' read -r _s _k _v; do
+            [ -n "$_s" ] || continue
+            [ $_first -eq 1 ] || printf ','
+            _first=0
+            printf '{"section":"%s","key":"%s","value":"%s"}' \
+                "$(json_escape "$_s")" "$(json_escape "$_k")" "$(json_escape "$_v")"
+        done < "$EXPERT_OVERRIDES_FILE"
+    fi
+    printf ']\n'
 }

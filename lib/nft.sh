@@ -106,7 +106,12 @@ NFT_EXTRA_COUNT=0
 # ── Сохранение / загрузка настроек ────────────────────────────
 save_nft_settings() {
     mkdir -p "$INSTALL_DIR"
-    cat > "$NFT_CONF" << EOF
+    # Пишем во временный файл рядом с целевым и подменяем одним mv: панель
+    # опрашивает 'nft status --json' параллельно и не должна прочитать файл,
+    # записанный наполовину.
+    local _tmp
+    _tmp=$(_mktemp "$INSTALL_DIR") || { log_error "Не удалось создать временный файл"; return 1; }
+    cat > "$_tmp" << EOF
 # MTProxyL NFT — настройки
 NFT_ENABLED='${NFT_ENABLED}'
 NFT_MODE='${NFT_MODE}'
@@ -118,8 +123,6 @@ NFT_SERVER_IP='${NFT_SERVER_IP}'
 NFT_REJECT_MODE='${NFT_REJECT_MODE}'
 NFT_IOS_RATE='${NFT_IOS_RATE}'
 NFT_IOS_BURST='${NFT_IOS_BURST}'
-NFT_OTHER_RATE='${NFT_OTHER_RATE}'
-NFT_OTHER_BURST='${NFT_OTHER_BURST}'
 NFT_OTHER_RATE='${NFT_OTHER_RATE}'
 NFT_OTHER_BURST='${NFT_OTHER_BURST}'
 NFT_IOS_LIMIT_ENABLED='${NFT_IOS_LIMIT_ENABLED}'
@@ -163,14 +166,15 @@ ZAPRET2_DEBUG='${ZAPRET2_DEBUG}'
 EOF
     local _i
     for _i in $(seq 1 "$NFT_EXTRA_COUNT"); do
-        cat >> "$NFT_CONF" << EOF
+        cat >> "$_tmp" << EOF
 NFT_EXTRA_${_i}_PORT='${NFT_EXTRA_PORT[$_i]:-}'
 NFT_EXTRA_${_i}_IP='${NFT_EXTRA_IP[$_i]:-}'
 NFT_EXTRA_${_i}_RATE='${NFT_EXTRA_RATE[$_i]:-1/second}'
 NFT_EXTRA_${_i}_BURST='${NFT_EXTRA_BURST[$_i]:-1}'
 EOF
     done
-    chmod 600 "$NFT_CONF"
+    chmod 600 "$_tmp"
+    mv "$_tmp" "$NFT_CONF"
 }
 
 load_nft_settings() {
@@ -249,7 +253,7 @@ prompt_apply_nft_rules() {
     echo ""
     echo -en "  ${BOLD}Применить новые NFT-правила сейчас? [Y/n]:${NC} "
     local _yn; read_line _yn
-    if [[ ! "$_yn" =~ ^[nN]$ ]]; then
+    if [[ ! "$_yn" =~ ^[nN] ]]; then
         apply_nft_rules || true
         [ "${NFT_ENABLED:-false}" = "true" ] && install_nft_service || true
     fi
@@ -622,9 +626,9 @@ enable_smart_mode() {
     echo -e "  ${BOLD}NFT Smart By-MEKO${NC}"
     echo ""
     echo -e "  ${DIM}Как работает:${NC}"
-    echo -e "  ${DIM}  • iOS и Android/Desktop разделяются автоматически по TTL${NC}"
-    echo -e "  ${DIM}  • iOS (TTL<65): мягкий лимит ${NFT_IOS_RATE} burst ${NFT_IOS_BURST}${NC}"
-    echo -e "  ${DIM}  • Остальные:    строгий лимит ${NFT_OTHER_RATE} burst ${NFT_OTHER_BURST}${NC}"
+    echo -e "  ${DIM}  • iOS определяется по TCP fingerprint (точнее TTL, доступен как альтернатива)${NC}"
+    echo -e "  ${DIM}  • iOS: лимит не действует вовсе — ложные срабатывания не бьют по iOS-клиентам${NC}"
+    echo -e "  ${DIM}  • Остальные:    строгий лимит 54/minute burst 1${NC}"
     echo -e "  ${DIM}  • REJECT вместо DROP — клиент получает RST и${NC}"
     echo -e "  ${DIM}    переподключается мгновенно (3-8 сек вместо 10-20)${NC}"
     echo -e "  ${DIM}  • Один порт для всех клиентов — iOS Fix v2 не нужен${NC}"
@@ -638,9 +642,20 @@ enable_smart_mode() {
         echo ""
     fi
 
+    # Zapret2 и лимитер — взаимоисключающие способы защиты одного и того же
+    # трафика. zapret2_install уже снимает лимитер при установке; обратная
+    # сторона до сих пор отсутствовала, и включение Smart оставляло оба
+    # работающими одновременно.
+    local _zapret_was_running="false"
+    if zapret2_is_running; then
+        _zapret_was_running="true"
+        echo -e "  ${YELLOW}⚠ Zapret2 сейчас работает — Smart режим его заменяет.${NC}"
+        echo ""
+    fi
+
     echo -en "  ${BOLD}Включить Smart режим? [Y/n]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Отменено"; return 0; }
+    [[ "$_yn" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     # Отключаем iOS Fix v2 если был
     if [ "${IOS2_FIX_ENABLED:-false}" = "true" ]; then
@@ -649,9 +664,30 @@ enable_smart_mode() {
         log_info "iOS Fix v2 отключён (Smart режим его заменяет)"
     fi
 
+    if [ "$_zapret_was_running" = "true" ]; then
+        echo -en "  ${BOLD}Остановить Zapret2? [Y/n]:${NC} "
+        local _yn_z; read_line _yn_z
+        if [[ ! "$_yn_z" =~ ^[nN] ]]; then
+            zapret2_stop
+        else
+            _zapret_was_running="false"
+            log_warn "Zapret2 оставлен работать вместе с лимитером — они мешают друг другу"
+        fi
+    fi
+
     apply_nft_preset smart
     save_nft_settings
-    apply_nft_rules || { log_error "Не удалось применить правила"; return 1; }
+    if ! apply_nft_rules; then
+        log_error "Не удалось применить правила"
+        # Симметрично откату в zapret2_install: если Smart не поднялся,
+        # возвращаем то, что ради него остановили, а не оставляем сервер
+        # вообще без защиты.
+        if [ "$_zapret_was_running" = "true" ]; then
+            log_info "Возвращаю Zapret2..."
+            zapret2_start_existing || true
+        fi
+        return 1
+    fi
     install_nft_service || true
 
     echo ""
@@ -1246,6 +1282,18 @@ zapret2_queue_in_use() {
     awk -v q="$_q" '$1 == q { found=1 } END { exit found ? 0 : 1 }' /proc/net/netfilter/nfnetlink_queue 2>/dev/null
 }
 
+# Работает ли zapret2 прямо сейчас.
+#
+# Отличается от zapret2_has_residue, который отвечает «есть ли следы» и
+# срабатывает даже на пустой каталог от прошлой установки: для решения
+# «останавливать ли перед включением лимитера» нужен именно живой процесс.
+zapret2_is_running() {
+    systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null 2>&1 && return 0
+    nft list table ip "${ZAPRET2_NFT_TABLE}" &>/dev/null 2>&1 && return 0
+    pgrep -f "$ZAPRET2_BIN" >/dev/null 2>&1 && return 0
+    return 1
+}
+
 zapret2_has_residue() {
     nft list table ip "${ZAPRET2_NFT_TABLE}" &>/dev/null 2>&1 && return 0
     systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null 2>&1 && return 0
@@ -1812,7 +1860,35 @@ zapret2_start_existing() {
         log_error "Zapret2 не установлен — используйте [1] Установить"
         return 1
     fi
-    zapret2_apply_nft || return 1
+
+    # Лимитер снимаем так же, как это делает установка: Zapret2 и лимитер
+    # фильтруют один и тот же трафик. Запуск уже установленного zapret2 этого
+    # не делал, а с панели кнопка ведёт именно сюда — обе защиты оставались
+    # работать вместе, и «Сейчас защищает» показывала только Zapret2.
+    local _restore_limiter="false" _restore_limiter_service="false"
+    if [ "${NFT_ENABLED:-false}" = "true" ] || nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1; then
+        _restore_limiter="true"
+        [ "${NFT_ENABLED:-false}" = "true" ] && _restore_limiter_service="true"
+
+        echo ""
+        echo -e "  ${YELLOW}⚠ SYN limiter активен — zapret2 его заменит.${NC}"
+        echo -en "  ${BOLD}Отключить SYN limiter? [Y/n]:${NC} "
+        local _yn_syn; read_line _yn_syn
+        if [[ ! "$_yn_syn" =~ ^[nN] ]]; then
+            remove_nft_rules 2>/dev/null || true
+            remove_nft_service 2>/dev/null || true
+            log_success "SYN limiter отключён"
+        else
+            _restore_limiter="false"
+            _restore_limiter_service="false"
+            log_warn "Лимитер оставлен работать вместе с Zapret2 — они мешают друг другу"
+        fi
+    fi
+
+    zapret2_apply_nft || {
+        _zapret2_restore_limiter "$_restore_limiter" "$_restore_limiter_service"
+        return 1
+    }
     systemctl daemon-reload
     systemctl enable "$ZAPRET2_SERVICE" >/dev/null 2>&1 || true
     systemctl start "$ZAPRET2_SERVICE" 2>/dev/null || true
@@ -1824,7 +1900,21 @@ zapret2_start_existing() {
     else
         log_error "zapret2 не запустился"
         journalctl -u "$ZAPRET2_SERVICE" -n 10 --no-pager 2>/dev/null || true
+        # Симметрично откату в enable_smart_mode: если zapret2 не поднялся,
+        # возвращаем то, что ради него сняли, а не оставляем сервер вообще
+        # без защиты.
+        _zapret2_restore_limiter "$_restore_limiter" "$_restore_limiter_service"
         return 1
+    fi
+}
+
+# Возврат лимитера после неудачного запуска zapret2.
+_zapret2_restore_limiter() {
+    [ "${1:-false}" = "true" ] || return 0
+    log_info "Возвращаю SYN limiter..."
+    apply_nft_rules >/dev/null 2>&1 || true
+    if [ "${2:-false}" = "true" ]; then
+        install_nft_service >/dev/null 2>&1 || true
     fi
 }
 
@@ -1897,13 +1987,13 @@ zapret2_install() {
         echo -e "  ${YELLOW}Zapret2 уже установлен. Переустановить?${NC}"
         echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
         local _yn; read_line _yn
-        [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Отменено"; return 0; }
+        [[ "$_yn" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
         _reinstall="true"
     fi
 
     echo -en "  ${BOLD}Скачать и установить zapret2? [Y/n]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Отменено"; return 0; }
+    [[ "$_yn" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     # Свой экземпляр снимаем до проверки очереди в любом случае: и при
     # переустановке, и когда настройки говорят «не установлен», а служба
@@ -1944,7 +2034,7 @@ zapret2_install() {
         echo -e "  ${YELLOW}⚠ SYN limiter активен — zapret2 его заменит.${NC}"
         echo -en "  ${BOLD}Отключить SYN limiter? [Y/n]:${NC} "
         local _yn_syn; read_line _yn_syn
-        if [[ ! "$_yn_syn" =~ ^[nN]$ ]]; then
+        if [[ ! "$_yn_syn" =~ ^[nN] ]]; then
             remove_nft_rules 2>/dev/null || true
             remove_nft_service 2>/dev/null || true
             log_success "SYN limiter отключён"
@@ -2000,7 +2090,7 @@ zapret2_remove() {
     echo ""
     echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
+    [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     zapret2_stop
     systemctl disable "$ZAPRET2_SERVICE" 2>/dev/null || true
@@ -2096,7 +2186,7 @@ zapret2_check_wscale() {
             echo -e "  ${BOLD}Необходимо изменить win ACK: ${_current_win_ack} → ${_win_ack_rec}${NC}"
             echo -en "  Применить? [Y/n]: "
             local _yn; read_line _yn
-            if [[ ! "$_yn" =~ ^[nN]$ ]]; then
+            if [[ ! "$_yn" =~ ^[nN] ]]; then
                 ZAPRET2_WIN_ACK="$_win_ack_rec"
                 save_nft_settings
                 log_success "win ACK установлен: ${_win_ack_rec} (реальное окно: ${_real_win} байт)"
@@ -2108,7 +2198,7 @@ zapret2_check_wscale() {
             echo -e "  ${DIM}win ACK ${_current_win_ack} (${_current_real} байт) → ${_win_ack_rec} (${_real_win} байт)${NC}"
             echo -en "  Оптимизировать? [y/N]: "
             local _yn; read_line _yn
-            if [[ "$_yn" =~ ^[yY]$ ]]; then
+            if [[ "$_yn" =~ ^[yY] ]]; then
                 ZAPRET2_WIN_ACK="$_win_ack_rec"
                 save_nft_settings
                 log_success "win ACK установлен: ${_win_ack_rec}"
@@ -2207,4 +2297,152 @@ ios2_fix_status_line() {
             echo -e "${DIM}не применён${NC}"
         fi
     fi
+}
+
+# ── Настраиваемые параметры для внешней панели ───────────────────────────────
+# Формат: КЛЮЧ|валидатор|описание
+# Валидаторы те же, что в экспертном каталоге (_expert_validate).
+#
+# Здесь только то, что пользователь задаёт осознанно. Производное состояние
+# (*_ENABLED, *_APPLIED, *_ORIG_*, NFT_TABLE, NFT_SERVER_IP, NFT_EXTRA_COUNT,
+# MEKO_*) не выставляется вручную: им управляют сами команды применения,
+# и правка извне рассинхронизировала бы конфиг с реальными правилами ядра.
+_NFT_SETTABLE=(
+    "NFT_RATE|custom:_validate_nft_rate|Лимит SYN в classic-режиме"
+    "NFT_BURST|range:1:65535|Всплеск в classic-режиме"
+    "NFT_METER_TIMEOUT|custom:_validate_nft_timeout|Время жизни записи счётчика"
+    "NFT_IOS_RATE|custom:_validate_nft_rate|Лимит SYN для iOS (Smart)"
+    "NFT_IOS_BURST|range:1:65535|Всплеск для iOS (Smart)"
+    "NFT_OTHER_RATE|custom:_validate_nft_rate|Лимит SYN для прочих (Smart)"
+    "NFT_OTHER_BURST|range:1:65535|Всплеск для прочих (Smart)"
+    "NFT_IOS_LIMIT_ENABLED|bool|Ограничивать iOS"
+    "NFT_OTHER_LIMIT_ENABLED|bool|Ограничивать прочих"
+    "NFT_IOS_DETECT|enum:fingerprint,ttl|Способ определения iOS"
+    "NFT_OTHER_ACTION|enum:icmp-host-unreachable,reject,drop|Действие при превышении"
+    "NFT_REJECT_MODE|enum:reset,icmp|Вид отказа"
+    "IOS_KA_TIME|range:1:86400|tcp_keepalive_time (сек)"
+    "IOS_KA_INTVL|range:1:3600|tcp_keepalive_intvl (сек)"
+    "IOS_KA_PROBES|range:1:100|tcp_keepalive_probes"
+    "IOS2_EXTERNAL_PORT|range:1:65535|Внешний порт iOS Fix v2"
+    "IOS2_TARGET_PORT|custom:_validate_nft_optional_port|Целевой порт iOS Fix v2 (пусто = порт прокси)"
+    "IOS2_MSS|range:1:65535|MSS для iOS Fix v2"
+    "ZAPRET2_SPLIT_LEN|range:1:65535|Смещение разрыва ClientHello"
+    "ZAPRET2_WIN_SYNACK|range:1:65535|Окно в SYN+ACK"
+    "ZAPRET2_WIN_ACK|range:1:65535|Окно в ACK"
+    "ZAPRET2_QNUM|range:0:65535|Номер очереди NFQUEUE"
+    "ZAPRET2_FWMARK|custom:_validate_nft_fwmark|fwmark для пропуска обработанных пакетов"
+    "ZAPRET2_EXTRA_PORTS|custom:_validate_nft_ports|Дополнительные порты/диапазоны"
+    "ZAPRET2_DEBUG|bool|Подробный лог Zapret2"
+)
+
+# nftables принимает лимит в виде ЧИСЛО/ЕДИНИЦА.
+_validate_nft_rate() {
+    [[ "$1" =~ ^[0-9]+/(second|minute|hour|day)$ ]] && return 0
+    echo "Формат: ЧИСЛО/second|minute|hour|day (например 15/second)"; return 1
+}
+
+_validate_nft_timeout() {
+    [[ "$1" =~ ^[0-9]+(s|m|h)$ ]] && return 0
+    echo "Формат: ЧИСЛО с суффиксом s/m/h (например 60s)"; return 1
+}
+
+# Пустое значение допустимо — оно означает «взять порт прокси».
+_validate_nft_optional_port() {
+    [ -z "$1" ] && return 0
+    _validate_range "$1" 1 65535
+}
+
+_validate_nft_fwmark() {
+    [[ "$1" =~ ^(0x[0-9a-fA-F]+|[0-9]+)$ ]] && return 0
+    echo "Формат: десятичное число или 0x-шестнадцатеричное"; return 1
+}
+
+# Список портов и диапазонов через запятую: 443,8443,9000-9100
+_validate_nft_ports() {
+    [ -z "$1" ] && return 0
+    local _p
+    IFS=',' read -ra _arr <<< "$1"
+    for _p in "${_arr[@]}"; do
+        [[ "$_p" =~ ^[0-9]+(-[0-9]+)?$ ]] || {
+            echo "Формат: порты и диапазоны через запятую (443,9000-9100)"; return 1; }
+    done
+    return 0
+}
+
+_nft_find_settable() {
+    local _key="$1" _entry
+    for _entry in "${_NFT_SETTABLE[@]}"; do
+        [ "${_entry%%|*}" = "$_key" ] && { echo "$_entry"; return 0; }
+    done
+    return 1
+}
+
+# mtproxyl nft set <КЛЮЧ> <значение>
+# Меняет только сохранённое значение. Правила ядра не трогаются, поэтому после
+# правки нужно переприменить их (nft apply / nft smart) — так же, как это
+# работает в интерактивном меню.
+nft_set_param() {
+    local _key="$1" _val="$2" _entry
+    if [ -z "$_key" ]; then
+        log_error "Использование: mtproxyl nft set <ключ> <значение>"
+        return 1
+    fi
+    if ! _entry=$(_nft_find_settable "$_key"); then
+        log_error "Параметр '${_key}' недоступен для изменения"
+        log_info "Список: mtproxyl nft settable"
+        return 1
+    fi
+    local _rest="${_entry#*|}"
+    local _validator="${_rest%%|*}"
+
+    local _err
+    if ! _err=$(_expert_validate "$_validator" "$_val" 2>&1); then
+        log_error "Недопустимое значение для ${_key}: ${_err}"
+        return 1
+    fi
+
+    printf -v "$_key" '%s' "$_val"
+    save_nft_settings
+    log_success "${_key} = ${_val}"
+    log_info "Примените правила заново, чтобы значение вступило в силу"
+}
+
+# Список изменяемых параметров с текущими значениями (для UI панели).
+nft_settable_json() {
+    local _entry _key _validator _desc _first=1
+    printf '['
+    for _entry in "${_NFT_SETTABLE[@]}"; do
+        _key="${_entry%%|*}"
+        local _rest="${_entry#*|}"
+        _validator="${_rest%%|*}"
+        _desc="${_rest#*|}"
+        [ $_first -eq 1 ] || printf ','
+        _first=0
+        printf '{"key":"%s","validator":"%s","description":"%s","value":"%s"}' \
+            "$(json_escape "$_key")" "$(json_escape "$_validator")" \
+            "$(json_escape "$_desc")" "$(json_escape "${!_key:-}")"
+    done
+    printf ']\n'
+}
+
+# Полное состояние NFT/iOS/Zapret2 одним документом.
+nft_status_json() {
+    local _syn_active="false" _zapret_active="false"
+    systemctl is-active "$NFT_SYSTEMD_UNIT" &>/dev/null && _syn_active="true"
+    systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null && _zapret_active="true"
+
+    printf '{"nft":{"enabled":%s,"mode":"%s","service_active":%s},' \
+        "$([ "${NFT_ENABLED:-false}" = "true" ] && echo true || echo false)" \
+        "$(json_escape "${NFT_MODE:-classic}")" "$_syn_active"
+    printf '"ios_fix_v1":{"enabled":%s},"ios_fix_v2":{"enabled":%s},' \
+        "$([ "${IOS_FIX_ENABLED:-false}" = "true" ] && echo true || echo false)" \
+        "$([ "${IOS2_FIX_ENABLED:-false}" = "true" ] && echo true || echo false)"
+    printf '"zapret2":{"applied":%s,"service_active":%s},' \
+        "$([ "${ZAPRET2_APPLIED:-false}" = "true" ] && echo true || echo false)" \
+        "$_zapret_active"
+    printf '"meko_opt":{"applied":%s},' \
+        "$([ "${MEKO_OPT_APPLIED:-false}" = "true" ] && echo true || echo false)"
+    printf '"params":'
+    nft_settable_json | tr -d '\n'
+    printf '}\n'
 }

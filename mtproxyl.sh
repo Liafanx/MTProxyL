@@ -1,14 +1,28 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-#  MTProxyL v1.3.2 — Telegram MTProto Proxy Manager
+#  MTProxyL v1.4.0 — Telegram MTProto Proxy Manager
 #  https://github.com/Liafanx/MTProxyL
 #  by LiafanX
 # ═══════════════════════════════════════════════════════════════
 
 set -o pipefail
-export LC_NUMERIC=C
 
-VERSION="1.3.2"
+# Почти всё требует root (/opt/mtproxyl, Docker, nft), поэтому поднимаем себя
+# сами: `mtproxyl` ведёт себя как `sudo mtproxyl`. Панель уже зовёт нас от
+# root через sudo -n, там ветка не срабатывает.
+if [ "$(id -u)" -ne 0 ]; then
+    exec sudo -- "$0" "$@"
+fi
+
+export LC_NUMERIC=C
+# apt не должен ничего спрашивать. Без этого установка зависимостей (selfmask,
+# nftables, ipset) может встать намертво на диалоге debconf или needrestart —
+# особенно когда MTProxyL запущен из панели, где терминала нет вовсе и ответ
+# ждать неоткуда.
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+
+VERSION="1.4.0"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -41,14 +55,24 @@ if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
     exit 1
 fi
 
-# Защита stdin при curl | bash (только если это не фоновый/systemd запуск)
-if [[ ! -t 0 ]] && [[ -e /dev/tty ]] && ps -p $$ -o stat= | grep -q "+"; then
+# Защита stdin при curl | bash (только если это не фоновый/systemd запуск).
+#
+# Не трогаем stdin, если он нужен самой команде: `superexpert write` читает
+# конфиг из пайпа, и переоткрытие /dev/tty подменило бы его вводом с
+# терминала — конфиг молча потерялся бы. То же в неинтерактивном режиме:
+# там терминала быть не должно по определению.
+_stdin_is_payload="false"
+[ "${MTPROXYL_ASSUME_YES:-}" = "1" ] && _stdin_is_payload="true"
+[ "${1:-}" = "superexpert" ] && [ "${2:-}" = "write" ] && _stdin_is_payload="true"
+
+if [ "$_stdin_is_payload" != "true" ] \
+   && [[ ! -t 0 ]] && [[ -e /dev/tty ]] && ps -p $$ -o stat= | grep -q "+"; then
     exec < /dev/tty 2>/dev/null || true
 fi
 
 # Загрузка библиотек
 LIB_DIR="${INSTALL_DIR}/lib"
-for _lib in colors utils settings detect secrets config docker engine traffic geoblock upstream backup nft selfmask tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode install; do
+for _lib in colors utils settings detect secrets config docker engine traffic geoblock geoip upstream backup nft selfmask panel tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode settings_cli install; do
     if [ -f "${LIB_DIR}/${_lib}.sh" ]; then
         # shellcheck source=/dev/null
         source "${LIB_DIR}/${_lib}.sh"
@@ -127,6 +151,9 @@ cli_main() {
 
         secret)
             load_settings; load_secrets
+            # В реаниматоре пользователи живут в конфиге цели, а путь к нему
+            # знает только обнаружение.
+            [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && load_detect_settings
             handle_secret_command "$@"
             ;;
 
@@ -155,9 +182,18 @@ cli_main() {
             handle_mask_backend "$@"
             ;;
 
+        settings)
+            load_settings; load_secrets; load_upstreams
+            handle_settings_command "$@"
+            ;;
+
         traffic)
             load_settings; load_secrets; load_detect_settings
-            show_traffic
+            if [ "${1:-}" = "--json" ]; then
+                traffic_list_json
+            else
+                show_traffic
+            fi
             ;;
 
         connections)
@@ -194,9 +230,59 @@ cli_main() {
             check_root; load_settings; load_detect_settings
             case "${1:-}" in
                 manager)    switch_to_manager_mode ;;
-                reanimator) switch_to_reanimator_mode ;;
+                # Второй аргумент — судьба своего контейнера: remove, stop или
+                # keep. Без него вопрос задаётся интерактивно.
+                reanimator) switch_to_reanimator_mode "${2:-}" ;;
+                --json)
+                    # API движка живёт в конфиге того режима, который сейчас
+                    # активен: у реаниматора это конфиг чужой цели, у менеджера
+                    # — свой. Панель настроена на один фиксированный адрес и
+                    # после смены режима может продолжить опрашивать движок
+                    # прежнего режима, показывая чужие данные как свои.
+                    _mode_cfg="${CONFIG_DIR}/config.toml"
+                    [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && _mode_cfg="${DETECTED_CONFIG_PATH:-}"
+                    _api_port=$(_get_telemt_api_port "$_mode_cfg" 2>/dev/null || echo "")
+                    _api_on="false"
+                    _telemt_api_enabled "$_mode_cfg" 2>/dev/null && _api_on="true"
+                    # Состояние своего контейнера нужно панели до переключения:
+                    # уходя в реаниматор, она обязана спросить, что с ним
+                    # делать, а спрашивать не о чем, когда контейнера нет.
+                    _own_state=$(own_container_state 2>/dev/null || echo unknown)
+
+                    # Откуда брать логи движка текущего режима. У менеджера это
+                    # всегда свой контейнер; у цели — как её нашли: контейнер
+                    # Docker или systemd-юнит на хосте. Панель настроена на
+                    # container_name при установке и после смены режима
+                    # продолжала звать 'docker logs mtproxyl' — контейнера уже
+                    # нет, и логи «не работали» без объяснения.
+                    _log_kind="docker"; _log_target="$CONTAINER_NAME"
+                    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+                        case "${DETECTED_MODE:-unknown}" in
+                            docker|mtproxymax)
+                                _log_kind="docker"; _log_target="${DETECTED_CONTAINER:-}" ;;
+                            local|config_only|manual)
+                                _log_kind="service"; _log_target="telemt" ;;
+                            *)
+                                _log_kind=""; _log_target="" ;;
+                        esac
+                        [ -n "$_log_target" ] || { _log_kind=""; _log_target=""; }
+                    fi
+
+                    printf '{"mode":"%s","detected_mode":"%s","detected_config":"%s","port":%d,"engine_config":"%s","api_port":%d,"api_enabled":%s,"own_container":"%s","running":%s,"log_kind":"%s","log_target":"%s"}\n' \
+                        "$(json_escape "${MTPROXYL_MODE:-manager}")" \
+                        "$(json_escape "${DETECTED_MODE:-unknown}")" \
+                        "$(json_escape "${DETECTED_CONFIG_PATH:-}")" \
+                        "${PROXY_PORT:-0}" \
+                        "$(json_escape "${_mode_cfg}")" \
+                        "${_api_port:-0}" \
+                        "$_api_on" \
+                        "$(json_escape "${_own_state}")" \
+                        "$(is_proxy_running 2>/dev/null && echo true || echo false)" \
+                        "$(json_escape "${_log_kind}")" \
+                        "$(json_escape "${_log_target}")"
+                    ;;
                 "")         echo -e "  ${BOLD}Текущий режим:${NC} ${MTPROXYL_MODE:-manager}" ;;
-                *)          log_error "Использование: mtproxyl mode [manager|reanimator]" ;;
+                *)          log_error "Использование: mtproxyl mode [manager|reanimator|--json]" ;;
             esac
             ;;
 
@@ -227,13 +313,29 @@ cli_main() {
             fi
             ;;
 
+        target-config)
+            check_root; load_settings; load_detect_settings
+            if [ "${MTPROXYL_MODE:-manager}" != "reanimator" ]; then
+                log_error "Доступно только в режиме reanimator (свой конфиг: mtproxyl superexpert)"
+                exit 1
+            fi
+            handle_target_config_command "$@"
+            ;;
+
         geoblock)
             load_settings
             handle_geoblock_command "$@"
             ;;
 
+        geoip)
+            # Не зависит от режима manager/reanimator и от обнаружения цели —
+            # база GeoIP лежит в общесистемном каталоге, а не в конфиге.
+            handle_geoip_command "$@"
+            ;;
+
         sni-policy)
-            load_settings; load_secrets
+            # SNI-политика правит [censorship] конфига цели.
+            load_settings; load_secrets; load_detect_settings
             handle_sni_policy "$@"
             ;;
 
@@ -264,7 +366,9 @@ cli_main() {
             ;;
 
         metrics)
-            load_settings
+            # В реаниматоре порт метрик читается из конфига цели —
+            # без load_detect_settings путь пуст и метрики «недоступны».
+            load_settings; load_detect_settings
             handle_metrics_command "$@"
             ;;
 
@@ -290,6 +394,17 @@ cli_main() {
                 zapret2-stop)  check_root; load_nft_settings; zapret2_stop ;;
                 zapret2-rm)    check_root; load_nft_settings; zapret2_remove ;;
                 zapret2-wscale) load_nft_settings; zapret2_check_wscale "true" ;;
+                set)      check_root; nft_set_param "$2" "$3" ;;
+                settable) nft_settable_json ;;
+                status)
+                    if [ "${2:-}" = "--json" ]; then
+                        nft_status_json
+                    else
+                        echo -e "  ${BOLD}Лимитер:${NC}   $(nft_status_line)"
+                        echo -e "  ${BOLD}iOS Fix:${NC}   $(ios_fix_status_line)"
+                        echo -e "  ${BOLD}iOS Fix v2:${NC} $(ios2_fix_status_line)"
+                    fi
+                    ;;
                 *)
                     echo -e "  ${BOLD}NFT SYN Limiter:${NC}"
                     echo -e "    ${GREEN}nft apply${NC}        Применить правила"
@@ -304,6 +419,9 @@ cli_main() {
                     echo -e "    ${GREEN}nft ios2-off${NC}     Откатить iOS Fix v2"
                     echo -e "    ${GREEN}nft extra-add${NC}    Доп. правило"
                     echo -e "    ${GREEN}nft extra-rm${NC} N   Удалить доп. правило"
+                    echo -e "    ${GREEN}nft status${NC}       Состояние (--json для машинного вывода)"
+                    echo -e "    ${GREEN}nft set${NC} K V      Изменить параметр"
+                    echo -e "    ${GREEN}nft settable${NC}     Список изменяемых параметров (JSON)"
                     echo ""
                     echo -e "  ${BOLD}Zapret2:${NC}"
                     echo -e "    ${GREEN}nft zapret2${NC}      Установить / переустановить Zapret2 fix"
@@ -321,19 +439,26 @@ cli_main() {
             ;;
 
          selfmask)
-            load_settings
+            # load_detect_settings обязателен: в режиме реаниматора selfmask
+            # дописывает [censorship] в конфиг цели, а путь к нему живёт в
+            # DETECTED_CONFIG_PATH. Без загрузки он пуст, и apply отвечал
+            # «Конфиг цели не найден», хотя цель обнаружена и путь известен.
+            load_settings; load_detect_settings
             handle_selfmask_command "$@"
             ;;
 
         pq-check)
             load_settings; load_detect_settings
-            if [ -x "$(_selfmask_pq_openssl_bin)" ]; then
-                _addon_check_pq_domain "${1:-$(_current_sni_domain)}"
-            else
-                log_error "PQ OpenSSL не установлен"
-                log_info "Установите через: mtproxyl selfmask setup"
-            fi
+            # Проверку берёт на себя _addon_check_pq_domain: она сама решает,
+            # чем проверять — системным OpenSSL или нашим — и объясняет, если
+            # не может ничем.
+            _addon_check_pq_domain "${1:-$(_current_sni_domain)}"
             ;;            
+
+        panel)
+            load_settings; load_detect_settings
+            handle_panel_command "$@"
+            ;;
 
         install)
             run_installer

@@ -116,7 +116,7 @@ run_installer() {
     fi
     echo -en "  ${BOLD}Оставить порт метрик ${PROXY_METRICS_PORT}? [Y/n]:${NC} "
     local metrics_keep; read_line metrics_keep
-    if [[ "$metrics_keep" =~ ^[nN]$ ]]; then
+    if [[ "$metrics_keep" =~ ^[nN] ]]; then
         while true; do
             echo -en "  ${BOLD}Введите порт метрик [${PROXY_METRICS_PORT}]:${NC} "
             local metrics_input; read_line metrics_input
@@ -132,6 +132,45 @@ run_installer() {
             else
                 log_error "Некорректный порт"
             fi
+        done
+    fi
+
+    # Порт REST API — из него панель берёт пользователей и статистику.
+    # Выбираем так же, как порт метрик: свободный по умолчанию, с проверкой.
+    # Не спросить нельзя: 9091 занимают и другие сервисы, а движок с занятым
+    # портом API просто не поднимет его — панель осталась бы пустой.
+    echo ""
+    local _api_default
+    _api_default=$(find_free_metrics_port "${PROXY_API_PORT:-9091}" 9199) || _api_default="${PROXY_API_PORT:-9091}"
+    PROXY_API_PORT="$_api_default"
+    echo -e "  ${BOLD}Порт REST API движка (только localhost)${NC}"
+    echo -e "  ${DIM}Через него работает веб-панель: пользователи, статистика, конфиг.${NC}"
+    if is_port_available "$PROXY_API_PORT" 2>/dev/null; then
+        echo -e "  ${DIM}Автоматически выбран свободный порт: ${PROXY_API_PORT}${NC}"
+    else
+        echo -e "  ${YELLOW}Порт ${PROXY_API_PORT} занят, рекомендуем выбрать другой${NC}"
+    fi
+    echo -en "  ${BOLD}Оставить порт API ${PROXY_API_PORT}? [Y/n]:${NC} "
+    local api_keep; read_line api_keep
+    if [[ "$api_keep" =~ ^[nN] ]]; then
+        while true; do
+            echo -en "  ${BOLD}Введите порт API [${PROXY_API_PORT}]:${NC} "
+            local api_input; read_line api_input
+            [ -z "$api_input" ] && break
+            if ! validate_port "$api_input"; then
+                log_error "Некорректный порт"
+                continue
+            fi
+            if [ "$api_input" = "${PROXY_METRICS_PORT:-9090}" ] || [ "$api_input" = "${PROXY_PORT:-443}" ]; then
+                log_error "Этот порт уже занят самим прокси или метриками"
+                continue
+            fi
+            if is_port_available "$api_input"; then
+                PROXY_API_PORT="$api_input"
+                log_success "Порт API: ${PROXY_API_PORT}"
+                break
+            fi
+            log_error "Порт ${api_input} уже занят, попробуйте другой"
         done
     fi
 
@@ -279,7 +318,7 @@ run_fix_arsenal_wizard() {
     echo -en "  ${BOLD}Установить Zapret2 MTProto fix? [Y/n]:${NC} "
     local _yn_zapret2; read_line _yn_zapret2
     local _zapret2_installed="false"
-    if [[ ! "$_yn_zapret2" =~ ^[nN]$ ]]; then
+    if [[ ! "$_yn_zapret2" =~ ^[nN] ]]; then
         load_nft_settings 2>/dev/null || true
         zapret2_download_bundle
         if [ $? -eq 0 ]; then
@@ -403,7 +442,7 @@ run_fix_arsenal_wizard() {
     echo ""
     echo -en "  ${BOLD}Применить оптимизацию By-MEKO? [Y/n]:${NC} "
     local _meko_choice; read_line _meko_choice
-    if [[ ! "$_meko_choice" =~ ^[nN]$ ]]; then
+    if [[ ! "$_meko_choice" =~ ^[nN] ]]; then
         load_nft_settings 2>/dev/null || true
         meko_opt_apply || log_warn "Не удалось применить оптимизацию By-MEKO"
     fi
@@ -458,6 +497,9 @@ uninstall() {
     echo -e "  ${DIM}- NFT правила и iOS фиксы${NC}"
     echo -e "  ${DIM}- Selfmask и PQ nginx (если установлены)${NC}"
     echo -e "  ${DIM}- /usr/local/bin/mtproxyl${NC}"
+    if panel_installed 2>/dev/null; then
+        echo -e "  ${DIM}- Веб-панель MTProxyL-Panel (спросим отдельно)${NC}"
+    fi
     echo ""
     echo -e "  ${GREEN}НЕ будет удалено:${NC}"
     echo -e "  ${DIM}- Docker (сам движок)${NC}"
@@ -486,6 +528,29 @@ uninstall() {
         fi
     fi
 
+    # Веб-панель. Спрашиваем до всего остального: если её оставить, надо хотя
+    # бы снять права sudo — они разрешают запуск /opt/mtproxyl/mtproxyl.sh от
+    # root, а сам файл сейчас исчезнет. Висящее разрешение на несуществующий
+    # путь — не то, что стоит оставлять после удаления.
+    if panel_installed 2>/dev/null; then
+        echo ""
+        echo -e "  ${BOLD}Установлена веб-панель MTProxyL-Panel${NC}"
+        echo -e "  ${DIM}Без MTProxyL она останется работать как обычная панель telemt,${NC}"
+        echo -e "  ${DIM}но разделы режима, Selfmask и лимитера в ней перестанут работать.${NC}"
+        echo -en "  ${BOLD}Удалить панель тоже? [Y/n]:${NC} "
+        local _panel_yn; read_line _panel_yn
+        if [[ ! "$_panel_yn" =~ ^[nN] ]]; then
+            panel_uninstall --no-confirm || log_warn "Не удалось удалить панель — проверьте вручную"
+        fi
+        # Панель могла остаться и после «удалить»: у panel_uninstall своё
+        # подтверждение, а установщик панели мог не скачаться. В любом случае,
+        # если она на месте — снимаем права sudo на исчезающий скрипт.
+        if panel_installed 2>/dev/null; then
+            log_info "Панель осталась — отключаем интеграцию с MTProxyL"
+            _panel_detach_mtproxyl
+        fi
+    fi
+
     # Selfmask и PQ nginx
     if [ "${SELFMASK_ENABLED:-false}" = "true" ] || [ -d "${SELFMASK_PQ_PREFIX:-/opt/mtproxyl-nginx}" ]; then
         echo ""
@@ -493,7 +558,7 @@ uninstall() {
         echo -en "  ${BOLD}Удалить PQ nginx и отключить selfmask? [Y/n]:${NC} "
         local _sm_yn
         read_line _sm_yn
-        if [[ ! "$_sm_yn" =~ ^[nN]$ ]]; then
+        if [[ ! "$_sm_yn" =~ ^[nN] ]]; then
             log_info "Удаление selfmask и PQ nginx..."
             _selfmask_cleanup_for_uninstall 2>/dev/null || true
             log_success "Selfmask и PQ nginx удалены"

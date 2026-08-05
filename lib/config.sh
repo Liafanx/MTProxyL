@@ -98,7 +98,7 @@ handle_tune_command() {
             [ -z "$value" ] && { log_error "Требуется значение"; return 1; }
             [[ "$value" =~ $regex ]] || { log_error "Некорректное значение (ожидается: ${regex})"; return 1; }
             mkdir -p "$INSTALL_DIR"; touch "$_TUNE_FILE"; chmod 600 "$_TUNE_FILE"
-            local tmp; tmp=$(_mktemp) || return 1
+            local tmp; tmp=$(_mktemp "$INSTALL_DIR") || return 1
             grep -v "^${param}|" "$_TUNE_FILE" > "$tmp" 2>/dev/null || true
             echo "${param}|${value}" >> "$tmp"
             mv "$tmp" "$_TUNE_FILE"; chmod 600 "$_TUNE_FILE"
@@ -118,7 +118,7 @@ handle_tune_command() {
             [ ! -f "$_TUNE_FILE" ] && { log_info "Нет параметров"; return 0; }
             if [ "$param" = "all" ]; then rm -f "$_TUNE_FILE"; log_success "Все параметры очищены"
             else
-                local tmp; tmp=$(_mktemp) || return 1
+                local tmp; tmp=$(_mktemp "$INSTALL_DIR") || return 1
                 grep -v "^${param}|" "$_TUNE_FILE" > "$tmp" 2>/dev/null || true
                 mv "$tmp" "$_TUNE_FILE"; chmod 600 "$_TUNE_FILE"
                 log_success "${param} очищен"
@@ -218,7 +218,7 @@ superexpert_enable() {
     echo ""
     echo -en "  ${BOLD}Включить режим супер эксперта? [y/N]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
+    [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     if [ ! -f "$SUPEREXPERT_FILE" ]; then
         # Копию делаем с действующего конфига; если его ещё нет — генерируем
@@ -240,6 +240,12 @@ superexpert_enable() {
     echo -e "  ${BOLD}Правьте файл:${NC} ${SUPEREXPERT_FILE}"
     echo -e "  ${DIM}Применить изменения: перезапуск прокси (меню «Управление прокси»)${NC}"
     echo ""
+    # Редактор запускаем только человеку за терминалом. Под обходом
+    # подтверждений (панель, скрипты) он бы стартовал без tty и висел до
+    # таймаута — а редактировать файл панель умеет сама.
+    if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ]; then
+        return 0
+    fi
     echo -en "  ${BOLD}Открыть файл в редакторе сейчас? [Y/n]:${NC} "
     local _e; read_line _e
     [[ "$_e" =~ ^[nN] ]] || superexpert_edit
@@ -262,7 +268,7 @@ superexpert_disable() {
     echo ""
     echo -en "  ${BOLD}Выключить режим супер эксперта? [y/N]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
+    [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     SUPEREXPERT_ENABLED="false"
     save_settings
@@ -279,6 +285,16 @@ superexpert_edit() {
 
     if [ ! -f "$SUPEREXPERT_FILE" ]; then
         log_error "Файл ${SUPEREXPERT_FILE} не найден — сначала включите режим"
+        return 1
+    fi
+
+    # Без терминала редактор запускать нельзя: он либо повиснет в ожидании
+    # ввода, либо испортит вывод управляющими последовательностями. Панель
+    # правит этот файл через 'superexpert write'.
+    if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ] || [ ! -t 0 ]; then
+        log_error "Редактор недоступен без терминала"
+        log_info "Из панели правьте файл в разделе «Супер эксперт»"
+        log_info "Из скрипта: mtproxyl superexpert write < файл.toml"
         return 1
     fi
 
@@ -324,7 +340,7 @@ superexpert_recreate() {
     echo -e "  ${DIM}Новый файл будет собран из настроек и секретов MTProxyL.${NC}"
     echo -en "  ${BOLD}Пересоздать? [y/N]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
+    [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     # Генерируем эталонный конфиг менеджера во временный файл: включённый
     # режим супер эксперта иначе просто скопировал бы сам себя.
@@ -351,14 +367,22 @@ handle_superexpert_command() {
         off|disable) superexpert_disable ;;
         edit)        superexpert_edit ;;
         status|"")
-            echo -e "  ${BOLD}Режим супер эксперта:${NC} $(superexpert_status_line)"
-            [ -f "$SUPEREXPERT_FILE" ] && echo -e "  ${BOLD}Файл:${NC} ${SUPEREXPERT_FILE}" ;;
+            if [ "${2:-}" = "--json" ]; then
+                superexpert_status_json
+            else
+                echo -e "  ${BOLD}Режим супер эксперта:${NC} $(superexpert_status_line)"
+                [ -f "$SUPEREXPERT_FILE" ] && echo -e "  ${BOLD}Файл:${NC} ${SUPEREXPERT_FILE}"
+            fi ;;
+        show)        superexpert_show_file ;;
+        write)       superexpert_write_file ;;
         *)
             echo -e "  ${BOLD}Режим супер эксперта:${NC}"
             echo -e "    ${GREEN}superexpert status${NC}   Текущее состояние"
             echo -e "    ${GREEN}superexpert on${NC}       Включить (создать/взять свой конфиг)"
             echo -e "    ${GREEN}superexpert off${NC}      Выключить (файл сохраняется)"
-            echo -e "    ${GREEN}superexpert edit${NC}     Правка конфига в \$EDITOR/nano" ;;
+            echo -e "    ${GREEN}superexpert edit${NC}     Правка конфига в \$EDITOR/nano"
+            echo -e "    ${GREEN}superexpert show${NC}     Вывести конфиг"
+            echo -e "    ${GREEN}superexpert write${NC}    Записать конфиг из stdin" ;;
     esac
 }
 
@@ -385,6 +409,7 @@ generate_telemt_config() {
     local ad_tag="${AD_TAG:-}"
     local port="${PROXY_PORT:-443}"
     local metrics_port="${PROXY_METRICS_PORT:-9090}"
+    local api_port="${PROXY_API_PORT:-9091}"
 
     local tmp; tmp=$(_mktemp "$CONFIG_DIR") || return 1
 
@@ -406,6 +431,7 @@ tls = true
 
 [general.links]
 show = [$(get_enabled_labels_quoted)]
+$(_h=$(proxy_public_host) && printf 'public_host = "%s"\n' "$_h")
 
 [server]
 port = ${port}
@@ -413,7 +439,12 @@ listen_addr_ipv4 = "0.0.0.0"
 listen_addr_ipv6 = "::"
 proxy_protocol = ${PROXY_PROTOCOL:-false}
 metrics_listen = "127.0.0.1:${metrics_port}"
-metrics_whitelist = ["127.0.0.1", "::1"]
+metrics_whitelist = ["127.0.0.1/32", "::1/128"]
+
+[server.api]
+enabled = true
+listen = "127.0.0.1:${api_port}"
+whitelist = ["127.0.0.1/32", "::1/128"]
 
 [timeouts]
 client_handshake = ${MTPROXYL_CLIENT_HANDSHAKE}
@@ -496,13 +527,32 @@ TOML_EOF
     fi
 
     # Upstreams
+    #
+    # Shadowsocks-апстрим движок принимает только при выключенном Middle-End.
+    # Запреты стоят в upstream_add/upstream_toggle, но ME можно выключить и
+    # включить обратно через режим эксперта уже после — тогда конфиг соберётся
+    # заведомо нерабочим, и понять почему по логам telemt будет непросто.
+    local _ss_enabled=0
+    for i in "${!UPSTREAM_NAMES[@]}"; do
+        [ "${UPSTREAM_ENABLED[$i]}" = "true" ] || continue
+        [ "${UPSTREAM_TYPES[$i]}" = "shadowsocks" ] && _ss_enabled=1
+    done
+    if [ "$_ss_enabled" -eq 1 ] && [ "$(get_expert_override_value general use_middle_proxy 2>/dev/null)" != "false" ]; then
+        log_warn "Включён shadowsocks-апстрим, но ME (use_middle_proxy) не выключен — движок отвергнет такой маршрут"
+    fi
+
     for i in "${!UPSTREAM_NAMES[@]}"; do
         [ "${UPSTREAM_ENABLED[$i]}" = "true" ] || continue
         echo "" >> "$tmp"; echo "[[upstreams]]" >> "$tmp"
         echo "type = \"${UPSTREAM_TYPES[$i]}\"" >> "$tmp"
         echo "weight = ${UPSTREAM_WEIGHTS[$i]}" >> "$tmp"
-        [ "${UPSTREAM_TYPES[$i]}" != "direct" ] && [ -n "${UPSTREAM_ADDRS[$i]}" ] && \
+        # У shadowsocks адрес, метод шифрования и пароль приходят одним
+        # ss-URL — движок ждёт его в поле url, а не address.
+        if [ "${UPSTREAM_TYPES[$i]}" = "shadowsocks" ]; then
+            [ -n "${UPSTREAM_ADDRS[$i]}" ] && echo "url = \"${UPSTREAM_ADDRS[$i]}\"" >> "$tmp"
+        elif [ "${UPSTREAM_TYPES[$i]}" != "direct" ] && [ -n "${UPSTREAM_ADDRS[$i]}" ]; then
             echo "address = \"${UPSTREAM_ADDRS[$i]}\"" >> "$tmp"
+        fi
         if [ "${UPSTREAM_TYPES[$i]}" = "socks5" ]; then
             [ -n "${UPSTREAM_USERS[$i]}" ] && echo "username = \"${UPSTREAM_USERS[$i]}\"" >> "$tmp"
             [ -n "${UPSTREAM_PASSES[$i]}" ] && echo "password = \"${UPSTREAM_PASSES[$i]}\"" >> "$tmp"
@@ -510,6 +560,7 @@ TOML_EOF
             echo "user_id = \"${UPSTREAM_USERS[$i]}\"" >> "$tmp"
         fi
         [ -n "${UPSTREAM_IFACES[$i]}" ] && echo "interface = \"${UPSTREAM_IFACES[$i]}\"" >> "$tmp"
+        [ -n "${UPSTREAM_SCOPES[$i]:-}" ] && echo "scopes = \"${UPSTREAM_SCOPES[$i]}\"" >> "$tmp"
     done
 
     # Engine tunings
@@ -577,10 +628,26 @@ TOML_EOF
 # Override сам по себе ничего не меняет: он попадает в конфиг только при
 # его генерации. Предлагаем это сразу, иначе «сохранено» вводит в
 # заблуждение — движок продолжает работать со старым значением.
+# Пересборка конфига и hot-reload — отдельным шагом.
+#
+# Панель сохраняет параметры пачкой, и пересобирать конфиг после каждого
+# было бы и медленно, и шумно: на десять правок пришлось бы десять
+# перезагрузок движка.
+expert_apply_now() {
+    generate_telemt_config || { log_error "Ошибка генерации конфига"; return 1; }
+    log_success "Конфиг обновлён"
+    if is_proxy_running; then
+        reload_target_config &>/dev/null || true
+        log_success "Hot-reload отправлен"
+    else
+        log_warn "Прокси не запущен — значения применятся при запуске"
+    fi
+}
+
 _expert_apply_prompt() {
     echo -en "  ${BOLD}Пересобрать конфиг и применить сейчас? [Y/n]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Позже: mtproxyl config или меню → Режим эксперта → Пересобрать"; return 0; }
+    [[ "$_yn" =~ ^[nN] ]] && { log_info "Позже: mtproxyl config или меню → Режим эксперта → Пересобрать"; return 0; }
     generate_telemt_config || { log_error "Ошибка генерации конфига"; return 1; }
     log_success "Конфиг обновлён"
     if is_proxy_running; then
@@ -596,7 +663,12 @@ handle_expert_command() {
     [ "$subcmd" = "list" ] || _require_manager_mode || return 1
     [ "$subcmd" = "list" ] || _require_no_superexpert || return 1
     case "$subcmd" in
-        list)  show_expert_overrides ;;
+        list)
+            case "${1:-}" in
+                --json)      expert_overrides_json ;;
+                --catalog)   expert_catalog_json ;;
+                *)           show_expert_overrides ;;
+            esac ;;
         set)
             check_root
             local _sec="${1:-}" _key="${2:-}" _val="${3:-}"
@@ -619,6 +691,7 @@ handle_expert_command() {
             fi
             save_expert_override "$_sec" "$_key" "$_val" || return 1
             log_success "Override сохранён: [${_sec}] ${_key} = ${_val}"
+            [ "${4:-}" = "--no-apply" ] && return 0
             _expert_apply_prompt ;;
         clear)
             check_root
@@ -643,8 +716,12 @@ handle_expert_command() {
                     fi
                     delete_expert_override "$_what" "$_key" || return 1
                     log_success "Override удалён: [${_what}] ${_key}"
+                    [ "${3:-}" = "--no-apply" ] && return 0
                     _expert_apply_prompt ;;
             esac ;;
+        apply)
+            check_root
+            expert_apply_now ;;
         edit)
             check_root
             local config="${CONFIG_DIR}/config.toml"
@@ -657,8 +734,87 @@ handle_expert_command() {
         *)
             echo -e "  ${BOLD}Режим эксперта:${NC}"
             echo -e "    ${GREEN}expert list${NC}                            Параметры"
+            echo -e "    ${GREEN}expert list --json${NC}                     Заданные override (JSON)"
+            echo -e "    ${GREEN}expert list --catalog${NC}                  Весь каталог с валидаторами (JSON)"
             echo -e "    ${GREEN}expert set${NC} <секция> <ключ> <значение>   Добавить"
             echo -e "    ${GREEN}expert clear${NC} <секция> <ключ> | all      Удалить"
+            echo -e "    ${GREEN}expert apply${NC}                           Пересобрать конфиг и применить"
+            echo -e "    ${DIM}У set/clear есть --no-apply: отложить применение${NC}"
             echo -e "    ${GREEN}expert edit${NC}                            Редактор" ;;
     esac
+}
+
+# Машинное состояние режима супер эксперта для панели.
+superexpert_status_json() {
+    local _size=0 _mtime=0
+    if [ -f "$SUPEREXPERT_FILE" ]; then
+        _size=$(stat -c '%s' "$SUPEREXPERT_FILE" 2>/dev/null || echo 0)
+        _mtime=$(stat -c '%Y' "$SUPEREXPERT_FILE" 2>/dev/null || echo 0)
+    fi
+    printf '{"enabled":%s,"active":%s,"file":"%s","file_exists":%s,"size":%d,"mtime":%d}\n' \
+        "$([ "${SUPEREXPERT_ENABLED:-false}" = "true" ] && echo true || echo false)" \
+        "$(_superexpert_active && echo true || echo false)" \
+        "$(json_escape "$SUPEREXPERT_FILE")" \
+        "$([ -f "$SUPEREXPERT_FILE" ] && echo true || echo false)" \
+        "${_size:-0}" "${_mtime:-0}"
+}
+
+# Содержимое пользовательского конфига — панель показывает его в редакторе.
+# Вывести конфиг супер эксперта, а если его ещё нет — тот, что действует
+# сейчас.
+#
+# Включение режима копирует текущий рабочий конфиг, так что именно он и станет
+# отправной точкой. Показывать вместо него абстрактный пример из трёх строк —
+# значит предлагать начать с нуля там, где начинать с нуля не нужно: свои
+# секреты, домен и порт пришлось бы вписывать заново руками.
+superexpert_show_file() {
+    if [ -f "$SUPEREXPERT_FILE" ]; then
+        cat "$SUPEREXPERT_FILE"
+        return 0
+    fi
+    local _live="${CONFIG_DIR}/config.toml"
+    if [ -f "$_live" ]; then
+        cat "$_live"
+        return 0
+    fi
+    # Конфига нет вовсе (прокси ещё не разворачивали) — соберём из текущих
+    # настроек, чтобы показать хоть что-то осмысленное.
+    if generate_telemt_config >/dev/null 2>&1 && [ -f "$_live" ]; then
+        cat "$_live"
+        return 0
+    fi
+    log_error "Конфиг не найден: ни ${SUPEREXPERT_FILE}, ни ${_live}"
+    return 1
+}
+
+# Запись конфига из stdin.
+#
+# Через stdin, а не аргументом: TOML многострочный и содержит кавычки —
+# передавать его в командной строке было бы и неудобно, и опасно.
+superexpert_write_file() {
+    check_root || return 1
+    mkdir -p "$(dirname "$SUPEREXPERT_FILE")"
+
+    # Пишем во временный файл: оборванная передача не должна оставить
+    # обрезанный конфиг, по которому движок потом не поднимется. Временный
+    # файл кладём рядом с целевым, чтобы подменить его одним mv.
+    local _tmp; _tmp=$(_mktemp "$(dirname "$SUPEREXPERT_FILE")") || return 1
+    cat > "$_tmp"
+
+    if [ ! -s "$_tmp" ]; then
+        rm -f "$_tmp"
+        log_error "Пустой конфиг отклонён"
+        return 1
+    fi
+    # Минимальная проверка: у telemt-конфига обязательно есть секции.
+    if ! grep -qE '^\[[a-z]' "$_tmp"; then
+        rm -f "$_tmp"
+        log_error "Не похоже на TOML движка — нет ни одной секции"
+        return 1
+    fi
+
+    chmod 600 "$_tmp"
+    mv "$_tmp" "$SUPEREXPERT_FILE"
+    log_success "Конфиг сохранён: ${SUPEREXPERT_FILE}"
+    log_info "Перезапустите прокси, чтобы применить: mtproxyl restart"
 }

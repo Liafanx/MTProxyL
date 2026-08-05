@@ -16,6 +16,90 @@ _selfmask_pq_openssl_bin() {
     echo "${SELFMASK_PQ_PREFIX}/bin/openssl"
 }
 
+# Минимальная версия OpenSSL с постквантовым обменом ключами (X25519MLKEM768)
+# из коробки. До 3.5.0 его нет вовсе, и нужен наш собранный.
+SELFMASK_MIN_SYSTEM_OPENSSL="3.5.0"
+
+# Сравнение версий вида 3.5.7: возвращает 0, если $1 >= $2.
+_version_ge() {
+    [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" = "$2" ]
+}
+
+# Умеет ли системный OpenSSL постквантовый обмен ключами.
+#
+# С 3.5.0 X25519MLKEM768 поддерживается штатно, и городить свою сборку незачем:
+# у системного пакета есть обновления безопасности, у нашего — только мы.
+_system_openssl_has_pq() {
+    local _bin; _bin=$(command -v openssl 2>/dev/null) || return 1
+    local _ver; _ver=$("$_bin" version 2>/dev/null | awk '{print $2}')
+    # Версия бывает с суффиксом: "3.5.7", "3.6.0-dev". Берём числовую часть.
+    _ver="${_ver%%-*}"
+    [[ "$_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+    _version_ge "$_ver" "$SELFMASK_MIN_SYSTEM_OPENSSL" || return 1
+    # Версия — необходимое условие, но сборка может быть собрана без ML-KEM.
+    # Спрашиваем сам бинарник, а не полагаемся на номер.
+    "$_bin" list -kem-algorithms 2>/dev/null | grep -qi 'mlkem768\|ml-kem-768' && return 0
+    "$_bin" list -group-algorithms 2>/dev/null | grep -qi 'X25519MLKEM768' && return 0
+    return 1
+}
+
+# Какой openssl использовать для проверок PQ: системный, если он умеет, иначе
+# наш собранный. Пустой вывод означает, что подходящего нет вовсе.
+_pq_openssl_bin() {
+    if _system_openssl_has_pq; then
+        command -v openssl
+        return 0
+    fi
+    local _own; _own=$(_selfmask_pq_openssl_bin)
+    [ -x "$_own" ] && { echo "$_own"; return 0; }
+    return 1
+}
+
+# Умеет ли системный nginx постквантовый обмен ключами.
+#
+# Важно, с чем он слинкован, а не какая версия у CLI openssl: это разные
+# пакеты и они расходятся. Спрашиваем сам nginx через -V.
+_system_nginx_has_pq() {
+    local _bin; _bin=$(command -v nginx 2>/dev/null) || return 1
+    local _ssl
+    _ssl=$("$_bin" -V 2>&1 | grep -oE 'OpenSSL [0-9]+\.[0-9]+\.[0-9]+' | head -1 | awk '{print $2}')
+    [ -n "$_ssl" ] || return 1
+    _version_ge "$_ssl" "$SELFMASK_MIN_SYSTEM_OPENSSL"
+}
+
+# Какой nginx использовать для заглушки.
+#
+# Системный подходит, если слинкован с OpenSSL 3.5.0+: тогда своя сборка не
+# нужна, а обновления безопасности приходят из дистрибутива. Запускаем его всё
+# равно со своим конфигом и под своим юнитом — трогать /etc/nginx/nginx.conf
+# нельзя, там может жить чужой сайт.
+_selfmask_nginx_bin() {
+    if _system_nginx_has_pq; then
+        command -v nginx
+        return 0
+    fi
+    echo "$(_selfmask_pq_nginx_bin)"
+}
+
+_selfmask_nginx_source() {
+    if _system_nginx_has_pq; then
+        echo "системный nginx ($(nginx -V 2>&1 | grep -oE 'OpenSSL [0-9]+\.[0-9]+\.[0-9]+' | head -1))"
+    else
+        echo "nginx из состава MTProxyL (OpenSSL ${SELFMASK_PQ_OPENSSL_VERSION})"
+    fi
+}
+
+# Человекочитаемое описание источника — для вывода и для панели.
+_pq_openssl_source() {
+    if _system_openssl_has_pq; then
+        echo "системный OpenSSL $(openssl version 2>/dev/null | awk '{print $2}')"
+    elif [ -x "$(_selfmask_pq_openssl_bin)" ]; then
+        echo "PQ OpenSSL из состава MTProxyL"
+    else
+        echo ""
+    fi
+}
+
 _selfmask_pq_conf() {
     echo "${SELFMASK_PQ_PREFIX}/conf/nginx.conf"
 }
@@ -104,6 +188,29 @@ selfmask_status_line() {
     else
         echo -e "${DIM}выключен${NC}"
     fi
+}
+
+# Машинный статус для панели: mtproxyl selfmask status --json
+selfmask_show_status_json() {
+    local _cert="false" _nginx="false" _conf
+    _conf="$(_selfmask_pq_conf)"
+    [ -n "${SELFMASK_DOMAIN:-}" ] && [ -f "$(_selfmask_cert_dir)/fullchain.pem" ] && _cert="true"
+    systemctl is-active "${SELFMASK_PQ_SERVICE}" &>/dev/null && _nginx="true"
+
+    printf '{"enabled":%s,"domain":"%s","site_source":"%s","site_dir":"%s","backend_port":%d,"cert_mode":"%s","auto_renew":%s,"nginx_conf":"%s","nginx_conf_exists":%s,"cert_found":%s,"pq_nginx_active":%s,"pq_source":"%s","pq_available":%s,"pq_system":%s}\n' \
+        "$([ "${SELFMASK_ENABLED:-false}" = "true" ] && echo true || echo false)" \
+        "$(json_escape "${SELFMASK_DOMAIN:-}")" \
+        "$(json_escape "${SELFMASK_SITE_SOURCE:-stub}")" \
+        "$(json_escape "${SELFMASK_SITE_DIR:-/var/www/mtproxyl-selfmask}")" \
+        "${SELFMASK_NGINX_BACKEND_PORT:-8444}" \
+        "$(json_escape "${SELFMASK_CERT_MODE:-letsencrypt}")" \
+        "$([ "${SELFMASK_AUTO_RENEW:-true}" = "true" ] && echo true || echo false)" \
+        "$(json_escape "$_conf")" \
+        "$([ -f "$_conf" ] && echo true || echo false)" \
+        "$_cert" "$_nginx" \
+        "$(json_escape "$(_pq_openssl_source)")" \
+        "$(_pq_openssl_bin >/dev/null 2>&1 && echo true || echo false)" \
+        "$(_system_openssl_has_pq && echo true || echo false)"
 }
 
 selfmask_show_requirements() {
@@ -228,14 +335,14 @@ _selfmask_collect_params() {
                 echo -en "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
                 local _dns_yn
                 read_line _dns_yn
-                [[ "$_dns_yn" =~ ^[yY]$ ]] || return 1
+                [[ "$_dns_yn" =~ ^[yY] ]] || return 1
             fi
         else
             log_warn "Не удалось определить A-запись домена"
             echo -en "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
             local _dns_yn
             read_line _dns_yn
-            [[ "$_dns_yn" =~ ^[yY]$ ]] || return 1
+            [[ "$_dns_yn" =~ ^[yY] ]] || return 1
         fi
     else
         log_info "Самоподписанный сертификат — проверка A-записи не требуется"
@@ -319,7 +426,7 @@ _selfmask_collect_params() {
     echo -en "  ${BOLD}Продолжить настройку? [Y/n]:${NC} "
     local _yn
     read_line _yn
-    [[ "$_yn" =~ ^[nN]$ ]] && return 1
+    [[ "$_yn" =~ ^[nN] ]] && return 1
 
     return 0
 }
@@ -350,6 +457,17 @@ _selfmask_install_deps() {
 
 _selfmask_install_pq_nginx() {
     local _prefix="${SELFMASK_PQ_PREFIX}"
+
+    # Системный nginx с OpenSSL 3.5.0+ умеет X25519MLKEM768 сам — качать свою
+    # сборку незачем. Каталоги под конфиг и логи всё равно готовим: запускаем
+    # его со своим конфигом, чтобы не трогать чужой /etc/nginx.
+    if _system_nginx_has_pq; then
+        log_success "Используем $(_selfmask_nginx_source)"
+        log_info "Своя сборка nginx не нужна — обновления придут из дистрибутива"
+        mkdir -p /var/log/mtproxyl-nginx /var/lib/mtproxyl-nginx/{body,proxy,fastcgi} /var/lock
+        mkdir -p "${_prefix}/logs" "${_prefix}/conf"
+        return 0
+    fi
 
     if [ -x "$(_selfmask_pq_nginx_bin)" ] && [ -x "$(_selfmask_pq_openssl_bin)" ]; then
         local _ver
@@ -428,8 +546,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStartPre=$(_selfmask_pq_nginx_bin) -t -c $(_selfmask_pq_conf)
-ExecStart=$(_selfmask_pq_nginx_bin) -c $(_selfmask_pq_conf) -g 'daemon off;'
+ExecStartPre=$(_selfmask_nginx_bin) -t -c $(_selfmask_pq_conf)
+ExecStart=$(_selfmask_nginx_bin) -c $(_selfmask_pq_conf) -g 'daemon off;'
 ExecReload=/bin/kill -HUP \$MAINPID
 ExecStop=/bin/kill -QUIT \$MAINPID
 Restart=on-failure
@@ -445,6 +563,7 @@ EOF
 }
 
 SELFMASK_SYSTEM_NGINX_WAS_ACTIVE="false"
+SELFMASK_PANEL_WAS_ACTIVE="false"
 
 _selfmask_stop_own_nginx() {
     if systemctl is-active "${SELFMASK_PQ_SERVICE}" &>/dev/null 2>&1; then
@@ -467,19 +586,25 @@ _selfmask_free_ports() {
         return 0
     fi
 
-    # 2. Проверяем занят ли порт 80 кем-то ещё
+    # 2. Проверяем занят ли порт 80 кем-то ещё.
+    # Вывод забираем в переменную, а не пайпим в grep -q: grep закрывает пайп
+    # на первом совпадении, источник получает SIGPIPE, и под set -o pipefail
+    # весь пайплайн — ненулевой, хотя совпадение найдено.
     local _port80_busy="false"
+    local _listen_out=""
     if command -v ss &>/dev/null; then
-        ss -tln 2>/dev/null | awk '{print $4}' | grep -qE '(^|:|])80$' && _port80_busy="true"
+        _listen_out=$(ss -tln 2>/dev/null)
     elif command -v netstat &>/dev/null; then
-        netstat -tln 2>/dev/null | awk '{print $4}' | grep -qE '(^|:|])80$' && _port80_busy="true"
+        _listen_out=$(netstat -tln 2>/dev/null)
     fi
+    printf '%s\n' "$_listen_out" | awk '{print $4}' | grep -qE '(^|:|])80$' && _port80_busy="true"
 
     # Если порт 80 свободен — отлично
     [ "$_port80_busy" != "true" ] && return 0
 
     # 3. Если активен системный nginx — спрашиваем пользователя
-    if systemctl list-unit-files 2>/dev/null | grep -q '^nginx\.service' && systemctl is-active nginx &>/dev/null 2>&1; then
+    local _unit_files; _unit_files=$(systemctl list-unit-files 2>/dev/null)
+    if printf '%s\n' "$_unit_files" | grep -q '^nginx\.service' && systemctl is-active nginx &>/dev/null 2>&1; then
         echo ""
         log_warn "Обнаружен системный nginx, который использует порт 80"
         echo -e "  ${DIM}Selfmask требует порт 80 для Let's Encrypt и http→https redirect.${NC}"
@@ -488,7 +613,7 @@ _selfmask_free_ports() {
         echo -en "  ${BOLD}Временно остановить системный nginx? [y/N]:${NC} "
         local _yn
         read_line _yn
-        if [[ "$_yn" =~ ^[yY]$ ]]; then
+        if [[ "$_yn" =~ ^[yY] ]]; then
             SELFMASK_SYSTEM_NGINX_WAS_ACTIVE="true"
             systemctl stop nginx &>/dev/null || {
                 log_error "Не удалось остановить системный nginx"
@@ -502,17 +627,57 @@ _selfmask_free_ports() {
         fi
     fi
 
-    # 4. Если занят не nginx'ом — просто сообщаем
+    # 4. Если активна веб-панель MTProxyL-Panel — она держит порт 80 ради
+    # собственного Let's Encrypt (AmbientCapabilities=CAP_NET_BIND_SERVICE в
+    # её systemd-юните), и делает это постоянно, а не только в момент
+    # выпуска. Тот же вопрос, что для системного nginx.
+    if printf '%s\n' "$_unit_files" | grep -q '^mtproxyl-panel\.service' && systemctl is-active mtproxyl-panel &>/dev/null 2>&1; then
+        # Под ASSUME_YES эту команду зовёт сама панель: остановив её, systemd
+        # убьёт и наш процесс — она останется выключенной. Отказываем явно.
+        if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ]; then
+            log_error "Порт 80 занят веб-панелью MTProxyL-Panel — не могу остановить её автоматически"
+            log_info "Остановите панель вручную (sudo systemctl stop mtproxyl-panel), повторите"
+            log_info "selfmask apply, затем запустите панель обратно (sudo systemctl start mtproxyl-panel)"
+            return 1
+        fi
+        echo ""
+        log_warn "Порт 80 занят веб-панелью MTProxyL-Panel (её собственный Let's Encrypt)"
+        echo -e "  ${DIM}Selfmask требует порт 80 для своего Let's Encrypt и http→https redirect.${NC}"
+        echo -e "  ${DIM}Панель будет недоступна на несколько секунд, пока сертификат не выпущен.${NC}"
+        echo ""
+        echo -en "  ${BOLD}Временно остановить панель? [y/N]:${NC} "
+        local _yn
+        read_line _yn
+        if [[ "$_yn" =~ ^[yY] ]]; then
+            SELFMASK_PANEL_WAS_ACTIVE="true"
+            systemctl stop mtproxyl-panel &>/dev/null || {
+                log_error "Не удалось остановить mtproxyl-panel"
+                return 1
+            }
+            log_info "Панель временно остановлена"
+            return 0
+        else
+            log_error "Настройка selfmask отменена: порт 80 занят панелью"
+            return 1
+        fi
+    fi
+
+    # 5. Если занят чем-то ещё — просто сообщаем
     log_error "Порт 80 уже занят другим процессом"
     log_info "Освободите порт 80 и повторите настройку selfmask"
     return 1
 }
 
-_selfmask_restore_system_nginx() {
+_selfmask_restore_port80_holders() {
     if [ "${SELFMASK_SYSTEM_NGINX_WAS_ACTIVE:-false}" = "true" ]; then
         log_info "Возвращаем системный nginx в исходное состояние..."
         systemctl start nginx &>/dev/null || log_warn "Не удалось снова запустить системный nginx"
         SELFMASK_SYSTEM_NGINX_WAS_ACTIVE="false"
+    fi
+    if [ "${SELFMASK_PANEL_WAS_ACTIVE:-false}" = "true" ]; then
+        log_info "Возвращаем веб-панель в исходное состояние..."
+        systemctl start mtproxyl-panel &>/dev/null || log_warn "Не удалось снова запустить mtproxyl-panel"
+        SELFMASK_PANEL_WAS_ACTIVE="false"
     fi
 }
 
@@ -601,13 +766,45 @@ _selfmask_open_public_ports() {
     fi
 }
 
+# Годен ли уже лежащий в системе сертификат: оба файла на месте, покрывает
+# наш домен и не истекает в ближайшие 30 дней (тот же порог, по которому
+# certbot решает продлевать). Наличия одного fullchain.pem мало: просроченный
+# файл никуда не девается, и по нему заглушка молча поднималась бы с
+# сертификатом, который браузер и Telegram уже не принимают.
+_selfmask_cert_is_valid() {
+    local _dir="$1" _domain="$2"
+    [ -f "${_dir}/fullchain.pem" ] && [ -f "${_dir}/privkey.pem" ] || return 1
+
+    # Проверить нечем — считаем годным: своей проверкой мы бы только выбросили
+    # рабочий сертификат и упёрлись в недельный лимит Let's Encrypt.
+    command -v openssl &>/dev/null || return 0
+
+    openssl x509 -in "${_dir}/fullchain.pem" -noout -checkend 2592000 &>/dev/null || return 1
+
+    # Домен сверяем по SAN точным совпадением: grep по строке с доменом принял
+    # бы и чужой сертификат, где наш домен — лишь часть другого имени.
+    openssl x509 -in "${_dir}/fullchain.pem" -noout -text 2>/dev/null \
+        | grep -oE 'DNS:[^,[:space:]]+' | cut -d: -f2 | grep -Fxq "$_domain" || return 1
+    return 0
+}
+
 _selfmask_obtain_cert() {
     log_info "Получение сертификата Let's Encrypt..."
 
     local _cert_dir; _cert_dir="$(_selfmask_cert_dir)"
-    if [ -f "${_cert_dir}/fullchain.pem" ]; then
-        log_success "Сертификат уже существует"
+    if _selfmask_cert_is_valid "$_cert_dir" "$SELFMASK_DOMAIN"; then
+        local _until
+        _until=$(openssl x509 -in "${_cert_dir}/fullchain.pem" -noout -enddate 2>/dev/null | cut -d= -f2)
+        log_success "Сертификат для ${SELFMASK_DOMAIN} уже есть в системе — используем его"
+        [ -n "$_until" ] && log_info "Действителен до: ${_until}"
+        log_info "Порт 80 не понадобится: выпускать нечего"
         return 0
+    fi
+
+    # Файлы есть, но не годятся — так бывает после смены домена или когда
+    # сертификат успел истечь. Выпускаем заново, но говорим почему.
+    if [ -f "${_cert_dir}/fullchain.pem" ]; then
+        log_warn "Найден сертификат, но он истёк или выдан на другой домен — выпускаем заново"
     fi
 
     mkdir -p "${SELFMASK_SITE_DIR}/.well-known/acme-challenge"
@@ -651,7 +848,7 @@ EOF
     rm -f /run/mtproxyl-nginx.pid 2>/dev/null || true
 
     local _test_out=""
-    _test_out=$("$(_selfmask_pq_nginx_bin)" -t -c "$(_selfmask_pq_conf)" 2>&1) || {
+    _test_out=$("$(_selfmask_nginx_bin)" -t -c "$(_selfmask_pq_conf)" 2>&1) || {
         log_error "Ошибка временного конфига PQ nginx для ACME"
         echo "$_test_out" | sed 's/^/    /'
         return 1
@@ -767,7 +964,7 @@ ${_http80}
 EOF
 
     local _test_out=""
-    _test_out=$("$(_selfmask_pq_nginx_bin)" -t -c "$(_selfmask_pq_conf)" 2>&1) || {
+    _test_out=$("$(_selfmask_nginx_bin)" -t -c "$(_selfmask_pq_conf)" 2>&1) || {
         log_error "Ошибка итогового конфига PQ nginx"
         echo "$_test_out" | sed 's/^/    /'
         return 1
@@ -788,7 +985,7 @@ EOF
     systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null || {
         log_error "Не удалось перезапустить PQ nginx"
         journalctl -u "${SELFMASK_PQ_SERVICE}" -n 20 --no-pager 2>/dev/null | sed 's/^/    /'
-        _selfmask_restore_system_nginx
+        _selfmask_restore_port80_holders
         return 1
     }
 
@@ -843,6 +1040,8 @@ _selfmask_apply_target_settings() {
     echo -e "    mask_host = \"127.0.0.1\""
     echo -e "    mask_port = ${SELFMASK_NGINX_BACKEND_PORT}"
     echo -e "    unknown_sni_action = \"mask\""
+    echo -e "  ${BOLD}и в секции [general.links]:${NC}"
+    echo -e "    public_host = \"${SELFMASK_DOMAIN}\"  ${DIM}(иначе ссылки будут с IP, а не с доменом)${NC}"
     echo ""
     if [ -n "$_old_domain" ] && [ "$_old_domain" != "${SELFMASK_DOMAIN}" ]; then
         log_warn "Смена SNI-домена меняет FakeTLS-ссылки — старые ee-ссылки перестанут работать"
@@ -857,7 +1056,7 @@ _selfmask_apply_target_settings() {
 
     echo -en "  ${BOLD}Применить в ${DETECTED_CONFIG_PATH} и перезапустить цель? [Y/n]:${NC} "
     local _yn; read_line _yn
-    if [[ "$_yn" =~ ^[nN]$ ]]; then
+    if [[ "$_yn" =~ ^[nN] ]]; then
         log_info "Пропущено — примените параметры вручную и перезапустите цель"
         return 0
     fi
@@ -868,6 +1067,10 @@ _selfmask_apply_target_settings() {
     apply_target_tuning "mask_host" "127.0.0.1" "censorship" true || _ok=false
     apply_target_tuning "mask_port" "${SELFMASK_NGINX_BACKEND_PORT}" "censorship" true || _ok=false
     apply_target_tuning "unknown_sni_action" "mask" "censorship" true || _ok=false
+    # Домен selfmask — заведомо наш, с проверенной A-записью сюда. Без
+    # public_host движок подставляет в ссылки определённый им IP, и клиент
+    # получает адрес, по которому FakeTLS-домен не совпадает с именем хоста.
+    apply_target_tuning "public_host" "${SELFMASK_DOMAIN}" "general.links" true || _ok=false
 
     if [ "$_ok" = "true" ]; then
         log_success "Параметры selfmask применены в конфиге цели"
@@ -909,11 +1112,136 @@ _selfmask_show_links_tail() {
     fi
 }
 
+# Выполняется после любого успешного продления — хоть по certbot.timer,
+# хоть по cron. В --deploy-hook нашей cron-строки его держать нельзя: на
+# системе со штатным таймером та строка не добавляется вовсе.
+SELFMASK_DEPLOY_HOOK="/etc/letsencrypt/renewal-hooks/deploy/mtproxyl-selfmask.sh"
+
+_selfmask_install_deploy_hook() {
+    mkdir -p "$(dirname "$SELFMASK_DEPLOY_HOOK")"
+    cat > "$SELFMASK_DEPLOY_HOOK" << HOOKEOF
+#!/bin/bash
+# MTProxyL — обновление служб после продления сертификата Let's Encrypt.
+# Ставится автоматически (lib/selfmask.sh), правки будут перезаписаны.
+
+# certbot зовёт хук на каждый домен отдельно — сверяем, что продлили наш.
+_domain=\$(basename "\${RENEWED_LINEAGE:-}" 2>/dev/null)
+[ -n "\$_domain" ] || exit 0
+
+# Реаниматор держит настройки selfmask отдельно от менеджера. Через source,
+# а не grep: значения в одинарных кавычках.
+_ours=""
+for _f in "${INSTALL_DIR}/selfmask-reanimator.conf" "${INSTALL_DIR}/settings.conf"; do
+    [ -r "\$_f" ] || continue
+    SELFMASK_DOMAIN=""
+    # shellcheck source=/dev/null
+    . "\$_f" 2>/dev/null || continue
+    [ -n "\$SELFMASK_DOMAIN" ] && { _ours="\$SELFMASK_DOMAIN"; break; }
+done
+[ -n "\$_ours" ] && [ "\$_domain" = "\$_ours" ] || exit 0
+
+# Заглушка selfmask: подхватывает новый сертификат без обрыва соединений.
+systemctl reload ${SELFMASK_PQ_SERVICE} 2>/dev/null || true
+
+# Панель на этом же сертификате: /etc/letsencrypt её пользователю не
+# читается, поэтому у неё копия (см. _selfmask_handoff_cert_to_panel).
+_panel_cfg="/etc/mtproxyl-panel/config.toml"
+_panel_certs="/var/lib/mtproxyl-panel/certs"
+if [ -f "\$_panel_cfg" ] && grep -q "^cert_file *= *\"\$_panel_certs/panel.crt\"" "\$_panel_cfg" 2>/dev/null; then
+    install -o mtproxyl-panel -g mtproxyl-panel -m 0644 \\
+        "\${RENEWED_LINEAGE}/fullchain.pem" "\$_panel_certs/panel.crt" 2>/dev/null || exit 0
+    install -o mtproxyl-panel -g mtproxyl-panel -m 0600 \\
+        "\${RENEWED_LINEAGE}/privkey.pem" "\$_panel_certs/panel.key" 2>/dev/null || exit 0
+    # Панель читает сертификат один раз при старте, reload она не умеет.
+    systemctl restart mtproxyl-panel 2>/dev/null || true
+fi
+HOOKEOF
+    chmod 700 "$SELFMASK_DEPLOY_HOOK"
+}
+
+# Панель со своим ACME на нашем домене обречена: порт 80 занят нашим nginx.
+# Отдаём ей копию сертификата certbot и снимаем acme_domain — заодно панель
+# перестаёт слушать 80 вовсе (см. internal/server/server.go).
+_selfmask_handoff_cert_to_panel() {
+    local _panel_cfg="/etc/mtproxyl-panel/config.toml"
+    local _panel_certs="/var/lib/mtproxyl-panel/certs"
+    local _cert_dir; _cert_dir="$(_selfmask_cert_dir)"
+
+    [ -f "$_panel_cfg" ] || return 0
+    id mtproxyl-panel &>/dev/null || return 0
+
+    # Трогаем только панель, которая просит Let's Encrypt на наш же домен.
+    # Свой сертификат или самоподписанный — осознанный выбор пользователя.
+    grep -qE "^acme_domain[[:space:]]*=[[:space:]]*\"${SELFMASK_DOMAIN}\"" "$_panel_cfg" 2>/dev/null || return 0
+
+    log_info "Панель использует Let's Encrypt на этом же домене — передаём ей сертификат"
+
+    mkdir -p "$_panel_certs"
+    install -o mtproxyl-panel -g mtproxyl-panel -m 0644 \
+        "${_cert_dir}/fullchain.pem" "${_panel_certs}/panel.crt" 2>/dev/null || {
+        log_warn "Не удалось скопировать сертификат для панели"
+        return 0
+    }
+    install -o mtproxyl-panel -g mtproxyl-panel -m 0600 \
+        "${_cert_dir}/privkey.pem" "${_panel_certs}/panel.key" 2>/dev/null || {
+        log_warn "Не удалось скопировать ключ для панели"
+        return 0
+    }
+
+    # acme_domain убираем, cert_file/key_file добавляем — сохраняя остальной
+    # конфиг как есть: он принадлежит панели, а не нам.
+    local _tmp; _tmp=$(mktemp) || return 0
+    awk -v certs="$_panel_certs" '
+        /^acme_domain[[:space:]]*=/ { next }
+        /^acme_cache_dir[[:space:]]*=/ { next }
+        /^cert_file[[:space:]]*=/ { next }
+        /^key_file[[:space:]]*=/ { next }
+        /^\[tls\]/ {
+            print
+            print "cert_file = \"" certs "/panel.crt\""
+            print "key_file = \"" certs "/panel.key\""
+            next
+        }
+        { print }
+    ' "$_panel_cfg" > "$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 0; }
+
+    if ! grep -q '^cert_file' "$_tmp"; then
+        rm -f "$_tmp"
+        log_warn "Не удалось перенастроить панель — секция [tls] не найдена"
+        return 0
+    fi
+
+    cat "$_tmp" > "$_panel_cfg"
+    rm -f "$_tmp"
+    chown mtproxyl-panel:mtproxyl-panel "$_panel_cfg" 2>/dev/null || true
+    chmod 600 "$_panel_cfg" 2>/dev/null || true
+
+    log_success "Панель переведена на сертификат selfmask — порт 80 ей больше не нужен"
+
+    # Конфиг читается при старте. Остановленную поднимет
+    # _selfmask_restore_port80_holders, работающую перезапускаем здесь.
+    systemctl is-active mtproxyl-panel &>/dev/null || return 0
+    if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ]; then
+        # Зовёт сама панель — перезапуск оборвал бы её же запрос.
+        log_warn "Панель перечитает сертификат после перезапуска:"
+        log_info "  sudo systemctl restart mtproxyl-panel"
+        return 0
+    fi
+    if systemctl restart mtproxyl-panel 2>/dev/null; then
+        log_success "Панель перезапущена с новым сертификатом"
+    else
+        log_warn "Не удалось перезапустить панель — сделайте это вручную"
+    fi
+}
+
 _selfmask_setup_renewal() {
     log_info "Настройка автопродления сертификата..."
 
+    _selfmask_install_deploy_hook
+    log_success "Хук обновления служб установлен (${SELFMASK_DEPLOY_HOOK})"
+
     if systemctl is-enabled certbot.timer &>/dev/null 2>&1; then
-        log_success "certbot.timer уже активен"
+        log_success "certbot.timer уже активен — продление по расписанию системы"
         return 0
     fi
 
@@ -922,7 +1250,10 @@ _selfmask_setup_renewal() {
         return 0
     fi
 
-    local _cron_line="0 3 * * * certbot renew --quiet --deploy-hook 'systemctl reload ${SELFMASK_PQ_SERVICE}'"
+    # Свой cron нужен только там, где certbot не принёс ни таймера, ни
+    # cron.d. Перезагрузку служб оставляем хуку выше — иначе она была бы
+    # в двух местах и разошлась бы при первой же правке.
+    local _cron_line="0 3 * * * certbot renew --quiet"
     if ! crontab -l 2>/dev/null | grep -q "certbot renew"; then
         (crontab -l 2>/dev/null; echo "$_cron_line") | crontab -
         log_success "Добавлен cron для автопродления"
@@ -938,7 +1269,11 @@ selfmask_verify() {
 
     local _ok=true
 
-    [ -x "$(_selfmask_pq_nginx_bin)" ] && log_success "PQ nginx установлен" || { log_error "PQ nginx не установлен"; _ok=false; }
+    if [ -x "$(_selfmask_nginx_bin)" ]; then
+        log_success "nginx с поддержкой PQ: $(_selfmask_nginx_source)"
+    else
+        log_error "nginx с поддержкой PQ не найден"; _ok=false
+    fi
     [ -x "$(_selfmask_pq_openssl_bin)" ] && log_success "PQ openssl установлен" || { log_error "PQ openssl не установлен"; _ok=false; }
     if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "letsencrypt" ]; then
         command -v certbot &>/dev/null && log_success "certbot установлен" || { log_error "certbot не установлен"; _ok=false; }
@@ -1049,7 +1384,7 @@ selfmask_setup() {
         echo -en "  ${BOLD}Переустановить / обновить настройку? [y/N]:${NC} "
         local _re
         read_line _re
-        [[ "$_re" =~ ^[yY]$ ]] || return 0
+        [[ "$_re" =~ ^[yY] ]] || return 0
     fi
 
     _selfmask_collect_params       || return 1
@@ -1059,11 +1394,22 @@ selfmask_setup() {
     if [ "$SELFMASK_CERT_MODE" = "selfsigned" ]; then
         _selfmask_generate_selfsigned_cert || return 1
     else
-        _selfmask_obtain_cert          || { _selfmask_restore_system_nginx; return 1; }
+        _selfmask_obtain_cert          || { _selfmask_restore_port80_holders; return 1; }
     fi
-    _selfmask_configure_nginx      || { _selfmask_restore_system_nginx; return 1; }
-    _selfmask_apply_mtproxyl_settings || { _selfmask_restore_system_nginx; return 1; }
-    [ "$SELFMASK_CERT_MODE" = "letsencrypt" ] && { _selfmask_setup_renewal || true; }
+    _selfmask_configure_nginx      || { _selfmask_restore_port80_holders; return 1; }
+    _selfmask_apply_mtproxyl_settings || { _selfmask_restore_port80_holders; return 1; }
+    if [ "$SELFMASK_CERT_MODE" = "letsencrypt" ]; then
+        _selfmask_setup_renewal || true
+        # До возврата панели: она читает конфиг только при старте, и поднимать
+        # её со старым acme_domain значило бы разбудить второго претендента на
+        # порт 80, который уже занят нашим nginx.
+        _selfmask_handoff_cert_to_panel || true
+    fi
+    # Порт 80 больше не нужен никому, кроме нашего nginx, — возвращаем всех,
+    # кого останавливали ради выпуска сертификата. Раньше это делалось только
+    # на путях с ошибкой, поэтому после успешной настройки панель так и
+    # оставалась выключенной.
+    _selfmask_restore_port80_holders
     selfmask_verify
 
     echo ""
@@ -1093,7 +1439,7 @@ selfmask_disable() {
     echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
     local _yn
     read_line _yn
-    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
+    [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     systemctl disable --now "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
     rm -f "/etc/systemd/system/${SELFMASK_PQ_SERVICE}" 2>/dev/null || true
@@ -1147,7 +1493,7 @@ selfmask_remove_pq_nginx() {
     echo -en "  ${BOLD}Удалить PQ nginx? [y/N]:${NC} "
     local _yn
     read_line _yn
-    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 0; }
+    [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     # Сначала отключаем selfmask если активен
     if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
@@ -1225,18 +1571,200 @@ handle_selfmask_command() {
     shift 2>/dev/null || true
 
     case "$subcmd" in
-        status)  selfmask_show_status ;;
+        status)
+            if [ "${1:-}" = "--json" ]; then
+                selfmask_show_status_json
+            else
+                selfmask_show_status
+            fi
+            ;;
         setup)   selfmask_setup ;;
+        apply)   selfmask_apply ;;
+        pq-install) selfmask_install_pq_tools ;;
+        set)     selfmask_set_param "$1" "$2" ;;
+        settable) selfmask_settable_json ;;
         verify)  selfmask_verify ;;
         disable) selfmask_disable ;;
         menu)    tui_selfmask_menu ;;
         *)
             echo -e "  ${BOLD}Selfmask:${NC}"
             echo -e "    ${GREEN}selfmask status${NC}   Статус"
-            echo -e "    ${GREEN}selfmask setup${NC}    Настроить / переустановить"
+            echo -e "    ${GREEN}selfmask setup${NC}    Настроить через мастер"
+            echo -e "    ${GREEN}selfmask apply${NC}    Применить по сохранённым параметрам"
+            echo -e "    ${GREEN}selfmask set${NC} K V   Изменить параметр"
+            echo -e "    ${GREEN}selfmask settable${NC} Список параметров (JSON)"
             echo -e "    ${GREEN}selfmask verify${NC}   Проверка"
             echo -e "    ${GREEN}selfmask disable${NC}  Отключить"
             echo -e "    ${GREEN}selfmask menu${NC}     Открыть меню"
             ;;
     esac
+}
+
+# ── Настраиваемые параметры для внешней панели ───────────────────────────────
+# Формат: КЛЮЧ|валидатор|описание — как в каталоге NFT, через тот же
+# _expert_validate.
+#
+# Выведено только то, что спрашивает мастер. Производное состояние
+# (SELFMASK_ENABLED) и внутренние пути (SITE_DIR, NGINX_SITE_NAME,
+# TLS_PROTOCOLS) не выставляются: ими управляет сама установка.
+_SELFMASK_SETTABLE=(
+    "SELFMASK_DOMAIN|custom:_validate_selfmask_domain|Домен сайта-заглушки"
+    "SELFMASK_CERT_MODE|enum:letsencrypt,selfsigned|Тип сертификата"
+    "SELFMASK_CERT_EMAIL|custom:_validate_selfmask_email|Email для Let's Encrypt"
+    "SELFMASK_SITE_SOURCE|custom:_validate_selfmask_template|Шаблон сайта или URL на index.html"
+    "SELFMASK_NGINX_BACKEND_PORT|range:1:65535|Порт локального nginx"
+    "SELFMASK_AUTO_RENEW|bool|Автопродление сертификата"
+)
+
+_validate_selfmask_domain() {
+    validate_domain "$1" && return 0
+    echo "Домен вида example.com"; return 1
+}
+
+# Пустой email допустим — установка подставит admin@<домен>.
+_validate_selfmask_email() {
+    [ -z "$1" ] && return 0
+    [[ "$1" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] && return 0
+    echo "Адрес вида user@example.com"; return 1
+}
+
+# Либо имя встроенного шаблона, либо ссылка на свой index.html.
+_validate_selfmask_template() {
+    case "$1" in
+        stub|filemanager|catrunner|mekorunner) return 0 ;;
+        http://*|https://*) return 0 ;;
+    esac
+    echo "Допустимо: stub, filemanager, catrunner, mekorunner или http(s)://... "
+    return 1
+}
+
+_selfmask_find_settable() {
+    local _key="$1" _entry
+    for _entry in "${_SELFMASK_SETTABLE[@]}"; do
+        [ "${_entry%%|*}" = "$_key" ] && { echo "$_entry"; return 0; }
+    done
+    return 1
+}
+
+# mtproxyl selfmask set <КЛЮЧ> <значение>
+#
+# Меняет только сохранённое значение. Сайт и сертификат перевыпускаются
+# отдельной командой (selfmask apply) — так же, как параметры и правила
+# разделены у лимитера.
+selfmask_set_param() {
+    local _key="$1" _val="$2" _entry
+    if [ -z "$_key" ]; then
+        log_error "Использование: mtproxyl selfmask set <ключ> <значение>"
+        return 1
+    fi
+    if ! _entry=$(_selfmask_find_settable "$_key"); then
+        log_error "Параметр '${_key}' недоступен для изменения"
+        log_info "Список: mtproxyl selfmask settable"
+        return 1
+    fi
+    local _rest="${_entry#*|}"
+    local _validator="${_rest%%|*}"
+
+    local _err
+    if ! _err=$(_expert_validate "$_validator" "$_val" 2>&1); then
+        log_error "Недопустимое значение для ${_key}: ${_err}"
+        return 1
+    fi
+
+    printf -v "$_key" '%s' "$_val"
+    save_selfmask_settings
+    log_success "${_key} = ${_val}"
+    log_info "Примените настройку заново: mtproxyl selfmask apply"
+}
+
+selfmask_settable_json() {
+    local _entry _key _validator _desc _first=1
+    printf '['
+    for _entry in "${_SELFMASK_SETTABLE[@]}"; do
+        _key="${_entry%%|*}"
+        local _rest="${_entry#*|}"
+        _validator="${_rest%%|*}"
+        _desc="${_rest#*|}"
+        [ $_first -eq 1 ] || printf ','
+        _first=0
+        printf '{"key":"%s","validator":"%s","description":"%s","value":"%s"}' \
+            "$(json_escape "$_key")" "$(json_escape "$_validator")" \
+            "$(json_escape "$_desc")" "$(json_escape "${!_key:-}")"
+    done
+    printf ']\n'
+}
+
+# Неинтерактивная установка по уже сохранённым параметрам.
+#
+# selfmask_setup запускает мастер и потому не годится для панели: под обходом
+# подтверждений он берёт значения по умолчанию, а введённые в интерфейсе — нет.
+# Здесь тот же конвейер установки, но параметры читаются из настроек.
+selfmask_apply() {
+    check_root
+
+    if ! selfmask_supported_os; then
+        log_error "Selfmask пока поддерживается только на Debian/Ubuntu"
+        return 1
+    fi
+
+    if ! validate_domain "${SELFMASK_DOMAIN:-}"; then
+        log_error "Домен не задан или некорректен"
+        log_info "Задайте его: mtproxyl selfmask set SELFMASK_DOMAIN example.com"
+        return 1
+    fi
+
+    # Мастер подставляет email сам, здесь делаем то же явно.
+    if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "letsencrypt" ] && [ -z "${SELFMASK_CERT_EMAIL:-}" ]; then
+        SELFMASK_CERT_EMAIL="admin@${SELFMASK_DOMAIN}"
+    fi
+
+    log_info "Домен:   ${SELFMASK_DOMAIN}"
+    log_info "Шаблон:  $(_selfmask_template_label "${SELFMASK_SITE_SOURCE:-stub}")"
+    log_info "Сертификат: ${SELFMASK_CERT_MODE:-letsencrypt}"
+
+    _selfmask_install_deps         || return 1
+    _selfmask_install_pq_nginx     || return 1
+    _selfmask_deploy_site          || return 1
+    if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "selfsigned" ]; then
+        _selfmask_generate_selfsigned_cert || return 1
+    else
+        _selfmask_obtain_cert      || { _selfmask_restore_port80_holders; return 1; }
+    fi
+    _selfmask_configure_nginx      || { _selfmask_restore_port80_holders; return 1; }
+    _selfmask_apply_mtproxyl_settings || { _selfmask_restore_port80_holders; return 1; }
+    if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "letsencrypt" ]; then
+        _selfmask_setup_renewal || true
+        _selfmask_handoff_cert_to_panel || true
+    fi
+    _selfmask_restore_port80_holders
+
+    echo ""
+    log_success "Selfmask настроен"
+}
+
+# Поставить только инструменты PQ, без настройки самой заглушки.
+#
+# Проверке домена нужен openssl, умеющий X25519MLKEM768. Если системный
+# слишком стар, раньше приходилось идти в мастер Selfmask целиком — ради
+# одной проверки это чересчур.
+selfmask_install_pq_tools() {
+    check_root
+
+    if _system_openssl_has_pq; then
+        log_success "Уже есть: $(_pq_openssl_source)"
+        log_info "Ничего ставить не нужно — системный OpenSSL умеет PQ сам"
+        return 0
+    fi
+    if [ -x "$(_selfmask_pq_openssl_bin)" ]; then
+        log_success "PQ OpenSSL уже установлен"
+        return 0
+    fi
+    if ! selfmask_supported_os; then
+        log_error "Готовая сборка есть только для Debian/Ubuntu"
+        log_info "На других системах поставьте OpenSSL ${SELFMASK_MIN_SYSTEM_OPENSSL}+ средствами дистрибутива"
+        return 1
+    fi
+
+    _selfmask_install_pq_nginx || return 1
+    log_success "Готово: $(_pq_openssl_source)"
 }

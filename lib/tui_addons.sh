@@ -20,12 +20,23 @@ tui_addons_menu() {
             echo -e "  ${DIM}Установите через: mtproxyl selfmask setup${NC}"
         fi
 
+        local _geoip_installed="false"
+        geoip_installed && _geoip_installed="true"
+
+        if [ "$_geoip_installed" = "true" ]; then
+            echo -e "  ${BOLD}GeoIP:${NC} ${GREEN}установлен${NC}"
+        else
+            echo -e "  ${BOLD}GeoIP:${NC} ${DIM}не установлен${NC} ${DIM}(страна/город/ASN для истории IP)${NC}"
+        fi
+
         echo ""
         echo -e "  ${CYAN}[1]${NC}  Проверить текущий SNI-домен на PQ"
         echo -e "  ${CYAN}[2]${NC}  Проверить произвольный домен на PQ"
         echo -e "  ${CYAN}[3]${NC}  Установить PQ OpenSSL (из Release)"
         echo -e "  ${CYAN}[4]${NC}  Проверка ограничений сервера (censorcheck)"
         echo -e "  ${CYAN}[5]${NC}  Selfmask (заглушка + сертификат)"
+        echo -e "  ${CYAN}[6]${NC}  Веб-панель MTProxyL-Panel  ${DIM}$(panel_status_line)${NC}"
+        echo -e "  ${CYAN}[7]${NC}  $([ "$_geoip_installed" = "true" ] && echo "Переустановить" || echo "Установить") базу GeoIP"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -68,6 +79,13 @@ tui_addons_menu() {
                 ;;
             5)
                 tui_selfmask_menu
+                ;;
+            6)
+                tui_panel_menu
+                ;;
+            7)
+                geoip_install
+                press_any_key
                 ;;
             0|"") return ;;
         esac
@@ -114,7 +132,15 @@ _addon_check_pq_domain() {
     draw_header "ПРОВЕРКА PQ: ${_host}:${_port}"
     echo ""
 
-    local _openssl="$(_selfmask_pq_openssl_bin)"
+    # Системный OpenSSL 3.5.0+ умеет X25519MLKEM768 сам — своя сборка нужна
+    # только там, где он старее.
+    local _openssl; _openssl=$(_pq_openssl_bin) || {
+        log_error "Нет OpenSSL с поддержкой постквантового обмена ключами"
+        log_info "Нужен системный OpenSSL ${SELFMASK_MIN_SYSTEM_OPENSSL}+ либо сборка из состава MTProxyL"
+        log_info "Поставить нашу: mtproxyl selfmask pq-install (или из панели, раздел «Дополнения»)"
+        return 1
+    }
+    echo -e "  ${DIM}Проверяем через: $(_pq_openssl_source)${NC}"
 
     # DNS
     local _ips

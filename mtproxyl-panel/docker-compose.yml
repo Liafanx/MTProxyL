@@ -1,0 +1,7 @@
+services:
+  mtproxyl-panel:
+    build: .
+    volumes:
+      - ./config.toml:/etc/mtproxyl-panel/config.toml:ro
+    restart: unless-stopped
+    network_mode: host

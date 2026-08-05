@@ -44,6 +44,7 @@ tui_settings_menu() {
         echo -e "  ${DIM}[9]${NC} PROXY protocol вкл/выкл"
         echo -e "  ${DIM}[10]${NC} Управление движком"
         echo -e "  ${DIM}[11]${NC} Изменить порт метрик"        
+        echo -e "  ${DIM}[16]${NC} Изменить порт REST API [${PROXY_API_PORT:-9091}]"
         echo -e "  ${DIM}[12]${NC} Просмотр текущего конфига"
         echo -e "  ${DIM}[13]${NC} Тюнинг движка (tune) Telemt"
         echo -e "  ${DIM}[14]${NC} Пользовательские URL Telegram"
@@ -147,7 +148,7 @@ tui_settings_menu() {
                         echo -en "  ${BOLD}Обновить mask backend на ${PROXY_DOMAIN}? [Y/n]:${NC} "
                         local _mask_yn=""
                         read_line _mask_yn
-                        if [[ ! "$_mask_yn" =~ ^[nN]$ ]]; then
+                        if [[ ! "$_mask_yn" =~ ^[nN] ]]; then
                             MASKING_HOST="$PROXY_DOMAIN"
                             save_settings
                             log_success "Mask backend обновлён: ${MASKING_HOST}:${MASKING_PORT:-443}"
@@ -229,6 +230,33 @@ tui_settings_menu() {
                     else
                         log_error "Некорректный порт"
                     fi
+                done
+                press_any_key ;;
+            16)
+                echo ""
+                echo -e "  ${DIM}REST API движка (только localhost). Через него работает веб-панель.${NC}"
+                echo -e "  ${DIM}Текущий: 127.0.0.1:${PROXY_API_PORT:-9091}${NC}"
+                echo -e "  ${YELLOW}После смены порта поправьте адрес в конфиге панели:${NC}"
+                echo -e "  ${DIM}  /etc/mtproxyl-panel/config.toml → [telemt] url${NC}"
+                echo ""
+                while true; do
+                    echo -en "  ${BOLD}Новый порт API [${PROXY_API_PORT:-9091}]:${NC} "
+                    local _ap; read_line _ap
+                    [ -z "$_ap" ] && break
+                    if ! validate_port "$_ap"; then
+                        log_error "Некорректный порт"; continue
+                    fi
+                    if [ "$_ap" = "${PROXY_METRICS_PORT:-9090}" ] || [ "$_ap" = "${PROXY_PORT:-443}" ]; then
+                        log_error "Этот порт уже занят самим прокси или метриками"; continue
+                    fi
+                    if is_port_available "$_ap"; then
+                        PROXY_API_PORT="$_ap"
+                        save_settings
+                        log_success "Порт API установлен: ${PROXY_API_PORT}"
+                        is_proxy_running && { load_secrets; restart_proxy_container || true; }
+                        break
+                    fi
+                    log_error "Порт ${_ap} уже занят, попробуйте другой"
                 done
                 press_any_key ;;
             12) show_config; press_any_key ;;

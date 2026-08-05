@@ -193,7 +193,7 @@ tui_nft_presets() {
         echo ""
         echo -en "  ${BOLD}Применить NFT правила сейчас? [Y/n]:${NC} "
         local yn; read_line yn
-        if [[ ! "$yn" =~ ^[nN]$ ]]; then
+        if [[ ! "$yn" =~ ^[nN] ]]; then
             apply_nft_rules || true
             [ "${NFT_ENABLED:-false}" = "true" ] && install_nft_service || true
         fi
@@ -351,7 +351,7 @@ tui_nft_smart_settings_menu() {
                 if [ "${NFT_IOS_LIMIT_ENABLED:-true}" = "true" ]; then
                     echo -en "  ${BOLD}Отключить лимит iOS? [y/N]:${NC} "
                     local yn; read_line yn
-                    if [[ "$yn" =~ ^[yY]$ ]]; then
+                    if [[ "$yn" =~ ^[yY] ]]; then
                         NFT_IOS_LIMIT_ENABLED="false"
                         save_nft_settings
                         log_success "Лимит iOS отключён"
@@ -387,7 +387,7 @@ tui_nft_smart_settings_menu() {
                 if [ "${NFT_OTHER_LIMIT_ENABLED:-true}" = "true" ]; then
                     echo -en "  ${BOLD}Отключить лимит Other? [y/N]:${NC} "
                     local yn; read_line yn
-                    if [[ "$yn" =~ ^[yY]$ ]]; then
+                    if [[ "$yn" =~ ^[yY] ]]; then
                         NFT_OTHER_LIMIT_ENABLED="false"
                         save_nft_settings
                         log_success "Лимит Other отключён"
@@ -552,7 +552,7 @@ tui_nft_extra_menu() {
                     echo -en "  ${BOLD}Применить правила сейчас? [Y/n]:${NC} "
                     local _yn=""
                     read_line _yn
-                    if [[ ! "$_yn" =~ ^[nN]$ ]]; then
+                    if [[ ! "$_yn" =~ ^[nN] ]]; then
                         apply_nft_rules || true
                         [ "${NFT_ENABLED:-false}" = "true" ] && install_nft_service || true
                     fi
@@ -566,7 +566,7 @@ tui_nft_extra_menu() {
                 echo ""
                 echo -en "  ${BOLD}Применить правила заново? [Y/n]:${NC} "
                 local _yn; read_line _yn
-                if [[ ! "$_yn" =~ ^[nN]$ ]]; then
+                if [[ ! "$_yn" =~ ^[nN] ]]; then
                     apply_nft_rules || true
                     [ "${NFT_ENABLED:-false}" = "true" ] && install_nft_service || true
                 fi
@@ -953,7 +953,7 @@ tui_zapret2_menu() {
                     echo ""
                     echo -en "  ${BOLD}Сбросить и перезапустить? [y/N]:${NC} "
                     local _yn; read_line _yn
-                    if [[ "$_yn" =~ ^[yY]$ ]]; then
+                    if [[ "$_yn" =~ ^[yY] ]]; then
                         ZAPRET2_OUT_RANGE="$ZAPRET2_DEFAULT_OUT_RANGE"
                         ZAPRET2_IN_RANGE="$ZAPRET2_DEFAULT_IN_RANGE"
                         ZAPRET2_SPLIT_LEN="$ZAPRET2_DEFAULT_SPLIT_LEN"
@@ -999,7 +999,7 @@ tui_zapret2_menu() {
                     echo ""
                     echo -en "  ${BOLD}Очистить следы неудачной установки zapret2? [Y/n]:${NC} "
                     local _yn; read_line _yn
-                    if [[ ! "$_yn" =~ ^[nN]$ ]]; then
+                    if [[ ! "$_yn" =~ ^[nN] ]]; then
                         zapret2_cleanup_failed_install
                     else
                         log_info "Отменено"
@@ -1105,7 +1105,7 @@ tui_zapret2_settings() {
                 if [ "${ZAPRET2_DEBUG:-false}" = "true" ]; then
                     echo -en "  ${BOLD}Выключить debug лог? [Y/n]:${NC} "
                     local _yn; read_line _yn
-                    if [[ ! "$_yn" =~ ^[nN]$ ]]; then
+                    if [[ ! "$_yn" =~ ^[nN] ]]; then
                         ZAPRET2_DEBUG="false"; save_nft_settings
                         log_success "Debug лог выключен"; zapret2_update_config
                     fi
@@ -1113,7 +1113,7 @@ tui_zapret2_settings() {
                     echo -e "  ${YELLOW}⚠ Debug лог может быстро расти — выключите после отладки${NC}"
                     echo -en "  ${BOLD}Включить debug лог? [Y/n]:${NC} "
                     local _yn; read_line _yn
-                    if [[ ! "$_yn" =~ ^[nN]$ ]]; then
+                    if [[ ! "$_yn" =~ ^[nN] ]]; then
                         ZAPRET2_DEBUG="true"; save_nft_settings
                         log_success "Debug лог включён → ${ZAPRET2_DEBUG_LOG}"; zapret2_update_config
                     fi

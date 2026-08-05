@@ -1,0 +1,83 @@
+name: MTProxyL-Panel Release
+
+# Панель версионируется отдельно от MTProxyL: у неё свой цикл выпуска,
+# поэтому тег с собственным префиксом, а не общий тег репозитория.
+on:
+  push:
+    tags:
+      - 'mtproxyl-panel-v*'
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    working-directory: mtproxyl-panel
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: mtproxyl-panel/frontend/package-lock.json
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache-dependency-path: mtproxyl-panel/go.sum
+
+      - name: Derive version from tag
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#mtproxyl-panel-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      # Проверки перед публикацией: сломанный релиз хуже отсутствующего.
+      - name: Verify
+        run: |
+          go vet ./...
+          go test ./...
+
+      # release-binaries, а не release: фронтенд собран шагом выше, и цель
+      # release пересобрала бы его вторым npm ci.
+      - name: Build binaries
+        run: make release-binaries VERSION=${{ steps.version.outputs.value }}
+
+      # Установщик распаковывает архив и передаёт install(1) путь
+      # mtproxyl-panel-<arch>-linux, то есть внутри должен лежать ФАЙЛ с этим
+      # именем, а не каталог. Бинарник статический (CGO отключён), поэтому одна
+      # сборка годится и для glibc, и для musl — раскладываем её под оба имени,
+      # чтобы обе ветки выбора нашли своё.
+      - name: Package archives
+        run: |
+          cd release
+          for arch in x86_64 aarch64; do
+            bin="mtproxyl-panel-${arch}-linux"
+            [ -f "$bin" ] || { echo "missing $bin"; exit 1; }
+            for libc in gnu musl; do
+              tar czf "mtproxyl-panel-${arch}-linux-${libc}.tar.gz" "$bin"
+            done
+          done
+          # Установщик ищет один общий checksums.txt и грепает в нём имя архива.
+          sha256sum ./*.tar.gz | sed 's|\./||' > checksums.txt
+          cat checksums.txt
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            mtproxyl-panel/release/*.tar.gz
+            mtproxyl-panel/release/checksums.txt
+          generate_release_notes: true

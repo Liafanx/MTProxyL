@@ -76,7 +76,7 @@ restore_backup() {
     if is_proxy_running; then
         echo -en "  ${BOLD}Перезапустить прокси для применения? [Y/n]:${NC} "
         local yn; read_line yn
-        if [[ ! "$yn" =~ ^[nN]$ ]]; then
+        if [[ ! "$yn" =~ ^[nN] ]]; then
             restart_proxy_container || true
         else
             log_info "Выполните 'mtproxyl restart' для применения"
@@ -101,6 +101,23 @@ list_backups() {
         echo -e "  ${BOLD}$(basename "$f")${NC}  ${DIM}(${size})${NC}"
     done
     echo ""
+}
+
+# Машинный список бэкапов для панели: mtproxyl backup list --json
+list_backups_json() {
+    mkdir -p "$BACKUP_DIR"
+    local _first=1 _f _size _mtime
+    printf '['
+    while IFS= read -r _f; do
+        [ -n "$_f" ] || continue
+        _size=$(stat -c '%s' "$_f" 2>/dev/null || echo 0)
+        _mtime=$(stat -c '%Y' "$_f" 2>/dev/null || echo 0)
+        [ $_first -eq 1 ] || printf ','
+        _first=0
+        printf '{"name":"%s","size":%d,"mtime":%d}' \
+            "$(json_escape "$(basename "$_f")")" "${_size:-0}" "${_mtime:-0}"
+    done < <(ls -1t "${BACKUP_DIR}"/mtproxyl-*.tar.gz 2>/dev/null || true)
+    printf ']\n'
 }
 
 backup_autoclean() {
@@ -213,12 +230,40 @@ migrate_import() {
     fi
 }
 
+# Отдать архив в stdout.
+#
+# Бэкапы лежат root:600 — панель их создаёт (через sudo), но прочитать сама не
+# может, и кнопка «скачать» упиралась в permission denied. Читаем через ту же
+# привилегированную команду, что и создаём.
+# Коды возврата различаются, чтобы вызывающий отвечал 400 и 404 по-разному, а
+# не сваливал всё в одну ошибку шлюза: 2 — негодное имя, 3 — файла нет.
+backup_cat() {
+    local _name="$1"
+    # Только имя файла, только наша схема именования: путь приходит снаружи.
+    case "$_name" in
+        */*|*..*) log_error "Недопустимое имя файла" >&2; return 2 ;;
+    esac
+    [[ "$_name" =~ ^mtproxyl-[0-9]{8}-[0-9]{6}\.tar\.gz(\.enc)?$ ]] \
+        || { log_error "Недопустимое имя файла" >&2; return 2; }
+    local _path="${BACKUP_DIR}/${_name}"
+    [ -f "$_path" ] || { log_error "Бэкап не найден" >&2; return 3; }
+    cat "$_path"
+}
+
 handle_backup_command() {
     _require_manager_mode || return 1
     case "${1:-}" in
         --encrypt|encrypt) backup_create_encrypted ;;
         restore-encrypted) backup_restore_encrypted "$2" ;;
         autoclean)         backup_autoclean "${2:-${BACKUP_RETENTION_DAYS:-30}}" ;;
+        cat)               backup_cat "${2:-}" ;;
+        list)
+            if [ "${2:-}" = "--json" ]; then
+                list_backups_json
+            else
+                list_backups
+            fi
+            ;;
         *) create_backup ;;
     esac
 }

@@ -28,7 +28,9 @@
   - [NFT SYN Limiter](#cli-nft)
   - [Zapret2 MTProto fix](#cli-zapret2)
   - [Selfmask](#cli-selfmask)
+  - [Веб-панель](#cli-panel)
   - [PQ проверка](#cli-pqcheck)
+  - [GeoIP](#cli-geoip)
   - [Безопасность](#cli-security)
   - [Мониторинг](#cli-monitoring)
   - [Бэкапы и обновления](#cli-backup)
@@ -39,6 +41,7 @@
 - [NFT SYN Limiter — подробнее](#nft-details)
 - [NFT Smart By-MEKO — подробнее](#nft-smart)
 - [Selfmask — подробнее](#selfmask-details)
+- [Веб-панель MTProxyL-Panel](#panel)
 - [Устаревшие iOS фиксы](#ios-fixes)
 - [Режим эксперта и супер эксперта — подробнее](#expert-details)
 - [Модульная архитектура](#architecture)
@@ -97,7 +100,7 @@ mtproxyl
 С версии 1.3.0 MTProxyL умеет работать в двух режимах — выбор происходит на первом шаге мастера установки (`mtproxyl install`):
 
 - **Manager** *(по умолчанию, прежнее поведение)* — MTProxyL сам устанавливает движок telemt (образ из GHCR или сборка из исходников), сам генерирует `config.toml`, управляет секретами/upstream'ами/бэкапами и своим Docker-контейнером.
-- **Reanimator** — вместо установки MTProxyL ищет уже работающую установку telemt на сервере (Docker-контейнер сторонней панели, MTProxyMax, голый процесс/systemd-юнит `telemt.service` или просто конфиг-файл) и применяет к ней тот же арсенал фиксов: NFT SYN limiter, Zapret2 MTProto fix, iOS-фиксы, оптимизацию By-MEKO и точечный тюнинг `config.toml` — не устанавливая ничего и не перезаписывая чужой конфиг целиком.
+- **Reanimator** — вместо установки MTProxyL ищет уже работающую установку telemt на сервере (Docker-контейнер сторонней панели, MTProxyMax, голый процесс/systemd-юнит `telemt.service` или просто конфиг-файл) и применяет к ней тот же арсенал фиксов: NFT SYN limiter, Zapret2 MTProto fix, iOS-фиксы, оптимизацию By-MEKO и точечный тюнинг `config.toml` — не устанавливая ничего и не перезаписывая чужой конфиг целиком. **Если telemt на сервере нет вовсе — предложит поставить оригинальный из официального репозитория [`telemt/telemt`](https://github.com/telemt/telemt)** ([подробнее](#modes)).
 
 Переключение режима в любой момент — при переходе учитывается состояние
 установки: из Reanimator в Manager, если своего telemt ещё нет, сразу
@@ -176,6 +179,11 @@ mtproxyl uninstall-telemt     # удалить telemt: uninstall или purge (R
 > enabled = true
 > listen = "127.0.0.1:9091"
 > ```
+>
+> В режиме Manager MTProxyL пишет эту секцию в свой конфиг сам — порт
+> спрашивается при установке и меняется в настройках, рядом с портом метрик.
+> Указываем `listen` явно: по умолчанию telemt слушает `0.0.0.0:9091`, то есть
+> без этой строки REST API движка был бы доступен из интернета.
 
 ---
 
@@ -218,6 +226,8 @@ mtproxyl uninstall-telemt     # удалить telemt: uninstall или purge (R
 - Лимиты: макс. соединений, IP, квота трафика, срок действия
 - Клонирование, переименование, экспорт / импорт
 - Ссылки и для Telegram
+- Накопленный трафик и история подключённых IP — переживают перезапуск движка
+  и цели, доступны в обоих режимах
 
 ### Движок Telemt
 - Просмотр всех версий, обновление, откат, пересборка из исходников
@@ -259,6 +269,7 @@ mtproxyl uninstall-telemt     # удалить telemt: uninstall или purge (R
 
 ### Мониторинг и бэкапы
 - Персистентный трафик, метрики, зашифрованные бэкапы, миграция
+- Опциональная база GeoIP: страна, город и провайдер для адресов пользователей
 
 ---
 
@@ -352,7 +363,27 @@ mtproxyl nft remove           # Удалить правила
 mtproxyl nft service          # Systemd-служба
 mtproxyl nft drop             # Счётчик правил (live)
 mtproxyl nft extra-add 8443   # Доп. правило
+mtproxyl nft status           # Состояние (--json для машинного вывода)
 ```
+
+**Параметры лимитера, iOS-фиксов и Zapret2** задаются без интерактивного меню —
+25 значений с проверкой при записи. Так работает веб-панель:
+
+```bash
+mtproxyl nft settable         # Список параметров с текущими значениями (JSON)
+
+mtproxyl nft set NFT_IOS_RATE 20/second
+mtproxyl nft set NFT_OTHER_RATE 54/minute
+mtproxyl nft set NFT_IOS_DETECT fingerprint   # fingerprint|ttl
+mtproxyl nft set IOS_KA_TIME 45
+mtproxyl nft set ZAPRET2_SPLIT_LEN 400
+
+mtproxyl nft apply            # Переприменить правила (classic)
+mtproxyl nft smart            # Переприменить правила (smart)
+```
+
+Сохранение параметра не меняет правила ядра — их нужно переприменить, как и
+в меню.
 
 <a id="cli-zapret2"></a>
 
@@ -370,12 +401,31 @@ mtproxyl nft zapret2-wscale   # Проверить wscale / win ACK
 ### Selfmask
 
 ```bash
-mtproxyl selfmask status      # Статус
-mtproxyl selfmask setup       # Настроить / переустановить
+mtproxyl selfmask status      # Статус (--json для машинного вывода)
+mtproxyl selfmask setup       # Настроить через мастер (интерактивно)
 mtproxyl selfmask verify      # Проверить
 mtproxyl selfmask disable     # Отключить
 mtproxyl selfmask menu        # Открыть меню
 ```
+
+**Без мастера** — параметры задаются по отдельности и применяются одной
+командой. Так работает веб-панель, и так же можно настраивать из скриптов:
+
+```bash
+mtproxyl selfmask settable    # Список параметров с текущими значениями (JSON)
+
+mtproxyl selfmask set SELFMASK_DOMAIN example.com
+mtproxyl selfmask set SELFMASK_CERT_MODE selfsigned      # letsencrypt|selfsigned
+mtproxyl selfmask set SELFMASK_SITE_SOURCE mekorunner    # stub|filemanager|catrunner|mekorunner|URL
+mtproxyl selfmask set SELFMASK_CERT_EMAIL admin@example.com
+mtproxyl selfmask set SELFMASK_NGINX_BACKEND_PORT 8444
+mtproxyl selfmask set SELFMASK_AUTO_RENEW true
+
+mtproxyl selfmask apply       # Развернуть сайт и выпустить сертификат
+```
+
+Значения проверяются при записи: домен, email, порт и шаблон должны быть
+корректными, иначе команда откажет.
 
 <a id="cli-pqcheck"></a>
 
@@ -386,6 +436,28 @@ mtproxyl pq-check                     # Текущий SNI-домен
 mtproxyl pq-check cloudflare.com      # Любой домен
 mtproxyl pq-check example.com:8443    # На нестандартном порту
 ```
+
+<a id="cli-geoip"></a>
+
+### GeoIP
+
+Опциональная база: без неё всё работает, просто адреса пользователей
+показываются без страны, города и провайдера.
+
+```bash
+mtproxyl geoip install    # Скачать базы GeoLite2 (City + ASN)
+mtproxyl geoip status     # Статус
+mtproxyl geoip remove     # Удалить
+```
+
+Базы кладутся в `/var/lib/GeoIP/` — стандартный путь, откуда их читает и
+веб-панель. Источник — зеркало [P3TERX/GeoLite.mmdb](https://github.com/P3TERX/GeoLite.mmdb)
+(данные MaxMind GeoLite2, лицензия CC BY-SA 4.0). Если база уже стоит системным
+пакетом (`geoipupdate`, `geoip-database`), ставить ничего не нужно — она
+подхватится сама.
+
+Команда не зависит от режима: база лежит в общесистемном каталоге, а не в
+конфиге прокси, поэтому работает одинаково в Manager и Reanimator.
 
 <a id="cli-security"></a>
 
@@ -400,6 +472,32 @@ mtproxyl upstream list        # Upstream-маршруты
 mtproxyl upstream add warp socks5 127.0.0.1:40000
 ```
 
+Аргументы `upstream add`: `<имя> <тип> <адрес> [логин] [пароль] [вес]
+[интерфейс] [область]`. Типы — `direct`, `socks5`, `socks4`, `shadowsocks`:
+
+```bash
+# Прямой выход через конкретный интерфейс
+mtproxyl upstream add eth1 direct "" "" "" 10 eth1
+
+# SOCKS4: пароля в протоколе нет, логин уходит в user_id
+mtproxyl upstream add s4 socks4 10.0.0.8:1080 telemt
+
+# Shadowsocks: вместо адреса ss-URL, метод и пароль уже внутри него.
+# Работает только при выключенном ME:
+#   mtproxyl expert set general use_middle_proxy false
+mtproxyl upstream add ss shadowsocks 'ss://2022-blake3-aes-256-gcm:ПАРОЛЬ@10.0.0.1:8388'
+
+# Маршрут только для запросов с тегом me или fetch
+mtproxyl upstream add tagged socks5 10.0.0.9:1080 "" "" 20 "" me,fetch
+```
+
+**Вес** — 0..65535, доля трафика при случайном выборе среди включённых
+маршрутов. **Область** (`scopes`) — теги через запятую: запрос со scope идёт
+только через маршруты с этим тегом, а запрос без scope — только через маршруты
+с пустой областью. Поэтому хотя бы один включённый маршрут должен оставаться
+без области, иначе обычному трафику будет некуда идти — CLI об этом
+предупреждает.
+
 Правила гео-блокировки живут в `iptables`/`ipset` и не переживают перезагрузку
 сервера, поэтому `geoblock list` показывает не только список стран, но и
 реальное состояние правил (и порт, на котором они висят). При смене порта
@@ -411,6 +509,7 @@ mtproxyl upstream add warp socks5 127.0.0.1:40000
 
 ```bash
 mtproxyl traffic              # Трафик по пользователям
+mtproxyl traffic --json       # То же машинным форматом (использует панель)
 mtproxyl connections          # Активные соединения
 mtproxyl metrics              # Метрики движка
 mtproxyl metrics live 5       # Метрики в реальном времени
@@ -418,6 +517,18 @@ mtproxyl logs                 # Потоковые логи
 mtproxyl health               # Диагностика
 mtproxyl info                 # Информация о сервере
 ```
+
+У `traffic --json` в ответе два флага, определяющих смысл чисел:
+
+- `directional` — разделён ли трафик на входящий и исходящий. В режиме
+  менеджера и при доступных метриках цели — да; API цели отдаёт только общую
+  сумму, и тогда `in`/`out` нулевые, а объём лежит в `total`.
+- `persistent` — переживают ли числа перезапуск движка. Своя база накопленного
+  есть только у менеджера; у чужой цели читаются её счётчики, которые
+  обнуляются вместе с ней.
+
+Поле `source` говорит, откуда взяты данные: `db` (база менеджера),
+`metrics` (Prometheus цели), `api` (HTTP API цели) или `none`.
 
 <a id="cli-backup"></a>
 
@@ -429,6 +540,19 @@ mtproxyl backup --encrypt     # Зашифрованный бэкап
 mtproxyl restore file.tar.gz  # Восстановить
 mtproxyl update               # Обновить MTProxyL
 ```
+
+<a id="cli-panel"></a>
+
+### Веб-панель
+
+```bash
+mtproxyl panel status         # Состояние панели
+mtproxyl panel install        # Установить / переустановить
+mtproxyl panel restart        # Перезапустить
+mtproxyl panel uninstall      # Удалить
+```
+
+---
 
 <a id="cli-system"></a>
 
@@ -459,7 +583,10 @@ mtproxyl tune clear all
 ```bash
 mtproxyl mode                 # текущий режим (manager|reanimator)
 mtproxyl mode manager         # переключиться в Manager
-mtproxyl mode reanimator      # переключиться в Reanimator
+mtproxyl mode reanimator      # переключиться в Reanimator (спросит про контейнер)
+mtproxyl mode reanimator remove  # ...и сразу удалить свой контейнер
+mtproxyl mode reanimator stop    # ...остановить, но оставить
+mtproxyl mode reanimator keep    # ...не трогать (порт останется занят)
 mtproxyl detect               # (пере)обнаружить существующую установку telemt
 mtproxyl edit-config          # открыть конфиг цели в $EDITOR/nano + предложить рестарт
 mtproxyl install-telemt       # официальный установщик telemt: установка/обновление, выбор версии
@@ -634,6 +761,80 @@ mask-backend, поэтому «снаружи» домен не открывае
 
 ---
 
+<a id="panel"></a>
+
+## Веб-панель MTProxyL-Panel
+
+Опциональный веб-интерфейс ко всему, что умеет MTProxyL: пользователи, трафик,
+переключение режимов, Selfmask, лимитер, Zapret2, блокировка стран, маршруты и
+бэкапы. Интерфейс на русском, ставится одним бинарником.
+
+У каждого пользователя видны накопленный трафик и история подключённых IP —
+в обоих режимах. Если поставить базу GeoIP (кнопка в разделе **Дополнения**),
+рядом с адресами появятся страна, город и провайдер.
+
+Панель не заменяет MTProxyL, а работает поверх него — CLI и меню остаются
+основным способом управления.
+
+### Установка
+
+Ставится **после** того, как прокси поднят: панели нужен работающий движок
+с доступным API.
+
+```bash
+mtproxyl panel install
+```
+
+Либо через меню: **Дополнения → Веб-панель MTProxyL-Panel**.
+
+Отдельно, без MTProxyL:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/main/mtproxyl-panel/install.sh -o install-panel.sh
+sh install-panel.sh install
+```
+
+После установки панель доступна на `http://<ваш-сервер>:8080`.
+
+> Панель выпускается отдельно от MTProxyL — её релизы помечены тегом
+> `mtproxyl-panel-vX.Y.Z`. Пока такого релиза нет, панель можно собрать прямо
+> из ветки: `sh install-panel.sh install --from-source=dev`. При наличии Docker
+> сборка идёт в нём и не оставляет тулчейн на сервере; иначе понадобятся
+> Go 1.25+ и Node.js 20+. `mtproxyl panel install` предложит это сам.
+
+### Управление
+
+```bash
+mtproxyl panel status      # состояние
+mtproxyl panel restart     # перезапуск
+mtproxyl panel uninstall   # удаление
+```
+
+### Права
+
+Панель работает под собственным непривилегированным пользователем
+`mtproxyl-panel`. Для команд, которым нужен root, установщик создаёт
+`/etc/sudoers.d/mtproxyl-panel-mtproxyl` — список **конкретных** разрешённых
+команд, а не право запускать `mtproxyl` целиком. При отключении интеграции или
+удалении панели файл убирается.
+
+### Ограничения
+
+- Обновление движка telemt из панели недоступно: встроенный механизм рассчитан
+  на systemd-сервис, а в режиме Manager движок работает в Docker. Используйте
+  `mtproxyl engine`.
+- Интерактивный мастер `selfmask setup` остаётся только в CLI: из панели
+  параметры задаются по отдельности и применяются командой `selfmask apply`.
+- Один администратор, без ролей и 2FA.
+- Бэкапы, маршруты, экспертные параметры и супер эксперт доступны только в
+  режиме Manager — в Reanimator они скрыты, так как требуют владения конфигом.
+- Проверка ограничений сервера (censorcheck) в панель не перенесена: она
+  выполняет сторонний скрипт из сети. Команда осталась в меню MTProxyL.
+
+Подробности — [mtproxyl-panel/README.md](mtproxyl-panel/README.md).
+
+---
+
 <a id="ios-fixes"></a>
 
 ## Устаревшие iOS фиксы
@@ -702,14 +903,17 @@ selfmask, гео-блокировка, бэкапы) работают как о�
 │   ├── config.sh                # Генерация config.toml
 │   ├── docker.sh                # Docker
 │   ├── engine.sh                # Версии telemt
-│   ├── traffic.sh               # Метрики, трафик
+│   ├── traffic.sh               # Метрики, трафик, история IP пользователей
 │   ├── geoblock.sh              # Гео-блокировка
+│   ├── geoip.sh                 # База GeoIP: страна, город, провайдер
 │   ├── upstream.sh              # Upstream
 │   ├── backup.sh                # Бэкапы
 │   ├── nft.sh                   # NFT limiter + Zapret2 fix + iOS фиксы
 │   ├── selfmask.sh              # Selfmask (PQ nginx + LE / самоподписанный cert)
+│   ├── panel.sh                 # Установка и управление веб-панелью
 │   ├── expert_catalog.sh        # Каталог параметров telemt
 │   ├── expert_mode.sh           # Режим эксперта
+│   ├── settings_cli.sh          # Машинный вывод настроек для панели
 │   ├── tui_main.sh              # Главное меню
 │   ├── tui_proxy.sh             # Подменю: прокси
 │   ├── tui_secrets.sh           # Подменю: секреты
@@ -719,6 +923,7 @@ selfmask, гео-блокировка, бэкапы) работают как о�
 │   ├── tui_traffic.sh           # Подменю: трафик
 │   ├── tui_engine.sh            # Подменю: движок
 │   ├── tui_backup.sh            # Подменю: обновления и бэкапы
+│   ├── tui_expert.sh            # Подменю: режим эксперта
 │   ├── tui_nft.sh               # Подменю: NFT + Zapret2
 │   ├── tui_selfmask.sh          # Подменю: selfmask
 │   ├── tui_addons.sh            # Подменю: дополнения
@@ -732,6 +937,11 @@ selfmask, гео-блокировка, бэкапы) работают как о�
 ├── nft-rules.conf               # NFT настройки (включая Zapret2)
 └── backups/
 ```
+
+Веб-панель — отдельный компонент в каталоге `mtproxyl-panel/` этого
+репозитория: Go + React, собирается в один бинарник со встроенным фронтендом,
+ставится своим установщиком. MTProxyL вызывает её установщик и показывает
+состояние, но логику установки не дублирует.
 
 ---
 
@@ -770,6 +980,11 @@ Docker, сертификаты Let's Encrypt и Zapret2 NFT-таблица оч�
 ## Благодарности
 
 - **[MTPROTO-FIX-By-MEKO](https://github.com/Mekotofeuka/MTPR-FIX-By-MEKO)** — идея Smart режима NFT, TCP fingerprint, оптимизация sysctl
+- **[telemt_panel](https://github.com/amirotin/telemt_panel)** — основа веб-панели
+  MTProxyL-Panel. Оттуда взято ядро: авторизация, обновление бинарника,
+  потоковые логи через WebSocket, GeoIP-поиск и редактор TOML. Всё, что
+  касается самого MTProxyL — режимы, Selfmask, лимитер, бэкапы, пользователи —
+  надстроено поверх
 
 ---
 

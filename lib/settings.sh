@@ -5,6 +5,10 @@
 MTPROXYL_MODE="manager"
 PROXY_PORT=443
 PROXY_METRICS_PORT=9090
+# REST API движка. MTProxyL включает его явно и вешает на localhost:
+# у telemt по умолчанию listen = "0.0.0.0:9091", то есть без явной
+# записи API смотрел бы в интернет.
+PROXY_API_PORT=9091
 PROXY_DOMAIN="autoscout24.ru"
 PROXY_CONCURRENCY=8192
 PROXY_CPUS=""
@@ -52,7 +56,10 @@ PORT_PROFILE_REANIMATOR=""
 save_settings() {
     mkdir -p "$INSTALL_DIR"
     local tmp
-    tmp=$(_mktemp) || { log_error "Не удалось создать временный файл"; return 1; }
+    # Временный файл рядом с целевым: mv в пределах одной ФС — это rename(2),
+    # то есть замена целиком. Через /tmp (обычно tmpfs) mv выродился бы в
+    # copy+truncate, и читатель увидел бы файл в середине записи.
+    tmp=$(_mktemp "$INSTALL_DIR") || { log_error "Не удалось создать временный файл"; return 1; }
 
     cat > "$tmp" << SETTINGS_EOF
 # MTProxyL — настройки v${VERSION}
@@ -65,6 +72,7 @@ MTPROXYL_MODE='${MTPROXYL_MODE}'
 # Конфигурация прокси
 PROXY_PORT='${PROXY_PORT}'
 PROXY_METRICS_PORT='${PROXY_METRICS_PORT}'
+PROXY_API_PORT='${PROXY_API_PORT}'
 PROXY_DOMAIN='${PROXY_DOMAIN}'
 PROXY_CONCURRENCY='${PROXY_CONCURRENCY}'
 PROXY_CPUS='${PROXY_CPUS}'
@@ -137,7 +145,9 @@ _selfmask_conf_file() {
 save_selfmask_settings() {
     mkdir -p "$INSTALL_DIR"
     local _f; _f=$(_selfmask_conf_file)
-    cat > "$_f" << SELFMASK_EOF
+    local _tmp
+    _tmp=$(_mktemp "$INSTALL_DIR") || { log_error "Не удалось создать временный файл"; return 1; }
+    cat > "$_tmp" << SELFMASK_EOF
 # MTProxyL — настройки Selfmask для режима ${MTPROXYL_MODE:-manager}
 SELFMASK_ENABLED='${SELFMASK_ENABLED}'
 SELFMASK_DOMAIN='${SELFMASK_DOMAIN}'
@@ -150,7 +160,8 @@ SELFMASK_AUTO_RENEW='${SELFMASK_AUTO_RENEW}'
 SELFMASK_TLS_PROTOCOLS='${SELFMASK_TLS_PROTOCOLS}'
 SELFMASK_CERT_MODE='${SELFMASK_CERT_MODE}'
 SELFMASK_EOF
-    chmod 600 "$_f"
+    chmod 600 "$_tmp"
+    mv "$_tmp" "$_f"
 }
 
 # Значения из per-mode файла перекрывают то, что пришло из settings.conf.
@@ -227,41 +238,45 @@ switch_port_profile() {
 }
 
 load_settings() {
-    [ -f "$SETTINGS_FILE" ] || return 0
+    # Отсутствие settings.conf раньше означало выход сразу — а вместе с ним
+    # пропускались нормализация значений и load_selfmask_settings в конце.
+    # В итоге selfmask-профиль режима не читался, и каждое 'selfmask set'
+    # сохраняло значения по умолчанию поверх ранее заданных.
+    if [ -f "$SETTINGS_FILE" ]; then
+        while IFS= read -r line; do
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ "$line" =~ ^[[:space:]]*$ ]] && continue
 
-    while IFS= read -r line; do
-        [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+            if [[ "$line" =~ ^([A-Z_][A-Z0-9_]*)=\'([^\']*)\'$ ]]; then
+                local key="${BASH_REMATCH[1]}" val="${BASH_REMATCH[2]}"
+            elif [[ "$line" =~ ^([A-Z_][A-Z0-9_]*)=\"([^\"]*)\"$ ]]; then
+                local key="${BASH_REMATCH[1]}" val="${BASH_REMATCH[2]}"
+            elif [[ "$line" =~ ^([A-Z_][A-Z0-9_]*)=([^[:space:]]*)$ ]]; then
+                local key="${BASH_REMATCH[1]}" val="${BASH_REMATCH[2]}"
+            else
+                continue
+            fi
 
-        if [[ "$line" =~ ^([A-Z_][A-Z0-9_]*)=\'([^\']*)\'$ ]]; then
-            local key="${BASH_REMATCH[1]}" val="${BASH_REMATCH[2]}"
-        elif [[ "$line" =~ ^([A-Z_][A-Z0-9_]*)=\"([^\"]*)\"$ ]]; then
-            local key="${BASH_REMATCH[1]}" val="${BASH_REMATCH[2]}"
-        elif [[ "$line" =~ ^([A-Z_][A-Z0-9_]*)=([^[:space:]]*)$ ]]; then
-            local key="${BASH_REMATCH[1]}" val="${BASH_REMATCH[2]}"
-        else
-            continue
-        fi
-
-        case "$key" in
-            MTPROXYL_MODE|\
-            PROXY_PORT|PROXY_METRICS_PORT|PROXY_DOMAIN|PROXY_CONCURRENCY|\
-            PROXY_CPUS|PROXY_MEMORY|CUSTOM_IP|FAKE_CERT_LEN|\
-            PROXY_PROTOCOL|PROXY_PROTOCOL_TRUSTED_CIDRS|\
-            AD_TAG|GEOBLOCK_MODE|BLOCKLIST_COUNTRIES|\
-            MASKING_ENABLED|MASKING_HOST|MASKING_PORT|MASKING_RELAY_MAX_BYTES|\
-            UNKNOWN_SNI_ACTION|\
-            PROXY_SECRET_URL|PROXY_CONFIG_V4_URL|PROXY_CONFIG_V6_URL|\
-            AUTO_UPDATE_ENABLED|SECRET_AUTO_ROTATE_DAYS|BACKUP_RETENTION_DAYS|\
-            SELFMASK_ENABLED|SELFMASK_DOMAIN|SELFMASK_SITE_SOURCE|SELFMASK_SITE_DIR|\
-            SELFMASK_NGINX_BACKEND_PORT|SELFMASK_CERT_EMAIL|SELFMASK_NGINX_SITE_NAME|\
-            SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS|SELFMASK_CERT_MODE|\
-            SUPEREXPERT_ENABLED|\
-            PORT_PROFILE_MANAGER|PORT_PROFILE_REANIMATOR)
-                printf -v "$key" '%s' "$val"
-                ;;
-        esac
-    done < "$SETTINGS_FILE"
+            case "$key" in
+                MTPROXYL_MODE|\
+                PROXY_PORT|PROXY_METRICS_PORT|PROXY_API_PORT|PROXY_DOMAIN|PROXY_CONCURRENCY|\
+                PROXY_CPUS|PROXY_MEMORY|CUSTOM_IP|FAKE_CERT_LEN|\
+                PROXY_PROTOCOL|PROXY_PROTOCOL_TRUSTED_CIDRS|\
+                AD_TAG|GEOBLOCK_MODE|BLOCKLIST_COUNTRIES|\
+                MASKING_ENABLED|MASKING_HOST|MASKING_PORT|MASKING_RELAY_MAX_BYTES|\
+                UNKNOWN_SNI_ACTION|\
+                PROXY_SECRET_URL|PROXY_CONFIG_V4_URL|PROXY_CONFIG_V6_URL|\
+                AUTO_UPDATE_ENABLED|SECRET_AUTO_ROTATE_DAYS|BACKUP_RETENTION_DAYS|\
+                SELFMASK_ENABLED|SELFMASK_DOMAIN|SELFMASK_SITE_SOURCE|SELFMASK_SITE_DIR|\
+                SELFMASK_NGINX_BACKEND_PORT|SELFMASK_CERT_EMAIL|SELFMASK_NGINX_SITE_NAME|\
+                SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS|SELFMASK_CERT_MODE|\
+                SUPEREXPERT_ENABLED|\
+                PORT_PROFILE_MANAGER|PORT_PROFILE_REANIMATOR)
+                    printf -v "$key" '%s' "$val"
+                    ;;
+            esac
+        done < "$SETTINGS_FILE"
+    fi
 
     # Валидация
     case "$MTPROXYL_MODE" in
@@ -270,6 +285,7 @@ load_settings() {
     esac
     [[ "$PROXY_PORT" =~ ^[0-9]+$ ]] && [ "$PROXY_PORT" -ge 1 ] && [ "$PROXY_PORT" -le 65535 ] || PROXY_PORT=443
     [[ "$PROXY_METRICS_PORT" =~ ^[0-9]+$ ]] && [ "$PROXY_METRICS_PORT" -ge 1 ] && [ "$PROXY_METRICS_PORT" -le 65535 ] || PROXY_METRICS_PORT=9090
+    [[ "$PROXY_API_PORT" =~ ^[0-9]+$ ]] && [ "$PROXY_API_PORT" -ge 1 ] && [ "$PROXY_API_PORT" -le 65535 ] || PROXY_API_PORT=9091
     [[ "$MASKING_PORT" =~ ^[0-9]+$ ]] && [ "$MASKING_PORT" -ge 1 ] && [ "$MASKING_PORT" -le 65535 ] || MASKING_PORT=443
     [[ "$FAKE_CERT_LEN" =~ ^[0-9]+$ ]] && [ "$FAKE_CERT_LEN" -ge 512 ] || FAKE_CERT_LEN=2048
     [[ "$PROXY_CONCURRENCY" =~ ^[0-9]+$ ]] || PROXY_CONCURRENCY=8192

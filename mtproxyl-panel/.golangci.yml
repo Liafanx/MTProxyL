@@ -1,0 +1,33 @@
+version: "2"
+linters:
+  default: none
+  enable:
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  settings:
+    staticcheck:
+      # Preserve the v1 lint scope: SA (staticcheck) + S (gosimple) checks only.
+      # v1 never ran stylecheck (ST) or quickfix (QF), so keep them off to avoid
+      # newly failing CI on pre-existing code after the v2 upgrade.
+      checks:
+        - all
+        - -ST1*
+        - -QF1*
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  max-issues-per-linter: 50
+  max-same-issues: 3
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

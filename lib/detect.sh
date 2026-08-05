@@ -14,7 +14,11 @@ DETECT_BRIDGE_STRATEGY="simple"  # simple|precise
 
 save_detect_settings() {
     mkdir -p "$INSTALL_DIR"
-    cat > "$DETECT_CONF" << EOF
+    # Через временный файл: панель читает состояние цели ('mode --json')
+    # параллельно с пересканированием.
+    local _tmp
+    _tmp=$(_mktemp "$INSTALL_DIR") || { log_error "Не удалось создать временный файл"; return 1; }
+    cat > "$_tmp" << EOF
 # MTProxyL Reanimator — обнаруженная цель
 DETECTED_MODE='${DETECTED_MODE}'
 DETECTED_CONTAINER='${DETECTED_CONTAINER}'
@@ -24,7 +28,8 @@ DETECTED_PORT='${DETECTED_PORT}'
 DETECTED_NETWORK_MODE='${DETECTED_NETWORK_MODE}'
 DETECT_BRIDGE_STRATEGY='${DETECT_BRIDGE_STRATEGY}'
 EOF
-    chmod 600 "$DETECT_CONF"
+    chmod 600 "$_tmp"
+    mv "$_tmp" "$DETECT_CONF"
 }
 
 load_detect_settings() {
@@ -124,7 +129,11 @@ _toml_get_string_in_section() {
             if (line ~ ("^" k "[[:space:]]*=")) {
                 sub(("^" k "[[:space:]]*=[[:space:]]*"), "", line)
                 sub(/[[:space:]]*#.*$/, "", line)
-                gsub(/"/, "", line)
+                # TOML знает и "строку", и '"'"'строку'"'"' — telemt пишет вторую,
+                # так что снимать только двойные кавычки нельзя: значение
+                # уезжало вместе с ними и, например, порт API из listen
+                # переставал разбираться.
+                gsub(/["'"'"']/, "", line)
                 gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
                 print line
                 exit
@@ -158,11 +167,16 @@ _get_telemt_metrics_port() {
     echo "$_port"
 }
 
+# У telemt [server.api] enabled по умолчанию true, и конфиг, который
+# генерирует сам MTProxyL, секцию [server.api] не пишет вовсе. Считать
+# отсутствие ключа за «выключено» — значит объявлять API выключенным на
+# любой обычной установке в режиме менеджера. Выключенным считаем только
+# явное false.
 _telemt_api_enabled() {
     local _cfg="${1:-$DETECTED_CONFIG_PATH}"
     [ -n "$_cfg" ] && [ -f "$_cfg" ] || return 1
     local _en; _en=$(_toml_get_string_in_section "server.api" "enabled" "$_cfg")
-    [ "$_en" = "true" ]
+    [ "$_en" != "false" ]
 }
 
 # Забирает JSON с /v1/users API цели (список пользователей + их
@@ -284,6 +298,39 @@ _target_user_stats() {
         done
 }
 
+# IP-адреса пользователей из того же ответа API: "user|ip" построчно, без
+# разделения на active/recent — история копит оба списка одинаково, а живой
+# статус конкретного IP экран решает сам по данным API.
+_target_user_ip_lists() {
+    local _json="$1"
+    printf '%s' "$_json" | tr -d '\n' \
+        | awk '{gsub(/"username"/, "\n\"username\""); print}' \
+        | while IFS= read -r _chunk; do
+            case "$_chunk" in *'"username"'*) ;; *) continue ;; esac
+            local _u; _u=$(sed -nE 's/.*"username"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' <<< "$_chunk")
+            [ -n "$_u" ] || continue
+            local _field _arr _ip
+            for _field in active_unique_ips_list recent_unique_ips_list; do
+                _arr=$(sed -nE "s/.*\"${_field}\"[[:space:]]*:[[:space:]]*\[([^]]*)\].*/\1/p" <<< "$_chunk")
+                [ -n "$_arr" ] || continue
+                printf '%s\n' "$_arr" | grep -oE '"[0-9a-fA-F:.]+"' | tr -d '"' | while IFS= read -r _ip; do
+                    [ -n "$_ip" ] && printf '%s|%s\n' "$_u" "$_ip"
+                done
+            done
+        done
+}
+
+# Конфиг движка текущего режима: у реаниматора это конфиг чужой цели, у
+# менеджера — свой. Тот же выбор, что 'mtproxyl mode --json' делает inline
+# для панели, но как функция — для мест, где нужен просто путь, а не JSON.
+_engine_config_path() {
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        printf '%s' "${DETECTED_CONFIG_PATH:-}"
+    else
+        printf '%s' "${CONFIG_DIR}/config.toml"
+    fi
+}
+
 # Отвечает ли Prometheus-эндпоинт цели. Метрики движка в telemt по
 # умолчанию выключены (metrics_listen/metrics_port закомментированы),
 # поэтому это отдельная от API проверка.
@@ -332,7 +379,7 @@ offer_enable_target_metrics() {
     echo ""
     echo -en "  ${BOLD}Включить метрики в конфиге цели на 127.0.0.1:${_port}? [y/N]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Пропущено"; return 0; }
+    [[ "$_yn" =~ ^[yY] ]] || { log_info "Пропущено"; return 0; }
 
     backup_target_config "metrics" "true" || true
 
@@ -536,7 +583,7 @@ _telemt_host_pids() {
 _is_excluded_path() {
     local _path="$1"
     case "$_path" in
-        *telemt-panel*|*telemt_panel*) return 0 ;;
+        *telemt-panel*|*telemt_panel*|*mtproxyl-panel*) return 0 ;;
     esac
     return 1
 }
@@ -644,7 +691,7 @@ detect_telemt() {
         _args=""
         for _pid in $(_telemt_host_pids); do
             _cmd=$(tr '\0' ' ' < "/proc/${_pid}/cmdline" 2>/dev/null)
-            case "$_cmd" in *telemt-panel*|*telemt_panel*) continue ;; esac
+            case "$_cmd" in *telemt-panel*|*telemt_panel*|*mtproxyl-panel*) continue ;; esac
             _args=$(grep -oE '/[^ ]+\.toml' <<< "$_cmd" | head -1)
             [ -n "$_args" ] && break
         done
@@ -764,7 +811,7 @@ apply_target_tuning() {
         log_warn "Секция [${section}] отсутствует в ${_cfg}"
         echo -en "  ${BOLD}Создать секцию и применить? [Y/n]:${NC} "
         local _cr; read_line _cr
-        if [[ ! "$_cr" =~ ^[nN]$ ]]; then
+        if [[ ! "$_cr" =~ ^[nN] ]]; then
             printf '\n[%s]\n%s = %s\n' "$section" "$param" "$_tv_out" >> "$_cfg"
             log_success "Секция [${section}] создана"
         else
@@ -824,7 +871,7 @@ run_reanimator_tuning_wizard() {
 
     echo -en "  ${BOLD}Применить эти значения в конфиге цели? [Y/n]:${NC} "
     local _yn; read_line _yn
-    if [[ "$_yn" =~ ^[nN]$ ]]; then
+    if [[ "$_yn" =~ ^[nN] ]]; then
         log_info "Тюнинг пропущен. Позже: mtproxyl tune set <параметр> <значение>"
         return 0
     fi
@@ -936,6 +983,94 @@ edit_target_config() {
     fi
 }
 
+# ── Конфиг цели для панели ─────────────────────────────────────
+# Панель работает под непривилегированным пользователем, а конфиг цели
+# принадлежит ей самой (у systemd-цели это telemt:telemt, каталог 750) —
+# прочитать и тем более записать его напрямую панель не может. Здесь тот же
+# путь, что у superexpert show/write для своего конфига: читаем и пишем от
+# root через CLI, содержимое передаётся по stdin.
+show_target_config() {
+    if [ -z "${DETECTED_CONFIG_PATH:-}" ] || [ ! -f "$DETECTED_CONFIG_PATH" ]; then
+        log_error "Конфиг цели не найден — выполните 'mtproxyl detect'"
+        return 1
+    fi
+    cat "$DETECTED_CONFIG_PATH"
+}
+
+write_target_config() {
+    local _restart="${1:-false}"
+
+    if [ -z "${DETECTED_CONFIG_PATH:-}" ] || [ ! -f "$DETECTED_CONFIG_PATH" ]; then
+        log_error "Конфиг цели не найден — выполните 'mtproxyl detect'"
+        return 1
+    fi
+
+    local _new; _new=$(cat)
+    if [ -z "${_new//[[:space:]]/}" ]; then
+        log_error "Пустой конфиг — запись отменена"
+        return 1
+    fi
+
+    local _tmp; _tmp=$(_mktemp "$(dirname "$DETECTED_CONFIG_PATH")") || {
+        log_error "Не удалось создать временный файл рядом с конфигом цели"
+        return 1
+    }
+    printf '%s' "$_new" > "$_tmp"
+    # Перенос строки в конце: движок читает файл построчно, а редактор в
+    # браузере последнюю пустую строку не сохраняет.
+    [ "${_new: -1}" = $'\n' ] || printf '\n' >> "$_tmp"
+
+    if ! _looks_like_telemt_config "$_tmp"; then
+        log_error "Текст не похож на конфиг telemt — запись отменена"
+        rm -f "$_tmp"
+        return 1
+    fi
+
+    backup_target_config "panel" "true" || true
+
+    # Владельца и права держим от исходного файла: движок читает конфиг под
+    # своим пользователем, и запись от root сменила бы их на root:root.
+    chown --reference="$DETECTED_CONFIG_PATH" "$_tmp" 2>/dev/null || true
+    chmod --reference="$DETECTED_CONFIG_PATH" "$_tmp" 2>/dev/null || true
+
+    if ! mv -f "$_tmp" "$DETECTED_CONFIG_PATH"; then
+        log_error "Не удалось записать конфиг цели"
+        rm -f "$_tmp"
+        return 1
+    fi
+    log_success "Конфиг цели записан: ${DETECTED_CONFIG_PATH}"
+    [ -n "${TARGET_CONFIG_BACKUP:-}" ] && log_info "Резервная копия: ${TARGET_CONFIG_BACKUP}"
+
+    if [ "$_restart" = "true" ]; then
+        restart_target
+        sleep 1
+        if is_proxy_running; then
+            log_success "Цель перезапущена"
+        else
+            log_error "Цель не поднялась после перезапуска — проверьте правки и логи"
+            return 1
+        fi
+    fi
+    return 0
+}
+
+handle_target_config_command() {
+    case "${1:-}" in
+        show)  show_target_config ;;
+        write)
+            case "${2:-}" in
+                --restart) write_target_config "true" ;;
+                "")        write_target_config "false" ;;
+                *)         log_error "Использование: mtproxyl target-config write [--restart]"; return 1 ;;
+            esac
+            ;;
+        *)
+            log_error "Использование: mtproxyl target-config show|write [--restart]"
+            return 1
+            ;;
+    esac
+}
+
 # ── Переключение режима работы ─────────────────────────────────
 # В reanimator-режиме порт цели — источник истины: на него навешиваются
 # zapret2/NFT-правила. Если PROXY_PORT остался от менеджера, фиксы уйдут
@@ -983,7 +1118,7 @@ offer_reapply_fixes() {
     log_warn "Правила фиксов наложены на порт ${_old} — их нужно переприменить"
     echo -en "  ${BOLD}Переприменить сейчас? [Y/n]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Переприменить позже: меню NFT/Zapret2"; return 0; }
+    [[ "$_yn" =~ ^[nN] ]] && { log_info "Переприменить позже: меню NFT/Zapret2"; return 0; }
 
     if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
         zapret2_update_config || log_warn "Не удалось обновить zapret2"
@@ -1052,18 +1187,57 @@ switch_to_manager_mode() {
     echo ""
     echo -en "  ${BOLD}Запустить установку сейчас? [Y/n]:${NC} "
     local _yn; read_line _yn
-    if [[ "$_yn" =~ ^[nN]$ ]]; then
+    if [[ "$_yn" =~ ^[nN] ]]; then
         log_info "Установку можно запустить позже: mtproxyl install"
         return 0
     fi
     run_installer
 }
 
+# Что сделать со своим контейнером при уходе в реаниматор.
+#
+# Вынесено из switch_to_reanimator_mode, чтобы решение можно было передать
+# аргументом: панель спрашивает пользователя сама и не может отвечать на
+# интерактивный вопрос, а MTPROXYL_ASSUME_YES молча выбрал бы вариант по
+# умолчанию — то есть удалил контейнер, ничего не спросив.
+_dispose_own_container() {
+    local _choice="$1"
+    case "$_choice" in
+        remove)
+            remove_own_container ;;
+        stop)
+            docker update --restart=no "$CONTAINER_NAME" &>/dev/null || true
+            docker stop --timeout 10 "$CONTAINER_NAME" &>/dev/null \
+                && log_success "Контейнер остановлен (не удалён)" \
+                || log_warn "Не удалось остановить контейнер" ;;
+        keep)
+            log_info "Контейнер оставлен как есть"
+            log_warn "Он продолжит занимать порт ${PROXY_PORT:-443} — цель реаниматора может не запуститься" ;;
+        *)
+            log_error "Неизвестное решение по контейнеру: ${_choice}"
+            return 1 ;;
+    esac
+}
+
+# switch_to_reanimator_mode [remove|stop|keep]
+#
+# Аргумент задаёт судьбу своего контейнера. Без него вопрос задаётся
+# интерактивно — как и раньше.
 switch_to_reanimator_mode() {
+    local _container_choice="${1:-}"
+
     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
         log_info "Уже в режиме reanimator"
         return 0
     fi
+
+    if [ -n "$_container_choice" ]; then
+        case "$_container_choice" in
+            remove|stop|keep) ;;
+            *) log_error "Использование: mode reanimator [remove|stop|keep]"; return 1 ;;
+        esac
+    fi
+
     echo ""
     log_warn "Переход в режим Reanimator. Свой контейнер/конфиг MTProxyL больше не будет управляться из меню."
     echo -en "  ${BOLD}Введите 'yes' для подтверждения:${NC} "
@@ -1077,19 +1251,19 @@ switch_to_reanimator_mode() {
         echo ""
         echo -e "  ${BOLD}Свой контейнер ${CONTAINER_NAME}:${NC} ${_own_state}"
         echo -e "  ${DIM}Он занимает порт ${PROXY_PORT:-443} и будет мешать цели реаниматора.${NC}"
-        echo ""
-        echo -e "  ${DIM}[1]${NC} Остановить и удалить контейнер ${DIM}(рекомендуется)${NC}"
-        echo -e "  ${DIM}[2]${NC} Только остановить, контейнер оставить"
-        echo -e "  ${DIM}[3]${NC} Не трогать"
-        local _oc; _oc=$(read_choice "выбор" "1")
-        case "$_oc" in
-            1) remove_own_container ;;
-            2) docker update --restart=no "$CONTAINER_NAME" &>/dev/null || true
-               docker stop --timeout 10 "$CONTAINER_NAME" &>/dev/null \
-                   && log_success "Контейнер остановлен (не удалён)" \
-                   || log_warn "Не удалось остановить контейнер" ;;
-            *) log_info "Контейнер оставлен как есть" ;;
-        esac
+        if [ -z "$_container_choice" ]; then
+            echo ""
+            echo -e "  ${DIM}[1]${NC} Остановить и удалить контейнер ${DIM}(рекомендуется)${NC}"
+            echo -e "  ${DIM}[2]${NC} Только остановить, контейнер оставить"
+            echo -e "  ${DIM}[3]${NC} Не трогать"
+            local _oc; _oc=$(read_choice "выбор" "1")
+            case "$_oc" in
+                1) _container_choice="remove" ;;
+                2) _container_choice="stop" ;;
+                *) _container_choice="keep" ;;
+            esac
+        fi
+        _dispose_own_container "$_container_choice"
     fi
 
     switch_port_profile "reanimator" || true
@@ -1433,7 +1607,7 @@ install_original_telemt() {
     echo ""
     echo -en "  ${BOLD}Запустить установщик telemt? [y/N]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[yY]$ ]] || { log_info "Отменено"; return 1; }
+    [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 1; }
 
     # Версию выбираем до запуска: установщик принимает её первым аргументом
     _telemt_pick_version
@@ -1540,7 +1714,7 @@ offer_install_original_telemt() {
     echo -e "  ${DIM}Можно поставить оригинальный telemt официальным установщиком проекта${NC}"
     echo -en "  ${BOLD}Установить telemt сейчас? [Y/n]:${NC} "
     local _yn; read_line _yn
-    [[ "$_yn" =~ ^[nN]$ ]] && { log_info "Позже: меню «Цель / режим» → «Установить telemt»"; return 1; }
+    [[ "$_yn" =~ ^[nN] ]] && { log_info "Позже: меню «Цель / режим» → «Установить telemt»"; return 1; }
     # Тюнинг предложит сам мастер установки реаниматора — здесь не дублируем
     install_original_telemt "false"
 }
@@ -1578,7 +1752,7 @@ run_reanimator_installer() {
         echo ""
         echo -en "  ${BOLD}Указать другой путь к конфигу? [y/N]:${NC} "
         local _override; read_line _override
-        if [[ "$_override" =~ ^[yY]$ ]]; then
+        if [[ "$_override" =~ ^[yY] ]]; then
             echo -en "  ${DIM}Путь:${NC} "
             local _p; read_line _p
             [ -n "$_p" ] && [ -f "$_p" ] && DETECTED_CONFIG_PATH="$_p"
