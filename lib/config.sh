@@ -431,7 +431,7 @@ tls = true
 
 [general.links]
 show = [$(get_enabled_labels_quoted)]
-$(proxy_domain_points_here && printf 'public_host = "%s"\n' "$PROXY_DOMAIN")
+$(_h=$(proxy_public_host) && printf 'public_host = "%s"\n' "$_h")
 
 [server]
 port = ${port}

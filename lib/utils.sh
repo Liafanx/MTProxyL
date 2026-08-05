@@ -182,13 +182,9 @@ get_public_ip() {
 }
 
 # ── Публичные host/port для tg://-ссылок ───────────────────────
-#
-# [general.links] public_host/public_port — то, что реально идёт в ссылку,
-# отдельно от того, где движок слушает (например, за NAT или пробросом
-# порта). В обычном режиме это expert-override поверх сгенерированного
-# конфига; в супер эксперте — сам конфиг пользователя. Раньше все места,
-# что строят tg://, использовали get_public_ip()/PROXY_PORT напрямую и этот
-# override молча игнорировали.
+# [general.links] public_host/public_port — что идёт в ссылку, отдельно от
+# того, где движок слушает (NAT, проброс порта). Источник зависит от режима:
+# в супер эксперте — конфиг пользователя, иначе expert-override.
 proxy_link_host() {
     local _host=""
     if _superexpert_active 2>/dev/null; then
@@ -200,27 +196,14 @@ proxy_link_host() {
     echo "$_host"
 }
 
-# Указывает ли домен FakeTLS на этот же сервер.
-#
-# tls_domain — не адрес прокси, а имя, под которое он маскируется, и по
-# умолчанию это чужой сайт (petrovich.ru): подставлять такой домен в ссылки
-# нельзя, клиенты ушли бы на чужой сервер. Но когда домен свой — с A-записью
-# сюда, как при selfmask — ссылка по имени и есть то, что нужно, а IP в ней
-# выглядит поломкой.
-proxy_domain_points_here() {
-    local _domain="${1:-${PROXY_DOMAIN:-}}"
-    [ -n "$_domain" ] || return 1
-
-    # Selfmask уже проверял A-запись при настройке — верим ему и не ходим в DNS.
-    if [ "${SELFMASK_ENABLED:-false}" = "true" ] && [ "$_domain" = "${SELFMASK_DOMAIN:-}" ]; then
-        return 0
-    fi
-
-    local _server_ip _resolved
-    _server_ip=$(get_public_ip 2>/dev/null)
-    [ -n "$_server_ip" ] || return 1
-    _resolved=$(getent ahostsv4 "$_domain" 2>/dev/null | awk '{print $1; exit}')
-    [ -n "$_resolved" ] && [ "$_resolved" = "$_server_ip" ]
+# Домен для [general.links] public_host — из настройки «IP/домен сервера».
+# Пусто (автоопределение) или IP-литерал: движок определит адрес сам.
+proxy_public_host() {
+    local _v="${CUSTOM_IP:-}"
+    [ -n "$_v" ] || return 1
+    validate_ip_literal "$_v" && return 1
+    case "$_v" in *:*) return 1 ;; esac   # IPv6
+    printf '%s' "$_v"
 }
 
 proxy_link_port() {
