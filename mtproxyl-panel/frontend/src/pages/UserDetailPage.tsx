@@ -14,7 +14,10 @@ import { useQuota, resetUserQuota } from '@/hooks/useQuota';
 import { telemt, panelApi, mtproxylUsersApi, ApiError, type MtproxylUserIP } from '@/lib/api';
 import { mergeUserStats } from './usersPage.helpers';
 import { formatBytes } from '@/lib/utils';
-import { ArrowLeft, ChevronDown, ChevronRight, Search, AlertTriangle, RotateCcw } from 'lucide-react';
+import {
+  ArrowLeft, ChevronDown, ChevronRight, Search, AlertTriangle, RotateCcw,
+  ArrowUp, ArrowDown, ArrowUpDown,
+} from 'lucide-react';
 
 interface UserInfo {
   username: string;
@@ -62,9 +65,49 @@ interface IPTableProps {
   historyByIp?: Map<string, MtproxylUserIP>;
 }
 
+type IPSortKey = 'ip' | 'country' | 'first_seen' | 'last_seen';
+type SortDir = 'asc' | 'desc';
+
+function SortableHead({ label, sortKey, active, dir, onSort }: {
+  label: string;
+  sortKey: IPSortKey;
+  active: IPSortKey;
+  dir: SortDir;
+  onSort: (key: IPSortKey) => void;
+}) {
+  const isActive = active === sortKey;
+  return (
+    <TableHead className="cursor-pointer select-none" onClick={() => onSort(sortKey)}>
+      <span className="inline-flex items-center gap-1">
+        {label}
+        {isActive ? (
+          dir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />
+        ) : (
+          <ArrowUpDown size={12} className="text-text-secondary/40" />
+        )}
+      </span>
+    </TableHead>
+  );
+}
+
 function IPTable({ ips, geoData, hasGeo, historyByIp }: IPTableProps) {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
+  // Свежие подключения интереснее старых, поэтому история открывается
+  // отсортированной по последнему появлению, а не по порядку из базы.
+  const [sortKey, setSortKey] = useState<IPSortKey>(historyByIp ? 'last_seen' : 'ip');
+  const [sortDir, setSortDir] = useState<SortDir>(historyByIp ? 'desc' : 'asc');
+
+  const toggleSort = (key: IPSortKey) => {
+    if (key === sortKey) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      // Даты полезнее сначала свежие, текст — по алфавиту.
+      setSortDir(key === 'first_seen' || key === 'last_seen' ? 'desc' : 'asc');
+    }
+    setPage(0);
+  };
 
   useEffect(() => setPage(0), [search]);
 
@@ -85,8 +128,32 @@ function IPTable({ ips, geoData, hasGeo, historyByIp }: IPTableProps) {
     });
   }, [ips, search, geoData]);
 
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
-  const pageIps = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const sorted = useMemo(() => {
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      let cmp = 0;
+      switch (sortKey) {
+        case 'country':
+          cmp = (geoData.get(a)?.country_name ?? '').localeCompare(geoData.get(b)?.country_name ?? '');
+          break;
+        case 'first_seen':
+          cmp = (historyByIp?.get(a)?.first_seen ?? 0) - (historyByIp?.get(b)?.first_seen ?? 0);
+          break;
+        case 'last_seen':
+          cmp = (historyByIp?.get(a)?.last_seen ?? 0) - (historyByIp?.get(b)?.last_seen ?? 0);
+          break;
+        default:
+          // Числовое сравнение по октетам: строковое ставило бы .10 перед .9.
+          cmp = a.localeCompare(b, undefined, { numeric: true });
+      }
+      // Разные адреса не должны меняться местами между рендерами, когда
+      // ключ сортировки у них совпадает (нет геоданных, одинаковая секунда).
+      return cmp !== 0 ? cmp * dir : a.localeCompare(b, undefined, { numeric: true });
+    });
+  }, [filtered, sortKey, sortDir, geoData, historyByIp]);
+
+  const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
+  const pageIps = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   return (
     <div className="space-y-2">
@@ -111,12 +178,18 @@ function IPTable({ ips, geoData, hasGeo, historyByIp }: IPTableProps) {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>IP-адрес</TableHead>
-                {hasGeo && <TableHead>Страна</TableHead>}
+                <SortableHead label="IP-адрес" sortKey="ip" active={sortKey} dir={sortDir} onSort={toggleSort} />
+                {hasGeo && (
+                  <SortableHead label="Страна" sortKey="country" active={sortKey} dir={sortDir} onSort={toggleSort} />
+                )}
                 {hasGeo && <TableHead>Город</TableHead>}
                 {hasGeo && <TableHead>ASN</TableHead>}
-                {historyByIp && <TableHead>Впервые</TableHead>}
-                {historyByIp && <TableHead>Последний раз</TableHead>}
+                {historyByIp && (
+                  <SortableHead label="Впервые" sortKey="first_seen" active={sortKey} dir={sortDir} onSort={toggleSort} />
+                )}
+                {historyByIp && (
+                  <SortableHead label="Последний раз" sortKey="last_seen" active={sortKey} dir={sortDir} onSort={toggleSort} />
+                )}
               </TableRow>
             </TableHeader>
             <TableBody>
