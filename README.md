@@ -794,7 +794,8 @@ curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/main/mtproxyl-pane
 sh install-panel.sh install
 ```
 
-После установки панель доступна на `http://<ваш-сервер>:8080`.
+Порт спрашивает установщик (по умолчанию 8080), после установки панель
+доступна на `https://<ваш-сервер>:8080`.
 
 > Панель выпускается отдельно от MTProxyL — её релизы помечены тегом
 > `mtproxyl-panel-vX.Y.Z`. Пока такого релиза нет, панель можно собрать прямо
@@ -807,8 +808,21 @@ sh install-panel.sh install
 ```bash
 mtproxyl panel status      # состояние
 mtproxyl panel restart     # перезапуск
-mtproxyl panel uninstall   # удаление
+mtproxyl panel uninstall   # удаление (спросит, оставить ли конфиг и данные)
 ```
+
+Отдельно, без MTProxyL — тем же `install.sh`, что и для установки:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/main/mtproxyl-panel/install.sh | sudo sh -s -- uninstall
+curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/main/mtproxyl-panel/install.sh | sudo sh -s -- purge
+```
+
+`-s --` в пайпе обязателен именно в таком виде — без `-s` `sh` попытается
+открыть `uninstall`/`purge` как файл, а не передаст их установщику аргументом.
+`uninstall` оставляет конфиг и данные (в них логин и хеш пароля — повторная
+установка найдёт их и пропустит мастер), `purge` убирает всё, включая
+системного пользователя. Подробнее — [mtproxyl-panel/README.md](mtproxyl-panel/README.md#удаление-без-mtproxyl).
 
 ### Права
 

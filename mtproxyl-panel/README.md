@@ -95,12 +95,21 @@ Selfmask на том же сервере, — панель не выпускае
 
 ### Управление
 
+Через MTProxyL:
+
 ```bash
 mtproxyl panel status      # состояние
 mtproxyl panel restart     # перезапуск
-mtproxyl panel uninstall   # удаление
+mtproxyl panel uninstall   # удаление (спросит, оставить ли конфиг и данные)
+```
 
-journalctl -u mtproxyl-panel -f   # логи
+Напрямую — панель ставится и без MTProxyL, поэтому и обычные операции с ней
+не обязаны идти через его CLI:
+
+```bash
+sudo systemctl status mtproxyl-panel
+sudo systemctl restart mtproxyl-panel
+journalctl -u mtproxyl-panel -f
 ```
 
 При удалении самого MTProxyL (`mtproxyl uninstall`) панель не удаляется
@@ -108,6 +117,36 @@ journalctl -u mtproxyl-panel -f   # логи
 отключается: снимаются права sudo на исчезающий скрипт MTProxyL и
 выставляется `enabled = false`, после чего панель работает как обычная
 панель telemt.
+
+### Удаление без MTProxyL
+
+Тем же `install.sh`, что и для установки — двумя эквивалентными способами:
+
+```bash
+# Уже скачан как install-panel.sh (см. "Отдельно" выше):
+sudo sh install-panel.sh uninstall
+sudo sh install-panel.sh purge
+
+# Без сохранения на диск — сразу из пайпа:
+curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/main/mtproxyl-panel/install.sh | sudo sh -s -- uninstall
+curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/main/mtproxyl-panel/install.sh | sudo sh -s -- purge
+```
+
+`-s --` в пайпе обязателен именно в таком виде: без `-s` sh попытается
+открыть `uninstall`/`purge` как путь к файлу скрипта, а не передаст их
+установщику аргументом.
+
+| | `uninstall` | `purge` |
+|---|---|---|
+| Служба и бинарник | удаляются | удаляются |
+| Права sudo (`/etc/sudoers.d/mtproxyl-panel*`) | удаляются | удаляются |
+| Конфиг (`/etc/mtproxyl-panel`) | остаётся | удаляется |
+| Данные (`/var/lib/mtproxyl-panel`) | остаются | удаляются |
+| Системный пользователь `mtproxyl-panel` | остаётся | удаляется |
+
+Конфиг хранит логин и хеш пароля администратора — после `uninstall`
+повторная установка находит его и пропускает мастер настройки, пароль
+остаётся прежним. `purge` не оставляет ничего.
 
 ---
 

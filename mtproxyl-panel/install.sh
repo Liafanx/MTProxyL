@@ -708,7 +708,7 @@ usage() {
 
 Примеры:
   $0 install                            Последний релиз панели
-  $0 install ${RELEASE_TAG_PREFIX}0.1.0        Конкретная версия
+  $0 install ${RELEASE_TAG_PREFIX}1.0.0        Конкретная версия
   $0 install --from-source=dev          Сборка из ветки dev
   $0 uninstall                          Удалить службу и бинарник
   $0 purge                              Удалить всё
@@ -773,7 +773,7 @@ do_install() {
       say "Релизов ${RELEASE_TAG_PREFIX}* в $REPO не найдено."
       say "Панель выпускается отдельно от MTProxyL. Опубликуйте тег"
       say "'${RELEASE_TAG_PREFIX}X.Y.Z' либо укажите версию явно:"
-      say "  sh install.sh install ${RELEASE_TAG_PREFIX}0.1.0"
+      say "  sh install.sh install ${RELEASE_TAG_PREFIX}1.0.0"
       say "Либо соберите прямо из ветки:"
       say "  sh install.sh install --from-source=dev"
       die "Нет доступного релиза панели"
