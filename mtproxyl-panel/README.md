@@ -49,7 +49,7 @@ systemd-службу установщик не спрашивает — их т�
 `mtproxyl-panel-vX.Y.Z`. Конкретную версию можно указать явно:
 
 ```bash
-sh install-panel.sh install mtproxyl-panel-v1.0.1
+sh install-panel.sh install mtproxyl-panel-v1.0.2
 ```
 
 ### Сборка из ветки, без релиза
