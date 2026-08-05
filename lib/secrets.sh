@@ -337,14 +337,98 @@ secret_list_json() {
         _target_user_ip_lists "$_json" | _flush_user_ip_history "$_USER_IPS_DB"
     fi
 
-    local _i _first=1 _uin _uout
+    # Раньше вся статистика ниже (is_proxy_running, метрики, снимок сессии,
+    # история IP) считалась заново get_persistent_user_stats()/
+    # _user_ip_history_json() НА КАЖДОГО пользователя. is_proxy_running — это
+    # реальный docker inspect/systemctl, а не проверка в памяти; при 20-30+
+    # секретах панель этим одним запросом «Пользователи» устраивала десятки
+    # внешних процессов и по три awk на метрики на каждого. Здесь всё то же
+    # самое собирается один раз на весь список, дальше — только арифметика.
+    declare -A _DB_USER_IN _DB_USER_OUT
+    local _DB_TOTAL_IN=0 _DB_TOTAL_OUT=0
+    _load_traffic_db
+
+    local _running=false
+    is_proxy_running 2>/dev/null && _running=true
+
+    declare -A _CUR_USER_IN _CUR_USER_OUT
+    if $_running; then
+        local _m
+        if _m=$(_fetch_metrics); then
+            local _pu _pi _po
+            while IFS='|' read -r _pu _pi _po; do
+                [ -n "$_pu" ] || continue
+                _CUR_USER_IN["$_pu"]="${_pi:-0}"
+                _CUR_USER_OUT["$_pu"]="${_po:-0}"
+            done < <(echo "$_m" | awk '
+                function lbl(s, k,    p, q) {
+                    p = index(s, k "=\""); if (!p) return ""
+                    s = substr(s, p + length(k) + 2)
+                    q = index(s, "\""); return q ? substr(s, 1, q-1) : ""
+                }
+                /^telemt_user_octets_from_client\{/ { u=lbl($0,"user"); if(u) { rx[u]+=$NF; seen[u]=1 } }
+                /^telemt_user_octets_to_client\{/   { u=lbl($0,"user"); if(u) { tx[u]+=$NF; seen[u]=1 } }
+                END { for (u in seen) printf "%s|%.0f|%.0f\n", u, rx[u]+0, tx[u]+0 }
+            ')
+        fi
+    fi
+
+    declare -A _SNAP_USER_IN _SNAP_USER_OUT
+    local _user_snap_file="${INSTALL_DIR}/relay_stats/user_session_snapshot"
+    if [ -f "$_user_snap_file" ]; then
+        local _spu _spi _spo
+        while IFS='|' read -r _spu _spi _spo; do
+            [ -n "$_spu" ] || continue
+            _SNAP_USER_IN["$_spu"]="${_spi:-0}"
+            _SNAP_USER_OUT["$_spu"]="${_spo:-0}"
+        done < "$_user_snap_file"
+    fi
+
+    declare -A _IP_HIST_JSON
+    if [ -f "$_USER_IPS_DB" ]; then
+        local _ht _hu _hip _hfs _hls _entry
+        while IFS='|' read -r _ht _hu _hip _hfs _hls; do
+            [ "$_ht" = "USER" ] || continue
+            [ -n "$_hu" ] && [ -n "$_hip" ] || continue
+            _entry="{\"ip\":\"$(json_escape "$_hip")\",\"first_seen\":${_hfs:-0},\"last_seen\":${_hls:-0}}"
+            if [ -z "${_IP_HIST_JSON[$_hu]+x}" ]; then
+                _IP_HIST_JSON["$_hu"]="$_entry"
+            else
+                _IP_HIST_JSON["$_hu"]="${_IP_HIST_JSON[$_hu]},$_entry"
+            fi
+        done < "$_USER_IPS_DB"
+    fi
+
+    local _i _first=1 _label _uin _uout _cur_in _cur_out _snap_in _snap_out _unsaved_in _unsaved_out
     printf '['
     for _i in "${!SECRETS_LABELS[@]}"; do
         [ $_first -eq 1 ] || printf ','
         _first=0
-        read -r _uin _uout _ <<< "$(get_persistent_user_stats "${SECRETS_LABELS[$_i]}")"
-        printf '{"label":"%s","secret":"%s","created":%s,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"%s","total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":%s}' \
-            "$(json_escape "${SECRETS_LABELS[$_i]}")" \
+        _label="${SECRETS_LABELS[$_i]}"
+
+        _cur_in="${_CUR_USER_IN[$_label]:-0}"
+        _cur_out="${_CUR_USER_OUT[$_label]:-0}"
+        _snap_in="${_SNAP_USER_IN[$_label]:-0}"
+        _snap_out="${_SNAP_USER_OUT[$_label]:-0}"
+        [[ "$_snap_in" =~ ^[0-9]+$ ]] || _snap_in=0
+        [[ "$_snap_out" =~ ^[0-9]+$ ]] || _snap_out=0
+
+        if [ "${_cur_in:-0}" -ge "$_snap_in" ] 2>/dev/null; then
+            _unsaved_in=$(( ${_cur_in:-0} - _snap_in ))
+        else
+            _unsaved_in="${_cur_in:-0}"
+        fi
+        if [ "${_cur_out:-0}" -ge "$_snap_out" ] 2>/dev/null; then
+            _unsaved_out=$(( ${_cur_out:-0} - _snap_out ))
+        else
+            _unsaved_out="${_cur_out:-0}"
+        fi
+
+        _uin=$(( ${_DB_USER_IN[$_label]:-0} + _unsaved_in ))
+        _uout=$(( ${_DB_USER_OUT[$_label]:-0} + _unsaved_out ))
+
+        printf '{"label":"%s","secret":"%s","created":%s,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"%s","total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":[%s]}' \
+            "$(json_escape "$_label")" \
             "$(json_escape "${SECRETS_KEYS[$_i]}")" \
             "${SECRETS_CREATED[$_i]:-0}" \
             "$([ "${SECRETS_ENABLED[$_i]}" = "true" ] && echo true || echo false)" \
@@ -354,7 +438,7 @@ secret_list_json() {
             "$(json_escape "${SECRETS_EXPIRES[$_i]:-0}")" \
             "$(json_escape "${SECRETS_NOTES[$_i]:-}")" \
             "${_uin:-0}" "${_uout:-0}" "$(( ${_uin:-0} + ${_uout:-0} ))" \
-            "$(_user_ip_history_json "${SECRETS_LABELS[$_i]}" "$_USER_IPS_DB")"
+            "${_IP_HIST_JSON[$_label]:-}"
     done
     printf ']\n'
 }
