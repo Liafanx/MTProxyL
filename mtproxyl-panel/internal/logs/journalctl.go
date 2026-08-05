@@ -61,13 +61,9 @@ func journalctlCommand(ctx context.Context, args []string, withSudo bool) *exec.
 	return exec.CommandContext(ctx, "journalctl", args...)
 }
 
-// deniedJournalOutput reports whether journalctl refused to show the unit's
-// records for lack of privileges.
-//
-// It does not fail in that case: an unprivileged caller gets its own records
-// (usually none), exit status 0 and a note on stderr. Without this check the
-// panel treats that as an empty-but-working journal and never falls back to
-// sudo — the engine's log page stays blank with no explanation.
+// deniedJournalOutput reports whether journalctl refused the unit's records
+// for lack of privileges. It does not fail in that case: exit status is 0 and
+// the refusal is only a note in the output, so checking err alone misses it.
 func deniedJournalOutput(out []byte) bool {
 	return strings.Contains(string(out), "No journal files were opened due to insufficient permissions")
 }
@@ -118,14 +114,9 @@ func startJournalctlStream(ctx context.Context, args []string, withSudo bool) (*
 	return cmd, stdout, stderr, nil
 }
 
-// probeSudoNeeded decides up front whether this stream has to go through sudo.
-//
-// Start() succeeding says nothing about access: without the privileges to read
-// the unit, `journalctl -f` does not follow anything — it prints the hint about
-// insufficient permissions and exits straight away. The stream then closes on
-// its own a moment later, which the UI reports as "Log stream ended
-// unexpectedly". A cheap non-follow probe answers the question before the
-// stream starts, so the fallback happens where it still helps.
+// probeSudoNeeded decides up front whether this stream needs sudo. Start()
+// succeeding says nothing: without privileges `journalctl -f` follows nothing
+// and exits at once, which the UI reports as a stream that ended on its own.
 func (s *journalctlSource) probeSudoNeeded(ctx context.Context) {
 	if s.shouldUseSudo() {
 		return

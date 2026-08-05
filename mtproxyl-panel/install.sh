@@ -243,12 +243,8 @@ join_telemt_group() {
 }
 
 # ── Journal access for engine logs ──────────────────────────────────────────
-#
-# Логи systemd-юнита панель читает через journalctl. Непривилегированному
-# пользователю journald отдаёт только его собственные записи, причём молча:
-# journalctl завершается с кодом 0 и пишет "No journal files were opened due
-# to insufficient permissions" — то есть выглядит как пустой, но исправный
-# журнал. Штатный способ дать доступ — членство в systemd-journal.
+# Без членства в systemd-journal журнал юнита панели не виден, причём молча:
+# journalctl отдаёт пустой вывод с кодом 0.
 join_journal_group() {
   _journal_group=""
   if command -v getent >/dev/null 2>&1; then
@@ -271,11 +267,8 @@ join_journal_group() {
 }
 
 # ── Existing certificates ───────────────────────────────────────────────────
-#
-# Годен ли лежащий в системе сертификат: файлы на месте, покрывает домен и не
-# истекает в ближайшие 30 дней. Наличия файла мало — просроченный никуда не
-# девается, и панель молча поднялась бы с сертификатом, который браузер уже
-# не принимает.
+# Файлы на месте, домен покрыт, до истечения больше 30 дней. Наличия файла
+# мало: просроченный никуда не девается, а браузер его уже не примет.
 cert_is_valid() {
   _dir="$1"
   _domain="$2"
@@ -575,21 +568,9 @@ Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536
 
-# Let's Encrypt (tls.acme_domain) отвечает на HTTP-01-challenge на порту 80,
-# который непривилегированному пользователю панели не забиндить. Даём
-# только эту способность — не root целиком, — и она переживает замену
-# бинарника при самообновлении: capability выдаёт systemd при запуске
-# процесса, а не setcap на файле, который потерялся бы при следующей sudo mv.
-#
-# CapabilityBoundingSet НЕ трогаем: он ограничивает не только сам процесс,
-# но и всё, что тот запускает — включая sudo, которым панель вызывает CLI
-# MTProxyL (internal/mtproxylctl). Явный CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-# урезал бы набор до одной этой capability и для sudo тоже, а sudo для
-# смены на root и инициализации audit-плагина нужны свои (setuid/setgid,
-# CAP_AUDIT_WRITE) — без них он падает с "unable to change to root gid" и
-# "error initializing audit plugin sudoers_audit". По умолчанию (директива
-# не задана) systemd оставляет bounding set полным, ambient-capability
-# добавляется поверх него, а не вместо.
+# Порт 80 для HTTP-01-challenge Let's Encrypt: панель непривилегированная.
+# CapabilityBoundingSet не задаём — он урезал бы и sudo, которым панель
+# вызывает CLI MTProxyL (тот падает без setuid/setgid и CAP_AUDIT_WRITE).
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 
 # Hardening compatible with sudo-based updater operations
@@ -980,11 +961,9 @@ do_install() {
       2)
         TLS_DOMAIN=$(prompt "Домен панели" "")
         [ -n "$TLS_DOMAIN" ] || die "Для Let's Encrypt нужен домен"
-        # Сертификат на этот домен мог уже выпустить certbot — обычно это
-        # selfmask на том же сервере. Тогда собственный ACME панели не нужен и
-        # даже вреден: порт 80 занят nginx заглушки, выпустить через него
-        # нечего, и панель поднимется без сертификата вовсе (TLS handshake
-        # error: acme/autocert: missing certificate). Берём готовый.
+        # Сертификат мог уже выпустить certbot (обычно selfmask). Тогда свой
+        # ACME не поднимаем: порт 80 занят его nginx, и панель осталась бы
+        # без сертификата вовсе.
         if adopt_existing_cert "$TLS_DOMAIN"; then
           TLS_BLOCK="
 [tls]
