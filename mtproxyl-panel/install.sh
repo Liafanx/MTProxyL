@@ -231,9 +231,91 @@ join_telemt_group() {
         || { say "ВНИМАНИЕ: не удалось добавить '$SYSTEM_USER' в группу '$_telemt_group' — добавьте вручную для доступа к конфигу telemt"; return; }
       say "Пользователь '$SYSTEM_USER' добавлен в группу '$_telemt_group' для доступа к конфигу telemt"
     fi
+  elif [ "$MTPROXYL_MODE_DETECTED" = "manager" ]; then
+    # В режиме Manager движок живёт в Docker: ни группы telemt, ни конфига на
+    # хосте нет и быть не должно. Предупреждать не о чем — панель читает конфиг
+    # через CLI MTProxyL, а логи из контейнера.
+    :
   else
     say "ВНИМАНИЕ: группа telemt не найдена — панель не получит доступ к конфигу telemt"
     say "После установки telemt повторите установку или выполните: sudo usermod -aG telemt $SYSTEM_USER"
+  fi
+}
+
+# ── Journal access for engine logs ──────────────────────────────────────────
+#
+# Логи systemd-юнита панель читает через journalctl. Непривилегированному
+# пользователю journald отдаёт только его собственные записи, причём молча:
+# journalctl завершается с кодом 0 и пишет "No journal files were opened due
+# to insufficient permissions" — то есть выглядит как пустой, но исправный
+# журнал. Штатный способ дать доступ — членство в systemd-journal.
+join_journal_group() {
+  _journal_group=""
+  if command -v getent >/dev/null 2>&1; then
+    getent group systemd-journal >/dev/null 2>&1 && _journal_group="systemd-journal"
+  elif grep -q "^systemd-journal:" /etc/group 2>/dev/null; then
+    _journal_group="systemd-journal"
+  fi
+
+  [ -n "$_journal_group" ] || return 0
+
+  if id -nG "$SYSTEM_USER" 2>/dev/null | tr ' ' '\n' | grep -qx "$_journal_group"; then
+    say "Пользователь '$SYSTEM_USER' уже в группе '$_journal_group'"
+    return 0
+  fi
+
+  $SUDO usermod -aG "$_journal_group" "$SYSTEM_USER" 2>/dev/null \
+    || $SUDO adduser "$SYSTEM_USER" "$_journal_group" 2>/dev/null \
+    || { say "ВНИМАНИЕ: не удалось добавить '$SYSTEM_USER' в '$_journal_group' — логи движка будут пустыми"; return 0; }
+  say "Пользователь '$SYSTEM_USER' добавлен в группу '$_journal_group' для чтения логов движка"
+}
+
+# ── Existing certificates ───────────────────────────────────────────────────
+#
+# Годен ли лежащий в системе сертификат: файлы на месте, покрывает домен и не
+# истекает в ближайшие 30 дней. Наличия файла мало — просроченный никуда не
+# девается, и панель молча поднялась бы с сертификатом, который браузер уже
+# не принимает.
+cert_is_valid() {
+  _dir="$1"
+  _domain="$2"
+  [ -f "$_dir/fullchain.pem" ] && [ -f "$_dir/privkey.pem" ] || return 1
+  command -v openssl >/dev/null 2>&1 || return 1
+  $SUDO openssl x509 -in "$_dir/fullchain.pem" -noout -checkend 2592000 >/dev/null 2>&1 || return 1
+  # Домен сверяем по SAN точным совпадением: поиск подстроки принял бы и
+  # чужой сертификат, где наш домен — лишь часть другого имени.
+  $SUDO openssl x509 -in "$_dir/fullchain.pem" -noout -text 2>/dev/null \
+    | grep -oE 'DNS:[^,[:space:]]+' | cut -d: -f2 | grep -Fxq "$_domain"
+}
+
+# Копирует найденный сертификат в каталог панели и сообщает, удалось ли.
+# Панель работает под своим непривилегированным пользователем и читать
+# /etc/letsencrypt не может — поэтому именно копия, а не путь напрямую.
+adopt_existing_cert() {
+  _domain="$1"
+  _src="/etc/letsencrypt/live/$_domain"
+  cert_is_valid "$_src" "$_domain" || return 1
+
+  _until=$($SUDO openssl x509 -in "$_src/fullchain.pem" -noout -enddate 2>/dev/null | cut -d= -f2)
+  say "Найден сертификат Let's Encrypt для $_domain — используем его"
+  [ -n "$_until" ] && say "Действителен до: $_until"
+
+  $SUDO mkdir -p "$DATA_DIR/certs"
+  $SUDO install -o "$SYSTEM_USER" -g "$SYSTEM_USER" -m 0644 \
+    "$_src/fullchain.pem" "$DATA_DIR/certs/panel.crt" 2>/dev/null || return 1
+  $SUDO install -o "$SYSTEM_USER" -g "$SYSTEM_USER" -m 0600 \
+    "$_src/privkey.pem" "$DATA_DIR/certs/panel.key" 2>/dev/null || return 1
+  say "Порт 80 панели не понадобится — продлевает certbot"
+  return 0
+}
+
+port80_busy() {
+  if command -v ss >/dev/null 2>&1; then
+    ss -tln 2>/dev/null | awk '{print $4}' | grep -qE '(^|:|])80$'
+  elif command -v netstat >/dev/null 2>&1; then
+    netstat -tln 2>/dev/null | awk '{print $4}' | grep -qE '(^|:|])80$'
+  else
+    return 1
   fi
 }
 
@@ -671,7 +753,12 @@ do_install() {
   # ── Stage 1: Create system user and directories ─────────────────────────
   warn_legacy_install
   create_system_user
+  # Режим нужен уже здесь: в Manager группы telemt на хосте нет по устройству
+  # (движок в Docker), и предупреждать о её отсутствии не о чем. Позже мастер
+  # настройки вызовет детект ещё раз — он дешёвый и без побочных эффектов.
+  detect_from_mtproxyl >/dev/null 2>&1 || true
   join_telemt_group
+  join_journal_group
   setup_directories
 
   # ── Stage 2: Detect architecture ─────────────────────────────────────────
@@ -893,14 +980,45 @@ do_install() {
       2)
         TLS_DOMAIN=$(prompt "Домен панели" "")
         [ -n "$TLS_DOMAIN" ] || die "Для Let's Encrypt нужен домен"
-        TLS_BLOCK="
+        # Сертификат на этот домен мог уже выпустить certbot — обычно это
+        # selfmask на том же сервере. Тогда собственный ACME панели не нужен и
+        # даже вреден: порт 80 занят nginx заглушки, выпустить через него
+        # нечего, и панель поднимется без сертификата вовсе (TLS handshake
+        # error: acme/autocert: missing certificate). Берём готовый.
+        if adopt_existing_cert "$TLS_DOMAIN"; then
+          TLS_BLOCK="
+[tls]
+cert_file = \"$DATA_DIR/certs/panel.crt\"
+key_file = \"$DATA_DIR/certs/panel.key\""
+        else
+          if port80_busy; then
+            say "ВНИМАНИЕ: порт 80 уже занят — Let's Encrypt не сможет подтвердить домен"
+            say "Освободите его либо выберите вариант 1 (самоподписанный) или 3 (готовый сертификат)"
+          fi
+          TLS_BLOCK="
 [tls]
 acme_domain = \"$TLS_DOMAIN\"
 acme_cache_dir = \"$DATA_DIR/certs\""
+        fi
         ;;
       3)
-        TLS_CERT=$(prompt "Путь к файлу сертификата" "")
-        TLS_KEY=$(prompt "Путь к файлу ключа" "")
+        # Если на сервере уже есть сертификаты Let's Encrypt, показываем их
+        # пути как подсказку: иначе на пустой ввод остаётся только "Нужны оба
+        # пути" и установка обрывается, хотя всё нужное рядом.
+        _cert_default=""
+        _key_default=""
+        if [ -d /etc/letsencrypt/live ]; then
+          _found=$($SUDO sh -c 'ls -1 /etc/letsencrypt/live 2>/dev/null' | grep -v '^README$' | head -1)
+          if [ -n "$_found" ]; then
+            _cert_default="/etc/letsencrypt/live/$_found/fullchain.pem"
+            _key_default="/etc/letsencrypt/live/$_found/privkey.pem"
+            say "Найден сертификат для домена: $_found"
+            printf '  ВАЖНО: панель работает под пользователем %s и читать /etc/letsencrypt не может.\n' "$SYSTEM_USER"
+            printf '  Для этого домена лучше подходит вариант 2 — он сделает копию и настроит продление.\n'
+          fi
+        fi
+        TLS_CERT=$(prompt "Путь к файлу сертификата" "$_cert_default")
+        TLS_KEY=$(prompt "Путь к файлу ключа" "$_key_default")
         [ -n "$TLS_CERT" ] && [ -n "$TLS_KEY" ] || die "Нужны оба пути"
         TLS_BLOCK="
 [tls]
