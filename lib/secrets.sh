@@ -390,7 +390,8 @@ secret_list_json() {
         while IFS='|' read -r _ht _hu _hip _hfs _hls; do
             [ "$_ht" = "USER" ] || continue
             [ -n "$_hu" ] && [ -n "$_hip" ] || continue
-            _entry="{\"ip\":\"$(json_escape "$_hip")\",\"first_seen\":${_hfs:-0},\"last_seen\":${_hls:-0}}"
+            json_escape_fast "$_hip"
+            _entry="{\"ip\":\"${_JSON_ESCAPE_OUT}\",\"first_seen\":${_hfs:-0},\"last_seen\":${_hls:-0}}"
             if [ -z "${_IP_HIST_JSON[$_hu]+x}" ]; then
                 _IP_HIST_JSON["$_hu"]="$_entry"
             else
@@ -399,7 +400,13 @@ secret_list_json() {
         done < "$_USER_IPS_DB"
     fi
 
+    # Дальше — ни одного "$(...)": на сотнях тестовых секретов даже
+    # безобидные json_escape/[[ ]] && echo true, обёрнутые в командную
+    # подстановку, форкают подшелл на каждый вызов. json_escape_fast кладёт
+    # результат в переменную вместо stdout — экранирование то же самое,
+    # подпроцессов ноль.
     local _i _first=1 _label _uin _uout _cur_in _cur_out _snap_in _snap_out _unsaved_in _unsaved_out
+    local _label_esc _secret_esc _expires_esc _notes_esc _enabled_str
     printf '['
     for _i in "${!SECRETS_LABELS[@]}"; do
         [ $_first -eq 1 ] || printf ','
@@ -427,16 +434,22 @@ secret_list_json() {
         _uin=$(( ${_DB_USER_IN[$_label]:-0} + _unsaved_in ))
         _uout=$(( ${_DB_USER_OUT[$_label]:-0} + _unsaved_out ))
 
+        json_escape_fast "$_label";                       _label_esc="$_JSON_ESCAPE_OUT"
+        json_escape_fast "${SECRETS_KEYS[$_i]}";           _secret_esc="$_JSON_ESCAPE_OUT"
+        json_escape_fast "${SECRETS_EXPIRES[$_i]:-0}";     _expires_esc="$_JSON_ESCAPE_OUT"
+        json_escape_fast "${SECRETS_NOTES[$_i]:-}";        _notes_esc="$_JSON_ESCAPE_OUT"
+        if [ "${SECRETS_ENABLED[$_i]}" = "true" ]; then _enabled_str=true; else _enabled_str=false; fi
+
         printf '{"label":"%s","secret":"%s","created":%s,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"%s","total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":[%s]}' \
-            "$(json_escape "$_label")" \
-            "$(json_escape "${SECRETS_KEYS[$_i]}")" \
+            "$_label_esc" \
+            "$_secret_esc" \
             "${SECRETS_CREATED[$_i]:-0}" \
-            "$([ "${SECRETS_ENABLED[$_i]}" = "true" ] && echo true || echo false)" \
+            "$_enabled_str" \
             "${SECRETS_MAX_CONNS[$_i]:-0}" \
             "${SECRETS_MAX_IPS[$_i]:-0}" \
             "${SECRETS_QUOTA[$_i]:-0}" \
-            "$(json_escape "${SECRETS_EXPIRES[$_i]:-0}")" \
-            "$(json_escape "${SECRETS_NOTES[$_i]:-}")" \
+            "$_expires_esc" \
+            "$_notes_esc" \
             "${_uin:-0}" "${_uout:-0}" "$(( ${_uin:-0} + ${_uout:-0} ))" \
             "${_IP_HIST_JSON[$_label]:-}"
     done
