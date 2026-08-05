@@ -2,43 +2,44 @@ package github
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
-	"strings"
 )
 
-// ParseVersion parses a version string like "v1.2.3", "1.2.3", or "v1.2.3-rc1".
+// versionSuffixPattern matches a semver "X.Y.Z" (with optional "-pre") at the
+// end of a string, regardless of what precedes it. Release tags carry a
+// repo/component prefix (e.g. "mtproxyl-panel-v1.0.1"), and a plain
+// TrimPrefix(s, "v") only handles a bare "v1.2.3" — anything else fails to
+// parse and CompareVersions then sorts it as "older" than any real version.
+var versionSuffixPattern = regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.]+))?$`)
+
+// ParseVersion parses a version string like "v1.2.3", "1.2.3", "v1.2.3-rc1",
+// or a prefixed tag like "mtproxyl-panel-v1.2.3".
 // Returns major, minor, patch, pre-release suffix, and error.
 func ParseVersion(s string) (major, minor, patch int, pre string, err error) {
 	if s == "" {
 		return 0, 0, 0, "", fmt.Errorf("empty version string")
 	}
-	s = strings.TrimPrefix(s, "v")
 
-	// Split off pre-release suffix
-	if idx := strings.IndexByte(s, '-'); idx >= 0 {
-		pre = s[idx+1:]
-		s = s[:idx]
-	}
-
-	parts := strings.Split(s, ".")
-	if len(parts) != 3 {
+	m := versionSuffixPattern.FindStringSubmatch(s)
+	if m == nil {
 		return 0, 0, 0, "", fmt.Errorf("invalid version format: %q", s)
 	}
 
-	major, err = strconv.Atoi(parts[0])
+	major, err = strconv.Atoi(m[1])
 	if err != nil {
 		return 0, 0, 0, "", fmt.Errorf("invalid major version: %w", err)
 	}
-	minor, err = strconv.Atoi(parts[1])
+	minor, err = strconv.Atoi(m[2])
 	if err != nil {
 		return 0, 0, 0, "", fmt.Errorf("invalid minor version: %w", err)
 	}
-	patch, err = strconv.Atoi(parts[2])
+	patch, err = strconv.Atoi(m[3])
 	if err != nil {
 		return 0, 0, 0, "", fmt.Errorf("invalid patch version: %w", err)
 	}
 
-	return major, minor, patch, pre, nil
+	return major, minor, patch, m[4], nil
 }
 
 // CompareVersions compares two version strings.

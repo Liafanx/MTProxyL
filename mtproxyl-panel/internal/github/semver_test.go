@@ -18,6 +18,7 @@ func TestParseVersion(t *testing.T) {
 		{"", 0, 0, 0, "", true},
 		{"invalid", 0, 0, 0, "", true},
 		{"v1.2", 0, 0, 0, "", true},
+		{"mtproxyl-panel-v1.0.1", 1, 0, 1, "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -46,10 +47,12 @@ func TestCompareVersions(t *testing.T) {
 		{"v1.0.0", "v1.0.1", -1},
 		{"v2.0.0", "v1.9.9", 1},
 		{"v1.2.0", "v1.1.9", 1},
-		{"3.3.10", "v3.3.9", 1},         // bare vs prefixed
-		{"v1.0.0", "v1.0.0-rc1", 1},     // release > pre-release
-		{"v1.0.0-rc1", "v1.0.0", -1},    // pre-release < release
-		{"v1.0.0-rc2", "v1.0.0-rc1", 1}, // pre-release lexicographic
+		{"3.3.10", "v3.3.9", 1},               // bare vs prefixed
+		{"v1.0.0", "v1.0.0-rc1", 1},           // release > pre-release
+		{"v1.0.0-rc1", "v1.0.0", -1},          // pre-release < release
+		{"v1.0.0-rc2", "v1.0.0-rc1", 1},       // pre-release lexicographic
+		{"mtproxyl-panel-v1.0.1", "1.0.1", 0}, // tag prefix vs bare current version
+		{"mtproxyl-panel-v1.0.2", "1.0.1", 1}, // tag prefix, actually newer
 	}
 	for _, tt := range tests {
 		t.Run(tt.a+"_vs_"+tt.b, func(t *testing.T) {
