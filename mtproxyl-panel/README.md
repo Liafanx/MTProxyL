@@ -148,6 +148,27 @@ curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/main/mtproxyl-pane
 повторная установка находит его и пропускает мастер настройки, пароль
 остаётся прежним. `purge` не оставляет ничего.
 
+### Известные проблемы
+
+**Ubuntu 26+: установка падает на `visudo: invalid sudoers file`.**
+
+```
+sudoers:15:37: syntax error: wildcards are not allowed in command arguments
+mtproxyl-panel ALL=(root) NOPASSWD: /usr/bin/journalctl -u telemt -n * --no-pager -o short-iso
+```
+
+По умолчанию там `sudo` — это sudo-rs (переписанная на Rust реализация), и её
+`visudo` пока не умеет символ `*` в аргументах команд — а часть правил
+sudoers панели на нём держится (например, чтение диапазона строк лога).
+Установщик покажет эту же подсказку прямо в момент ошибки. Лечится
+переключением на классический sudo:
+
+```bash
+sudo update-alternatives --set sudo /usr/bin/sudo.ws
+```
+
+После этого установку можно повторить.
+
 ---
 
 ## Что умеет

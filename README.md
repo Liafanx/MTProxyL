@@ -844,6 +844,11 @@ curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/main/mtproxyl-pane
   режиме Manager — в Reanimator они скрыты, так как требуют владения конфигом.
 - Проверка ограничений сервера (censorcheck) в панель не перенесена: она
   выполняет сторонний скрипт из сети. Команда осталась в меню MTProxyL.
+- **Ubuntu 26+:** если установка падает на `visudo: invalid sudoers file` /
+  `wildcards are not allowed in command arguments` — система переключена на
+  sudo-rs, чей `visudo` пока не поддерживает `*` в аргументах sudoers.
+  `sudo update-alternatives --set sudo /usr/bin/sudo.ws` возвращает
+  классический sudo, после чего установка проходит.
 
 Подробности — [mtproxyl-panel/README.md](mtproxyl-panel/README.md).
 

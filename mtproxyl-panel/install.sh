@@ -28,6 +28,20 @@ LEGACY_CONFIG_DIR="/opt/etc/mtproxyl-panel"
 say()  { printf '[ИНФО]  %s\n' "$*"; }
 die()  { printf '[ОШИБКА] %s\n' "$*" >&2; exit 1; }
 
+# На части систем (Ubuntu 26+) sudo по умолчанию — sudo-rs, и его visudo пока
+# не принимает wildcard (*) в аргументах команд: правила sudoers здесь на них
+# держатся (journalctl -n *, docker ps --filter name=* и т.п.), проверка
+# падает с "wildcards are not allowed in command arguments". Подсказываем
+# сразу тут, а не только в README — иначе искать причину пришлось бы по
+# сырому выводу visudo.
+hint_sudo_rs_wildcards() {
+  say "Если ошибка выше — 'wildcards are not allowed in command arguments':"
+  say "  это sudo-rs (новая реализация sudo в Ubuntu 26+), её visudo пока"
+  say "  не поддерживает символ * в аргументах команд sudoers."
+  say "  Переключитесь на классический sudo и повторите установку:"
+  say "    sudo update-alternatives --set sudo /usr/bin/sudo.ws"
+}
+
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then
   SUDO="sudo"
@@ -413,7 +427,7 @@ EOF
   fi
 
   if [ -n "$_visudo" ]; then
-    $SUDO "$_visudo" -cf "$_tmp" >/dev/null || die "Сгенерированный файл sudoers некорректен"
+    $SUDO "$_visudo" -cf "$_tmp" >/dev/null || { hint_sudo_rs_wildcards; die "Сгенерированный файл sudoers некорректен"; }
   fi
 
   $SUDO mkdir -p "$(dirname "$SUDOERS_FILE")"
@@ -545,7 +559,7 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script pq-check [A-Za-z0-9]*
 EOF
 
   if [ -n "$_visudo" ]; then
-    $SUDO "$_visudo" -cf "$_tmp" >/dev/null || die "Сгенерированный файл sudoers для MTProxyL некорректен"
+    $SUDO "$_visudo" -cf "$_tmp" >/dev/null || { hint_sudo_rs_wildcards; die "Сгенерированный файл sudoers для MTProxyL некорректен"; }
   fi
 
   $SUDO mkdir -p "$(dirname "$MTPROXYL_SUDOERS_FILE")"
