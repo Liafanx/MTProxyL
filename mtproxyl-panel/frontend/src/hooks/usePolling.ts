@@ -30,9 +30,27 @@ export function usePolling<T>(
   }, []);
 
   useEffect(() => {
-    doFetch();
-    const id = setInterval(doFetch, intervalMs);
-    return () => clearInterval(id);
+    // setTimeout, а не setInterval: следующий опрос планируется только после
+    // того, как предыдущий завершился. Опрашиваемые команды идут через CLI
+    // (sudo + запуск bash-скрипта), и под нагрузкой один вызов может занять
+    // больше intervalMs — setInterval в этом случае копил бы запросы один
+    // на другой без предела, а не отставал на шаг.
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const tick = async () => {
+      await doFetch();
+      if (!cancelled) {
+        timeoutId = setTimeout(tick, intervalMs);
+      }
+    };
+
+    void tick();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [doFetch, intervalMs]);
 
   return { data, error, loading, refresh: doFetch };

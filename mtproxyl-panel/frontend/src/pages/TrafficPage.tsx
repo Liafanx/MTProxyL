@@ -50,9 +50,24 @@ export function TrafficPage() {
   }, []);
 
   useEffect(() => {
-    void load();
-    const t = setInterval(() => void load(), 15_000);
-    return () => clearInterval(t);
+    // setTimeout, а не setInterval — см. usePolling.ts: следующий опрос
+    // планируется только после завершения предыдущего, без накопления.
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const tick = async () => {
+      await load();
+      if (!cancelled) {
+        timeoutId = setTimeout(tick, 15_000);
+      }
+    };
+
+    void tick();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [load]);
 
   const directional = report?.directional ?? false;

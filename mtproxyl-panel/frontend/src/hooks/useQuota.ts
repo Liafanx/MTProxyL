@@ -46,9 +46,24 @@ export function useQuota(intervalMs = 10000): UseQuotaResult {
   }, []);
 
   useEffect(() => {
-    doFetch();
-    const id = setInterval(doFetch, intervalMs);
-    return () => clearInterval(id);
+    // setTimeout, а не setInterval — см. usePolling.ts: следующий опрос
+    // планируется только после завершения предыдущего, без накопления.
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const tick = async () => {
+      await doFetch();
+      if (!cancelled) {
+        timeoutId = setTimeout(tick, intervalMs);
+      }
+    };
+
+    void tick();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
   }, [doFetch, intervalMs]);
 
   return { quotaByUser, supported, refresh: doFetch };
