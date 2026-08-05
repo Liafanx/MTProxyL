@@ -126,6 +126,71 @@ func invalidateModeCache() {
 	modeCache.mu.Unlock()
 }
 
+// usersCache coalesces concurrent GET /api/mtproxyl/users into one CLI call.
+//
+// Unlike modeCache, this also dedupes callers that arrive *while* a call is
+// in flight rather than just caching the last result: `secret list --json`
+// starts a full bash interpreter, sources ~30 library files and shells out
+// to the engine's own API, so it is slow enough that several browser tabs
+// (or one tab whose previous poll hasn't returned yet) can pile up dozens of
+// these processes on a single-core host. inFlight is the channel other
+// callers wait on; it is nil when no call is running.
+var usersCache struct {
+	mu       sync.Mutex
+	at       time.Time
+	val      []mtproxylctl.Secret
+	err      error
+	inFlight chan struct{}
+}
+
+const usersCacheTTL = 3 * time.Second
+
+func cachedUsers(ctx context.Context, c *mtproxylctl.Client) ([]mtproxylctl.Secret, error) {
+	usersCache.mu.Lock()
+	if time.Since(usersCache.at) < usersCacheTTL && (usersCache.val != nil || usersCache.err != nil) {
+		v, e := usersCache.val, usersCache.err
+		usersCache.mu.Unlock()
+		return v, e
+	}
+	if ch := usersCache.inFlight; ch != nil {
+		usersCache.mu.Unlock()
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		usersCache.mu.Lock()
+		v, e := usersCache.val, usersCache.err
+		usersCache.mu.Unlock()
+		return v, e
+	}
+	ch := make(chan struct{})
+	usersCache.inFlight = ch
+	usersCache.mu.Unlock()
+
+	// context.Background(), не ctx запроса: если один из клиентов отменит
+	// запрос (закрыл вкладку), опрос всё равно должен доехать и заполнить
+	// кэш для тех, кто его ждёт. c.run сам ограничивает время выполнения.
+	list, err := c.ListSecrets(context.Background())
+
+	usersCache.mu.Lock()
+	usersCache.at = time.Now()
+	usersCache.val, usersCache.err = list, err
+	usersCache.inFlight = nil
+	usersCache.mu.Unlock()
+	close(ch)
+	return list, err
+}
+
+// invalidateUsersCache is called after any write to users so the next read
+// (including one already waiting on a stale in-flight result) sees it.
+func invalidateUsersCache() {
+	usersCache.mu.Lock()
+	usersCache.at = time.Time{}
+	usersCache.val, usersCache.err = nil, nil
+	usersCache.mu.Unlock()
+}
+
 // geoipCache holds the lazily-opened GeoIP database.
 //
 // The panel runs unprivileged and cannot watch the filesystem for a database

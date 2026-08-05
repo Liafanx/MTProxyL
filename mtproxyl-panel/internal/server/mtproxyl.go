@@ -285,7 +285,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		if !guard(w) {
 			return
 		}
-		list, err := client.ListSecrets(r.Context())
+		list, err := cachedUsers(r.Context(), client)
 		if err != nil {
 			writeCLIError(w, "mtproxyl_error", err)
 			return
@@ -310,6 +310,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 			writeCLIError(w, "mtproxyl_error", err)
 			return
 		}
+		invalidateUsersCache()
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 
@@ -322,6 +323,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 			writeCLIError(w, "mtproxyl_error", err)
 			return
 		}
+		invalidateUsersCache()
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 
@@ -339,6 +341,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 			writeCLIError(w, "mtproxyl_error", err)
 			return
 		}
+		invalidateUsersCache()
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 
@@ -358,6 +361,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 			writeCLIError(w, "mtproxyl_error", err)
 			return
 		}
+		invalidateUsersCache()
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 
@@ -370,6 +374,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 			writeCLIError(w, "mtproxyl_error", err)
 			return
 		}
+		invalidateUsersCache()
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 
@@ -389,6 +394,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 			writeCLIError(w, "mtproxyl_error", err)
 			return
 		}
+		invalidateUsersCache()
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 
