@@ -70,8 +70,15 @@ jobs:
               tar czf "mtproxyl-panel-${arch}-linux-${libc}.tar.gz" "$bin"
             done
           done
-          # Установщик ищет один общий checksums.txt и грепает в нём имя архива.
+          # Два разных потребителя — два формата. install.sh (первая установка)
+          # грепает имя архива в одном общем checksums.txt. Само же обновление
+          # панели (internal/panel_updater, унаследовано от telemt_panel) ищет
+          # отдельный "<архив>.sha256" на каждый tar.gz и без него отказывает
+          # с "has no checksum asset", даже когда архив на месте.
           sha256sum ./*.tar.gz | sed 's|\./||' > checksums.txt
+          for f in ./*.tar.gz; do
+            sha256sum "$f" | sed 's|\./||' > "${f%.tar.gz}.sha256"
+          done
           cat checksums.txt
 
       - name: Publish release
@@ -79,5 +86,6 @@ jobs:
         with:
           files: |
             mtproxyl-panel/release/*.tar.gz
+            mtproxyl-panel/release/*.sha256
             mtproxyl-panel/release/checksums.txt
           generate_release_notes: true
