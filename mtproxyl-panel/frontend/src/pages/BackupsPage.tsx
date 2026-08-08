@@ -41,7 +41,7 @@ export function BackupsPage() {
     }
   }, [allowed]);
 
-  const { operation, start, running } = useMtproxylOperation(load, ['backup:']);
+  const { operation, start, dismiss, running } = useMtproxylOperation(load, ['backup:']);
 
   useEffect(() => {
     void load();
@@ -94,7 +94,7 @@ export function BackupsPage() {
       {allowed && (
         <>
       {error && <ErrorAlert message={error} onRetry={load} />}
-      <OperationProgress operation={operation} />
+      <OperationProgress operation={operation} onDismiss={dismiss} />
 
       <Card>
         <CardHeader>

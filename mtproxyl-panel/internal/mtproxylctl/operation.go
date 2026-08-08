@@ -80,6 +80,24 @@ func (r *Runner) Busy() bool {
 	return r.status.Phase == PhaseRunning
 }
 
+// Dismiss clears a finished operation so the UI stops showing its log.
+//
+// The slot is shared and keeps the last result until something else runs, so
+// without this the «готово»/«ошибка» panel with the whole command output comes
+// back on every page load — users reported it as a window that cannot be
+// closed. A running operation is never dropped: its output is the only thing
+// telling the user the server is still working.
+func (r *Runner) Dismiss() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.status.Phase == PhaseRunning {
+		return false
+	}
+	r.status = OperationStatus{Phase: PhaseIdle}
+	r.progress = nil
+	return true
+}
+
 // Start launches fn in the background under the given name.
 //
 // It returns false if another operation is already running. fn receives a

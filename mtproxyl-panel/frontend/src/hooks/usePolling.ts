@@ -38,17 +38,33 @@ export function usePolling<T>(
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
+    // Во вкладке, которую не смотрят, опрашивать нечего.
+    //
+    // Панель обычно висит открытой сутками в фоновой вкладке, и каждый её
+    // опрос — это запуск CLI на сервере. Прятать эту работу от пользователя,
+    // который на неё даже не смотрит, дешевле всего просто не делая её;
+    // при возвращении на вкладку данные обновляются сразу, а не через интервал.
+    const hidden = () => typeof document !== 'undefined' && document.hidden;
+
     const tick = async () => {
-      await doFetch();
+      if (!hidden()) {
+        await doFetch();
+      }
       if (!cancelled) {
         timeoutId = setTimeout(tick, intervalMs);
       }
     };
 
+    const onVisible = () => {
+      if (!cancelled && !hidden()) void doFetch();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
     void tick();
 
     return () => {
       cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
       if (timeoutId) clearTimeout(timeoutId);
     };
   }, [doFetch, intervalMs]);

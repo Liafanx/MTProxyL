@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Loader2, X } from 'lucide-react';
 import type { MtproxylOperation } from '@/lib/api';
 
 const OPERATION_LABELS: Record<string, string> = {
@@ -57,6 +57,27 @@ function tail(text: string, lines: number): string {
 
 interface OperationProgressProps {
   operation: MtproxylOperation | null;
+  /**
+   * Закрыть блок с результатом. Без него отчёт о завершившейся операции висит
+   * до следующего запуска и возвращается после перезагрузки страницы.
+   */
+  onDismiss?: () => void;
+}
+
+/** Крестик в углу блока — единственный способ убрать отчёт о прошлой операции. */
+function DismissButton({ onDismiss }: { onDismiss?: () => void }) {
+  if (!onDismiss) return null;
+  return (
+    <button
+      type="button"
+      onClick={onDismiss}
+      aria-label="Закрыть"
+      title="Закрыть"
+      className="shrink-0 -mt-1 -mr-1 p-1 rounded text-text-secondary hover:text-text-primary hover:bg-background/60 transition-colors"
+    >
+      <X size={16} />
+    </button>
+  );
 }
 
 /**
@@ -67,7 +88,7 @@ interface OperationProgressProps {
  * echoed here — without it a slow step (downloading PQ nginx, waiting on
  * certbot) is indistinguishable from a hang.
  */
-export function OperationProgress({ operation }: OperationProgressProps) {
+export function OperationProgress({ operation, onDismiss }: OperationProgressProps) {
   if (!operation || operation.phase === 'idle') return null;
 
   if (operation.phase === 'running') {
@@ -123,6 +144,7 @@ export function OperationProgress({ operation }: OperationProgressProps) {
             </details>
           )}
         </div>
+        <DismissButton onDismiss={onDismiss} />
       </div>
     );
   }
@@ -143,6 +165,7 @@ export function OperationProgress({ operation }: OperationProgressProps) {
           </pre>
         )}
       </div>
+      <DismissButton onDismiss={onDismiss} />
     </div>
   );
 }

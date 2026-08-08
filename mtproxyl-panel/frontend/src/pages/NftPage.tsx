@@ -84,7 +84,7 @@ export function NftPage() {
     }
   }, []);
 
-  const { operation, start, running } = useMtproxylOperation(load, ['nft:']);
+  const { operation, start, dismiss, running } = useMtproxylOperation(load, ['nft:']);
 
   useEffect(() => {
     void load();
@@ -177,7 +177,7 @@ export function NftPage() {
           {notice}
         </div>
       )}
-      <OperationProgress operation={operation} />
+      <OperationProgress operation={operation} onDismiss={dismiss} />
 
       {loading && !status ? (
         <div className="text-sm text-text-secondary">Загрузка…</div>

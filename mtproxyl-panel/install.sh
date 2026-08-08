@@ -983,6 +983,25 @@ do_install() {
 [tls]
 cert_file = \"$DATA_DIR/certs/panel.crt\"
 key_file = \"$DATA_DIR/certs/panel.key\""
+        elif port80_busy && [ -x "$MTPROXYL_SCRIPT" ]; then
+          # Порт 80 держит кто-то ещё — почти всегда nginx Selfmask, и он
+          # держит его постоянно. Свой ACME в панели тут бесполезен: она не
+          # сможет ни занять порт, ни подтвердить домен. Выпуск отдаём
+          # MTProxyL: он либо проведёт challenge через webroot уже работающей
+          # заглушки, либо остановит её ровно на время выпуска.
+          say "Порт 80 занят — сертификат выпустит MTProxyL после установки службы"
+          say "(заглушка Selfmask при этом либо не трогается, либо встанет на несколько секунд)"
+          TLS_EMAIL=$(prompt "Email для Let's Encrypt" "")
+          [ -n "$TLS_EMAIL" ] || die "Для выпуска сертификата нужен email"
+          ISSUE_CERT_AFTER_INSTALL="yes"
+          # До выпуска панель поднимаем на самоподписанном: без [tls] она
+          # слушала бы открытый HTTP, а пароль администратора уходит в первом
+          # же запросе.
+          TLS_BLOCK="
+[tls]
+self_signed = true
+cert_file = \"$DATA_DIR/certs/panel.crt\"
+key_file = \"$DATA_DIR/certs/panel.key\""
         else
           if port80_busy; then
             say "ВНИМАНИЕ: порт 80 уже занят — Let's Encrypt не сможет подтвердить домен"
@@ -1116,6 +1135,20 @@ session_ttl = \"24h\"${TLS_BLOCK}"
   $SUDO systemctl enable "$SERVICE_NAME"
   $SUDO systemctl start "$SERVICE_NAME"
   say "Служба $SERVICE_NAME запущена и включена в автозагрузку"
+
+  # Порт 80 занят — выпуск сертификата умеет только MTProxyL (см. выше).
+  # Делаем это уже после старта службы: команда сама перепишет [tls] в конфиге
+  # панели на выпущенные файлы и перезапустит её.
+  if [ "${ISSUE_CERT_AFTER_INSTALL:-}" = "yes" ]; then
+    printf '\n'
+    say "Выпуск сертификата Let's Encrypt для $TLS_DOMAIN..."
+    if $SUDO "$MTPROXYL_SCRIPT" panel cert "$TLS_DOMAIN" "$TLS_EMAIL"; then
+      say "Сертификат выпущен и передан панели"
+    else
+      say "ВНИМАНИЕ: выпустить сертификат не удалось — панель осталась на самоподписанном"
+      say "Повторить позже: sudo mtproxyl panel cert $TLS_DOMAIN $TLS_EMAIL"
+    fi
+  fi
 
   # ── Stage 6: Done ───────────────────────────────────────────────────────
   _ip=$(hostname -I 2>/dev/null | awk '{print $1}') || _ip="<server-ip>"

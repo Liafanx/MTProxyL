@@ -192,54 +192,56 @@ _flush_user_ip_history() {
     local _db_file="$1"
     [ -n "$_db_file" ] || return 0
     mkdir -p "${INSTALL_DIR}/relay_stats" 2>/dev/null
-
-    declare -A _FIRST=() _LAST=()
-    if [ -f "$_db_file" ]; then
-        local _t _u _ip _fs _ls
-        while IFS='|' read -r _t _u _ip _fs _ls; do
-            [ "$_t" = "USER" ] || continue
-            [ -z "$_u" ] || [ -z "$_ip" ] && continue
-            _FIRST["${_u}|${_ip}"]="${_fs:-0}"
-            _LAST["${_u}|${_ip}"]="${_ls:-0}"
-        done < "$_db_file"
-    fi
+    # awk ниже читает базу как файл — пустой годится, отсутствующий нет.
+    [ -f "$_db_file" ] || : > "$_db_file"
 
     local _now; _now=$(date +%s)
-    local _u _ip _key
-    while IFS='|' read -r _u _ip; do
-        [ -z "$_u" ] || [ -z "$_ip" ] && continue
-        _key="${_u}|${_ip}"
-        if [ -n "${_FIRST[$_key]:-}" ]; then
-            _LAST["$_key"]="$_now"
-            continue
-        fi
-        # Новый IP этого пользователя — если лимит уже набран, вытесняем тот,
-        # что дольше всех не появлялся, а не первый попавшийся.
-        local _count=0 _k
-        for _k in "${!_FIRST[@]}"; do
-            case "$_k" in "${_u}|"*) _count=$((_count + 1)) ;; esac
-        done
-        if [ "$_count" -ge "$_USER_IP_HISTORY_CAP" ]; then
-            local _oldest_key="" _oldest_ts=""
-            for _k in "${!_FIRST[@]}"; do
-                case "$_k" in "${_u}|"*)
-                    if [ -z "$_oldest_ts" ] || [ "${_LAST[$_k]:-0}" -lt "$_oldest_ts" ]; then
-                        _oldest_ts="${_LAST[$_k]:-0}"; _oldest_key="$_k"
-                    fi ;;
-                esac
-            done
-            [ -n "$_oldest_key" ] && { unset "_FIRST[$_oldest_key]"; unset "_LAST[$_oldest_key]"; }
-        fi
-        _FIRST["$_key"]="$_now"
-        _LAST["$_key"]="$_now"
-    done
-
     local _tmp="${_db_file}.tmp.$$"
-    local _k
-    for _k in "${!_FIRST[@]}"; do
-        _u="${_k%%|*}"; _ip="${_k#*|}"
-        printf 'USER|%s|%s|%s|%s\n' "$_u" "$_ip" "${_FIRST[$_k]}" "${_LAST[$_k]}"
-    done > "$_tmp" 2>/dev/null
+
+    # Слияние целиком в awk, вытеснение — сортировкой.
+    #
+    # На чистом bash это разорялось на вложенных циклах: чтобы вытеснить самый
+    # старый адрес, на КАЖДЫЙ новый IP дважды перебиралась вся база. При
+    # заполненной истории (200 адресов × 120 пользователей) один флаш занимал
+    # около 40 секунд процессорного времени — а панель просит список
+    # пользователей каждые 10 секунд, и ядро было занято непрерывно. Здесь
+    # один проход awk и одна сортировка: и то и другое линейно и в C.
+    #
+    # Формат промежуточных строк: пользователь|last|ip|first. last вторым
+    # полем специально — по нему сортируем убыванием, и после сортировки
+    # первые cap строк каждого пользователя это ровно те адреса, что видели
+    # позже всех.
+    awk -v now="$_now" '
+        NR == FNR {
+            if (substr($0, 1, 5) != "USER|") next
+            n = split($0, f, "|")
+            if (n < 3 || f[2] == "" || f[3] == "") next
+            k = f[2] SUBSEP f[3]
+            if (!(k in first)) { nk++; ku[nk] = f[2]; ki[nk] = f[3]; kk[nk] = k }
+            first[k] = (n > 3 && f[4] != "") ? f[4] : 0
+            last[k]  = (n > 4 && f[5] != "") ? f[5] : 0
+            next
+        }
+        {
+            n = split($0, f, "|")
+            if (n < 2 || f[1] == "" || f[2] == "") next
+            k = f[1] SUBSEP f[2]
+            if (!(k in first)) { nk++; ku[nk] = f[1]; ki[nk] = f[2]; kk[nk] = k; first[k] = now }
+            last[k] = now
+        }
+        END {
+            for (i = 1; i <= nk; i++) {
+                k = kk[i]
+                printf "%s|%s|%s|%s\n", ku[i], last[k], ki[i], first[k]
+            }
+        }
+    ' "$_db_file" - 2>/dev/null \
+        | sort -t'|' -k1,1 -k2,2nr 2>/dev/null \
+        | awk -F'|' -v cap="$_USER_IP_HISTORY_CAP" '
+            $1 != prev { prev = $1; n = 0 }
+            { n++; if (n <= cap) printf "USER|%s|%s|%s|%s\n", $1, $3, $4, $2 }
+        ' > "$_tmp" 2>/dev/null
+
     mv "$_tmp" "$_db_file" 2>/dev/null
     chmod 600 "$_db_file" 2>/dev/null
 }
@@ -686,37 +688,96 @@ _traffic_json_manager() {
         done
     fi
 
-    local _rows="" _first=1 _idx=0
+    # Всё общее — один раз на весь список.
+    #
+    # Раньше на каждого пользователя вызывались get_persistent_user_stats и
+    # get_user_stats, а внутри них — is_proxy_running (это настоящий docker
+    # inspect), _fetch_metrics (запрос к движку) и по три awk на разбор
+    # ответа. То есть на 30 секретах панель на каждый опрос трафика делала
+    # 60 запросов метрик и 30 docker inspect. Здесь метрики забираются один
+    # раз, база и снимок читаются один раз, а в цикле остаётся арифметика.
+    declare -A _DB_USER_IN=() _DB_USER_OUT=()
+    _DB_TOTAL_IN=0; _DB_TOTAL_OUT=0
+    _load_traffic_db
+
+    local _running=false
+    is_proxy_running 2>/dev/null && _running=true
+
+    declare -A _CUR_IN=() _CUR_OUT=() _CUR_CONNS=()
+    if $_running; then
+        local _mu _mi _mo _mc
+        while IFS='|' read -r _mu _mi _mo _mc; do
+            [ -n "$_mu" ] || continue
+            _CUR_IN["$_mu"]="${_mi:-0}"; _CUR_OUT["$_mu"]="${_mo:-0}"; _CUR_CONNS["$_mu"]="${_mc:-0}"
+        done < <(_metrics_user_table 2>/dev/null)
+    fi
+
+    declare -A _SNAP_IN=() _SNAP_OUT=()
+    local _user_snap_file="${INSTALL_DIR}/relay_stats/user_session_snapshot"
+    if [ -f "$_user_snap_file" ]; then
+        local _pu _pi _po
+        while IFS='|' read -r _pu _pi _po; do
+            [ -n "$_pu" ] || continue
+            _SNAP_IN["$_pu"]="${_pi:-0}"; _SNAP_OUT["$_pu"]="${_po:-0}"
+        done < "$_user_snap_file"
+    fi
+
+    # Метка → включён ли: поиск по массиву на каждого давал квадрат.
+    local _se_active=false
+    _superexpert_active && _se_active=true
+    declare -A _ENABLED_BY_LABEL=()
+    if ! $_se_active; then
+        local _idx
+        for _idx in "${!SECRETS_LABELS[@]}"; do
+            _ENABLED_BY_LABEL["${SECRETS_LABELS[$_idx]}"]="${SECRETS_ENABLED[$_idx]}"
+        done
+    fi
+
+    local _rows="" _first=1
+    local _si _so _ui _uo _unsaved_in _unsaved_out _en _label_esc _row
     declare -A _KNOWN=()
     for label in "${_labels[@]}"; do
         _KNOWN["$label"]=1
-        local u_in u_out u_conns su_in su_out su_conns
-        read -r u_in u_out u_conns <<< "$(get_persistent_user_stats "$label")"
-        read -r su_in su_out su_conns <<< "$(get_user_stats "$label")"
 
-        local _en="true"
-        if ! _superexpert_active; then
-            _en="false"
-            for _idx in "${!SECRETS_LABELS[@]}"; do
-                [ "${SECRETS_LABELS[$_idx]}" = "$label" ] && { _en="${SECRETS_ENABLED[$_idx]}"; break; }
-            done
+        _si="${_SNAP_IN[$label]:-0}"; [[ "$_si" =~ ^[0-9]+$ ]] || _si=0
+        _so="${_SNAP_OUT[$label]:-0}"; [[ "$_so" =~ ^[0-9]+$ ]] || _so=0
+        local _ci="${_CUR_IN[$label]:-0}" _co="${_CUR_OUT[$label]:-0}"
+
+        if [ "${_ci:-0}" -ge "$_si" ] 2>/dev/null; then
+            _unsaved_in=$(( ${_ci:-0} - _si ))
+        else
+            _unsaved_in="${_ci:-0}"
         fi
-        [ "$_en" = "true" ] || _en="false"
+        if [ "${_co:-0}" -ge "$_so" ] 2>/dev/null; then
+            _unsaved_out=$(( ${_co:-0} - _so ))
+        else
+            _unsaved_out="${_co:-0}"
+        fi
 
+        _ui=$(( ${_DB_USER_IN[$label]:-0} + _unsaved_in ))
+        _uo=$(( ${_DB_USER_OUT[$label]:-0} + _unsaved_out ))
+
+        if $_se_active; then
+            _en="true"
+        elif [ "${_ENABLED_BY_LABEL[$label]:-false}" = "true" ]; then
+            _en="true"
+        else
+            _en="false"
+        fi
+
+        json_escape_fast "$label"; _label_esc="$_JSON_ESCAPE_OUT"
         [ $_first -eq 1 ] || _rows+=","
         _first=0
-        _rows+=$(printf '{"user":"%s","in":%s,"out":%s,"total":%s,"session_in":%s,"session_out":%s,"connections":%s,"unique_ips":0,"enabled":%s,"deleted":false}' \
-            "$(json_escape "$label")" "${u_in:-0}" "${u_out:-0}" "$(( ${u_in:-0} + ${u_out:-0} ))" \
-            "${su_in:-0}" "${su_out:-0}" "${su_conns:-0}" "$_en")
+        printf -v _row '{"user":"%s","in":%s,"out":%s,"total":%s,"session_in":%s,"session_out":%s,"connections":%s,"unique_ips":0,"enabled":%s,"deleted":false}' \
+            "$_label_esc" "$_ui" "$_uo" "$(( _ui + _uo ))" \
+            "${_ci:-0}" "${_co:-0}" "${_CUR_CONNS[$label]:-0}" "$_en"
+        _rows+="$_row"
     done
 
     # Трафик удалённых пользователей никуда не девается: он был израсходован и
     # учтён в TOTAL. Раньше их строки просто не показывались, и сумма по
     # пользователям не сходилась с «всего» без объяснения. Собираем остаток в
     # одну помеченную строку вместо того, чтобы прятать его или чистить базу.
-    declare -A _DB_USER_IN=() _DB_USER_OUT=()
-    _DB_TOTAL_IN=0; _DB_TOTAL_OUT=0
-    _load_traffic_db
     local _di=0 _do=0 _u
     for _u in "${!_DB_USER_IN[@]}"; do
         [ -n "${_KNOWN[$_u]:-}" ] && continue
@@ -795,10 +856,16 @@ _traffic_json_reanimator() {
         _tc=$(( _tc + ${_CONNS[$_u]:-0} ))
         [ $_first -eq 1 ] || _rows+=","
         _first=0
-        _rows+=$(printf '{"user":"%s","in":%s,"out":%s,"total":%s,"session_in":%s,"session_out":%s,"connections":%s,"unique_ips":%s,"enabled":%s,"deleted":false}' \
-            "$(json_escape "$_u")" "$_ai" "$_ao" "$_at" "${_i:-0}" "${_o:-0}" \
-            "${_CONNS[$_u]:-0}" "${_IPS[$_u]:-0}" \
-            "$([ "${_ENABLED[$_u]:-true}" = "false" ] && echo false || echo true)")
+        # Без "$(...)" на каждого пользователя: три подстановки в строке — это
+        # три подшелла, и на нескольких десятках секретов они стоили больше,
+        # чем вся остальная сборка ответа.
+        local _u_esc _en_str _row
+        json_escape_fast "$_u"; _u_esc="$_JSON_ESCAPE_OUT"
+        if [ "${_ENABLED[$_u]:-true}" = "false" ]; then _en_str=false; else _en_str=true; fi
+        printf -v _row '{"user":"%s","in":%s,"out":%s,"total":%s,"session_in":%s,"session_out":%s,"connections":%s,"unique_ips":%s,"enabled":%s,"deleted":false}' \
+            "$_u_esc" "$_ai" "$_ao" "$_at" "${_i:-0}" "${_o:-0}" \
+            "${_CONNS[$_u]:-0}" "${_IPS[$_u]:-0}" "$_en_str"
+        _rows+="$_row"
     done <<< "$_cur"
 
     # Пользователи, которых у цели больше нет: трафик они израсходовали, и

@@ -316,12 +316,274 @@ panel_show_status() {
     echo ""
 }
 
+# ── Let's Encrypt для панели ─────────────────────────────────────────────────
+#
+# Панель умеет ACME сама, но только когда порт 80 свободен: она поднимает на
+# нём свой обработчик challenge. С включённым Selfmask порт 80 постоянно занят
+# его nginx, и выпуск падал с «порт занят» — а останавливать заглушку руками
+# ради сертификата пользователю неоткуда знать.
+#
+# Здесь сертификат выпускает certbot, а панель получает готовую копию файлов:
+# так порт 80 либо не нужен вовсе (challenge отдаёт nginx selfmask из общего
+# webroot), либо занят ровно на время выпуска.
+PANEL_CERT_DIR="/var/lib/mtproxyl-panel/certs"
+
+# Годен ли сертификат: не истекает в ближайший месяц и выписан на этот домен.
+_panel_cert_is_valid() {
+    local _dir="$1" _domain="$2"
+    [ -f "${_dir}/fullchain.pem" ] && [ -f "${_dir}/privkey.pem" ] || return 1
+    command -v openssl &>/dev/null || return 1
+    openssl x509 -in "${_dir}/fullchain.pem" -noout -checkend 2592000 &>/dev/null || return 1
+    openssl x509 -in "${_dir}/fullchain.pem" -noout -text 2>/dev/null \
+        | grep -oE 'DNS:[^,[:space:]]+' | cut -d: -f2 | grep -Fxq "$_domain"
+}
+
+# Домен, на который панель хочет (или уже имеет) сертификат.
+panel_cert_domain() {
+    local _cfg="${PANEL_CONFIG_DIR}/config.toml"
+    [ -f "$_cfg" ] || return 1
+    local _d
+    _d=$(grep -oE '^[[:space:]]*acme_domain[[:space:]]*=[[:space:]]*"[^"]+"' "$_cfg" 2>/dev/null \
+        | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+    if [ -z "$_d" ] && [ -f "${PANEL_CERT_DIR}/panel.crt" ]; then
+        _d=$(openssl x509 -in "${PANEL_CERT_DIR}/panel.crt" -noout -text 2>/dev/null \
+            | grep -oE 'DNS:[^,[:space:]]+' | cut -d: -f2 | head -1)
+    fi
+    [ -n "$_d" ] || return 1
+    echo "$_d"
+}
+
+# Отдаёт панели копию сертификата и переводит её конфиг на файлы.
+#
+# Копия, а не путь в /etc/letsencrypt: панель работает под своим
+# непривилегированным пользователем и читать оттуда не может.
+_panel_adopt_cert() {
+    local _lineage="$1"
+    local _cfg="${PANEL_CONFIG_DIR}/config.toml"
+
+    id mtproxyl-panel &>/dev/null || { log_error "Пользователь mtproxyl-panel не найден"; return 1; }
+    [ -f "$_cfg" ] || { log_error "Конфиг панели не найден: ${_cfg}"; return 1; }
+
+    mkdir -p "$PANEL_CERT_DIR"
+    install -o mtproxyl-panel -g mtproxyl-panel -m 0644 \
+        "${_lineage}/fullchain.pem" "${PANEL_CERT_DIR}/panel.crt" || {
+        log_error "Не удалось скопировать сертификат для панели"; return 1; }
+    install -o mtproxyl-panel -g mtproxyl-panel -m 0600 \
+        "${_lineage}/privkey.pem" "${PANEL_CERT_DIR}/panel.key" || {
+        log_error "Не удалось скопировать ключ для панели"; return 1; }
+
+    # acme_domain снимаем: с ним панель продолжит занимать порт 80 под свой
+    # (теперь не нужный) обработчик challenge.
+    local _tmp; _tmp=$(_mktemp) || return 1
+    awk -v certs="$PANEL_CERT_DIR" '
+        /^[[:space:]]*acme_domain[[:space:]]*=/    { next }
+        /^[[:space:]]*acme_cache_dir[[:space:]]*=/ { next }
+        /^[[:space:]]*cert_file[[:space:]]*=/      { next }
+        /^[[:space:]]*key_file[[:space:]]*=/       { next }
+        /^\[tls\]/ {
+            print
+            print "cert_file = \"" certs "/panel.crt\""
+            print "key_file = \"" certs "/panel.key\""
+            found=1
+            next
+        }
+        { print }
+        END { if (!found) exit 3 }
+    ' "$_cfg" > "$_tmp" || {
+        log_error "В конфиге панели нет секции [tls] — добавьте её и повторите"
+        return 1
+    }
+
+    cat "$_tmp" > "$_cfg"
+    chown mtproxyl-panel:mtproxyl-panel "$_cfg" 2>/dev/null || true
+    chmod 600 "$_cfg" 2>/dev/null || true
+    log_success "Панель переведена на выпущенный сертификат"
+    return 0
+}
+
+# Умеет ли работающий nginx selfmask отдать HTTP-01 за нас.
+#
+# Тогда порт 80 останавливать не нужно вовсе: challenge кладётся в тот же
+# webroot, и заглушка продолжает работать. Проверяем не разбором конфига, а
+# делом: кладём пробный файл и просим его у порта 80 с нужным Host. Конфиг
+# бывает старый (без challenge в default_server), да и отдать файл может
+# кто-то совсем другой.
+_panel_selfmask_serves_acme() {
+    local _domain="$1"
+    [ -n "$_domain" ] || return 1
+    [ -n "${SELFMASK_SITE_DIR:-}" ] && [ -d "$SELFMASK_SITE_DIR" ] || return 1
+    systemctl is-active "${SELFMASK_PQ_SERVICE:-mtproxyl-pq-nginx.service}" &>/dev/null || return 1
+    command -v curl &>/dev/null || return 1
+
+    local _dir="${SELFMASK_SITE_DIR}/.well-known/acme-challenge"
+    mkdir -p "$_dir" 2>/dev/null || return 1
+    local _token="mtproxyl-probe-$$"
+    printf 'ok' > "${_dir}/${_token}" 2>/dev/null || return 1
+    chmod 644 "${_dir}/${_token}" 2>/dev/null || true
+
+    local _code
+    _code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+        -H "Host: ${_domain}" \
+        "http://127.0.0.1/.well-known/acme-challenge/${_token}" 2>/dev/null)
+    rm -f "${_dir}/${_token}" 2>/dev/null || true
+    [ "$_code" = "200" ]
+}
+
+# Кто сейчас держит порт 80 — из тех, кого мы вправе трогать.
+_panel_port80_holders() {
+    local _out=""
+    systemctl is-active "${SELFMASK_PQ_SERVICE:-mtproxyl-pq-nginx.service}" &>/dev/null \
+        && _out+="${SELFMASK_PQ_SERVICE:-mtproxyl-pq-nginx.service} "
+    systemctl is-active nginx &>/dev/null && _out+="nginx "
+    systemctl is-active apache2 &>/dev/null && _out+="apache2 "
+    echo "$_out"
+}
+
+_panel_port80_busy() {
+    local _listen=""
+    if command -v ss &>/dev/null; then
+        _listen=$(ss -tln 2>/dev/null)
+    elif command -v netstat &>/dev/null; then
+        _listen=$(netstat -tln 2>/dev/null)
+    else
+        return 1
+    fi
+    printf '%s\n' "$_listen" | awk '{print $4}' | grep -qE '(^|:|])80$'
+}
+
+# Выпуск сертификата Let's Encrypt для панели.
+panel_issue_cert() {
+    check_root || return 1
+    panel_installed || { log_error "Панель не установлена"; return 1; }
+
+    local _domain="${1:-}" _email="${2:-}"
+
+    echo ""
+    draw_header "СЕРТИФИКАТ LET'S ENCRYPT ДЛЯ ПАНЕЛИ"
+    echo ""
+
+    if [ -z "$_domain" ]; then
+        local _suggest; _suggest=$(panel_cert_domain 2>/dev/null)
+        echo -en "  ${BOLD}Домен панели${_suggest:+ [${_suggest}]}:${NC} "
+        read_line _domain
+        [ -n "$_domain" ] || _domain="$_suggest"
+    fi
+    [ -n "$_domain" ] || { log_error "Домен не задан"; return 1; }
+    if ! validate_domain "$_domain"; then
+        log_error "Некорректный домен: ${_domain}"
+        return 1
+    fi
+
+    local _lineage="/etc/letsencrypt/live/${_domain}"
+
+    # Сертификат мог уже выпустить selfmask на этот же домен — тогда всё, что
+    # нужно, это отдать копию панели.
+    if _panel_cert_is_valid "$_lineage" "$_domain"; then
+        log_success "Сертификат для ${_domain} уже есть — используем его"
+        _panel_adopt_cert "$_lineage" || return 1
+        _panel_finish_cert
+        return 0
+    fi
+
+    if ! command -v certbot &>/dev/null; then
+        log_info "Устанавливаем certbot..."
+        _wait_apt 2>/dev/null || true
+        apt-get update -qq &>/dev/null || true
+        apt-get install -y -qq certbot &>/dev/null || {
+            log_error "Не удалось установить certbot"
+            log_info "Поставьте его вручную (apt install certbot) и повторите"
+            return 1
+        }
+    fi
+
+    if [ -z "$_email" ]; then
+        echo -en "  ${BOLD}Email для Let's Encrypt${SELFMASK_CERT_EMAIL:+ [${SELFMASK_CERT_EMAIL}]}:${NC} "
+        read_line _email
+        [ -n "$_email" ] || _email="${SELFMASK_CERT_EMAIL:-}"
+    fi
+    [ -n "$_email" ] || { log_error "Email обязателен для выпуска сертификата"; return 1; }
+
+    echo ""
+    log_info "Домен: ${_domain}"
+
+    local _rc=1
+    if _panel_selfmask_serves_acme "$_domain"; then
+        # Ничего останавливать не нужно: заглушка сама отдаёт challenge.
+        log_info "Проверку домена отдаёт nginx Selfmask — порт 80 не освобождаем"
+        certbot certonly --webroot -w "$SELFMASK_SITE_DIR" \
+            -d "$_domain" --non-interactive --agree-tos -m "$_email" \
+            --cert-name "$_domain" && _rc=0
+    else
+        local _stopped=""
+        if _panel_port80_busy; then
+            local _holders; _holders=$(_panel_port80_holders)
+            if [ -z "$_holders" ]; then
+                log_error "Порт 80 занят посторонним процессом — освободите его и повторите"
+                return 1
+            fi
+            echo ""
+            log_warn "Порт 80 занят: ${_holders}"
+            echo -e "  ${DIM}На время выпуска эти службы будут остановлены и сразу запущены обратно.${NC}"
+            echo -e "  ${DIM}Обычно это несколько секунд.${NC}"
+            echo ""
+            echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
+            local _yn; read_line _yn
+            [[ "$_yn" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
+
+            local _svc
+            for _svc in $_holders; do
+                systemctl stop "$_svc" &>/dev/null && _stopped+="${_svc} "
+            done
+            [ -n "$_stopped" ] && log_info "Временно остановлено: ${_stopped}"
+        fi
+
+        certbot certonly --standalone \
+            -d "$_domain" --non-interactive --agree-tos -m "$_email" \
+            --cert-name "$_domain" && _rc=0
+
+        # Возвращаем всё на место в любом случае — и после ошибки тоже.
+        local _svc
+        for _svc in $_stopped; do
+            systemctl start "$_svc" &>/dev/null || log_warn "Не удалось запустить обратно: ${_svc}"
+        done
+        [ -n "$_stopped" ] && log_info "Остановленные службы запущены обратно"
+    fi
+
+    if [ "$_rc" -ne 0 ]; then
+        log_error "Не удалось выпустить сертификат"
+        log_info "Проверьте A-запись домена ${_domain} на этот сервер и доступность порта 80 извне"
+        return 1
+    fi
+    log_success "Сертификат получен"
+
+    _panel_adopt_cert "$_lineage" || return 1
+    # Продление тоже должно доехать до панели: хук копирует новые файлы и
+    # перезапускает её.
+    _selfmask_install_deploy_hook 2>/dev/null || true
+    _panel_finish_cert
+}
+
+# Перезапуск панели и подсказка по адресу — общий хвост выпуска/принятия.
+_panel_finish_cert() {
+    if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ]; then
+        log_warn "Панель прочитает сертификат после перезапуска:"
+        log_info "  sudo systemctl restart ${PANEL_SERVICE}"
+        return 0
+    fi
+    systemctl restart "$PANEL_SERVICE" &>/dev/null \
+        && log_success "Панель перезапущена" \
+        || log_warn "Перезапустите панель вручную: mtproxyl panel restart"
+    local _addr; _addr=$(panel_listen_addr 2>/dev/null)
+    [ -n "$_addr" ] && log_info "Адрес: https://${_addr}"
+}
+
 handle_panel_command() {
     case "${1:-status}" in
         install)   panel_install ;;
         uninstall) panel_uninstall ;;
         restart)   panel_restart ;;
         password)  panel_password ;;
+        cert)      panel_issue_cert "${2:-}" "${3:-}" ;;
         status)    panel_show_status ;;
         *)
             echo -e "  ${BOLD}MTProxyL-Panel (веб-панель):${NC}"
@@ -329,6 +591,8 @@ handle_panel_command() {
             echo -e "    ${GREEN}panel install${NC}    Установить / переустановить"
             echo -e "    ${GREEN}panel restart${NC}    Перезапустить"
             echo -e "    ${GREEN}panel password${NC}   Сменить пароль администратора"
+            echo -e "    ${GREEN}panel cert${NC} [домен] [email]"
+            echo -e "                     Выпустить сертификат Let's Encrypt"
             echo -e "    ${GREEN}panel uninstall${NC}  Удалить"
             ;;
     esac
@@ -346,6 +610,10 @@ tui_panel_menu() {
             echo -e "  ${CYAN}[3]${NC}  Сменить пароль администратора"
             echo -e "  ${CYAN}[4]${NC}  Показать логи"
             echo -e "  ${CYAN}[5]${NC}  Удалить"
+            echo -e "  ${CYAN}[6]${NC}  Выпустить сертификат Let's Encrypt"
+            if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+                echo -e "      ${DIM}порт 80 занят Selfmask — выпуск это учитывает${NC}"
+            fi
         else
             echo -e "  ${CYAN}[1]${NC}  Установить"
             echo ""
@@ -364,6 +632,7 @@ tui_panel_menu() {
                 3) panel_password; press_any_key ;;
                 4) journalctl -u "$PANEL_SERVICE" -n 50 --no-pager; press_any_key ;;
                 5) panel_uninstall; press_any_key ;;
+                6) panel_issue_cert; press_any_key ;;
                 0|"") return ;;
             esac
         else

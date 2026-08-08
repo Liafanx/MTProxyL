@@ -68,23 +68,15 @@ tui_settings_menu() {
                 echo -en "  ${BOLD}IP/домен [${CUSTOM_IP:-авто}]:${NC} "
                 local ip=""
                 read_line ip
+                # Через handle_ip_command, а не своим save_settings: там же
+                # перегенерируется конфиг движка, иначе ссылки в панели и у
+                # самого движка остаются со старым адресом.
                 case "$ip" in
-                    auto|clear|AUTO|CLEAR)
-                        CUSTOM_IP=""
-                        save_settings
-                        log_success "IP: авто ($(get_public_ip 2>/dev/null || echo '?'))"
-                        ;;
-                    "")
-                        ;;
+                    auto|clear|AUTO|CLEAR) handle_ip_command auto ;;
+                    "") ;;
                     *)
-                        if validate_ip_literal "$ip"; then
-                            CUSTOM_IP="$ip"
-                            save_settings
-                            log_success "IP: ${ip}"
-                        elif validate_domain "$ip"; then
-                            CUSTOM_IP="$ip"
-                            save_settings
-                            log_success "Домен: ${ip}"
+                        if validate_ip_literal "$ip" || validate_domain "$ip"; then
+                            handle_ip_command "$ip"
                         else
                             log_error "Некорректный IP-адрес или домен"
                         fi

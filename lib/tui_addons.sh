@@ -7,17 +7,23 @@ tui_addons_menu() {
         draw_header "ДОПОЛНЕНИЯ (УТИЛИТЫ)"
         echo ""
 
-        local _pq_installed="false"
-        [ -x "$(_selfmask_pq_openssl_bin)" ] && _pq_installed="true"
+        # Проверять PQ умеет любой OpenSSL 3.5.0+, включая системный. Раньше
+        # здесь спрашивалась только своя сборка, и на системном 3.5+ пункты
+        # проверки отказывались работать («PQ OpenSSL не установлен»), хотя
+        # установка своей сборки в том же меню отвечала, что она не нужна.
+        local _pq_available="false" _pq_bin=""
+        if _pq_bin=$(_pq_openssl_bin 2>/dev/null); then
+            _pq_available="true"
+        fi
 
-        if [ "$_pq_installed" = "true" ]; then
+        if [ "$_pq_available" = "true" ]; then
             local _ver
-            _ver=$("$(_selfmask_pq_openssl_bin)" version 2>/dev/null | awk '{print $2}')
-            echo -e "  ${BOLD}PQ OpenSSL:${NC} ${GREEN}установлен${NC} (${_ver:-?})"
+            _ver=$("$_pq_bin" version 2>/dev/null | awk '{print $2}')
+            echo -e "  ${BOLD}PQ OpenSSL:${NC} ${GREEN}есть${NC} — $(_pq_openssl_source) (${_ver:-?})"
         else
-            echo -e "  ${BOLD}PQ OpenSSL:${NC} ${DIM}не установлен${NC}"
-            echo -e "  ${DIM}Для проверки PQ нужен PQ nginx (OpenSSL 3.5+).${NC}"
-            echo -e "  ${DIM}Установите через: mtproxyl selfmask setup${NC}"
+            echo -e "  ${BOLD}PQ OpenSSL:${NC} ${DIM}нет${NC}"
+            echo -e "  ${DIM}Нужен системный OpenSSL ${SELFMASK_MIN_SYSTEM_OPENSSL}+ либо сборка из состава MTProxyL.${NC}"
+            echo -e "  ${DIM}Поставить нашу: пункт [3] ниже.${NC}"
         fi
 
         local _geoip_installed="false"
@@ -44,9 +50,9 @@ tui_addons_menu() {
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
             1)
-                if [ "$_pq_installed" != "true" ]; then
-                    log_error "PQ OpenSSL не установлен"
-                    log_info "Установите через: mtproxyl selfmask setup или меню [3]"
+                if [ "$_pq_available" != "true" ]; then
+                    log_error "Нет OpenSSL с поддержкой постквантового обмена ключами"
+                    log_info "Нужен системный OpenSSL ${SELFMASK_MIN_SYSTEM_OPENSSL}+ либо сборка из состава MTProxyL (меню [3])"
                 else
                     local _domain; _domain=$(_current_sni_domain 2>/dev/null)
                     if [ -z "$_domain" ]; then
@@ -58,9 +64,9 @@ tui_addons_menu() {
                 press_any_key
                 ;;
             2)
-                if [ "$_pq_installed" != "true" ]; then
-                    log_error "PQ OpenSSL не установлен"
-                    log_info "Установите через: mtproxyl selfmask setup или меню [3]"
+                if [ "$_pq_available" != "true" ]; then
+                    log_error "Нет OpenSSL с поддержкой постквантового обмена ключами"
+                    log_info "Нужен системный OpenSSL ${SELFMASK_MIN_SYSTEM_OPENSSL}+ либо сборка из состава MTProxyL (меню [3])"
                 else
                     echo -en "  ${BOLD}Домен (или домен:порт):${NC} "
                     local _input
@@ -70,7 +76,9 @@ tui_addons_menu() {
                 press_any_key
                 ;;
             3)
-                _selfmask_install_pq_nginx
+                # Именно инструменты PQ, а не заглушка: этот пункт про openssl
+                # для проверки домена, и системный nginx его не заменяет.
+                selfmask_install_pq_tools
                 press_any_key
                 ;;
             4)
@@ -165,7 +173,7 @@ _addon_check_pq_domain() {
         local _proto _cipher _temp _cert _sig _hash
         _proto=$(_pq_parse_field "$_pq_out" "Protocol version")
         _cipher=$(_pq_parse_field "$_pq_out" "Ciphersuite")
-        _temp=$(_pq_parse_field "$_pq_out" "Peer Temp Key")
+        _temp=$(_pq_negotiated_group "$_pq_out")
         _cert=$(_pq_parse_field "$_pq_out" "Peer certificate")
         _sig=$(_pq_parse_field "$_pq_out" "Signature type")
         _hash=$(_pq_parse_field "$_pq_out" "Hash used")
@@ -173,7 +181,7 @@ _addon_check_pq_domain() {
         echo -e "  ${GREEN}✅ Статус: поддерживается${NC}"
         [ -n "$_proto" ] && echo -e "    Протокол:    ${_proto}"
         [ -n "$_cipher" ] && echo -e "    Шифронабор:  ${_cipher}"
-        [ -n "$_temp" ] && echo -e "    Temp Key:    ${_temp}"
+        [ -n "$_temp" ] && echo -e "    Группа:      ${_temp}"
         [ -n "$_cert" ] && echo -e "    Сертификат:  ${_cert}"
         [ -n "$_sig" ] && echo -e "    Подпись:     ${_sig}"
         [ -n "$_hash" ] && echo -e "    Хэш:        ${_hash}"
@@ -209,7 +217,7 @@ _addon_check_pq_domain() {
     local _proto _cipher _temp _cert _sig _hash
     _proto=$(_pq_parse_field "$_std_out" "Protocol version")
     _cipher=$(_pq_parse_field "$_std_out" "Ciphersuite")
-    _temp=$(_pq_parse_field "$_std_out" "Peer Temp Key")
+    _temp=$(_pq_negotiated_group "$_std_out")
     _cert=$(_pq_parse_field "$_std_out" "Peer certificate")
     _sig=$(_pq_parse_field "$_std_out" "Signature type")
     _hash=$(_pq_parse_field "$_std_out" "Hash used")
@@ -217,7 +225,7 @@ _addon_check_pq_domain() {
     echo -e "  ${GREEN}Подключение: OK${NC}"
     [ -n "$_proto" ] && echo -e "    Протокол:    ${_proto}"
     [ -n "$_cipher" ] && echo -e "    Шифронабор:  ${_cipher}"
-    [ -n "$_temp" ] && echo -e "    Temp Key:    ${_temp}"
+    [ -n "$_temp" ] && echo -e "    Группа:      ${_temp}"
     [ -n "$_cert" ] && echo -e "    Сертификат:  ${_cert}"
     [ -n "$_sig" ] && echo -e "    Подпись:     ${_sig}"
     [ -n "$_hash" ] && echo -e "    Хэш:        ${_hash}"
@@ -225,13 +233,16 @@ _addon_check_pq_domain() {
     echo ""
     echo -e "  ${BOLD}━━━ Вердикт ━━━${NC}"
 
-    if [[ "${_temp:-}" == X25519 ]] || [[ "${_temp:-}" == X25519,* ]]; then
+    if [ -z "${_temp:-}" ]; then
+        echo -e "  ${YELLOW}${BOLD}🟡 Маркер: неизвестно${NC}"
+        echo -e "  ${DIM}Группа обмена ключами не определилась по выводу openssl${NC}"
+    elif [[ "${_temp:-}" == X25519 ]]; then
         echo -e "  ${RED}${BOLD}🔴 МАРКЕР: ДА${NC}"
-        echo -e "  ${RED}PQ не поддерживается + Peer Temp Key = X25519${NC}"
+        echo -e "  ${RED}PQ не поддерживается + группа обмена ключами = X25519${NC}"
         echo -e "  ${YELLOW}⚠️ Риск блокировки на ТСПУ для iOS клиентов${NC}"
     else
         echo -e "  ${GREEN}${BOLD}🟢 Маркер: НЕТ${NC}"
-        echo -e "  ${DIM}PQ не поддерживается, но Peer Temp Key не X25519${NC}"
+        echo -e "  ${DIM}PQ не поддерживается, но группа обмена ключами не X25519${NC}"
     fi
 }
 
@@ -244,4 +255,22 @@ _pq_parse_field() {
             return 0
         fi
     done
+}
+
+# Какая группа обмена ключами реально согласована.
+#
+# До 3.5 openssl писал «Peer Temp Key: X25519, 253 bits», с 3.5 — «Negotiated
+# TLS1.3 group: X25519MLKEM768». Проверка ждала только первую строку, поэтому
+# на любом свежем openssl (в том числе на нашей сборке 3.5.7) группа выходила
+# пустой, и вердикт про маркер X25519 всегда получался благополучным.
+_pq_negotiated_group() {
+    local _text="$1" _val
+    _val=$(_pq_parse_field "$_text" "Negotiated TLS1.3 group")
+    [ -z "$_val" ] && _val=$(_pq_parse_field "$_text" "Negotiated group")
+    if [ -z "$_val" ]; then
+        # «X25519, 253 bits» — от старого формата нужно только имя группы.
+        _val=$(_pq_parse_field "$_text" "Peer Temp Key")
+        _val="${_val%%,*}"
+    fi
+    echo "$_val"
 }

@@ -48,13 +48,43 @@ SELFMASK_AUTO_RENEW="true"
 SELFMASK_TLS_PROTOCOLS="TLSv1.3"
 SELFMASK_CERT_MODE="letsencrypt"  # letsencrypt|selfsigned
 
+# Снимок того, что было до включения Selfmask.
+#
+# Selfmask подменяет fake SNI и маскировочный backend, а при отключении обещает
+# вернуть прежние значения. Возвращать их было неоткуда — домен так и оставался
+# selfmask'овым. Снимок живёт в per-mode файле, поэтому один набор имён
+# обслуживает и менеджер (свои настройки), и реаниматор (конфиг цели).
+SELFMASK_PREV_SAVED="false"
+SELFMASK_PREV_DOMAIN=""
+SELFMASK_PREV_MASK_HOST=""
+SELFMASK_PREV_MASK_PORT=""
+SELFMASK_PREV_UNKNOWN_SNI=""
+SELFMASK_PREV_MASKING_ENABLED=""
+SELFMASK_PREV_FAKE_CERT_LEN=""
+SELFMASK_PREV_PUBLIC_HOST=""
+
 # Порт, запомненный за каждым режимом: при переключении режима порт
 # восстанавливается, а не тянется из предыдущего режима.
 PORT_PROFILE_MANAGER=""
 PORT_PROFILE_REANIMATOR=""
 
+# Права на settings.conf.
+#
+# Файл описывает саму раскладку прокси (порт, fake SNI, домен) — эти же данные
+# видно снаружи по одному подключению, секретов в нём нет: ключи лежат в
+# secrets.conf с правами 600. Читать его хотят сторонние скрипты и мониторинг
+# пользователя, а раньше это было можно только из-под root, причём каждая
+# перезапись настроек отбирала права заново.
+#
+# Каталог остаётся закрытым на листинг: 711 даёт только проход к файлу с
+# известным именем, поэтому соседние secrets.conf/detect.conf не становятся
+# доступнее, чем были.
+_SETTINGS_FILE_MODE="644"
+_INSTALL_DIR_MODE="711"
+
 save_settings() {
     mkdir -p "$INSTALL_DIR"
+    chmod "$_INSTALL_DIR_MODE" "$INSTALL_DIR" 2>/dev/null || true
     local tmp
     # Временный файл рядом с целевым: mv в пределах одной ФС — это rename(2),
     # то есть замена целиком. Через /tmp (обычно tmpfs) mv выродился бы в
@@ -128,7 +158,7 @@ PORT_PROFILE_MANAGER='${PORT_PROFILE_MANAGER}'
 PORT_PROFILE_REANIMATOR='${PORT_PROFILE_REANIMATOR}'
 SETTINGS_EOF
 
-    chmod 600 "$tmp"
+    chmod "$_SETTINGS_FILE_MODE" "$tmp"
     mv "$tmp" "$SETTINGS_FILE"
 
     save_selfmask_settings
@@ -159,6 +189,16 @@ SELFMASK_NGINX_SITE_NAME='${SELFMASK_NGINX_SITE_NAME}'
 SELFMASK_AUTO_RENEW='${SELFMASK_AUTO_RENEW}'
 SELFMASK_TLS_PROTOCOLS='${SELFMASK_TLS_PROTOCOLS}'
 SELFMASK_CERT_MODE='${SELFMASK_CERT_MODE}'
+
+# Что было до включения Selfmask — для возврата при отключении
+SELFMASK_PREV_SAVED='${SELFMASK_PREV_SAVED}'
+SELFMASK_PREV_DOMAIN='${SELFMASK_PREV_DOMAIN}'
+SELFMASK_PREV_MASK_HOST='${SELFMASK_PREV_MASK_HOST}'
+SELFMASK_PREV_MASK_PORT='${SELFMASK_PREV_MASK_PORT}'
+SELFMASK_PREV_UNKNOWN_SNI='${SELFMASK_PREV_UNKNOWN_SNI}'
+SELFMASK_PREV_MASKING_ENABLED='${SELFMASK_PREV_MASKING_ENABLED}'
+SELFMASK_PREV_FAKE_CERT_LEN='${SELFMASK_PREV_FAKE_CERT_LEN}'
+SELFMASK_PREV_PUBLIC_HOST='${SELFMASK_PREV_PUBLIC_HOST}'
 SELFMASK_EOF
     chmod 600 "$_tmp"
     mv "$_tmp" "$_f"
@@ -178,7 +218,11 @@ load_selfmask_settings() {
         case "$_key" in
             SELFMASK_ENABLED|SELFMASK_DOMAIN|SELFMASK_SITE_SOURCE|SELFMASK_SITE_DIR|\
             SELFMASK_NGINX_BACKEND_PORT|SELFMASK_CERT_EMAIL|SELFMASK_NGINX_SITE_NAME|\
-            SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS|SELFMASK_CERT_MODE)
+            SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS|SELFMASK_CERT_MODE|\
+            SELFMASK_PREV_SAVED|SELFMASK_PREV_DOMAIN|SELFMASK_PREV_MASK_HOST|\
+            SELFMASK_PREV_MASK_PORT|SELFMASK_PREV_UNKNOWN_SNI|\
+            SELFMASK_PREV_MASKING_ENABLED|SELFMASK_PREV_FAKE_CERT_LEN|\
+            SELFMASK_PREV_PUBLIC_HOST)
                 printf -v "$_key" '%s' "$_val" ;;
         esac
     done < "$_f"
@@ -195,6 +239,14 @@ _selfmask_reset_defaults() {
     SELFMASK_AUTO_RENEW="true"
     SELFMASK_TLS_PROTOCOLS="TLSv1.3"
     SELFMASK_CERT_MODE="letsencrypt"
+    SELFMASK_PREV_SAVED="false"
+    SELFMASK_PREV_DOMAIN=""
+    SELFMASK_PREV_MASK_HOST=""
+    SELFMASK_PREV_MASK_PORT=""
+    SELFMASK_PREV_UNKNOWN_SNI=""
+    SELFMASK_PREV_MASKING_ENABLED=""
+    SELFMASK_PREV_FAKE_CERT_LEN=""
+    SELFMASK_PREV_PUBLIC_HOST=""
 }
 
 # Смена режима: профиль старого режима сохраняем, профиль нового
@@ -235,6 +287,24 @@ switch_port_profile() {
 
     [ -n "$_restore" ] && [[ "$_restore" =~ ^[0-9]+$ ]] && PROXY_PORT="$_restore"
     [ "$PROXY_PORT" != "$_before" ]
+}
+
+# Привести права каталога и settings.conf к нужным.
+#
+# Нужно для уже установленных копий: там каталог остался 700 с прошлых версий,
+# и одного chmod при сохранении мало — пользователь может ничего не менять
+# месяцами. Обычный вызов обходится одним stat и ни одним chmod.
+_fix_settings_perms() {
+    [ "${EUID:-$(id -u)}" -eq 0 ] || return 0
+    [ -f "$SETTINGS_FILE" ] || return 0
+    local _cur
+    _cur=$(stat -c '%a' "$INSTALL_DIR" "$SETTINGS_FILE" 2>/dev/null | tr '\n' ' ')
+    [ "$_cur" = "${_INSTALL_DIR_MODE} ${_SETTINGS_FILE_MODE} " ] && return 0
+    chmod "$_INSTALL_DIR_MODE" "$INSTALL_DIR" 2>/dev/null || true
+    chmod "$_SETTINGS_FILE_MODE" "$SETTINGS_FILE" 2>/dev/null || true
+    # Подкаталоги закрываем явно: до сих пор их прятал только закрытый на
+    # листинг родитель, а теперь через него можно пройти.
+    chmod 700 "${STATS_DIR:-${INSTALL_DIR}/relay_stats}" "${BACKUP_DIR:-${INSTALL_DIR}/backups}" 2>/dev/null || true
 }
 
 load_settings() {
@@ -312,4 +382,6 @@ load_settings() {
     esac
 
     [ "$SUPEREXPERT_ENABLED" = "true" ] || SUPEREXPERT_ENABLED="false"
+
+    _fix_settings_perms
 }

@@ -31,6 +31,11 @@ type SelfmaskStatus struct {
 	PQSource    string `json:"pq_source"`
 	PQAvailable bool   `json:"pq_available"`
 	PQSystem    bool   `json:"pq_system"`
+	// PrevSaved/PrevDomain describe the settings snapshot taken when Selfmask
+	// was enabled. Disabling restores it, so the UI can name the fake SNI that
+	// is about to come back instead of promising a vague "previous setup".
+	PrevSaved  bool   `json:"prev_saved"`
+	PrevDomain string `json:"prev_domain"`
 }
 
 // SelfmaskStatus reports the current decoy-site configuration.

@@ -39,9 +39,13 @@ export function AddonsPage() {
     void loadGeoip();
   }, [loadPq, loadGeoip]);
 
-  const { operation, start, running } = useMtproxylOperation(loadPq, ['selfmask:pq-install']);
-  const { operation: geoipOperation, start: startGeoip, running: geoipRunning } =
-    useMtproxylOperation(loadGeoip, ['geoip:install']);
+  const { operation, start, dismiss, running } = useMtproxylOperation(loadPq, ['selfmask:pq-install']);
+  const {
+    operation: geoipOperation,
+    start: startGeoip,
+    dismiss: dismissGeoip,
+    running: geoipRunning,
+  } = useMtproxylOperation(loadGeoip, ['geoip:install']);
 
   const installPq = async () => {
     try {
@@ -114,7 +118,7 @@ export function AddonsPage() {
             </Button>
           </form>
 
-          <OperationProgress operation={operation} />
+          <OperationProgress operation={operation} onDismiss={dismiss} />
 
           {pq?.pq_available === false ? (
             <div className="bg-warning/10 border border-warning/30 rounded-lg p-3 space-y-2">
@@ -161,7 +165,7 @@ export function AddonsPage() {
             одинаково в режиме менеджера и реаниматора — база не привязана к конфигу цели.
           </p>
 
-          <OperationProgress operation={geoipOperation} />
+          <OperationProgress operation={geoipOperation} onDismiss={dismissGeoip} />
 
           {geoip?.city_installed ? (
             <p className="text-sm text-text-primary">

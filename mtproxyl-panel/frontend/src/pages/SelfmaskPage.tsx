@@ -86,7 +86,7 @@ export function SelfmaskPage() {
     }
   }, []);
 
-  const { operation, start, running } = useMtproxylOperation(load, ['selfmask:']);
+  const { operation, start, dismiss, running } = useMtproxylOperation(load, ['selfmask:']);
 
   useEffect(() => {
     void load();
@@ -195,7 +195,7 @@ export function SelfmaskPage() {
           {notice}
         </div>
       )}
-      <OperationProgress operation={operation} />
+      <OperationProgress operation={operation} onDismiss={dismiss} />
 
       {loading && !status ? (
         <div className="text-sm text-text-secondary">Загрузка…</div>
@@ -324,7 +324,13 @@ export function SelfmaskPage() {
         onClose={() => setConfirmDisable(false)}
         onConfirm={runDisable}
         title="Отключить Selfmask"
-        message="Сайт-заглушка будет отключён, а FakeTLS вернётся к прежней настройке. Продолжить?"
+        message={
+          status?.prev_saved
+            ? `Сайт-заглушка будет отключена, а FakeTLS вернётся к тому, что было до включения${
+                status.prev_domain ? ` (${status.prev_domain})` : ''
+              }. Ссылки при этом изменятся. Продолжить?`
+            : 'Сайт-заглушка будет отключена. Прежний fake SNI не сохранён — домен останется selfmask’овым, задайте нужный вручную в настройках. Продолжить?'
+        }
         confirmLabel="Отключить"
         loadingLabel="Отключение…"
         loading={disabling}

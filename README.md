@@ -57,7 +57,7 @@
 ## Установка
 
 ```bash
-wget -qO /tmp/mtproxyl-install.sh https://raw.githubusercontent.com/Liafanx/MTProxyL/main/install.sh && sudo bash /tmp/mtproxyl-install.sh
+wget -qO /tmp/mtproxyl-install.sh https://raw.githubusercontent.com/Liafanx/MTProxyL/main/install.sh && sudo bash /tmp/mtproxyl-install.sh && source ~/.bashrc
 ```
 
 После установки запускается мастер настройки.
@@ -66,6 +66,12 @@ wget -qO /tmp/mtproxyl-install.sh https://raw.githubusercontent.com/Liafanx/MTPr
 ```bash
 mtproxyl
 ```
+
+> MTProxyL работает от root. Если вы заходите на сервер обычным пользователем,
+> установщик заводит алиас `mtproxyl` → `sudo mtproxyl` (в `/etc/profile.d/` и
+> в вашем `~/.bashrc`), поэтому `sudo` дописывать не нужно. `source ~/.bashrc`
+> в команде выше применяет алиас сразу, без перезахода. Под root алиас не
+> определяется — команда и так работает напрямую.
 
 > При первой установке скрипт первым предлагает **Zapret2 MTProto fix** (по умолчанию Y) — серверный обход через TCP-манипуляции. Если отказаться — предлагается **NFT Smart By-MEKO** — рекомендуемый режим с разделением iOS/Android.
 
@@ -77,7 +83,7 @@ mtproxyl
 
 1. Запустите установку:
    ```bash
-   wget -qO /tmp/mtproxyl-install.sh https://raw.githubusercontent.com/Liafanx/MTProxyL/main/install.sh && sudo bash /tmp/mtproxyl-install.sh
+   wget -qO /tmp/mtproxyl-install.sh https://raw.githubusercontent.com/Liafanx/MTProxyL/main/install.sh && sudo bash /tmp/mtproxyl-install.sh && source ~/.bashrc
    ```
 
 2. Следуйте мастеру настройки — выберите порт, домен, IP, режим обхода
@@ -206,8 +212,12 @@ mtproxyl uninstall-telemt     # удалить telemt: uninstall или purge (R
 > - или бот: [@Sni_checker_bot](https://t.me/Sni_checker_bot)
 >
 > - 🟢 **сервер принимает X25519MLKEM768** — домен подходит
-> - 🟡 **PQ нет, но Peer Temp Key не X25519** — можно использовать
-> - 🔴 **PQ не поддерживается + Peer Temp Key = X25519** — **iOS не сможет подключиться**
+> - 🟡 **PQ нет, но группа обмена ключами не X25519** — можно использовать
+> - 🔴 **PQ не поддерживается + группа обмена ключами = X25519** — **iOS не сможет подключиться**
+>
+> Проверять умеет любой OpenSSL 3.5.0+, включая системный: если он такой
+> версии, ставить ничего не нужно. Где старее — **Дополнения → [3] Установить
+> PQ OpenSSL** поставит сборку из состава MTProxyL отдельно от системного пакета.
 
 ---
 
@@ -549,8 +559,16 @@ mtproxyl update               # Обновить MTProxyL
 mtproxyl panel status         # Состояние панели
 mtproxyl panel install        # Установить / переустановить
 mtproxyl panel restart        # Перезапустить
+mtproxyl panel password       # Сменить пароль администратора
+mtproxyl panel cert           # Выпустить сертификат Let's Encrypt
 mtproxyl panel uninstall      # Удалить
 ```
+
+`panel cert [домен] [email]` умеет выпускать сертификат при занятом 80 порте:
+если работает заглушка Selfmask, проверка домена идёт через её webroot и
+останавливать ничего не нужно; иначе держатели порта 80 останавливаются на
+время выпуска и запускаются обратно. Сертификат передаётся панели копией
+файлов, а `acme_domain` из её конфига снимается.
 
 ---
 
@@ -772,6 +790,13 @@ mask-backend, поэтому «снаружи» домен не открывае
 У каждого пользователя видны накопленный трафик и история подключённых IP —
 в обоих режимах. Если поставить базу GeoIP (кнопка в разделе **Дополнения**),
 рядом с адресами появятся страна, город и провайдер.
+
+Раздел **Доступность снаружи** проверяет порт прокси зондами в разных странах
+и у разных провайдеров и отдельно — на самом сервере. Это разделяет три
+случая, которые изнутри сервера выглядят одинаково: прокси не запущен, порт
+режет хостер, адрес заблокирован в отдельной стране. Проверка идёт обычными
+исходящими запросами к публичному сервису check-host.net — без прав root и
+без установки чего-либо на сервер.
 
 Панель не заменяет MTProxyL, а работает поверх него — CLI и меню остаются
 основным способом управления.

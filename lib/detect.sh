@@ -284,18 +284,56 @@ show_target_links_ipv4() {
 # Разбор без jq — тем же способом, что и ссылки (чанки по "username").
 _target_user_stats() {
     local _json="$1"
-    printf '%s' "$_json" | tr -d '\n' \
-        | awk '{gsub(/"username"/, "\n\"username\""); print}' \
-        | while IFS= read -r _chunk; do
-            case "$_chunk" in *'"username"'*) ;; *) continue ;; esac
-            local _u _en _c _ips _oct
-            _u=$(sed -nE 's/.*"username"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' <<< "$_chunk")
-            _en=$(sed -nE 's/.*"enabled"[[:space:]]*:[[:space:]]*(true|false).*/\1/p' <<< "$_chunk")
-            _c=$(sed -nE 's/.*"current_connections"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' <<< "$_chunk")
-            _ips=$(sed -nE 's/.*"active_unique_ips"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' <<< "$_chunk")
-            _oct=$(sed -nE 's/.*"total_octets"[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' <<< "$_chunk")
-            printf '%s|%s|%s|%s|%s\n' "${_u:-?}" "${_en:-true}" "${_c:-0}" "${_ips:-0}" "${_oct:-0}"
-        done
+    # Один awk на весь ответ, а не пять sed на каждого пользователя.
+    #
+    # Прежний вариант резал JSON на чанки и запускал по пять подпроцессов
+    # sed на чанк. На 30 пользователях это полторы сотни процессов за один
+    # запрос панели — а панель спрашивает и трафик, и список пользователей
+    # каждые несколько секунд. Разбор тот же (чанки по "username", поиск
+    # ключей внутри чанка), но в одном процессе.
+    printf '%s' "$_json" | tr -d '\n' | awk '
+        # Первая строка в кавычках после начала записи — само имя.
+        function first_string(s,   p, q) {
+            p = index(s, "\"")
+            if (!p) return ""
+            s = substr(s, p + 1)
+            q = index(s, "\"")
+            return q ? substr(s, 1, q - 1) : ""
+        }
+        # Значение ключа как есть, от двоеточия до запятой/скобки.
+        function raw_after(s, k,   p) {
+            p = index(s, "\"" k "\"")
+            if (!p) return ""
+            s = substr(s, p + length(k) + 2)
+            p = index(s, ":")
+            if (!p) return ""
+            s = substr(s, p + 1)
+            sub(/^[ \t]+/, "", s)
+            return s
+        }
+        function num(s, k,   v) {
+            v = raw_after(s, k)
+            if (match(v, /^[0-9]+/)) return substr(v, RSTART, RLENGTH)
+            return ""
+        }
+        function bool(s, k,   v) {
+            v = raw_after(s, k)
+            if (substr(v, 1, 4) == "true")  return "true"
+            if (substr(v, 1, 5) == "false") return "false"
+            return ""
+        }
+        BEGIN { RS = "\"username\"" }
+        NR == 1 { next }
+        {
+            u = first_string($0)
+            if (u == "") u = "?"
+            en = bool($0, "enabled");            if (en == "")  en = "true"
+            c  = num($0, "current_connections"); if (c == "")   c = 0
+            ip = num($0, "active_unique_ips");   if (ip == "")  ip = 0
+            oc = num($0, "total_octets");        if (oc == "")  oc = 0
+            printf "%s|%s|%s|%s|%s\n", u, en, c, ip, oc
+        }
+    '
 }
 
 # IP-адреса пользователей из того же ответа API: "user|ip" построчно, без
@@ -303,21 +341,46 @@ _target_user_stats() {
 # статус конкретного IP экран решает сам по данным API.
 _target_user_ip_lists() {
     local _json="$1"
-    printf '%s' "$_json" | tr -d '\n' \
-        | awk '{gsub(/"username"/, "\n\"username\""); print}' \
-        | while IFS= read -r _chunk; do
-            case "$_chunk" in *'"username"'*) ;; *) continue ;; esac
-            local _u; _u=$(sed -nE 's/.*"username"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' <<< "$_chunk")
-            [ -n "$_u" ] || continue
-            local _field _arr _ip
-            for _field in active_unique_ips_list recent_unique_ips_list; do
-                _arr=$(sed -nE "s/.*\"${_field}\"[[:space:]]*:[[:space:]]*\[([^]]*)\].*/\1/p" <<< "$_chunk")
-                [ -n "$_arr" ] || continue
-                printf '%s\n' "$_arr" | grep -oE '"[0-9a-fA-F:.]+"' | tr -d '"' | while IFS= read -r _ip; do
-                    [ -n "$_ip" ] && printf '%s|%s\n' "$_u" "$_ip"
-                done
-            done
-        done
+    # Как и в _target_user_stats — один процесс на весь ответ. Здесь прежний
+    # вариант был ещё дороже: на каждого пользователя два sed плюс конвейер
+    # grep|tr|while на каждый список адресов.
+    printf '%s' "$_json" | tr -d '\n' | awk '
+        function first_string(s,   p, q) {
+            p = index(s, "\"")
+            if (!p) return ""
+            s = substr(s, p + 1)
+            q = index(s, "\"")
+            return q ? substr(s, 1, q - 1) : ""
+        }
+        # Содержимое массива ключа: от "[" до первой "]".
+        function array_body(s, k,   p, q) {
+            p = index(s, "\"" k "\"")
+            if (!p) return ""
+            s = substr(s, p + length(k) + 2)
+            p = index(s, "[")
+            if (!p) return ""
+            s = substr(s, p + 1)
+            q = index(s, "]")
+            return q ? substr(s, 1, q - 1) : ""
+        }
+        # Адреса из тела массива: всё, что в кавычках и похоже на IP.
+        function emit_ips(u, body,   n, i, parts, ip) {
+            n = split(body, parts, "\"")
+            # Нечётные элементы — то, что между кавычками.
+            for (i = 2; i <= n; i += 2) {
+                ip = parts[i]
+                if (ip ~ /^[0-9a-fA-F:.]+$/ && ip != "") printf "%s|%s\n", u, ip
+            }
+        }
+        BEGIN { RS = "\"username\"" }
+        NR == 1 { next }
+        {
+            u = first_string($0)
+            if (u == "") next
+            emit_ips(u, array_body($0, "active_unique_ips_list"))
+            emit_ips(u, array_body($0, "recent_unique_ips_list"))
+        }
+    '
 }
 
 # Конфиг движка текущего режима: у реаниматора это конфиг чужой цели, у

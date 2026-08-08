@@ -56,7 +56,9 @@ restore_backup() {
 
     # Распаковка
     tar xzf "$backup_file" -C "$INSTALL_DIR" --exclude='backup_meta.txt' 2>/dev/null
-    chmod 600 "${SETTINGS_FILE}" 2>/dev/null
+    # settings.conf намеренно читаем всем (см. lib/settings.sh) — восстановление
+    # из бэкапа не должно возвращать ему старые 600.
+    chmod "${_SETTINGS_FILE_MODE:-644}" "${SETTINGS_FILE}" 2>/dev/null
     chmod 600 "${SECRETS_FILE}" 2>/dev/null
 
     # Перезагрузка настроек в память

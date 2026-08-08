@@ -105,6 +105,40 @@ export interface SelfmaskStatus {
   pq_available: boolean;
   /** true — хватает системного OpenSSL, своя сборка не нужна. */
   pq_system: boolean;
+  /** Есть ли снимок настроек до включения Selfmask — его вернёт отключение. */
+  prev_saved?: boolean;
+  /** Fake SNI, который стоял до Selfmask; пусто, если его не было. */
+  prev_domain?: string;
+}
+
+/** Результат одного зонда: увиделся ли порт прокси снаружи. */
+export interface AvailabilityNode {
+  node: string;
+  country_code: string;
+  country: string;
+  city: string;
+  ok: boolean;
+  time_ms: number;
+  error?: string;
+  /** Узел не успел ответить до дедлайна. */
+  pending?: boolean;
+}
+
+export interface AvailabilityReport {
+  phase: 'idle' | 'running' | 'done' | 'failed';
+  host?: string;
+  port?: number;
+  /** Отвечает ли порт на самом сервере — отделяет блокировку от «не запущен». */
+  local_ok: boolean;
+  local_error?: string;
+  local_checked: boolean;
+  nodes: AvailabilityNode[];
+  reachable: number;
+  total: number;
+  started_at?: string;
+  finished_at?: string;
+  error?: string;
+  permanent_link?: string;
 }
 
 export interface SelfmaskParam {
@@ -153,6 +187,12 @@ const MTPROXYL_BASE = `${BASE}/api/mtproxyl`;
 
 export const mtproxylApi = {
   status: () => request<MtproxylAvailability>(MTPROXYL_BASE, '/status'),
+
+  // Слот операции общий и переживает перезагрузку страницы, поэтому закрытие
+  // окна с логом приходится подтверждать на сервере — иначе тот же лог
+  // возвращается при следующем открытии панели.
+  dismissOperation: () =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/operation/dismiss', { method: 'POST' }),
 
   getMode: () => request<MtproxylModeStatus>(MTPROXYL_BASE, '/mode'),
   // container обязателен при переходе в реаниматор: без него CLI выберет
@@ -509,4 +549,17 @@ export const mtproxylAddonsApi = {
   /** Скачивает GeoLite2-City/-ASN с зеркала P3TERX. Долгая — операция. */
   geoipInstall: () =>
     request<MtproxylOperation>(MTPROXYL_BASE, '/geoip-install', { method: 'POST' }),
+
+  /**
+   * Доступность прокси со стороны зондов в разных странах.
+   *
+   * Пустые host/port означают «взять текущие» — их подставит сервер. Проверка
+   * идёт в фоне, результат забирается опросом availability().
+   */
+  availability: () => request<AvailabilityReport>(MTPROXYL_BASE, '/availability'),
+  availabilityCheck: (host?: string, port?: number) =>
+    request<AvailabilityReport>(MTPROXYL_BASE, '/availability', {
+      method: 'POST',
+      body: JSON.stringify({ host: host ?? '', port: port ?? 0 }),
+    }),
 };

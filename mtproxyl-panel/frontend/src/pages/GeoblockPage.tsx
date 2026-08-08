@@ -45,7 +45,7 @@ export function GeoblockPage() {
     }
   }, []);
 
-  const { operation, start, running } = useMtproxylOperation(load, ['geoblock:']);
+  const { operation, start, dismiss, running } = useMtproxylOperation(load, ['geoblock:']);
 
   useEffect(() => {
     void load();
@@ -92,7 +92,7 @@ export function GeoblockPage() {
       </div>
 
       {error && <ErrorAlert message={error} onRetry={load} />}
-      <OperationProgress operation={operation} />
+      <OperationProgress operation={operation} onDismiss={dismiss} />
 
       <Card>
         <CardHeader>

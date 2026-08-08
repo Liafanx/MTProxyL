@@ -24,6 +24,7 @@ import { TrafficPage } from '@/pages/TrafficPage';
 import { ExpertPage } from '@/pages/ExpertPage';
 import { SuperExpertPage } from '@/pages/SuperExpertPage';
 import { AddonsPage } from '@/pages/AddonsPage';
+import { AvailabilityPage } from '@/pages/AvailabilityPage';
 import { MtproxylContext, useMtproxylAvailability } from '@/hooks/useMtproxyl';
 
 function AuthenticatedApp() {
@@ -68,6 +69,7 @@ function AuthenticatedApp() {
           <Route path="/expert" element={<ExpertPage />} />
           <Route path="/superexpert" element={<SuperExpertPage />} />
           <Route path="/addons" element={<AddonsPage />} />
+          <Route path="/availability" element={<AvailabilityPage />} />
         </Route>
       </Routes>
       </MtproxylContext.Provider>

@@ -139,9 +139,54 @@ fi
 # Симлинк
 ln -sf "${INSTALL_DIR}/mtproxyl.sh" /usr/local/bin/mtproxyl
 
+# ── Алиас mtproxyl → sudo mtproxyl ───────────────────────────────────────────
+# MTProxyL всё делает от root, и без sudo команда просто ругается. Алиас
+# избавляет от «а почему не работает» у тех, кто ходит на сервер под обычным
+# пользователем. Для root он не нужен и не определяется: условие проверяется
+# в момент запуска шелла, а не установки, — один и тот же файл читают и root
+# (через sudo -s), и обычный пользователь.
+ALIAS_MARK="# MTProxyL: запуск без ручного sudo"
+ALIAS_BODY='if [ "$(id -u)" -ne 0 ]; then alias mtproxyl='"'"'sudo mtproxyl'"'"'; fi'
+
+add_alias_to_rc() {
+    local rc="$1" owner="$2"
+    [ -f "$rc" ] || return 0
+    grep -qF "$ALIAS_MARK" "$rc" 2>/dev/null && return 0
+    {
+        echo ""
+        echo "$ALIAS_MARK"
+        echo "$ALIAS_BODY"
+    } >> "$rc" || return 0
+    [ -n "$owner" ] && chown "$owner" "$rc" 2>/dev/null || true
+    echo "  → алиас добавлен в ${rc}"
+}
+
+# Всем будущим сессиям: /etc/profile.d читают логин-шеллы, в том числе ssh.
+cat > /etc/profile.d/mtproxyl.sh << PROFILE_EOF
+${ALIAS_MARK}
+${ALIAS_BODY}
+PROFILE_EOF
+chmod 644 /etc/profile.d/mtproxyl.sh
+
+# Тому, кто прямо сейчас запустил установку через sudo, — ещё и в его rc,
+# чтобы 'source ~/.bashrc' в текущей сессии сразу дал результат.
+if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+    _u_home=$(getent passwd "$SUDO_USER" 2>/dev/null | cut -d: -f6)
+    if [ -n "$_u_home" ] && [ -d "$_u_home" ]; then
+        _u_group=$(id -gn "$SUDO_USER" 2>/dev/null || echo "$SUDO_USER")
+        add_alias_to_rc "${_u_home}/.bashrc" "${SUDO_USER}:${_u_group}"
+        add_alias_to_rc "${_u_home}/.zshrc" "${SUDO_USER}:${_u_group}"
+    fi
+fi
+
 echo ""
 echo "  ✓ MTProxyL установлен"
-echo "  Запуск: mtproxyl"
+if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+    echo "  Запуск: mtproxyl  (алиас на 'sudo mtproxyl')"
+    echo "  В текущей сессии он появится после: source ~/.bashrc"
+else
+    echo "  Запуск: mtproxyl"
+fi
 echo ""
 
 # Автозапуск. Если скрипт запускали через пайп или подстановку процесса,

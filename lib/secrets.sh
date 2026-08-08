@@ -1010,23 +1010,76 @@ target_users_list_json() {
         _target_user_ip_lists "$_json" | _flush_user_ip_history "$_TARGET_USER_IPS_DB"
     fi
 
-    local _first=1 _row _state _label _secret _tin _tout _ttotal
+    # Всё, что нужно списку, собирается ОДИН раз на весь список.
+    #
+    # Раньше на каждого пользователя приходилось по десятку подстановок
+    # "$(...)": четыре разбора конфига цели ради лимитов, отдельное чтение базы
+    # IP, три json_escape — и, что хуже всего, get_persistent_target_user_stats
+    # со своим flush_target_traffic_to_disk, то есть поход в API цели и
+    # перезапись базы трафика. На 24 секретах один вызов занимал около
+    # 12 секунд, а панель опрашивает этот список каждые 10 — ядро было занято
+    # непрерывно. Здесь ровно один флаш, одно чтение каждого файла и дальше
+    # только строки и арифметика.
+    flush_target_traffic_to_disk 2>/dev/null || true
+    declare -A _TDB_IN=() _TDB_OUT=() _TDB_TOTAL=()
+    local _TDB_SRC=""
+    _load_target_db
+
+    declare -A _LIM_CONNS=() _LIM_IPS=() _LIM_QUOTA=() _LIM_EXPIRES=()
+    local _st _nm _vl
+    while IFS='|' read -r _st _nm _vl; do
+        [ -n "$_nm" ] && _LIM_CONNS["$_nm"]="$_vl"
+    done < <(_target_section_pairs "access.user_max_tcp_conns")
+    while IFS='|' read -r _st _nm _vl; do
+        [ -n "$_nm" ] && _LIM_IPS["$_nm"]="$_vl"
+    done < <(_target_section_pairs "access.user_max_unique_ips")
+    while IFS='|' read -r _st _nm _vl; do
+        [ -n "$_nm" ] && _LIM_QUOTA["$_nm"]="$_vl"
+    done < <(_target_section_pairs "access.user_data_quota")
+    while IFS='|' read -r _st _nm _vl; do
+        [ -n "$_nm" ] && _LIM_EXPIRES["$_nm"]="$_vl"
+    done < <(_target_section_pairs "access.user_expirations")
+
+    declare -A _IP_HIST=()
+    if [ -f "$_TARGET_USER_IPS_DB" ]; then
+        local _ht _hu _hip _hfs _hls _entry
+        while IFS='|' read -r _ht _hu _hip _hfs _hls; do
+            [ "$_ht" = "USER" ] || continue
+            [ -n "$_hu" ] && [ -n "$_hip" ] || continue
+            json_escape_fast "$_hip"
+            _entry="{\"ip\":\"${_JSON_ESCAPE_OUT}\",\"first_seen\":${_hfs:-0},\"last_seen\":${_hls:-0}}"
+            if [ -z "${_IP_HIST[$_hu]+x}" ]; then
+                _IP_HIST["$_hu"]="$_entry"
+            else
+                _IP_HIST["$_hu"]="${_IP_HIST[$_hu]},$_entry"
+            fi
+        done < "$_TARGET_USER_IPS_DB"
+    fi
+
+    local _first=1 _state _label _secret _label_esc _secret_esc _expires_esc
+    local _enabled_str _conns _ips _quota _expires
     printf '['
     while IFS='|' read -r _state _label _secret; do
         [ -n "$_label" ] || continue
         [ $_first -eq 1 ] || printf ','
         _first=0
-        read -r _tin _tout _ttotal <<< "$(get_persistent_target_user_stats "$_label")"
-        printf '{"label":"%s","secret":"%s","created":0,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"","total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":%s}' \
-            "$(json_escape "$_label")" \
-            "$(json_escape "$_secret")" \
-            "$([ "$_state" = "on" ] && echo true || echo false)" \
-            "$(_target_user_limit "$_label" "access.user_max_tcp_conns" | grep -E '^[0-9]+$' || echo 0)" \
-            "$(_target_user_limit "$_label" "access.user_max_unique_ips" | grep -E '^[0-9]+$' || echo 0)" \
-            "$(_target_user_limit "$_label" "access.user_data_quota" | grep -E '^[0-9]+$' || echo 0)" \
-            "$(json_escape "$(_target_user_limit "$_label" "access.user_expirations")")" \
-            "${_tin:-0}" "${_tout:-0}" "${_ttotal:-0}" \
-            "$(_user_ip_history_json "$_label" "$_TARGET_USER_IPS_DB")"
+
+        # Ноль — «без ограничения»; мусор в конфиге цели трактуем так же.
+        _conns="${_LIM_CONNS[$_label]:-0}";  [[ "$_conns" =~ ^[0-9]+$ ]]  || _conns=0
+        _ips="${_LIM_IPS[$_label]:-0}";      [[ "$_ips" =~ ^[0-9]+$ ]]    || _ips=0
+        _quota="${_LIM_QUOTA[$_label]:-0}";  [[ "$_quota" =~ ^[0-9]+$ ]]  || _quota=0
+        _expires="${_LIM_EXPIRES[$_label]:-}"
+
+        json_escape_fast "$_label";    _label_esc="$_JSON_ESCAPE_OUT"
+        json_escape_fast "$_secret";   _secret_esc="$_JSON_ESCAPE_OUT"
+        json_escape_fast "$_expires";  _expires_esc="$_JSON_ESCAPE_OUT"
+        if [ "$_state" = "on" ]; then _enabled_str=true; else _enabled_str=false; fi
+
+        printf '{"label":"%s","secret":"%s","created":0,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"","total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":[%s]}' \
+            "$_label_esc" "$_secret_esc" "$_enabled_str" \
+            "$_conns" "$_ips" "$_quota" "$_expires_esc" \
+            "${_TDB_IN[$_label]:-0}" "${_TDB_OUT[$_label]:-0}" "${_TDB_TOTAL[$_label]:-0}" \
+            "${_IP_HIST[$_label]:-}"
     done < <(_target_section_pairs "access.users")
     printf ']\n'
 }

@@ -197,7 +197,7 @@ selfmask_show_status_json() {
     [ -n "${SELFMASK_DOMAIN:-}" ] && [ -f "$(_selfmask_cert_dir)/fullchain.pem" ] && _cert="true"
     systemctl is-active "${SELFMASK_PQ_SERVICE}" &>/dev/null && _nginx="true"
 
-    printf '{"enabled":%s,"domain":"%s","site_source":"%s","site_dir":"%s","backend_port":%d,"cert_mode":"%s","auto_renew":%s,"nginx_conf":"%s","nginx_conf_exists":%s,"cert_found":%s,"pq_nginx_active":%s,"pq_source":"%s","pq_available":%s,"pq_system":%s}\n' \
+    printf '{"enabled":%s,"domain":"%s","site_source":"%s","site_dir":"%s","backend_port":%d,"cert_mode":"%s","auto_renew":%s,"nginx_conf":"%s","nginx_conf_exists":%s,"cert_found":%s,"pq_nginx_active":%s,"pq_source":"%s","pq_available":%s,"pq_system":%s,"prev_saved":%s,"prev_domain":"%s"}\n' \
         "$([ "${SELFMASK_ENABLED:-false}" = "true" ] && echo true || echo false)" \
         "$(json_escape "${SELFMASK_DOMAIN:-}")" \
         "$(json_escape "${SELFMASK_SITE_SOURCE:-stub}")" \
@@ -210,7 +210,9 @@ selfmask_show_status_json() {
         "$_cert" "$_nginx" \
         "$(json_escape "$(_pq_openssl_source)")" \
         "$(_pq_openssl_bin >/dev/null 2>&1 && echo true || echo false)" \
-        "$(_system_openssl_has_pq && echo true || echo false)"
+        "$(_system_openssl_has_pq && echo true || echo false)" \
+        "$([ "${SELFMASK_PREV_SAVED:-false}" = "true" ] && echo true || echo false)" \
+        "$(json_escape "${SELFMASK_PREV_DOMAIN:-}")"
 }
 
 selfmask_show_requirements() {
@@ -457,11 +459,17 @@ _selfmask_install_deps() {
 
 _selfmask_install_pq_nginx() {
     local _prefix="${SELFMASK_PQ_PREFIX}"
+    # Ради чего ставим: заглушке нужен nginx, проверке домена — openssl. Это
+    # разные пакеты, и они расходятся: системный nginx бывает слинкован с
+    # OpenSSL 3.5+, когда CLI openssl в системе ещё старый. В таком случае
+    # отказ «своя сборка nginx не нужна» оставлял проверку PQ вовсе без
+    # инструмента, поэтому для неё системный nginx поводом не является.
+    local _need="${1:-nginx}"
 
     # Системный nginx с OpenSSL 3.5.0+ умеет X25519MLKEM768 сам — качать свою
     # сборку незачем. Каталоги под конфиг и логи всё равно готовим: запускаем
     # его со своим конфигом, чтобы не трогать чужой /etc/nginx.
-    if _system_nginx_has_pq; then
+    if [ "$_need" = "nginx" ] && _system_nginx_has_pq; then
         log_success "Используем $(_selfmask_nginx_source)"
         log_info "Своя сборка nginx не нужна — обновления придут из дистрибутива"
         mkdir -p /var/log/mtproxyl-nginx /var/lib/mtproxyl-nginx/{body,proxy,fastcgi} /var/lock
@@ -889,7 +897,19 @@ _selfmask_configure_nginx() {
     server {
         listen 80 default_server;
         server_name _;
-        return 444;
+
+        # HTTP-01 отдаём для любого домена, который смотрит на этот сервер.
+        # Порт 80 занят нами постоянно, и без этого блока никакой другой
+        # сертификат (в первую очередь — для веб-панели на своём домене)
+        # выпустить нельзя: challenge упирается в 444.
+        location /.well-known/acme-challenge/ {
+            root ${SELFMASK_SITE_DIR};
+            allow all;
+        }
+
+        location / {
+            return 444;
+        }
     }
 
     server {
@@ -992,6 +1012,113 @@ EOF
     log_success "PQ nginx настроен"
 }
 
+# Запомнить то, что Selfmask сейчас перепишет.
+#
+# Отключение обещает вернуть прежний fake SNI, но возвращать было неоткуда:
+# PROXY_DOMAIN затирался доменом заглушки без следа. Снимок делается один раз —
+# повторное применение поверх уже включённого selfmask не должно записать в
+# «прежние» значения его собственные.
+_selfmask_snapshot_manager_settings() {
+    [ "${SELFMASK_PREV_SAVED:-false}" = "true" ] && return 0
+    SELFMASK_PREV_DOMAIN="${PROXY_DOMAIN:-}"
+    SELFMASK_PREV_MASKING_ENABLED="${MASKING_ENABLED:-}"
+    SELFMASK_PREV_MASK_HOST="${MASKING_HOST:-}"
+    SELFMASK_PREV_MASK_PORT="${MASKING_PORT:-}"
+    SELFMASK_PREV_UNKNOWN_SNI="${UNKNOWN_SNI_ACTION:-}"
+    SELFMASK_PREV_FAKE_CERT_LEN="${FAKE_CERT_LEN:-}"
+    SELFMASK_PREV_SAVED="true"
+}
+
+# Вернуть настройки менеджера к состоянию до Selfmask.
+# Возвращает 1, если снимка нет (selfmask включали ещё старой версией).
+_selfmask_restore_manager_settings() {
+    [ "${SELFMASK_PREV_SAVED:-false}" = "true" ] || return 1
+
+    local _was_domain="${SELFMASK_PREV_DOMAIN}"
+    PROXY_DOMAIN="${SELFMASK_PREV_DOMAIN}"
+    MASKING_ENABLED="${SELFMASK_PREV_MASKING_ENABLED:-true}"
+    MASKING_HOST="${SELFMASK_PREV_MASK_HOST}"
+    MASKING_PORT="${SELFMASK_PREV_MASK_PORT:-443}"
+    UNKNOWN_SNI_ACTION="${SELFMASK_PREV_UNKNOWN_SNI:-mask}"
+    [ -n "${SELFMASK_PREV_FAKE_CERT_LEN}" ] && FAKE_CERT_LEN="${SELFMASK_PREV_FAKE_CERT_LEN}"
+
+    SELFMASK_PREV_SAVED="false"
+    SELFMASK_PREV_DOMAIN=""
+    SELFMASK_PREV_MASK_HOST=""
+    SELFMASK_PREV_MASK_PORT=""
+    SELFMASK_PREV_UNKNOWN_SNI=""
+    SELFMASK_PREV_MASKING_ENABLED=""
+    SELFMASK_PREV_FAKE_CERT_LEN=""
+
+    log_success "Возвращены настройки, которые были до Selfmask"
+    [ -n "$_was_domain" ] && log_info "Fake SNI: ${_was_domain}"
+    log_info "Backend маскировки: ${MASKING_HOST:-${PROXY_DOMAIN}}:${MASKING_PORT}"
+    return 0
+}
+
+# Снимок [censorship]/[general.links] цели перед тем, как их перепишет Selfmask.
+_selfmask_snapshot_target_settings() {
+    [ "${SELFMASK_PREV_SAVED:-false}" = "true" ] && return 0
+    local _cfg="${DETECTED_CONFIG_PATH:-}"
+    [ -f "$_cfg" ] || return 1
+    SELFMASK_PREV_DOMAIN=$(_toml_get_string_in_section "censorship" "tls_domain" "$_cfg" 2>/dev/null)
+    SELFMASK_PREV_MASK_HOST=$(_toml_get_string_in_section "censorship" "mask_host" "$_cfg" 2>/dev/null)
+    SELFMASK_PREV_MASK_PORT=$(_toml_get_string_in_section "censorship" "mask_port" "$_cfg" 2>/dev/null)
+    SELFMASK_PREV_UNKNOWN_SNI=$(_toml_get_string_in_section "censorship" "unknown_sni_action" "$_cfg" 2>/dev/null)
+    SELFMASK_PREV_PUBLIC_HOST=$(_toml_get_string_in_section "general.links" "public_host" "$_cfg" 2>/dev/null)
+    SELFMASK_PREV_SAVED="true"
+    return 0
+}
+
+# Вернуть конфиг цели к тому, что было до Selfmask.
+#
+# Возвращаются только те ключи, которые в конфиге действительно стояли: у
+# отсутствовавших правильный «прежний» вид — отсутствие, а не пустая строка,
+# которую движок прочтёт как явно заданное пустое значение.
+_selfmask_restore_target_settings() {
+    [ "${SELFMASK_PREV_SAVED:-false}" = "true" ] || return 1
+    if [ -z "${DETECTED_CONFIG_PATH:-}" ] || [ ! -f "${DETECTED_CONFIG_PATH:-}" ]; then
+        log_warn "Конфиг цели не найден — вернуть прежние параметры автоматически не получится"
+        return 1
+    fi
+
+    local _ok=true _touched=false _skipped=""
+    _selfmask_restore_target_key() {
+        local _key="$1" _val="$2" _section="$3"
+        if [ -z "$_val" ]; then
+            _skipped+="${_skipped:+, }${_key}"
+            return 0
+        fi
+        apply_target_tuning "$_key" "$_val" "$_section" true || _ok=false
+        _touched=true
+    }
+
+    _selfmask_restore_target_key "tls_domain" "${SELFMASK_PREV_DOMAIN}" "censorship"
+    _selfmask_restore_target_key "mask_host" "${SELFMASK_PREV_MASK_HOST}" "censorship"
+    _selfmask_restore_target_key "mask_port" "${SELFMASK_PREV_MASK_PORT}" "censorship"
+    _selfmask_restore_target_key "unknown_sni_action" "${SELFMASK_PREV_UNKNOWN_SNI}" "censorship"
+    _selfmask_restore_target_key "public_host" "${SELFMASK_PREV_PUBLIC_HOST}" "general.links"
+    unset -f _selfmask_restore_target_key
+
+    SELFMASK_PREV_SAVED="false"
+    SELFMASK_PREV_DOMAIN=""
+    SELFMASK_PREV_MASK_HOST=""
+    SELFMASK_PREV_MASK_PORT=""
+    SELFMASK_PREV_UNKNOWN_SNI=""
+    SELFMASK_PREV_PUBLIC_HOST=""
+
+    if [ "$_touched" = "true" ] && [ "$_ok" = "true" ]; then
+        log_success "Конфиг цели возвращён к состоянию до Selfmask"
+    elif [ "$_touched" = "true" ]; then
+        log_warn "Не все прежние параметры удалось вернуть — проверьте [censorship] в конфиге цели"
+    fi
+    if [ -n "$_skipped" ]; then
+        log_info "До Selfmask эти ключи в конфиге не стояли, поэтому не восстанавливались: ${_skipped}"
+        log_info "Если движок их не любит пустыми — удалите их из конфига вручную"
+    fi
+    [ "$_ok" = "true" ]
+}
+
 _selfmask_apply_mtproxyl_settings() {
     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
         _selfmask_apply_target_settings
@@ -1000,6 +1127,7 @@ _selfmask_apply_mtproxyl_settings() {
 
     log_info "Применение selfmask-настроек в MTProxyL..."
 
+    _selfmask_snapshot_manager_settings
     SELFMASK_ENABLED="true"
 
     PROXY_DOMAIN="${SELFMASK_DOMAIN}"
@@ -1060,6 +1188,10 @@ _selfmask_apply_target_settings() {
         log_info "Пропущено — примените параметры вручную и перезапустите цель"
         return 0
     fi
+
+    # То же, что и в менеджере: запоминаем, что стояло в конфиге цели, чтобы
+    # отключение вернуло это назад, а не оставило чужой конфиг с нашим доменом.
+    _selfmask_snapshot_target_settings
 
     # Пакетный режим: перезапуск один раз в конце, а не после каждого ключа.
     local _ok=true
@@ -1138,16 +1270,25 @@ for _f in "${INSTALL_DIR}/selfmask-reanimator.conf" "${INSTALL_DIR}/settings.con
     . "\$_f" 2>/dev/null || continue
     [ -n "\$SELFMASK_DOMAIN" ] && { _ours="\$SELFMASK_DOMAIN"; break; }
 done
-[ -n "\$_ours" ] && [ "\$_domain" = "\$_ours" ] || exit 0
-
 # Заглушка selfmask: подхватывает новый сертификат без обрыва соединений.
-systemctl reload ${SELFMASK_PQ_SERVICE} 2>/dev/null || true
+# Только на своём домене — чужое продление её не касается.
+if [ -n "\$_ours" ] && [ "\$_domain" = "\$_ours" ]; then
+    systemctl reload ${SELFMASK_PQ_SERVICE} 2>/dev/null || true
+fi
 
-# Панель на этом же сертификате: /etc/letsencrypt её пользователю не
-# читается, поэтому у неё копия (см. _selfmask_handoff_cert_to_panel).
+# Панель: /etc/letsencrypt её пользователю не читается, поэтому у неё копия
+# (см. _selfmask_handoff_cert_to_panel и panel_issue_cert). Домен панели может
+# отличаться от домена заглушки, поэтому сверяем не с ним, а с тем, на что
+# выписана сама копия.
 _panel_cfg="/etc/mtproxyl-panel/config.toml"
 _panel_certs="/var/lib/mtproxyl-panel/certs"
-if [ -f "\$_panel_cfg" ] && grep -q "^cert_file *= *\"\$_panel_certs/panel.crt\"" "\$_panel_cfg" 2>/dev/null; then
+_panel_is_ours=""
+if [ -f "\$_panel_certs/panel.crt" ]; then
+    openssl x509 -in "\$_panel_certs/panel.crt" -noout -text 2>/dev/null \\
+        | grep -oE 'DNS:[^,[:space:]]+' | cut -d: -f2 | grep -Fxq "\$_domain" \\
+        && _panel_is_ours="yes"
+fi
+if [ -n "\$_panel_is_ours" ] && [ -f "\$_panel_cfg" ] && grep -q "^cert_file *= *\"\$_panel_certs/panel.crt\"" "\$_panel_cfg" 2>/dev/null; then
     install -o mtproxyl-panel -g mtproxyl-panel -m 0644 \\
         "\${RENEWED_LINEAGE}/fullchain.pem" "\$_panel_certs/panel.crt" 2>/dev/null || exit 0
     install -o mtproxyl-panel -g mtproxyl-panel -m 0600 \\
@@ -1274,7 +1415,14 @@ selfmask_verify() {
     else
         log_error "nginx с поддержкой PQ не найден"; _ok=false
     fi
-    [ -x "$(_selfmask_pq_openssl_bin)" ] && log_success "PQ openssl установлен" || { log_error "PQ openssl не установлен"; _ok=false; }
+    # Годится любой openssl с X25519MLKEM768 — системный 3.5.0+ ничем не хуже
+    # нашей сборки, и требовать именно её значит ронять проверку на ровном месте.
+    local _verify_openssl=""
+    if _verify_openssl=$(_pq_openssl_bin 2>/dev/null); then
+        log_success "openssl с поддержкой PQ: $(_pq_openssl_source)"
+    else
+        log_error "openssl с поддержкой PQ не найден"; _ok=false
+    fi
     if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "letsencrypt" ]; then
         command -v certbot &>/dev/null && log_success "certbot установлен" || { log_error "certbot не установлен"; _ok=false; }
     fi
@@ -1309,9 +1457,9 @@ selfmask_verify() {
         log_warn "Backend nginx не отвечает как ожидалось (HTTP ${_http_code:-?})"
     fi
 
-    if [ -n "${SELFMASK_DOMAIN:-}" ] && [ -x "$(_selfmask_pq_openssl_bin)" ]; then
+    if [ -n "${SELFMASK_DOMAIN:-}" ] && [ -n "$_verify_openssl" ]; then
         local _pq_out _pq_line
-        _pq_out=$("$(_selfmask_pq_openssl_bin)" s_client \
+        _pq_out=$("$_verify_openssl" s_client \
             -tls1_3 \
             -groups X25519MLKEM768 \
             -connect "127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT}" \
@@ -1434,6 +1582,13 @@ selfmask_disable() {
     echo ""
     echo -e "  ${YELLOW}${BOLD}Отключение Selfmask${NC}"
     echo -e "  ${DIM}Будет отключён nginx selfmask и MTProxyL перестанет использовать локальный mask backend.${NC}"
+    if [ "${SELFMASK_PREV_SAVED:-false}" = "true" ]; then
+        echo -e "  ${DIM}Fake SNI и маскировка вернутся к тому, что было до включения${NC}"
+        echo -e "  ${DIM}(${SELFMASK_PREV_DOMAIN:-домен не был задан}). Ссылки при этом изменятся.${NC}"
+    else
+        echo -e "  ${DIM}Прежний fake SNI не сохранён — домен останется selfmask'овым,${NC}"
+        echo -e "  ${DIM}задайте нужный вручную после отключения.${NC}"
+    fi
     echo -e "  ${DIM}Каталог сайта и сертификаты удаляться не будут.${NC}"
     echo ""
     echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
@@ -1449,15 +1604,29 @@ selfmask_disable() {
     SELFMASK_ENABLED="false"
 
     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
-        echo -e "  ${DIM}Nginx-заглушка selfmask отключена. Конфиг цели не тронут —${NC}"
-        echo -e "  ${DIM}при необходимости верните в [censorship] цели прежние${NC}"
-        echo -e "  ${DIM}mask_host/mask_port/unknown_sni_action вручную и перезапустите цель.${NC}"
+        # Раньше здесь только просили вернуть всё руками, и в чужом конфиге
+        # оставался наш домен вместе с mask_host = 127.0.0.1 — то есть цель
+        # продолжала ходить на уже выключенную заглушку.
+        if _selfmask_restore_target_settings; then
+            log_warn "Ссылки цели изменились — проверьте их после перезапуска"
+        else
+            echo -e "  ${DIM}Nginx-заглушка selfmask отключена. Конфиг цели не тронут —${NC}"
+            echo -e "  ${DIM}при необходимости верните в [censorship] цели прежние${NC}"
+            echo -e "  ${DIM}tls_domain/mask_host/mask_port/unknown_sni_action вручную${NC}"
+            echo -e "  ${DIM}и перезапустите цель.${NC}"
+        fi
+    elif _selfmask_restore_manager_settings; then
+        log_warn "Проверьте ссылки после отключения selfmask: mtproxyl secret link"
     elif [ "${MASKING_HOST:-}" = "127.0.0.1" ] && [ "${MASKING_PORT:-}" = "${SELFMASK_NGINX_BACKEND_PORT}" ]; then
+        # Снимка нет: selfmask включали версией, которая его ещё не делала.
+        # Тогда как раньше — только маскировка, fake SNI остаётся selfmask'овым.
         MASKING_ENABLED="true"
         MASKING_HOST=""
         MASKING_PORT="443"
         log_info "Selfmask отключён — маскировка возвращена в обычный режим"
         log_info "Теперь backend по умолчанию: ${PROXY_DOMAIN}:443"
+        log_warn "Прежний fake SNI не сохранялся (selfmask включён до обновления)"
+        log_warn "Задайте домен вручную: mtproxyl settings set PROXY_DOMAIN <домен>"
         log_warn "Проверьте ссылки после отключения selfmask: mtproxyl secret link"
     fi
 
@@ -1765,6 +1934,6 @@ selfmask_install_pq_tools() {
         return 1
     fi
 
-    _selfmask_install_pq_nginx || return 1
+    _selfmask_install_pq_nginx openssl || return 1
     log_success "Готово: $(_pq_openssl_source)"
 }

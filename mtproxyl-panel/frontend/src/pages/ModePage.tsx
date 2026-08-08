@@ -98,7 +98,7 @@ export function ModePage() {
     }
   }, []);
 
-  const { operation, start, running } = useMtproxylOperation(load, ['mode:']);
+  const { operation, start, dismiss, running } = useMtproxylOperation(load, ['mode:']);
 
   useEffect(() => {
     void load();
@@ -141,7 +141,7 @@ export function ModePage() {
       </div>
 
       {error && <ErrorAlert message={error} onRetry={load} />}
-      <OperationProgress operation={operation} />
+      <OperationProgress operation={operation} onDismiss={dismiss} />
 
       {loading && !status ? (
         <div className="text-sm text-text-secondary">Загрузка…</div>

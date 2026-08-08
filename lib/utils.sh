@@ -212,12 +212,16 @@ proxy_link_host() {
     echo "$_host"
 }
 
-# Домен для [general.links] public_host — из настройки «IP/домен сервера».
-# Пусто (автоопределение) или IP-литерал: движок определит адрес сам.
+# Хост для [general.links] public_host — из настройки «IP/домен сервера».
+#
+# Пусто — движок определяет адрес сам. Заданный IPv4 раньше тоже отбрасывался
+# «движок определит сам», но смысл настройки ровно в обратном: её задают там,
+# где автоопределение промахивается (NAT, несколько адресов), и ссылки движка
+# всё равно уходили с чужим IP. IPv6-литерал по-прежнему оставляем движку:
+# в ссылку он идёт в скобках, и подставлять его сюда как есть нельзя.
 proxy_public_host() {
     local _v="${CUSTOM_IP:-}"
     [ -n "$_v" ] || return 1
-    validate_ip_literal "$_v" && return 1
     case "$_v" in *:*) return 1 ;; esac   # IPv6
     printf '%s' "$_v"
 }
@@ -605,6 +609,17 @@ handle_ip_command() {
             log_success "IP: ${CUSTOM_IP}"
             ;;
     esac
+
+    # Ссылки движка собираются из [general.links] public_host в его конфиге, а
+    # не из настроек MTProxyL. Без перегенерации конфига смена IP меняла только
+    # то, что печатает CLI: панель и сам движок продолжали отдавать ссылки со
+    # старым (определённым автоматически) адресом — со стороны это выглядело
+    # так, будто настройка не работает вовсе.
+    if [ "${MTPROXYL_MODE:-manager}" = "manager" ] && ! _superexpert_active 2>/dev/null; then
+        reload_proxy_config >/dev/null 2>&1 || true
+    elif [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        log_info "В реаниматоре ссылки собирает цель — задайте у неё [general.links] public_host"
+    fi
 }
 
 handle_domain_command() {

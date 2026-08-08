@@ -249,7 +249,10 @@ run_installer() {
 
     # Сохранение
     mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" "$STATS_DIR" "$BACKUP_DIR"
-    chmod 700 "$CONFIG_DIR" "$INSTALL_DIR"
+    # Каталог настроек — 711: листинга нет, но settings.conf по известному имени
+    # читается без sudo (см. lib/settings.sh). Конфиг движка остаётся закрытым.
+    chmod 700 "$CONFIG_DIR" "$STATS_DIR" "$BACKUP_DIR"
+    chmod "${_INSTALL_DIR_MODE:-711}" "$INSTALL_DIR"
     save_settings
     save_secrets
 
@@ -610,6 +613,10 @@ uninstall() {
     log_info "Удаление файлов..."
     rm -rf "$INSTALL_DIR"
     rm -f /usr/local/bin/mtproxyl
+    # Алиас 'mtproxyl → sudo mtproxyl' от установщика. Строки в ~/.bashrc
+    # пользователей не трогаем — они безобидны (алиас на несуществующую
+    # команду) и лезть в чужие dotfiles при удалении не стоит.
+    rm -f /etc/profile.d/mtproxyl.sh
 
     echo ""
     log_success "MTProxyL полностью удалён"

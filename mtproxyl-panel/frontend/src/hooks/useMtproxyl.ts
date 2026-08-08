@@ -159,5 +159,18 @@ export function useMtproxylOperation(onFinished?: () => void, scope?: string[]) 
     };
   }, [poll, stop]);
 
-  return { operation, start, running: operation?.phase === 'running' };
+  // Закрыть окно с результатом операции.
+  //
+  // Слот один на всю панель и хранит последний результат до следующего запуска,
+  // поэтому просто спрятать блок в состоянии страницы мало: после F5 он
+  // возвращается. Гасим его и на сервере, а локально убираем сразу, не дожидаясь
+  // ответа, — если запрос не дойдёт, следующий опрос всё равно ничего не
+  // покажет, пока пользователь сам не запустит новую операцию.
+  const dismiss = useCallback(() => {
+    stop();
+    setOperation(null);
+    void mtproxylApi.dismissOperation().catch(() => undefined);
+  }, [stop]);
+
+  return { operation, start, dismiss, running: operation?.phase === 'running' };
 }

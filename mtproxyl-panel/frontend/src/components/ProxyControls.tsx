@@ -31,7 +31,7 @@ export function ProxyControls() {
     }
   }, [enabled]);
 
-  const { operation, start, running } = useMtproxylOperation(load, ['proxy:']);
+  const { operation, start, dismiss, running } = useMtproxylOperation(load, ['proxy:']);
 
   useEffect(() => {
     void load();
@@ -78,7 +78,7 @@ export function ProxyControls() {
       </div>
 
       {error && <div className="text-sm text-danger">{error}</div>}
-      <OperationProgress operation={operation} />
+      <OperationProgress operation={operation} onDismiss={dismiss} />
 
       <div className="flex flex-wrap gap-2">
         <Button size="sm" disabled={running || (up && !down)} onClick={() => run('start')}>
