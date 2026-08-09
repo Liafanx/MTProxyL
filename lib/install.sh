@@ -618,6 +618,7 @@ uninstall() {
     # безобидный остаток: удалённый MTProxyL продолжал бы менять поведение
     # TCP на каждой загрузке. Значения вернутся к дефолтам ядра.
     rm -f /etc/sysctl.d/99-mtproxyl-zapret2.conf \
+          /etc/sysctl.d/99-mtproxyl-wscale.conf \
           /etc/sysctl.d/99-mtproxyl-keepalive.conf \
           /etc/sysctl.d/99-mtproxyl-meko-opt.conf
 

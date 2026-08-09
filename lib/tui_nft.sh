@@ -837,6 +837,9 @@ tui_zapret2_menu() {
             else
                 echo -e "  ${BOLD}NFT:${NC}    ${RED}таблица не найдена${NC}"
             fi
+            if zapret2_wscale_opt_applied; then
+                echo -e "  ${BOLD}Буфер:${NC}  ${GREEN}оптимизация TCP включена${NC} ${DIM}(wscale 9)${NC}"
+            fi
             echo ""
         fi
 
@@ -940,7 +943,7 @@ tui_zapret2_menu() {
                     echo ""
                     echo -e "  ${BOLD}=== old limiter ===${NC}"
                     nft list table inet "${NFT_TABLE:-mtproxyl_limit}" 2>/dev/null || echo "  отсутствует"
-                    zapret2_check_wscale "true"
+                    zapret2_check_wscale "false"
                 fi
                 press_any_key ;;
             9)

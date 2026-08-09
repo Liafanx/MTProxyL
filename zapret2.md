@@ -31,6 +31,7 @@ disorder + badsum, а к SYN+ACK и пустым ACK — контроль TCP-о
 | Служба | `mtproxyl-zapret2.service` |
 | Таблица nftables | `ip MTProtoL` |
 | Параметры ядра | `/etc/sysctl.d/99-mtproxyl-zapret2.conf` |
+| Оптимизация TCP-буфера | `/etc/sysctl.d/99-mtproxyl-wscale.conf` *(если понадобилась)* |
 
 ---
 
@@ -377,14 +378,42 @@ tcp flags & (fin | syn | rst | ack) == ack ct mark 0x00040000 counter accept
 sysctl -n net.core.rmem_max net.ipv4.tcp_rmem
 ```
 
-При `net.core.rmem_max` порядка 8 МБ и больше `wscale` вырастает, окно уходит за
-1400 байт и дробление перестаёт работать. Приводится это в порядок уменьшением
-буфера, а не правкой окна:
+Когда буфер велик, `wscale` вырастает, и при `2^wscale ≥ 1400` дробление
+невозможно уже ни при каком `win ACK`. Лечится это буфером, а не окном:
 
 ```bash
-sysctl -w net.core.rmem_max=8388608
-sysctl -w net.ipv4.tcp_rmem='4096 131072 8388608'
+cat > /etc/sysctl.d/99-mtproxyl-wscale.conf << 'EOF'
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 131072 16777216
+net.ipv4.tcp_wmem = 4096 131072 16777216
+EOF
+
+sysctl --system
 ```
+
+16 МБ дают `wscale = 9`, гранулярность окна 512 байт, и `win ACK = 2` — это
+1024 байта, меньше порога. Значение `win ACK` не забудьте поставить в конфиге
+`nfqws2` (шаг 3).
+
+После применения обязательно перепроверьте, что значения действительно
+изменились:
+
+```bash
+sysctl -n net.core.rmem_max net.ipv4.tcp_rmem
+```
+
+Если они прежние — ключи задаёт файл, который читается после нашего (`sysctl.d`
+обрабатывается по возрастанию имён, последний выигрывает). Найдите его и
+уберите оттуда эти строки:
+
+```bash
+grep -rl 'net.core.rmem_max' /etc/sysctl.conf /etc/sysctl.d /run/sysctl.d \
+    /usr/lib/sysctl.d /usr/local/lib/sysctl.d 2>/dev/null
+```
+
+В MTProxyL это делается само: проверка `wscale` предлагает применить
+оптимизацию, а после применения сверяет значения и называет мешающий файл.
 
 ---
 
@@ -397,8 +426,9 @@ rm -f /usr/local/sbin/mtproxyl-zapret2-start.sh
 systemctl daemon-reload
 nft delete table ip MTProtoL 2>/dev/null || true
 rm -rf /opt/mtproxyl-zapret2 /etc/mtproxyl-zapret2
-rm -f /etc/sysctl.d/99-mtproxyl-zapret2.conf
+rm -f /etc/sysctl.d/99-mtproxyl-zapret2.conf /etc/sysctl.d/99-mtproxyl-wscale.conf
 sysctl -w net.ipv4.tcp_tw_reuse=2 >/dev/null   # значение ядра по умолчанию
+sysctl --system >/dev/null                     # вернуть буфер к системным значениям
 ```
 
 ---

@@ -82,6 +82,14 @@ ZAPRET2_BYPASS_MATCH="tcp flags & (fin | syn | rst | ack) == ack"
 ZAPRET2_SYSCTL_FILE="/etc/sysctl.d/99-mtproxyl-zapret2.conf"
 ZAPRET2_TW_REUSE_VALUE="1"
 ZAPRET2_ORIG_TW_REUSE=""
+
+# Оптимизация TCP-буфера под дробление ClientHello.
+# При 16 МБ wscale выходит 9, гранулярность окна 512 байт, и win ACK = 2 даёт
+# 1024 байта — меньше порога в 1400. На буфере крупнее дробление невозможно
+# ни при каком win ACK.
+ZAPRET2_WSCALE_OPT_FILE="/etc/sysctl.d/99-mtproxyl-wscale.conf"
+ZAPRET2_WSCALE_OPT_BUF="16777216"
+ZAPRET2_WSCALE_OPT_MEM="4096 131072 16777216"
 # Значения по умолчанию держим одним набором: их же показывает и
 # восстанавливает пункт «Сброс к дефолту», иначе сброс уводил настройки
 # к значениям, которых нет ни у одной свежей установки.
@@ -1769,6 +1777,71 @@ SYSEOF
     fi
 }
 
+# Включена ли оптимизация буфера: файл на месте и значения в ядре наши.
+zapret2_wscale_opt_applied() {
+    [ -f "$ZAPRET2_WSCALE_OPT_FILE" ] || return 1
+    local _r _t
+    _r=$(sysctl -n net.core.rmem_max 2>/dev/null)
+    _t=$(sysctl -n net.ipv4.tcp_rmem 2>/dev/null | awk '{print $3}')
+    [ "$_r" = "$ZAPRET2_WSCALE_OPT_BUF" ] && [ "$_t" = "$ZAPRET2_WSCALE_OPT_BUF" ]
+}
+
+# Кто ещё задаёт этот ключ, кроме нашего файла.
+_zapret2_sysctl_setters() {
+    local _key="$1"
+    grep -rlE "^[[:space:]]*${_key//./\\.}[[:space:]]*=" \
+        /etc/sysctl.conf /etc/sysctl.d /run/sysctl.d /usr/lib/sysctl.d \
+        /usr/local/lib/sysctl.d 2>/dev/null \
+        | grep -vF "$ZAPRET2_WSCALE_OPT_FILE" | sort -u
+}
+
+zapret2_wscale_opt_apply() {
+    cat > "$ZAPRET2_WSCALE_OPT_FILE" << EOF
+# MTProxyL: TCP-буфер под дробление ClientHello (zapret2)
+# 16 МБ дают wscale 9 и гранулярность окна 512 байт.
+net.core.rmem_max = ${ZAPRET2_WSCALE_OPT_BUF}
+net.core.wmem_max = ${ZAPRET2_WSCALE_OPT_BUF}
+net.ipv4.tcp_rmem = ${ZAPRET2_WSCALE_OPT_MEM}
+net.ipv4.tcp_wmem = ${ZAPRET2_WSCALE_OPT_MEM}
+EOF
+    chmod 644 "$ZAPRET2_WSCALE_OPT_FILE"
+
+    sysctl --system &>/dev/null || true
+
+    local _bad=""
+    local _r _t
+    _r=$(sysctl -n net.core.rmem_max 2>/dev/null)
+    _t=$(sysctl -n net.ipv4.tcp_rmem 2>/dev/null | awk '{print $3}')
+    [ "$_r" = "$ZAPRET2_WSCALE_OPT_BUF" ] || _bad="net.core.rmem_max"
+    [ "$_t" = "$ZAPRET2_WSCALE_OPT_BUF" ] || _bad="${_bad:+$_bad }net.ipv4.tcp_rmem"
+
+    if [ -z "$_bad" ]; then
+        log_success "Оптимизация применена: буфер ${ZAPRET2_WSCALE_OPT_BUF}, wscale 9"
+        return 0
+    fi
+
+    log_error "Значения не применились: ${_bad}"
+    log_warn "Их перетирает другой файл — наш читается раньше"
+    local _key _f _found=""
+    for _key in net.core.rmem_max net.ipv4.tcp_rmem; do
+        while IFS= read -r _f; do
+            [ -n "$_f" ] || continue
+            _found="yes"
+            echo -e "    ${DIM}${_key} задан в ${_f}${NC}"
+        done <<< "$(_zapret2_sysctl_setters "$_key")"
+    done
+    [ -n "$_found" ] || log_info "Файл-источник найти не удалось — проверьте sysctl --system вручную"
+    log_info "Уберите ключи из этих файлов и повторите"
+    return 1
+}
+
+zapret2_wscale_opt_remove() {
+    [ -f "$ZAPRET2_WSCALE_OPT_FILE" ] || return 0
+    rm -f "$ZAPRET2_WSCALE_OPT_FILE"
+    sysctl --system &>/dev/null || true
+    log_success "Оптимизация TCP-буфера снята"
+}
+
 zapret2_remove_sysctl() {
     [ -f "$ZAPRET2_SYSCTL_FILE" ] || return 0
     rm -f "$ZAPRET2_SYSCTL_FILE"
@@ -1883,6 +1956,7 @@ zapret2_cleanup_failed_install() {
 
     nft delete table ip "${ZAPRET2_NFT_TABLE}" 2>/dev/null || true
     zapret2_remove_sysctl
+    zapret2_wscale_opt_remove
 
     rm -f "/etc/systemd/system/${ZAPRET2_SERVICE}"
     rm -f "/usr/local/sbin/mtproxyl-zapret2-start.sh"
@@ -2133,6 +2207,7 @@ zapret2_remove() {
 
     zapret2_stop
     zapret2_remove_sysctl
+    zapret2_wscale_opt_remove
     systemctl disable "$ZAPRET2_SERVICE" 2>/dev/null || true
     rm -f "/etc/systemd/system/${ZAPRET2_SERVICE}"
     rm -f "/usr/local/sbin/mtproxyl-zapret2-start.sh"
@@ -2208,12 +2283,32 @@ zapret2_check_wscale() {
 
     if [ "$_impossible" = "true" ]; then
         echo -e "  ${RED}⚠ КРИТИЧНО: 2^wscale = ${_scale} >= 1400 байт${NC}"
-        echo -e "  ${RED}  Дробление ClientHello невозможно!${NC}"
-        echo -e "  ${RED}  Уменьшите net.core.rmem_max / net.ipv4.tcp_rmem${NC}"
+        echo -e "  ${RED}  Дробление ClientHello невозможно ни при каком win ACK${NC}"
         echo ""
-        echo -e "  ${YELLOW}Пример (wscale=7):${NC}"
-        echo -e "  ${DIM}  sysctl -w net.core.rmem_max=8388608${NC}"
-        echo -e "  ${DIM}  sysctl -w net.ipv4.tcp_rmem='4096 131072 8388608'${NC}"
+        echo -e "  ${BOLD}Оптимизация: буфер ${ZAPRET2_WSCALE_OPT_BUF} → wscale 9, win ACK 2 (окно 1024)${NC}"
+        echo -e "  ${DIM}Файл: ${ZAPRET2_WSCALE_OPT_FILE}${NC}"
+        echo -e "  ${DIM}  net.core.rmem_max / wmem_max = ${ZAPRET2_WSCALE_OPT_BUF}${NC}"
+        echo -e "  ${DIM}  net.ipv4.tcp_rmem / tcp_wmem = ${ZAPRET2_WSCALE_OPT_MEM}${NC}"
+
+        if [ "$_show_only" = "true" ]; then
+            echo ""
+            echo -e "  ${DIM}Применить: меню Zapret2 → Проверка wscale / win ACK${NC}"
+            return 0
+        fi
+
+        echo ""
+        echo -en "  ${BOLD}Применить оптимизацию? [Y/n]:${NC} "
+        local _yn_opt; read_line _yn_opt
+        if [[ "$_yn_opt" =~ ^[nN] ]]; then
+            log_info "Отменено — дробление ClientHello работать не будет"
+            return 0
+        fi
+        zapret2_wscale_opt_apply || return 1
+
+        # Буфер изменился — пересчитываем win ACK по новому wscale.
+        echo ""
+        zapret2_check_wscale "$_show_only"
+        return 0
     elif [ "$_current_real" -ge 1400 ]; then
         echo -e "  ${RED}⚠ Реальное окно (${_current_real} байт) >= 1400 — дробление не работает!${NC}"
     elif [ "$_current_real" -lt 1400 ]; then
@@ -2257,6 +2352,8 @@ zapret2_full_cleanup() {
         rm -f "/usr/local/sbin/mtproxyl-zapret2-start.sh"
         systemctl daemon-reload 2>/dev/null || true
         zapret2_remove_nft
+        zapret2_remove_sysctl
+        zapret2_wscale_opt_remove
         rm -f "$ZAPRET2_CONF" "$ZAPRET2_LUA"
         rm -rf "$ZAPRET2_DIR" "$ZAPRET2_ETC_DIR"
         log_info "Zapret2 MTProto fix удалён"
