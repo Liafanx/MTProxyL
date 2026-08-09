@@ -7,6 +7,7 @@ import { useMtproxyl } from '@/hooks/useMtproxyl';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Дашборд' },
+  { to: '/availability', icon: Radar, label: 'Доступность из России' },
   { to: '/users', icon: Users, label: 'Пользователи' },
   { to: '/runtime', icon: Activity, label: 'Телеметрия' },
   { to: '/security', icon: Shield, label: 'Безопасность' },
@@ -31,7 +32,6 @@ const mtproxylNavItems = [
   { to: '/routes', icon: Route, label: 'Маршруты', managerOnly: true },
   { to: '/expert', icon: SlidersHorizontal, label: 'Экспертные параметры', managerOnly: true },
   { to: '/superexpert', icon: FileCode, label: 'Супер эксперт', managerOnly: true },
-  { to: '/availability', icon: Radar, label: 'Доступность снаружи', managerOnly: false },
   { to: '/addons', icon: Puzzle, label: 'Дополнения', managerOnly: false },
 ];
 
