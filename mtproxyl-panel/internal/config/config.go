@@ -56,6 +56,74 @@ type Config struct {
 	TLS      TLSConfig      `toml:"tls"`
 	GeoIP    GeoIPConfig    `toml:"geoip"`
 	Users    UsersConfig    `toml:"users"`
+	// Globalping is the availability check from Russian residential probes.
+	Globalping GlobalpingConfig `toml:"globalping"`
+}
+
+// GlobalpingConfig controls the «Доступность из России» check.
+//
+// The panel asks Globalping's public probe network to open an HTTPS session
+// with the proxy from Russian residential ISPs; the result is a percentage of
+// probes that completed the TLS handshake.
+type GlobalpingConfig struct {
+	// Enabled turns the background check on. A pointer, because absent has to
+	// mean «on»: the section did not exist before this feature, and panels
+	// updated from an older version would otherwise silently show an empty
+	// page with «отключено в конфигурации».
+	Enabled *bool `toml:"enabled"`
+
+	// CheckInterval between background checks (Go duration: 15m, 1h).
+	CheckInterval string `toml:"check_interval"`
+
+	// ProbeLimit is how many probes each check uses. Globalping charges one
+	// credit per probe, and the free hourly quota is 250 — see Interval().
+	ProbeLimit int `toml:"probe_limit"`
+
+	// APIToken raises the quota. Free, optional: https://dash.globalping.io/
+	APIToken string `toml:"api_token"`
+
+	// OverrideHost replaces the address probes connect to. Needed when the
+	// proxy answers on an address the server cannot work out itself (NAT,
+	// several addresses, a domain that is not the FakeTLS one).
+	OverrideHost string `toml:"override_host"`
+}
+
+// GlobalpingEnabled reports whether the check should run.
+func (g GlobalpingConfig) GlobalpingEnabled() bool {
+	return g.Enabled == nil || *g.Enabled
+}
+
+// Interval returns the background check interval.
+//
+// The default is deliberately not aggressive: Globalping's free quota is 250
+// credits an hour and one probe costs one credit, so 20 probes every 5 minutes
+// (240/hour) leaves nothing for a manual check and starts failing with 429.
+// Every 15 minutes is 80/hour — plenty of room.
+func (g GlobalpingConfig) Interval() time.Duration {
+	if g.CheckInterval == "" {
+		return 15 * time.Minute
+	}
+	d, err := time.ParseDuration(g.CheckInterval)
+	if err != nil {
+		log.Printf("globalping: check_interval %q не разобран, беру 15m: %v", g.CheckInterval, err)
+		return 15 * time.Minute
+	}
+	if d < time.Minute {
+		log.Printf("globalping: check_interval %v слишком мал, беру 1m", d)
+		return time.Minute
+	}
+	return d
+}
+
+// EffectiveProbeLimit bounds the probe count to what the service allows.
+func (g GlobalpingConfig) EffectiveProbeLimit() int {
+	if g.ProbeLimit <= 0 {
+		return 20
+	}
+	if g.ProbeLimit > 50 {
+		return 50
+	}
+	return g.ProbeLimit
 }
 
 // MtproxylConfig describes how to reach the MTProxyL bash CLI. The panel

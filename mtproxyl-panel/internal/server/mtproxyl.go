@@ -4,74 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log"
 	"net/http"
 	"path/filepath"
 	"strconv"
-	"strings"
-	"time"
 
 	"github.com/Liafanx/mtproxyl-panel/internal/auth"
-	"github.com/Liafanx/mtproxyl-panel/internal/availability"
 	"github.com/Liafanx/mtproxyl-panel/internal/mtproxylctl"
 )
-
-// defaultProbeTarget guesses what to check when the UI did not say.
-//
-// The port is whatever the current mode's engine listens on. The address is
-// the one MTProxyL puts in proxy links: pinned in settings when the operator
-// set it, otherwise the server's own public address — which is what the probes
-// have to reach anyway. Both lookups are best-effort: an empty answer just
-// means the field stays for the user to fill in.
-func defaultProbeTarget(ctx context.Context, client *mtproxylctl.Client) (string, int) {
-	var host string
-	var port int
-
-	if client.Enabled() {
-		if st, err := client.GetMode(ctx); err == nil {
-			port = st.Port
-		}
-		if list, err := client.Settings(ctx); err == nil {
-			for _, s := range list {
-				if s.Key == "CUSTOM_IP" && strings.TrimSpace(s.Value) != "" {
-					host = strings.TrimSpace(s.Value)
-					break
-				}
-			}
-		}
-	}
-	if host == "" {
-		host = publicIP(ctx)
-	}
-	return host, port
-}
-
-// publicIP asks an outside service what this server's address looks like.
-//
-// Only used to prefill the field: on a server without outbound access it
-// simply returns nothing rather than delaying the request.
-func publicIP(ctx context.Context) string {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.ipify.org", nil)
-	if err != nil {
-		return ""
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return ""
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return ""
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 64))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(body))
-}
 
 // registerMtproxylRoutes wires the /api/mtproxyl/* endpoints, which expose
 // MTProxyL's host-level features (mode, selfmask, backups) to the UI.
@@ -81,7 +21,6 @@ func publicIP(ctx context.Context) string {
 func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	client := mtproxylctl.New(s.cfg.Mtproxyl)
 	runner := mtproxylctl.NewRunner()
-	availabilityChecker := availability.NewChecker()
 	telemtURL := s.cfg.Telemt.URL
 
 	protected := func(h http.HandlerFunc) http.Handler {
@@ -871,48 +810,6 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 			return
 		}
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
-	}))
-
-	// ── Availability ────────────────────────────────────────────────────────
-	// Доступность прокси снаружи, глазами зондов в разных странах. Сам сервер
-	// об этом ничего сказать не может: порт слушается, а до пользователя пакеты
-	// не доходят. Работает без прав root — это обычные HTTP-запросы наружу,
-	// поэтому маршрут не завязан на мост MTProxyL и не идёт через sudo.
-	mux.Handle("GET /api/mtproxyl/availability", protected(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: availabilityChecker.Report()})
-	}))
-
-	mux.Handle("POST /api/mtproxyl/availability", protected(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Host     string `json:"host"`
-			Port     int    `json:"port"`
-			MaxNodes int    `json:"max_nodes"`
-		}
-		// Пустое тело — обычный случай «проверить как есть»: адрес и порт
-		// подставим сами.
-		if r.Body != nil {
-			_ = json.NewDecoder(r.Body).Decode(&req)
-		}
-		host, port := strings.TrimSpace(req.Host), req.Port
-		if host == "" || port == 0 {
-			dh, dp := defaultProbeTarget(r.Context(), client)
-			if host == "" {
-				host = dh
-			}
-			if port == 0 {
-				port = dp
-			}
-		}
-		if err := availability.ValidateTarget(host, port); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_target", err.Error())
-			return
-		}
-		if !availabilityChecker.Start(host, port, req.MaxNodes) {
-			writeError(w, http.StatusConflict, "check_busy",
-				"Проверка уже идёт — дождитесь её завершения")
-			return
-		}
-		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: availabilityChecker.Report()})
 	}))
 
 	// ── Addons ──────────────────────────────────────────────────────────────

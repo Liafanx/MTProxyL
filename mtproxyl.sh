@@ -268,11 +268,19 @@ cli_main() {
                         [ -n "$_log_target" ] || { _log_kind=""; _log_target=""; }
                     fi
 
-                    printf '{"mode":"%s","detected_mode":"%s","detected_config":"%s","port":%d,"engine_config":"%s","api_port":%d,"api_enabled":%s,"own_container":"%s","running":%s,"log_kind":"%s","log_target":"%s"}\n' \
+                    # Fake SNI берём тот же, что показывает статус: у
+                    # реаниматора это tls_domain конфига цели, а не наш
+                    # PROXY_DOMAIN. Панель проверяет доступность рукопожатием
+                    # именно по нему — с чужим доменом проверка показывала бы
+                    # недоступность работающего прокси.
+                    _mode_sni=$(_current_sni_domain 2>/dev/null || echo "")
+
+                    printf '{"mode":"%s","detected_mode":"%s","detected_config":"%s","port":%d,"sni":"%s","engine_config":"%s","api_port":%d,"api_enabled":%s,"own_container":"%s","running":%s,"log_kind":"%s","log_target":"%s"}\n' \
                         "$(json_escape "${MTPROXYL_MODE:-manager}")" \
                         "$(json_escape "${DETECTED_MODE:-unknown}")" \
                         "$(json_escape "${DETECTED_CONFIG_PATH:-}")" \
                         "${PROXY_PORT:-0}" \
+                        "$(json_escape "${_mode_sni}")" \
                         "$(json_escape "${_mode_cfg}")" \
                         "${_api_port:-0}" \
                         "$_api_on" \

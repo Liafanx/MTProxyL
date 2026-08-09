@@ -111,36 +111,6 @@ export interface SelfmaskStatus {
   prev_domain?: string;
 }
 
-/** Результат одного зонда: увиделся ли порт прокси снаружи. */
-export interface AvailabilityNode {
-  node: string;
-  country_code: string;
-  country: string;
-  city: string;
-  ok: boolean;
-  time_ms: number;
-  error?: string;
-  /** Узел не успел ответить до дедлайна. */
-  pending?: boolean;
-}
-
-export interface AvailabilityReport {
-  phase: 'idle' | 'running' | 'done' | 'failed';
-  host?: string;
-  port?: number;
-  /** Отвечает ли порт на самом сервере — отделяет блокировку от «не запущен». */
-  local_ok: boolean;
-  local_error?: string;
-  local_checked: boolean;
-  nodes: AvailabilityNode[];
-  reachable: number;
-  total: number;
-  started_at?: string;
-  finished_at?: string;
-  error?: string;
-  permanent_link?: string;
-}
-
 export interface SelfmaskParam {
   key: string;
   validator: string;
@@ -549,17 +519,76 @@ export const mtproxylAddonsApi = {
   /** Скачивает GeoLite2-City/-ASN с зеркала P3TERX. Долгая — операция. */
   geoipInstall: () =>
     request<MtproxylOperation>(MTPROXYL_BASE, '/geoip-install', { method: 'POST' }),
+};
 
-  /**
-   * Доступность прокси со стороны зондов в разных странах.
-   *
-   * Пустые host/port означают «взять текущие» — их подставит сервер. Проверка
-   * идёт в фоне, результат забирается опросом availability().
-   */
-  availability: () => request<AvailabilityReport>(MTPROXYL_BASE, '/availability'),
-  availabilityCheck: (host?: string, port?: number) =>
-    request<AvailabilityReport>(MTPROXYL_BASE, '/availability', {
-      method: 'POST',
-      body: JSON.stringify({ host: host ?? '', port: port ?? 0 }),
-    }),
+// ── Доступность из России ───────────────────────────────────────────────────
+//
+// Прокси проверяется снаружи, с зондов на домашних сетях российских
+// провайдеров: фильтрация применяется к абонентскому трафику, и зонд в
+// дата-центре спокойно видит сервер, до которого не достучаться из дома.
+// Проверка — HTTPS HEAD на порт прокси с fake SNI, успех — полученный
+// TLS-сертификат, то есть то же рукопожатие, что делает клиент Telegram.
+
+export type AvailabilityLevel = 'green' | 'yellow' | 'red';
+
+export interface AvailabilityTLSInfo {
+  authorized: boolean;
+  createdAt: string;
+  expiresAt: string;
+  issuer: { C: string; O: string; CN: string };
+  subject: { CN: string; alt: string };
+}
+
+export interface AvailabilityProbe {
+  city: string;
+  country: string;
+  region: string;
+  continent: string;
+  asn: number;
+  network: string;
+  tags: string[];
+  status: string;
+  /** Зонд получил TLS-сертификат — прокси для него доступен. */
+  tls_success: boolean;
+  tls_info?: AvailabilityTLSInfo | null;
+  http_status_code?: number;
+  raw_output: string;
+  error?: string;
+}
+
+export interface AvailabilityResult {
+  percentage: number;
+  level: AvailabilityLevel;
+  total_probes: number;
+  success_probes: number;
+  /** Что именно проверяли: адрес, порт и SNI. */
+  target: string;
+  measurement_id: string;
+  checked_at: string;
+  probes?: AvailabilityProbe[];
+  error?: string;
+}
+
+export interface AvailabilityStatusResponse {
+  enabled: boolean;
+  status?: AvailabilityResult | null;
+  message?: string;
+}
+
+export interface AvailabilityDetailsResponse {
+  enabled: boolean;
+  result?: AvailabilityResult | null;
+  message?: string;
+}
+
+const AVAILABILITY_BASE = `${BASE}/api/availability`;
+
+export const availabilityApi = {
+  /** Короткая сводка — для индикатора на дашборде. */
+  status: () => request<AvailabilityStatusResponse>(AVAILABILITY_BASE, '/status'),
+  /** Полный результат со списком зондов. */
+  details: () => request<AvailabilityDetailsResponse>(AVAILABILITY_BASE, '/details'),
+  /** Проверить прямо сейчас. Сервер может отказать: каждый зонд стоит квоты. */
+  check: () =>
+    request<AvailabilityDetailsResponse>(AVAILABILITY_BASE, '/check', { method: 'POST' }),
 };

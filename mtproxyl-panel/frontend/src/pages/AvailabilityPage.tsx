@@ -1,268 +1,320 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, RefreshCw } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useCallback, useEffect, useState } from 'react';
+import { RefreshCw, ChevronDown, ChevronUp, CheckCircle2, XCircle, ExternalLink } from 'lucide-react';
+import { Header } from '@/components/layout/Header';
+import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { ErrorAlert } from '@/components/ErrorAlert';
-import { StatusDot } from '@/components/StatusDot';
-import { mtproxylAddonsApi, type AvailabilityReport } from '@/lib/api';
+import {
+  availabilityApi,
+  type AvailabilityResult,
+  type AvailabilityProbe,
+  type AvailabilityLevel,
+} from '@/lib/api';
+import { cn } from '@/lib/utils';
 
-const POLL_INTERVAL_MS = 2000;
+const LEVEL_TEXT_CLASS: Record<AvailabilityLevel, string> = {
+  green: 'text-success',
+  yellow: 'text-warning',
+  red: 'text-danger',
+};
 
-/** «RU» → флаг: узлы приходят с кодом страны, а флаг читается быстрее кода. */
-function flag(code: string): string {
-  if (!/^[A-Za-z]{2}$/.test(code)) return '';
-  return String.fromCodePoint(
-    ...code
-      .toUpperCase()
-      .split('')
-      .map((c) => 0x1f1e6 + c.charCodeAt(0) - 65),
-  );
-}
-
-function verdict(report: AvailabilityReport): { tone: 'ok' | 'warn' | 'error'; text: string } {
-  if (!report.local_checked) {
-    return { tone: 'warn', text: 'Проверка не выполнялась' };
-  }
-  if (!report.local_ok) {
-    return {
-      tone: 'error',
-      text: 'Порт не отвечает даже на самом сервере — прокси не запущен или слушает другой порт',
-    };
-  }
-  if (report.total === 0) {
-    return { tone: 'warn', text: 'Ни один зонд не ответил — повторите проверку позже' };
-  }
-  if (report.reachable === 0) {
-    return {
-      tone: 'error',
-      text: 'Снаружи сервер недоступен ниоткуда: порт закрыт фаерволом хостера или адрес заблокирован',
-    };
-  }
-  if (report.reachable < report.total) {
-    return {
-      tone: 'warn',
-      text: 'Доступен не отовсюду — из части стран порт не открывается',
-    };
-  }
-  return { tone: 'ok', text: 'Сервер доступен со всех зондов' };
-}
+const LEVEL_LABEL: Record<AvailabilityLevel, string> = {
+  green: 'доступен',
+  yellow: 'частично доступен',
+  red: 'недоступен',
+};
 
 export function AvailabilityPage() {
-  const [report, setReport] = useState<AvailabilityReport | null>(null);
-  const [host, setHost] = useState('');
-  const [port, setPort] = useState('');
+  const [enabled, setEnabled] = useState(true);
+  const [result, setResult] = useState<AvailabilityResult | null>(null);
+  const [message, setMessage] = useState<string | undefined>();
+  const [loading, setLoading] = useState(true);
+  const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [starting, setStarting] = useState(false);
-  const timer = useRef<number | null>(null);
+  const [expanded, setExpanded] = useState<number | null>(null);
 
-  const stop = useCallback(() => {
-    if (timer.current !== null) {
-      window.clearInterval(timer.current);
-      timer.current = null;
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await availabilityApi.details();
+      setEnabled(res.enabled);
+      setResult(res.result ?? null);
+      setMessage(res.message);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось загрузить результаты проверки');
+    } finally {
+      setLoading(false);
     }
   }, []);
 
-  const poll = useCallback(async () => {
-    try {
-      const r = await mtproxylAddonsApi.availability();
-      setReport(r);
-      if (r.phase !== 'running') stop();
-    } catch {
-      // Одна неудачная попытка не повод бросать: проверка идёт на сервере.
-    }
-  }, [stop]);
-
-  // Подхватываем проверку, запущенную раньше или в другой вкладке: она общая.
   useEffect(() => {
-    let cancelled = false;
-    mtproxylAddonsApi
-      .availability()
-      .then((r) => {
-        if (cancelled) return;
-        setReport(r);
-        if (r.host) setHost(r.host);
-        if (r.port) setPort(String(r.port));
-        if (r.phase === 'running') {
-          timer.current = window.setInterval(poll, POLL_INTERVAL_MS);
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-      stop();
-    };
-  }, [poll, stop]);
+    void load();
+  }, [load]);
 
-  const start = async () => {
-    setStarting(true);
+  const check = async () => {
+    setChecking(true);
     setError(null);
     try {
-      const r = await mtproxylAddonsApi.availabilityCheck(
-        host.trim() || undefined,
-        port.trim() ? Number(port.trim()) : undefined,
-      );
-      setReport(r);
-      if (r.host) setHost(r.host);
-      if (r.port) setPort(String(r.port));
-      stop();
-      timer.current = window.setInterval(poll, POLL_INTERVAL_MS);
+      const res = await availabilityApi.check();
+      setEnabled(res.enabled);
+      setResult(res.result ?? null);
+      setMessage(res.message);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось запустить проверку');
     } finally {
-      setStarting(false);
+      setChecking(false);
     }
   };
 
-  const running = report?.phase === 'running';
-  const v = report && report.phase !== 'idle' ? verdict(report) : null;
+  return (
+    <div>
+      <Header title="Доступность из России" refreshing={loading} onRefresh={load} />
+
+      <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <p className="text-sm text-text-secondary max-w-2xl">
+            Проверка через{' '}
+            <a
+              href="https://globalping.io"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-accent hover:underline"
+            >
+              Globalping API
+            </a>{' '}
+            — HTTPS HEAD запросы с российских резидентских (eyeball) зондов.
+            Критерий успеха — получение TLS-сертификата, то же рукопожатие,
+            что делает клиент Telegram.
+          </p>
+          <Button onClick={check} disabled={checking || !enabled} className="gap-2 shrink-0">
+            <RefreshCw size={14} className={cn(checking && 'animate-spin')} />
+            {checking ? 'Проверяем…' : 'Проверить сейчас'}
+          </Button>
+        </div>
+
+        {error && <ErrorAlert message={error} onRetry={load} />}
+
+        {!enabled ? (
+          <Card className="p-6 text-sm text-text-secondary">
+            Проверка доступности выключена в конфиге панели. Включите её в{' '}
+            <code className="bg-surface-hover px-1 rounded">[globalping] enabled = true</code>{' '}
+            и перезапустите панель.
+          </Card>
+        ) : !result ? (
+          <Card className="p-6 text-sm text-text-secondary text-center">
+            {message || 'Проверки ещё не проводились'}
+          </Card>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
+              <StatCard
+                label="Доступность"
+                value={`${result.percentage.toFixed(0)}%`}
+                valueClass={LEVEL_TEXT_CLASS[result.level]}
+                extra={
+                  <span className={cn('text-xs', LEVEL_TEXT_CLASS[result.level])}>
+                    {LEVEL_LABEL[result.level]}
+                  </span>
+                }
+              />
+              <StatCard
+                label="Успешные зонды"
+                value={`${result.success_probes} / ${result.total_probes}`}
+              />
+              <StatCard label="Цель проверки" value={result.target} small />
+              <StatCard
+                label="Время проверки"
+                value={new Date(result.checked_at).toLocaleString('ru-RU')}
+                small
+                extra={
+                  result.measurement_id ? (
+                    <a
+                      href={`https://api.globalping.io/v1/measurements/${result.measurement_id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-accent hover:underline flex items-center gap-1"
+                    >
+                      JSON в Globalping <ExternalLink size={12} />
+                    </a>
+                  ) : undefined
+                }
+              />
+            </div>
+
+            {result.error && <ErrorAlert message={result.error} />}
+
+            {result.probes && result.probes.length > 0 && (
+              <Card className="overflow-hidden">
+                <div className="p-4 border-b border-border">
+                  <h3 className="text-sm font-medium text-text-primary">
+                    Результаты по зондам ({result.probes.length})
+                  </h3>
+                </div>
+                <div className="divide-y divide-border">
+                  {result.probes.map((probe, idx) => (
+                    <ProbeRow
+                      key={idx}
+                      probe={probe}
+                      expanded={expanded === idx}
+                      onToggle={() => setExpanded(expanded === idx ? null : idx)}
+                    />
+                  ))}
+                </div>
+              </Card>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StatCard({
+  label,
+  value,
+  valueClass,
+  small,
+  extra,
+}: {
+  label: string;
+  value: string;
+  valueClass?: string;
+  small?: boolean;
+  extra?: React.ReactNode;
+}) {
+  return (
+    <div className="bg-surface border border-border rounded-lg p-3 lg:p-4 min-h-[44px] flex flex-col justify-center">
+      <span className="text-xs lg:text-sm text-text-secondary mb-1.5 lg:mb-2">{label}</span>
+      <div
+        className={cn(small ? 'text-sm truncate' : 'text-xl lg:text-2xl font-bold', valueClass)}
+        title={value}
+      >
+        {value}
+      </div>
+      {extra}
+    </div>
+  );
+}
+
+function ProbeRow({
+  probe,
+  expanded,
+  onToggle,
+}: {
+  probe: AvailabilityProbe;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const isEyeball = probe.tags?.includes('eyeball-network');
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold text-text-primary">Доступность снаружи</h1>
-        <p className="text-sm text-text-secondary mt-1">
-          Проверка порта прокси зондами в разных странах и у разных провайдеров.
-        </p>
-      </div>
+    <div>
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between gap-2 p-4 hover:bg-surface-hover transition-colors text-left min-h-[44px]"
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          {probe.tls_success ? (
+            <CheckCircle2 size={18} className="text-success shrink-0" />
+          ) : (
+            <XCircle size={18} className="text-danger shrink-0" />
+          )}
+          <div className="min-w-0">
+            <span className="font-medium text-text-primary">
+              {probe.city || '—'}, {probe.country || '—'}
+            </span>
+            <span className="text-text-secondary text-sm ml-2 hidden sm:inline">
+              {probe.region} • {probe.network || `AS${probe.asn}`}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {isEyeball && (
+            <Badge variant="default" className="hidden sm:inline-flex">
+              eyeball
+            </Badge>
+          )}
+          <Badge variant={probe.tls_success ? 'success' : 'danger'}>
+            {probe.tls_success ? 'TLS ✓' : 'TLS ✗'}
+          </Badge>
+          {expanded ? (
+            <ChevronUp size={16} className="text-text-secondary" />
+          ) : (
+            <ChevronDown size={16} className="text-text-secondary" />
+          )}
+        </div>
+      </button>
 
-      {error && <ErrorAlert message={error} />}
+      {expanded && (
+        <div className="px-4 pb-4 space-y-3 bg-surface-hover/40">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+            <InfoCell label="Город" value={probe.city} />
+            <InfoCell label="Страна" value={probe.country} />
+            <InfoCell label="Регион" value={probe.region} />
+            <InfoCell label="Континент" value={probe.continent} />
+            <InfoCell label="ASN" value={probe.asn ? `AS${probe.asn}` : undefined} />
+            <InfoCell label="Сеть" value={probe.network} />
+            <InfoCell label="Теги" value={probe.tags?.join(', ')} />
+            <InfoCell label="HTTP статус" value={probe.http_status_code?.toString()} />
+          </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Что проверяем</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-sm text-text-secondary">
-            Сервер не может сам увидеть, доходят ли до него пакеты пользователей: порт слушается,
-            а трафик может резаться фаерволом хостера или фильтрацией по пути. Зонды подключаются
-            к порту снаружи и показывают, откуда сервер виден, а откуда нет. Проверка идёт через
-            публичный сервис check-host.net — обычными исходящими запросами, без прав root и без
-            установки чего-либо на сервер.
-          </p>
-
-          <form
-            className="flex flex-wrap items-end gap-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void start();
-            }}
-          >
-            <div className="space-y-1">
-              <Label htmlFor="probe-host">Адрес сервера</Label>
-              <Input
-                id="probe-host"
-                value={host}
-                onChange={(e) => setHost(e.target.value)}
-                placeholder="Пусто — определить самим"
-                className="w-[260px]"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="probe-port">Порт</Label>
-              <Input
-                id="probe-port"
-                value={port}
-                onChange={(e) => setPort(e.target.value)}
-                placeholder="Текущий"
-                className="w-[110px]"
-              />
-            </div>
-            <Button type="submit" disabled={running || starting}>
-              {running ? (
-                <>
-                  <Loader2 size={16} className="animate-spin" /> Проверяем…
-                </>
-              ) : (
-                <>
-                  <RefreshCw size={16} /> Проверить
-                </>
+          {probe.tls_info && (
+            <div className="bg-success/10 border border-success/20 rounded-lg p-3 text-xs space-y-1">
+              <div className="text-success font-medium mb-1">TLS сертификат</div>
+              <div>
+                <span className="text-text-secondary">Авторизован: </span>
+                {probe.tls_info.authorized ? 'да' : 'нет'}
+              </div>
+              {probe.tls_info.issuer?.CN && (
+                <div>
+                  <span className="text-text-secondary">Издатель: </span>
+                  {probe.tls_info.issuer.CN}
+                </div>
               )}
-            </Button>
-          </form>
-          <p className="text-xs text-text-secondary">
-            Проверка занимает около 10–20 секунд: зонды отвечают вразнобой.
-          </p>
-        </CardContent>
-      </Card>
+              {probe.tls_info.subject?.CN && (
+                <div>
+                  <span className="text-text-secondary">Субъект: </span>
+                  {probe.tls_info.subject.CN}
+                </div>
+              )}
+              {probe.tls_info.expiresAt && (
+                <div>
+                  <span className="text-text-secondary">Истекает: </span>
+                  {new Date(probe.tls_info.expiresAt).toLocaleDateString('ru-RU')}
+                </div>
+              )}
+            </div>
+          )}
 
-      {report && report.phase !== 'idle' && (
-        <Card>
-          <CardHeader>
-            <CardTitle>
-              Результат{report.host ? ` — ${report.host}:${report.port}` : ''}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {report.phase === 'failed' ? (
-              <ErrorAlert message={report.error || 'Проверка не удалась'} />
-            ) : (
-              <>
-                {v && (
-                  <div className="flex items-start gap-2">
-                    <StatusDot status={v.tone} size="md" className="mt-1" />
-                    <div>
-                      <div className="text-sm text-text-primary">{v.text}</div>
-                      {report.total > 0 && (
-                        <div className="text-xs text-text-secondary mt-0.5">
-                          Доступен с {report.reachable} из {report.total} зондов
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
+          {probe.error && (
+            <div className="bg-danger/10 border border-danger/20 rounded-lg p-3 text-xs text-danger">
+              {probe.error}
+            </div>
+          )}
 
-                {report.local_checked && (
-                  <div className="text-xs text-text-secondary">
-                    На самом сервере порт{' '}
-                    {report.local_ok ? (
-                      <span className="text-success">отвечает</span>
-                    ) : (
-                      <span className="text-danger">не отвечает{report.local_error ? ` (${report.local_error})` : ''}</span>
-                    )}
-                  </div>
-                )}
-
-                {report.nodes.length > 0 && (
-                  <div className="border border-border rounded-md divide-y divide-border">
-                    {report.nodes.map((n) => (
-                      <div key={n.node} className="flex items-center gap-3 px-3 py-2 text-sm">
-                        <StatusDot status={n.pending ? 'warn' : n.ok ? 'ok' : 'error'} />
-                        <span className="w-8 shrink-0">{flag(n.country_code)}</span>
-                        <span className="text-text-primary min-w-0 flex-1 truncate">
-                          {n.country || n.country_code}
-                          {n.city ? `, ${n.city}` : ''}
-                        </span>
-                        <span className="text-xs text-text-secondary text-right min-w-0 truncate">
-                          {n.ok ? `${n.time_ms} мс` : n.error || 'нет соединения'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {running && (
-                  <div className="text-xs text-text-secondary flex items-center gap-2">
-                    <Loader2 size={14} className="animate-spin" /> Ждём ответа зондов…
-                  </div>
-                )}
-
-                {report.permanent_link && (
-                  <a
-                    href={report.permanent_link}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="text-xs text-accent hover:underline inline-block"
-                  >
-                    Та же проверка на check-host.net
-                  </a>
-                )}
-              </>
-            )}
-          </CardContent>
-        </Card>
+          {probe.raw_output && (
+            <details className="text-xs">
+              <summary className="cursor-pointer text-text-secondary hover:text-text-primary py-1">
+                Полный ответ
+              </summary>
+              <pre className="mt-2 p-3 bg-black/30 rounded-lg overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap break-all">
+                {probe.raw_output}
+              </pre>
+            </details>
+          )}
+        </div>
       )}
+    </div>
+  );
+}
+
+function InfoCell({ label, value }: { label: string; value?: string | null }) {
+  return (
+    <div>
+      <div className="text-text-secondary text-xs">{label}</div>
+      <div className="text-text-primary">{value || '—'}</div>
     </div>
   );
 }

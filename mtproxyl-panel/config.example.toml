@@ -146,3 +146,28 @@ session_ttl = "24h"
 # data_quota_bytes = 1073741824
 # max_unique_ips = 3
 # expiration = "2027-12-31T23:59:59Z"
+
+[globalping]
+# "Доступность из России" — background check of the proxy from Russian
+# residential (eyeball) probes via the public Globalping API. Success means
+# a probe completed the TLS handshake, the same thing a real client does.
+#
+# Absent from an older config is treated as enabled = true, so upgrading the
+# panel does not silently turn this off.
+# enabled = true
+
+# Interval between background checks (Go duration: 15m, 30m, 1h).
+# Globalping's free quota is 250 credits/hour, one credit per probe, so
+# 20 probes every 15 minutes (80/hour) leaves headroom for manual checks.
+# check_interval = "15m"
+
+# Probes used per check (max 50).
+# probe_limit = 20
+
+# Globalping API token, raises the hourly quota. Free: https://dash.globalping.io/
+# api_token = "gp_xxxxxxxxxxxxxxxxxxxx"
+
+# Override the address probes connect to (default: the server's public IP,
+# or the FakeTLS/Selfmask domain if one is configured). Useful when the
+# server cannot work out its own reachable address (NAT, several IPs).
+# override_host = "my-proxy.example.com"

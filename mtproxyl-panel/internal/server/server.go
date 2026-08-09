@@ -19,6 +19,7 @@ import (
 	"github.com/Liafanx/mtproxyl-panel/internal/auth"
 	"github.com/Liafanx/mtproxyl-panel/internal/auto_update"
 	"github.com/Liafanx/mtproxyl-panel/internal/config"
+	"github.com/Liafanx/mtproxyl-panel/internal/globalping"
 	"github.com/Liafanx/mtproxyl-panel/internal/logs"
 	"github.com/Liafanx/mtproxyl-panel/internal/mtproxylctl"
 	"github.com/Liafanx/mtproxyl-panel/internal/panel_updater"
@@ -94,6 +95,9 @@ func (rl *loginRateLimiter) record(ip string) {
 
 type Server struct {
 	cfg *config.Config
+	// availability is the «Доступность из России» checker; nil when it is
+	// turned off in the config.
+	availability *globalping.Checker
 }
 
 func New(cfg *config.Config) *Server {
@@ -413,6 +417,9 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 
 	// MTProxyL host-level endpoints (mode, selfmask, backups)
 	s.registerMtproxylRoutes(mux, jwtSecret)
+
+	// Доступность прокси из России глазами обычных пользователей
+	s.registerAvailabilityRoutes(mux, jwtSecret, mtproxylctl.New(s.cfg.Mtproxyl))
 
 	// Telemt service restart endpoint
 	mux.Handle("POST /api/telemt/restart", auth.RequireAuth(jwtSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

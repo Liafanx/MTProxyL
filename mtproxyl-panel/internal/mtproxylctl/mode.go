@@ -32,6 +32,10 @@ type ModeStatus struct {
 	DetectedMode   string `json:"detected_mode"`
 	DetectedConfig string `json:"detected_config"`
 	Port           int    `json:"port"`
+	// SNI is the FakeTLS domain clients must present. In reanimator mode it
+	// lives in the foreign target's config, not in MTProxyL's settings, so it
+	// cannot be read from settings.conf.
+	SNI string `json:"sni"`
 	// EngineConfig is the config file that belongs to the *current* mode: the
 	// foreign target's in reanimator, MTProxyL's own in manager.
 	EngineConfig string `json:"engine_config"`
