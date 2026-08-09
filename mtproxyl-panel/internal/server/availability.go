@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Liafanx/mtproxyl-panel/internal/auth"
 	"github.com/Liafanx/mtproxyl-panel/internal/globalping"
@@ -25,6 +27,8 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 	protected := func(h http.HandlerFunc) http.Handler {
 		return auth.RequireAuth(jwtSecret, h)
 	}
+
+	s.availabilityOverride = newAvailabilityOverrideStore(s.cfg.DataDir)
 
 	enabled := s.cfg.Globalping.GlobalpingEnabled()
 	if enabled {
@@ -49,6 +53,7 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
 			"enabled": true,
 			"status":  st,
+			"quota":   s.availability.Quota(),
 			"message": pendingMessage(st == nil),
 		}})
 	}))
@@ -63,7 +68,39 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
 			"enabled": true,
 			"result":  res,
+			"quota":   s.availability.Quota(),
 			"message": pendingMessage(res == nil),
+		}})
+	}))
+
+	// Что проверяем. GET отдаёт и заданное руками, и то, что вышло бы само —
+	// без второго форма не может показать, от чего оператор отступает.
+	mux.Handle("GET /api/availability/target", protected(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
+			"override": s.availabilityOverride.get(),
+			"resolved": s.resolvedAvailabilityTarget(r.Context(), client),
+		}})
+	}))
+
+	mux.Handle("PUT /api/availability/target", protected(func(w http.ResponseWriter, r *http.Request) {
+		var ov AvailabilityOverride
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&ov); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "Не удалось разобрать запрос")
+			return
+		}
+		if err := validateAvailabilityOverride(&ov); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_target", err.Error())
+			return
+		}
+		if err := s.availabilityOverride.set(ov); err != nil {
+			log.Printf("[globalping] не удалось сохранить цель проверки: %s", err)
+			writeError(w, http.StatusInternalServerError, "save_failed",
+				"Цель принята, но сохранить её не удалось — после перезапуска панели вернётся автоопределение")
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
+			"override": s.availabilityOverride.get(),
+			"resolved": s.resolvedAvailabilityTarget(r.Context(), client),
 		}})
 	}))
 
@@ -86,6 +123,24 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 	}))
 }
 
+// resolvedAvailabilityTarget is what the next check will actually use: the
+// override where it is set, autodetection where it is not. The form shows it as
+// the placeholder, so an empty field visibly means «вот это подставится», and
+// the operator can see the detected value before deciding to override it.
+func (s *Server) resolvedAvailabilityTarget(ctx context.Context, client *mtproxylctl.Client) map[string]any {
+	// Определение цели дёргает CLI и, в крайнем случае, внешний сервис за
+	// адресом — на открытии страницы это не должно висеть.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	t, err := s.availabilityTarget(client)(ctx)
+	out := map[string]any{"host": t.Host, "port": t.Port, "sni": t.SNI}
+	if err != nil {
+		out["error"] = err.Error()
+	}
+	return out
+}
+
 func pendingMessage(empty bool) string {
 	if empty {
 		return "Проверки ещё не проводились"
@@ -102,23 +157,35 @@ func (s *Server) availabilityTarget(client *mtproxylctl.Client) globalping.Targe
 	return func(ctx context.Context) (globalping.Target, error) {
 		var t globalping.Target
 
+		// Указанное руками важнее всего остального, включая override_host из
+		// конфига: это ответ оператора на вопрос «а что, собственно, проверять»,
+		// и автоопределение он уже видел — форма показывает его как подсказку.
+		ov := s.availabilityOverride.get()
+		t.Host, t.Port, t.SNI = ov.Host, ov.Port, ov.SNI
+		if t.Host != "" && t.Port != 0 && t.SNI != "" {
+			return t, nil
+		}
+
 		// Порт и fake SNI знает MTProxyL, причём для текущего режима: у
 		// реаниматора они живут в конфиге чужой цели, а не в settings.conf,
 		// и брать их оттуда значило бы проверять рукопожатие с чужим доменом.
-		if client.Enabled() {
+		// Каждое поле подставляется, только если его не задали руками.
+		if client.Enabled() && (t.Port == 0 || t.SNI == "") {
 			if st, err := client.GetMode(ctx); err == nil {
-				if st.Port > 0 && st.Port <= 65535 {
+				if t.Port == 0 && st.Port > 0 && st.Port <= 65535 {
 					t.Port = uint16(st.Port)
 				}
-				t.SNI = st.SNI
+				if t.SNI == "" {
+					t.SNI = st.SNI
+				}
 			} else {
 				log.Printf("[globalping] не удалось спросить режим у MTProxyL: %s", err)
 			}
 		}
 
-		// Адрес: явное указание в конфиге важнее всего — им чинят случаи,
-		// где сервер сам себя определяет не так, как видят клиенты.
-		if h := strings.TrimSpace(s.cfg.Globalping.OverrideHost); h != "" {
+		// Адрес: явное указание в конфиге важнее автоопределения — им чинят
+		// случаи, где сервер сам себя определяет не так, как видят клиенты.
+		if h := strings.TrimSpace(s.cfg.Globalping.OverrideHost); t.Host == "" && h != "" {
 			t.Host = h
 		}
 

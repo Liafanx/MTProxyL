@@ -2,6 +2,7 @@ package globalping
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -39,6 +40,7 @@ type TargetProvider func(ctx context.Context) (Target, error)
 type Checker struct {
 	client         *Client
 	store          *Store
+	quota          *quota
 	targetProvider TargetProvider
 	interval       time.Duration
 	probeLimit     int
@@ -57,17 +59,30 @@ func NewChecker(apiToken string, targetProvider TargetProvider, interval time.Du
 	if probeLimit <= 0 || probeLimit > 50 {
 		probeLimit = 20
 	}
-	return &Checker{
+	c := &Checker{
 		client:         NewClient(apiToken),
 		store:          NewStore(),
+		quota:          newQuota(apiToken),
 		targetProvider: targetProvider,
 		interval:       interval,
 		probeLimit:     probeLimit,
 	}
+	// A schedule that cannot fit in the allowance is worth saying out loud: the
+	// quota will throttle it anyway, but silently skipped checks look like the
+	// feature is broken rather than misconfigured.
+	if perHour := int(time.Hour/interval) * probeLimit; perHour > c.quota.budget {
+		log.Printf("[globalping] интервал %v при %d зондах требует %d кредитов в час, "+
+			"а лимит — %d: часть проверок будет пропущена. Увеличьте check_interval "+
+			"или уменьшите probe_limit", interval, probeLimit, perHour, c.quota.budget)
+	}
+	return c
 }
 
 // Store gives the HTTP handlers access to the last result.
 func (c *Checker) Store() *Store { return c.store }
+
+// Quota reports the hourly allowance for the UI.
+func (c *Checker) Quota() QuotaState { return c.quota.state() }
 
 // Start runs checks until ctx is cancelled.
 func (c *Checker) Start(ctx context.Context) {
@@ -123,6 +138,12 @@ func (c *Checker) RunCheckNow(ctx context.Context) (*CheckResult, error) {
 func (c *Checker) runScheduled(ctx context.Context) {
 	result, err := c.doCheck(ctx)
 	if err != nil {
+		var qe *QuotaError
+		if errors.As(err, &qe) {
+			// Не сбой: кредиты кончились, прошлый вердикт остаётся в силе.
+			log.Printf("[globalping] плановая проверка пропущена — %s", qe)
+			return
+		}
 		log.Printf("[globalping] проверка не удалась: %s", err)
 		return
 	}
@@ -143,6 +164,12 @@ func (c *Checker) doCheck(ctx context.Context) (*CheckResult, error) {
 			return r, nil
 		}
 		return nil, fmt.Errorf("проверка завершилась без результата")
+	}
+	// Отказ по квоте — не результат проверки, а отказ её начинать: ничего не
+	// потрачено и не измерено, поэтому прошлый вердикт не затирается.
+	if err := c.quota.check(c.probeLimit); err != nil {
+		c.mu.Unlock()
+		return nil, err
 	}
 	done := make(chan struct{})
 	c.inFlight = done
@@ -182,8 +209,22 @@ func (c *Checker) measure(ctx context.Context) (*CheckResult, error) {
 	req := BuildMeasurementRequest(target.Host, target.Port, target.SNI, c.probeLimit)
 	created, err := c.client.CreateMeasurement(ctx, req)
 	if err != nil {
+		// Сервис говорит, что кредитов нет: его слово важнее локального счёта,
+		// который после перезапуска панели начинается с нуля, а квота — нет.
+		var rle *RateLimitError
+		if errors.As(err, &rle) {
+			c.quota.blockFor(rle.RetryIn)
+		}
 		return nil, err
 	}
+	// Платим за реально задействованные зонды: сервис не всегда даёт столько,
+	// сколько попросили, и списывать по запрошенному значило бы занижать
+	// остаток и пропускать проверки, которые ещё влезали.
+	cost := created.ProbesCount
+	if cost <= 0 {
+		cost = c.probeLimit
+	}
+	c.quota.record(cost)
 
 	measurement, err := c.client.AwaitMeasurement(ctx, created.ID, measurementWait, pollInterval)
 	if err != nil {

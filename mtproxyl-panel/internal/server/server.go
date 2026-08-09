@@ -98,6 +98,8 @@ type Server struct {
 	// availability is the «Доступность из России» checker; nil when it is
 	// turned off in the config.
 	availability *globalping.Checker
+	// availabilityOverride is the operator's answer to what should be checked.
+	availabilityOverride *availabilityOverrideStore
 }
 
 func New(cfg *config.Config) *Server {

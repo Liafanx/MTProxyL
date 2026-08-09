@@ -569,16 +569,40 @@ export interface AvailabilityResult {
   error?: string;
 }
 
+/** Часовая квота Globalping: один зонд — один кредит. */
+export interface AvailabilityQuota {
+  budget: number;
+  spent: number;
+  remaining: number;
+  reset_in_seconds: number;
+  has_token: boolean;
+}
+
 export interface AvailabilityStatusResponse {
   enabled: boolean;
   status?: AvailabilityResult | null;
+  quota?: AvailabilityQuota;
   message?: string;
 }
 
 export interface AvailabilityDetailsResponse {
   enabled: boolean;
   result?: AvailabilityResult | null;
+  quota?: AvailabilityQuota;
   message?: string;
+}
+
+/** Что проверять. Пустое поле означает «определить автоматически». */
+export interface AvailabilityOverride {
+  host?: string;
+  port?: number;
+  sni?: string;
+}
+
+export interface AvailabilityTargetResponse {
+  override: AvailabilityOverride;
+  /** Что подставится на самом деле — переопределение плюс автоопределение. */
+  resolved: { host: string; port: number; sni: string; error?: string };
 }
 
 const AVAILABILITY_BASE = `${BASE}/api/availability`;
@@ -591,4 +615,12 @@ export const availabilityApi = {
   /** Проверить прямо сейчас. Сервер может отказать: каждый зонд стоит квоты. */
   check: () =>
     request<AvailabilityDetailsResponse>(AVAILABILITY_BASE, '/check', { method: 'POST' }),
+  /** Текущая цель проверки и то, что определилось само. */
+  target: () => request<AvailabilityTargetResponse>(AVAILABILITY_BASE, '/target'),
+  /** Задать цель. Пустые поля возвращают автоопределение. */
+  saveTarget: (o: AvailabilityOverride) =>
+    request<AvailabilityTargetResponse>(AVAILABILITY_BASE, '/target', {
+      method: 'PUT',
+      body: JSON.stringify(o),
+    }),
 };

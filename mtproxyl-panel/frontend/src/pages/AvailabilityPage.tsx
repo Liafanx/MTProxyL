@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
-import { RefreshCw, ChevronDown, ChevronUp, CheckCircle2, XCircle, ExternalLink } from 'lucide-react';
+import { RefreshCw, ChevronDown, ChevronUp, CheckCircle2, XCircle, ExternalLink, Target } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import {
   availabilityApi,
   type AvailabilityResult,
   type AvailabilityProbe,
   type AvailabilityLevel,
+  type AvailabilityQuota,
+  type AvailabilityTargetResponse,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -28,6 +32,7 @@ const LEVEL_LABEL: Record<AvailabilityLevel, string> = {
 export function AvailabilityPage() {
   const [enabled, setEnabled] = useState(true);
   const [result, setResult] = useState<AvailabilityResult | null>(null);
+  const [quota, setQuota] = useState<AvailabilityQuota | undefined>();
   const [message, setMessage] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
@@ -40,6 +45,7 @@ export function AvailabilityPage() {
       const res = await availabilityApi.details();
       setEnabled(res.enabled);
       setResult(res.result ?? null);
+      setQuota(res.quota);
       setMessage(res.message);
       setError(null);
     } catch (e) {
@@ -60,6 +66,7 @@ export function AvailabilityPage() {
       const res = await availabilityApi.check();
       setEnabled(res.enabled);
       setResult(res.result ?? null);
+      setQuota(res.quota);
       setMessage(res.message);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось запустить проверку');
@@ -95,6 +102,10 @@ export function AvailabilityPage() {
         </div>
 
         {error && <ErrorAlert message={error} onRetry={load} />}
+
+        {enabled && <QuotaBanner quota={quota} />}
+
+        {enabled && <TargetForm onSaved={load} />}
 
         {!enabled ? (
           <Card className="p-6 text-sm text-text-secondary">
@@ -168,6 +179,191 @@ export function AvailabilityPage() {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Остаток часовой квоты. Globalping считает кредиты по зондам, и когда
+ * «Проверить сейчас» отказывает, причина почти всегда здесь — без этой строки
+ * отказ выглядел бы поломкой.
+ */
+function QuotaBanner({ quota }: { quota?: AvailabilityQuota }) {
+  if (!quota) return null;
+
+  const low = quota.remaining < 20;
+  const resetMin = Math.ceil(quota.reset_in_seconds / 60);
+
+  return (
+    <div className="text-xs text-text-secondary flex items-center gap-2 flex-wrap">
+      <span>
+        Квота Globalping:{' '}
+        <span className={cn('font-medium', low ? 'text-warning' : 'text-text-primary')}>
+          {quota.remaining} из {quota.budget}
+        </span>{' '}
+        кредитов на час (один зонд — один кредит)
+      </span>
+      {quota.spent > 0 && resetMin > 0 && <span>• обновление через {resetMin} мин</span>}
+      {!quota.has_token && (
+        <span>
+          •{' '}
+          <a
+            href="https://dash.globalping.io/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-accent hover:underline"
+          >
+            бесплатный токен
+          </a>{' '}
+          удвоит лимит
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Что именно проверять. Автоопределение верно для обычной установки и слепо
+ * там, где адрес прокси знает только оператор: прокси за CDN, второй домен на
+ * том же сервере, проброшенный порт. Пустое поле — «определить самому», в
+ * подсказке при этом стоит то, что подставится.
+ */
+function TargetForm({ onSaved }: { onSaved: () => void }) {
+  const [data, setData] = useState<AvailabilityTargetResponse | null>(null);
+  const [host, setHost] = useState('');
+  const [port, setPort] = useState('');
+  const [sni, setSni] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const apply = useCallback((res: AvailabilityTargetResponse) => {
+    setData(res);
+    setHost(res.override.host ?? '');
+    setPort(res.override.port ? String(res.override.port) : '');
+    setSni(res.override.sni ?? '');
+  }, []);
+
+  useEffect(() => {
+    availabilityApi
+      .target()
+      .then(apply)
+      .catch((e) => setError(e instanceof Error ? e.message : 'Не удалось загрузить цель проверки'));
+  }, [apply]);
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      const portNum = port.trim() ? Number(port.trim()) : undefined;
+      if (portNum !== undefined && (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535)) {
+        setError('Порт должен быть числом от 1 до 65535');
+        return;
+      }
+      const res = await availabilityApi.saveTarget({
+        host: host.trim() || undefined,
+        port: portNum,
+        sni: sni.trim() || undefined,
+      });
+      apply(res);
+      setSaved(true);
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось сохранить цель проверки');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reset = async () => {
+    setHost('');
+    setPort('');
+    setSni('');
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      apply(await availabilityApi.saveTarget({}));
+      setSaved(true);
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось сбросить цель проверки');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const overridden = Boolean(data?.override.host || data?.override.port || data?.override.sni);
+  const resolved = data?.resolved;
+
+  return (
+    <CollapsibleSection
+      title="Что проверять"
+      defaultOpen={false}
+      badge={
+        <Badge variant={overridden ? 'default' : 'outline'}>
+          {overridden ? 'задано вручную' : 'определяется автоматически'}
+        </Badge>
+      }
+    >
+      <p className="text-xs text-text-secondary mb-3">
+        Пустое поле — определить автоматически; в подсказке показано, что подставится.
+        Пригодится, когда прокси доступен по другому домену, чем определяет сервер.
+      </p>
+
+      {resolved?.error && <ErrorAlert message={resolved.error} />}
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-text-secondary">Адрес или домен</span>
+          <Input
+            value={host}
+            onChange={(e) => setHost(e.target.value)}
+            placeholder={resolved?.host || 'определяется автоматически'}
+            spellCheck={false}
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-text-secondary">Порт</span>
+          <Input
+            value={port}
+            onChange={(e) => setPort(e.target.value)}
+            placeholder={resolved?.port ? String(resolved.port) : '443'}
+            inputMode="numeric"
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-xs text-text-secondary">Fake SNI</span>
+          <Input
+            value={sni}
+            onChange={(e) => setSni(e.target.value)}
+            placeholder={resolved?.sni || 'без SNI'}
+            spellCheck={false}
+          />
+        </label>
+      </div>
+
+      {error && (
+        <div className="mt-3">
+          <ErrorAlert message={error} />
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 mt-3 flex-wrap">
+        <Button onClick={save} disabled={saving} size="sm" className="gap-2">
+          <Target size={14} />
+          {saving ? 'Сохраняем…' : 'Сохранить'}
+        </Button>
+        <Button onClick={reset} disabled={saving || !overridden} size="sm" variant="outline">
+          Вернуть автоопределение
+        </Button>
+        {saved && !error && (
+          <span className="text-xs text-success">
+            Сохранено — применится со следующей проверкой
+          </span>
+        )}
+      </div>
+    </CollapsibleSection>
   );
 }
 

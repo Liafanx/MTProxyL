@@ -24,6 +24,16 @@ const (
 	eyeballTag = "eyeball-network"
 )
 
+// RateLimitError says the hourly allowance is spent. It carries the wait the
+// service asked for, so the caller can stop trying instead of burning the
+// remaining checks on guaranteed failures.
+type RateLimitError struct {
+	Message string
+	RetryIn time.Duration
+}
+
+func (e *RateLimitError) Error() string { return e.Message }
+
 // Client talks to the Globalping API.
 type Client struct {
 	httpClient *http.Client
@@ -66,10 +76,15 @@ func (c *Client) CreateMeasurement(ctx context.Context, req *MeasurementRequest)
 	if resp.StatusCode == http.StatusTooManyRequests {
 		// The quota is counted in credits — one per probe — and is easy to
 		// exhaust with a short interval and many probes. Saying so plainly
-		// beats "API error 429".
-		return nil, fmt.Errorf("превышен часовой лимит Globalping (%s); "+
-			"следующая попытка через %s или уменьшите число зондов/частоту проверок%s",
-			rateLimitLimit(resp), rateLimitReset(resp), tokenHint(c.apiToken))
+		// beats "API error 429". Typed, so the caller can stop spending until
+		// the service says the allowance is back.
+		retryIn := rateLimitResetIn(resp)
+		return nil, &RateLimitError{
+			RetryIn: retryIn,
+			Message: fmt.Sprintf("превышен часовой лимит Globalping (%s); "+
+				"следующая попытка через %s или уменьшите число зондов/частоту проверок%s",
+				rateLimitLimit(resp), humanDuration(retryIn), tokenHint(c.apiToken == "")),
+		}
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		return nil, fmt.Errorf("сервис проверки ответил %d: %s", resp.StatusCode, snippet(respBody))
@@ -241,23 +256,21 @@ func rateLimitLimit(resp *http.Response) string {
 	return "квота исчерпана"
 }
 
-func rateLimitReset(resp *http.Response) string {
+// rateLimitResetIn is how long the service says the allowance stays gone.
+func rateLimitResetIn(resp *http.Response) time.Duration {
 	v := resp.Header.Get("X-RateLimit-Reset")
 	if v == "" {
 		v = resp.Header.Get("Retry-After")
 	}
 	secs, err := strconv.Atoi(v)
 	if err != nil || secs <= 0 {
-		return "час"
+		return time.Hour
 	}
-	if secs < 60 {
-		return strconv.Itoa(secs) + " с"
-	}
-	return strconv.Itoa(secs/60) + " мин"
+	return time.Duration(secs) * time.Second
 }
 
-func tokenHint(token string) string {
-	if token != "" {
+func tokenHint(tokenless bool) string {
+	if !tokenless {
 		return ""
 	}
 	return ". Бесплатный токен на dash.globalping.io поднимает лимит вдвое: [globalping] api_token"

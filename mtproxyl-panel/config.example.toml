@@ -159,6 +159,11 @@ session_ttl = "24h"
 # Interval between background checks (Go duration: 15m, 30m, 1h).
 # Globalping's free quota is 250 credits/hour, one credit per probe, so
 # 20 probes every 15 minutes (80/hour) leaves headroom for manual checks.
+#
+# The panel counts credits itself over a rolling hour and refuses a check that
+# would not fit, so a too-frequent setting here costs skipped checks (logged),
+# not failed ones. It still cannot buy back what the schedule already spent —
+# keep interval × probes under the quota.
 # check_interval = "15m"
 
 # Probes used per check (max 50).
@@ -170,4 +175,9 @@ session_ttl = "24h"
 # Override the address probes connect to (default: the server's public IP,
 # or the FakeTLS/Selfmask domain if one is configured). Useful when the
 # server cannot work out its own reachable address (NAT, several IPs).
+#
+# The «Что проверять» form on the availability page does the same thing and
+# wins over this key: it is the more immediate control, and it can also pin the
+# port and the SNI. Set this one when the panel should come up already pointed
+# at the right address.
 # override_host = "my-proxy.example.com"
