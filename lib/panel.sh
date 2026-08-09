@@ -41,11 +41,41 @@ panel_status_line() {
     fi
 }
 
+# Имя, на которое выписан сертификат панели. Именно оно должно стоять в
+# ссылке: по любому другому адресу браузер откажется открывать панель с
+# ошибкой несовпадения имени, даже если сеть до неё доходит.
+#
+# Берём SAN, а не CN: у самоподписанного сертификата панели CN —
+# «MTProxyL-Panel», это не адрес. localhost отбрасываем — панель добавляет
+# его в каждый самоподписанный сертификат для локальных запросов.
+_panel_cert_domain() {
+    local _cfg="${PANEL_CONFIG_DIR}/config.toml"
+    local _cert
+    _cert=$(grep -oE '^[[:space:]]*cert_file[[:space:]]*=[[:space:]]*"[^"]+"' "$_cfg" 2>/dev/null \
+        | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+    [ -n "$_cert" ] && [ -r "$_cert" ] || return 1
+    command -v openssl &>/dev/null || return 1
+
+    local _dom
+    _dom=$(openssl x509 -in "$_cert" -noout -text 2>/dev/null \
+        | grep -oE 'DNS:[^,[:space:]]+' | cut -d: -f2 | grep -vFx 'localhost' | head -1)
+    [ -n "$_dom" ] || return 1
+    echo "$_dom"
+}
+
 # Адрес, по которому панель отвечает — читаем из её конфига, чтобы не гадать.
 # 0.0.0.0 означает «на всех интерфейсах», поэтому подставляем реальный IP
 # сервера: ссылка вида http://:8080 никуда не ведёт. Let's Encrypt (acme_domain)
 # выпускается на конкретный домен — если он задан, показываем его, а не IP:
 # сертификат домену не соответствует IP, браузер такой ссылке не поверит.
+#
+# По той же причине домен из готового сертификата (cert_file — свой файл либо
+# подхваченный у certbot) идёт раньше IP. И ни при каких условиях не берём
+# get_public_ip: она отдаёт CUSTOM_IP — «IP/домен сервера» из настроек прокси,
+# то есть адрес для tg://-ссылок. С панелью он не связан никак, а совпасть с
+# ней может разве что случайно: у панели на стенде свой домен и сертификат
+# Let's Encrypt на него, и меню звало открыть её по домену прокси, где она
+# либо не отвечает, либо отдаёт чужой сертификат.
 panel_listen_addr() {
     local _cfg="${PANEL_CONFIG_DIR}/config.toml"
     [ -f "$_cfg" ] || return 1
@@ -63,9 +93,16 @@ panel_listen_addr() {
         return 0
     fi
 
+    local _cert_domain; _cert_domain=$(_panel_cert_domain 2>/dev/null)
+    if [ -n "$_cert_domain" ]; then
+        echo "${_cert_domain}:${_port}"
+        return 0
+    fi
+
     case "$_host" in
         ""|"0.0.0.0"|"::"|"[::]")
-            local _ip; _ip=$(get_public_ip 2>/dev/null)
+            # CUSTOM_IP="" — иначе вернётся домен прокси вместо адреса сервера.
+            local _ip; _ip=$(CUSTOM_IP="" get_public_ip 2>/dev/null)
             [ -n "$_ip" ] || _ip=$(hostname -I 2>/dev/null | awk '{print $1}')
             [ -n "$_ip" ] || _ip="<адрес-сервера>"
             echo "${_ip}:${_port}"
