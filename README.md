@@ -280,6 +280,7 @@ mtproxyl uninstall-telemt     # удалить telemt: uninstall или purge (R
 ### Мониторинг и бэкапы
 - Персистентный трафик, метрики, зашифрованные бэкапы, миграция
 - Опциональная база GeoIP: страна, город и провайдер для адресов пользователей
+- Проверка доступности прокси из России глазами зондов — в [веб-панели](#panel)
 
 ---
 
@@ -330,6 +331,26 @@ mtproxyl mask-backend 127.0.0.1:8443   # Mask backend
 mtproxyl sni-policy mask               # SNI-политика
 mtproxyl config                        # Показать config.toml
 ```
+
+Те же настройки одним списком — с текущими значениями и проверкой ввода.
+Это то, что показывает и правит панель в разделе **Настройки прокси**:
+
+```bash
+mtproxyl settings list                 # Все настройки и их значения
+mtproxyl settings list --json          # То же машиночитаемо
+mtproxyl settings set PROXY_PORT 443   # Изменить (значение проверяется)
+```
+
+Доступные ключи: `PROXY_PORT`, `PROXY_DOMAIN`, `CUSTOM_IP`, `AD_TAG`,
+`MASKING_ENABLED`, `MASKING_HOST`, `MASKING_PORT`, `UNKNOWN_SNI_ACTION`,
+`PROXY_CONCURRENCY`, `FAKE_CERT_LEN`, `PROXY_PROTOCOL`, `PROXY_METRICS_PORT`,
+`PROXY_API_PORT`, `AUTO_UPDATE_ENABLED`, `BACKUP_RETENTION_DAYS`,
+`SECRET_AUTO_ROTATE_DAYS`.
+
+> `CUSTOM_IP` — это адрес для ссылок, а не адрес, на котором слушает движок.
+> Задавайте его там, где автоопределение промахивается: NAT, несколько
+> адресов, домен вместо IP. Заданное значение попадает в `public_host` конфига
+> движка, и конфиг перечитывается сразу.
 
 <a id="cli-engine"></a>
 
@@ -609,7 +630,16 @@ mtproxyl detect               # (пере)обнаружить существу�
 mtproxyl edit-config          # открыть конфиг цели в $EDITOR/nano + предложить рестарт
 mtproxyl install-telemt       # официальный установщик telemt: установка/обновление, выбор версии
 mtproxyl uninstall-telemt     # официальный установщик telemt: uninstall / purge
+mtproxyl target-config show   # показать конфиг цели целиком
+mtproxyl target-config write            # заменить конфиг цели (текст со stdin)
+mtproxyl target-config write --restart  # ...и сразу перезапустить цель
 ```
+
+`target-config` работает только в режиме Reanimator — конфигом своего движка
+управляет `mtproxyl superexpert`. Конфиг цели принадлежит ей самой (у
+systemd-установки это `telemt:telemt` в каталоге 750), поэтому панель читает и
+пишет его через эту команду: она проверяет, что текст всё ещё похож на конфиг
+telemt, делает резервную копию и сохраняет владельца с правами.
 
 ---
 
