@@ -345,7 +345,15 @@ mtproxyl settings set PROXY_PORT 443   # Изменить (значение пр
 `MASKING_ENABLED`, `MASKING_HOST`, `MASKING_PORT`, `UNKNOWN_SNI_ACTION`,
 `PROXY_CONCURRENCY`, `FAKE_CERT_LEN`, `PROXY_PROTOCOL`, `PROXY_METRICS_PORT`,
 `PROXY_API_PORT`, `AUTO_UPDATE_ENABLED`, `BACKUP_RETENTION_DAYS`,
-`SECRET_AUTO_ROTATE_DAYS`.
+`SECRET_AUTO_ROTATE_DAYS`, `IP_HISTORY_LIMIT`.
+
+> `IP_HISTORY_LIMIT` — сколько адресов хранить в истории на пользователя,
+> по умолчанию 200. Уменьшение подрезает историю на ближайшем обновлении
+> списка пользователей.
+>
+> Настройки самого MTProxyL (`AUTO_UPDATE_ENABLED`, `BACKUP_RETENTION_DAYS`,
+> `SECRET_AUTO_ROTATE_DAYS`, `IP_HISTORY_LIMIT`) доступны в обоих режимах:
+> в конфиг движка они не попадают. Остальные — только в Manager.
 
 > `CUSTOM_IP` — это адрес для ссылок, а не адрес, на котором слушает движок.
 > Задавайте его там, где автоопределение промахивается: NAT, несколько
@@ -822,6 +830,13 @@ mask-backend, поэтому «снаружи» домен не открывае
 | Файловый менеджер | Форма входа (всегда «неверные данные») |
 | Cat Runner | Мини-игра: кот прыгает через кактусы |
 | Свой URL | Любой `index.html` по ссылке |
+| Свой сайт с сервера | Путь к папке с `index.html` — копируется целиком |
+
+Последний вариант для тех, у кого сайт уже лежит на диске: укажите
+`/var/www/some.name.ru` (или путь к самому `index.html` — возьмём его папку), и
+содержимое скопируется в каталог заглушки со всеми стилями, скриптами и
+картинками. Поднимать раздачу не нужно. Путь проверяется сразу — если его нет
+или в нём нет `index.html`, мастер скажет об этом, а не подставит заглушку.
 
 ---
 

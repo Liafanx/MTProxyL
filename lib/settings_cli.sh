@@ -21,6 +21,7 @@ _SETTINGS_SETTABLE=(
     "AUTO_UPDATE_ENABLED|bool|Автообновление MTProxyL"
     "BACKUP_RETENTION_DAYS|range:0:3650|Сколько дней хранить бэкапы (0 — не удалять)"
     "SECRET_AUTO_ROTATE_DAYS|range:0:3650|Автоматическая ротация секретов, дней (0 — выключена)"
+    "IP_HISTORY_LIMIT|range:1:100000|Сколько IP хранить в истории на пользователя"
 )
 
 # ── Валидаторы, которых нет в экспертном каталоге ─────────────
@@ -126,8 +127,18 @@ settings_set_param() {
     esac
 
     check_root
-    _require_manager_mode || return 1
-    _require_no_superexpert || return 1
+
+    # Настройки самого MTProxyL в конфиг движка не попадают, поэтому доступны
+    # и в реаниматоре, и при супер эксперте: чужой конфиг они не трогают.
+    local _own_setting="false"
+    case "$_key" in
+        AUTO_UPDATE_ENABLED|BACKUP_RETENTION_DAYS|SECRET_AUTO_ROTATE_DAYS|IP_HISTORY_LIMIT)
+            _own_setting="true" ;;
+    esac
+    if [ "$_own_setting" != "true" ]; then
+        _require_manager_mode || return 1
+        _require_no_superexpert || return 1
+    fi
 
     printf -v "$_key" '%s' "$_val"
     save_settings
@@ -142,7 +153,7 @@ settings_set_param() {
             [ "$_key" = "PROXY_API_PORT" ] && \
                 log_warn "Поправьте url в конфиге панели: /etc/mtproxyl-panel/config.toml"
             ;;
-        AUTO_UPDATE_ENABLED|BACKUP_RETENTION_DAYS|SECRET_AUTO_ROTATE_DAYS)
+        AUTO_UPDATE_ENABLED|BACKUP_RETENTION_DAYS|SECRET_AUTO_ROTATE_DAYS|IP_HISTORY_LIMIT)
             # Настройки самого MTProxyL — в конфиг движка не попадают.
             ;;
         *)

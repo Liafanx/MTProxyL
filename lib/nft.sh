@@ -100,6 +100,10 @@ ZAPRET2_DEFAULT_IN_RANGE="a"
 ZAPRET2_DEFAULT_SPLIT_LEN="400"
 ZAPRET2_DEFAULT_WIN_SYNACK="1400"
 ZAPRET2_DEFAULT_WIN_ACK="10"
+# nobody:nogroup — под них nfqws2 сбрасывает привилегии. Без явного --uid он
+# берёт своё значение по умолчанию и в LXC падает на setgroups.
+ZAPRET2_DEFAULT_UID="65534"
+ZAPRET2_DEFAULT_GID="65534"
 
 ZAPRET2_FWMARK="$ZAPRET2_DEFAULT_FWMARK"
 ZAPRET2_QNUM="$ZAPRET2_DEFAULT_QNUM"
@@ -110,6 +114,8 @@ ZAPRET2_DEBUG="false"
 ZAPRET2_DEBUG_LOG="/var/log/mtproxyl-nfqws2.log"
 ZAPRET2_WIN_SYNACK="$ZAPRET2_DEFAULT_WIN_SYNACK"
 ZAPRET2_WIN_ACK="$ZAPRET2_DEFAULT_WIN_ACK"
+ZAPRET2_UID="$ZAPRET2_DEFAULT_UID"
+ZAPRET2_GID="$ZAPRET2_DEFAULT_GID"
 # Доп. порты/диапазоны для --filter-tcp, через запятую (напр. "8443,9000-9100").
 # Порт прокси добавляется автоматически и здесь не нужен.
 ZAPRET2_EXTRA_PORTS=""
@@ -183,6 +189,8 @@ ZAPRET2_EXTRA_PORTS='${ZAPRET2_EXTRA_PORTS}'
 ZAPRET2_QNUM='${ZAPRET2_QNUM}'
 ZAPRET2_FWMARK='${ZAPRET2_FWMARK}'
 ZAPRET2_ORIG_TW_REUSE='${ZAPRET2_ORIG_TW_REUSE}'
+ZAPRET2_UID='${ZAPRET2_UID}'
+ZAPRET2_GID='${ZAPRET2_GID}'
 ZAPRET2_DEBUG='${ZAPRET2_DEBUG}'
 EOF
     local _i
@@ -225,7 +233,8 @@ load_nft_settings() {
                 ZAPRET2_APPLIED|ZAPRET2_SERVICE_ENABLED|\
                 ZAPRET2_OUT_RANGE|ZAPRET2_IN_RANGE|ZAPRET2_SPLIT_LEN|\
                 ZAPRET2_WIN_SYNACK|ZAPRET2_WIN_ACK|ZAPRET2_EXTRA_PORTS|\
-                ZAPRET2_QNUM|ZAPRET2_FWMARK|ZAPRET2_DEBUG|ZAPRET2_ORIG_TW_REUSE)
+                ZAPRET2_QNUM|ZAPRET2_FWMARK|ZAPRET2_DEBUG|ZAPRET2_ORIG_TW_REUSE|\
+                ZAPRET2_UID|ZAPRET2_GID)
                     printf -v "$_key" '%s' "$_val"
                     [ "$_key" = "NFT_IOS_DETECT" ] && _have_ios_detect="true"
                     ;;
@@ -1520,6 +1529,7 @@ zapret2_write_conf() {
 --qnum ${ZAPRET2_QNUM}
 --fwmark=${ZAPRET2_FWMARK}
 --server
+--uid=${ZAPRET2_UID}:${ZAPRET2_GID}
 ${_debug_line}
 --lua-init=@${ZAPRET2_LUA_DIR}/zapret-lib.lua
 --lua-init=@${ZAPRET2_LUA_DIR}/zapret-antidpi.lua
@@ -2497,6 +2507,8 @@ _NFT_SETTABLE=(
     "ZAPRET2_QNUM|range:0:65535|Номер очереди NFQUEUE"
     "ZAPRET2_FWMARK|custom:_validate_nft_fwmark|fwmark для пропуска обработанных пакетов"
     "ZAPRET2_EXTRA_PORTS|custom:_validate_nft_ports|Дополнительные порты/диапазоны"
+    "ZAPRET2_UID|range:0:65535|UID, под который nfqws2 сбрасывает привилегии"
+    "ZAPRET2_GID|range:0:65535|GID, под который nfqws2 сбрасывает привилегии"
     "ZAPRET2_DEBUG|bool|Подробный лог Zapret2"
 )
 

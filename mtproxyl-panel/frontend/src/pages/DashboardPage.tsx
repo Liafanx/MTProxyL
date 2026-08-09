@@ -7,6 +7,7 @@ import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { StartupStatus } from '@/components/StartupStatus';
 import { ProxyControls } from '@/components/ProxyControls';
 import { ConnectionErrors, type ClassCount } from '@/components/ConnectionErrors';
+import { AvailabilityCard } from '@/components/AvailabilityCard';
 import { useWsSubscription, useEndpoint } from '@/hooks/useWebSocket';
 import { usePolling } from '@/hooks/usePolling';
 import { telemt } from '@/lib/api';
@@ -108,6 +109,8 @@ export function DashboardPage() {
             </span>
           )}
         </div>
+
+        <AvailabilityCard />
 
         {/* Startup Status */}
         {gates && (

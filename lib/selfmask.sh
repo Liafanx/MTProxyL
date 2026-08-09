@@ -103,8 +103,49 @@ _selfmask_template_label() {
         catrunner)   echo "Cat Runner" ;;
         mekorunner)  echo "MEKO Runner" ;;
         http*)       echo "$1" ;;
+        /*)          echo "свой сайт: $1" ;;
         *)           echo "${1:-stub}" ;;
     esac
+}
+
+# Каталог с готовым сайтом. Принимает и путь к index.html — берём его папку,
+# сайт это не один файл, рядом лежат стили, скрипты и картинки.
+# Печатает каталог в stdout, диагностику — в stderr: результат забирают через $( ).
+_selfmask_resolve_local_site() {
+    local _p="${1%/}"
+    [ -n "$_p" ] || { log_error "Путь не задан" >&2; return 1; }
+    case "$_p" in
+        /*) ;;
+        *) log_error "Нужен абсолютный путь, например /var/www/site.ru" >&2; return 1 ;;
+    esac
+
+    [ -e "$_p" ] || { log_error "Путь не существует: ${_p}" >&2; return 1; }
+    [ -f "$_p" ] && _p=$(dirname "$_p")
+    [ -d "$_p" ] || { log_error "Не каталог: ${_p}" >&2; return 1; }
+    [ -f "${_p}/index.html" ] || { log_error "В каталоге нет index.html: ${_p}" >&2; return 1; }
+
+    # Копировать каталог сам в себя нечем и незачем.
+    if [ "$_p" = "${SELFMASK_SITE_DIR%/}" ]; then
+        log_error "Это и есть каталог заглушки — укажите другой" >&2
+        return 1
+    fi
+    echo "$_p"
+}
+
+# Копирует сайт оператора в каталог заглушки.
+_selfmask_copy_local_site() {
+    local _src; _src=$(_selfmask_resolve_local_site "$1") || return 1
+
+    log_info "Копирование сайта из ${_src}"
+    # Каталог чистим, но не .well-known: там лежит challenge Let's Encrypt.
+    find "$SELFMASK_SITE_DIR" -mindepth 1 -maxdepth 1 \
+        ! -name '.well-known' -exec rm -rf {} + 2>/dev/null || true
+
+    if ! cp -a "${_src}/." "$SELFMASK_SITE_DIR/" 2>/dev/null; then
+        log_error "Не удалось скопировать сайт из ${_src}"
+        return 1
+    fi
+    log_success "Сайт скопирован: $(find "$SELFMASK_SITE_DIR" -type f | wc -l) файлов"
 }
 
 _selfmask_selfsigned_dir() {
@@ -348,6 +389,7 @@ _selfmask_collect_params() {
     echo -e "  ${DIM}[3]${NC} Cat Runner ${DIM}(мини-игра: кот прыгает через кактусы)${NC}"
     echo -e "  ${DIM}[4]${NC} MEKO Runner ${DIM}(MEKO убегает от сотрудников РКН)${NC}"
     echo -e "  ${CYAN}[5]${NC} Указать свой URL ${DIM}(прямая ссылка на index.html)${NC}"
+    echo -e "  ${CYAN}[6]${NC} Свой сайт с этого сервера ${DIM}(путь к папке с index.html)${NC}"
     echo ""
 
     local _tpl
@@ -380,6 +422,20 @@ _selfmask_collect_params() {
                 log_error "Нужен URL вида http(s)://..."
                 return 1
             fi
+            ;;
+        6)
+            echo ""
+            echo -e "  ${DIM}Каталог с готовым сайтом на этом сервере. Можно указать и путь${NC}"
+            echo -e "  ${DIM}к index.html — возьмём его папку целиком, со всеми файлами.${NC}"
+            echo -e "  ${DIM}Например: /var/www/some.name.ru${NC}"
+            echo -en "  ${BOLD}Путь:${NC} "
+            local _local_path
+            read_line _local_path
+            local _resolved
+            _resolved=$(_selfmask_resolve_local_site "$_local_path") || return 1
+            SELFMASK_SITE_SOURCE="$_resolved"
+            log_info "Свой сайт: ${_resolved}"
+            log_info "Файлы копируются в ${SELFMASK_SITE_DIR} при применении"
             ;;
         *)
             SELFMASK_SITE_SOURCE="stub"
@@ -690,8 +746,11 @@ _selfmask_deploy_site() {
         mekorunner)
             _selfmask_download_template "${_templates_base}/mekorunner.html" || _selfmask_fallback_stub
             ;;
-        http*) 
+        http*)
             _selfmask_download_template "$_src" || _selfmask_fallback_stub
+            ;;
+        /*)
+            _selfmask_copy_local_site "$_src" || _selfmask_fallback_stub
             ;;
     esac
 
@@ -1738,7 +1797,7 @@ _SELFMASK_SETTABLE=(
     "SELFMASK_DOMAIN|custom:_validate_selfmask_domain|Домен сайта-заглушки"
     "SELFMASK_CERT_MODE|enum:letsencrypt,selfsigned|Тип сертификата"
     "SELFMASK_CERT_EMAIL|custom:_validate_selfmask_email|Email для Let's Encrypt"
-    "SELFMASK_SITE_SOURCE|custom:_validate_selfmask_template|Шаблон сайта или URL на index.html"
+    "SELFMASK_SITE_SOURCE|custom:_validate_selfmask_template|Шаблон, URL на index.html или путь к папке с сайтом"
     "SELFMASK_NGINX_BACKEND_PORT|range:1:65535|Порт локального nginx"
     "SELFMASK_AUTO_RENEW|bool|Автопродление сертификата"
 )
@@ -1760,8 +1819,15 @@ _validate_selfmask_template() {
     case "$1" in
         stub|filemanager|catrunner|mekorunner) return 0 ;;
         http://*|https://*) return 0 ;;
+        /*)
+            # Путь проверяем сразу: иначе панель приняла бы несуществующий
+            # каталог, и подмена вскрылась бы только заглушкой вместо сайта.
+            _selfmask_resolve_local_site "$1" >/dev/null 2>&1 && return 0
+            echo "Каталог не найден или в нём нет index.html: $1"
+            return 1
+            ;;
     esac
-    echo "Допустимо: stub, filemanager, catrunner, mekorunner или http(s)://... "
+    echo "Допустимо: stub, filemanager, catrunner, mekorunner, http(s)://... или путь к папке с index.html"
     return 1
 }
 

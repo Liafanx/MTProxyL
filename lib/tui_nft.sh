@@ -815,6 +815,7 @@ tui_zapret2_menu() {
             echo -e "    win ACK:     ${ZAPRET2_WIN_ACK}"
             echo -e "    NFQUEUE:     ${ZAPRET2_QNUM}"
             echo -e "    fwmark:      ${ZAPRET2_FWMARK}"
+            echo -e "    UID:GID:     ${ZAPRET2_UID}:${ZAPRET2_GID}"
             echo -e "    Порт:        ${PROXY_PORT:-не задан}"
             if [ "${ZAPRET2_DEBUG:-false}" = "true" ]; then
                 echo -e "    Debug:       ${YELLOW}включён${NC} → ${ZAPRET2_DEBUG_LOG}"
@@ -953,6 +954,7 @@ tui_zapret2_menu() {
                     echo -e "    out-range: ${ZAPRET2_DEFAULT_OUT_RANGE}  in-range: ${ZAPRET2_DEFAULT_IN_RANGE}"
                     echo -e "    split len: ${ZAPRET2_DEFAULT_SPLIT_LEN}  win SYN+ACK: ${ZAPRET2_DEFAULT_WIN_SYNACK}  win ACK: ${ZAPRET2_DEFAULT_WIN_ACK}"
                     echo -e "    NFQUEUE: ${ZAPRET2_DEFAULT_QNUM}  fwmark: ${ZAPRET2_DEFAULT_FWMARK}"
+                    echo -e "    UID:GID: ${ZAPRET2_DEFAULT_UID}:${ZAPRET2_DEFAULT_GID}"
                     echo ""
                     echo -en "  ${BOLD}Сбросить и перезапустить? [y/N]:${NC} "
                     local _yn; read_line _yn
@@ -964,6 +966,8 @@ tui_zapret2_menu() {
                         ZAPRET2_WIN_ACK="$ZAPRET2_DEFAULT_WIN_ACK"
                         ZAPRET2_QNUM="$ZAPRET2_DEFAULT_QNUM"
                         ZAPRET2_FWMARK="$ZAPRET2_DEFAULT_FWMARK"
+                        ZAPRET2_UID="$ZAPRET2_DEFAULT_UID"
+                        ZAPRET2_GID="$ZAPRET2_DEFAULT_GID"
                         save_nft_settings
                         zapret2_update_config
                         log_success "Настройки сброшены к дефолту"
@@ -1032,6 +1036,7 @@ tui_zapret2_settings() {
             echo -e "  ${DIM}[9]${NC} Debug лог ${DIM}[выключен]${NC}"
         fi
         echo -e "  ${DIM}[10]${NC} Доп. порты  [${ZAPRET2_EXTRA_PORTS:-нет}]  ${DIM}— через запятую, можно диапазоны${NC}"
+        echo -e "  ${DIM}[12]${NC} UID:GID     [${ZAPRET2_UID}:${ZAPRET2_GID}]  ${DIM}— под кого nfqws2 сбрасывает права${NC}"
         local _z_bridge="false"
         if zapret2_is_bridge_target; then
             _z_bridge="true"
@@ -1165,6 +1170,25 @@ tui_zapret2_settings() {
                        log_success "Docker bridge: precise (фильтр по IP контейнера)"
                        zapret2_update_config ;;
                 esac
+                press_any_key ;;
+            12)
+                echo ""
+                echo -e "  ${DIM}nfqws2 сбрасывает привилегии под этого пользователя.${NC}"
+                echo -e "  ${DIM}65534:65534 — nobody:nogroup, подходит почти везде.${NC}"
+                echo -e "  ${DIM}Менять стоит, только если служба падает на setgroups.${NC}"
+                echo -en "  UID [${ZAPRET2_UID}]: "
+                local _u; read_line _u
+                [ -n "$_u" ] || _u="$ZAPRET2_UID"
+                echo -en "  GID [${ZAPRET2_GID}]: "
+                local _g; read_line _g
+                [ -n "$_g" ] || _g="$ZAPRET2_GID"
+                if [[ "$_u" =~ ^[0-9]+$ ]] && [[ "$_g" =~ ^[0-9]+$ ]] \
+                   && [ "$_u" -le 65535 ] && [ "$_g" -le 65535 ]; then
+                    ZAPRET2_UID="$_u"; ZAPRET2_GID="$_g"; save_nft_settings
+                    log_success "UID:GID = ${_u}:${_g}"; zapret2_update_config
+                else
+                    log_error "UID и GID — числа 0..65535"
+                fi
                 press_any_key ;;
             0|"") return ;;
         esac
