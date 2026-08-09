@@ -18,13 +18,10 @@ type Backup struct {
 	Mtime int64  `json:"mtime"`
 }
 
-// backupNameRe matches exactly the archive names create_backup produces:
-// mtproxyl-YYYYMMDD-HHMMSS.tar.gz
-//
-// Restore passes a filename into a sudo-invoked command, so the name is
-// validated against this pattern rather than merely cleaned. Anchoring the
-// whole string rejects path separators, "..", flags and shell metacharacters
-// outright instead of trying to enumerate what is dangerous.
+// backupNameRe matches exactly what create_backup produces:
+// mtproxyl-YYYYMMDD-HHMMSS.tar.gz. The name goes into a sudo-invoked command,
+// so it is validated, not cleaned: anchoring rejects separators, ".." and
+// shell metacharacters outright.
 var backupNameRe = regexp.MustCompile(`^mtproxyl-\d{8}-\d{6}\.tar\.gz$`)
 
 // ErrInvalidBackupName marks a rejected archive name, so handlers can answer
@@ -74,11 +71,8 @@ func (c *Client) CreateBackup(ctx context.Context) (string, error) {
 	return name, nil
 }
 
-// RestoreBackup restores a previously created archive by name.
-//
-// Only a name is accepted, never a path: it is validated and then resolved
-// against MTProxyL's own backup directory, so a caller cannot direct the
-// privileged restore at an arbitrary file.
+// RestoreBackup restores an archive by name. Only a name, never a path: it is
+// resolved against MTProxyL's own backup directory.
 func (c *Client) RestoreBackup(ctx context.Context, name string) (string, error) {
 	if err := ValidateBackupName(name); err != nil {
 		return "", err
@@ -96,15 +90,9 @@ func (c *Client) ResolveBackupPath(name string) (string, error) {
 	return filepath.Join(c.cfg.BackupDir(), name), nil
 }
 
-// ReadBackup returns an archive's bytes.
-//
-// The panel creates backups through sudo but cannot read them back: they are
-// written root-owned with mode 600, so opening the file directly fails with
-// permission denied and the download button did nothing but show an error.
-// Reading goes through the same privileged CLI that wrote them.
-//
-// Output is returned raw — the archive is gzip, and running it through the
-// ANSI stripper other commands use would corrupt it.
+// ReadBackup returns an archive's bytes through the privileged CLI: backups are
+// root-owned 600, so the panel cannot open them directly.
+// Output is raw — the ANSI stripper would corrupt gzip.
 func (c *Client) ReadBackup(ctx context.Context, name string) ([]byte, error) {
 	if err := ValidateBackupName(name); err != nil {
 		return nil, err

@@ -20,10 +20,8 @@ var ipServices = []string{
 }
 
 // PublicIP asks an outside service what this server's address looks like.
-//
-// Deliberately not cached: the address is re-read before every check, and an
-// address that changed (new VPS, floating IP moved) has to be noticed — a
-// cached one would keep the panel checking a server that is no longer ours.
+// Deliberately not cached: a changed address (new VPS, floating IP) has to be
+// noticed, or the panel keeps checking a server that is no longer ours.
 func PublicIP(ctx context.Context) (string, error) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	for _, url := range ipServices {

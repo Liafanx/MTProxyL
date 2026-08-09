@@ -1,13 +1,7 @@
 #!/bin/bash
-# MTProxyL — подменю: режим супер эксперта
-#
-# Основная логика режима эксперта (override поверх генерируемого конфига)
-# живёт в lib/expert_catalog.sh и lib/expert_mode.sh — здесь её нет
-# специально, чтобы не переопределять новые функции старой реализацией.
-#
-# Супер эксперт — это другое: конфиг движка целиком ведёт пользователь,
-# MTProxyL только кладёт его файл на место config.toml. Сама механика в
-# lib/config.sh (superexpert_*), здесь — только меню.
+# MTProxyL — подменю: режим супер эксперта (только меню).
+# Механика в lib/config.sh (superexpert_*), обычный режим эксперта —
+# в lib/expert_catalog.sh и lib/expert_mode.sh.
 
 tui_superexpert_menu() {
     while true; do

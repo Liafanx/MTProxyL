@@ -4,14 +4,9 @@ function tomlValue(value: unknown): string {
   return JSON.stringify(String(value));
 }
 
-// Apply key/value edits to the config text itself, touching only the lines that
-// change.
-//
-// Parsing the whole file and printing it back was rewriting configs wholesale:
-// nested sections came back indented, arrays reflowed and section order shifted
-// (a one-value edit moved [timeouts] to the end of the file). In reanimator mode
-// that file belongs to someone else, and MTProxyL must leave everything it was
-// not asked to change exactly as it found it.
+// Правим текст конфига построчно, трогая только изменённые строки.
+// Разбор с обратной печатью переписывал конфиг целиком: секции переезжали,
+// массивы переформатировались. В реаниматоре файл чужой.
 export function applyEdits(
   raw: string,
   changes: Map<string, Map<string, unknown>>,

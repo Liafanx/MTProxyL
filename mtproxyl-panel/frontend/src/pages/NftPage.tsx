@@ -10,10 +10,8 @@ import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { mtproxylNetApi, type NftAction, type NftParam, type NftStatus } from '@/lib/api';
 import { useMtproxylOperation } from '@/hooks/useMtproxyl';
 
-// Parameters are grouped so the form does not read as one flat list of 25 keys.
-//
-// Порядок групп повторяет порядок разделов страницы: сначала настройки того,
-// чем пользуются, в конце — устаревшие методы.
+// Параметры сгруппированы, чтобы форма не читалась плоским списком из 25 ключей.
+// Порядок групп повторяет порядок разделов страницы.
 const GROUPS: { title: string; prefixes: string[]; legacy?: boolean }[] = [
   { title: 'Zapret2', prefixes: ['ZAPRET2_'] },
   {
@@ -95,12 +93,9 @@ export function NftPage() {
     [edits, status],
   );
 
-  // saveChanged writes the edited parameters and, when asked, reapplies the
-  // rules so the new values take effect in one step.
-  //
-  // Which action to apply depends on the active preset: the smart limiter is
-  // built by its own command, so running plain `apply` there would rebuild the
-  // classic ruleset and silently change behaviour.
+  // saveChanged пишет параметры и, если попросили, переприменяет правила.
+  // Действие зависит от активного пресета: smart строится своей командой, и
+  // обычный apply пересобрал бы classic.
   const saveChanged = async (thenApply: boolean) => {
     if (dirty.length === 0) return;
     setSaving(true);

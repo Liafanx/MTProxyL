@@ -60,16 +60,13 @@ type Config struct {
 	Globalping GlobalpingConfig `toml:"globalping"`
 }
 
-// GlobalpingConfig controls the «Доступность из России» check.
-//
-// The panel asks Globalping's public probe network to open an HTTPS session
-// with the proxy from Russian residential ISPs; the result is a percentage of
+// GlobalpingConfig controls the «Доступность из России» check: an HTTPS session
+// with the proxy from Russian residential ISPs, scored as a percentage of
 // probes that completed the TLS handshake.
 type GlobalpingConfig struct {
-	// Enabled turns the background check on. A pointer, because absent has to
-	// mean «on»: the section did not exist before this feature, and panels
-	// updated from an older version would otherwise silently show an empty
-	// page with «отключено в конфигурации».
+	// Enabled turns the background check on. A pointer, because absent must mean
+	// «on»: the section did not exist before, and updated panels would otherwise
+	// show an empty page.
 	Enabled *bool `toml:"enabled"`
 
 	// CheckInterval between background checks (Go duration: 15m, 1h).
@@ -93,12 +90,9 @@ func (g GlobalpingConfig) GlobalpingEnabled() bool {
 	return g.Enabled == nil || *g.Enabled
 }
 
-// Interval returns the background check interval.
-//
-// The default is deliberately not aggressive: Globalping's free quota is 250
-// credits an hour and one probe costs one credit, so 20 probes every 5 minutes
-// (240/hour) leaves nothing for a manual check and starts failing with 429.
-// Every 15 minutes is 80/hour — plenty of room.
+// Interval returns the background check interval. The default is deliberately
+// mild: the free quota is 250 credits an hour and one probe costs one, so
+// 20 probes every 15 minutes is 80/hour with room for manual checks.
 func (g GlobalpingConfig) Interval() time.Duration {
 	if g.CheckInterval == "" {
 		return 15 * time.Minute
@@ -174,13 +168,9 @@ type TLSConfig struct {
 	KeyFile      string `toml:"key_file"`
 	AcmeDomain   string `toml:"acme_domain"`
 	AcmeCacheDir string `toml:"acme_cache_dir"`
-	// SelfSigned makes the panel generate its own certificate when cert_file
-	// and key_file point at files that do not exist yet.
-	//
-	// Without it HTTPS needs a certificate obtained beforehand, so a plain
-	// install falls back to HTTP — and the admin password and session token
-	// then cross the network in the clear. A self-signed certificate warns in
-	// the browser but still encrypts, which is strictly better than nothing.
+	// SelfSigned makes the panel generate its own certificate when cert_file and
+	// key_file point at files that do not exist yet. Without it a plain install
+	// falls back to HTTP and the admin password crosses the network in the clear.
 	SelfSigned bool `toml:"self_signed"`
 	// SelfSignedHosts are extra names and addresses to put in the certificate,
 	// so the browser at least matches the host being used.
@@ -277,11 +267,9 @@ func findFirstReadable(paths []string) string {
 	return ""
 }
 
-// ResolveGeoIPPaths redoes the same candidate scan as Load(). Exported so the
-// server can retry after Load() found nothing: `mtproxyl geoip install` (or a
-// system package) can populate one of these paths after the panel has already
-// started, and the panel runs unprivileged so it cannot watch the directory —
-// it just checks again on the next lookup.
+// ResolveGeoIPPaths redoes the candidate scan from Load(). Exported so the
+// server can retry: a database installed after startup cannot be watched for
+// by an unprivileged panel.
 func ResolveGeoIPPaths(dataDir string) (dbPath, asnDBPath string) {
 	return findFirstReadable(geoipCityCandidates(dataDir)), findFirstReadable(geoipASNCandidates(dataDir))
 }
@@ -343,10 +331,8 @@ func Load(path string) (*Config, error) {
 		cfg.DataDir = "/var/lib/mtproxyl-panel"
 	}
 
-	// Базу GeoIP ставят системным пакетом или geoipupdate, и она уже лежит в
-	// одном из стандартных мест. Раньше панель этого не замечала и требовала
-	// прописать путь руками — на экране пользователя это выглядело как
-	// поломка, хотя база на сервере есть.
+	// Базу ставят системным пакетом или geoipupdate, и она уже лежит в одном из
+	// стандартных мест — раньше панель требовала прописать путь руками.
 	if cfg.GeoIP.DBPath == "" {
 		cfg.GeoIP.DBPath = findFirstReadable(geoipCityCandidates(cfg.DataDir))
 	}

@@ -533,10 +533,9 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 				writeError(w, http.StatusBadRequest, "invalid_toml", err.Error())
 				return
 			}
-			// Отправляем только изменённые секции. Редактор заполняется
-			// действующей конфигурацией движка — со всеми заводскими
-			// значениями, — и отправка её целиком записала бы эти значения в
-			// файл явно, зафиксировав их на сегодняшнем уровне.
+			// Только изменённые секции: редактор заполняется действующей
+			// конфигурацией движка, и отправка целиком записала бы заводские
+			// значения в файл явно.
 			if current, _, err := telemtProxy.GetManagedConfig(); err == nil {
 				sections = telemt_config.ChangedSections(sections, current)
 				if len(sections) == 0 {
@@ -624,10 +623,8 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 		})
 	})))
 
-	// GeoIP lookup endpoint. The database is resolved lazily (see
-	// getGeoIPLookup below) so a database installed later from the panel's
-	// Addons page — or by a system package after the panel started — is
-	// picked up on the next lookup without a restart.
+	// GeoIP lookup endpoint. The database is resolved lazily, so one installed
+	// later is picked up on the next lookup without a restart.
 	if s.cfg.GeoIP.DBPath == "" {
 		// Молчание здесь читалось как «всё в порядке», а в интерфейсе при этом
 		// появлялось предупреждение о недоступном GeoIP.
@@ -661,12 +658,8 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 	})))
 
 	// Logs
-	//
-	// Источник определяется на каждое подключение, а не один раз при старте:
-	// какой движок логировать, зависит от текущего режима MTProxyL, а он
-	// меняется на ходу. Раньше панель до перезапуска держала контейнер,
-	// записанный при установке, и после ухода в реаниматор читала логи
-	// несуществующего контейнера.
+	// Источник определяется на каждое подключение: какой движок логировать,
+	// зависит от текущего режима, а он меняется на ходу.
 	logTarget := func() (service, container string) {
 		service, container = s.cfg.Telemt.ServiceName, s.cfg.Telemt.ContainerName
 		if !mtproxylForConfig.Enabled() {
@@ -788,8 +781,7 @@ func securityHeaders(next http.Handler) http.Handler {
 
 // basePathHandler strips the base path prefix from incoming requests.
 // GET /{basePath} → 301 redirect to /{basePath}/
-// /{basePath}/... → strip prefix, pass to next handler
-// anything else → 404
+// /{basePath}/... → strip prefix, pass to next handler; anything else → 404
 func basePathHandler(basePath string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Exact match without trailing slash → redirect

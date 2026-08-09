@@ -18,11 +18,9 @@ import (
 	"github.com/Liafanx/mtproxyl-panel/internal/mtproxylctl"
 )
 
-// registerAvailabilityRoutes wires «Доступность из России».
-//
-// The check itself is outbound HTTP to a public probe network, so nothing here
-// needs root; the only privileged bit is asking MTProxyL what to check, and
-// that goes through the same sudo-whitelisted CLI as the rest of the panel.
+// registerAvailabilityRoutes wires «Доступность из России». The check is
+// outbound HTTP and needs no root; only asking MTProxyL what to check is
+// privileged, and that goes through the usual sudo-whitelisted CLI.
 func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte, client *mtproxylctl.Client) {
 	protected := func(h http.HandlerFunc) http.Handler {
 		return auth.RequireAuth(jwtSecret, h)
@@ -123,10 +121,8 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 	}))
 }
 
-// resolvedAvailabilityTarget is what the next check will actually use: the
-// override where it is set, autodetection where it is not. The form shows it as
-// the placeholder, so an empty field visibly means «вот это подставится», and
-// the operator can see the detected value before deciding to override it.
+// resolvedAvailabilityTarget is what the next check will use: the override where
+// set, autodetection where not. The form shows it as the placeholder.
 func (s *Server) resolvedAvailabilityTarget(ctx context.Context, client *mtproxylctl.Client) map[string]any {
 	// Определение цели дёргает CLI и, в крайнем случае, внешний сервис за
 	// адресом — на открытии страницы это не должно висеть.
@@ -148,11 +144,8 @@ func pendingMessage(empty bool) string {
 	return ""
 }
 
-// availabilityTarget answers what to check: the address probes connect to, the
-// proxy port and the FakeTLS domain to put in SNI.
-//
-// Everything is re-read before each check — the operator changes the port and
-// the domain from this very panel.
+// availabilityTarget answers what to check: address, proxy port and the FakeTLS
+// domain for SNI. Re-read before every check — the operator changes them here.
 func (s *Server) availabilityTarget(client *mtproxylctl.Client) globalping.TargetProvider {
 	return func(ctx context.Context) (globalping.Target, error) {
 		var t globalping.Target
@@ -166,10 +159,8 @@ func (s *Server) availabilityTarget(client *mtproxylctl.Client) globalping.Targe
 			return t, nil
 		}
 
-		// Порт и fake SNI знает MTProxyL, причём для текущего режима: у
-		// реаниматора они живут в конфиге чужой цели, а не в settings.conf,
-		// и брать их оттуда значило бы проверять рукопожатие с чужим доменом.
-		// Каждое поле подставляется, только если его не задали руками.
+		// Порт и fake SNI знает MTProxyL, для текущего режима: у реаниматора они
+		// живут в конфиге чужой цели. Подставляем только незаданные руками поля.
 		if client.Enabled() && (t.Port == 0 || t.SNI == "") {
 			if st, err := client.GetMode(ctx); err == nil {
 				if t.Port == 0 && st.Port > 0 && st.Port <= 65535 {
@@ -227,13 +218,10 @@ func (s *Server) availabilityTarget(client *mtproxylctl.Client) globalping.Targe
 	}
 }
 
-// settingsFallback reads MTProxyL's settings.conf directly.
-//
-// Only a fallback: the CLI knows better in reanimator mode, where the engine's
-// real port and domain live in the target's config. The file is world-readable
-// by design (MTProxyL keeps its secrets in a separate 600 file), but a panel
-// installed next to an older MTProxyL can still hit a permission error — hence
-// the silent empty result rather than a failed check.
+// settingsFallback reads MTProxyL's settings.conf directly — only a fallback,
+// the CLI knows better in reanimator mode. The file is world-readable by
+// design, but an older MTProxyL alongside can still deny it: hence empty
+// result rather than a failed check.
 func (s *Server) settingsFallback() map[string]string {
 	out := map[string]string{}
 	if s.cfg.Mtproxyl.InstallDir == "" {

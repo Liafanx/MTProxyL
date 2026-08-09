@@ -11,10 +11,8 @@ tui_links_menu() {
         return
     fi
 
-    # [general.links] public_host/public_port — то, что реально идёт в
-    # ссылку, отдельно от того, где движок слушает (например, за NAT).
-    # proxy_link_host/proxy_link_port сами знают, откуда их брать: expert
-    # override в обычном режиме, сам конфиг — в супер эксперте.
+    # [general.links] public_host/public_port — то, что идёт в ссылку, отдельно
+    # от того, где движок слушает (например, за NAT).
     local server_ip server_port
     server_ip=$(proxy_link_host)
     server_port=$(proxy_link_port)

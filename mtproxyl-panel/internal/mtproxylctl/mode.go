@@ -7,11 +7,8 @@ import (
 	"strings"
 )
 
-// Mode is MTProxyL's operating mode.
-//
-// In manager mode MTProxyL installs and owns its own telemt container. In
-// reanimator mode it attaches to a telemt instance someone else installed and
-// only applies host-level fixes to it.
+// Mode is MTProxyL's operating mode: manager owns its own telemt container,
+// reanimator attaches to someone else's install and only applies host fixes.
 type Mode string
 
 const (
@@ -39,13 +36,9 @@ type ModeStatus struct {
 	// EngineConfig is the config file that belongs to the *current* mode: the
 	// foreign target's in reanimator, MTProxyL's own in manager.
 	EngineConfig string `json:"engine_config"`
-	// APIPort is where that engine exposes its REST API, and APIEnabled whether
-	// it is turned on there at all.
-	//
-	// The panel is pointed at one fixed telemt URL when it is installed. Nothing
-	// updates it on a mode switch, so it can keep polling the previous mode's
-	// engine and present another instance's users and traffic as the current
-	// one's. Reporting the mode's real endpoint lets the UI catch that.
+	// APIPort is where that engine exposes its REST API, APIEnabled whether it
+	// is on. The panel holds one fixed telemt URL, so after a switch it can keep
+	// polling the previous mode's engine.
 	APIPort    int  `json:"api_port"`
 	APIEnabled bool `json:"api_enabled"`
 	// OwnContainer is the state of MTProxyL's own container ("running",
@@ -56,23 +49,15 @@ type ModeStatus struct {
 	// can offer start or stop rather than both.
 	Running bool `json:"running"`
 	// LogKind and LogTarget say where the current mode's engine logs live:
-	// "docker" with a container name, or "service" with a systemd unit. Empty
-	// when MTProxyL cannot tell.
-	//
-	// The panel is configured with one container name at install time. After a
-	// switch to reanimator that container is gone, and reading logs from it
-	// failed with a permission error that looked like a Docker problem rather
-	// than what it was: the wrong container.
+	// "docker" with a container or "service" with a unit, empty when unknown.
+	// The panel is configured with one container at install time.
 	LogKind   string `json:"log_kind"`
 	LogTarget string `json:"log_target"`
 }
 
 // ContainerDisposition says what to do with MTProxyL's own container when
-// leaving manager mode.
-//
-// The CLI asks this interactively. The panel cannot answer an interactive
-// prompt, and MTPROXYL_ASSUME_YES would silently pick the default — deleting
-// the container without asking — so the choice is passed explicitly.
+// leaving manager mode. Passed explicitly: the panel cannot answer the CLI's
+// prompt, and the default would delete the container silently.
 type ContainerDisposition string
 
 const (
@@ -101,15 +86,9 @@ func (c *Client) GetMode(ctx context.Context) (*ModeStatus, error) {
 	return &st, nil
 }
 
-// SwitchMode switches MTProxyL between manager and reanimator.
-//
-// This is a destructive host-level operation: switching to reanimator disposes
-// of the panel's own container, and switching to manager may kick off a full
-// install. It can therefore run for minutes.
-//
-// disposition applies only when switching to reanimator and must be set there:
-// without it the CLI would fall back to its own default and delete the
-// container, which is the one outcome the user has to choose deliberately.
+// SwitchMode switches MTProxyL between manager and reanimator. Destructive and
+// slow: it may dispose of the container or kick off a full install.
+// disposition applies only when switching to reanimator and must be set there.
 func (c *Client) SwitchMode(ctx context.Context, m Mode, disposition ContainerDisposition) error {
 	if !m.Valid() {
 		return fmt.Errorf("unknown mode %q", m)
@@ -125,25 +104,16 @@ func (c *Client) SwitchMode(ctx context.Context, m Mode, disposition ContainerDi
 	return err
 }
 
-// TargetConfigShow returns the reanimator target's config file verbatim.
-//
-// The panel runs unprivileged and the target's config belongs to the target —
-// for a systemd install that is telemt:telemt in a 750 directory, which the
-// panel cannot even open. MTProxyL reads it as root, the same way superexpert
-// show serves the manager's own config.
-//
-// The output is returned unchanged: stripping ANSI here would corrupt a config
-// that legitimately contains such sequences.
+// TargetConfigShow returns the reanimator target's config verbatim: the panel
+// cannot open it (telemt:telemt, 750), so MTProxyL reads it as root.
+// Unchanged output — stripping ANSI would corrupt such a config.
 func (c *Client) TargetConfigShow(ctx context.Context) (string, error) {
 	return c.run(ctx, "target-config", "show")
 }
 
-// TargetConfigWrite replaces the reanimator target's config file.
-//
-// The content goes over stdin rather than as an argument: it is multi-line TOML
-// with quotes, which would be both awkward and risky to pass on a command line.
-// MTProxyL backs the old file up and keeps its owner and mode, so the target can
-// still read what it is given.
+// TargetConfigWrite replaces the reanimator target's config file. Content goes
+// over stdin: multi-line TOML with quotes is awkward and risky as an argument.
+// MTProxyL backs up the old file and keeps its owner and mode.
 func (c *Client) TargetConfigWrite(ctx context.Context, content string, restart bool) (string, error) {
 	if strings.TrimSpace(content) == "" {
 		return "", fmt.Errorf("config must not be empty")
@@ -180,11 +150,8 @@ func (c *Client) ControlProxy(ctx context.Context, a ProxyAction) (string, error
 }
 
 // firstJSONLine extracts the first line that parses as a JSON document.
-//
-// Even with stderr split off, some MTProxyL code paths print a stray line to
-// stdout before the payload, so we cannot assume the whole buffer is JSON.
-// Validity is checked rather than just the opening brace, because MTProxyL's
-// own log prefixes ("[i] ...", "[✓] ...") also start with a bracket.
+// Some MTProxyL paths print a stray line to stdout first. Validity is checked
+// rather than the opening brace: its log prefixes also start with one.
 func firstJSONLine(out string) string {
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(stripANSI(line))

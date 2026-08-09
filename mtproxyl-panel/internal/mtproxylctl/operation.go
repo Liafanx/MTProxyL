@@ -33,12 +33,9 @@ type OperationStatus struct {
 	ElapsedSeconds int `json:"elapsed_seconds,omitempty"`
 }
 
-// Runner serializes long-running MTProxyL operations.
-//
-// Mode switches, selfmask provisioning and restores take minutes and mutate
-// host state, so they run in the background while the UI polls for status.
-// Only one may run at a time: concurrent invocations would race over the same
-// settings.conf and container.
+// Runner serializes long-running MTProxyL operations. Mode switches, selfmask
+// and restores take minutes and mutate host state, so they run in the
+// background; only one at a time, or they would race over settings.conf.
 type Runner struct {
 	mu       sync.Mutex
 	status   OperationStatus
@@ -80,13 +77,9 @@ func (r *Runner) Busy() bool {
 	return r.status.Phase == PhaseRunning
 }
 
-// Dismiss clears a finished operation so the UI stops showing its log.
-//
-// The slot is shared and keeps the last result until something else runs, so
-// without this the «готово»/«ошибка» panel with the whole command output comes
-// back on every page load — users reported it as a window that cannot be
-// closed. A running operation is never dropped: its output is the only thing
-// telling the user the server is still working.
+// Dismiss clears a finished operation so the UI stops showing its log. The slot
+// is shared and keeps the last result, so without this the panel comes back on
+// every page load. A running operation is never dropped.
 func (r *Runner) Dismiss() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -98,10 +91,8 @@ func (r *Runner) Dismiss() bool {
 	return true
 }
 
-// Start launches fn in the background under the given name.
-//
-// It returns false if another operation is already running. fn receives a
-// context detached from the HTTP request, so the work survives the response.
+// Start launches fn in the background, false if another operation runs.
+// fn gets a context detached from the request, so work survives the response.
 func (r *Runner) Start(name string, fn func(ctx context.Context) (string, error)) bool {
 	r.mu.Lock()
 	if r.status.Phase == PhaseRunning {

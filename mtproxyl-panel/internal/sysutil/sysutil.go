@@ -208,11 +208,8 @@ func isValidServiceName(name string) bool {
 }
 
 // DetectVariant determines whether the system should use "musl" or "gnu" binaries.
-// Detection order:
-//  1. Check existing binary with ldd — if "musl" appears, return "musl"
-//  2. Check if /lib/ld-musl-* exists — common on Alpine/musl systems
-//  3. Check glibc version via ldd --version — if >= 2.32, return "gnu"
-//  4. Default to "musl" (safer: musl binaries work on both, gnu needs glibc 2.32+)
+// Order: ldd on an existing binary, /lib/ld-musl-*, glibc >= 2.32, else "musl"
+// (safer: musl works on both, gnu needs glibc 2.32+).
 func DetectVariant(binaryPath string) string {
 	// 1. Check existing binary
 	if binaryPath != "" {

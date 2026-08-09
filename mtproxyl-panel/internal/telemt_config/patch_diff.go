@@ -5,21 +5,11 @@ import (
 	"reflect"
 )
 
-// ChangedSections keeps only the top-level sections whose contents differ from
-// the current ones.
-//
-// In API mode the editor is filled from GET /v1/config, which reports the
-// engine's *effective* configuration — every key, including the hundreds the
-// operator never set. Sending all of that back as a patch would write those
-// defaults into the config file explicitly, freezing them at today's values so
-// they stop following engine upgrades. That is how the config turns into a
-// wall of settings nobody chose.
-//
-// The API takes a sparse patch keyed by section, so the fix is to submit only
-// the sections that actually changed. Filtering is done per section rather
-// than per key on purpose: the API contract documents sparseness at the top
-// level only, and dropping unchanged keys inside a section would silently
-// erase them if the engine replaces sections wholesale.
+// ChangedSections keeps only the top-level sections whose contents differ.
+// In API mode the editor is filled from the engine's *effective* config, so
+// sending it back would freeze hundreds of defaults into the file explicitly.
+// Filtering is per section, not per key: the API documents sparseness at the
+// top level only, and dropping keys inside a section could erase them.
 func ChangedSections(submitted, current map[string]interface{}) map[string]interface{} {
 	out := make(map[string]interface{}, len(submitted))
 	for name, value := range submitted {
@@ -32,11 +22,8 @@ func ChangedSections(submitted, current map[string]interface{}) map[string]inter
 }
 
 // equalJSON compares two decoded TOML/JSON values for semantic equality.
-//
-// Round-tripping through JSON normalises the numeric types: the same port
-// arrives as json.Number from the API and may be int64 after TOML parsing, and
-// reflect.DeepEqual would call those different and mark an untouched section
-// as edited.
+// The JSON round-trip normalises numeric types: the same port arrives as
+// json.Number from the API and int64 from TOML, and DeepEqual would differ.
 func equalJSON(a, b interface{}) bool {
 	if reflect.DeepEqual(a, b) {
 		return true

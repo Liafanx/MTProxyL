@@ -6,11 +6,9 @@ import (
 	"strconv"
 )
 
-// versionSuffixPattern matches a semver "X.Y.Z" (with optional "-pre") at the
-// end of a string, regardless of what precedes it. Release tags carry a
-// repo/component prefix (e.g. "mtproxyl-panel-v1.0.1"), and a plain
-// TrimPrefix(s, "v") only handles a bare "v1.2.3" — anything else fails to
-// parse and CompareVersions then sorts it as "older" than any real version.
+// versionSuffixPattern matches a semver "X.Y.Z" (optionally "-pre") at the end
+// of a string: release tags carry a prefix like "mtproxyl-panel-v1.0.1", which
+// TrimPrefix(s, "v") would fail to parse and sort as older than anything.
 var versionSuffixPattern = regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.]+))?$`)
 
 // ParseVersion parses a version string like "v1.2.3", "1.2.3", "v1.2.3-rc1",

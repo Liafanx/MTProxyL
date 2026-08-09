@@ -1,24 +1,12 @@
-// Package globalping checks whether the proxy is reachable from Russia, as
-// seen by ordinary home users.
+// Package globalping checks whether the proxy is reachable from Russia as
+// ordinary home users see it.
 //
-// A proxy can be perfectly healthy on the server and still be dead for its
-// users: the address may be blocked by the national filter while the port
-// stays open for everyone else. Nothing observable on the host tells that
-// apart from "nobody is connecting today", so the check has to come from the
-// outside — and specifically from *eyeball* networks (residential ISPs), not
-// from data centres: filtering is applied to subscriber traffic, and a probe
-// sitting in a hosting provider's rack routinely sees a server its users
-// cannot reach.
-//
-// The probes come from Globalping: a free public network that runs the check
-// from real ISP connections and needs no account. The panel only talks HTTP to
-// its API — no privileges, no extra binaries on the server.
-//
-// The check is an HTTPS HEAD request to the proxy port with the FakeTLS domain
-// in SNI, and success means the probe got a TLS certificate back. That is the
-// same handshake a Telegram client performs, so unlike a bare TCP connect it
-// also catches the case where the port answers but the TLS session is torn
-// down mid-handshake.
+// Probes must sit on eyeball networks: filtering applies to subscriber traffic,
+// and a probe in a data centre routinely sees a server its users cannot reach.
+// The check is an HTTPS HEAD to the proxy port with the FakeTLS domain in SNI,
+// and success is a returned TLS certificate — the same handshake a Telegram
+// client performs, so it also catches a port that answers but tears the
+// session down mid-handshake.
 package globalping
 
 import (

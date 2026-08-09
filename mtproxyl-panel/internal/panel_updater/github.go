@@ -44,11 +44,8 @@ func AssetName() string {
 }
 
 // NewAssetMatcher selects the release asset by architecture, not libc variant.
-// The detected variant is only a preference: if its exact asset is published it
-// is chosen, otherwise any published variant for this arch is used. This keeps
-// updates working when variant detection falls back to a variant that isn't
-// published (e.g. "musl" on glibc < 2.32 / Alpine / missing ldd), since releases
-// only ship the "gnu"-named static binary.
+// The variant is only a preference — releases ship one static "gnu" binary,
+// so updates keep working when detection falls back to "musl".
 func NewAssetMatcher() github.AssetMatcher {
 	preferred := AssetName()
 	archPrefix := archAssetPrefix()

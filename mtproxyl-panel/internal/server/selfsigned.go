@@ -22,12 +22,8 @@ const selfSignedValidity = 10 * 365 * 24 * time.Hour
 
 // ensureSelfSignedCert writes a certificate and key to the given paths if they
 // are not already there, and reports whether TLS can be served from them.
-//
-// The panel handles an admin password and a session token, so serving it over
-// plain HTTP puts both on the wire in the clear — on a proxy server that is
-// usually reachable from the internet. A self-signed certificate still makes
-// the browser complain, but it encrypts the session, which is the part that
-// matters here.
+// A self-signed certificate still warns in the browser, but it encrypts the
+// admin password and session token — which is the part that matters.
 func ensureSelfSignedCert(certFile, keyFile string, hosts []string) error {
 	if certFile == "" || keyFile == "" {
 		return fmt.Errorf("cert_file and key_file must both be set for self-signed TLS")

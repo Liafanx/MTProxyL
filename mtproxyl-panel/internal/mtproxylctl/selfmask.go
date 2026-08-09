@@ -8,11 +8,9 @@ import (
 	"strings"
 )
 
-// SelfmaskStatus is the output of `mtproxyl selfmask status --json`.
-//
-// Selfmask serves a real HTTPS decoy site from a private nginx so that probing
-// the proxy's SNI looks like an ordinary website, while Telegram clients still
-// get MTProto on the same port.
+// SelfmaskStatus is the output of `mtproxyl selfmask status --json`. Selfmask
+// serves a real HTTPS decoy from a private nginx so probing the SNI looks like
+// an ordinary website, while Telegram clients still get MTProto on that port.
 type SelfmaskStatus struct {
 	Enabled         bool   `json:"enabled"`
 	Domain          string `json:"domain"`
@@ -121,22 +119,16 @@ func (c *Client) SetSelfmaskParam(ctx context.Context, key, value string) (strin
 	return stripANSI(out), err
 }
 
-// SelfmaskApply provisions the decoy site from the stored parameters.
-//
-// This is the non-interactive counterpart of MTProxyL's `selfmask setup`
-// wizard: the wizard would take its own defaults under the assume-yes bypass
-// and ignore whatever was chosen in the UI, so the panel sets parameters first
-// and applies them here.
+// SelfmaskApply provisions the decoy site from the stored parameters — the
+// non-interactive counterpart of the `selfmask setup` wizard, which under
+// assume-yes would take its own defaults instead of the UI's.
 func (c *Client) SelfmaskApply(ctx context.Context) (string, error) {
 	out, err := c.run(ctx, "selfmask", "apply")
 	return stripANSI(out), err
 }
 
-// InstallPQTools installs the bundled PQ OpenSSL/nginx build.
-//
-// Only needed where the system OpenSSL predates 3.5.0 and therefore has no
-// X25519MLKEM768: before this, the only way to get it was to run the whole
-// Selfmask wizard, which is a lot of machinery for one domain check.
+// InstallPQTools installs the bundled PQ OpenSSL/nginx build. Needed only where
+// the system OpenSSL predates 3.5.0 and has no X25519MLKEM768.
 func (c *Client) InstallPQTools(ctx context.Context) (string, error) {
 	out, err := c.run(ctx, "selfmask", "pq-install")
 	return stripANSI(out), err

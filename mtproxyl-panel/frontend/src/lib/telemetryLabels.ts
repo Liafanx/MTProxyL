@@ -221,10 +221,8 @@ function patternMeta(key: string): FieldMeta | null {
     const base = BUCKET_SUBJECTS[what] ?? what.replace(/_/g, ' ');
     return { label: `${base}: ${humanRange(range)}`, hint: 'Столбец гистограммы' };
   }
-  // "<известное>_total" — счётчик того же самого. Применяем только когда
-  // основа действительно известна: иначе получился бы полуперевод вида
-  // "unknown field, всего", который выглядит как настоящая подпись, но ею
-  // не является.
+  // "<известное>_total" — счётчик того же. Только когда основа известна, иначе
+  // вышел бы полуперевод вида «unknown field, всего».
   if (key.endsWith('_total')) {
     const base = key.slice(0, -'_total'.length);
     if (base in FIELDS) {
@@ -232,10 +230,8 @@ function patternMeta(key: string): FieldMeta | null {
       return { label: `${inner.label}, всего`, hint: inner.hint };
     }
   }
-  // Действующие лимиты приходят вложенными таблицами, и раздел разворачивает
-  // их в точечные ключи. Осмысленное имя стоит то в конце пути
-  // ("user_rate_limits.alice.up_bps"), то в начале ("user_max_tcp_conns.alice"),
-  // а остальное — имя пользователя или подсеть, которые переводить нечем.
+  // Лимиты приходят вложенными таблицами и разворачиваются в точечные ключи.
+  // Осмысленное имя стоит то в конце пути, то в начале.
   const known = semanticKey(key);
   if (known !== key) {
     const inner = FIELDS[known];

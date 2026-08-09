@@ -8,11 +8,9 @@ import (
 	"strconv"
 )
 
-// Secret is one entry of `mtproxyl secret list --json`.
-//
-// MTProxyL calls these "secrets" and telemt calls them "users"; they are the
-// same thing seen from two sides. The panel speaks of users, so the HTTP layer
-// renames the fields — this struct stays close to the CLI.
+// Secret is one entry of `mtproxyl secret list --json`. MTProxyL calls these
+// «secrets», telemt calls them «users»; the HTTP layer renames the fields, this
+// struct stays close to the CLI.
 type Secret struct {
 	Label      string `json:"label"`
 	Secret     string `json:"secret"`
@@ -42,10 +40,8 @@ type SecretIP struct {
 	LastSeen  int64  `json:"last_seen"`
 }
 
-// secretLabelRe mirrors MTProxyL's own rule for labels, with one tightening:
-// the first character must be alphanumeric. MTProxyL would happily accept a
-// label of "--help", which is a confusing thing to have in a config and an
-// argument that reads as a flag everywhere it is later echoed.
+// secretLabelRe mirrors MTProxyL's rule for labels, tightened: the first
+// character must be alphanumeric, so a label cannot read as a flag ("--help").
 var secretLabelRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 
 // secretHexRe is telemt's secret format: exactly 32 hex characters.
@@ -59,11 +55,9 @@ func ValidateSecretLabel(label string) error {
 	return nil
 }
 
-// ListSecrets returns the users MTProxyL owns.
-//
-// In manager mode this is the authoritative list: telemt's config is mounted
-// read-only into its container, so the engine cannot write users at all and
-// its own POST /v1/users fails with "Device or resource busy".
+// ListSecrets returns the users MTProxyL owns. In manager mode this is the
+// authoritative list: the engine's config is mounted read-only, so its own
+// POST /v1/users fails with «Device or resource busy».
 func (c *Client) ListSecrets(ctx context.Context) ([]Secret, error) {
 	out, err := c.run(ctx, "secret", "list", "--json")
 	if err != nil {
@@ -138,10 +132,8 @@ func (c *Client) RenameSecret(ctx context.Context, from, to string) (string, err
 	return stripANSI(out), err
 }
 
-// SecretLimits are the per-user caps MTProxyL stores.
-//
-// Every field is optional on the wire; a nil pointer means "leave as is",
-// which matches `secret setlimits` treating an empty argument as unchanged.
+// SecretLimits are the per-user caps MTProxyL stores. Every field is optional:
+// nil means «leave as is», matching `secret setlimits` on an empty argument.
 type SecretLimits struct {
 	MaxConns   *int   `json:"max_conns"`
 	MaxIPs     *int   `json:"max_ips"`

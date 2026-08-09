@@ -964,12 +964,8 @@ tui_zapret2_menu() {
                         save_nft_settings
                         zapret2_update_config
                         log_success "Настройки сброшены к дефолту"
-                        # win ACK по умолчанию — 10, но реальное окно это
-                        # 10 × 2^wscale и зависит от TCP-буфера сервера: при
-                        # большом rmem_max окно уходит за 1400 байт и
-                        # дробление ClientHello перестаёт работать. Поэтому
-                        # сразу после сброса пересчитываем и предлагаем
-                        # корректное значение.
+                        # Реальное окно — win ACK × 2^wscale и зависит от TCP-буфера:
+                        # при большом rmem_max дробление ClientHello перестаёт работать.
                         echo ""
                         log_info "Проверяем win ACK под TCP-буфер этого сервера..."
                         zapret2_check_wscale "false"

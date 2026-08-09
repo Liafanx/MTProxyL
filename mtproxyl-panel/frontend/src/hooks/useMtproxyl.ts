@@ -133,12 +133,9 @@ export function useMtproxylOperation(onFinished?: () => void, scope?: string[]) 
     [poll, stop],
   );
 
-  // Pick up an operation started elsewhere (another tab, or a page reload
-  // mid-run) so the UI does not look idle while the server is busy.
-  //
-  // The operation slot is shared server-side, so a page only adopts one that
-  // belongs to it — otherwise the backups page would display the output of a
-  // selfmask setup that finished minutes ago.
+  // Подхватываем операцию, начатую в другой вкладке или до перезагрузки.
+  // Слот общий, поэтому страница берёт только свою — иначе бэкапы показали бы
+  // вывод давно завершившегося selfmask.
   useEffect(() => {
     let cancelled = false;
     mtproxylApi
@@ -159,13 +156,8 @@ export function useMtproxylOperation(onFinished?: () => void, scope?: string[]) 
     };
   }, [poll, stop]);
 
-  // Закрыть окно с результатом операции.
-  //
-  // Слот один на всю панель и хранит последний результат до следующего запуска,
-  // поэтому просто спрятать блок в состоянии страницы мало: после F5 он
-  // возвращается. Гасим его и на сервере, а локально убираем сразу, не дожидаясь
-  // ответа, — если запрос не дойдёт, следующий опрос всё равно ничего не
-  // покажет, пока пользователь сам не запустит новую операцию.
+  // Закрыть окно с результатом. Слот один на панель и хранит последний
+  // результат, поэтому гасим и на сервере — иначе блок вернётся после F5.
   const dismiss = useCallback(() => {
     stop();
     setOperation(null);

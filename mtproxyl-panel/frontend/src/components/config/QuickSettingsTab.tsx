@@ -35,10 +35,8 @@ interface FormValues {
   // Timeouts
   'timeouts.client_handshake'?: number;
   'timeouts.client_ack'?: number;
-  // Таймаут подключения к Telegram движок держит в [general], а не в
-  // [timeouts]: раньше поле читалось и писалось в несуществующий
-  // timeouts.tg_connect — на экране всегда пусто, а заданное значение уходило
-  // в чужую секцию, где движок его не ищет.
+  // Таймаут подключения к Telegram движок держит в [general], а не в [timeouts]:
+  // раньше поле уходило в несуществующий timeouts.tg_connect.
   'general.tg_connect'?: number;
 }
 

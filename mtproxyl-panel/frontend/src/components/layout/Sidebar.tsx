@@ -17,10 +17,8 @@ const navItems = [
   { to: '/logs', icon: ScrollText, label: 'Логи' },
 ];
 
-// Shown only when the MTProxyL bridge is enabled: on a plain telemt install
-// these pages have nothing to talk to.
-// managerOnly — разделы, которые MTProxyL отклоняет в режиме реаниматора:
-// они требуют владения конфигом движка.
+// Показываются только при включённом мосте MTProxyL.
+// managerOnly — разделы, требующие владения конфигом движка.
 const mtproxylNavItems = [
   { to: '/mode', icon: ToggleLeft, label: 'Режим работы', managerOnly: false },
   { to: '/proxy-settings', icon: SlidersHorizontal, label: 'Настройки прокси', managerOnly: true },

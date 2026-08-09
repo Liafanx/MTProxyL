@@ -15,10 +15,8 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 export LC_NUMERIC=C
-# apt не должен ничего спрашивать. Без этого установка зависимостей (selfmask,
-# nftables, ipset) может встать намертво на диалоге debconf или needrestart —
-# особенно когда MTProxyL запущен из панели, где терминала нет вовсе и ответ
-# ждать неоткуда.
+# apt не должен ничего спрашивать: из панели терминала нет, и диалог debconf
+# или needrestart вешает установку намертво.
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
@@ -55,12 +53,9 @@ if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
     exit 1
 fi
 
-# Защита stdin при curl | bash (только если это не фоновый/systemd запуск).
-#
-# Не трогаем stdin, если он нужен самой команде: `superexpert write` читает
-# конфиг из пайпа, и переоткрытие /dev/tty подменило бы его вводом с
-# терминала — конфиг молча потерялся бы. То же в неинтерактивном режиме:
-# там терминала быть не должно по определению.
+# Защита stdin при curl | bash, кроме фонового/systemd запуска.
+# Не трогаем stdin, если он нужен команде: `superexpert write` читает конфиг
+# из пайпа, и переоткрытие /dev/tty потеряло бы его.
 _stdin_is_payload="false"
 [ "${MTPROXYL_ASSUME_YES:-}" = "1" ] && _stdin_is_payload="true"
 [ "${1:-}" = "superexpert" ] && [ "${2:-}" = "write" ] && _stdin_is_payload="true"
@@ -234,11 +229,8 @@ cli_main() {
                 # keep. Без него вопрос задаётся интерактивно.
                 reanimator) switch_to_reanimator_mode "${2:-}" ;;
                 --json)
-                    # API движка живёт в конфиге того режима, который сейчас
-                    # активен: у реаниматора это конфиг чужой цели, у менеджера
-                    # — свой. Панель настроена на один фиксированный адрес и
-                    # после смены режима может продолжить опрашивать движок
-                    # прежнего режима, показывая чужие данные как свои.
+                    # API движка живёт в конфиге активного режима. Панель настроена на
+                    # один адрес и после смены режима опрашивала бы чужой движок.
                     _mode_cfg="${CONFIG_DIR}/config.toml"
                     [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && _mode_cfg="${DETECTED_CONFIG_PATH:-}"
                     _api_port=$(_get_telemt_api_port "$_mode_cfg" 2>/dev/null || echo "")
@@ -249,12 +241,8 @@ cli_main() {
                     # делать, а спрашивать не о чем, когда контейнера нет.
                     _own_state=$(own_container_state 2>/dev/null || echo unknown)
 
-                    # Откуда брать логи движка текущего режима. У менеджера это
-                    # всегда свой контейнер; у цели — как её нашли: контейнер
-                    # Docker или systemd-юнит на хосте. Панель настроена на
-                    # container_name при установке и после смены режима
-                    # продолжала звать 'docker logs mtproxyl' — контейнера уже
-                    # нет, и логи «не работали» без объяснения.
+                    # Откуда брать логи движка текущего режима: свой контейнер, контейнер
+                    # цели или systemd-юнит. Панель зовёт то, что настроено при установке.
                     _log_kind="docker"; _log_target="$CONTAINER_NAME"
                     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
                         case "${DETECTED_MODE:-unknown}" in
@@ -268,11 +256,8 @@ cli_main() {
                         [ -n "$_log_target" ] || { _log_kind=""; _log_target=""; }
                     fi
 
-                    # Fake SNI берём тот же, что показывает статус: у
-                    # реаниматора это tls_domain конфига цели, а не наш
-                    # PROXY_DOMAIN. Панель проверяет доступность рукопожатием
-                    # именно по нему — с чужим доменом проверка показывала бы
-                    # недоступность работающего прокси.
+                    # Fake SNI тот же, что показывает статус: у реаниматора это tls_domain
+                    # конфига цели, а не наш PROXY_DOMAIN.
                     _mode_sni=$(_current_sni_domain 2>/dev/null || echo "")
 
                     printf '{"mode":"%s","detected_mode":"%s","detected_config":"%s","port":%d,"sni":"%s","engine_config":"%s","api_port":%d,"api_enabled":%s,"own_container":"%s","running":%s,"log_kind":"%s","log_target":"%s"}\n' \
@@ -447,10 +432,8 @@ cli_main() {
             ;;
 
          selfmask)
-            # load_detect_settings обязателен: в режиме реаниматора selfmask
-            # дописывает [censorship] в конфиг цели, а путь к нему живёт в
-            # DETECTED_CONFIG_PATH. Без загрузки он пуст, и apply отвечал
-            # «Конфиг цели не найден», хотя цель обнаружена и путь известен.
+            # load_detect_settings обязателен: в реаниматоре selfmask пишет
+            # [censorship] в конфиг цели, а путь к нему в DETECTED_CONFIG_PATH.
             load_settings; load_detect_settings
             handle_selfmask_command "$@"
             ;;

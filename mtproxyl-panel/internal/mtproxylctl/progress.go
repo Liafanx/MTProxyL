@@ -8,11 +8,7 @@ import (
 )
 
 // Progress collects a running command's output so the UI can show it before the
-// command finishes.
-//
-// Selfmask provisioning, mode switches and restores take minutes. Without this
-// the panel shows a spinner and nothing else, and there is no way to tell a
-// slow step from a stuck one — which is exactly how a long apt-get looks.
+// command finishes — otherwise a slow step looks exactly like a stuck one.
 type Progress struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -46,11 +42,8 @@ func (p *Progress) String() string {
 
 type progressKey struct{}
 
-// WithProgress attaches a sink that run() mirrors command output into.
-//
-// Passing it through the context rather than every method signature keeps the
-// command wrappers unchanged: a call that wants live output opts in, the rest
-// behave exactly as before.
+// WithProgress attaches a sink that run() mirrors command output into. Passed
+// through the context so command wrappers stay unchanged.
 func WithProgress(ctx context.Context, w io.Writer) context.Context {
 	return context.WithValue(ctx, progressKey{}, w)
 }

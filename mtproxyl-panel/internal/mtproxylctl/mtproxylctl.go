@@ -1,14 +1,9 @@
 // Package mtproxylctl bridges the panel to the MTProxyL bash CLI.
 //
-// telemt's own REST API (see internal/proxy) covers proxy users and engine
-// config, but MTProxyL owns host-level state that has no API: which mode it
-// runs in (manager/reanimator), the selfmask FakeTLS decoy site, firewall
-// fixes and its settings backups. Those live behind the `mtproxyl` script,
-// so this package shells out to it and parses its output.
-//
-// MTProxyL is interactive by default; every command here runs with
-// MTPROXYL_ASSUME_YES=1, which short-circuits its read_line/read_choice
-// helpers so confirmations resolve without a TTY.
+// telemt's REST API covers users and engine config, but MTProxyL owns
+// host-level state with no API: mode, selfmask, firewall fixes, backups.
+// Every command runs with MTPROXYL_ASSUME_YES=1 so confirmations resolve
+// without a TTY.
 package mtproxylctl
 
 import (
@@ -62,18 +57,14 @@ func (e *CommandError) Error() string {
 
 func (e *CommandError) Unwrap() error { return e.Err }
 
-// run executes `mtproxyl <args...>` and returns its stdout.
-//
-// stderr is captured separately: MTProxyL prints progress and log lines to it,
-// so mixing the two would corrupt --json output on stdout.
+// run executes `mtproxyl <args...>` and returns its stdout. stderr is captured
+// separately: MTProxyL logs there, and mixing would corrupt --json output.
 func (c *Client) run(ctx context.Context, args ...string) (string, error) {
 	return c.runWithStdin(ctx, "", args...)
 }
 
-// runWithStdin is run() with data piped to the command's standard input.
-//
-// Used where a value is too large or too structured for a command-line
-// argument — the hand-authored engine config, for instance.
+// runWithStdin is run() with data piped to standard input — for values too
+// large or structured for an argument, like the hand-authored engine config.
 func (c *Client) runWithStdin(ctx context.Context, stdin string, args ...string) (string, error) {
 	if !c.cfg.Enabled {
 		return "", ErrDisabled

@@ -44,10 +44,8 @@ export function StartupStatus({ status, stage, progressPct }: StartupStatusProps
 
   const isReady = status === 'ready' && progressPct === 100;
 
-  // Эта кнопка делает systemctl restart telemt.service. При включённом мосте
-  // MTProxyL движок может жить в Docker, и тогда systemctl ни при чём — там
-  // перезапуском занимается блок «Управление прокси», который знает режим.
-  // Две кнопки перезапуска рядом, из которых одна не работает, хуже одной.
+  // Кнопка делает systemctl restart telemt.service, а при включённом мосте
+  // движок может жить в Docker — там перезапуск в «Управлении прокси».
   const showRestart = !mtproxylEnabled;
 
   const handleRestart = async () => {

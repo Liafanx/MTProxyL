@@ -18,13 +18,8 @@ import (
 )
 
 // apiEndpointMismatch reports, in Russian, that the panel is polling a different
-// engine than the one the current MTProxyL mode owns — or "" when they agree.
-//
-// The panel is configured with a single telemt URL at install time. Switching
-// between manager and reanimator changes which engine is authoritative, but
-// nothing rewrites that URL, so the dashboard can keep serving the previous
-// mode's users and traffic as though they belonged to the current one. That is
-// silent and convincing, which makes it worth calling out explicitly.
+// engine than the current mode owns — or "" when they agree. The telemt URL is
+// fixed at install time and a mode switch does not rewrite it.
 func apiEndpointMismatch(telemtURL string, st *mtproxylctl.ModeStatus) string {
 	if st == nil || st.APIPort <= 0 {
 		return ""
@@ -85,11 +80,7 @@ func displayURL(raw string) string {
 }
 
 // modeCache keeps the mode probe from spawning a sudo subprocess on every poll.
-//
-// The availability probe runs on each page load and every two seconds while an
-// operation is in flight; `mtproxyl mode --json` reads and parses config files
-// each time. The mode itself only changes through an explicit switch, so a
-// short cache costs nothing in accuracy.
+// The mode only changes through an explicit switch, so a short cache is free.
 var modeCache struct {
 	mu   sync.Mutex
 	at   time.Time
@@ -126,15 +117,9 @@ func invalidateModeCache() {
 	modeCache.mu.Unlock()
 }
 
-// usersCache coalesces concurrent GET /api/mtproxyl/users into one CLI call.
-//
-// Unlike modeCache, this also dedupes callers that arrive *while* a call is
-// in flight rather than just caching the last result: `secret list --json`
-// starts a full bash interpreter, sources ~30 library files and shells out
-// to the engine's own API, so it is slow enough that several browser tabs
-// (or one tab whose previous poll hasn't returned yet) can pile up dozens of
-// these processes on a single-core host. inFlight is the channel other
-// callers wait on; it is nil when no call is running.
+// usersCache coalesces concurrent GET /api/mtproxyl/users into one CLI call and
+// also dedupes callers arriving while a call is in flight: `secret list --json`
+// starts bash and calls the engine API, so tabs pile up dozens of processes.
 var usersCache struct {
 	mu       sync.Mutex
 	at       time.Time
@@ -191,13 +176,9 @@ func invalidateUsersCache() {
 	usersCache.mu.Unlock()
 }
 
-// geoipCache holds the lazily-opened GeoIP database.
-//
-// The panel runs unprivileged and cannot watch the filesystem for a database
-// that shows up after startup — an install triggered from the Addons page
-// writes it as root through the CLI, in a separate process. So instead of
-// opening once at startup, every lookup re-resolves the candidate paths until
-// one succeeds, then caches the result.
+// geoipCache holds the lazily-opened GeoIP database. The panel is unprivileged
+// and cannot watch for a database installed later by the CLI, so every lookup
+// re-resolves the candidate paths until one succeeds.
 var geoipCache struct {
 	mu     sync.Mutex
 	lookup *geoip.Lookup
@@ -258,26 +239,14 @@ type ConfigEditTarget struct {
 	// ForcedByMode is set when reanimator mode overrode the configured value,
 	// so the UI can explain why it is not editing through the API.
 	ForcedByMode bool
-	// Reanimator marks the file as the foreign target's. It belongs to that
-	// target, not to the panel, so it is read and written through MTProxyL
-	// rather than directly: the panel runs unprivileged and a systemd target
-	// keeps its config where only its own user may look.
+	// Reanimator marks the file as the foreign target's: read and written through
+	// MTProxyL, since the panel is unprivileged and the config is not its own.
 	Reanimator bool
 }
 
 // resolveConfigEditTarget picks between editing the engine's config file and
-// patching it through the engine's API.
-//
-// In reanimator mode the file always wins, whatever config_edit_mode says. The
-// API reports the engine's *effective* configuration — every factory default
-// included — so a save writes hundreds of values the operator never typed and
-// freezes them at today's defaults. That is precisely what MTProxyL must not do
-// to a config it does not own: in reanimator mode it edits the target's file
-// and touches nothing else.
-//
-// The path also comes from MTProxyL there: it detected the target and knows
-// where its config lives, while the panel's own telemt.config_path points at
-// whatever was configured at install time.
+// patching it through the API. In reanimator the file always wins: the API
+// reports the *effective* config, freezing today's defaults into a foreign one.
 func resolveConfigEditTarget(ctx context.Context, cfg config.TelemtConfig, c *mtproxylctl.Client) ConfigEditTarget {
 	configured := ConfigEditTarget{Mode: cfg.EffectiveConfigEditMode()}
 	if configured.Mode == "file" {

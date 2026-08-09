@@ -15,17 +15,10 @@ const (
 	creditWindow = time.Hour
 )
 
-// quota keeps the panel inside Globalping's hourly allowance.
-//
-// The service enforces the limit itself with a 429, but learning about it that
-// way costs a check: the page is left without a verdict, and — worse — the
-// allowance is already gone, so the next scheduled checks fail too until the
-// window rolls over. Counting locally means a check that would not fit is
-// refused before it is paid for.
-//
-// The count is a rolling hour rather than a fixed bucket because that is what
-// the service does: credits come back one hour after they were spent, not at
-// the top of the hour.
+// quota keeps the panel inside Globalping's hourly allowance. The service
+// enforces it with a 429, but by then the credits are already gone and the next
+// checks fail too. Rolling hour, not a fixed bucket: credits come back an hour
+// after they were spent.
 type quota struct {
 	mu     sync.Mutex
 	budget int

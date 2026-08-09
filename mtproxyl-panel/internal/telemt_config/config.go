@@ -58,17 +58,11 @@ func SaveConfig(configPath, content string) (newHash string, err error) {
 		return "", fmt.Errorf("create backup: %w", err)
 	}
 
-	// Write the new content in place, preserving the existing inode.
-	//
-	// The panel runs unprivileged (systemd User=mtproxyl-panel) and edits
-	// Telemt's config through group membership, not as its owner. A
-	// write-to-temp-then-rename would create a brand-new inode owned by the
-	// panel user; restoring Telemt's ownership afterwards needs root (chown),
-	// which the panel lacks, so the file's owner/group would silently flip and
-	// lock either Telemt or the panel out of the config. Rewriting the
-	// existing inode keeps Telemt's owner, group and permission bits intact and
-	// only requires group-write on the file itself. The backup above is our
-	// safety net for the (now non-atomic) write.
+	// Write in place, preserving the inode.
+	// The panel is unprivileged and edits Telemt's config through group
+	// membership, not ownership. Temp-then-rename would create a new inode owned
+	// by the panel, and restoring Telemt's owner needs root — locking one of them
+	// out. The backup above covers the now non-atomic write.
 	if err := writeConfigInPlace(configPath, content); err != nil {
 		return "", fmt.Errorf("write config: %w", err)
 	}
@@ -213,10 +207,8 @@ func removeIntegerUnderscores(s string) string {
 	return s
 }
 
-// writeConfigInPlace truncates and rewrites the existing config file so its
-// inode — and therefore its owner, group and permission bits — is preserved.
-// If the file does not exist yet it is created fresh (there is nothing to
-// preserve in that case).
+// writeConfigInPlace truncates and rewrites the existing file so its inode —
+// and with it owner, group and mode — is preserved. Created fresh if absent.
 func writeConfigInPlace(path, content string) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_TRUNC, 0)
 	if err != nil {

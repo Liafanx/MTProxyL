@@ -13,10 +13,8 @@ type GeoIPStatus struct {
 	Dir           string `json:"dir"`
 }
 
-// GeoIPStatusFn reads whether the GeoLite2 databases are installed.
-//
-// Independent of manager/reanimator: the databases live in a system-wide
-// directory, not the target's config, so this works the same in both modes.
+// GeoIPStatusFn reads whether the GeoLite2 databases are installed. Independent
+// of mode: they live in a system-wide directory, not the target's config.
 func (c *Client) GeoIPStatus(ctx context.Context) (*GeoIPStatus, error) {
 	out, err := c.run(ctx, "geoip", "status", "--json")
 	if err != nil {

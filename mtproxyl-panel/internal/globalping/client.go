@@ -74,10 +74,8 @@ func (c *Client) CreateMeasurement(ctx context.Context, req *MeasurementRequest)
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 
 	if resp.StatusCode == http.StatusTooManyRequests {
-		// The quota is counted in credits — one per probe — and is easy to
-		// exhaust with a short interval and many probes. Saying so plainly
-		// beats "API error 429". Typed, so the caller can stop spending until
-		// the service says the allowance is back.
+		// Credits are counted per probe, so this is easy to hit. Typed, so the
+		// caller can stop spending until the allowance is back.
 		retryIn := rateLimitResetIn(resp)
 		return nil, &RateLimitError{
 			RetryIn: retryIn,

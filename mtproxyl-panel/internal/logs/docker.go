@@ -93,12 +93,8 @@ func dockerSinceUnixArg(v string) string {
 }
 
 // dockerCommand builds a `docker logs` invocation, optionally through sudo.
-//
-// The panel runs as an unprivileged user that is deliberately not in the
-// docker group — membership there is equivalent to root on the host. Without a
-// fallback the log viewer just reported "permission denied while trying to
-// connect to the Docker API", which is accurate and useless. The installer
-// grants exactly this one command through sudoers instead.
+// The panel is deliberately not in the docker group — that is root on the host —
+// so the installer grants exactly this one command through sudoers.
 func dockerCommand(ctx context.Context, args []string, useSudo bool) *exec.Cmd {
 	if useSudo {
 		return exec.CommandContext(ctx, "sudo", append([]string{"-n", "docker"}, args...)...)

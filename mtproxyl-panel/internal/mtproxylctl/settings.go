@@ -7,13 +7,9 @@ import (
 	"regexp"
 )
 
-// Setting is one entry of `mtproxyl settings list --json`.
-//
-// These are MTProxyL's own settings — port, SNI domain, masking and so on —
-// stored in settings.conf, not in the engine's config. In manager mode the
-// engine's config.toml is mounted read-only into its container, so telemt
-// cannot be asked to change any of this: MTProxyL regenerates the config from
-// these values instead.
+// Setting is one entry of `mtproxyl settings list --json` — MTProxyL's own
+// settings from settings.conf, not the engine's config. In manager mode that
+// config is mounted read-only, so MTProxyL regenerates it from these values.
 type Setting struct {
 	Key         string `json:"key"`
 	Validator   string `json:"validator"`
@@ -25,10 +21,8 @@ type Setting struct {
 var settingKeyRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
 // settingValueRe covers ports, domains, hex tags, booleans and enum words.
-//
-// Brackets, quotes and whitespace stay out: none of the settable keys take a
-// list, and a stray quote would end up inside settings.conf. Empty is allowed
-// — it is how an ad tag or a pinned IP is cleared.
+// Brackets, quotes and whitespace stay out; empty is allowed — that is how an
+// ad tag or a pinned IP is cleared.
 var settingValueRe = regexp.MustCompile(`^[A-Za-z0-9_.:@%+-]*$`)
 
 // ValidateSetting checks a key/value pair before it reaches the CLI. MTProxyL
@@ -66,11 +60,9 @@ func (c *Client) Settings(ctx context.Context) ([]Setting, error) {
 	return list, nil
 }
 
-// SetSetting changes one setting.
-//
-// Some keys carry side effects MTProxyL already handles — changing the proxy
-// port moves the geoblock rules and restarts the container — so the CLI is the
-// only correct place to do this, not a direct write to settings.conf.
+// SetSetting changes one setting through the CLI, not by writing settings.conf:
+// some keys carry side effects MTProxyL already handles (changing the port
+// moves geoblock rules and restarts the container).
 func (c *Client) SetSetting(ctx context.Context, key, value string) (string, error) {
 	if err := ValidateSetting(key, value); err != nil {
 		return "", err

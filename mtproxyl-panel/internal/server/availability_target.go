@@ -17,11 +17,8 @@ import (
 const availabilityOverrideFile = "availability-target.json"
 
 // AvailabilityOverride is what the operator typed on the «Доступность» page.
-//
-// Autodetection is right for the common setup and wrong for the ones it cannot
-// see: a proxy behind a CDN, a second domain pointed at the same server, a port
-// forwarded from another. An empty field means «determine automatically», so
-// clearing the form restores the detected value rather than checking nothing.
+// Autodetection is blind to a proxy behind a CDN, a second domain or a
+// forwarded port. An empty field means «determine automatically».
 type AvailabilityOverride struct {
 	Host string `json:"host,omitempty"`
 	Port uint16 `json:"port,omitempty"`

@@ -13,11 +13,9 @@ import (
 	"github.com/Liafanx/mtproxyl-panel/internal/mtproxylctl"
 )
 
-// registerMtproxylRoutes wires the /api/mtproxyl/* endpoints, which expose
-// MTProxyL's host-level features (mode, selfmask, backups) to the UI.
-//
-// Routes are registered even when the bridge is disabled, so the frontend gets
-// a clear "disabled" answer instead of a 404 it would have to special-case.
+// registerMtproxylRoutes wires /api/mtproxyl/* — MTProxyL's host-level features.
+// Registered even when the bridge is off, so the frontend gets a clear
+// "disabled" answer instead of a 404 it would have to special-case.
 func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	client := mtproxylctl.New(s.cfg.Mtproxyl)
 	runner := mtproxylctl.NewRunner()
@@ -38,11 +36,8 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		return true
 	}
 
-	// busy rejects a state-changing request while a background operation runs.
-	//
-	// Those operations rewrite MTProxyL's settings files — a restore replaces
-	// them wholesale — so a concurrent write would either be lost or corrupt the
-	// result. Read-only checks are deliberately not gated.
+	// busy rejects a state-changing request while a background operation runs:
+	// those rewrite settings files wholesale. Read-only checks are not gated.
 	busy := func(w http.ResponseWriter) bool {
 		if runner.Busy() {
 			writeError(w, http.StatusConflict, "operation_busy",
@@ -53,9 +48,8 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	}
 
 	// ── Availability ────────────────────────────────────────────────────────
-	// The mode travels with this probe because several MTProxyL features are
-	// manager-only (backups, outbound routes): the UI hides them in reanimator
-	// mode rather than offering buttons that are guaranteed to fail.
+	// Mode travels with the probe: several features are manager-only, and the UI
+	// hides them rather than offering buttons guaranteed to fail.
 	mux.Handle("GET /api/mtproxyl/status", protected(func(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]any{
 			"enabled":   client.Enabled(),
@@ -67,10 +61,9 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 			// know the bridge is on, even if the mode could not be read.
 			if st, err := cachedMode(r.Context(), client); err == nil {
 				resp["mode"] = string(st.Mode)
-				// The panel talks to one fixed telemt URL, chosen at install
-				// time. A mode switch changes which engine is authoritative but
-				// not this URL, so the dashboard can end up showing the other
-				// engine's users and traffic as if they were the current one's.
+				// The panel talks to one fixed telemt URL chosen at install time;
+				// a mode switch does not change it, so the dashboard can show the
+				// other engine's data as its own.
 				if mismatch := apiEndpointMismatch(telemtURL, st); mismatch != "" {
 					resp["api_mismatch"] = mismatch
 					resp["api_expected_port"] = st.APIPort
@@ -84,9 +77,8 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	}))
 
 	// ── Operation slot ──────────────────────────────────────────────────────
-	// Closing the progress/log panel has to reach the server: the slot is shared
-	// between tabs and survives reloads, so a purely client-side «hide» would
-	// bring the same finished log back on the next page load.
+	// Closing the log panel has to reach the server: the slot is shared between
+	// tabs and survives reloads.
 	mux.Handle("POST /api/mtproxyl/operation/dismiss", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !runner.Dismiss() {
 			writeError(w, http.StatusConflict, "operation_busy",
@@ -245,10 +237,8 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	}))
 
 	// ── Настройки MTProxyL ──────────────────────────────────────────────────
-	//
-	// Порт, домен FakeTLS, маскировка и прочее живут в settings.conf, а не в
-	// конфиге движка: в режиме Manager тот примонтирован в контейнер только для
-	// чтения, и telemt не может изменить ничего из этого сам.
+	// Живут в settings.conf, а не в конфиге движка: в Manager тот примонтирован
+	// только для чтения.
 	mux.Handle("GET /api/mtproxyl/settings", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
 			return
@@ -286,14 +276,9 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	}))
 
 	// ── Пользователи (секреты MTProxyL) ─────────────────────────────────────
-	//
-	// В режиме Manager конфиг движка примонтирован в контейнер только для
-	// чтения — telemt не может записать пользователя и отвечает на POST
-	// /v1/users «Device or resource busy». Владелец пользователей здесь
-	// MTProxyL, поэтому панель ходит через его CLI, а не через API движка.
-	//
-	// Все команды манипулируют secrets.conf, поэтому закрыты busy(): во время
-	// восстановления бэкапа этот файл переписывается целиком.
+	// В Manager движок не может записать пользователя («Device or resource busy»),
+	// владелец здесь MTProxyL — панель ходит через его CLI.
+	// Всё закрыто busy(): восстановление бэкапа переписывает secrets.conf целиком.
 	mux.Handle("GET /api/mtproxyl/users", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
 			return
@@ -620,11 +605,8 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	}))
 
 	// ── Proxy control ───────────────────────────────────────────────────────
-	//
-	// Работает в обоих режимах: CLI сам решает, что запускать — свой контейнер
-	// у менеджера или обнаруженную цель у реаниматора. Унаследованный от
-	// telemt_panel /api/telemt/restart делает systemctl restart telemt.service
-	// и в режиме менеджера бесполезен: движок там живёт в Docker.
+	// Работает в обоих режимах: CLI сам решает, что запускать. Унаследованный
+	// /api/telemt/restart дёргает systemctl и в Manager бесполезен.
 	mux.Handle("POST /api/mtproxyl/proxy/{action}", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) || busy(w) {
 			return
@@ -650,9 +632,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	}))
 
 	// ── Traffic ─────────────────────────────────────────────────────────────
-	//
-	// Работает в обоих режимах, поэтому проверки на менеджера здесь нет:
-	// в реаниматоре CLI берёт те же числа у цели, из метрик или из её API.
+	// Работает в обоих режимах: в реаниматоре CLI берёт числа у цели.
 	mux.Handle("GET /api/mtproxyl/traffic", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
 			return
@@ -813,11 +793,8 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	}))
 
 	// ── Addons ──────────────────────────────────────────────────────────────
-	// PQ-проверка домена: единственное дополнение, которое имеет смысл в
-	// панели. censorcheck намеренно не перенесён — он выполняет сторонний
-	// скрипт с сети, и делать это по нажатию в вебе не стоит.
-	// Установка инструментов PQ отдельно от мастера Selfmask: скачивание,
-	// поэтому асинхронно, как и остальные долгие операции.
+	// Только PQ-проверка домена и установка инструментов PQ. censorcheck не
+	// перенесён намеренно: он выполняет сторонний скрипт из сети.
 	mux.Handle("POST /api/mtproxyl/pq-install", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
 			return

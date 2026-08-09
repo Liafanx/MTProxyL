@@ -6,10 +6,8 @@ import (
 	"fmt"
 )
 
-// TrafficUser is one row of the traffic report.
-//
-// In and Out are only meaningful when TrafficReport.Directional is set; when it
-// is not, the source could not split directions and only Total carries data.
+// TrafficUser is one row of the traffic report. In and Out matter only when
+// TrafficReport.Directional is set; otherwise only Total carries data.
 type TrafficUser struct {
 	User string `json:"user"`
 	In   int64  `json:"in"`
@@ -38,13 +36,9 @@ type TrafficTotals struct {
 	Connections int64 `json:"connections"`
 }
 
-// TrafficReport is the output of `mtproxyl traffic --json`.
-//
-// The two flags describe how far the numbers can be trusted, and the UI has to
-// honour them: Directional says whether upload and download are separate
-// figures, Persistent whether they survive an engine restart. Only manager mode
-// keeps its own database; against a foreign target we read that target's
-// counters, which reset when it does.
+// TrafficReport is the output of `mtproxyl traffic --json`. The two flags say
+// how far the numbers can be trusted: Directional — upload and download are
+// separate; Persistent — they survive an engine restart (manager mode only).
 type TrafficReport struct {
 	Mode string `json:"mode"`
 	// Source is "db" (manager's own accounting), "metrics" (the target's

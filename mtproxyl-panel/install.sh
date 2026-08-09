@@ -28,12 +28,8 @@ LEGACY_CONFIG_DIR="/opt/etc/mtproxyl-panel"
 say()  { printf '[ИНФО]  %s\n' "$*"; }
 die()  { printf '[ОШИБКА] %s\n' "$*" >&2; exit 1; }
 
-# На части систем (Ubuntu 26+) sudo по умолчанию — sudo-rs, и его visudo пока
-# не принимает wildcard (*) в аргументах команд: правила sudoers здесь на них
-# держатся (journalctl -n *, docker ps --filter name=* и т.п.), проверка
-# падает с "wildcards are not allowed in command arguments". Подсказываем
-# сразу тут, а не только в README — иначе искать причину пришлось бы по
-# сырому выводу visudo.
+# В Ubuntu 26+ sudo по умолчанию — sudo-rs, и его visudo не принимает
+# wildcard в аргументах команд, на которых держатся здешние правила.
 hint_sudo_rs_wildcards() {
   say "Если ошибка выше — 'wildcards are not allowed in command arguments':"
   say "  это sudo-rs (новая реализация sudo в Ubuntu 26+), её visudo пока"
@@ -138,12 +134,8 @@ detect_telemt_service() {
   echo ""
 }
 
-# Слушает ли кто-нибудь этот порт. Отличает «движок стоит» от «движок жив, но
-# API отвечает не так, как мы ждём» — диагнозы разные, и лечатся по-разному.
-#
-# Коды: 0 — слушается, 1 — нет, 2 — проверить нечем. Второе и третье путать
-# нельзя: на минимальном образе без ss и netstat «не смог проверить» иначе
-# превратилось бы в уверенное «порт закрыт».
+# Слушает ли кто-нибудь порт. Коды: 0 — да, 1 — нет, 2 — проверить нечем.
+# Последние два путать нельзя: без ss и netstat это не «порт закрыт».
 port_is_listening() {
   _p="$1"
   if command -v ss >/dev/null 2>&1; then
@@ -417,11 +409,8 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_journalctl -u $_telemt_service -f --no-pager
 $SYSTEM_USER ALL=(root) NOPASSWD: $_journalctl -u $_telemt_service -f --since * --no-pager -o short-iso
 EOF
 
-  # Прямая запись конфига движка нужна только там, где MTProxyL нет. С ним
-  # панель правит конфиг цели через 'mtproxyl target-config write': тот
-  # проверяет, что текст всё ещё похож на конфиг telemt, делает резервную копию
-  # и сохраняет владельца с правами. Правило на tee обходило всё это разом —
-  # притом путь здесь захардкожен как раз на типовой конфиг чужой цели.
+  # Прямая запись конфига движка нужна только без MTProxyL: с ним панель идёт
+  # через 'target-config write', а тот проверяет текст и делает резервную копию.
   if [ "${MTPROXYL_ENABLED:-false}" != "true" ]; then
     printf '%s\n' "$SYSTEM_USER ALL=(root) NOPASSWD: $_tee $_telemt_config" >>"$_tmp"
   fi
@@ -436,9 +425,8 @@ EOF
 }
 
 # ── Sudoers for the MTProxyL bridge ─────────────────────────────────────────
-# Separate drop-in from the updater one: MTProxyL is optional, so this is only
-# written when the integration is enabled, and removing it disables the feature
-# without touching update permissions.
+# Отдельный drop-in: интеграция опциональна, и её снятие не должно трогать
+# права на обновление.
 install_mtproxyl_sudoers() {
   _script="$1"
   _install_dir="$2"
@@ -452,21 +440,10 @@ install_mtproxyl_sudoers() {
   ensure_temp_dir
   _tmp="$TEMP_DIR/sudoers-mtproxyl"
 
-  # Only the subcommands the panel calls are permitted; `mtproxyl` as a whole
-  # is not. The restore rule is pinned to the backup directory and the archive
-  # naming scheme, and the panel validates the filename before building that
-  # argument.
-  #
-  # What these rules do NOT do is pin arity: a trailing `*` in sudoers is
-  # greedy and matches across argument boundaries, so a rule ending in `*`
-  # also admits extra trailing arguments (verified against sudo directly).
-  # That is contained rather than prevented here — the subcommand itself is
-  # always literal, and MTProxyL validates every key and value against its own
-  # catalog, so surplus positional arguments are ignored by the script. Do not
-  # read the argument patterns below as a strict signature.
-  #
-  # env_keep is required: sudo resets the environment, which would strip
-  # MTPROXYL_ASSUME_YES and leave the script waiting on a prompt forever.
+  # Разрешены только вызываемые панелью подкоманды, не `mtproxyl` целиком.
+  # Арность правила не фиксируют: хвостовой `*` в sudoers жадный и допускает
+  # лишние аргументы — их отбрасывает уже сам скрипт по своему каталогу.
+  # env_keep обязателен: без MTPROXYL_ASSUME_YES скрипт зависнет на вопросе.
   cat >"$_tmp" <<EOF
 Defaults:$SYSTEM_USER env_keep += "MTPROXYL_ASSUME_YES"
 
@@ -489,10 +466,8 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask set SELFMASK_[A-Z_]* *
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask verify
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask disable
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup
-# Пользователи. В режиме Manager конфиг движка примонтирован в контейнер
-# только для чтения, telemt их записать не может — владелец здесь MTProxyL.
-# Настройки MTProxyL: порт, домен, маскировка. В конфиге движка их не
-# поменять — он примонтирован в контейнер только для чтения.
+# Пользователи и настройки MTProxyL: в режиме Manager конфиг движка
+# примонтирован только для чтения, менять их может лишь MTProxyL.
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script settings list --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script settings set [A-Z]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script settings set [A-Z]* *
@@ -625,12 +600,8 @@ prompt_secret() {
   return $_rc
 }
 
-# Пароль вводится вслепую, поэтому опечатка обнаружилась бы только на экране
-# входа — и чинить её пришлось бы отдельной командой. Спрашиваем дважды и
-# переспрашиваем, пока не совпадёт.
-#
-# Число попыток ограничено: без этого запуск без терминала (EOF на каждом
-# чтении) превращался бы в бесконечный цикл вместо внятной ошибки.
+# Пароль вводится вслепую — спрашиваем дважды. Число попыток ограничено:
+# иначе запуск без терминала крутился бы на EOF бесконечно.
 prompt_password_confirmed() {
   _tries=0
   while [ "$_tries" -lt 5 ]; do
@@ -662,13 +633,8 @@ prompt_password_confirmed() {
 }
 
 # ── Автоопределение параметров у установленного MTProxyL ─────────────────────
-#
-# Адрес API движка зависит от режима: у менеджера это его собственный конфиг,
-# у реаниматора — конфиг чужой цели, и порт там свой. Спрашивать его «вслепую»
-# со значением по умолчанию 9091 означает, что половина установок в режиме
-# реаниматора получит панель, смотрящую не туда.
-#
-# Заполняет MTPROXYL_MODE_DETECTED, API_PORT_DETECTED, API_ENABLED_DETECTED.
+# Адрес API зависит от режима: у реаниматора это конфиг чужой цели со своим
+# портом. Заполняет MTPROXYL_MODE_DETECTED, API_PORT_DETECTED, API_ENABLED_DETECTED.
 detect_from_mtproxyl() {
   MTPROXYL_MODE_DETECTED=""
   API_PORT_DETECTED=""
@@ -958,10 +924,8 @@ do_install() {
       die "Порт должен быть в диапазоне 1-65535"
     fi
 
-    # Куда привязывать сокет. Панель на сервере с прокси по умолчанию торчит в
-    # интернет, и это нужно не всем: доступ можно оставить только локальным, а
-    # ходить в неё через ssh-туннель. Тогда снаружи не видно ни порта, ни формы
-    # входа — брутфорсить нечего.
+    # Доступ можно оставить только локальным и ходить через ssh-туннель:
+    # тогда снаружи не видно ни порта, ни формы входа.
     echo ""
     say "Доступ к панели"
     printf '  1) Со всех интерфейсов — панель открыта из интернета\n'
@@ -979,10 +943,8 @@ do_install() {
     PANEL_SCHEME="https"
 
     if [ "$PANEL_LOCAL_ONLY" = "true" ]; then
-      # По петле трафик не покидает машину, поэтому шифровать нечего: канал до
-      # браузера обеспечивает ssh-туннель, а самоподписанный сертификат добавил
-      # бы только предупреждение браузера на каждый вход. При необходимости
-      # HTTPS включается в конфиге — секция [tls] в config.example.toml.
+      # По петле трафик машину не покидает, канал даёт ssh — шифровать нечего.
+      # HTTPS при необходимости включается в конфиге, секция [tls].
       PANEL_SCHEME="http"
       say "Панель будет слушать 127.0.0.1:${PANEL_PORT} — снаружи недоступна"
       say "Шифрование не настраивается: соединение не выходит за пределы машины"
@@ -1013,11 +975,8 @@ do_install() {
 cert_file = \"$DATA_DIR/certs/panel.crt\"
 key_file = \"$DATA_DIR/certs/panel.key\""
         elif port80_busy && [ -x "$MTPROXYL_SCRIPT" ]; then
-          # Порт 80 держит кто-то ещё — почти всегда nginx Selfmask, и он
-          # держит его постоянно. Свой ACME в панели тут бесполезен: она не
-          # сможет ни занять порт, ни подтвердить домен. Выпуск отдаём
-          # MTProxyL: он либо проведёт challenge через webroot уже работающей
-          # заглушки, либо остановит её ровно на время выпуска.
+          # Порт 80 постоянно держит nginx Selfmask: своё ACME панели тут
+          # бесполезно. Выпуск отдаём MTProxyL — он умеет через webroot.
           say "Порт 80 занят — сертификат выпустит MTProxyL после установки службы"
           say "(заглушка Selfmask при этом либо не трогается, либо встанет на несколько секунд)"
           TLS_EMAIL=$(prompt "Email для Let's Encrypt" "")
@@ -1085,10 +1044,8 @@ self_signed_hosts = [\"$TLS_HOSTS\"]"
     esac
     fi
 
-    # Панель делалась под MTProxyL: если он на месте, интеграция включается
-    # без вопросов — отказ от неё оставил бы половину разделов пустыми и ни
-    # разу не был осмысленным выбором. Отключить её при необходимости можно в
-    # конфиге: [mtproxyl] enabled = false.
+    # Панель делалась под MTProxyL: при его наличии интеграция включается без
+    # вопросов. Отключается в конфиге: [mtproxyl] enabled = false.
     MTPROXYL_ENABLED="false"
     if [ -x "$MTPROXYL_SCRIPT" ]; then
       MTPROXYL_ENABLED="true"

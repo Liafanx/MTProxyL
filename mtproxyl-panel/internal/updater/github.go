@@ -42,10 +42,9 @@ func AssetName() string {
 	return "telemt-" + archString() + "-linux-" + Variant() + ".tar.gz"
 }
 
-// NewAssetMatcher returns an AssetMatcher that finds Telemt binary and checksum assets.
-// Checksum matching is flexible: it matches any asset ending in .sha256 whose name
-// starts with the binary asset name prefix (without extension), covering both
-// "telemt-x86_64-linux-gnu.sha256" and "telemt-x86_64-linux-gnu.tar.gz.sha256".
+// NewAssetMatcher finds Telemt binary and checksum assets. Checksum matching is
+// flexible: any .sha256 starting with the binary's name prefix, so both
+// "...-gnu.sha256" and "...-gnu.tar.gz.sha256" are covered.
 func NewAssetMatcher() github.AssetMatcher {
 	binaryName := AssetName()
 	prefix := strings.TrimSuffix(binaryName, ".tar.gz")

@@ -84,9 +84,7 @@ func TestNormalizeScopes(t *testing.T) {
 }
 
 // UpstreamAdd normalizes before validating, so a list typed with spaces must
-// reach the CLI rather than be rejected as malformed. The argument positions
-// matter beyond that: the CLI reads scopes as the eighth argument after "add",
-// so an omitted empty field would silently land the tags in "iface".
+// reach the CLI. Argument positions matter: scopes is the eighth after "add",
 func TestUpstreamAddArguments(t *testing.T) {
 	c := newStubClient(t)
 	out, err := c.UpstreamAdd(t.Context(), UpstreamSpec{

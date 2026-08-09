@@ -12,11 +12,9 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// SaveConfigFile writes Telemt's config file directly (file edit mode). It
-// preserves the file's inode/owner/mode by rewriting in place, and falls back
-// to `sudo tee` when the unprivileged panel lacks write permission. Backups are
-// stored in backupDir (the panel's own data dir) so this never needs write
-// access to Telemt's config directory.
+// SaveConfigFile writes Telemt's config directly (file edit mode), preserving
+// inode/owner/mode and falling back to `sudo tee` without write permission.
+// Backups go to backupDir so this never needs access to Telemt's directory.
 func SaveConfigFile(configPath, content, backupDir string) error {
 	if strings.Contains(configPath, "..") {
 		return fmt.Errorf("invalid config path")

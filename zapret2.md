@@ -30,6 +30,7 @@ disorder + badsum, а к SYN+ACK и пустым ACK — контроль TCP-о
 | Скрипт правил + запуска | `/usr/local/sbin/mtproxyl-zapret2-start.sh` |
 | Служба | `mtproxyl-zapret2.service` |
 | Таблица nftables | `ip MTProtoL` |
+| Параметры ядра | `/etc/sysctl.d/99-mtproxyl-zapret2.conf` |
 
 ---
 
@@ -256,6 +257,11 @@ PORT="443"
 QNUM="200"
 CT_MARK="0x00040000"
 COMBINED_MARK="0x40040000"
+# Мимо очереди пропускаем только пакеты с данными — см. пояснение ниже.
+BYPASS_MATCH="tcp flags & (fin | syn | rst | ack) == ack"
+
+# Переиспользование сокета в TIME_WAIT для нового соединения.
+sysctl -w net.ipv4.tcp_tw_reuse=1 >/dev/null 2>&1 || true
 
 nft delete table ip "$TABLE" 2>/dev/null || true
 nft add table ip "$TABLE"
@@ -268,18 +274,49 @@ nft "add chain ip $TABLE output { type route hook output priority mangle; policy
 nft "add rule ip $TABLE output meta mark and $COMBINED_MARK == $COMBINED_MARK ct mark set $CT_MARK counter accept"
 
 nft "add chain ip $TABLE postrouting { type filter hook postrouting priority srcnat + 1; policy accept; }"
-nft "add rule ip $TABLE postrouting ct mark $CT_MARK counter accept"
+nft "add rule ip $TABLE postrouting $BYPASS_MATCH ct mark $CT_MARK counter accept"
 nft "add rule ip $TABLE postrouting meta mark and $FWMARK == 0x00000000 tcp sport $PORT counter queue num $QNUM bypass"
 
 nft "add chain ip $TABLE prerouting { type filter hook prerouting priority mangle; policy accept; }"
 nft "add rule ip $TABLE prerouting ct state invalid counter drop"
-nft "add rule ip $TABLE prerouting ct mark $CT_MARK counter accept"
+nft "add rule ip $TABLE prerouting $BYPASS_MATCH ct mark $CT_MARK counter accept"
 nft "add rule ip $TABLE prerouting meta mark and $FWMARK == 0x00000000 tcp dport $PORT counter queue num $QNUM bypass"
 
 echo "NFT table $TABLE applied (port=$PORT qnum=$QNUM)"
 
 exec /opt/mtproxyl-zapret2/bin/nfqws2 @/etc/mtproxyl-zapret2/mtproto.conf
 ```
+
+Чтобы `tcp_tw_reuse` пережил перезагрузку, положите его ещё и в sysctl.d:
+
+```bash
+cat > /etc/sysctl.d/99-mtproxyl-zapret2.conf << 'EOF'
+net.ipv4.tcp_tw_reuse = 1
+EOF
+```
+
+### Почему обход очереди ловит только ACK
+
+Разгрузка держится на том, что соединение, которое `nfqws2` уже разобрал,
+помечается в conntrack (`ct mark`) и дальше идёт мимо очереди. Но выпускать
+мимо неё можно только пакеты с данными: если мимо пройдёт и FIN, `nfqws2` не
+увидит закрытия и оставит соединение в своём conntrack живым.
+
+За NAT, тем более CGNAT, это оборачивается разрывами. Клиент за NAT не выбирает
+порт сам: трансляция берёт его из небольшого пула и переиспользует сразу после
+закрытия, которое отследила по FIN. Для `nfqws2` новое подключение выглядит как
+SYN внутри соединения, которое он всё ещё считает установленным, и
+обрабатывается по устаревшему состоянию.
+
+Поэтому в обеих цепочках стоит `tcp flags & (fin | syn | rst | ack) == ack`:
+мимо очереди идут только пакеты, у которых из этих четырёх флагов поднят один
+ACK. FIN, SYN и RST продолжают попадать в `nfqws2` — на объём трафика это не
+влияет, их единицы на соединение.
+
+`net.ipv4.tcp_tw_reuse=1` закрывает ту же дыру со стороны ядра: у него на месте
+закрытого соединения остаётся сокет в TIME_WAIT, и на SYN со свежезакрытого
+кортежа оно отвечает ACK вместо того, чтобы открыть новое соединение. Значение
+по умолчанию на свежих ядрах — `2` (только loopback), нужна `1`.
 
 ```bash
 chmod +x /usr/local/sbin/mtproxyl-zapret2-start.sh
@@ -322,6 +359,14 @@ systemctl status mtproxyl-zapret2.service
 nft list table ip MTProtoL          # правила на месте, счётчики растут под нагрузкой
 cat /proc/net/netfilter/nfnetlink_queue   # очередь 200 в списке
 journalctl -u mtproxyl-zapret2 -n 30 --no-pager
+sysctl -n net.ipv4.tcp_tw_reuse     # должна быть 1
+```
+
+В обеих цепочках правило обхода должно выглядеть так — с проверкой флагов, а не
+только `ct mark`:
+
+```
+tcp flags & (fin | syn | rst | ack) == ack ct mark 0x00040000 counter accept
 ```
 
 Отдельно стоит проверить TCP-окно. Реальное окно в пустых ACK равно
@@ -352,6 +397,8 @@ rm -f /usr/local/sbin/mtproxyl-zapret2-start.sh
 systemctl daemon-reload
 nft delete table ip MTProtoL 2>/dev/null || true
 rm -rf /opt/mtproxyl-zapret2 /etc/mtproxyl-zapret2
+rm -f /etc/sysctl.d/99-mtproxyl-zapret2.conf
+sysctl -w net.ipv4.tcp_tw_reuse=2 >/dev/null   # значение ядра по умолчанию
 ```
 
 ---
@@ -365,7 +412,7 @@ rm -rf /opt/mtproxyl-zapret2 /etc/mtproxyl-zapret2
 ```bash
 nft "add chain ip $TABLE forward { type filter hook forward priority mangle; policy accept; }"
 nft "add rule ip $TABLE forward ct state invalid counter drop"
-nft "add rule ip $TABLE forward ct mark $CT_MARK counter accept"
+nft "add rule ip $TABLE forward $BYPASS_MATCH ct mark $CT_MARK counter accept"
 nft "add rule ip $TABLE forward meta mark and $FWMARK == 0x00000000 tcp dport $PORT counter queue num $QNUM bypass"
 nft "add rule ip $TABLE forward meta mark and $FWMARK == 0x00000000 tcp sport $PORT counter queue num $QNUM bypass"
 ```

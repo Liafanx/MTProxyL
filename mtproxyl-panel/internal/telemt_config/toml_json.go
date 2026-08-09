@@ -19,12 +19,9 @@ func SectionsToTOML(sections map[string]interface{}) (string, error) {
 	return removeIntegerUnderscores(string(out)), nil
 }
 
-// normalizeJSONNumbers converts json.Number values (produced by a JSON decoder
-// with UseNumber) into concrete int64/float64 so the TOML marshaler renders
-// integers as integers (443) and not as floats (443.0) or quoted strings.
-// Integral numbers without a fraction or exponent become int64; everything
-// else becomes float64. Without this, a port like 443 round-trips through the
-// API as 443.0 and corrupts Telemt's config on save.
+// normalizeJSONNumbers turns json.Number into concrete int64/float64 so the TOML
+// marshaler renders 443 as an integer, not 443.0 — which would corrupt the
+// engine's config on save.
 func normalizeJSONNumbers(v interface{}) interface{} {
 	switch x := v.(type) {
 	case map[string]interface{}:

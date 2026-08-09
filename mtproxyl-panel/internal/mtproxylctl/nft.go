@@ -39,11 +39,9 @@ type NftStatus struct {
 	Params []NftParam `json:"params"`
 }
 
-// nftParamKeyRe bounds what may be passed as a parameter name.
-//
-// The key becomes an argument to a sudo-invoked command, so it is matched
-// against a shape rather than merely escaped. MTProxyL validates the key
-// against its own catalog too; this is the near-side guard.
+// nftParamKeyRe bounds what may be passed as a parameter name: the key becomes
+// an argument to a sudo-invoked command, so it is matched against a shape
+// rather than escaped. MTProxyL validates it too; this is the near-side guard.
 var nftParamKeyRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]{1,63}$`)
 
 // nftParamValueRe rejects anything that is not a plain scalar. Real values are
@@ -87,10 +85,8 @@ func (c *Client) NftStatus(ctx context.Context) (*NftStatus, error) {
 	return &st, nil
 }
 
-// SetNftParam changes a stored parameter.
-//
-// It does not reapply kernel rules — MTProxyL keeps those steps separate, and
-// so does the UI: the caller applies a preset afterwards.
+// SetNftParam changes a stored parameter. Kernel rules are not reapplied —
+// MTProxyL keeps those steps separate, and so does the UI.
 func (c *Client) SetNftParam(ctx context.Context, key, value string) (string, error) {
 	if err := ValidateNftParam(key, value); err != nil {
 		return "", err
@@ -131,12 +127,9 @@ var nftActions = map[NftAction]bool{
 // ValidNftAction reports whether a is a recognised action.
 func ValidNftAction(a NftAction) bool { return nftActions[a] }
 
-// RunNftAction executes one of the allowlisted limiter/fix commands.
-//
-// Several of these (smart, ios1, ios2, zapret2 install) are wizards in
-// MTProxyL: under the assume-yes bypass they run with the values stored in
-// nft-rules.conf, which is exactly what SetNftParam writes. So the UI flow is
-// "set parameters, then apply".
+// RunNftAction executes one of the allowlisted limiter/fix commands. Several
+// are wizards that, under assume-yes, run with the values SetNftParam wrote —
+// hence the «set parameters, then apply» flow.
 func (c *Client) RunNftAction(ctx context.Context, a NftAction) (string, error) {
 	if !ValidNftAction(a) {
 		return "", fmt.Errorf("unknown nft action %q", a)
