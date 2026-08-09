@@ -958,6 +958,37 @@ do_install() {
       die "Порт должен быть в диапазоне 1-65535"
     fi
 
+    # Куда привязывать сокет. Панель на сервере с прокси по умолчанию торчит в
+    # интернет, и это нужно не всем: доступ можно оставить только локальным, а
+    # ходить в неё через ssh-туннель. Тогда снаружи не видно ни порта, ни формы
+    # входа — брутфорсить нечего.
+    echo ""
+    say "Доступ к панели"
+    printf '  1) Со всех интерфейсов — панель открыта из интернета\n'
+    printf '  2) Только с этой машины (127.0.0.1) — снаружи недоступна, вход через ssh-туннель\n'
+    BIND_CHOICE=$(prompt "Вариант" "1")
+
+    PANEL_LOCAL_ONLY="false"
+    PANEL_BIND="0.0.0.0"
+    if [ "$BIND_CHOICE" = "2" ]; then
+      PANEL_LOCAL_ONLY="true"
+      PANEL_BIND="127.0.0.1"
+    fi
+
+    TLS_BLOCK=""
+    PANEL_SCHEME="https"
+
+    if [ "$PANEL_LOCAL_ONLY" = "true" ]; then
+      # По петле трафик не покидает машину, поэтому шифровать нечего: канал до
+      # браузера обеспечивает ssh-туннель, а самоподписанный сертификат добавил
+      # бы только предупреждение браузера на каждый вход. При необходимости
+      # HTTPS включается в конфиге — секция [tls] в config.example.toml.
+      PANEL_SCHEME="http"
+      say "Панель будет слушать 127.0.0.1:${PANEL_PORT} — снаружи недоступна"
+      say "Шифрование не настраивается: соединение не выходит за пределы машины"
+      TLS_CHOICE=""
+    else
+
     # HTTPS по умолчанию: панель принимает пароль администратора и выдаёт токен
     # сессии, а сервер с прокси почти всегда торчит в интернет. По HTTP и то и
     # другое уходит открытым текстом.
@@ -969,8 +1000,6 @@ do_install() {
     printf '  4) Без шифрования (HTTP) — пароль пойдёт открытым текстом\n'
     TLS_CHOICE=$(prompt "Вариант" "1")
 
-    TLS_BLOCK=""
-    PANEL_SCHEME="https"
     case "$TLS_CHOICE" in
       2)
         TLS_DOMAIN=$(prompt "Домен панели" "")
@@ -1054,6 +1083,7 @@ key_file = \"$DATA_DIR/certs/panel.key\"
 self_signed_hosts = [\"$TLS_HOSTS\"]"
         ;;
     esac
+    fi
 
     # Панель делалась под MTProxyL: если он на месте, интеграция включается
     # без вопросов — отказ от неё оставил бы половину разделов пустыми и ни
@@ -1073,7 +1103,7 @@ self_signed_hosts = [\"$TLS_HOSTS\"]"
     JWT_SECRET=$(openssl rand -hex 32)
 
     # Build config with standard paths
-    _cfg="listen = \"0.0.0.0:$PANEL_PORT\"
+    _cfg="listen = \"${PANEL_BIND}:$PANEL_PORT\"
 data_dir = \"$DATA_DIR\"
 
 [telemt]
@@ -1173,9 +1203,21 @@ session_ttl = \"24h\"${TLS_BLOCK}"
     _listen=$($SUDO sh -c "cat '$CONFIG_FILE'" 2>/dev/null | sed -n 's/^[[:space:]]*listen[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' | head -1)
     _from_listen=$(printf '%s' "$_listen" | sed -n 's/.*:\([0-9]\{1,5\}\)$/\1/p')
     [ -n "$_from_listen" ] && _panel_port="$_from_listen"
+    # Привязка к петле меняет и адрес, и смысл предупреждений: снаружи такой
+    # панели нет, а незашифрованным соединение выглядит только изнутри машины.
+    _bind=$(printf '%s' "$_listen" | sed 's/:[0-9]\{1,5\}$//')
+    case "$_bind" in
+      127.0.0.1|localhost|::1|"[::1]") _local_only="true"; _host="127.0.0.1" ;;
+    esac
   fi
   printf '  Адрес панели:  %s://%s:%s\n' "$_scheme" "$_host" "$_panel_port"
-  if [ "$_selfsigned" = "true" ]; then
+  if [ "${_local_only:-false}" = "true" ]; then
+    printf '                 доступна только с этой машины — снаружи порт не слушается\n'
+    printf '\n'
+    printf '  Открыть со своего компьютера — прокинуть порт по ssh:\n'
+    printf '    ssh -L %s:127.0.0.1:%s <пользователь>@%s\n' "$_panel_port" "$_panel_port" "$_ip"
+    printf '  и открыть %s://127.0.0.1:%s у себя в браузере.\n' "$_scheme" "$_panel_port"
+  elif [ "$_selfsigned" = "true" ]; then
     printf '                 браузер предупредит о недоверенном сертификате — это ожидаемо\n'
   elif [ "$_scheme" = "http" ]; then
     printf '                 без шифрования: пароль и токен идут открытым текстом\n'

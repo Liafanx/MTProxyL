@@ -86,6 +86,16 @@ panel_listen_addr() {
 
     local _host="${_listen%:*}" _port="${_listen##*:}"
     local _acme_domain
+    # Привязка к петле — самый конкретный ответ, какой вообще бывает: панель
+    # отвечает только по этому адресу. Домен из сертификата тут подставлять
+    # нельзя, даже если сертификат есть: снаружи по этому имени панели нет.
+    case "$_host" in
+        "127.0.0.1"|"localhost"|"::1"|"[::1]")
+            echo "$_listen"
+            return 0
+            ;;
+    esac
+
     _acme_domain=$(grep -oE '^[[:space:]]*acme_domain[[:space:]]*=[[:space:]]*"[^"]+"' "$_cfg" 2>/dev/null \
         | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
     if [ -n "$_acme_domain" ]; then
@@ -510,6 +520,19 @@ _panel_port80_busy() {
     printf '%s\n' "$_listen" | awk '{print $4}' | grep -qE '(^|:|])80$'
 }
 
+# true, если панель привязана к петле и снаружи её нет.
+_panel_listens_locally() {
+    local _cfg="${PANEL_CONFIG_DIR}/config.toml"
+    [ -f "$_cfg" ] || return 1
+    local _listen
+    _listen=$(grep -oE '^[[:space:]]*listen[[:space:]]*=[[:space:]]*"[^"]+"' "$_cfg" 2>/dev/null \
+        | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+    case "${_listen%:*}" in
+        "127.0.0.1"|"localhost"|"::1"|"[::1]") return 0 ;;
+    esac
+    return 1
+}
+
 # Выпуск сертификата Let's Encrypt для панели.
 panel_issue_cert() {
     check_root || return 1
@@ -520,6 +543,21 @@ panel_issue_cert() {
     echo ""
     draw_header "СЕРТИФИКАТ LET'S ENCRYPT ДЛЯ ПАНЕЛИ"
     echo ""
+
+    # Панель, привязанная к петле, снаружи не отвечает: по домену до неё не
+    # дойти, а шифровать соединение, которое не покидает машину, незачем.
+    # Сам выпуск при этом прошёл бы — и оставил после себя сертификат, который
+    # некуда применить, плюс продление, которое некому использовать.
+    if _panel_listens_locally; then
+        log_warn "Панель слушает только 127.0.0.1 — снаружи она недоступна"
+        log_info "Сертификат такой панели не нужен: до неё ходят через ssh-туннель,"
+        log_info "а он шифрует соединение сам. Чтобы открыть панель наружу,"
+        log_info "смените listen в ${PANEL_CONFIG_DIR}/config.toml и перезапустите её."
+        echo ""
+        echo -en "  ${BOLD}Всё равно выпустить? [y/N]:${NC} "
+        local _yn_local; read_line _yn_local
+        [[ "$_yn_local" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
+    fi
 
     if [ -z "$_domain" ]; then
         local _suggest; _suggest=$(panel_cert_domain 2>/dev/null)

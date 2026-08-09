@@ -618,6 +618,13 @@ uninstall() {
     # команду) и лезть в чужие dotfiles при удалении не стоит.
     rm -f /etc/profile.d/mtproxyl.sh
 
+    # Параметры ядра, которые ставили фиксы. В отличие от алиаса это не
+    # безобидный остаток: удалённый MTProxyL продолжал бы менять поведение
+    # TCP на каждой загрузке. Значения вернутся к дефолтам ядра.
+    rm -f /etc/sysctl.d/99-mtproxyl-zapret2.conf \
+          /etc/sysctl.d/99-mtproxyl-keepalive.conf \
+          /etc/sysctl.d/99-mtproxyl-meko-opt.conf
+
     echo ""
     log_success "MTProxyL полностью удалён"
     echo ""

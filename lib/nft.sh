@@ -70,6 +70,39 @@ ZAPRET2_CONF="${ZAPRET2_ETC_DIR}/mtproto.conf"
 ZAPRET2_LUA="${ZAPRET2_LUA_DIR}/mtproto.lua"
 ZAPRET2_SERVICE="mtproxyl-zapret2.service"
 ZAPRET2_NFT_TABLE="MTProtoL"
+
+# Условие обхода очереди для уже обработанного соединения.
+#
+# Разгрузка держится на том, что соединение, которое nfqws2 уже разобрал,
+# помечается в conntrack и дальше идёт мимо очереди. Но обходить очередь
+# должны только пакеты с данными: если мимо пройдёт и FIN, nfqws2 не увидит
+# закрытия и оставит соединение в своём conntrack живым.
+#
+# Само по себе это лишняя запись, но за NAT (тем более CGNAT) — источник
+# оборванных подключений. Клиент за NAT не выбирает порт сам: трансляция
+# берёт его из своего небольшого пула и переиспользует порт сразу после
+# закрытия соединения, которое она отследила по FIN. Для nfqws2 это выглядит
+# как SYN внутри соединения, которое он всё ещё считает установленным, и
+# новое подключение обрабатывается по устаревшему состоянию.
+#
+# Поэтому мимо очереди пропускаем только пакеты, у которых из fin/syn/rst/ack
+# поднят один ack. FIN, SYN и RST продолжают попадать в nfqws2 — на объём
+# трафика это не влияет (их единицы на соединение), зато его conntrack
+# остаётся в согласии с реальностью.
+ZAPRET2_BYPASS_MATCH="tcp flags & (fin | syn | rst | ack) == ack"
+
+# Ядру тоже нужно объяснить про переиспользуемые порты. Даже когда nfqws2
+# видит закрытие и чистит своё состояние, у ядра остаётся сокет в TIME_WAIT:
+# на SYN со «свежезакрытого» кортежа оно отвечает ACK вместо того, чтобы
+# открыть новое соединение, и клиент за NAT висит до таймаута.
+#
+# tcp_tw_reuse разрешает переиспользовать сокет в TIME_WAIT для нового
+# исходящего соединения, когда метки времени говорят, что старое действительно
+# завершилось. Значение по умолчанию на свежих ядрах — 2 (только loopback),
+# нам нужно 1.
+ZAPRET2_SYSCTL_FILE="/etc/sysctl.d/99-mtproxyl-zapret2.conf"
+ZAPRET2_TW_REUSE_VALUE="1"
+ZAPRET2_ORIG_TW_REUSE=""
 # Значения по умолчанию держим одним набором: их же показывает и
 # восстанавливает пункт «Сброс к дефолту», иначе сброс уводил настройки
 # к значениям, которых нет ни у одной свежей установки.
@@ -162,6 +195,7 @@ ZAPRET2_WIN_ACK='${ZAPRET2_WIN_ACK}'
 ZAPRET2_EXTRA_PORTS='${ZAPRET2_EXTRA_PORTS}'
 ZAPRET2_QNUM='${ZAPRET2_QNUM}'
 ZAPRET2_FWMARK='${ZAPRET2_FWMARK}'
+ZAPRET2_ORIG_TW_REUSE='${ZAPRET2_ORIG_TW_REUSE}'
 ZAPRET2_DEBUG='${ZAPRET2_DEBUG}'
 EOF
     local _i
@@ -204,7 +238,7 @@ load_nft_settings() {
                 ZAPRET2_APPLIED|ZAPRET2_SERVICE_ENABLED|\
                 ZAPRET2_OUT_RANGE|ZAPRET2_IN_RANGE|ZAPRET2_SPLIT_LEN|\
                 ZAPRET2_WIN_SYNACK|ZAPRET2_WIN_ACK|ZAPRET2_EXTRA_PORTS|\
-                ZAPRET2_QNUM|ZAPRET2_FWMARK|ZAPRET2_DEBUG)
+                ZAPRET2_QNUM|ZAPRET2_FWMARK|ZAPRET2_DEBUG|ZAPRET2_ORIG_TW_REUSE)
                     printf -v "$_key" '%s' "$_val"
                     [ "$_key" = "NFT_IOS_DETECT" ] && _have_ios_detect="true"
                     ;;
@@ -1610,9 +1644,18 @@ PORT="$(zapret2_nft_port_spec)"
 QNUM="${ZAPRET2_QNUM}"
 CT_MARK="${_ct_mark}"
 COMBINED_MARK="${_combined_mark}"
+# Мимо очереди — только пакеты с данными: FIN/SYN/RST нужны самому nfqws2,
+# иначе его conntrack держит закрытые соединения живыми (см. lib/nft.sh).
+BYPASS_MATCH="${ZAPRET2_BYPASS_MATCH}"
 IS_BRIDGE="${_is_bridge}"
 IS_PRECISE="${_is_precise}"
 CONTAINER="${DETECTED_CONTAINER}"
+
+# Ядро само по себе не знает про переиспользуемые порты за NAT: на SYN с
+# недавно закрытого кортежа оно отвечает ACK вместо нового соединения.
+# Файл в sysctl.d отрабатывает при загрузке, но служба может подниматься и
+# после ручного изменения параметра — задаём его явно на каждый старт.
+sysctl -w net.ipv4.tcp_tw_reuse=${ZAPRET2_TW_REUSE_VALUE} >/dev/null 2>&1 || true
 
 nft delete table ip "\$TABLE" 2>/dev/null || true
 nft add table ip "\$TABLE"
@@ -1651,17 +1694,17 @@ if [ "\$IS_BRIDGE" = "true" ]; then
 
     nft "add chain ip \$TABLE forward { type filter hook forward priority mangle; policy accept; }"
     nft "add rule ip \$TABLE forward ct state invalid counter drop"
-    nft "add rule ip \$TABLE forward ct mark \$CT_MARK counter accept"
+    nft "add rule ip \$TABLE forward \$BYPASS_MATCH ct mark \$CT_MARK counter accept"
     nft "add rule ip \$TABLE forward \${DADDR_MATCH}meta mark and \$FWMARK == 0x00000000 tcp dport \$PORT counter queue num \$QNUM bypass"
     nft "add rule ip \$TABLE forward \${SADDR_MATCH}meta mark and \$FWMARK == 0x00000000 tcp sport \$PORT counter queue num \$QNUM bypass"
 else
     nft "add chain ip \$TABLE postrouting { type filter hook postrouting priority srcnat + 1; policy accept; }"
-    nft "add rule ip \$TABLE postrouting ct mark \$CT_MARK counter accept"
+    nft "add rule ip \$TABLE postrouting \$BYPASS_MATCH ct mark \$CT_MARK counter accept"
     nft "add rule ip \$TABLE postrouting meta mark and \$FWMARK == 0x00000000 tcp sport \$PORT counter queue num \$QNUM bypass"
 
     nft "add chain ip \$TABLE prerouting { type filter hook prerouting priority mangle; policy accept; }"
     nft "add rule ip \$TABLE prerouting ct state invalid counter drop"
-    nft "add rule ip \$TABLE prerouting ct mark \$CT_MARK counter accept"
+    nft "add rule ip \$TABLE prerouting \$BYPASS_MATCH ct mark \$CT_MARK counter accept"
     nft "add rule ip \$TABLE prerouting meta mark and \$FWMARK == 0x00000000 tcp dport \$PORT counter queue num \$QNUM bypass"
 fi
 
@@ -1738,8 +1781,44 @@ zapret2_is_bridge_target() {
     [ "${DETECTED_NETWORK_MODE:-host}" = "bridge" ] || [ "${NFT_HOOK:-input}" = "forward" ]
 }
 
+# Кладёт tcp_tw_reuse=1 и применяет его сразу.
+#
+# Файл в sysctl.d нужен, чтобы настройка пережила перезагрузку; отдельный
+# sysctl -w — чтобы она подействовала сейчас, не дожидаясь её. Именно -w, а не
+# `sysctl --system`: последний перечитывает вообще все файлы и заодно откатил
+# бы значения, которые администратор поменял на ходу.
+zapret2_apply_sysctl() {
+    if [ -z "$ZAPRET2_ORIG_TW_REUSE" ]; then
+        ZAPRET2_ORIG_TW_REUSE=$(sysctl -n net.ipv4.tcp_tw_reuse 2>/dev/null || echo "2")
+    fi
+
+    cat > "$ZAPRET2_SYSCTL_FILE" << SYSEOF
+# MTProxyL: параметры ядра для zapret2
+# Переиспользование сокета в TIME_WAIT для нового соединения. Без этого
+# клиенты за NAT, которым трансляция выдала недавно освободившийся порт,
+# получают на SYN ответ ACK и висят до таймаута.
+net.ipv4.tcp_tw_reuse = ${ZAPRET2_TW_REUSE_VALUE}
+SYSEOF
+    chmod 644 "$ZAPRET2_SYSCTL_FILE"
+
+    if sysctl -w "net.ipv4.tcp_tw_reuse=${ZAPRET2_TW_REUSE_VALUE}" &>/dev/null; then
+        log_success "net.ipv4.tcp_tw_reuse=${ZAPRET2_TW_REUSE_VALUE} (было ${ZAPRET2_ORIG_TW_REUSE})"
+    else
+        log_warn "Не удалось применить net.ipv4.tcp_tw_reuse — настройка вступит в силу после перезагрузки"
+    fi
+}
+
+zapret2_remove_sysctl() {
+    [ -f "$ZAPRET2_SYSCTL_FILE" ] || return 0
+    rm -f "$ZAPRET2_SYSCTL_FILE"
+    sysctl -w "net.ipv4.tcp_tw_reuse=${ZAPRET2_ORIG_TW_REUSE:-2}" &>/dev/null || true
+    ZAPRET2_ORIG_TW_REUSE=""
+    log_success "Параметры ядра zapret2 сняты"
+}
+
 zapret2_apply_nft() {
     ensure_nftables_installed || return 1
+    zapret2_apply_sysctl
 
     local _table="${ZAPRET2_NFT_TABLE}"
     local _fwmark="${ZAPRET2_FWMARK}"
@@ -1783,7 +1862,7 @@ zapret2_apply_nft() {
 
         nft "add chain ip $_table forward { type filter hook forward priority mangle; policy accept; }"
         nft "add rule ip $_table forward ct state invalid counter drop"
-        nft "add rule ip $_table forward ct mark ${_ct_mark} counter accept"
+        nft "add rule ip $_table forward ${ZAPRET2_BYPASS_MATCH} ct mark ${_ct_mark} counter accept"
         nft "add rule ip $_table forward ${_daddr_match}meta mark and $_fwmark == 0x00000000 tcp dport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
         nft "add rule ip $_table forward ${_saddr_match}meta mark and $_fwmark == 0x00000000 tcp sport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
         log_success "NFT таблица ${_table} применена для Docker bridge (forward: порты=${_port} qnum=${ZAPRET2_QNUM} strategy=${DETECT_BRIDGE_STRATEGY:-simple})"
@@ -1791,12 +1870,12 @@ zapret2_apply_nft() {
     fi
 
     nft "add chain ip $_table postrouting { type filter hook postrouting priority srcnat + 1; policy accept; }"
-    nft "add rule ip $_table postrouting ct mark ${_ct_mark} counter accept"
+    nft "add rule ip $_table postrouting ${ZAPRET2_BYPASS_MATCH} ct mark ${_ct_mark} counter accept"
     nft "add rule ip $_table postrouting meta mark and $_fwmark == 0x00000000 tcp sport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
 
     nft "add chain ip $_table prerouting { type filter hook prerouting priority mangle; policy accept; }"
     nft "add rule ip $_table prerouting ct state invalid counter drop"
-    nft "add rule ip $_table prerouting ct mark ${_ct_mark} counter accept"
+    nft "add rule ip $_table prerouting ${ZAPRET2_BYPASS_MATCH} ct mark ${_ct_mark} counter accept"
     nft "add rule ip $_table prerouting meta mark and $_fwmark == 0x00000000 tcp dport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
 
     log_success "NFT таблица ${_table} применена (порты=${_port} qnum=${ZAPRET2_QNUM})"
@@ -1842,6 +1921,7 @@ zapret2_cleanup_failed_install() {
     pkill -9 -x nfqws2 2>/dev/null || true
 
     nft delete table ip "${ZAPRET2_NFT_TABLE}" 2>/dev/null || true
+    zapret2_remove_sysctl
 
     rm -f "/etc/systemd/system/${ZAPRET2_SERVICE}"
     rm -f "/usr/local/sbin/mtproxyl-zapret2-start.sh"
@@ -2093,6 +2173,7 @@ zapret2_remove() {
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     zapret2_stop
+    zapret2_remove_sysctl
     systemctl disable "$ZAPRET2_SERVICE" 2>/dev/null || true
     rm -f "/etc/systemd/system/${ZAPRET2_SERVICE}"
     rm -f "/usr/local/sbin/mtproxyl-zapret2-start.sh"

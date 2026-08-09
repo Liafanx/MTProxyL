@@ -1,6 +1,15 @@
 # MTProxyL-Panel Configuration
 
-# Address and port the panel listens on
+# Address and port the panel listens on.
+#
+# 0.0.0.0 — all interfaces, the panel is reachable from the internet.
+# 127.0.0.1 — loopback only: the port is not listened on from outside at all,
+# so there is no login form to brute-force. Reach it over an ssh tunnel:
+#
+#   ssh -L 8080:127.0.0.1:8080 user@server
+#
+# and open http://127.0.0.1:8080 locally. TLS is pointless in that setup —
+# ssh already encrypts the hop and loopback traffic never leaves the host.
 listen = "0.0.0.0:8080"
 
 # Base path for running behind a reverse proxy (e.g. "/panel123")
