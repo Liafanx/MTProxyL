@@ -1760,7 +1760,10 @@ zapret2_is_bridge_target() {
 zapret2_apply_sysctl() {
     if [ -z "$ZAPRET2_ORIG_TW_REUSE" ]; then
         ZAPRET2_ORIG_TW_REUSE=$(sysctl -n net.ipv4.tcp_tw_reuse 2>/dev/null || echo "2")
+        save_nft_settings 2>/dev/null || true
     fi
+
+    log_info "Параметры ядра: переиспользование портов за NAT"
 
     cat > "$ZAPRET2_SYSCTL_FILE" << SYSEOF
 # MTProxyL: параметры ядра для zapret2
@@ -1769,12 +1772,31 @@ zapret2_apply_sysctl() {
 net.ipv4.tcp_tw_reuse = ${ZAPRET2_TW_REUSE_VALUE}
 SYSEOF
     chmod 644 "$ZAPRET2_SYSCTL_FILE"
+    log_success "Записан ${ZAPRET2_SYSCTL_FILE}"
 
+    local _now
     if sysctl -w "net.ipv4.tcp_tw_reuse=${ZAPRET2_TW_REUSE_VALUE}" &>/dev/null; then
-        log_success "net.ipv4.tcp_tw_reuse=${ZAPRET2_TW_REUSE_VALUE} (было ${ZAPRET2_ORIG_TW_REUSE})"
-    else
-        log_warn "Не удалось применить net.ipv4.tcp_tw_reuse — настройка вступит в силу после перезагрузки"
+        _now=$(sysctl -n net.ipv4.tcp_tw_reuse 2>/dev/null)
+        if [ "$_now" = "$ZAPRET2_TW_REUSE_VALUE" ]; then
+            if [ "$ZAPRET2_ORIG_TW_REUSE" = "$ZAPRET2_TW_REUSE_VALUE" ]; then
+                log_success "net.ipv4.tcp_tw_reuse = ${_now} (уже было включено)"
+            else
+                log_success "net.ipv4.tcp_tw_reuse = ${_now} (было ${ZAPRET2_ORIG_TW_REUSE})"
+            fi
+            return 0
+        fi
+        log_warn "net.ipv4.tcp_tw_reuse = ${_now}, ожидалось ${ZAPRET2_TW_REUSE_VALUE}"
+        log_warn "Значение задаёт другой файл — он читается после нашего"
+        local _f
+        while IFS= read -r _f; do
+            [ -n "$_f" ] || continue
+            echo -e "    ${DIM}задан в ${_f}${NC}"
+        done <<< "$(_zapret2_sysctl_setters net.ipv4.tcp_tw_reuse "$ZAPRET2_SYSCTL_FILE")"
+        return 1
     fi
+
+    log_warn "Не удалось применить net.ipv4.tcp_tw_reuse — вступит в силу после перезагрузки"
+    return 1
 }
 
 # Включена ли оптимизация буфера: файл на месте и значения в ядре наши.
@@ -1788,11 +1810,13 @@ zapret2_wscale_opt_applied() {
 
 # Кто ещё задаёт этот ключ, кроме нашего файла.
 _zapret2_sysctl_setters() {
-    local _key="$1"
-    grep -rlE "^[[:space:]]*${_key//./\\.}[[:space:]]*=" \
+    local _key="$1" _own="${2:-}"
+    local _out
+    _out=$(grep -rlE "^[[:space:]]*${_key//./\\.}[[:space:]]*=" \
         /etc/sysctl.conf /etc/sysctl.d /run/sysctl.d /usr/lib/sysctl.d \
-        /usr/local/lib/sysctl.d 2>/dev/null \
-        | grep -vF "$ZAPRET2_WSCALE_OPT_FILE" | sort -u
+        /usr/local/lib/sysctl.d 2>/dev/null | sort -u)
+    [ -n "$_own" ] && _out=$(printf '%s\n' "$_out" | grep -vF "$_own")
+    printf '%s\n' "$_out"
 }
 
 zapret2_wscale_opt_apply() {
@@ -1828,7 +1852,7 @@ EOF
             [ -n "$_f" ] || continue
             _found="yes"
             echo -e "    ${DIM}${_key} задан в ${_f}${NC}"
-        done <<< "$(_zapret2_sysctl_setters "$_key")"
+        done <<< "$(_zapret2_sysctl_setters "$_key" "$ZAPRET2_WSCALE_OPT_FILE")"
     done
     [ -n "$_found" ] || log_info "Файл-источник найти не удалось — проверьте sysctl --system вручную"
     log_info "Уберите ключи из этих файлов и повторите"
@@ -2160,6 +2184,9 @@ zapret2_install() {
     zapret2_write_conf
     zapret2_write_lua
     zapret2_write_service
+    # До запуска: стартовый скрипт службы сам выставит tw_reuse, и прежнее
+    # значение после него уже не узнать.
+    zapret2_apply_sysctl
 
     if ! zapret2_start; then
         log_warn "zapret2 не запустился — выполняю откат"
@@ -2192,6 +2219,11 @@ zapret2_install() {
     echo -e "    ${GREEN}${SYM_CHECK}${NC} Lua: ${ZAPRET2_LUA}"
     echo -e "    ${GREEN}${SYM_CHECK}${NC} Служба: ${ZAPRET2_SERVICE}"
     echo -e "    ${GREEN}${SYM_CHECK}${NC} NFT таблица ip ${ZAPRET2_NFT_TABLE}"
+    echo -e "    ${GREEN}${SYM_CHECK}${NC} Параметры ядра: ${ZAPRET2_SYSCTL_FILE}"
+    echo -e "      ${DIM}net.ipv4.tcp_tw_reuse = $(sysctl -n net.ipv4.tcp_tw_reuse 2>/dev/null)${NC}"
+    if zapret2_wscale_opt_applied; then
+        echo -e "    ${GREEN}${SYM_CHECK}${NC} Оптимизация TCP-буфера: ${ZAPRET2_WSCALE_OPT_FILE}"
+    fi
 }
 
 zapret2_remove() {
