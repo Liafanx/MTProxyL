@@ -378,14 +378,17 @@ run_fix_arsenal_wizard() {
     echo -en "  ${BOLD}Применить NFT limiter? [1 по умолчанию]:${NC} "
     local _nft_choice; read_line _nft_choice
 
+    # Отказ — это отказ: без флага ниже применялись правила режима по
+    # умолчанию, и каскад через реаниматор ломался.
+    local _nft_applied="true"
     case "$_nft_choice" in
         2) apply_nft_preset classic ;;
-        0) log_info "NFT limiter не применён" ;;
+        0) _nft_applied="false"; log_info "NFT limiter не применён" ;;
         *) apply_nft_preset smart ;;
     esac
 
-      # Выбор Other Action для Smart режима (только если zapret2 не установлен)
-      if [ "$NFT_MODE" = "smart" ] && [ "$_zapret2_installed" != "true" ]; then
+      # Выбор Other Action для Smart режима
+      if [ "$_nft_applied" = "true" ] && [ "$NFT_MODE" = "smart" ]; then
         echo ""
         echo -e "  ${BOLD}Действие для non-iOS устройств (Android / Desktop):${NC}"
         echo ""
@@ -404,7 +407,7 @@ run_fix_arsenal_wizard() {
         log_success "Other Action: ${NFT_OTHER_ACTION}"
       fi
 
-      if [ "$_nft_choice" != "n" ] && [ "$_nft_choice" != "N" ]; then
+      if [ "$_nft_applied" = "true" ]; then
         # По умолчанию ограничиваем по IP сервера
         if [ -n "${CUSTOM_IP:-}" ] && validate_ip_literal "${CUSTOM_IP}"; then
             NFT_SERVER_IP="${CUSTOM_IP}"

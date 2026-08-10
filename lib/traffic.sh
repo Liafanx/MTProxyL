@@ -195,7 +195,6 @@ _flush_user_ip_history() {
     local _db_file="$1"
     [ -n "$_db_file" ] || return 0
     mkdir -p "${INSTALL_DIR}/relay_stats" 2>/dev/null
-    # awk ниже читает базу как файл — пустой годится, отсутствующий нет.
     [ -f "$_db_file" ] || : > "$_db_file"
 
     local _now; _now=$(date +%s)
@@ -203,16 +202,20 @@ _flush_user_ip_history() {
 
     # Слияние в awk, вытеснение сортировкой: на bash вложенные циклы давали
     # ~40 секунд CPU на флаш. Строки: пользователь|last|ip|first.
-    awk -v now="$_now" '
-        NR == FNR {
-            if (substr($0, 1, 5) != "USER|") next
-            n = split($0, f, "|")
-            if (n < 3 || f[2] == "" || f[3] == "") next
-            k = f[2] SUBSEP f[3]
-            if (!(k in first)) { nk++; ku[nk] = f[2]; ki[nk] = f[3]; kk[nk] = k }
-            first[k] = (n > 3 && f[4] != "") ? f[4] : 0
-            last[k]  = (n > 4 && f[5] != "") ? f[5] : 0
-            next
+    # База читается getline, а не вторым файлом: у пустой базы NR == FNR
+    # совпало бы и на stdin, и весь ввод ушёл бы в разбор базы.
+    awk -v now="$_now" -v db="$_db_file" '
+        BEGIN {
+            while ((getline line < db) > 0) {
+                if (substr(line, 1, 5) != "USER|") continue
+                n = split(line, f, "|")
+                if (n < 3 || f[2] == "" || f[3] == "") continue
+                k = f[2] SUBSEP f[3]
+                if (!(k in first)) { nk++; ku[nk] = f[2]; ki[nk] = f[3]; kk[nk] = k }
+                first[k] = (n > 3 && f[4] != "") ? f[4] : 0
+                last[k]  = (n > 4 && f[5] != "") ? f[5] : 0
+            }
+            close(db)
         }
         {
             n = split($0, f, "|")
@@ -227,7 +230,7 @@ _flush_user_ip_history() {
                 printf "%s|%s|%s|%s\n", ku[i], last[k], ki[i], first[k]
             }
         }
-    ' "$_db_file" - 2>/dev/null \
+    ' 2>/dev/null \
         | sort -t'|' -k1,1 -k2,2nr 2>/dev/null \
         | awk -F'|' -v cap="$(_user_ip_history_cap)" '
             $1 != prev { prev = $1; n = 0 }
