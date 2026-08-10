@@ -28,6 +28,10 @@ type AvailabilityOverride struct {
 	// считать это выключенной проверкой нельзя. Он же позволяет сохранить цель,
 	// не трогая флаг, — форма цели про него ничего не знает.
 	AutoCheck *bool `json:"auto_check,omitempty"`
+	// APIToken поднимает часовой лимит Globalping. Указатель по той же
+	// причине, что и AutoCheck: nil значит «не трогать», иначе сохранение
+	// цели стирало бы токен. Наружу не отдаётся — только признак, что он есть.
+	APIToken *string `json:"api_token,omitempty"`
 }
 
 // availabilityOverrideStore persists the override across restarts.
@@ -86,14 +90,43 @@ func (s *availabilityOverrideStore) setAutoCheck(on bool) error {
 	return s.set(cur)
 }
 
-func (s *availabilityOverrideStore) set(o AvailabilityOverride) error {
-	// Форма цели флаг не присылает: nil означает «оставить как было», иначе
-	// сохранение адреса молча включало бы автопроверку обратно.
-	if o.AutoCheck == nil {
-		s.mu.RLock()
-		o.AutoCheck = s.cur.AutoCheck
-		s.mu.RUnlock()
+// public — то же переопределение, но без секрета: форма цели его не показывает
+// и не присылает, а в браузере ему делать нечего.
+func (s *availabilityOverrideStore) public() AvailabilityOverride {
+	o := s.get()
+	o.APIToken = nil
+	return o
+}
+
+// apiToken возвращает сохранённый токен, пустую строку — если его нет.
+func (s *availabilityOverrideStore) apiToken() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cur.APIToken == nil {
+		return ""
 	}
+	return *s.cur.APIToken
+}
+
+func (s *availabilityOverrideStore) setAPIToken(tok string) error {
+	s.mu.RLock()
+	cur := s.cur
+	s.mu.RUnlock()
+	cur.APIToken = &tok
+	return s.set(cur)
+}
+
+func (s *availabilityOverrideStore) set(o AvailabilityOverride) error {
+	// Формы цели и токена присылают только своё: nil значит «оставить как
+	// было», иначе сохранение адреса стирало бы токен и включало автопроверку.
+	s.mu.RLock()
+	if o.AutoCheck == nil {
+		o.AutoCheck = s.cur.AutoCheck
+	}
+	if o.APIToken == nil {
+		o.APIToken = s.cur.APIToken
+	}
+	s.mu.RUnlock()
 
 	s.mu.Lock()
 	s.cur = o

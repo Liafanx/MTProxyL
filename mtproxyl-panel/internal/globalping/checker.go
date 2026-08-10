@@ -85,6 +85,22 @@ func (c *Checker) Store() *Store { return c.store }
 // Quota reports the hourly allowance for the UI.
 func (c *Checker) Quota() QuotaState { return c.quota.state() }
 
+// SetToken swaps the Globalping token without restarting the panel.
+// Счётчик при этом сохраняется: потраченное за час никуда не делось, меняется
+// только справочный лимит, до которого его сравнивают.
+func (c *Checker) SetToken(token string) {
+	c.mu.Lock()
+	c.client = NewClient(token)
+	c.mu.Unlock()
+	c.quota.setBudgetFor(token)
+}
+
+func (c *Checker) apiClient() *Client {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.client
+}
+
 // SetAutoCheck installs the predicate asked before every scheduled check.
 // Manual checks ignore it: кнопку нажимает человек, он и решает.
 func (c *Checker) SetAutoCheck(fn func() bool) {
@@ -160,10 +176,10 @@ func (c *Checker) RunCheckNow(ctx context.Context) (*CheckResult, error) {
 func (c *Checker) runScheduled(ctx context.Context) {
 	result, err := c.doCheck(ctx)
 	if err != nil {
-		var qe *QuotaError
-		if errors.As(err, &qe) {
-			// Не сбой: кредиты кончились, прошлый вердикт остаётся в силе.
-			log.Printf("[globalping] плановая проверка пропущена — %s", qe)
+		var rle *RateLimitError
+		if errors.As(err, &rle) {
+			// Не сбой: у сервиса кончились кредиты, прошлый вердикт в силе.
+			log.Printf("[globalping] плановая проверка пропущена — %s", rle)
 			return
 		}
 		log.Printf("[globalping] проверка не удалась: %s", err)
@@ -187,12 +203,6 @@ func (c *Checker) doCheck(ctx context.Context) (*CheckResult, error) {
 		}
 		return nil, fmt.Errorf("проверка завершилась без результата")
 	}
-	// Отказ по квоте — не результат проверки, а отказ её начинать: ничего не
-	// потрачено и не измерено, поэтому прошлый вердикт не затирается.
-	if err := c.quota.check(c.probeLimit); err != nil {
-		c.mu.Unlock()
-		return nil, err
-	}
 	done := make(chan struct{})
 	c.inFlight = done
 	c.lastCheckTime = time.Now()
@@ -205,6 +215,13 @@ func (c *Checker) doCheck(ctx context.Context) (*CheckResult, error) {
 	c.inFlight = nil
 	c.mu.Unlock()
 	close(done)
+
+	// Лимит сервиса — не приговор прокси: измерения не было, и прошлый
+	// вердикт остаётся в силе, иначе страница показала бы «недоступен».
+	var rle *RateLimitError
+	if errors.As(err, &rle) {
+		return nil, err
+	}
 
 	if err != nil {
 		// The failure is worth keeping: the page has to explain why there is
@@ -229,7 +246,8 @@ func (c *Checker) measure(ctx context.Context) (*CheckResult, error) {
 	}
 
 	req := BuildMeasurementRequest(target.Host, target.Port, target.SNI, c.probeLimit)
-	created, err := c.client.CreateMeasurement(ctx, req)
+	api := c.apiClient()
+	created, err := api.CreateMeasurement(ctx, req)
 	if err != nil {
 		// Сервис говорит, что кредитов нет: его слово важнее локального счёта,
 		// который после перезапуска панели начинается с нуля, а квота — нет.
@@ -248,7 +266,7 @@ func (c *Checker) measure(ctx context.Context) (*CheckResult, error) {
 	}
 	c.quota.record(cost)
 
-	measurement, err := c.client.AwaitMeasurement(ctx, created.ID, measurementWait, pollInterval)
+	measurement, err := api.AwaitMeasurement(ctx, created.ID, measurementWait, pollInterval)
 	if err != nil {
 		return nil, err
 	}

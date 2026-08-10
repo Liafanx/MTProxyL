@@ -1,59 +1,84 @@
 package globalping
 
 import (
-	"errors"
 	"testing"
 	"time"
 )
 
-// newTestQuota gives the ledger a clock the test drives by hand: the window is
-// an hour long, and waiting it out for real is not an option.
+// newTestQuota гоняет счётчик по часам вручную: окно длиной в час, ждать его
+// по-настоящему не вариант.
 func newTestQuota(token string, now *time.Time) *quota {
 	q := newQuota(token)
 	q.now = func() time.Time { return *now }
 	return q
 }
 
-func TestQuotaAnonymousBudgetIs250(t *testing.T) {
+func TestQuotaCountsSpentCredits(t *testing.T) {
 	now := time.Now()
 	q := newTestQuota("", &now)
 
-	// 12 проверок по 20 зондов — 240 кредитов, всё ещё в лимите.
 	for i := 0; i < 12; i++ {
-		if err := q.check(20); err != nil {
-			t.Fatalf("проверка %d отклонена раньше времени: %s", i+1, err)
-		}
 		q.record(20)
 	}
-	if got := q.state().Spent; got != 240 {
-		t.Errorf("Spent = %d, ожидалось 240", got)
+	st := q.state()
+	if st.Spent != 240 {
+		t.Errorf("Spent = %d, ожидалось 240", st.Spent)
 	}
-	// Тринадцатая (260 > 250) уже не влезает.
-	err := q.check(20)
-	if err == nil {
-		t.Fatal("13-я проверка должна быть отклонена: 260 > 250")
+	if st.Budget != 250 {
+		t.Errorf("Budget = %d, ожидалось 250", st.Budget)
 	}
-	var qe *QuotaError
-	if !errors.As(err, &qe) {
-		t.Errorf("ожидался *QuotaError, получен %T", err)
+	if st.Remaining != 10 {
+		t.Errorf("Remaining = %d, ожидалось 10", st.Remaining)
 	}
 }
 
-func TestQuotaTokenDoublesBudget(t *testing.T) {
+// Счётчик перерасход показывает, но ничего не запрещает: лимит объявляет сервис.
+func TestQuotaDoesNotBlockOverspend(t *testing.T) {
+	now := time.Now()
+	q := newTestQuota("", &now)
+
+	for i := 0; i < 20; i++ {
+		q.record(20) // 400 при справочных 250
+	}
+	st := q.state()
+	if st.Spent != 400 {
+		t.Errorf("Spent = %d, ожидалось 400", st.Spent)
+	}
+	if st.Remaining != 0 {
+		t.Errorf("Remaining = %d, ожидалось 0 (в минус не уходим)", st.Remaining)
+	}
+}
+
+func TestQuotaTokenRaisesBudget(t *testing.T) {
 	now := time.Now()
 	q := newTestQuota("gp_token", &now)
 
-	if got := q.state().Budget; got != 500 {
-		t.Errorf("Budget с токеном = %d, ожидалось 500", got)
+	if st := q.state(); st.Budget != 500 || !st.HasToken {
+		t.Errorf("с токеном Budget = %d, HasToken = %v; ожидалось 500 и true", st.Budget, st.HasToken)
 	}
-	for i := 0; i < 25; i++ {
-		if err := q.check(20); err != nil {
-			t.Fatalf("проверка %d отклонена раньше времени: %s", i+1, err)
-		}
-		q.record(20)
+}
+
+// Токен можно поменять на ходу: счётчик при этом не сбрасывается.
+func TestQuotaSetBudgetKeepsCounter(t *testing.T) {
+	now := time.Now()
+	q := newTestQuota("", &now)
+	q.record(60)
+
+	q.setBudgetFor("gp_token")
+	st := q.state()
+	if st.Budget != 500 {
+		t.Errorf("Budget = %d, ожидалось 500", st.Budget)
 	}
-	if err := q.check(20); err == nil {
-		t.Error("26-я проверка должна быть отклонена: 520 > 500")
+	if st.Spent != 60 {
+		t.Errorf("Spent = %d, ожидалось 60 — счётчик не должен сбрасываться", st.Spent)
+	}
+	if !st.HasToken {
+		t.Error("HasToken должен стать true")
+	}
+
+	q.setBudgetFor("")
+	if st := q.state(); st.Budget != 250 || st.HasToken {
+		t.Errorf("после снятия токена Budget = %d, HasToken = %v", st.Budget, st.HasToken)
 	}
 }
 
@@ -62,79 +87,49 @@ func TestQuotaCreditsReturnAfterAnHour(t *testing.T) {
 	now := time.Now()
 	q := newTestQuota("", &now)
 
-	for i := 0; i < 12; i++ {
-		q.record(20)
-	}
-	if err := q.check(20); err == nil {
-		t.Fatal("лимит должен быть исчерпан")
+	q.record(100)
+	if st := q.state(); st.Spent != 100 {
+		t.Fatalf("Spent = %d, ожидалось 100", st.Spent)
 	}
 
-	// Через 59 минут ещё ничего не вернулось.
 	now = now.Add(59 * time.Minute)
-	if err := q.check(20); err == nil {
-		t.Error("через 59 минут кредиты возвращаться не должны")
+	if st := q.state(); st.Spent != 100 {
+		t.Errorf("через 59 минут Spent = %d, ожидалось 100", st.Spent)
 	}
 
-	// Через час первое списание уходит из окна и место освобождается.
 	now = now.Add(2 * time.Minute)
-	if err := q.check(20); err != nil {
-		t.Errorf("через час проверка должна пройти, получено: %s", err)
+	if st := q.state(); st.Spent != 0 {
+		t.Errorf("через час Spent = %d, ожидалось 0", st.Spent)
 	}
 }
 
-// 429 от сервиса важнее локального счёта: после перезапуска панели ledger
-// пустой, а квота на стороне Globalping — нет.
-func TestQuotaRespects429Block(t *testing.T) {
+// 429 обнуляет остаток в показаниях, пока сервис не отпустит.
+func TestQuotaShowsBlockFrom429(t *testing.T) {
 	now := time.Now()
 	q := newTestQuota("", &now)
 
-	if err := q.check(20); err != nil {
-		t.Fatalf("пустой ledger не должен ничего отклонять: %s", err)
-	}
-
 	q.blockFor(30 * time.Minute)
-	if err := q.check(20); err == nil {
-		t.Fatal("после 429 проверки должны отклоняться")
+	st := q.state()
+	if st.Remaining != 0 {
+		t.Errorf("Remaining во время блокировки = %d, ожидалось 0", st.Remaining)
 	}
-	if got := q.state().Remaining; got != 0 {
-		t.Errorf("Remaining во время блокировки = %d, ожидалось 0", got)
+	if st.ResetInSeconds < 29*60 || st.ResetInSeconds > 31*60 {
+		t.Errorf("ResetInSeconds = %d, ожидалось около %d", st.ResetInSeconds, 30*60)
 	}
 
 	now = now.Add(31 * time.Minute)
-	if err := q.check(20); err != nil {
-		t.Errorf("после истечения блокировки проверка должна пройти: %s", err)
+	if st := q.state(); st.Remaining != 250 {
+		t.Errorf("после истечения блокировки Remaining = %d, ожидалось 250", st.Remaining)
 	}
 }
 
-// Списываем по числу реально задействованных зондов: сервис не всегда даёт
-// столько, сколько попросили.
 func TestQuotaRecordsActualProbeCount(t *testing.T) {
 	now := time.Now()
 	q := newTestQuota("", &now)
 
 	q.record(7)
 	st := q.state()
-	if st.Spent != 7 {
-		t.Errorf("Spent = %d, ожидалось 7", st.Spent)
-	}
-	if st.Remaining != 243 {
-		t.Errorf("Remaining = %d, ожидалось 243", st.Remaining)
-	}
-}
-
-func TestQuotaStateReportsResetCountdown(t *testing.T) {
-	now := time.Now()
-	q := newTestQuota("", &now)
-
-	q.record(20)
-	now = now.Add(20 * time.Minute)
-
-	st := q.state()
-	// Первое списание уходит из окна через 40 минут.
-	if st.ResetInSeconds < 39*60 || st.ResetInSeconds > 41*60 {
-		t.Errorf("ResetInSeconds = %d, ожидалось около %d", st.ResetInSeconds, 40*60)
-	}
-	if st.HasToken {
-		t.Error("HasToken должен быть false без токена")
+	if st.Spent != 7 || st.Remaining != 243 {
+		t.Errorf("Spent = %d, Remaining = %d; ожидалось 7 и 243", st.Spent, st.Remaining)
 	}
 }

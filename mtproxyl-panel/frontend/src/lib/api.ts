@@ -617,6 +617,12 @@ export const availabilityApi = {
       method: 'PUT',
       body: JSON.stringify(o),
     }),
+  /** Сохранить токен Globalping. Пустая строка — убрать. */
+  setToken: (token: string) =>
+    request<{ has_token: boolean }>(AVAILABILITY_BASE, '/token', {
+      method: 'PUT',
+      body: JSON.stringify({ token }),
+    }),
   /** Включить или выключить проверку по расписанию. */
   setAutoCheck: (enabled: boolean) =>
     request<{ auto_check: boolean }>(AVAILABILITY_BASE, '/autocheck', {

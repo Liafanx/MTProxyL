@@ -110,6 +110,8 @@ export function AvailabilityPage() {
 
         {enabled && <QuotaBanner quota={quota} />}
 
+        {enabled && <TokenForm hasToken={quota?.has_token ?? false} onSaved={load} />}
+
         {enabled && <TargetForm onSaved={load} />}
 
         {!enabled ? (
@@ -257,21 +259,80 @@ function QuotaBanner({ quota }: { quota?: AvailabilityQuota }) {
         кредитов на час (один зонд — один кредит)
       </span>
       {quota.spent > 0 && resetMin > 0 && <span>• обновление через {resetMin} мин</span>}
-      {!quota.has_token && (
-        <span>
-          •{' '}
-          <a
-            href="https://dash.globalping.io/"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-accent hover:underline"
-          >
-            бесплатный токен
-          </a>{' '}
-          удвоит лимит
-        </span>
-      )}
+      <span>• лимит держит сам сервис: закончится — скажет ответом на проверку</span>
     </div>
+  );
+}
+
+/**
+ * Токен Globalping. Обратно не приходит — только признак, что он сохранён:
+ * возить секрет в браузер на каждую загрузку страницы незачем.
+ */
+function TokenForm({ hasToken, onSaved }: { hasToken: boolean; onSaved: () => void }) {
+  const [value, setValue] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const submit = async (token: string) => {
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await availabilityApi.setToken(token);
+      setValue('');
+      setSaved(true);
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось сохранить токен');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <CollapsibleSection
+      title="Токен Globalping"
+      defaultOpen={false}
+      badge={<Badge variant={hasToken ? 'success' : 'outline'}>{hasToken ? 'задан' : 'не задан'}</Badge>}
+    >
+      <p className="text-xs text-text-secondary mb-3">
+        Бесплатный токен удваивает часовой лимит — 500 кредитов вместо 250. Получить:{' '}
+        <a
+          href="https://dash.globalping.io/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-accent hover:underline"
+        >
+          dash.globalping.io
+        </a>{' '}
+        → Tokens. Обратно токен не показывается, только заменяется.
+      </p>
+      <div className="flex items-center gap-2 flex-wrap">
+        <Input
+          type="password"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={hasToken ? 'заменить на новый' : 'вставьте токен'}
+          spellCheck={false}
+          className="max-w-[280px]"
+        />
+        <Button onClick={() => submit(value.trim())} disabled={saving || !value.trim()} size="sm">
+          {saving ? 'Сохраняем…' : 'Сохранить'}
+        </Button>
+        {hasToken && (
+          <Button onClick={() => submit('')} disabled={saving} size="sm" variant="outline">
+            Убрать
+          </Button>
+        )}
+        {saved && !error && <span className="text-xs text-success">Сохранено</span>}
+      </div>
+      {error && (
+        <div className="mt-2">
+          <ErrorAlert message={error} />
+        </div>
+      )}
+    </CollapsibleSection>
   );
 }
 

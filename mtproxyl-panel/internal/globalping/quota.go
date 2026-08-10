@@ -15,10 +15,11 @@ const (
 	creditWindow = time.Hour
 )
 
-// quota keeps the panel inside Globalping's hourly allowance. The service
-// enforces it with a 429, but by then the credits are already gone and the next
-// checks fail too. Rolling hour, not a fixed bucket: credits come back an hour
-// after they were spent.
+// quota — счётчик потраченных кредитов, а не сторож. Лимит объявляет сам
+// сервис ответом 429: своя арифметика тут только гадала бы, а отказывать по
+// догадке хуже, чем отдать решение тому, кто считает по-настоящему.
+// Скользящий час, а не фиксированное окно: кредиты возвращаются через час
+// после списания.
 type quota struct {
 	mu     sync.Mutex
 	budget int
@@ -40,36 +41,6 @@ func newQuota(apiToken string) *quota {
 		budget = tokenHourlyCredits
 	}
 	return &quota{budget: budget, now: time.Now}
-}
-
-// QuotaError means the panel refused the check itself to stay inside the
-// hourly allowance. Nothing was spent and nothing was measured, so the previous
-// verdict is still the current one.
-type QuotaError struct{ Message string }
-
-func (e *QuotaError) Error() string { return e.Message }
-
-// check reports whether cost more credits can be spent right now.
-func (q *quota) check(cost int) error {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	now := q.now()
-	if now.Before(q.blockedUntil) {
-		return &QuotaError{Message: fmt.Sprintf(
-			"часовой лимит Globalping исчерпан, следующая проверка через %s",
-			humanDuration(q.blockedUntil.Sub(now)))}
-	}
-	q.prune(now)
-
-	spent := q.spentLocked()
-	if spent+cost <= q.budget {
-		return nil
-	}
-	return &QuotaError{Message: fmt.Sprintf(
-		"проверка на %d зондов не укладывается в часовой лимит Globalping "+
-			"(израсходовано %d из %d кредитов); кредиты вернутся через %s%s",
-		cost, spent, q.budget, humanDuration(q.freesUpInLocked(cost, now)), tokenHint(q.tokenless()))}
 }
 
 // record books credits actually spent. The cost is the number of probes the
@@ -112,7 +83,7 @@ func (q *quota) state() QuotaState {
 		Budget:    q.budget,
 		Spent:     spent,
 		Remaining: remaining,
-		HasToken:  !q.tokenless(),
+		HasToken:  !q.tokenlessLocked(),
 	}
 	if now.Before(q.blockedUntil) {
 		st.Remaining = 0
@@ -147,21 +118,19 @@ func (q *quota) spentLocked() int {
 	return total
 }
 
-// freesUpInLocked answers how long until cost credits are available again:
-// spends expire oldest first, so it is the age-out time of the last one that
-// has to go. Caller holds the lock.
-func (q *quota) freesUpInLocked(cost int, now time.Time) time.Duration {
-	need := q.spentLocked() + cost - q.budget
-	for _, s := range q.spends {
-		need -= s.cost
-		if need <= 0 {
-			return s.at.Add(creditWindow).Sub(now)
-		}
-	}
-	return creditWindow
-}
+// Вызывается из state(), которая уже держит мьютекс: sync.Mutex не рекурсивный.
+func (q *quota) tokenlessLocked() bool { return q.budget == anonymousHourlyCredits }
 
-func (q *quota) tokenless() bool { return q.budget == anonymousHourlyCredits }
+// setBudgetFor меняет справочный лимит под новый токен, не сбрасывая счётчик.
+func (q *quota) setBudgetFor(token string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if token != "" {
+		q.budget = tokenHourlyCredits
+	} else {
+		q.budget = anonymousHourlyCredits
+	}
+}
 
 // QuotaState is the hourly allowance as the panel sees it.
 type QuotaState struct {

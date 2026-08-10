@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -31,7 +32,7 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 	enabled := s.cfg.Globalping.GlobalpingEnabled()
 	if enabled {
 		s.availability = globalping.NewChecker(
-			s.cfg.Globalping.APIToken,
+			s.effectiveGlobalpingToken(),
 			s.availabilityTarget(client),
 			s.cfg.Globalping.Interval(),
 			s.cfg.Globalping.EffectiveProbeLimit(),
@@ -78,7 +79,7 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 	// без второго форма не может показать, от чего оператор отступает.
 	mux.Handle("GET /api/availability/target", protected(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
-			"override": s.availabilityOverride.get(),
+			"override": s.availabilityOverride.public(),
 			"resolved": s.resolvedAvailabilityTarget(r.Context(), client),
 		}})
 	}))
@@ -100,7 +101,7 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 			return
 		}
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
-			"override": s.availabilityOverride.get(),
+			"override": s.availabilityOverride.public(),
 			"resolved": s.resolvedAvailabilityTarget(r.Context(), client),
 		}})
 	}))
@@ -126,6 +127,36 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 		}})
 	}))
 
+	// Токен Globalping. Наружу не отдаём — только признак, что он задан:
+	// секрету незачем ездить в браузер на каждую загрузку страницы.
+	mux.Handle("PUT /api/availability/token", protected(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Token *string `json:"token"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil || body.Token == nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "Ожидается {\"token\": \"...\"}")
+			return
+		}
+		tok := strings.TrimSpace(*body.Token)
+		if tok != "" && !globalpingTokenRe.MatchString(tok) {
+			writeError(w, http.StatusBadRequest, "invalid_token",
+				"Токен Globalping — 20-200 символов из латиницы, цифр, дефиса и подчёркивания")
+			return
+		}
+		if err := s.availabilityOverride.setAPIToken(tok); err != nil {
+			log.Printf("[globalping] не удалось сохранить токен: %s", err)
+			writeError(w, http.StatusInternalServerError, "save_failed",
+				"Токен принят, но сохранить его не удалось — после перезапуска панели вернётся прежний")
+			return
+		}
+		if s.availability != nil {
+			s.availability.SetToken(s.effectiveGlobalpingToken())
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
+			"has_token": s.effectiveGlobalpingToken() != "",
+		}})
+	}))
+
 	mux.Handle("POST /api/availability/check", protected(func(w http.ResponseWriter, r *http.Request) {
 		if s.availability == nil {
 			writeError(w, http.StatusBadRequest, "disabled",
@@ -144,6 +175,19 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 		}})
 	}))
 }
+
+// Токен Globalping: заданный в панели важнее конфига — его меняют на ходу,
+// а конфиг правят руками и реже.
+func (s *Server) effectiveGlobalpingToken() string {
+	if t := s.availabilityOverride.apiToken(); t != "" {
+		return t
+	}
+	return s.cfg.Globalping.APIToken
+}
+
+// Формат токена dash.globalping.io. Проверяем форму, а не подлинность:
+// негодный отсеется первым же ответом сервиса.
+var globalpingTokenRe = regexp.MustCompile(`^[A-Za-z0-9_-]{20,200}$`)
 
 // resolvedAvailabilityTarget is what the next check will use: the override where
 // set, autodetection where not. The form shows it as the placeholder.
