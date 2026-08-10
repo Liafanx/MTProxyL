@@ -108,6 +108,61 @@ _selfmask_template_label() {
     esac
 }
 
+# Настоящий внешний адрес сервера — спрошенный у сети, а не у настроек.
+# get_public_ip первым делом отдаёт CUSTOM_IP, «IP/домен сервера» для
+# tg://-ссылок: там бывает домен, и сверка с A-записью тогда не сходится
+# никогда.
+_selfmask_real_public_ip() {
+    CUSTOM_IP="" get_public_ip 2>/dev/null
+}
+
+# Все адреса этого сервера: переданный внешний плюс адреса интерфейсов.
+# Каждый печатаем отдельным printf: источники не гарантируют перевод строки,
+# и без этого адреса склеиваются в одну строку.
+_selfmask_own_addresses() {
+    local _pub="${1:-}" _ip
+    [ -n "$_pub" ] && printf '%s\n' "$_pub"
+    for _ip in $(hostname -I 2>/dev/null); do
+        printf '%s\n' "$_ip"
+    done
+}
+
+# Указывает ли домен на этот сервер.
+# 0 — да, 1 — нет, 2 — проверить не удалось.
+_selfmask_check_dns() {
+    local _domain="$1"
+    local _a; _a=$(getent ahostsv4 "$_domain" 2>/dev/null | awk '{print $1}' | sort -u)
+
+    if [ -z "$_a" ]; then
+        log_warn "A-запись ${_domain} не найдена"
+        log_info "Домен должен резолвиться в адрес этого сервера, иначе Let's Encrypt откажет"
+        return 2
+    fi
+    log_info "A-запись ${_domain}: $(echo "$_a" | tr '\n' ' ')"
+
+    local _pub; _pub=$(_selfmask_real_public_ip)
+    if [ -n "$_pub" ]; then
+        log_info "Внешний IP сервера: ${_pub}"
+    else
+        log_warn "Не удалось узнать внешний IP сервера — сверить не с чем"
+        return 2
+    fi
+
+    local _own _ip
+    _own=$(_selfmask_own_addresses "$_pub" | grep -v '^[[:space:]]*$' | sort -u)
+    while IFS= read -r _ip; do
+        [ -n "$_ip" ] || continue
+        if printf '%s\n' "$_own" | grep -qxF "$_ip"; then
+            log_success "Домен указывает на этот сервер"
+            return 0
+        fi
+    done <<< "$_a"
+
+    log_warn "A-запись домена не совпадает ни с одним адресом этого сервера"
+    log_info "Так бывает за CDN или обратным прокси — тогда это нормально"
+    return 1
+}
+
 # Каталог с готовым сайтом. Принимает и путь к index.html — берём его папку,
 # сайт это не один файл, рядом лежат стили, скрипты и картинки.
 # Печатает каталог в stdout, диагностику — в stderr: результат забирают через $( ).
@@ -353,26 +408,16 @@ _selfmask_collect_params() {
 
         echo ""
         log_info "Проверяем DNS..."
-        local _server_ip _resolved_ip
-        _server_ip=$(get_public_ip)
-        _resolved_ip=$(getent ahostsv4 "$SELFMASK_DOMAIN" 2>/dev/null | awk '{print $1; exit}')
-        [ -n "$_server_ip" ] && log_info "IP сервера: ${_server_ip}"
-        if [ -n "$_resolved_ip" ]; then
-            log_info "A-запись ${SELFMASK_DOMAIN}: ${_resolved_ip}"
-            if [ -n "$_server_ip" ] && [ "$_server_ip" != "$_resolved_ip" ]; then
-                log_warn "A-запись домена не совпадает с IP сервера"
+        _selfmask_check_dns "$SELFMASK_DOMAIN"
+        case "$?" in
+            0) ;;
+            *)
                 echo -en "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
                 local _dns_yn
                 read_line _dns_yn
                 [[ "$_dns_yn" =~ ^[yY] ]] || return 1
-            fi
-        else
-            log_warn "Не удалось определить A-запись домена"
-            echo -en "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
-            local _dns_yn
-            read_line _dns_yn
-            [[ "$_dns_yn" =~ ^[yY] ]] || return 1
-        fi
+                ;;
+        esac
     else
         log_info "Самоподписанный сертификат — проверка A-записи не требуется"
     fi

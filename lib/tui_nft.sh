@@ -460,7 +460,8 @@ tui_nft_ip_settings() {
                 break ;;
             auto|AUTO)
                 log_info "Определение публичного IP..."
-                local _detected_ip; _detected_ip=$(get_public_ip)
+                # Спрашиваем сеть, а не настройки: в CUSTOM_IP бывает домен.
+                local _detected_ip; _detected_ip=$(CUSTOM_IP="" get_public_ip)
                 if [ -n "$_detected_ip" ] && validate_ip_literal "$_detected_ip"; then
                     NFT_SERVER_IP="$_detected_ip"
                     save_nft_settings

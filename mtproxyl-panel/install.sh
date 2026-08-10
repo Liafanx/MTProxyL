@@ -1154,9 +1154,16 @@ session_ttl = \"24h\"${TLS_BLOCK}"
     _tls_acme=$($SUDO sh -c "cat '$CONFIG_FILE'" 2>/dev/null | sed -n 's/^[[:space:]]*acme_domain[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' | head -1)
     _selfsigned=$($SUDO sh -c "cat '$CONFIG_FILE'" 2>/dev/null | sed -n 's/^[[:space:]]*self_signed[[:space:]]*=[[:space:]]*\(true\).*/\1/p' | head -1)
     { [ -n "$_tls_cert" ] || [ -n "$_tls_acme" ]; } && _scheme="https"
-    # Let's Encrypt выпускается на домен — показываем его, а не IP сервера,
-    # иначе адрес в сообщении не совпадает с тем, на что реально есть сертификат.
+    # Сертификат выписан на имя — показываем его, а не IP сервера, иначе адрес
+    # в сообщении не совпадает с тем, на что сертификат реально есть.
+    # acme_domain знает имя сразу; с готовым файлом (в том числе выпущенным
+    # через 'mtproxyl panel cert') имя лежит только в самом сертификате.
     [ -n "$_tls_acme" ] && _host="$_tls_acme"
+    if [ -z "$_tls_acme" ] && [ -n "$_tls_cert" ] && command -v openssl >/dev/null 2>&1; then
+        _cert_cn=$($SUDO openssl x509 -in "$_tls_cert" -noout -text 2>/dev/null \
+            | grep -oE 'DNS:[^,[:space:]]+' | cut -d: -f2 | grep -vFx 'localhost' | head -1)
+        [ -n "$_cert_cn" ] && _host="$_cert_cn"
+    fi
     _listen=$($SUDO sh -c "cat '$CONFIG_FILE'" 2>/dev/null | sed -n 's/^[[:space:]]*listen[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' | head -1)
     _from_listen=$(printf '%s' "$_listen" | sed -n 's/.*:\([0-9]\{1,5\}\)$/\1/p')
     [ -n "$_from_listen" ] && _panel_port="$_from_listen"

@@ -403,13 +403,17 @@ _panel_adopt_cert() {
         log_error "Не удалось скопировать ключ для панели"; return 1; }
 
     # acme_domain снимаем: с ним панель продолжит занимать порт 80 под свой
-    # (теперь не нужный) обработчик challenge.
+    # (теперь не нужный) обработчик challenge. self_signed — тоже: сертификат
+    # настоящий, и оставленный флаг врёт про недоверенный сертификат везде,
+    # где по нему судят.
     local _tmp; _tmp=$(_mktemp) || return 1
     awk -v certs="$PANEL_CERT_DIR" '
-        /^[[:space:]]*acme_domain[[:space:]]*=/    { next }
-        /^[[:space:]]*acme_cache_dir[[:space:]]*=/ { next }
-        /^[[:space:]]*cert_file[[:space:]]*=/      { next }
-        /^[[:space:]]*key_file[[:space:]]*=/       { next }
+        /^[[:space:]]*acme_domain[[:space:]]*=/       { next }
+        /^[[:space:]]*acme_cache_dir[[:space:]]*=/    { next }
+        /^[[:space:]]*cert_file[[:space:]]*=/         { next }
+        /^[[:space:]]*key_file[[:space:]]*=/          { next }
+        /^[[:space:]]*self_signed[[:space:]]*=/       { next }
+        /^[[:space:]]*self_signed_hosts[[:space:]]*=/ { next }
         /^\[tls\]/ {
             print
             print "cert_file = \"" certs "/panel.crt\""
@@ -548,11 +552,22 @@ panel_issue_cert() {
     fi
 
     if [ -z "$_email" ]; then
+        echo -e "  ${DIM}Email нужен только для писем об истечении сертификата.${NC}"
+        echo -e "  ${DIM}Можно оставить пустым — выпуск от этого не зависит.${NC}"
         echo -en "  ${BOLD}Email для Let's Encrypt${SELFMASK_CERT_EMAIL:+ [${SELFMASK_CERT_EMAIL}]}:${NC} "
         read_line _email
         [ -n "$_email" ] || _email="${SELFMASK_CERT_EMAIL:-}"
     fi
-    [ -n "$_email" ] || { log_error "Email обязателен для выпуска сертификата"; return 1; }
+
+    # Let's Encrypt регистрирует аккаунт и без адреса; certbot в этом случае
+    # требует явного согласия вместо -m.
+    local _email_args
+    if [ -n "$_email" ]; then
+        _email_args="-m $_email"
+    else
+        _email_args="--register-unsafely-without-email"
+        log_info "Email не указан — писем об истечении не будет, продление автоматическое"
+    fi
 
     echo ""
     log_info "Домен: ${_domain}"
@@ -562,7 +577,7 @@ panel_issue_cert() {
         # Ничего останавливать не нужно: заглушка сама отдаёт challenge.
         log_info "Проверку домена отдаёт nginx Selfmask — порт 80 не освобождаем"
         certbot certonly --webroot -w "$SELFMASK_SITE_DIR" \
-            -d "$_domain" --non-interactive --agree-tos -m "$_email" \
+            -d "$_domain" --non-interactive --agree-tos $_email_args \
             --cert-name "$_domain" && _rc=0
     else
         local _stopped=""
@@ -589,7 +604,7 @@ panel_issue_cert() {
         fi
 
         certbot certonly --standalone \
-            -d "$_domain" --non-interactive --agree-tos -m "$_email" \
+            -d "$_domain" --non-interactive --agree-tos $_email_args \
             --cert-name "$_domain" && _rc=0
 
         # Возвращаем всё на место в любом случае — и после ошибки тоже.

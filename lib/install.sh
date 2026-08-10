@@ -411,7 +411,8 @@ run_fix_arsenal_wizard() {
             log_info "Используем IP из настроек ссылок: ${NFT_SERVER_IP}"
         elif [ -n "${CUSTOM_IP:-}" ]; then
             log_warn "В настройках ссылок указан домен '${CUSTOM_IP}' — для NFT нужен IPv4"
-            NFT_SERVER_IP="$(get_public_ip)"
+            # CUSTOM_IP="" — иначе get_public_ip вернёт тот же домен.
+            NFT_SERVER_IP="$(CUSTOM_IP="" get_public_ip)"
             if [ -n "$NFT_SERVER_IP" ]; then
                 log_info "Автоматически определён IP для NFT: ${NFT_SERVER_IP}"
             else
