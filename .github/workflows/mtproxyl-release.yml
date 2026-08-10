@@ -22,6 +22,29 @@ jobs:
         id: version
         run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
+      # Версия живёт в трёх местах, и забыть любое из них легко. Особенно
+      # ./version: по нему check_for_update решает, предлагать ли обновление,
+      # и отставший файл делает релиз невидимым для уже установленных копий.
+      - name: Check version consistency
+        run: |
+          ver="${{ steps.version.outputs.value }}"
+          rc=0
+
+          file_ver=$(tr -d '[:space:]' < version)
+          if [ "$file_ver" != "$ver" ]; then
+            echo "./version = '$file_ver', а тег v$ver" >&2
+            rc=1
+          fi
+
+          script_ver=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' mtproxyl.sh | head -1)
+          if [ "$script_ver" != "$ver" ]; then
+            echo "mtproxyl.sh VERSION = '$script_ver', а тег v$ver" >&2
+            rc=1
+          fi
+
+          [ "$rc" -eq 0 ] && echo "версия совпадает везде: $ver"
+          exit "$rc"
+
       # Секция «## vX.Y.Z — дата» до следующего заголовка версии.
       - name: Extract changelog section
         run: |
