@@ -1,4 +1,4 @@
-Панель к MTProxyL **v1.4.6**. Обновление: `mtproxyl panel install` либо
+Панель к MTProxyL **v1.4.5**. Обновление: `mtproxyl panel install` либо
 раздел **Обновление** в самой панели.
 
 ### Новое
