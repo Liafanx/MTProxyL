@@ -443,7 +443,7 @@ cli_main() {
             # Проверку берёт на себя _addon_check_pq_domain: она сама решает,
             # чем проверять — системным OpenSSL или нашим — и объясняет, если
             # не может ничем.
-            _addon_check_pq_domain "${1:-$(_current_sni_domain)}"
+            _addon_check_pq_domain "${1:-$(_addon_pq_default_target)}"
             ;;            
 
         panel)

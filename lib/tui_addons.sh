@@ -52,11 +52,11 @@ tui_addons_menu() {
                     log_error "Нет OpenSSL с поддержкой постквантового обмена ключами"
                     log_info "Нужен системный OpenSSL ${SELFMASK_MIN_SYSTEM_OPENSSL}+ либо сборка из состава MTProxyL (меню [3])"
                 else
-                    local _domain; _domain=$(_current_sni_domain 2>/dev/null)
-                    if [ -z "$_domain" ]; then
+                    local _target; _target=$(_addon_pq_default_target)
+                    if [ -z "$_target" ]; then
                         log_warn "SNI-домен не задан"
                     else
-                        _addon_check_pq_domain "$_domain"
+                        _addon_check_pq_domain "$_target"
                     fi
                 fi
                 press_any_key
@@ -114,6 +114,16 @@ _addon_censorcheck() {
         log_error "Не найден wget или curl"
         return 1
     fi
+}
+
+# Свой SNI-домен с портом прокси. Именно там отвечает наш FakeTLS: на 443
+# обычно никто не слушает, и проверка упиралась в connection refused.
+_addon_pq_default_target() {
+    local _d; _d=$(_current_sni_domain 2>/dev/null)
+    [ -n "$_d" ] || return 1
+    local _p="${PROXY_PORT:-}"
+    [[ "$_p" =~ ^[0-9]+$ ]] || _p=443
+    echo "${_d}:${_p}"
 }
 
 _addon_check_pq_domain() {

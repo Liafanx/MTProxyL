@@ -38,9 +38,17 @@ const GROUPS: { title: string; description: string; keys: string[] }[] = [
   {
     title: 'Обслуживание',
     description: 'Настройки самого MTProxyL — в конфиг движка не попадают.',
-    keys: ['AUTO_UPDATE_ENABLED', 'BACKUP_RETENTION_DAYS', 'SECRET_AUTO_ROTATE_DAYS'],
+    keys: [
+      'AUTO_UPDATE_ENABLED',
+      'BACKUP_RETENTION_DAYS',
+      'SECRET_AUTO_ROTATE_DAYS',
+      'IP_HISTORY_LIMIT',
+    ],
   },
 ];
+
+/** Ключи, разложенные по группам выше. Всё остальное показываем отдельно. */
+const GROUPED_KEYS = new Set(GROUPS.flatMap((g) => g.keys));
 
 /** Ключи, смена которых рвёт активные соединения или требует действий от вас. */
 const WARNINGS: Record<string, string> = {
@@ -178,6 +186,45 @@ export function SettingsPage() {
                   </Card>
                 );
               })}
+
+              {/* Ключи, которых нет ни в одной группе. Без этого настройка,
+                  добавленная в CLI, молча не появлялась бы в панели. */}
+              {(() => {
+                const rest = params.filter((p) => !GROUPED_KEYS.has(p.key));
+                if (rest.length === 0) return null;
+                return (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Прочее</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <p className="text-sm text-text-secondary">
+                        Настройки, появившиеся в MTProxyL позже этой версии панели.
+                      </p>
+                      <div className="space-y-3">
+                        {rest.map((p) => (
+                          <div
+                            key={p.key}
+                            className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-4"
+                          >
+                            <div className="sm:w-1/2 min-w-0">
+                              <div className="text-sm text-text-primary">{p.description}</div>
+                              <div className="text-xs text-text-secondary font-mono truncate">
+                                {p.key}
+                              </div>
+                            </div>
+                            <ParamField
+                              param={p}
+                              value={valueOf(p.key)}
+                              onChange={(v) => setEdits((prev) => ({ ...prev, [p.key]: v }))}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })()}
             </div>
           )}
 
