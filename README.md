@@ -344,16 +344,13 @@ mtproxyl settings set PROXY_PORT 443   # Изменить (значение пр
 Доступные ключи: `PROXY_PORT`, `PROXY_DOMAIN`, `CUSTOM_IP`, `AD_TAG`,
 `MASKING_ENABLED`, `MASKING_HOST`, `MASKING_PORT`, `UNKNOWN_SNI_ACTION`,
 `PROXY_CONCURRENCY`, `FAKE_CERT_LEN`, `PROXY_PROTOCOL`, `PROXY_METRICS_PORT`,
-`PROXY_API_PORT`, `AUTO_UPDATE_ENABLED`, `BACKUP_RETENTION_DAYS`,
-`SECRET_AUTO_ROTATE_DAYS`, `IP_HISTORY_LIMIT`.
+`PROXY_API_PORT`, `BACKUP_RETENTION_DAYS`, `IP_HISTORY_LIMIT`.
 
 > `IP_HISTORY_LIMIT` — сколько адресов хранить в истории на пользователя,
 > по умолчанию 200. Уменьшение подрезает историю на ближайшем обновлении
-> списка пользователей.
->
-> Настройки самого MTProxyL (`AUTO_UPDATE_ENABLED`, `BACKUP_RETENTION_DAYS`,
-> `SECRET_AUTO_ROTATE_DAYS`, `IP_HISTORY_LIMIT`) доступны в обоих режимах:
-> в конфиг движка они не попадают. Остальные — только в Manager.
+> списка пользователей. Работает в обоих режимах: в конфиг движка настройка
+> не попадает. Остальные — только в Manager (`BACKUP_RETENTION_DAYS` в
+> реаниматоре бесполезен: бэкапить чужую цель нечем).
 
 > `CUSTOM_IP` — это адрес для ссылок, а не адрес, на котором слушает движок.
 > Задавайте его там, где автоопределение промахивается: NAT, несколько

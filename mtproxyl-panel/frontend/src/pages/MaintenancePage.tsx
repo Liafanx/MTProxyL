@@ -3,19 +3,17 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { ParamField } from '@/components/ParamField';
+import { useManagerOnly } from '@/hooks/useMtproxyl';
 import { mtproxylSettingsApi, type MtproxylSetting } from '@/lib/api';
 
 /**
- * Настройки самого MTProxyL: в конфиг движка не попадают, поэтому доступны и в
- * реаниматоре, где конфигом владеет чужая цель. «Настройки прокси» там скрыты
- * целиком, и этим настройкам в них не место.
+ * Настройки самого MTProxyL: в конфиг движка не попадают, поэтому им не место
+ * в «Настройках прокси», которые в реаниматоре скрыты целиком.
  */
-export const MAINTENANCE_KEYS = [
-  'AUTO_UPDATE_ENABLED',
-  'BACKUP_RETENTION_DAYS',
-  'SECRET_AUTO_ROTATE_DAYS',
-  'IP_HISTORY_LIMIT',
-];
+export const MAINTENANCE_KEYS = ['BACKUP_RETENTION_DAYS', 'IP_HISTORY_LIMIT'];
+
+/** Бэкапы — только у менеджера, у чужой цели их делать нечем. */
+const MANAGER_ONLY_KEYS = new Set(['BACKUP_RETENTION_DAYS']);
 
 export function MaintenancePage() {
   const [params, setParams] = useState<MtproxylSetting[]>([]);
@@ -24,6 +22,7 @@ export function MaintenancePage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const { allowed: isManager } = useManagerOnly();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -43,8 +42,11 @@ export function MaintenancePage() {
   }, [load]);
 
   const shown = useMemo(
-    () => MAINTENANCE_KEYS.map((k) => params.find((p) => p.key === k)).filter(Boolean) as MtproxylSetting[],
-    [params],
+    () =>
+      MAINTENANCE_KEYS.filter((k) => isManager || !MANAGER_ONLY_KEYS.has(k))
+        .map((k) => params.find((p) => p.key === k))
+        .filter(Boolean) as MtproxylSetting[],
+    [params, isManager],
   );
   const byKey = useMemo(() => new Map(params.map((p) => [p.key, p])), [params]);
   const valueOf = (key: string) => edits[key] ?? byKey.get(key)?.value ?? '';
@@ -78,9 +80,9 @@ export function MaintenancePage() {
       <div>
         <h1 className="text-xl font-semibold text-text-primary">Обслуживание</h1>
         <p className="text-sm text-text-secondary mt-1">
-          Настройки самого MTProxyL — автообновление, хранение бэкапов, ротация секретов и
-          глубина истории IP. В конфиг движка они не попадают, поэтому работают в обоих
-          режимах.
+          Настройки самого MTProxyL: в конфиг движка они не попадают. Глубина истории IP
+          работает в обоих режимах, хранение бэкапов — только в Manager, потому что
+          бэкапить чужую цель нечем.
         </p>
       </div>
 
