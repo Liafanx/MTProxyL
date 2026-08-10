@@ -1,0 +1,53 @@
+name: MTProxyL Release
+
+# MTProxyL — это bash, собирать нечего: релиз нужен, чтобы у версии была
+# страница с описанием и чтобы её было видно в списке. Текст берём из
+# CHANGELOG.md, иначе он разъезжается с тем, что написано в репозитории.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Derive version from tag
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # Секция «## vX.Y.Z — дата» до следующего заголовка версии.
+      - name: Extract changelog section
+        run: |
+          awk -v ver="${{ steps.version.outputs.value }}" '
+            $0 ~ "^## v" ver "( |$|—)" { found = 1; next }
+            found && /^## v/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+
+          # Пустая секция значит, что changelog забыли — это стоит заметить
+          # сразу, а не увидеть пустой релиз на странице проекта.
+          if [ ! -s release-notes.md ]; then
+            echo "В CHANGELOG.md нет секции для версии ${{ steps.version.outputs.value }}" >&2
+            exit 1
+          fi
+
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "Полный список изменений — [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/main/CHANGELOG.md)."
+          } >> release-notes.md
+
+          cat release-notes.md
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
