@@ -46,6 +46,7 @@ type Checker struct {
 	probeLimit     int
 
 	mu            sync.Mutex
+	autoCheck     func() bool
 	lastCheckTime time.Time
 	// inFlight is non-nil while a check runs; other callers wait on it instead
 	// of starting a second measurement and paying twice.
@@ -84,6 +85,21 @@ func (c *Checker) Store() *Store { return c.store }
 // Quota reports the hourly allowance for the UI.
 func (c *Checker) Quota() QuotaState { return c.quota.state() }
 
+// SetAutoCheck installs the predicate asked before every scheduled check.
+// Manual checks ignore it: кнопку нажимает человек, он и решает.
+func (c *Checker) SetAutoCheck(fn func() bool) {
+	c.mu.Lock()
+	c.autoCheck = fn
+	c.mu.Unlock()
+}
+
+func (c *Checker) autoCheckEnabled() bool {
+	c.mu.Lock()
+	fn := c.autoCheck
+	c.mu.Unlock()
+	return fn == nil || fn()
+}
+
 // Start runs checks until ctx is cancelled.
 func (c *Checker) Start(ctx context.Context) {
 	log.Printf("[globalping] проверка доступности включена: интервал %v, зондов %d", c.interval, c.probeLimit)
@@ -93,8 +109,12 @@ func (c *Checker) Start(ctx context.Context) {
 		return
 	case <-time.After(startupDelay):
 	}
-	c.runScheduled(ctx)
+	if c.autoCheckEnabled() {
+		c.runScheduled(ctx)
+	}
 
+	// Тикер крутится и при выключенной автопроверке: включить её должно быть
+	// достаточно, без перезапуска панели.
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
 	for {
@@ -103,7 +123,9 @@ func (c *Checker) Start(ctx context.Context) {
 			log.Println("[globalping] проверка доступности остановлена")
 			return
 		case <-ticker.C:
-			c.runScheduled(ctx)
+			if c.autoCheckEnabled() {
+				c.runScheduled(ctx)
+			}
 		}
 	}
 }

@@ -25,6 +25,7 @@ const LEVEL_LABEL: Record<AvailabilityLevel, string> = {
 export function AvailabilityCard() {
   const [enabled, setEnabled] = useState(true);
   const [status, setStatus] = useState<AvailabilityResult | null>(null);
+  const [autoCheck, setAutoCheck] = useState(true);
   const [message, setMessage] = useState<string | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,6 +35,7 @@ export function AvailabilityCard() {
       const res = await availabilityApi.status();
       setEnabled(res.enabled);
       setStatus(res.status ?? null);
+      setAutoCheck(res.auto_check ?? true);
       setMessage(res.message);
       setError(null);
     } catch (e) {
@@ -59,9 +61,16 @@ export function AvailabilityCard() {
         <span className="text-xs text-text-secondary uppercase tracking-wider">
           Доступность из РФ
         </span>
-        <Link to="/availability" className="text-xs text-accent hover:underline">
-          Подробнее →
-        </Link>
+        <div className="flex items-center gap-2">
+          {!loading && (
+            <span className={cn('text-xs', autoCheck ? 'text-text-secondary' : 'text-warning')}>
+              автообновление {autoCheck ? 'вкл' : 'выкл'}
+            </span>
+          )}
+          <Link to="/availability" className="text-xs text-accent hover:underline">
+            Подробнее →
+          </Link>
+        </div>
       </div>
       <Body loading={loading} error={error} status={status} message={message} />
     </div>

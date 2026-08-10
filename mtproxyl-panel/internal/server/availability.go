@@ -36,6 +36,7 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 			s.cfg.Globalping.Interval(),
 			s.cfg.Globalping.EffectiveProbeLimit(),
 		)
+		s.availability.SetAutoCheck(s.availabilityOverride.autoCheckEnabled)
 		go s.availability.Start(context.Background())
 	} else {
 		log.Println("[globalping] проверка доступности выключена в конфиге панели")
@@ -49,10 +50,11 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 		}
 		st := s.availability.Store().GetStatus()
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
-			"enabled": true,
-			"status":  st,
-			"quota":   s.availability.Quota(),
-			"message": pendingMessage(st == nil),
+			"enabled":    true,
+			"status":     st,
+			"quota":      s.availability.Quota(),
+			"auto_check": s.availabilityOverride.autoCheckEnabled(),
+			"message":    pendingMessage(st == nil),
 		}})
 	}))
 
@@ -64,10 +66,11 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 		}
 		res := s.availability.Store().Get()
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
-			"enabled": true,
-			"result":  res,
-			"quota":   s.availability.Quota(),
-			"message": pendingMessage(res == nil),
+			"enabled":    true,
+			"result":     res,
+			"quota":      s.availability.Quota(),
+			"auto_check": s.availabilityOverride.autoCheckEnabled(),
+			"message":    pendingMessage(res == nil),
 		}})
 	}))
 
@@ -99,6 +102,27 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
 			"override": s.availabilityOverride.get(),
 			"resolved": s.resolvedAvailabilityTarget(r.Context(), client),
+		}})
+	}))
+
+	// Автопроверка. Выключенная не отменяет кнопку «Проверить сейчас»: она
+	// нужна тем, кто хочет проверять руками и не тратить квоту по расписанию.
+	mux.Handle("PUT /api/availability/autocheck", protected(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&body); err != nil || body.Enabled == nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "Ожидается {\"enabled\": true|false}")
+			return
+		}
+		if err := s.availabilityOverride.setAutoCheck(*body.Enabled); err != nil {
+			log.Printf("[globalping] не удалось сохранить автопроверку: %s", err)
+			writeError(w, http.StatusInternalServerError, "save_failed",
+				"Настройка принята, но сохранить её не удалось — после перезапуска панели вернётся прежняя")
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
+			"auto_check": s.availabilityOverride.autoCheckEnabled(),
 		}})
 	}))
 

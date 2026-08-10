@@ -33,6 +33,7 @@ export function AvailabilityPage() {
   const [enabled, setEnabled] = useState(true);
   const [result, setResult] = useState<AvailabilityResult | null>(null);
   const [quota, setQuota] = useState<AvailabilityQuota | undefined>();
+  const [autoCheck, setAutoCheck] = useState(true);
   const [message, setMessage] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
@@ -46,6 +47,7 @@ export function AvailabilityPage() {
       setEnabled(res.enabled);
       setResult(res.result ?? null);
       setQuota(res.quota);
+      setAutoCheck(res.auto_check ?? true);
       setMessage(res.message);
       setError(null);
     } catch (e) {
@@ -67,6 +69,7 @@ export function AvailabilityPage() {
       setEnabled(res.enabled);
       setResult(res.result ?? null);
       setQuota(res.quota);
+      setAutoCheck(res.auto_check ?? autoCheck);
       setMessage(res.message);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось запустить проверку');
@@ -102,6 +105,8 @@ export function AvailabilityPage() {
         </div>
 
         {error && <ErrorAlert message={error} onRetry={load} />}
+
+        {enabled && <AutoCheckToggle enabled={autoCheck} onChange={setAutoCheck} />}
 
         {enabled && <QuotaBanner quota={quota} />}
 
@@ -178,6 +183,55 @@ export function AvailabilityPage() {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Проверка по расписанию. Выключенная не отменяет «Проверить сейчас» — она для
+ * тех, кто хочет проверять руками и не тратить квоту фоном.
+ */
+function AutoCheckToggle({
+  enabled,
+  onChange,
+}: {
+  enabled: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const toggle = async () => {
+    const next = !enabled;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await availabilityApi.setAutoCheck(next);
+      onChange(res.auto_check);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось сохранить');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-between gap-3 bg-surface border border-border rounded-lg p-3 flex-wrap">
+      <div className="text-sm">
+        <span className="text-text-primary">Автопроверка</span>
+        <span className={cn('ml-2 font-medium', enabled ? 'text-success' : 'text-text-secondary')}>
+          {enabled ? 'включена' : 'выключена'}
+        </span>
+        <div className="text-xs text-text-secondary mt-0.5">
+          {enabled
+            ? 'Проверка идёт сама раз в 15 минут'
+            : 'Проверки идут только по кнопке «Проверить сейчас»'}
+        </div>
+        {error && <div className="text-xs text-danger mt-1">{error}</div>}
+      </div>
+      <Button onClick={toggle} disabled={saving} size="sm" variant="outline">
+        {saving ? 'Сохраняем…' : enabled ? 'Выключить' : 'Включить'}
+      </Button>
     </div>
   );
 }

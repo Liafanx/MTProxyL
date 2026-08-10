@@ -23,6 +23,11 @@ type AvailabilityOverride struct {
 	Host string `json:"host,omitempty"`
 	Port uint16 `json:"port,omitempty"`
 	SNI  string `json:"sni,omitempty"`
+	// AutoCheck включает проверку по расписанию. Указатель, потому что nil
+	// значит «не задано»: в файлах, записанных до появления флага, его нет, и
+	// считать это выключенной проверкой нельзя. Он же позволяет сохранить цель,
+	// не трогая флаг, — форма цели про него ничего не знает.
+	AutoCheck *bool `json:"auto_check,omitempty"`
 }
 
 // availabilityOverrideStore persists the override across restarts.
@@ -66,7 +71,30 @@ func (s *availabilityOverrideStore) get() AvailabilityOverride {
 	return s.cur
 }
 
+// autoCheckEnabled reports whether scheduled checks should run. По умолчанию да.
+func (s *availabilityOverrideStore) autoCheckEnabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cur.AutoCheck == nil || *s.cur.AutoCheck
+}
+
+func (s *availabilityOverrideStore) setAutoCheck(on bool) error {
+	s.mu.RLock()
+	cur := s.cur
+	s.mu.RUnlock()
+	cur.AutoCheck = &on
+	return s.set(cur)
+}
+
 func (s *availabilityOverrideStore) set(o AvailabilityOverride) error {
+	// Форма цели флаг не присылает: nil означает «оставить как было», иначе
+	// сохранение адреса молча включало бы автопроверку обратно.
+	if o.AutoCheck == nil {
+		s.mu.RLock()
+		o.AutoCheck = s.cur.AutoCheck
+		s.mu.RUnlock()
+	}
+
 	s.mu.Lock()
 	s.cur = o
 	s.mu.Unlock()

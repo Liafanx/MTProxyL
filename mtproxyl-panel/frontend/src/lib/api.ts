@@ -573,6 +573,8 @@ export interface AvailabilityStatusResponse {
   enabled: boolean;
   status?: AvailabilityResult | null;
   quota?: AvailabilityQuota;
+  /** Идут ли проверки по расписанию. Кнопка «Проверить сейчас» работает всегда. */
+  auto_check?: boolean;
   message?: string;
 }
 
@@ -580,6 +582,7 @@ export interface AvailabilityDetailsResponse {
   enabled: boolean;
   result?: AvailabilityResult | null;
   quota?: AvailabilityQuota;
+  auto_check?: boolean;
   message?: string;
 }
 
@@ -613,5 +616,11 @@ export const availabilityApi = {
     request<AvailabilityTargetResponse>(AVAILABILITY_BASE, '/target', {
       method: 'PUT',
       body: JSON.stringify(o),
+    }),
+  /** Включить или выключить проверку по расписанию. */
+  setAutoCheck: (enabled: boolean) =>
+    request<{ auto_check: boolean }>(AVAILABILITY_BASE, '/autocheck', {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
     }),
 };
