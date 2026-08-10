@@ -15,6 +15,7 @@ import { ConfigPage } from '@/pages/ConfigPage';
 import { LogsPage } from '@/pages/LogsPage';
 import { ModePage } from '@/pages/ModePage';
 import { SettingsPage } from '@/pages/SettingsPage';
+import { MaintenancePage } from '@/pages/MaintenancePage';
 import { SelfmaskPage } from '@/pages/SelfmaskPage';
 import { BackupsPage } from '@/pages/BackupsPage';
 import { NftPage } from '@/pages/NftPage';
@@ -60,6 +61,7 @@ function AuthenticatedApp() {
           <Route path="/logs" element={<LogsPage />} />
           <Route path="/mode" element={<ModePage />} />
           <Route path="/proxy-settings" element={<SettingsPage />} />
+          <Route path="/maintenance" element={<MaintenancePage />} />
           <Route path="/selfmask" element={<SelfmaskPage />} />
           <Route path="/backups" element={<BackupsPage />} />
           <Route path="/nft" element={<NftPage />} />
