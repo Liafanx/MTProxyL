@@ -1829,6 +1829,35 @@ _zapret2_sysctl_setters() {
     printf '%s\n' "$_out"
 }
 
+_ZAPRET2_WSCALE_KEYS="net.core.rmem_max net.core.wmem_max net.ipv4.tcp_rmem net.ipv4.tcp_wmem"
+
+# Совпадают ли значения в ядре с нашими. Считаем по тем двум, от которых
+# зависит wscale: приём определяет гранулярность окна.
+_zapret2_wscale_in_effect() {
+    local _r _t
+    _r=$(sysctl -n net.core.rmem_max 2>/dev/null)
+    _t=$(sysctl -n net.ipv4.tcp_rmem 2>/dev/null | awk '{print $3}')
+    [ "$_r" = "$ZAPRET2_WSCALE_OPT_BUF" ] && [ "$_t" = "$ZAPRET2_WSCALE_OPT_BUF" ]
+}
+
+# Файлы, которые задают наши ключи и потому перебивают нас.
+_zapret2_wscale_conflicts() {
+    local _key
+    for _key in $_ZAPRET2_WSCALE_KEYS; do
+        _zapret2_sysctl_setters "$_key" "$ZAPRET2_WSCALE_OPT_FILE"
+    done | grep -v '^[[:space:]]*$' | sort -u
+}
+
+# Закомментировать наши ключи в чужом файле, сохранив копию рядом.
+_zapret2_wscale_disarm_file() {
+    local _f="$1" _key _bak="${1}.mtproxyl-bak"
+    [ -f "$_bak" ] || cp -a "$_f" "$_bak" 2>/dev/null || return 1
+    for _key in $_ZAPRET2_WSCALE_KEYS; do
+        sed -i -E "s|^([[:space:]]*${_key//./\\.}[[:space:]]*=.*)$|# отключено MTProxyL (zapret2): \1|" "$_f" 2>/dev/null || return 1
+    done
+    log_success "Правки в ${_f} (копия: ${_bak})"
+}
+
 zapret2_wscale_opt_apply() {
     cat > "$ZAPRET2_WSCALE_OPT_FILE" << EOF
 # MTProxyL: TCP-буфер под дробление ClientHello (zapret2)
@@ -1839,33 +1868,57 @@ net.ipv4.tcp_rmem = ${ZAPRET2_WSCALE_OPT_MEM}
 net.ipv4.tcp_wmem = ${ZAPRET2_WSCALE_OPT_MEM}
 EOF
     chmod 644 "$ZAPRET2_WSCALE_OPT_FILE"
-
     sysctl --system &>/dev/null || true
 
-    local _bad=""
-    local _r _t
-    _r=$(sysctl -n net.core.rmem_max 2>/dev/null)
-    _t=$(sysctl -n net.ipv4.tcp_rmem 2>/dev/null | awk '{print $3}')
-    [ "$_r" = "$ZAPRET2_WSCALE_OPT_BUF" ] || _bad="net.core.rmem_max"
-    [ "$_t" = "$ZAPRET2_WSCALE_OPT_BUF" ] || _bad="${_bad:+$_bad }net.ipv4.tcp_rmem"
-
-    if [ -z "$_bad" ]; then
+    if _zapret2_wscale_in_effect; then
         log_success "Оптимизация применена: буфер ${ZAPRET2_WSCALE_OPT_BUF}, wscale 9"
         return 0
     fi
 
-    log_error "Значения не применились: ${_bad}"
-    log_warn "Их перетирает другой файл — наш читается раньше"
-    local _key _f _found=""
-    for _key in net.core.rmem_max net.ipv4.tcp_rmem; do
+    # Наш файл лежит в /etc/sysctl.d, а он читается раньше /etc/sysctl.conf и
+    # раньше файлов с более поздним именем — те и выигрывают. Переименованием
+    # это не лечится: /etc/sysctl.conf читается последним всегда.
+    local _conf; _conf=$(_zapret2_wscale_conflicts)
+    if [ -n "$_conf" ]; then
+        log_warn "Те же ключи заданы в других файлах, и они применяются после нашего:"
+        local _f
         while IFS= read -r _f; do
-            [ -n "$_f" ] || continue
-            _found="yes"
-            echo -e "    ${DIM}${_key} задан в ${_f}${NC}"
-        done <<< "$(_zapret2_sysctl_setters "$_key" "$ZAPRET2_WSCALE_OPT_FILE")"
+            [ -n "$_f" ] && echo -e "    ${DIM}${_f}${NC}"
+        done <<< "$_conf"
+        echo ""
+        echo -e "  ${DIM}Строки с этими ключами можно закомментировать — рядом останется копия.${NC}"
+        echo -en "  ${BOLD}Сделать это? [Y/n]:${NC} "
+        local _yn; read_line _yn
+        if [[ ! "$_yn" =~ ^[nN] ]]; then
+            while IFS= read -r _f; do
+                [ -n "$_f" ] && _zapret2_wscale_disarm_file "$_f"
+            done <<< "$_conf"
+            sysctl --system &>/dev/null || true
+            if _zapret2_wscale_in_effect; then
+                log_success "Оптимизация применена: буфер ${ZAPRET2_WSCALE_OPT_BUF}, wscale 9"
+                return 0
+            fi
+        fi
+    fi
+
+    # Не вышло с файлами — выставляем на ходу, чтобы заработало сейчас.
+    local _key
+    for _key in $_ZAPRET2_WSCALE_KEYS; do
+        case "$_key" in
+            *_max) sysctl -w "${_key}=${ZAPRET2_WSCALE_OPT_BUF}" &>/dev/null || true ;;
+            *)     sysctl -w "${_key}=${ZAPRET2_WSCALE_OPT_MEM}" &>/dev/null || true ;;
+        esac
     done
-    [ -n "$_found" ] || log_info "Файл-источник найти не удалось — проверьте sysctl --system вручную"
-    log_info "Уберите ключи из этих файлов и повторите"
+
+    if _zapret2_wscale_in_effect; then
+        log_success "Буфер выставлен: ${ZAPRET2_WSCALE_OPT_BUF}, wscale 9"
+        log_warn "Только до перезагрузки: чужой файл вернёт своё значение"
+        [ -n "$_conf" ] && log_info "Уберите наши ключи из перечисленных выше файлов"
+        return 0
+    fi
+
+    log_error "Не удалось выставить буфер — дробление ClientHello работать не будет"
+    log_info "Проверьте вручную: sysctl -n ${_ZAPRET2_WSCALE_KEYS%% *}"
     return 1
 }
 
