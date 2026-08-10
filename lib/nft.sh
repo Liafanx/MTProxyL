@@ -1834,10 +1834,23 @@ _ZAPRET2_WSCALE_KEYS="net.core.rmem_max net.core.wmem_max net.ipv4.tcp_rmem net.
 # Совпадают ли значения в ядре с нашими. Считаем по тем двум, от которых
 # зависит wscale: приём определяет гранулярность окна.
 _zapret2_wscale_in_effect() {
-    local _r _t
-    _r=$(sysctl -n net.core.rmem_max 2>/dev/null)
-    _t=$(sysctl -n net.ipv4.tcp_rmem 2>/dev/null | awk '{print $3}')
-    [ "$_r" = "$ZAPRET2_WSCALE_OPT_BUF" ] && [ "$_t" = "$ZAPRET2_WSCALE_OPT_BUF" ]
+    _zapret2_wscale_mismatched >/dev/null
+}
+
+# Ключи, значение которых в ядре не наше. Печатает их через пробел.
+# У триплетов сверяем максимум: середину ядро может подправить своё.
+_zapret2_wscale_mismatched() {
+    local _key _cur _bad=""
+    for _key in $_ZAPRET2_WSCALE_KEYS; do
+        _cur=$(sysctl -n "$_key" 2>/dev/null) || continue
+        case "$_key" in
+            *_max) [ "$_cur" = "$ZAPRET2_WSCALE_OPT_BUF" ] || _bad="${_bad}${_key} " ;;
+            *)     [ "$(printf '%s' "$_cur" | awk '{print $3}')" = "$ZAPRET2_WSCALE_OPT_BUF" ] \
+                       || _bad="${_bad}${_key} " ;;
+        esac
+    done
+    printf '%s' "${_bad% }"
+    [ -z "$_bad" ]
 }
 
 # Файлы, которые задают наши ключи и потому перебивают нас.
@@ -1871,13 +1884,15 @@ EOF
     sysctl --system &>/dev/null || true
 
     if _zapret2_wscale_in_effect; then
-        log_success "Оптимизация применена: буфер ${ZAPRET2_WSCALE_OPT_BUF}, wscale 9"
+        log_success "Оптимизация применена: все 4 параметра, буфер ${ZAPRET2_WSCALE_OPT_BUF}, wscale 9"
         return 0
     fi
 
     # Наш файл лежит в /etc/sysctl.d, а он читается раньше /etc/sysctl.conf и
     # раньше файлов с более поздним именем — те и выигрывают. Переименованием
     # это не лечится: /etc/sysctl.conf читается последним всегда.
+    log_warn "Не встали: $(_zapret2_wscale_mismatched)"
+
     local _conf; _conf=$(_zapret2_wscale_conflicts)
     if [ -n "$_conf" ]; then
         log_warn "Те же ключи заданы в других файлах, и они применяются после нашего:"
@@ -1895,7 +1910,7 @@ EOF
             done <<< "$_conf"
             sysctl --system &>/dev/null || true
             if _zapret2_wscale_in_effect; then
-                log_success "Оптимизация применена: буфер ${ZAPRET2_WSCALE_OPT_BUF}, wscale 9"
+                log_success "Оптимизация применена: все 4 параметра, буфер ${ZAPRET2_WSCALE_OPT_BUF}, wscale 9"
                 return 0
             fi
         fi
@@ -1911,14 +1926,14 @@ EOF
     done
 
     if _zapret2_wscale_in_effect; then
-        log_success "Буфер выставлен: ${ZAPRET2_WSCALE_OPT_BUF}, wscale 9"
+        log_success "Буфер выставлен: все 4 параметра, ${ZAPRET2_WSCALE_OPT_BUF}, wscale 9"
         log_warn "Только до перезагрузки: чужой файл вернёт своё значение"
         [ -n "$_conf" ] && log_info "Уберите наши ключи из перечисленных выше файлов"
         return 0
     fi
 
-    log_error "Не удалось выставить буфер — дробление ClientHello работать не будет"
-    log_info "Проверьте вручную: sysctl -n ${_ZAPRET2_WSCALE_KEYS%% *}"
+    log_error "Не удалось выставить: $(_zapret2_wscale_mismatched)"
+    log_info "Дробление ClientHello работать не будет — проверьте sysctl вручную"
     return 1
 }
 
