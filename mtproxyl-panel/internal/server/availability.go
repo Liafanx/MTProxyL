@@ -28,6 +28,7 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 	}
 
 	s.availabilityOverride = newAvailabilityOverrideStore(s.cfg.DataDir)
+	s.telegramStore = newTelegramBotStore(s.cfg.DataDir)
 
 	enabled := s.cfg.Globalping.GlobalpingEnabled()
 	if enabled {
@@ -38,6 +39,7 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 			s.cfg.Globalping.EffectiveProbeLimit(),
 		)
 		s.availability.SetAutoCheck(s.availabilityOverride.autoCheckEnabled)
+		s.startTelegramBot(client)
 		go s.availability.Start(context.Background())
 	} else {
 		log.Println("[globalping] проверка доступности выключена в конфиге панели")
