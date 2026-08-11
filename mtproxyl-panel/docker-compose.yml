@@ -3,5 +3,14 @@ services:
     build: .
     volumes:
       - ./config.toml:/etc/mtproxyl-panel/config.toml:ro
+      # data_dir панели. Без тома всё, что она пишет о себе сама, живёт в слое
+      # контейнера и пропадает при первом же пересоздании: токен Globalping,
+      # выбранная цель проверки и состояние автопроверки
+      # (availability-target.json), самоподписанный сертификат (certs/) и
+      # настройки телеграм-бота вместе с id его сообщения.
+      - mtproxyl-panel-data:/var/lib/mtproxyl-panel
     restart: unless-stopped
     network_mode: host
+
+volumes:
+  mtproxyl-panel-data:
