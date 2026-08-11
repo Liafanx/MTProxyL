@@ -102,7 +102,10 @@ type Bot struct {
 	baseCtx    context.Context
 	pollCancel context.CancelFunc
 	pollWG     sync.WaitGroup
-	started    bool
+	// restartMu держит перезапуски опроса в одну очередь; отдельный от mu,
+	// потому что ждать выхода горутины под общим мьютексом нельзя.
+	restartMu sync.Mutex
+	started   bool
 }
 
 func New(deps Deps, state PersistedState) *Bot {
@@ -126,12 +129,14 @@ func (b *Bot) Start(ctx context.Context) {
 	}
 	b.started = true
 	b.baseCtx = ctx
-	cfg := b.cfg
 	b.mu.Unlock()
 
 	go b.worker(ctx)
 
-	b.applyConfig(cfg)
+	// Именно restartPolling, а не applyConfig: настройки обычно уже применены
+	// Reconfigure до старта, и applyConfig счёл бы их неизменными и не поднял
+	// бы опрос вовсе — бот молчал бы до первой правки настроек.
+	b.restartPolling()
 	b.requestRedraw()
 }
 
@@ -178,7 +183,10 @@ func (b *Bot) applyConfig(cfg Config) {
 		b.client = nil
 	}
 	started := b.started
-	sameLoop := prev.Token == cfg.Token && prev.Enabled == cfg.Enabled
+	// AdminID здесь наравне с токеном: горутина опроса захватывает его при
+	// запуске, и без перезапуска смена админа не дошла бы до проверки прав на
+	// кнопках — их продолжал бы принимать прежний.
+	sameLoop := prev.Token == cfg.Token && prev.Enabled == cfg.Enabled && prev.AdminID == cfg.AdminID
 	b.mu.Unlock()
 
 	if !started || sameLoop {
@@ -191,6 +199,12 @@ func (b *Bot) applyConfig(cfg Config) {
 // новый. Именно останавливает и дожидается: двух getUpdates одним токеном
 // Telegram не разрешает и отвечает на это 409.
 func (b *Bot) restartPolling() {
+	// Перезапуски идут строго по одному. Два одновременных сохранения настроек
+	// иначе разошлись бы на pollWG: один успел бы добавить горутину, пока
+	// другой уже ждёт нулевого счётчика, — WaitGroup такого не допускает.
+	b.restartMu.Lock()
+	defer b.restartMu.Unlock()
+
 	b.mu.Lock()
 	if b.pollCancel != nil {
 		b.pollCancel()

@@ -270,3 +270,41 @@ func TestRenderStartReplyCarriesChatID(t *testing.T) {
 		t.Errorf("не сказано, куда вписывать ID:\n%s", out)
 	}
 }
+
+// Список зондов режется своей логикой, но шапка события, длинная цель и текст
+// отказа складываются независимо от неё. Сообщение длиннее предела Telegram не
+// отправляется вовсе — вместо статуса пришло бы ничего.
+func TestRenderStatusClampsEvenWithoutProbes(t *testing.T) {
+	v := baseView(&globalping.CheckResult{
+		Percentage: 55, TotalProbes: 20, SuccessProbes: 11,
+		CheckedAt: time.Now(), Level: globalping.LevelYellow,
+	})
+	v.Banner = BannerDown
+	v.PrevKnown = true
+	v.PrevPercentage = 95
+	v.Target.Host = strings.Repeat("длинный-хост.", 400)
+	v.Target.SNI = strings.Repeat("длинный-sni.", 400)
+	v.Failure = &Failure{Reason: strings.Repeat("развёрнутая причина отказа ", 200), At: v.Now}
+
+	out := RenderStatus(v)
+
+	if n := len([]rune(out)); n > MessageLimit {
+		t.Fatalf("длина %d рун превышает предел %d", n, MessageLimit)
+	}
+}
+
+func TestClampCutsOnLineBoundary(t *testing.T) {
+	long := strings.Repeat("строка сообщения\n", 500)
+	out := clamp(long)
+
+	if n := len([]rune(out)); n > MessageLimit {
+		t.Fatalf("длина %d рун превышает предел %d", n, MessageLimit)
+	}
+	if !strings.HasSuffix(out, "…") {
+		t.Errorf("обрезка не помечена многоточием: ...%q", out[len(out)-20:])
+	}
+	// Обрыв по границе строки не разрывает теги разметки.
+	if strings.Count(out, "<") != strings.Count(out, ">") {
+		t.Error("обрезка разорвала HTML-тег")
+	}
+}

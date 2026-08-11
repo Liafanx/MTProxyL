@@ -40,6 +40,9 @@ func newRecorder(t *testing.T) (*recorder, *Client) {
 
 		rec.mu.Lock()
 		rec.calls = append(rec.calls, call{Method: method, Body: body})
+		// Счётчик снимаем под тем же мьютексом: опрос и воркер ходят сюда
+		// одновременно, и чтение длины снаружи было бы гонкой в самом тесте.
+		seq := len(rec.calls)
 		fn := rec.reply[method]
 		rec.mu.Unlock()
 
@@ -50,7 +53,7 @@ func newRecorder(t *testing.T) (*recorder, *Client) {
 		}
 		switch method {
 		case "sendMessage":
-			okResult(w, Message{MessageID: 100 + len(rec.calls), Chat: Chat{ID: 555}})
+			okResult(w, Message{MessageID: 100 + seq, Chat: Chat{ID: 555}})
 		case "getMe":
 			okResult(w, User{ID: 1, IsBot: true, Username: "test_bot"})
 		default:
@@ -463,4 +466,91 @@ func TestDeliverExplainsChatNotFound(t *testing.T) {
 	if got := b.Status().LastError; !strings.Contains(got, "/start") {
 		t.Errorf("LastError = %q, ожидалась подсказка про /start", got)
 	}
+}
+
+// Настройки применяются до Start (панель читает их с диска и сразу отдаёт
+// боту), поэтому Start обязан поднять опрос сам. Раньше он звал applyConfig,
+// тот видел неизменившуюся конфигурацию и не делал ничего — бот молчал до
+// первой правки настроек в панели.
+func TestStartBeginsPollingWithPreloadedConfig(t *testing.T) {
+	rec, client := newRecorder(t)
+	b := New(Deps{}, PersistedState{})
+	b.Reconfigure(Config{Enabled: true, Token: "123456:test", AdminID: 555})
+
+	b.mu.Lock()
+	b.client = client // подменяем уже после Reconfigure: адрес ведёт на подставной API
+	b.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	b.Start(ctx)
+	t.Cleanup(func() { cancel(); b.pollWG.Wait() })
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if rec.count("getUpdates") > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("опрос Telegram не начался, вызовы: %v", rec.methods())
+}
+
+// Горутина опроса захватывает ID админа при запуске. Без перезапуска смена
+// админа не дошла бы до проверки прав на кнопках: их принимал бы прежний.
+func TestChangingAdminRestartsPolling(t *testing.T) {
+	rec, client := newRecorder(t)
+	b := New(Deps{}, PersistedState{})
+	b.Reconfigure(Config{Enabled: true, Token: "123456:test", AdminID: 555})
+	b.mu.Lock()
+	b.client = client
+	b.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	b.Start(ctx)
+	t.Cleanup(func() { cancel(); b.pollWG.Wait() })
+
+	waitFor(t, func() bool { return rec.count("getMe") >= 1 })
+
+	b.Reconfigure(Config{Enabled: true, Token: "123456:test", AdminID: 777})
+
+	// Новый цикл опроса начинается с getMe — по нему и видно, что он новый.
+	waitFor(t, func() bool { return rec.count("getMe") >= 2 })
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("условие не выполнилось за отведённое время")
+}
+
+// Два одновременных сохранения настроек не должны разойтись на WaitGroup.
+func TestConcurrentReconfigureIsSafe(t *testing.T) {
+	_, client := newRecorder(t)
+	b := New(Deps{}, PersistedState{})
+	b.mu.Lock()
+	b.client = client
+	b.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	b.Start(ctx)
+	t.Cleanup(func() { cancel(); b.pollWG.Wait() })
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			b.Reconfigure(Config{Enabled: true, Token: "123456:test", AdminID: int64(500 + i)})
+		}(i)
+	}
+	wg.Wait()
 }

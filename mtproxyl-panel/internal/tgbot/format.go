@@ -75,7 +75,7 @@ func RenderStatus(v View) string {
 		if v.Result == nil {
 			b.WriteString("\nУдачных проверок пока не было.\n")
 			writeFooter(&b, v)
-			return b.String()
+			return clamp(b.String())
 		}
 		b.WriteString("\nНиже — последний известный вердикт.\n\n")
 	}
@@ -83,7 +83,7 @@ func RenderStatus(v View) string {
 	if v.Result == nil {
 		b.WriteString("Проверок ещё не было — первая пройдёт в ближайшие минуты.\n")
 		writeFooter(&b, v)
-		return b.String()
+		return clamp(b.String())
 	}
 
 	r := v.Result
@@ -95,7 +95,24 @@ func RenderStatus(v View) string {
 	writeFooter(&b, v)
 
 	writeProbes(&b, r)
-	return b.String()
+	return clamp(b.String())
+}
+
+// clamp — последняя страховка от предела Telegram. Список зондов режется своей
+// логикой, но шапка события, длинная цель и текст отказа складываются
+// независимо, а сообщение длиннее предела не отправляется вовсе — вместо
+// статуса пришло бы ничего. Режем по границе строки: теги разметки не
+// пересекают перевод строки, поэтому такой обрыв не ломает HTML.
+func clamp(s string) string {
+	runes := []rune(s)
+	if len(runes) <= MessageLimit {
+		return s
+	}
+	cut := string(runes[:MessageLimit-1])
+	if i := strings.LastIndexByte(cut, '\n'); i > 0 {
+		cut = cut[:i+1]
+	}
+	return cut + "…"
 }
 
 func writeBanner(b *strings.Builder, v View) {
