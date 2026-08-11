@@ -10,7 +10,11 @@ import { mtproxylSettingsApi, type MtproxylSetting } from '@/lib/api';
  * Настройки самого MTProxyL: в конфиг движка не попадают, поэтому им не место
  * в «Настройках прокси», которые в реаниматоре скрыты целиком.
  */
-export const MAINTENANCE_KEYS = ['BACKUP_RETENTION_DAYS', 'IP_HISTORY_LIMIT'];
+export const MAINTENANCE_KEYS = [
+  'BACKUP_RETENTION_DAYS',
+  'IP_HISTORY_LIMIT',
+  'IP_HISTORY_INTERVAL',
+];
 
 /** Бэкапы — только у менеджера, у чужой цели их делать нечем. */
 const MANAGER_ONLY_KEYS = new Set(['BACKUP_RETENTION_DAYS']);

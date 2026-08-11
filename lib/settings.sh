@@ -29,6 +29,8 @@ PROXY_SECRET_URL=""
 PROXY_CONFIG_V4_URL=""
 PROXY_CONFIG_V6_URL=""
 IP_HISTORY_LIMIT="200"
+# Как часто снимать адреса в историю, минут. 0 — только при открытой панели.
+IP_HISTORY_INTERVAL="5"
 BACKUP_RETENTION_DAYS="30"
 
 # Режим супер эксперта: конфиг движка ведёт пользователь вручную,
@@ -122,6 +124,7 @@ PROXY_CONFIG_V6_URL='${PROXY_CONFIG_V6_URL}'
 
 # Автоматическая ротация секретов
 IP_HISTORY_LIMIT='${IP_HISTORY_LIMIT}'
+IP_HISTORY_INTERVAL='${IP_HISTORY_INTERVAL}'
 BACKUP_RETENTION_DAYS='${BACKUP_RETENTION_DAYS}'
 
 # Selfmask
@@ -316,7 +319,7 @@ load_settings() {
                 MASKING_ENABLED|MASKING_HOST|MASKING_PORT|MASKING_RELAY_MAX_BYTES|\
                 UNKNOWN_SNI_ACTION|\
                 PROXY_SECRET_URL|PROXY_CONFIG_V4_URL|PROXY_CONFIG_V6_URL|\
-                BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT|\
+                BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT|IP_HISTORY_INTERVAL|\
                 SELFMASK_ENABLED|SELFMASK_DOMAIN|SELFMASK_SITE_SOURCE|SELFMASK_SITE_DIR|\
                 SELFMASK_NGINX_BACKEND_PORT|SELFMASK_CERT_EMAIL|SELFMASK_NGINX_SITE_NAME|\
                 SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS|SELFMASK_CERT_MODE|\
@@ -362,6 +365,8 @@ load_settings() {
     esac
 
     [ "$SUPEREXPERT_ENABLED" = "true" ] || SUPEREXPERT_ENABLED="false"
+    [[ "$IP_HISTORY_INTERVAL" =~ ^[0-9]+$ ]] || IP_HISTORY_INTERVAL="5"
 
     _fix_settings_perms
+    _ensure_ip_history_timer
 }

@@ -20,6 +20,7 @@ _SETTINGS_SETTABLE=(
     "PROXY_API_PORT|range:1:65535|Порт REST API движка (через него работает панель)"
     "BACKUP_RETENTION_DAYS|range:0:3650|Сколько дней хранить бэкапы (0 — не удалять)"
     "IP_HISTORY_LIMIT|range:1:100000|Сколько IP хранить в истории на пользователя"
+    "IP_HISTORY_INTERVAL|range:0:1440|Как часто снимать адреса в историю, минут (0 — выключить)"
 )
 
 # ── Валидаторы, которых нет в экспертном каталоге ─────────────
@@ -130,7 +131,7 @@ settings_set_param() {
     # и в реаниматоре, и при супер эксперте: чужой конфиг они не трогают.
     local _own_setting="false"
     case "$_key" in
-        BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT)
+        BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT|IP_HISTORY_INTERVAL)
             _own_setting="true" ;;
     esac
     if [ "$_own_setting" != "true" ]; then
@@ -153,6 +154,11 @@ settings_set_param() {
             ;;
         BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT)
             # Настройки самого MTProxyL — в конфиг движка не попадают.
+            ;;
+        IP_HISTORY_INTERVAL)
+            # Интервал зашит в юнит таймера, его надо переписать.
+            install_ip_history_timer
+            [ "$_val" = "0" ] && log_info "Снимки выключены: история пополняется, только пока открыта панель"
             ;;
         *)
             reload_proxy_config >/dev/null 2>&1 || true

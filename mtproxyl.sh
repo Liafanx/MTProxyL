@@ -445,6 +445,46 @@ cli_main() {
             esac
             ;;
 
+        ip-history)
+            check_root; load_settings; load_detect_settings
+            case "${1:-status}" in
+                flush|snapshot)
+                    ip_history_snapshot || { log_warn "Движок не ответил — снимок пропущен"; exit 1; }
+                    ;;
+                on|enable)
+                    # Выключение живёт в настройке: иначе снятый таймер
+                    # вернулся бы следующей же командой.
+                    [ "$(_ip_history_interval_minutes)" -gt 0 ] || IP_HISTORY_INTERVAL="5"
+                    save_settings
+                    install_ip_history_timer
+                    log_success "Снимки истории IP: каждые $(_ip_history_interval_minutes) мин"
+                    ;;
+                off|disable)
+                    IP_HISTORY_INTERVAL="0"
+                    save_settings
+                    remove_ip_history_timer
+                    log_success "Снимки истории IP выключены"
+                    ;;
+                status)
+                    local _db="${INSTALL_DIR}/relay_stats/user_ips_db"
+                    [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && \
+                        _db="${INSTALL_DIR}/relay_stats/target_user_ips_db"
+                    if ip_history_timer_active; then
+                        echo -e "  ${BOLD}Снимки:${NC} каждые $(_ip_history_interval_minutes) мин"
+                        systemctl list-timers "$IP_HISTORY_TIMER" --no-pager 2>/dev/null | sed -n '2p'
+                    else
+                        echo -e "  ${BOLD}Снимки:${NC} выключены ${DIM}(mtproxyl ip-history on)${NC}"
+                    fi
+                    echo -e "  ${BOLD}Записей:${NC} $(grep -c '^USER|' "$_db" 2>/dev/null || echo 0)"
+                    echo -e "  ${BOLD}Хранить:${NC} $(_user_ip_history_cap) адресов на пользователя"
+                    ;;
+                *)
+                    log_error "ip-history: flush | status | on | off"
+                    return 1
+                    ;;
+            esac
+            ;;
+
          selfmask)
             # load_detect_settings обязателен: в реаниматоре selfmask пишет
             # [censorship] в конфиг цели, а путь к нему в DETECTED_CONFIG_PATH.

@@ -290,6 +290,9 @@ SVC_EOF
         systemctl daemon-reload
         systemctl enable mtproxyl.service 2>/dev/null
         log_success "Автозапуск включён"
+
+        install_ip_history_timer
+        log_success "Снимки истории IP: каждые $(_ip_history_interval_minutes) мин"
     fi
 
     # Итог
@@ -580,6 +583,7 @@ uninstall() {
     systemctl stop mtproxyl.service >/dev/null 2>&1 || true
     systemctl disable mtproxyl.service >/dev/null 2>&1 || true
     rm -f /etc/systemd/system/mtproxyl.service
+    remove_ip_history_timer >/dev/null 2>&1 || true
     systemctl daemon-reload >/dev/null 2>&1 || true
 
     # Гео-блокировка

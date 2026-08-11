@@ -241,6 +241,96 @@ _flush_user_ip_history() {
     chmod 600 "$_db_file" 2>/dev/null
 }
 
+# ── Снимки истории по расписанию ────────────────────────────────
+# Списки адресов у движка живут недолго, а пополнялась история только когда
+# кто-то открывал список пользователей — то есть при открытой панели. Между
+# заходами адреса терялись. Снимок делает то же самое, но без сборки JSON.
+IP_HISTORY_SERVICE="mtproxyl-ip-history.service"
+IP_HISTORY_TIMER="mtproxyl-ip-history.timer"
+
+_ip_history_interval_minutes() {
+    local _v="${IP_HISTORY_INTERVAL:-5}"
+    [[ "$_v" =~ ^[0-9]+$ ]] || _v=5
+    echo "$_v"
+}
+
+ip_history_snapshot() {
+    local _cfg _db
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        _cfg="${DETECTED_CONFIG_PATH}"
+        _db="${_TARGET_USER_IPS_DB}"
+    else
+        _cfg="$(_engine_config_path 2>/dev/null)"
+        _db="${_USER_IPS_DB}"
+    fi
+    [ -n "$_db" ] || return 1
+
+    local _json
+    _json=$(_get_telemt_users_json "$_cfg" 2>/dev/null) || return 1
+    _target_user_ip_lists "$_json" | _flush_user_ip_history "$_db"
+}
+
+ip_history_timer_active() {
+    systemctl is-enabled "$IP_HISTORY_TIMER" &>/dev/null
+}
+
+# Таймер появился в 1.4.7, и у обновившихся его нет: установщик своё уже
+# отработал, а больше поставить его некому. Проверка — один stat, установка
+# случается один раз. Выключение живёт в настройке, иначе таймер возвращался бы
+# следующей же командой.
+_ensure_ip_history_timer() {
+    [ "$(id -u)" -eq 0 ] || return 0
+    [ -f "$SETTINGS_FILE" ] || return 0
+    [ "$(_ip_history_interval_minutes)" -gt 0 ] || return 0
+    [ -f "/etc/systemd/system/${IP_HISTORY_TIMER}" ] && return 0
+    command -v systemctl &>/dev/null || return 0
+    install_ip_history_timer >/dev/null 2>&1 || true
+}
+
+install_ip_history_timer() {
+    command -v systemctl &>/dev/null || return 0
+    local _min; _min=$(_ip_history_interval_minutes)
+    if [ "$_min" -le 0 ]; then
+        remove_ip_history_timer
+        return 0
+    fi
+
+    cat > "/etc/systemd/system/${IP_HISTORY_SERVICE}" << EOF
+[Unit]
+Description=MTProxyL: снимок IP-адресов пользователей в историю
+After=network-online.target
+
+[Service]
+Type=oneshot
+# «-»: остановленный движок — обычное дело, и падающий каждые несколько минут
+# юнит в журнале выглядел бы поломкой.
+ExecStart=-${INSTALL_DIR}/mtproxyl.sh ip-history flush
+EOF
+
+    cat > "/etc/systemd/system/${IP_HISTORY_TIMER}" << EOF
+[Unit]
+Description=MTProxyL: снимки истории IP каждые ${_min} мин
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=${_min}min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    systemctl daemon-reload 2>/dev/null
+    systemctl enable --now "$IP_HISTORY_TIMER" &>/dev/null
+}
+
+remove_ip_history_timer() {
+    command -v systemctl &>/dev/null || return 0
+    systemctl disable --now "$IP_HISTORY_TIMER" &>/dev/null
+    rm -f "/etc/systemd/system/${IP_HISTORY_TIMER}" "/etc/systemd/system/${IP_HISTORY_SERVICE}"
+    systemctl daemon-reload 2>/dev/null
+}
+
 # Строки истории конкретного пользователя как "ip|first_seen|last_seen".
 _user_ip_history() {
     local _label="$1" _db_file="$2"
