@@ -542,6 +542,14 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script pq-check [A-Za-z0-9]*
 # скрипт заканчивает работу exec в интерактивное меню.
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script update-check
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script update --no-restart
+# Доступность из России. Проверку ведёт MTProxyL — тем же результатом
+# пользуются телеграм-бот и меню, а панель только показывает и просит проверить.
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script availability status --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script availability details
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script availability check --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script availability on
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script availability off
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script availability token *
 EOF
 
   if [ -n "$_visudo" ]; then

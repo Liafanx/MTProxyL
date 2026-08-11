@@ -1,87 +1,69 @@
 package server
 
 import (
-	"bufio"
-	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
+	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/Liafanx/mtproxyl-panel/internal/auth"
-	"github.com/Liafanx/mtproxyl-panel/internal/globalping"
 	"github.com/Liafanx/mtproxyl-panel/internal/mtproxylctl"
 )
 
-// registerAvailabilityRoutes wires «Доступность из России». The check is
-// outbound HTTP and needs no root; only asking MTProxyL what to check is
-// privileged, and that goes through the usual sudo-whitelisted CLI.
+// registerAvailabilityRoutes wires «Доступность из России». The check itself
+// lives in MTProxyL: the telegram bot and a systemd timer need the same verdict,
+// and one that only exists while the panel runs disappears with the browser tab.
+// Everything here reshapes what the script already knows.
 func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte, client *mtproxylctl.Client) {
 	protected := func(h http.HandlerFunc) http.Handler {
 		return auth.RequireAuth(jwtSecret, h)
 	}
 
-	s.availabilityOverride = newAvailabilityOverrideStore(s.cfg.DataDir)
-
-	enabled := s.cfg.Globalping.GlobalpingEnabled()
-	if enabled {
-		s.availability = globalping.NewChecker(
-			s.effectiveGlobalpingToken(),
-			s.availabilityTarget(client),
-			s.cfg.Globalping.Interval(),
-			s.cfg.Globalping.EffectiveProbeLimit(),
-		)
-		s.availability.SetAutoCheck(s.availabilityOverride.autoCheckEnabled)
-		go s.availability.Start(context.Background())
-	} else {
-		log.Println("[globalping] проверка доступности выключена в конфиге панели")
-	}
-
 	// Краткий статус — его опрашивает индикатор на дашборде.
 	mux.Handle("GET /api/availability/status", protected(func(w http.ResponseWriter, r *http.Request) {
-		if s.availability == nil {
-			writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{"enabled": false}})
+		st, err := client.AvailabilityStatus(r.Context())
+		if err != nil {
+			writeAvailabilityUnavailable(w, err)
 			return
 		}
-		st := s.availability.Store().GetStatus()
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
 			"enabled":    true,
-			"status":     st,
-			"quota":      s.availability.Quota(),
-			"auto_check": s.availabilityOverride.autoCheckEnabled(),
-			"message":    pendingMessage(st == nil),
+			"status":     rawOrNil(st.Result),
+			"quota":      rawOrNil(st.Quota),
+			"auto_check": st.AutoCheck,
+			"message":    st.Message,
 		}})
 	}))
 
 	// Полный результат со списком зондов — страница «Доступность».
 	mux.Handle("GET /api/availability/details", protected(func(w http.ResponseWriter, r *http.Request) {
-		if s.availability == nil {
-			writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{"enabled": false}})
+		st, err := client.AvailabilityDetails(r.Context())
+		if err != nil {
+			writeAvailabilityUnavailable(w, err)
 			return
 		}
-		res := s.availability.Store().Get()
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
 			"enabled":    true,
-			"result":     res,
-			"quota":      s.availability.Quota(),
-			"auto_check": s.availabilityOverride.autoCheckEnabled(),
-			"message":    pendingMessage(res == nil),
+			"result":     rawOrNil(st.Result),
+			"quota":      rawOrNil(st.Quota),
+			"auto_check": st.AutoCheck,
+			"message":    st.Message,
 		}})
 	}))
 
 	// Что проверяем. GET отдаёт и заданное руками, и то, что вышло бы само —
 	// без второго форма не может показать, от чего оператор отступает.
 	mux.Handle("GET /api/availability/target", protected(func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
-			"override": s.availabilityOverride.public(),
-			"resolved": s.resolvedAvailabilityTarget(r.Context(), client),
-		}})
+		st, err := client.AvailabilityStatus(r.Context())
+		if err != nil {
+			writeAvailabilityUnavailable(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: availabilityTargetPayload(st)})
 	}))
 
 	mux.Handle("PUT /api/availability/target", protected(func(w http.ResponseWriter, r *http.Request) {
@@ -94,16 +76,30 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 			writeError(w, http.StatusBadRequest, "invalid_target", err.Error())
 			return
 		}
-		if err := s.availabilityOverride.set(ov); err != nil {
-			log.Printf("[globalping] не удалось сохранить цель проверки: %s", err)
-			writeError(w, http.StatusInternalServerError, "save_failed",
-				"Цель принята, но сохранить её не удалось — после перезапуска панели вернётся автоопределение")
+
+		// Цель — обычные настройки MTProxyL, и меняются они той же командой,
+		// что и всё остальное: своей ветки прав в sudoers для них не нужно.
+		port := ""
+		if ov.Port != 0 {
+			port = strconv.Itoa(int(ov.Port))
+		}
+		for _, kv := range [][2]string{
+			{"AVAILABILITY_HOST", ov.Host},
+			{"AVAILABILITY_PORT", port},
+			{"AVAILABILITY_SNI", ov.SNI},
+		} {
+			if _, err := client.SetSetting(r.Context(), kv[0], kv[1]); err != nil {
+				writeCLIError(w, "availability_target_failed", err)
+				return
+			}
+		}
+
+		st, err := client.AvailabilityStatus(r.Context())
+		if err != nil {
+			writeAvailabilityUnavailable(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
-			"override": s.availabilityOverride.public(),
-			"resolved": s.resolvedAvailabilityTarget(r.Context(), client),
-		}})
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: availabilityTargetPayload(st)})
 	}))
 
 	// Автопроверка. Выключенная не отменяет кнопку «Проверить сейчас»: она
@@ -116,14 +112,12 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 			writeError(w, http.StatusBadRequest, "bad_request", "Ожидается {\"enabled\": true|false}")
 			return
 		}
-		if err := s.availabilityOverride.setAutoCheck(*body.Enabled); err != nil {
-			log.Printf("[globalping] не удалось сохранить автопроверку: %s", err)
-			writeError(w, http.StatusInternalServerError, "save_failed",
-				"Настройка принята, но сохранить её не удалось — после перезапуска панели вернётся прежняя")
+		if err := client.AvailabilitySetAutoCheck(r.Context(), *body.Enabled); err != nil {
+			writeCLIError(w, "availability_autocheck_failed", err)
 			return
 		}
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
-			"auto_check": s.availabilityOverride.autoCheckEnabled(),
+			"auto_check": *body.Enabled,
 		}})
 	}))
 
@@ -143,179 +137,133 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 				"Токен Globalping — 20-200 символов из латиницы, цифр, дефиса и подчёркивания")
 			return
 		}
-		if err := s.availabilityOverride.setAPIToken(tok); err != nil {
-			log.Printf("[globalping] не удалось сохранить токен: %s", err)
-			writeError(w, http.StatusInternalServerError, "save_failed",
-				"Токен принят, но сохранить его не удалось — после перезапуска панели вернётся прежний")
+		if err := client.AvailabilitySetToken(r.Context(), tok); err != nil {
+			writeCLIError(w, "availability_token_failed", err)
 			return
 		}
-		if s.availability != nil {
-			s.availability.SetToken(s.effectiveGlobalpingToken())
-		}
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
-			"has_token": s.effectiveGlobalpingToken() != "",
+			"has_token": tok != "",
 		}})
 	}))
 
 	mux.Handle("POST /api/availability/check", protected(func(w http.ResponseWriter, r *http.Request) {
-		if s.availability == nil {
-			writeError(w, http.StatusBadRequest, "disabled",
-				"Проверка доступности выключена: [globalping] enabled = false в конфиге панели")
-			return
-		}
-		result, err := s.availability.RunCheckNow(r.Context())
+		result, err := client.AvailabilityCheck(r.Context())
 		if err != nil {
-			// Отказ по частоте — не ошибка сервера, а просьба подождать.
-			writeError(w, http.StatusTooManyRequests, "check_rejected", err.Error())
+			var rejected *mtproxylctl.CheckRejected
+			if errors.As(err, &rejected) {
+				// Отказ по квоте или частоте — не ошибка сервера, а просьба
+				// подождать.
+				writeError(w, http.StatusTooManyRequests, "check_rejected", rejected.Message)
+				return
+			}
+			writeAvailabilityUnavailable(w, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
 			"enabled": true,
-			"result":  result,
+			"result":  json.RawMessage(result),
 		}})
 	}))
 }
 
-// Токен Globalping: заданный в панели важнее конфига — его меняют на ходу,
-// а конфиг правят руками и реже.
-func (s *Server) effectiveGlobalpingToken() string {
-	if t := s.availabilityOverride.apiToken(); t != "" {
-		return t
+// availabilityTargetPayload splits what the script reports into the shape the
+// form needs: what the operator pinned, and what the next check will use.
+func availabilityTargetPayload(st *mtproxylctl.AvailabilityState) map[string]any {
+	resolved := map[string]any{
+		"host": st.Target.Host,
+		"port": st.Target.Port,
+		"sni":  st.Target.SNI,
 	}
-	return s.cfg.Globalping.APIToken
+	if st.Target.Host == "" {
+		resolved["error"] = "не удалось определить адрес сервера — задайте его вручную"
+	}
+	return map[string]any{
+		"override": map[string]any{
+			"host": st.Target.Override.Host,
+			"port": st.Target.OverridePort(),
+			"sni":  st.Target.Override.SNI,
+		},
+		"resolved": resolved,
+	}
+}
+
+// rawOrNil keeps an absent result absent: the page distinguishes «проверок ещё
+// не было» from a verdict, and an empty object would read as the latter.
+func rawOrNil(raw json.RawMessage) any {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	return raw
+}
+
+// writeAvailabilityUnavailable answers when the check cannot be reached at all:
+// bridge switched off in the panel config, or an MTProxyL older than it.
+func writeAvailabilityUnavailable(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, mtproxylctl.ErrDisabled):
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
+			"enabled": false,
+			"message": "Интеграция с MTProxyL отключена в конфигурации панели",
+		}})
+	case errors.Is(err, mtproxylctl.ErrAvailabilityUnsupported):
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
+			"enabled": false,
+			"message": "Установленный MTProxyL не умеет проверять доступность — обновите его: mtproxyl update",
+		}})
+	default:
+		writeCLIError(w, "availability_failed", err)
+	}
 }
 
 // Формат токена dash.globalping.io. Проверяем форму, а не подлинность:
 // негодный отсеется первым же ответом сервиса.
 var globalpingTokenRe = regexp.MustCompile(`^[A-Za-z0-9_-]{20,200}$`)
 
-// resolvedAvailabilityTarget is what the next check will use: the override where
-// set, autodetection where not. The form shows it as the placeholder.
-func (s *Server) resolvedAvailabilityTarget(ctx context.Context, client *mtproxylctl.Client) map[string]any {
-	// Определение цели дёргает CLI и, в крайнем случае, внешний сервис за
-	// адресом — на открытии страницы это не должно висеть.
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	t, err := s.availabilityTarget(client)(ctx)
-	out := map[string]any{"host": t.Host, "port": t.Port, "sni": t.SNI}
-	if err != nil {
-		out["error"] = err.Error()
-	}
-	return out
+// AvailabilityOverride is what the operator typed on the «Доступность» page.
+// Autodetection is blind to a proxy behind a CDN, a second domain or a
+// forwarded port. An empty field means «determine automatically».
+type AvailabilityOverride struct {
+	Host string `json:"host,omitempty"`
+	Port uint16 `json:"port,omitempty"`
+	SNI  string `json:"sni,omitempty"`
 }
 
-func pendingMessage(empty bool) string {
-	if empty {
-		return "Проверки ещё не проводились"
+// hostPattern is a conservative hostname: labels of letters, digits and
+// hyphens. Anything with a scheme, a slash, a colon or a space is a mistake
+// worth reporting rather than passing on to the probe service.
+var hostPattern = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$`)
+
+// validateAvailabilityOverride rejects input that could only produce a
+// confusing check result. Empty fields are valid — they mean «auto».
+func validateAvailabilityOverride(o *AvailabilityOverride) error {
+	o.Host = strings.TrimSpace(o.Host)
+	o.SNI = strings.TrimSpace(o.SNI)
+
+	if err := validateHostField(o.Host, "Адрес"); err != nil {
+		return err
 	}
-	return ""
+	if err := validateHostField(o.SNI, "SNI"); err != nil {
+		return err
+	}
+	return nil
 }
 
-// availabilityTarget answers what to check: address, proxy port and the FakeTLS
-// domain for SNI. Re-read before every check — the operator changes them here.
-func (s *Server) availabilityTarget(client *mtproxylctl.Client) globalping.TargetProvider {
-	return func(ctx context.Context) (globalping.Target, error) {
-		var t globalping.Target
-
-		// Указанное руками важнее всего остального, включая override_host из
-		// конфига: это ответ оператора на вопрос «а что, собственно, проверять»,
-		// и автоопределение он уже видел — форма показывает его как подсказку.
-		ov := s.availabilityOverride.get()
-		t.Host, t.Port, t.SNI = ov.Host, ov.Port, ov.SNI
-		if t.Host != "" && t.Port != 0 && t.SNI != "" {
-			return t, nil
-		}
-
-		// Порт и fake SNI знает MTProxyL, для текущего режима: у реаниматора они
-		// живут в конфиге чужой цели. Подставляем только незаданные руками поля.
-		if client.Enabled() && (t.Port == 0 || t.SNI == "") {
-			if st, err := client.GetMode(ctx); err == nil {
-				if t.Port == 0 && st.Port > 0 && st.Port <= 65535 {
-					t.Port = uint16(st.Port)
-				}
-				if t.SNI == "" {
-					t.SNI = st.SNI
-				}
-			} else {
-				log.Printf("[globalping] не удалось спросить режим у MTProxyL: %s", err)
-			}
-		}
-
-		// Адрес: явное указание в конфиге важнее автоопределения — им чинят
-		// случаи, где сервер сам себя определяет не так, как видят клиенты.
-		if h := strings.TrimSpace(s.cfg.Globalping.OverrideHost); t.Host == "" && h != "" {
-			t.Host = h
-		}
-
-		// Дальше — то, что MTProxyL кладёт в ссылки: домен заглушки, если она
-		// поднята, иначе прикреплённый адрес из настроек.
-		fallback := s.settingsFallback()
-		if t.Host == "" && client.Enabled() {
-			if sm, err := client.SelfmaskStatus(ctx); err == nil && sm.Enabled && sm.Domain != "" {
-				t.Host = sm.Domain
-			}
-		}
-		if t.Host == "" {
-			if v := fallback["SELFMASK_DOMAIN"]; v != "" && fallback["SELFMASK_ENABLED"] == "true" {
-				t.Host = v
-			}
-		}
-		if t.Host == "" {
-			t.Host = fallback["CUSTOM_IP"]
-		}
-		if t.Port == 0 {
-			if p, err := strconv.ParseUint(fallback["PROXY_PORT"], 10, 16); err == nil && p > 0 {
-				t.Port = uint16(p)
-			}
-		}
-		if t.SNI == "" {
-			t.SNI = fallback["PROXY_DOMAIN"]
-		}
-
-		// Последнее средство — внешний адрес сервера. Он же самый честный:
-		// именно на него клиенты и приходят, когда домен не задан.
-		if t.Host == "" {
-			ip, err := globalping.PublicIP(ctx)
-			if err != nil {
-				return t, fmt.Errorf("%w", err)
-			}
-			t.Host = ip
-		}
-		return t, nil
+func validateHostField(v, label string) error {
+	if v == "" {
+		return nil
 	}
-}
-
-// settingsFallback reads MTProxyL's settings.conf directly — only a fallback,
-// the CLI knows better in reanimator mode. The file is world-readable by
-// design, but an older MTProxyL alongside can still deny it: hence empty
-// result rather than a failed check.
-func (s *Server) settingsFallback() map[string]string {
-	out := map[string]string{}
-	if s.cfg.Mtproxyl.InstallDir == "" {
-		return out
+	if len(v) > 253 {
+		return fmt.Errorf("%s: слишком длинное имя", label)
 	}
-	f, err := os.Open(filepath.Join(s.cfg.Mtproxyl.InstallDir, "settings.conf"))
-	if err != nil {
-		return out
+	// IP-литерал — законная цель: у сервера может не быть домена вовсе.
+	if net.ParseIP(v) != nil {
+		return nil
 	}
-	defer func() { _ = f.Close() }()
-
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		value = strings.Trim(strings.TrimSpace(value), `"'`)
-		if key != "" {
-			out[key] = value
-		}
+	if strings.Contains(v, "://") || strings.ContainsAny(v, "/ :?#@") {
+		return fmt.Errorf("%s: нужно только имя хоста или IP, без схемы, порта и пути", label)
 	}
-	return out
+	if !hostPattern.MatchString(v) {
+		return fmt.Errorf("%s: %q не похоже на домен или IP", label, v)
+	}
+	return nil
 }

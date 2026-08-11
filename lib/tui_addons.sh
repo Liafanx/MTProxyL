@@ -41,6 +41,7 @@ tui_addons_menu() {
         echo -e "  ${CYAN}[5]${NC}  Selfmask (заглушка + сертификат)"
         echo -e "  ${CYAN}[6]${NC}  Веб-панель MTProxyL-Panel  ${DIM}$(panel_status_line)${NC}"
         echo -e "  ${CYAN}[7]${NC}  $([ "$_geoip_installed" = "true" ] && echo "Переустановить" || echo "Установить") базу GeoIP"
+        echo -e "  ${CYAN}[8]${NC}  Доступность из России  ${DIM}$(availability_status_line)${NC}"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -93,9 +94,130 @@ tui_addons_menu() {
                 geoip_install
                 press_any_key
                 ;;
+            8)
+                tui_availability_menu
+                ;;
             0|"") return ;;
         esac
     done
+}
+
+# ── Доступность из России ─────────────────────────────────────
+# Проверка живёт в скрипте, а не в панели: ею пользуются и панель, и
+# телеграм-бот, и таймер — каждый со своей стороны.
+tui_availability_menu() {
+    while true; do
+        clear_screen
+        draw_header "ДОСТУПНОСТЬ ИЗ РОССИИ"
+        availability_show_status --no-title
+
+        echo -e "  ${CYAN}[1]${NC}  Проверить сейчас"
+        echo -e "  ${CYAN}[2]${NC}  Автопроверка: $(availability_timer_active && echo "${GREEN}включена${NC}" || echo "${DIM}выключена${NC}")"
+        echo -e "  ${CYAN}[3]${NC}  Интервал проверки ${DIM}($(availability_interval_minutes) мин)${NC}"
+        echo -e "  ${CYAN}[4]${NC}  Число зондов ${DIM}($(availability_probe_limit), кредит за зонд)${NC}"
+        echo -e "  ${CYAN}[5]${NC}  Порог уведомления ${DIM}($(availability_threshold)%)${NC}"
+        echo -e "  ${CYAN}[6]${NC}  Что проверять ${DIM}(адрес, порт, SNI)${NC}"
+        echo -e "  ${CYAN}[7]${NC}  Токен Globalping ${DIM}($([ -n "$(availability_token)" ] && echo "задан, лимит 500/ч" || echo "нет, лимит 250/ч"))${NC}"
+        echo -e "  ${CYAN}[8]${NC}  Показать все зонды последней проверки"
+        echo ""
+        echo -e "  ${DIM}[0]${NC}  Назад"
+        echo ""
+
+        local choice; choice=$(read_choice "выбор" "0")
+        case "$choice" in
+            1)
+                log_info "Опрашиваем российские зонды, это до минуты..."
+                availability_check
+                press_any_key
+                ;;
+            2)
+                if availability_timer_active; then
+                    handle_availability_command off
+                else
+                    handle_availability_command on
+                fi
+                press_any_key
+                ;;
+            3)
+                echo -en "  ${BOLD}Интервал в минутах${NC} ${DIM}(текущий $(availability_interval_minutes))${NC}: "
+                local _v; read_line _v
+                [ -n "$_v" ] && { settings_set_param AVAILABILITY_INTERVAL "$_v"; press_any_key; }
+                ;;
+            4)
+                echo -e "  ${DIM}Каждый зонд — кредит. 20 зондов раз в 15 минут это 80 кредитов в час${NC}"
+                echo -en "  ${BOLD}Зондов (1-50)${NC} ${DIM}(текущее $(availability_probe_limit))${NC}: "
+                local _v; read_line _v
+                [ -n "$_v" ] && { settings_set_param AVAILABILITY_PROBES "$_v"; press_any_key; }
+                ;;
+            5)
+                echo -e "  ${DIM}Ниже этого процента телеграм-бот пришлёт предупреждение${NC}"
+                echo -en "  ${BOLD}Порог в процентах${NC} ${DIM}(текущий $(availability_threshold))${NC}: "
+                local _v; read_line _v
+                [ -n "$_v" ] && { settings_set_param AVAILABILITY_THRESHOLD "$_v"; press_any_key; }
+                ;;
+            6)
+                _tui_availability_target
+                press_any_key
+                ;;
+            7)
+                _tui_availability_token
+                press_any_key
+                ;;
+            8)
+                _tui_availability_probes
+                press_any_key
+                ;;
+            0|"") return ;;
+        esac
+    done
+}
+
+# Пустое поле — законный ответ: значит «определяй сам».
+_tui_availability_target() {
+    local _t _h _p _s _v
+    _t=$(availability_target); IFS='|' read -r _h _p _s <<< "$_t"
+    echo ""
+    echo -e "  ${DIM}Сейчас проверяется ${_h}:${_p}${_s:+ (SNI: ${_s})}${NC}"
+    echo -e "  ${DIM}Пустой ответ на вопрос означает автоопределение${NC}"
+    echo ""
+
+    echo -en "  ${BOLD}Адрес${NC} ${DIM}(сейчас: ${AVAILABILITY_HOST:-авто})${NC}: "
+    read_line _v; settings_set_param AVAILABILITY_HOST "$_v"
+
+    echo -en "  ${BOLD}Порт${NC} ${DIM}(сейчас: ${AVAILABILITY_PORT:-авто})${NC}: "
+    read_line _v; settings_set_param AVAILABILITY_PORT "$_v"
+
+    echo -en "  ${BOLD}SNI${NC} ${DIM}(сейчас: ${AVAILABILITY_SNI:-авто})${NC}: "
+    read_line _v; settings_set_param AVAILABILITY_SNI "$_v"
+}
+
+_tui_availability_token() {
+    echo ""
+    echo -e "  ${DIM}Бесплатный токен на https://dash.globalping.io/ поднимает${NC}"
+    echo -e "  ${DIM}часовой лимит с 250 до 500 кредитов. Пусто — оставить как есть,${NC}"
+    echo -e "  ${DIM}слово ${BOLD}удалить${NC}${DIM} — стереть сохранённый.${NC}"
+    echo ""
+    echo -en "  ${BOLD}Токен:${NC} "
+    local _v; read_line _v
+    case "$_v" in
+        "")      log_info "Токен не изменён" ;;
+        удалить) availability_set_token "" && log_success "Токен удалён" ;;
+        *)       availability_set_token "$_v" && log_success "Токен сохранён" ;;
+    esac
+}
+
+_tui_availability_probes() {
+    local _f; _f=$(_avail_state_file)
+    if [ ! -s "$_f" ] || ! command -v jq &>/dev/null; then
+        log_warn "Результатов ещё нет"
+        return 0
+    fi
+    echo ""
+    jq -r '.probes[]? |
+        (if .tls_success then "  [+] " else "  [-] " end)
+        + ((.city // "?") + ", " + (.network // "?"))
+        + (if .tls_success then "" else " — " + .error end)' "$_f" 2>/dev/null
+    echo ""
 }
 
 # Проверка ограничений (censorship) сервера — портировано без изменений

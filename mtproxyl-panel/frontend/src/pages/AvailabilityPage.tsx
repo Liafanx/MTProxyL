@@ -116,9 +116,7 @@ export function AvailabilityPage() {
 
         {!enabled ? (
           <Card className="p-6 text-sm text-text-secondary">
-            Проверка доступности выключена в конфиге панели. Включите её в{' '}
-            <code className="bg-surface-hover px-1 rounded">[globalping] enabled = true</code>{' '}
-            и перезапустите панель.
+            {message || 'Проверка доступности недоступна'}
           </Card>
         ) : !result ? (
           <Card className="p-6 text-sm text-text-secondary text-center">

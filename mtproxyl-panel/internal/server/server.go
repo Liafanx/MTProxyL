@@ -19,7 +19,6 @@ import (
 	"github.com/Liafanx/mtproxyl-panel/internal/auth"
 	"github.com/Liafanx/mtproxyl-panel/internal/auto_update"
 	"github.com/Liafanx/mtproxyl-panel/internal/config"
-	"github.com/Liafanx/mtproxyl-panel/internal/globalping"
 	"github.com/Liafanx/mtproxyl-panel/internal/logs"
 	"github.com/Liafanx/mtproxyl-panel/internal/mtproxylctl"
 	"github.com/Liafanx/mtproxyl-panel/internal/panel_updater"
@@ -95,11 +94,6 @@ func (rl *loginRateLimiter) record(ip string) {
 
 type Server struct {
 	cfg *config.Config
-	// availability is the «Доступность из России» checker; nil when it is
-	// turned off in the config.
-	availability *globalping.Checker
-	// availabilityOverride is the operator's answer to what should be checked.
-	availabilityOverride *availabilityOverrideStore
 }
 
 func New(cfg *config.Config) *Server {
