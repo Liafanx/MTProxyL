@@ -308,6 +308,13 @@ adopt_existing_cert() {
   return 0
 }
 
+# Есть ли на сервере MTProxyL. Каталог /opt/mtproxyl закрыт от посторонних,
+# поэтому проверка [ -x ] от обычного пользователя врёт — спрашиваем через sudo.
+mtproxyl_present() {
+  [ -x "$MTPROXYL_SCRIPT" ] && return 0
+  $SUDO test -x "$MTPROXYL_SCRIPT" 2>/dev/null
+}
+
 port80_busy() {
   if command -v ss >/dev/null 2>&1; then
     ss -tln 2>/dev/null | awk '{print $4}' | grep -qE '(^|:|])80$'
@@ -644,7 +651,7 @@ detect_from_mtproxyl() {
   API_PORT_DETECTED=""
   API_ENABLED_DETECTED=""
 
-  [ -x "$MTPROXYL_SCRIPT" ] || return 1
+  mtproxyl_present || return 1
 
   _json=$(MTPROXYL_ASSUME_YES=1 $SUDO "$MTPROXYL_SCRIPT" mode --json 2>/dev/null) || return 1
   # Берём первую строку, похожую на JSON: скрипт может напечатать лог раньше.
@@ -978,26 +985,29 @@ do_install() {
 [tls]
 cert_file = \"$DATA_DIR/certs/panel.crt\"
 key_file = \"$DATA_DIR/certs/panel.key\""
-        elif port80_busy && [ -x "$MTPROXYL_SCRIPT" ]; then
-          # Порт 80 постоянно держит nginx Selfmask: своё ACME панели тут
-          # бесполезно. Выпуск отдаём MTProxyL — он умеет через webroot.
+        elif port80_busy && mtproxyl_present; then
+          # Порт 80 держит чужая служба (обычно nginx Selfmask): своё ACME
+          # панели тут бесполезно. Выпуск отдаём MTProxyL — он либо отдаёт
+          # проверку заглушке, либо освобождает порт на несколько секунд.
           say "Порт 80 занят — сертификат выпустит MTProxyL после установки службы"
           say "(заглушка Selfmask при этом либо не трогается, либо встанет на несколько секунд)"
-          TLS_EMAIL=$(prompt "Email для Let's Encrypt" "")
-          [ -n "$TLS_EMAIL" ] || die "Для выпуска сертификата нужен email"
+          say "Email спросит он же — его можно не указывать"
           ISSUE_CERT_AFTER_INSTALL="yes"
           # До выпуска панель поднимаем на самоподписанном: без [tls] она
           # слушала бы открытый HTTP, а пароль администратора уходит в первом
-          # же запросе.
+          # же запросе. Домен в self_signed_hosts — чтобы MTProxyL знал, на что
+          # выпускать, если выпуск придётся повторить.
           TLS_BLOCK="
 [tls]
 self_signed = true
+self_signed_hosts = [\"$TLS_DOMAIN\"]
 cert_file = \"$DATA_DIR/certs/panel.crt\"
 key_file = \"$DATA_DIR/certs/panel.key\""
         else
           if port80_busy; then
-            say "ВНИМАНИЕ: порт 80 уже занят — Let's Encrypt не сможет подтвердить домен"
-            say "Освободите его либо выберите вариант 1 (самоподписанный) или 3 (готовый сертификат)"
+            say "ВНИМАНИЕ: порт 80 уже занят — панель не сможет подтвердить домен сама"
+            say "Освободите его, выберите вариант 1 или 3, либо выпустите сертификат"
+            say "через MTProxyL: sudo mtproxyl panel cert $TLS_DOMAIN"
           fi
           TLS_BLOCK="
 [tls]
@@ -1051,7 +1061,7 @@ self_signed_hosts = [\"$TLS_HOSTS\"]"
     # Панель делалась под MTProxyL: при его наличии интеграция включается без
     # вопросов. Отключается в конфиге: [mtproxyl] enabled = false.
     MTPROXYL_ENABLED="false"
-    if [ -x "$MTPROXYL_SCRIPT" ]; then
+    if mtproxyl_present; then
       MTPROXYL_ENABLED="true"
       say "Обнаружен MTProxyL — интеграция включена: $MTPROXYL_SCRIPT"
     fi
@@ -1133,11 +1143,11 @@ session_ttl = \"24h\"${TLS_BLOCK}"
   if [ "${ISSUE_CERT_AFTER_INSTALL:-}" = "yes" ]; then
     printf '\n'
     say "Выпуск сертификата Let's Encrypt для $TLS_DOMAIN..."
-    if $SUDO "$MTPROXYL_SCRIPT" panel cert "$TLS_DOMAIN" "$TLS_EMAIL"; then
+    if $SUDO "$MTPROXYL_SCRIPT" panel cert "$TLS_DOMAIN"; then
       say "Сертификат выпущен и передан панели"
     else
       say "ВНИМАНИЕ: выпустить сертификат не удалось — панель осталась на самоподписанном"
-      say "Повторить позже: sudo mtproxyl panel cert $TLS_DOMAIN $TLS_EMAIL"
+      say "Повторить позже: sudo mtproxyl panel cert $TLS_DOMAIN"
     fi
   fi
 

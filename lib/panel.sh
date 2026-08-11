@@ -216,6 +216,70 @@ _panel_install_report() {
         local _addr; _addr=$(panel_listen_addr)
         [ -n "$_addr" ] && log_info "Адрес: $(panel_scheme)://${_addr}"
     fi
+    _panel_offer_cert_after_install
+}
+
+# Стоит ли в конфиге панели самоподписанный сертификат.
+_panel_config_self_signed() {
+    grep -qE '^[[:space:]]*self_signed[[:space:]]*=[[:space:]]*true' \
+        "${PANEL_CONFIG_DIR}/config.toml" 2>/dev/null
+}
+
+# Домен, который назвали при установке. Установщик кладёт его в
+# self_signed_hosts, когда поднимает панель на временном сертификате в
+# ожидании выпуска: acme_domain там не годится, панель заняла бы порт 80.
+_panel_requested_domain() {
+    grep -oE '^[[:space:]]*self_signed_hosts[[:space:]]*=.*' \
+        "${PANEL_CONFIG_DIR}/config.toml" 2>/dev/null \
+        | head -1 | grep -oE '"[^"]+"' | head -1 | tr -d '"'
+}
+
+# Собственный ACME панели требует порт 80 — и при старте, и при каждом
+# продлении. Установщик этого не умеет: занятый порт он может только назвать.
+# Здесь тот же выпуск, что и пунктом [6] меню, — он умеет и отдать проверку
+# заглушке Selfmask, и освободить порт на несколько секунд.
+_panel_offer_cert_after_install() {
+    panel_installed || return 0
+    local _cfg="${PANEL_CONFIG_DIR}/config.toml"
+    [ -f "$_cfg" ] || return 0
+
+    local _domain _reason=""
+    if grep -qE '^[[:space:]]*acme_domain[[:space:]]*=' "$_cfg" 2>/dev/null; then
+        _panel_port80_busy || return 0
+        _domain=$(panel_cert_domain 2>/dev/null)
+        _reason="панель выпускает сертификат сама, но порт 80 занят"
+    elif _panel_config_self_signed; then
+        # Только если домен назвали при установке: сам по себе самоподписанный
+        # сертификат — законный выбор, и звать в Let's Encrypt тут незачем.
+        _domain=$(_panel_requested_domain)
+        _reason="панель работает на самоподписанном сертификате"
+    else
+        return 0
+    fi
+    [ -n "$_domain" ] && validate_domain "$_domain" || return 0
+
+    echo ""
+    log_warn "Сертификат для ${_domain} не выпущен: ${_reason}"
+    local _holders; _holders=$(_panel_port80_holders)
+    if _panel_selfmask_serves_acme "$_domain"; then
+        log_info "Проверку домена отдаст nginx Selfmask — останавливать ничего не придётся"
+    elif [ -n "$_holders" ]; then
+        log_info "Порт 80 держит: ${_holders} — на время выпуска остановим и вернём обратно"
+    elif _panel_port80_busy; then
+        log_error "Порт 80 занят посторонним процессом — освободите его и повторите"
+        log_info "После этого: mtproxyl panel cert ${_domain}"
+        return 0
+    fi
+
+    echo ""
+    echo -en "  ${BOLD}Выпустить сертификат Let's Encrypt сейчас? [Y/n]:${NC} "
+    local _yn; read_line _yn
+    if [[ "$_yn" =~ ^[nN] ]]; then
+        log_info "Позже: mtproxyl panel cert ${_domain} (меню панели → [6])"
+        return 0
+    fi
+    panel_issue_cert "$_domain" || \
+        log_info "Повторить: mtproxyl panel cert ${_domain}"
 }
 
 # panel_uninstall [--no-confirm] — флаг пропускает вопрос «продолжить»,
