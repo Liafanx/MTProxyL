@@ -650,3 +650,42 @@ export const availabilityApi = {
       body: JSON.stringify({ enabled }),
     }),
 };
+
+/**
+ * Телеграм-бот, зеркалящий вердикт доступности в личку админа. Токен обратно
+ * не приходит — только признак, что он задан.
+ */
+export interface TelegramBotStatus {
+  /** false — выключена сама проверка доступности, боту нечего сообщать. */
+  available: boolean;
+  enabled: boolean;
+  has_token: boolean;
+  admin_id: number;
+  alert_threshold: number;
+  running?: boolean;
+  bot_username?: string;
+  last_error?: string;
+  status_message_id?: number;
+}
+
+/** Присылаем только изменённые поля: остальные остаются как были. */
+export interface TelegramBotPatch {
+  enabled?: boolean;
+  token?: string;
+  admin_id?: number;
+  alert_threshold?: number;
+}
+
+const TELEGRAM_BASE = `${BASE}/api/telegram`;
+
+export const telegramApi = {
+  status: () => request<TelegramBotStatus>(TELEGRAM_BASE, '/status'),
+  save: (patch: TelegramBotPatch) =>
+    request<TelegramBotStatus>(TELEGRAM_BASE, '/config', {
+      method: 'PUT',
+      body: JSON.stringify(patch),
+    }),
+  /** Проверить токен и отправить админу пробное сообщение. */
+  test: () =>
+    request<{ bot_username: string; sent: boolean }>(TELEGRAM_BASE, '/test', { method: 'POST' }),
+};

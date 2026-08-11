@@ -9,11 +9,14 @@ import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import {
   availabilityApi,
+  telegramApi,
   type AvailabilityResult,
   type AvailabilityProbe,
   type AvailabilityLevel,
   type AvailabilityQuota,
   type AvailabilityTargetResponse,
+  type TelegramBotStatus,
+  type TelegramBotPatch,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -111,6 +114,8 @@ export function AvailabilityPage() {
         {enabled && <QuotaBanner quota={quota} />}
 
         {enabled && <TokenForm hasToken={quota?.has_token ?? false} onSaved={load} />}
+
+        {enabled && <TelegramBotForm />}
 
         {enabled && <TargetForm onSaved={load} />}
 
@@ -327,6 +332,224 @@ function TokenForm({ hasToken, onSaved }: { hasToken: boolean; onSaved: () => vo
         )}
         {saved && !error && <span className="text-xs text-success">Сохранено</span>}
       </div>
+      {error && (
+        <div className="mt-2">
+          <ErrorAlert message={error} />
+        </div>
+      )}
+    </CollapsibleSection>
+  );
+}
+
+/**
+ * Телеграм-бот. Тот же вердикт, что на этой странице, но в личке админа: одно
+ * сообщение, которое бот переписывает после каждой проверки, и звуковой алерт,
+ * когда доступность уходит ниже порога.
+ *
+ * Токен обратно не приходит — только признак, что он задан, как и у Globalping.
+ */
+function TelegramBotForm() {
+  const [status, setStatus] = useState<TelegramBotStatus | null>(null);
+  const [token, setToken] = useState('');
+  const [adminId, setAdminId] = useState('');
+  const [threshold, setThreshold] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const apply = useCallback((s: TelegramBotStatus) => {
+    setStatus(s);
+    setToken('');
+    setAdminId(s.admin_id ? String(s.admin_id) : '');
+    setThreshold(s.alert_threshold ? String(s.alert_threshold) : '');
+  }, []);
+
+  useEffect(() => {
+    telegramApi
+      .status()
+      .then(apply)
+      .catch((e) => setError(e instanceof Error ? e.message : 'Не удалось загрузить настройки бота'));
+  }, [apply]);
+
+  const send = async (patch: TelegramBotPatch, okText: string) => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      apply(await telegramApi.save(patch));
+      setNotice(okText);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось сохранить');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const save = () => {
+    const patch: TelegramBotPatch = {};
+    if (token.trim()) patch.token = token.trim();
+
+    if (adminId.trim()) {
+      const id = Number(adminId.trim());
+      if (!Number.isInteger(id) || id <= 0) {
+        setError('ID админа — целое положительное число. Напишите боту /start, он пришлёт ваш ID');
+        return;
+      }
+      patch.admin_id = id;
+    }
+
+    if (threshold.trim()) {
+      const value = Number(threshold.trim());
+      if (!Number.isFinite(value) || value < 1 || value > 99) {
+        setError('Порог алерта — от 1 до 99 процентов');
+        return;
+      }
+      patch.alert_threshold = value;
+    }
+
+    if (Object.keys(patch).length === 0) {
+      setError('Менять нечего: заполните хотя бы одно поле');
+      return;
+    }
+    void send(patch, 'Сохранено');
+  };
+
+  const test = async () => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await telegramApi.test();
+      setNotice(`Сообщение отправлено ботом @${res.bot_username}`);
+      apply(await telegramApi.status());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Проверка связи не удалась');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!status) {
+    return (
+      <CollapsibleSection title="Телеграм-бот" defaultOpen={false}>
+        {error ? <ErrorAlert message={error} /> : <span className="text-xs text-text-secondary">Загружаем…</span>}
+      </CollapsibleSection>
+    );
+  }
+
+  const badge = !status.enabled ? (
+    <Badge variant="outline">выключен</Badge>
+  ) : status.running ? (
+    <Badge variant="success">работает</Badge>
+  ) : (
+    <Badge variant="warning">включён, не на связи</Badge>
+  );
+
+  return (
+    <CollapsibleSection title="Телеграм-бот" defaultOpen={false} badge={badge}>
+      <p className="text-xs text-text-secondary mb-3">
+        Присылает этот же вердикт в личку одним сообщением и переписывает его после каждой
+        проверки — плановой или по кнопке. Под сообщением две кнопки: «Проверить сейчас»
+        запускает настоящее измерение и тратит квоту, «Обновить» просто перечитывает
+        последний результат. Когда доступность падает ниже порога, приходит отдельный
+        алерт со звуком, а когда возвращается — сообщение о восстановлении.
+      </p>
+      <p className="text-xs text-text-secondary mb-3">
+        Токен получите у{' '}
+        <a
+          href="https://t.me/BotFather"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-accent hover:underline"
+        >
+          @BotFather
+        </a>
+        . ID админа бот пришлёт сам: сохраните токен, включите бота и напишите ему{' '}
+        <code className="bg-surface-hover px-1 rounded">/start</code>. Первым Telegram писать
+        боту не даёт, поэтому этот шаг обязателен в любом случае.
+      </p>
+
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <label className="text-xs text-text-secondary w-28 shrink-0">Токен бота</label>
+          <Input
+            type="password"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder={status.has_token ? 'заменить на новый' : '123456789:AA…'}
+            spellCheck={false}
+            className="max-w-[280px]"
+          />
+          <Badge variant={status.has_token ? 'success' : 'outline'}>
+            {status.has_token ? 'задан' : 'не задан'}
+          </Badge>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <label className="text-xs text-text-secondary w-28 shrink-0">ID админа</label>
+          <Input
+            value={adminId}
+            onChange={(e) => setAdminId(e.target.value)}
+            placeholder="123456789"
+            spellCheck={false}
+            className="max-w-[280px]"
+          />
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <label className="text-xs text-text-secondary w-28 shrink-0">Порог алерта</label>
+          <Input
+            type="number"
+            min={1}
+            max={99}
+            value={threshold}
+            onChange={(e) => setThreshold(e.target.value)}
+            placeholder="60"
+            className="max-w-[100px]"
+          />
+          <span className="text-xs text-text-secondary">
+            % — ниже этого значения приходит алерт
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button onClick={save} disabled={busy} size="sm">
+            {busy ? 'Сохраняем…' : 'Сохранить'}
+          </Button>
+          <Button
+            onClick={() => void send({ enabled: !status.enabled }, status.enabled ? 'Бот выключен' : 'Бот включён')}
+            disabled={busy}
+            size="sm"
+            variant="outline"
+          >
+            {status.enabled ? 'Выключить' : 'Включить'}
+          </Button>
+          <Button onClick={test} disabled={busy || !status.has_token} size="sm" variant="outline">
+            Тест
+          </Button>
+          {notice && !error && <span className="text-xs text-success">{notice}</span>}
+        </div>
+
+        {status.bot_username && (
+          <div className="text-xs text-text-secondary">
+            Бот:{' '}
+            <a
+              href={`https://t.me/${status.bot_username}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-accent hover:underline"
+            >
+              @{status.bot_username}
+            </a>
+          </div>
+        )}
+      </div>
+
+      {status.last_error && (
+        <div className="mt-3">
+          <ErrorAlert message={status.last_error} />
+        </div>
+      )}
       {error && (
         <div className="mt-2">
           <ErrorAlert message={error} />
