@@ -47,6 +47,7 @@ type Checker struct {
 
 	mu            sync.Mutex
 	autoCheck     func() bool
+	onResult      func(*CheckResult)
 	lastCheckTime time.Time
 	// inFlight is non-nil while a check runs; other callers wait on it instead
 	// of starting a second measurement and paying twice.
@@ -114,6 +115,27 @@ func (c *Checker) autoCheckEnabled() bool {
 	fn := c.autoCheck
 	c.mu.Unlock()
 	return fn == nil || fn()
+}
+
+// SetOnResult подписывает на каждый новый вердикт — и удачный, и неудачный.
+// Подписчику отдаётся тот же указатель, что лёг в Store; менять его нельзя.
+//
+// Обработчик обязан возвращаться немедленно: он вызывается из середины
+// проверки, и всё, что он делает долго, задержит и плановый цикл, и HTTP-ответ
+// на «Проверить сейчас». Медленную работу подписчик уносит в свою горутину.
+func (c *Checker) SetOnResult(fn func(*CheckResult)) {
+	c.mu.Lock()
+	c.onResult = fn
+	c.mu.Unlock()
+}
+
+func (c *Checker) notify(result *CheckResult) {
+	c.mu.Lock()
+	fn := c.onResult
+	c.mu.Unlock()
+	if fn != nil {
+		fn(result)
+	}
 }
 
 // Start runs checks until ctx is cancelled.
@@ -226,10 +248,15 @@ func (c *Checker) doCheck(ctx context.Context) (*CheckResult, error) {
 	if err != nil {
 		// The failure is worth keeping: the page has to explain why there is
 		// no fresh verdict instead of showing a stale one as current.
-		c.store.Set(&CheckResult{CheckedAt: time.Now(), Error: err.Error(), Level: LevelRed})
+		failed := &CheckResult{CheckedAt: time.Now(), Error: err.Error(), Level: LevelRed}
+		c.store.Set(failed)
+		// Подписчику неудача нужна не меньше удачи: иначе его сообщение молча
+		// замрёт на прошлых цифрах и будет выдавать их за свежие.
+		c.notify(failed)
 		return nil, err
 	}
 	c.store.Set(result)
+	c.notify(result)
 	return result, nil
 }
 
