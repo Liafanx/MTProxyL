@@ -122,6 +122,12 @@ ZAPRET2_EXTRA_PORTS=""
 ZAPRET2_APPLIED="false"
 ZAPRET2_SERVICE_ENABLED="false"
 
+# ── Исключения для VPN-интерфейсов ─────────────────────────────
+# Трафик из VPN-туннелей (AmneziaWG, WireGuard, OpenVPN) не должен попадать
+# под обработку zapret2, иначе transiting HTTPS-трафик будет ломаться.
+# Список интерфейсов через пробел, поддерживаются wildcard (*).
+ZAPRET2_EXCLUDE_IFACES="awg* wg* tun*"
+
 # Доп. правила
 declare -A NFT_EXTRA_PORT
 declare -A NFT_EXTRA_IP
@@ -1686,13 +1692,11 @@ if [ "\$IS_BRIDGE" = "true" ]; then
     nft "add rule ip \$TABLE forward \${SADDR_MATCH}meta mark and \$FWMARK == 0x00000000 tcp sport \$PORT counter queue num \$QNUM bypass"
 else
     nft "add chain ip \$TABLE postrouting { type filter hook postrouting priority srcnat + 1; policy accept; }"
-    nft "add rule ip \$TABLE postrouting oifname { "awg*", "wg*", "tun*" } accept"
     nft "add rule ip \$TABLE postrouting \$BYPASS_MATCH ct mark \$CT_MARK counter accept"
     nft "add rule ip \$TABLE postrouting meta mark and \$FWMARK == 0x00000000 tcp sport \$PORT counter queue num \$QNUM bypass"
 
     nft "add chain ip \$TABLE prerouting { type filter hook prerouting priority mangle; policy accept; }"
     nft "add rule ip \$TABLE prerouting ct state invalid counter drop"
-    nft "add rule ip \$TABLE prerouting iifname { "awg*", "wg*", "tun*" } accept"
     nft "add rule ip \$TABLE prerouting \$BYPASS_MATCH ct mark \$CT_MARK counter accept"
     nft "add rule ip \$TABLE prerouting meta mark and \$FWMARK == 0x00000000 tcp dport \$PORT counter queue num \$QNUM bypass"
 fi
@@ -1973,6 +1977,17 @@ zapret2_apply_nft() {
 
     nft delete table ip "$_table" 2>/dev/null || true
     nft add table ip "$_table"
+
+    # ── Исключения для VPN-интерфейсов ────────────────────────
+    # Трафик из туннелей (AmneziaWG, WireGuard, OpenVPN) пропускаем мимо очереди,
+    # иначе zapret2 будет ломать транзитный HTTPS-трафик, применяя к нему badsum.
+    if [ -n "${ZAPRET2_EXCLUDE_IFACES:-}" ]; then
+        local _iface
+        for _iface in $ZAPRET2_EXCLUDE_IFACES; do
+            nft "add rule ip $_table prerouting iifname \"$_iface\" counter accept"
+            nft "add rule ip $_table postrouting oifname \"$_iface\" counter accept"
+        done
+    fi
 
     nft "add chain ip $_table predefrag { type filter hook output priority -401; policy accept; }"
     nft "add rule ip $_table predefrag meta mark ${_combined_mark} counter accept"
