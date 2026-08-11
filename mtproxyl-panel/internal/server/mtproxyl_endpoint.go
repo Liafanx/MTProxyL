@@ -176,6 +176,67 @@ func invalidateUsersCache() {
 	usersCache.mu.Unlock()
 }
 
+// updateCache holds the last MTProxyL version check. The dashboard shows the
+// «вышла новая версия» badge and polls, while a check spawns bash under sudo
+// and reaches out to github — too much to repeat every minute.
+var updateCache struct {
+	mu       sync.Mutex
+	at       time.Time
+	val      *mtproxylctl.UpdateInfo
+	err      error
+	inFlight chan struct{}
+}
+
+const updateCacheTTL = time.Hour
+
+// cachedUpdateInfo returns the last check, running a new one when it is older
+// than updateCacheTTL or when force is set (the «Проверить» button).
+func cachedUpdateInfo(ctx context.Context, c *mtproxylctl.Client, force bool) (*mtproxylctl.UpdateInfo, error) {
+	updateCache.mu.Lock()
+	if !force && time.Since(updateCache.at) < updateCacheTTL && (updateCache.val != nil || updateCache.err != nil) {
+		v, e := updateCache.val, updateCache.err
+		updateCache.mu.Unlock()
+		return v, e
+	}
+	if ch := updateCache.inFlight; ch != nil {
+		updateCache.mu.Unlock()
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		updateCache.mu.Lock()
+		v, e := updateCache.val, updateCache.err
+		updateCache.mu.Unlock()
+		return v, e
+	}
+	ch := make(chan struct{})
+	updateCache.inFlight = ch
+	updateCache.mu.Unlock()
+
+	info, err := c.CheckUpdate(context.Background())
+	if err == nil && info != nil {
+		info.CheckedAt = time.Now().Format(time.RFC3339)
+	}
+
+	updateCache.mu.Lock()
+	updateCache.at = time.Now()
+	updateCache.val, updateCache.err = info, err
+	updateCache.inFlight = nil
+	updateCache.mu.Unlock()
+	close(ch)
+	return info, err
+}
+
+// invalidateUpdateCache is called after an update lands: the installed version
+// changed, and a cached «доступно обновление» would linger for an hour.
+func invalidateUpdateCache() {
+	updateCache.mu.Lock()
+	updateCache.at = time.Time{}
+	updateCache.val, updateCache.err = nil, nil
+	updateCache.mu.Unlock()
+}
+
 // geoipCache holds the lazily-opened GeoIP database. The panel is unprivileged
 // and cannot watch for a database installed later by the CLI, so every lookup
 // re-resolves the candidate paths until one succeeds.

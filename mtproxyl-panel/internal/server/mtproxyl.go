@@ -88,6 +88,47 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: runner.Status()})
 	}))
 
+	// ── Обновление самого MTProxyL ──────────────────────────────────────────
+	// Версия CLI живёт вне панели: обновляет себя сам скрипт, панель только
+	// показывает, что вышло новое, и нажимает кнопку.
+	mux.Handle("GET /api/mtproxyl/update", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		info, err := cachedUpdateInfo(r.Context(), client, r.URL.Query().Get("refresh") == "1")
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: info})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/update/apply", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		if busy(w) {
+			return
+		}
+		// Скрипт, не знающий --no-restart, проглотит флаг и уйдёт в exec
+		// интерактивного меню — операция провисит до таймаута. Проверка
+		// версии заодно подтверждает, что флаг понимают.
+		if _, err := cachedUpdateInfo(r.Context(), client, false); err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		started := runner.Start("update:mtproxyl", func(ctx context.Context) (string, error) {
+			defer invalidateUpdateCache()
+			return client.ApplyUpdate(ctx)
+		})
+		if !started {
+			writeError(w, http.StatusConflict, "operation_busy",
+				"Другая операция MTProxyL уже выполняется")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
+	}))
+
 	// ── Mode ────────────────────────────────────────────────────────────────
 	mux.Handle("GET /api/mtproxyl/mode", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {

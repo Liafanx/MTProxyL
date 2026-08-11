@@ -4,6 +4,7 @@ import { useMtproxyl } from '@/hooks/useMtproxyl';
 import { MetricCard } from '@/components/MetricCard';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { panelApi } from '@/lib/api';
+import { MtproxylUpdateCard } from '@/components/MtproxylUpdateCard';
 import { cn } from '@/lib/utils';
 import { RefreshCw, Download, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 
@@ -583,6 +584,10 @@ export function UpdatePage() {
     <div className="min-h-screen">
       <Header title="Обновление" onRefresh={() => { fetchReleases(); fetchPanelReleases(); }} />
       <div className="p-4 lg:p-6 space-y-4 lg:space-y-6 max-w-3xl">
+
+        {/* MTProxyL сам обновляет себя, поэтому раздел живёт отдельно от
+            автообновления панели и движка. */}
+        <MtproxylUpdateCard />
 
         {/* Auto-update settings */}
         {autoStatus && (

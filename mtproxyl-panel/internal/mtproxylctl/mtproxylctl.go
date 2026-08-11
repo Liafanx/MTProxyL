@@ -50,9 +50,23 @@ type CommandError struct {
 
 func (e *CommandError) Error() string {
 	if e.Output != "" {
-		return fmt.Sprintf("mtproxyl %s: %s: %s", strings.Join(e.Args, " "), e.Err, e.Output)
+		return fmt.Sprintf("mtproxyl %s: %s: %s%s", strings.Join(e.Args, " "), e.Err, e.Output, sudoHint(e.Output))
 	}
 	return fmt.Sprintf("mtproxyl %s: %s", strings.Join(e.Args, " "), e.Err)
+}
+
+// sudoHint explains a sudo refusal. The drop-in in /etc/sudoers.d lists the
+// subcommands one by one, so a panel updated in place keeps the rules it was
+// installed with and a newly added command is denied until they are rewritten.
+func sudoHint(output string) string {
+	switch {
+	case strings.Contains(output, "a password is required"),
+		strings.Contains(output, "not allowed to execute"),
+		strings.Contains(output, "may not run sudo"):
+		return " — панели не хватает прав sudo на эту команду. " +
+			"Обновите их: mtproxyl panel install"
+	}
+	return ""
 }
 
 func (e *CommandError) Unwrap() error { return e.Err }

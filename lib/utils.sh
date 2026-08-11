@@ -422,13 +422,48 @@ check_for_update() {
     fi
 }
 
+# 0, если $1 строго новее $2.
+_version_gt() {
+    [ -n "$1" ] || return 1
+    [ "$1" = "$2" ] && return 1
+    [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V 2>/dev/null | tail -1)" = "$1" ]
+}
+
+# Машинная проверка обновления для панели. Root не нужен: только запрос к
+# github. Сетевой сбой — не ошибка команды, о нём говорит поле error.
+update_check_json() {
+    local _latest _err="" _avail="false"
+    _latest=$(curl -fsS --max-time 8 "${GITHUB_RAW}/version" 2>/dev/null | tr -d '[:space:]')
+    if [ -z "$_latest" ]; then
+        _err="не удалось получить номер версии с github.com"
+    elif ! [[ "$_latest" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+        _err="github.com вернул не номер версии"
+        _latest=""
+    elif _version_gt "$_latest" "$VERSION"; then
+        _avail="true"
+    fi
+
+    local _url=""
+    [ -n "$_latest" ] && _url="https://github.com/${GITHUB_REPO}/releases/tag/v${_latest}"
+
+    printf '{"current":"%s","latest":"%s","update_available":%s,"branch":"%s","release_url":"%s","error":"%s"}\n' \
+        "$VERSION" "$_latest" "$_avail" "${GITHUB_BRANCH}" "$_url" "$_err"
+}
+
+# --no-restart: не перезапускать меню в конце. Из панели exec подменил бы
+# процесс интерактивным TUI, которому неоткуда читать ввод.
 self_update() {
+    local _restart="true"
+    [ "${1:-}" = "--no-restart" ] && _restart="false"
+
     echo ""
     draw_header "ОБНОВЛЕНИЕ MTPROXYL"
     echo ""
 
     log_info "Шаг 1/4: Скачивание основного скрипта..."
-    local _tmp="/tmp/mtproxyl-update-$$.sh"
+    # Рядом с целью, а не в /tmp: перенос между файловыми системами перезаписал
+    # бы файл на месте, а его в этот момент читает работающий bash.
+    local _tmp="${INSTALL_DIR}/.mtproxyl-update-$$.sh"
 
     if ! curl -fsS --retry 3 --retry-delay 2 --max-time 30 "${GITHUB_RAW}/mtproxyl.sh" -o "$_tmp" 2>/dev/null; then
         log_error "Не удалось скачать mtproxyl.sh"
@@ -493,7 +528,7 @@ self_update() {
         _current=$((_current + 1))
 
         local _lib_tmp
-        _lib_tmp=$(mktemp "/tmp/.mtproxyl-lib-${lib}.XXXXXX") || {
+        _lib_tmp=$(mktemp "${LIB_DIR}/.${lib}.sh.XXXXXX") || {
             echo -e "  ${RED}[${_current}/${_total}]${NC} ${lib}.sh — не удалось создать временный файл"
             _failed=$((_failed + 1))
             _failed_list="${_failed_list} ${lib}.sh"
@@ -537,6 +572,9 @@ self_update() {
     fi
 
     log_success "MTProxyL обновлён: v${VERSION} → v${_new_ver}"
+    if [ "$_restart" = "false" ]; then
+        return 0
+    fi
     log_info "Перезапуск..."
     exec "${INSTALL_DIR}/mtproxyl.sh"
 }
@@ -742,7 +780,7 @@ show_cli_help() {
     echo -e "  ${BOLD}Мониторинг:${NC}     traffic | connections | metrics [live] | logs | health | info"
     echo -e "  ${BOLD}Бэкапы:${NC}         backup [--encrypt] | restore <файл>"
     echo -e "  ${BOLD}Reanimator:${NC}     mode [manager|reanimator] | detect | edit-config\n                  install-telemt | uninstall-telemt"
-    echo -e "  ${BOLD}Система:${NC}        install | menu | update | uninstall | version | help"
+    echo -e "  ${BOLD}Система:${NC}        install | menu | update [--no-restart] | update-check | uninstall\n                  version | help"
     echo ""
 }
 

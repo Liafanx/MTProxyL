@@ -575,7 +575,14 @@ mtproxyl backup               # Создать бэкап
 mtproxyl backup --encrypt     # Зашифрованный бэкап
 mtproxyl restore file.tar.gz  # Восстановить
 mtproxyl update               # Обновить MTProxyL
+mtproxyl update --no-restart  # То же, но без возврата в меню
+mtproxyl update-check         # Есть ли новая версия (JSON, root не нужен)
 ```
+
+`update-check` печатает `{"current","latest","update_available","branch",
+"release_url","error"}`. Недоступный github — не ошибка команды: установленная
+версия всё равно известна, о неудаче говорит поле `error`. Этой командой
+пользуется панель, чтобы показать уведомление о новой версии.
 
 <a id="cli-panel"></a>
 
@@ -935,6 +942,11 @@ curl -fsSL https://raw.githubusercontent.com/Liafanx/MTProxyL/main/mtproxyl-pane
 `/etc/sudoers.d/mtproxyl-panel-mtproxyl` — список **конкретных** разрешённых
 команд, а не право запускать `mtproxyl` целиком. При отключении интеграции или
 удалении панели файл убирается.
+
+Список именной, поэтому команда, появившаяся в новой версии, работать не
+начнёт, пока файл не перепишут: панель, обновлённая своей же кнопкой, меняет
+только бинарник. Если она сообщает, что ей не хватает прав sudo, — обновите
+их командой `mtproxyl panel install`.
 
 ### Ограничения
 

@@ -20,7 +20,7 @@ export LC_NUMERIC=C
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="1.4.6"
+VERSION="1.4.7"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -426,9 +426,23 @@ cli_main() {
             esac
             ;;
 
+        # Отдельная команда, а не флаг: версии до 1.4.7 проглотили бы
+        # `update --check` и запустили настоящее обновление, а неизвестную
+        # команду они просто отклоняют. Панель зовёт именно её.
+        # Без root и без load_settings: settings.conf доступен только root,
+        # а проверке нужен лишь номер версии.
+        update-check)
+            update_check_json
+            ;;
+
         update)
-            check_root; load_settings
-            self_update
+            case "${1:-}" in
+                --check) update_check_json ;;
+                *)
+                    check_root; load_settings
+                    self_update "$@"
+                    ;;
+            esac
             ;;
 
          selfmask)

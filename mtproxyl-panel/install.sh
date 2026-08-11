@@ -531,6 +531,10 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script target-config write
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script target-config write --restart
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script pq-check
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script pq-check [A-Za-z0-9]*
+# Обновление самого MTProxyL из панели. --no-restart обязателен: без него
+# скрипт заканчивает работу exec в интерактивное меню.
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script update-check
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script update --no-restart
 EOF
 
   if [ -n "$_visudo" ]; then

@@ -155,8 +155,28 @@ export interface MtproxylAvailability {
 
 const MTPROXYL_BASE = `${BASE}/api/mtproxyl`;
 
+/** Ответ `mtproxyl update --check`: что стоит и что опубликовано. */
+export interface MtproxylUpdateInfo {
+  current: string;
+  latest: string;
+  update_available: boolean;
+  /** Ветка, из которой приходят обновления: main у релизной установки. */
+  branch?: string;
+  release_url?: string;
+  /** Проверка не удалась (github недоступен) — версия при этом известна. */
+  error?: string;
+  checked_at?: string;
+}
+
 export const mtproxylApi = {
   status: () => request<MtproxylAvailability>(MTPROXYL_BASE, '/status'),
+
+  // Проверка ходит на github и запускает скрипт под sudo, поэтому ответ
+  // кэшируется на сервере; refresh — это кнопка «Проверить».
+  update: (refresh = false) =>
+    request<MtproxylUpdateInfo>(MTPROXYL_BASE, `/update${refresh ? '?refresh=1' : ''}`),
+  applyUpdate: () =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/update/apply', { method: 'POST' }),
 
   // Слот операции общий и переживает перезагрузку страницы, поэтому закрытие
   // окна с логом приходится подтверждать на сервере — иначе тот же лог

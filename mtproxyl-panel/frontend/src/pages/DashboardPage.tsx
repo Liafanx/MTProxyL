@@ -8,6 +8,7 @@ import { StartupStatus } from '@/components/StartupStatus';
 import { ProxyControls } from '@/components/ProxyControls';
 import { ConnectionErrors, type ClassCount } from '@/components/ConnectionErrors';
 import { AvailabilityCard } from '@/components/AvailabilityCard';
+import { MtproxylUpdateBanner } from '@/components/MtproxylUpdateCard';
 import { useWsSubscription, useEndpoint } from '@/hooks/useWebSocket';
 import { usePolling } from '@/hooks/usePolling';
 import { telemt } from '@/lib/api';
@@ -81,6 +82,8 @@ export function DashboardPage() {
 
       <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
         {firstError && <ErrorAlert message={firstError} onRetry={refresh} />}
+
+        <MtproxylUpdateBanner />
 
         {/* Health Banner */}
         <div
