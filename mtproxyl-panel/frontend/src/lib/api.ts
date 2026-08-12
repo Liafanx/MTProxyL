@@ -662,10 +662,32 @@ export interface TelegramBotStatus {
   has_token: boolean;
   admin_id: number;
   alert_threshold: number;
+  /** Порог доли неудачных подключений к дата-центрам Telegram, %. */
+  connect_fail_threshold: number;
+  /** Последний вердикт наблюдения за исходящей связью; нет — наблюдение молчит. */
+  uplink?: TelegramUplinkStatus | null;
   running?: boolean;
   bot_username?: string;
   last_error?: string;
   status_message_id?: number;
+}
+
+/**
+ * Состояние исходящей связи прокси с дата-центрами Telegram. Отвечает на
+ * вопрос, которого не видит проверка зондами: снаружи прокси может быть
+ * здоров, а писать в Telegram не может.
+ */
+export interface TelegramUplinkStatus {
+  CheckedAt: string;
+  EngineUp: boolean;
+  EngineReadOnly: boolean;
+  EngineError: string;
+  Applicable: boolean;
+  NotApplicableReason: string;
+  AliveWriters: number;
+  RequiredWriters: number;
+  Level: 'green' | 'yellow' | 'red';
+  Problems: string[] | null;
 }
 
 /** Присылаем только изменённые поля: остальные остаются как были. */
@@ -674,6 +696,7 @@ export interface TelegramBotPatch {
   token?: string;
   admin_id?: number;
   alert_threshold?: number;
+  connect_fail_threshold?: number;
 }
 
 const TELEGRAM_BASE = `${BASE}/api/telegram`;

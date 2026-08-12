@@ -265,11 +265,19 @@ func (b *Bot) restartPolling() {
 	b.pollWG.Wait()
 
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	if b.baseCtx == nil || !b.cfg.Enabled || b.client == nil || b.cfg.AdminID == 0 {
 		b.running = false
+		// Бот выключили или у него сменился владелец — снимаем подсказки
+		// команд, чтобы они не остались висеть у прежнего. Сеть под мьютексом
+		// не держим: снятие ничего не ждёт и никого не блокирует.
+		client, adminID, ctx := b.client, b.cfg.AdminID, b.baseCtx
+		b.mu.Unlock()
+		if client != nil && ctx != nil {
+			go b.unregisterCommands(ctx, client, adminID)
+		}
 		return
 	}
+	defer b.mu.Unlock()
 	ctx, cancel := context.WithCancel(b.baseCtx)
 	b.pollCancel = cancel
 	b.running = true

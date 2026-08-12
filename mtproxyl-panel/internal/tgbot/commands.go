@@ -225,18 +225,3 @@ func (b *Bot) setMute(ctx context.Context, client *Client, chatID int64, d time.
 	}
 	b.forceStatus()
 }
-
-// expireMute снимает истёкшую паузу. Если авария всё ещё идёт, о ней надо
-// сказать вслух: пауза кончилась, а проблема нет.
-func (b *Bot) expireMute(now time.Time) (expired, stillBroken bool) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	inc := b.state.Incidents
-	if inc.MuteForever || inc.MutedUntil.IsZero() || now.Before(inc.MutedUntil) {
-		return false, false
-	}
-	inc.MutedUntil = time.Time{}
-	b.state.Incidents = inc
-	return true, inc.AnyActive()
-}

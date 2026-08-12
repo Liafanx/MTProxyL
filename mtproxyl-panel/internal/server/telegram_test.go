@@ -248,7 +248,12 @@ func TestTelegramStoreKeepsBotMemoryAcrossRestart(t *testing.T) {
 	notify := time.Now().Add(-10 * time.Minute).Truncate(time.Second)
 	state := tgbot.PersistedState{
 		MessageID: 4242,
-		Alert:     tgbot.AlertState{Active: true, Since: since, LastNotify: notify, LastPct: 45, HasPct: true},
+		Incidents: tgbot.Incidents{
+			Availability: tgbot.AlertState{Active: true, Since: since, LastNotify: notify, LastPct: 45, HasPct: true},
+			Uplink:       tgbot.IncidentState{Active: true, Since: since, LastNotify: notify},
+			LastKnownIP:  "203.0.113.10",
+			MutedUntil:   notify,
+		},
 	}
 	if err := s.saveState(state); err != nil {
 		t.Fatalf("saveState: %v", err)
@@ -258,11 +263,21 @@ func TestTelegramStoreKeepsBotMemoryAcrossRestart(t *testing.T) {
 	if got.MessageID != 4242 {
 		t.Errorf("MessageID = %d, want 4242", got.MessageID)
 	}
-	if !got.Alert.Active || !got.Alert.HasPct || got.Alert.LastPct != 45 {
-		t.Errorf("Alert = %+v", got.Alert)
+	av := got.Incidents.Availability
+	if !av.Active || !av.HasPct || av.LastPct != 45 {
+		t.Errorf("доступность = %+v", av)
 	}
-	if !got.Alert.Since.Equal(since) || !got.Alert.LastNotify.Equal(notify) {
-		t.Errorf("времена не совпали: %+v против since=%v notify=%v", got.Alert, since, notify)
+	if !av.Since.Equal(since) || !av.LastNotify.Equal(notify) {
+		t.Errorf("времена не совпали: %+v против since=%v notify=%v", av, since, notify)
+	}
+	if !got.Incidents.Uplink.Active || !got.Incidents.Uplink.Since.Equal(since) {
+		t.Errorf("состояние связи не пережило перезапуск: %+v", got.Incidents.Uplink)
+	}
+	if got.Incidents.LastKnownIP != "203.0.113.10" {
+		t.Errorf("LastKnownIP = %q", got.Incidents.LastKnownIP)
+	}
+	if !got.Incidents.MutedUntil.Equal(notify) {
+		t.Errorf("пауза не пережила перезапуск: %v", got.Incidents.MutedUntil)
 	}
 }
 

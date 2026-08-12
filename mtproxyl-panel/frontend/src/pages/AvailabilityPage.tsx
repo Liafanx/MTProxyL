@@ -353,6 +353,7 @@ function TelegramBotForm() {
   const [token, setToken] = useState('');
   const [adminId, setAdminId] = useState('');
   const [threshold, setThreshold] = useState('');
+  const [failThreshold, setFailThreshold] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -362,6 +363,7 @@ function TelegramBotForm() {
     setToken('');
     setAdminId(s.admin_id ? String(s.admin_id) : '');
     setThreshold(s.alert_threshold ? String(s.alert_threshold) : '');
+    setFailThreshold(s.connect_fail_threshold ? String(s.connect_fail_threshold) : '');
   }, []);
 
   useEffect(() => {
@@ -407,6 +409,15 @@ function TelegramBotForm() {
       patch.alert_threshold = value;
     }
 
+    if (failThreshold.trim()) {
+      const value = Number(failThreshold.trim());
+      if (!Number.isFinite(value) || value < 1 || value > 100) {
+        setError('Порог ошибок подключения — от 1 до 100 процентов');
+        return;
+      }
+      patch.connect_fail_threshold = value;
+    }
+
     if (Object.keys(patch).length === 0) {
       setError('Менять нечего: заполните хотя бы одно поле');
       return;
@@ -449,7 +460,9 @@ function TelegramBotForm() {
     <CollapsibleSection title="Телеграм-бот" defaultOpen={false} badge={badge}>
       <p className="text-xs text-text-secondary mb-3">
         Присылает этот же вердикт в личку одним сообщением и переписывает его после каждой
-        проверки — плановой или по кнопке. Под сообщением две кнопки: «Проверить сейчас»
+        проверки — плановой или по кнопке. Вторым блоком идёт связь прокси с дата-центрами
+        Telegram: фильтрация часто режет не вход, а выход, и тогда зонды показывают прежний
+        процент, а клиенты не работают. Это наблюдение идёт раз в минуту. Под сообщением две кнопки: «Проверить сейчас»
         запускает настоящее измерение и тратит квоту, «Обновить» просто перечитывает
         последний результат. Когда доступность падает ниже порога, приходит отдельный
         алерт со звуком, а когда возвращается — сообщение о восстановлении.
@@ -513,6 +526,24 @@ function TelegramBotForm() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <label className="text-xs text-text-secondary w-28 shrink-0">Ошибки связи</label>
+          <Input
+            type="number"
+            min={1}
+            max={100}
+            value={failThreshold}
+            onChange={(e) => setFailThreshold(e.target.value)}
+            placeholder="20"
+            className="max-w-[100px]"
+          />
+          <span className="text-xs text-text-secondary">
+            % — доля неудачных подключений к дата-центрам, выше которой приходит алерт
+          </span>
+        </div>
+
+        {status.uplink && <UplinkLine uplink={status.uplink} />}
+
+        <div className="flex items-center gap-2 flex-wrap">
           <Button onClick={save} disabled={busy} size="sm">
             {busy ? 'Сохраняем…' : 'Сохранить'}
           </Button>
@@ -556,6 +587,32 @@ function TelegramBotForm() {
         </div>
       )}
     </CollapsibleSection>
+  );
+}
+
+/** Строка состояния исходящей связи — чтобы было видно, что наблюдение живое. */
+function UplinkLine({ uplink }: { uplink: NonNullable<TelegramBotStatus['uplink']> }) {
+  const problems = uplink.Problems ?? [];
+  let text: string;
+  let cls = 'text-success';
+
+  if (uplink.EngineError) {
+    text = `нет данных — ${uplink.EngineError}`;
+    cls = 'text-warning';
+  } else if (!uplink.Applicable) {
+    text = `не применимо — ${uplink.NotApplicableReason}`;
+    cls = 'text-text-secondary';
+  } else if (problems.length > 0) {
+    text = problems.join('; ');
+    cls = uplink.Level === 'red' ? 'text-danger' : 'text-warning';
+  } else {
+    text = `норма, писателей ${uplink.AliveWriters} из ${uplink.RequiredWriters} нужных`;
+  }
+
+  return (
+    <div className="text-xs text-text-secondary">
+      Связь с дата-центрами: <span className={cls}>{text}</span>
+    </div>
   );
 }
 

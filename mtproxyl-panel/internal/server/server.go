@@ -28,6 +28,7 @@ import (
 	"github.com/Liafanx/mtproxyl-panel/internal/telemt_config"
 	"github.com/Liafanx/mtproxyl-panel/internal/tgbot"
 	"github.com/Liafanx/mtproxyl-panel/internal/updater"
+	"github.com/Liafanx/mtproxyl-panel/internal/uplink"
 	"github.com/Liafanx/mtproxyl-panel/internal/ws"
 )
 
@@ -106,6 +107,8 @@ type Server struct {
 	// telegram зеркалит вердикт проверки в личку админа; nil, когда сама
 	// проверка выключена в конфиге — тогда боту нечего сообщать.
 	telegram *tgbot.Bot
+	// uplink наблюдает за исходящей связью прокси с дата-центрами Telegram.
+	uplink *uplink.Watcher
 }
 
 func New(cfg *config.Config) *Server {

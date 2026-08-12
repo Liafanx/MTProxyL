@@ -16,6 +16,7 @@ import (
 	"github.com/Liafanx/mtproxyl-panel/internal/auth"
 	"github.com/Liafanx/mtproxyl-panel/internal/mtproxylctl"
 	"github.com/Liafanx/mtproxyl-panel/internal/tgbot"
+	"github.com/Liafanx/mtproxyl-panel/internal/uplink"
 )
 
 // telegramBotFile — настройки бота и то, что ему нужно помнить между
@@ -44,6 +45,30 @@ type TelegramBotConfig struct {
 	LastAlertUnix  int64   `json:"last_alert_unix,omitempty"`
 	LastPercentage float64 `json:"last_percentage,omitempty"`
 	HasPercentage  bool    `json:"has_percentage,omitempty"`
+
+	// Состояние новых инцидентов — плоскими полями рядом, а не вложенной
+	// структурой. При обновлении отсутствующие ключи читаются нулями, а ноль
+	// здесь значит «инцидента не было», так что ложной тревоги задним числом
+	// не будет. При откате на прежнюю версию она этих ключей не знает: файл не
+	// бьётся, доступность продолжает работать, теряется только память о новых
+	// инцидентах.
+	UplinkAlertActive    bool  `json:"uplink_alert_active,omitempty"`
+	UplinkAlertSinceUnix int64 `json:"uplink_alert_since_unix,omitempty"`
+	UplinkLastAlertUnix  int64 `json:"uplink_last_alert_unix,omitempty"`
+
+	EngineAlertActive    bool  `json:"engine_alert_active,omitempty"`
+	EngineAlertSinceUnix int64 `json:"engine_alert_since_unix,omitempty"`
+	EngineLastAlertUnix  int64 `json:"engine_last_alert_unix,omitempty"`
+
+	// LastKnownIP — внешний адрес сервера, каким его видели в прошлый раз.
+	LastKnownIP string `json:"last_known_ip,omitempty"`
+	// Пауза тревог на время работ.
+	MutedUntilUnix int64 `json:"muted_until_unix,omitempty"`
+	MuteForever    bool  `json:"mute_forever,omitempty"`
+
+	// ConnectFailThreshold — доля неудачных подключений к дата-центрам, выше
+	// которой поднимается тревога.
+	ConnectFailThreshold *float64 `json:"connect_fail_threshold,omitempty"`
 }
 
 // telegramBotStore хранит настройки бота на диске рядом с остальным, что
@@ -112,19 +137,33 @@ func (s *telegramBotStore) botState() tgbot.PersistedState {
 	c := s.get()
 	st := tgbot.PersistedState{
 		MessageID: c.StatusMessageID,
-		Alert: tgbot.AlertState{
-			Active:  c.AlertActive,
-			LastPct: c.LastPercentage,
-			HasPct:  c.HasPercentage,
+		Incidents: tgbot.Incidents{
+			Availability: tgbot.AlertState{
+				Active:  c.AlertActive,
+				LastPct: c.LastPercentage,
+				HasPct:  c.HasPercentage,
+			},
+			Uplink:      tgbot.IncidentState{Active: c.UplinkAlertActive},
+			Engine:      tgbot.IncidentState{Active: c.EngineAlertActive},
+			LastKnownIP: c.LastKnownIP,
+			MuteForever: c.MuteForever,
 		},
 	}
-	if c.AlertSinceUnix > 0 {
-		st.Alert.Since = time.Unix(c.AlertSinceUnix, 0)
-	}
-	if c.LastAlertUnix > 0 {
-		st.Alert.LastNotify = time.Unix(c.LastAlertUnix, 0)
-	}
+	st.Incidents.Availability.Since = fromUnix(c.AlertSinceUnix)
+	st.Incidents.Availability.LastNotify = fromUnix(c.LastAlertUnix)
+	st.Incidents.Uplink.Since = fromUnix(c.UplinkAlertSinceUnix)
+	st.Incidents.Uplink.LastNotify = fromUnix(c.UplinkLastAlertUnix)
+	st.Incidents.Engine.Since = fromUnix(c.EngineAlertSinceUnix)
+	st.Incidents.Engine.LastNotify = fromUnix(c.EngineLastAlertUnix)
+	st.Incidents.MutedUntil = fromUnix(c.MutedUntilUnix)
 	return st
+}
+
+func fromUnix(v int64) time.Time {
+	if v <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(v, 0)
 }
 
 // saveState — обратный путь: бот сообщает, что нужно запомнить.
@@ -132,11 +171,20 @@ func (s *telegramBotStore) saveState(st tgbot.PersistedState) error {
 	s.mu.Lock()
 	cur := s.cur
 	cur.StatusMessageID = st.MessageID
-	cur.AlertActive = st.Alert.Active
-	cur.LastPercentage = st.Alert.LastPct
-	cur.HasPercentage = st.Alert.HasPct
-	cur.AlertSinceUnix = unixOrZero(st.Alert.Since)
-	cur.LastAlertUnix = unixOrZero(st.Alert.LastNotify)
+	cur.AlertActive = st.Incidents.Availability.Active
+	cur.LastPercentage = st.Incidents.Availability.LastPct
+	cur.HasPercentage = st.Incidents.Availability.HasPct
+	cur.AlertSinceUnix = unixOrZero(st.Incidents.Availability.Since)
+	cur.LastAlertUnix = unixOrZero(st.Incidents.Availability.LastNotify)
+	cur.UplinkAlertActive = st.Incidents.Uplink.Active
+	cur.UplinkAlertSinceUnix = unixOrZero(st.Incidents.Uplink.Since)
+	cur.UplinkLastAlertUnix = unixOrZero(st.Incidents.Uplink.LastNotify)
+	cur.EngineAlertActive = st.Incidents.Engine.Active
+	cur.EngineAlertSinceUnix = unixOrZero(st.Incidents.Engine.Since)
+	cur.EngineLastAlertUnix = unixOrZero(st.Incidents.Engine.LastNotify)
+	cur.LastKnownIP = st.Incidents.LastKnownIP
+	cur.MutedUntilUnix = unixOrZero(st.Incidents.MutedUntil)
+	cur.MuteForever = st.Incidents.MuteForever
 	s.cur = cur
 	s.mu.Unlock()
 	return s.write(cur)
@@ -165,6 +213,9 @@ func (s *telegramBotStore) setConfig(patch TelegramBotConfig) error {
 	if patch.AlertThreshold != nil {
 		cur.AlertThreshold = patch.AlertThreshold
 	}
+	if patch.ConnectFailThreshold != nil {
+		cur.ConnectFailThreshold = patch.ConnectFailThreshold
+	}
 	s.cur = cur
 	s.mu.Unlock()
 	return s.write(cur)
@@ -191,6 +242,16 @@ func (s *telegramBotStore) write(c TelegramBotConfig) error {
 	return nil
 }
 
+// connectFailThreshold — порог доли неудачных подключений для наблюдения за
+// связью. Ноль означает «не задан», тогда берётся умолчание пакета.
+func (s *telegramBotStore) connectFailThreshold() float64 {
+	c := s.get()
+	if c.ConnectFailThreshold != nil && *c.ConnectFailThreshold > 0 {
+		return *c.ConnectFailThreshold
+	}
+	return uplink.DefaultFailRateThreshold
+}
+
 func (s *telegramBotStore) hasToken() bool {
 	c := s.get()
 	return c.Token != nil && *c.Token != ""
@@ -214,17 +275,23 @@ func (s *Server) registerTelegramRoutes(mux *http.ServeMux, jwtSecret []byte) {
 
 	mux.Handle("PUT /api/telegram/config", protected(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Enabled        *bool    `json:"enabled"`
-			Token          *string  `json:"token"`
-			AdminID        *int64   `json:"admin_id"`
-			AlertThreshold *float64 `json:"alert_threshold"`
+			Enabled              *bool    `json:"enabled"`
+			Token                *string  `json:"token"`
+			AdminID              *int64   `json:"admin_id"`
+			AlertThreshold       *float64 `json:"alert_threshold"`
+			ConnectFailThreshold *float64 `json:"connect_fail_threshold"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "Не удалось разобрать запрос")
 			return
 		}
 
-		patch := TelegramBotConfig{Enabled: body.Enabled, AdminID: body.AdminID, AlertThreshold: body.AlertThreshold}
+		patch := TelegramBotConfig{
+			Enabled:              body.Enabled,
+			AdminID:              body.AdminID,
+			AlertThreshold:       body.AlertThreshold,
+			ConnectFailThreshold: body.ConnectFailThreshold,
+		}
 		if body.Token != nil {
 			tok := strings.TrimSpace(*body.Token)
 			if tok != "" && !botTokenRe.MatchString(tok) {
@@ -245,6 +312,11 @@ func (s *Server) registerTelegramRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		if body.AlertThreshold != nil && (*body.AlertThreshold < 1 || *body.AlertThreshold > 99) {
 			writeError(w, http.StatusBadRequest, "invalid_threshold",
 				"Порог алерта — от 1 до 99 процентов")
+			return
+		}
+		if body.ConnectFailThreshold != nil && (*body.ConnectFailThreshold < 1 || *body.ConnectFailThreshold > 100) {
+			writeError(w, http.StatusBadRequest, "invalid_connect_threshold",
+				"Порог ошибок подключения — от 1 до 100 процентов")
 			return
 		}
 
@@ -318,11 +390,15 @@ func (s *Server) telegramStatus() map[string]any {
 	out := map[string]any{
 		// available=false значит, что выключена сама проверка доступности:
 		// без неё боту нечего рассказывать.
-		"available":       s.telegram != nil,
-		"enabled":         cfg.Enabled,
-		"has_token":       s.telegramStore.hasToken(),
-		"admin_id":        cfg.AdminID,
-		"alert_threshold": cfg.AlertThreshold,
+		"available":              s.telegram != nil,
+		"enabled":                cfg.Enabled,
+		"has_token":              s.telegramStore.hasToken(),
+		"admin_id":               cfg.AdminID,
+		"alert_threshold":        cfg.AlertThreshold,
+		"connect_fail_threshold": s.telegramStore.connectFailThreshold(),
+	}
+	if s.uplink != nil {
+		out["uplink"] = s.uplink.Snapshot()
 	}
 	if s.telegram != nil {
 		st := s.telegram.Status()
@@ -341,14 +417,23 @@ func (s *Server) startTelegramBot(client *mtproxylctl.Client) {
 	if s.availability == nil {
 		return
 	}
+	// Наблюдатель за исходящей связью. Живёт рядом с проверкой доступности, но
+	// независимо от неё: они смотрят в разные стороны и ловят разные аварии.
+	s.uplink = uplink.NewWatcher(
+		uplink.NewClient(s.cfg.Telemt.URL, s.cfg.Telemt.AuthHeader),
+		uplink.DefaultInterval,
+		s.telegramStore.connectFailThreshold,
+	)
+
 	bot := tgbot.New(tgbot.Deps{
-		RunCheckNow: s.availability.RunCheckNow,
-		Snapshot:    s.availability.Store().Get,
-		Quota:       s.availability.Quota,
-		AutoCheck:   s.availabilityOverride.autoCheckEnabled,
-		Target:      s.availabilityTarget(client),
-		Interval:    s.cfg.Globalping.Interval(),
-		Persist:     s.telegramStore.saveState,
+		RunCheckNow:    s.availability.RunCheckNow,
+		Snapshot:       s.availability.Store().Get,
+		Quota:          s.availability.Quota,
+		AutoCheck:      s.availabilityOverride.autoCheckEnabled,
+		Target:         s.availabilityTarget(client),
+		Interval:       s.cfg.Globalping.Interval(),
+		UplinkSnapshot: s.uplink.Snapshot,
+		Persist:        s.telegramStore.saveState,
 	}, s.telegramStore.botState())
 
 	s.telegram = bot
@@ -357,7 +442,9 @@ func (s *Server) startTelegramBot(client *mtproxylctl.Client) {
 	// Подписка ставится до старта проверки: первый же вердикт должен попасть
 	// в чат, а не потеряться из-за того, что бот ещё не слушал.
 	s.availability.SetOnResult(bot.OnResult)
+	s.uplink.SetOnResult(bot.OnUplink)
 	bot.Start(context.Background())
+	go s.uplink.Start(context.Background())
 
 	if cfg := s.telegramStore.botConfig(); cfg.Enabled {
 		log.Println("[tgbot] телеграм-бот включён")
