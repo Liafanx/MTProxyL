@@ -15,7 +15,7 @@ from aiogram.types import CallbackQuery, Message
 
 from . import cli, keyboards as kb
 from .format import esc, human_bytes, link_text, user_card, users_page_text, web_link
-from .ui import notice, render, report_error, stale_button
+from .ui import ack, notice, render, report_error, stale_button
 
 log = logging.getLogger(__name__)
 router = Router(name="users")
@@ -48,7 +48,6 @@ async def _resolve(call: CallbackQuery) -> tuple[str, list[dict]] | None:
     key = call.data.rsplit(":", 1)[-1]
     label = kb.label_for(key)
     if label is None:
-        await call.answer()
         await notice(call, stale_button())
         return None
     return label, await cli.secrets()
@@ -86,7 +85,7 @@ async def cmd_users(message: Message) -> None:
 @router.callback_query(F.data.startswith("u:list:"))
 async def cb_users_list(call: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await call.answer()
+    await ack(call)
     try:
         await show_users(call, int(call.data.split(":")[2]))
     except Exception as exc:
@@ -100,7 +99,7 @@ async def cb_user_show(call: CallbackQuery, state: FSMContext) -> None:
     if resolved is None:
         return
     label, _ = resolved
-    await call.answer()
+    await ack(call)
     try:
         await show_card(call, label)
     except Exception as exc:
@@ -111,7 +110,7 @@ async def cb_user_show(call: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "u:add")
 async def cb_user_add(call: CallbackQuery, state: FSMContext) -> None:
-    await call.answer()
+    await ack(call)
     await state.set_state(UserForm.add)
     await render(
         call,
@@ -146,19 +145,21 @@ async def do_user_add(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("u:toggle:"))
 async def cb_user_toggle(call: CallbackQuery) -> None:
+    await ack(call)
     resolved = await _resolve(call)
     if resolved is None:
         return
     label, users = resolved
     user = _find(users, label) or {}
     enable = not user.get("enabled", True)
+    await render(call, f"⏳ {'Включаю' if enable else 'Выключаю'} {esc(label)}…")
     try:
         await cli.secret_toggle(label, enable)
     except Exception as exc:
         await report_error(call, exc)
+        await show_card(call, label)
         return
-    await call.answer("Включён" if enable else "Выключен")
-    await show_card(call, label)
+    await show_card(call, label, "✅ Включён" if enable else "⛔ Выключен")
 
 
 @router.callback_query(F.data.startswith("u:rename:"))
@@ -167,7 +168,7 @@ async def cb_user_rename(call: CallbackQuery, state: FSMContext) -> None:
     if resolved is None:
         return
     label, _ = resolved
-    await call.answer()
+    await ack(call)
     await state.set_state(UserForm.rename)
     await state.update_data(label=label)
     await render(call, f"<b>Переименование · {esc(label)}</b>\n\nПришлите новое имя.",
@@ -200,23 +201,25 @@ async def cb_user_del(call: CallbackQuery) -> None:
         return
     label, _ = resolved
     key = kb.key_for(label)
-    await call.answer()
+    await ack(call)
     await render(call, f"Удалить <b>{esc(label)}</b>?\n\nСсылка перестанет работать сразу.",
                  kb.confirm(f"u:delyes:{key}", f"u:show:{key}"))
 
 
 @router.callback_query(F.data.startswith("u:delyes:"))
 async def cb_user_del_yes(call: CallbackQuery) -> None:
+    await ack(call)
     resolved = await _resolve(call)
     if resolved is None:
         return
     label, _ = resolved
+    await render(call, f"⏳ Удаляю {esc(label)}…")
     try:
         await cli.secret_remove(label)
     except Exception as exc:
         await report_error(call, exc)
+        await show_users(call, 0)
         return
-    await call.answer("Удалён")
     await show_users(call, 0, f"🗑 Удалён <b>{esc(label)}</b>")
 
 
@@ -254,7 +257,7 @@ async def cb_limits(call: CallbackQuery, state: FSMContext) -> None:
     if resolved is None:
         return
     label, _ = resolved
-    await call.answer()
+    await ack(call)
     try:
         await show_limits(call, label)
     except Exception as exc:
@@ -263,25 +266,25 @@ async def cb_limits(call: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("u:lim:"))
 async def cb_limit_edit(call: CallbackQuery, state: FSMContext) -> None:
+    await ack(call)
     _, _, field, key = call.data.split(":", 3)
     label = kb.label_for(key)
     if label is None:
-        await call.answer()
         await notice(call, stale_button())
         return
 
     if field == "clear":
+        await render(call, "⏳ Снимаю лимиты…")
         try:
             await cli.secret_limits(label, 0, 0, 0, "")
         except Exception as exc:
             await report_error(call, exc)
+            await show_limits(call, label)
             return
-        await call.answer("Лимиты сняты")
         await show_limits(call, label, "✅ Все лимиты сняты")
         return
 
     title, hint = LIMIT_PROMPT[field]
-    await call.answer()
     await state.set_state(UserForm.limit)
     await state.update_data(label=label, field=field)
     await render(call, f"<b>{title}</b>\nПользователь: {esc(label)}\n\n{hint}\n\nПришлите значение.",
@@ -394,7 +397,7 @@ async def cmd_link(message: Message) -> None:
 @router.callback_query(F.data.startswith("l:list:"))
 async def cb_links_list(call: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await call.answer()
+    await ack(call)
     try:
         users = await cli.secrets()
     except Exception as exc:
@@ -409,8 +412,8 @@ async def cb_link_get(call: CallbackQuery) -> None:
     key = call.data.rsplit(":", 1)[-1]
     label = kb.label_for(key)
     if label is None:
-        await call.answer()
+        await ack(call)
         await notice(call, stale_button())
         return
-    await call.answer()
+    await ack(call)
     await send_link(call, label)

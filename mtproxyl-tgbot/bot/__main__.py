@@ -9,9 +9,13 @@ import sys
 from aiogram import BaseMiddleware, Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramBadRequest, TelegramUnauthorizedError
+from aiogram.exceptions import (
+    TelegramAPIError,
+    TelegramBadRequest,
+    TelegramUnauthorizedError,
+)
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import BotCommand, CallbackQuery, Message, TelegramObject
+from aiogram.types import BotCommand, CallbackQuery, ErrorEvent, Message, TelegramObject
 
 from . import config, handlers_ops, handlers_users, notify
 
@@ -49,21 +53,45 @@ class AdminOnly(BaseMiddleware):
 
 
 class CleanChat(BaseMiddleware):
-    """В истории должны остаться только уведомления бота, а не переписка с
-    ним. Команды и ответы на вопросы удаляем после обработки — до неё нельзя,
-    обработчику ещё нужен текст."""
+    """В истории должны остаться только уведомления бота, а не переписка с ним.
+
+    Внешняя, а не внутренняя: сообщение надо убрать и тогда, когда обработчика
+    для него не нашлось — иначе «20», отправленное мимо диалога, так и висело
+    бы в чате. Удаляем после обработки: до неё нельзя, обработчику нужен текст.
+    """
 
     async def __call__(self, handler, event: TelegramObject, data: dict):
         try:
             return await handler(event, data)
         finally:
-            if isinstance(event, Message):
+            user = data.get("event_from_user")
+            if isinstance(event, Message) and user is not None \
+                    and user.id in config.load().admins:
                 try:
                     await event.delete()
                 except TelegramBadRequest as exc:
                     # Право удалять входящие в личной переписке есть всегда, но
                     # сообщение могли убрать раньше — и это не повод шуметь.
                     log.debug("не удалось удалить сообщение: %s", exc)
+
+
+async def on_error(event: ErrorEvent) -> bool:
+    """Последний рубеж: без него сбой в обработчике оставляет человека перед
+    экраном «⏳ …» без объяснений."""
+    log.exception("необработанный сбой: %s", event.exception)
+    chat = None
+    update = event.update
+    if update.message is not None:
+        chat = update.message.chat.id
+    elif update.callback_query is not None and update.callback_query.message is not None:
+        chat = update.callback_query.message.chat.id
+    if chat is not None:
+        try:
+            await event.bot.send_message(
+                chat, "⚠️ Что-то пошло не так. Откройте меню заново: /menu")
+        except TelegramAPIError:
+            pass
+    return True
 
 
 async def main() -> int:
@@ -84,9 +112,10 @@ async def main() -> int:
     dp = Dispatcher(storage=MemoryStorage())
     dp.message.middleware(AdminOnly())
     dp.callback_query.middleware(AdminOnly())
-    dp.message.middleware(CleanChat())
+    dp.message.outer_middleware(CleanChat())
     dp.include_router(handlers_users.router)
     dp.include_router(handlers_ops.router)
+    dp.errors.register(on_error)
 
     try:
         await bot.set_my_commands(COMMANDS)

@@ -21,7 +21,7 @@ from .format import (
     status_text,
     traffic_text,
 )
-from .ui import render, report_error
+from .ui import ack, notice, render, report_error
 
 log = logging.getLogger(__name__)
 router = Router(name="ops")
@@ -61,13 +61,13 @@ async def cmd_help(message: Message) -> None:
 @router.callback_query(F.data == "m:root")
 async def cb_root(call: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await call.answer()
+    await ack(call)
     await show_root(call)
 
 
 @router.callback_query(F.data == "noop")
 async def cb_noop(call: CallbackQuery) -> None:
-    await call.answer()
+    await ack(call)
 
 
 # ── Статус и управление прокси ───────────────────────────────────────────────
@@ -88,7 +88,7 @@ async def cmd_status(message: Message) -> None:
 
 @router.callback_query(F.data == "m:status")
 async def cb_status(call: CallbackQuery) -> None:
-    await call.answer()
+    await ack(call)
     try:
         await show_status(call)
     except Exception as exc:
@@ -107,7 +107,7 @@ async def show_proxy(event: Message | CallbackQuery, note: str = "") -> None:
 
 @router.callback_query(F.data == "m:proxy")
 async def cb_proxy(call: CallbackQuery) -> None:
-    await call.answer()
+    await ack(call)
     try:
         await show_proxy(call)
     except Exception as exc:
@@ -119,8 +119,6 @@ async def do_proxy_action(event: Message | CallbackQuery, action: str) -> None:
     done = {"start": "Запущен", "stop": "Остановлен", "restart": "Перезапущен"}
     # Пока команда идёт (перезапуск движка — это секунды), экран должен
     # говорить об этом, иначе кажется, что кнопка не сработала.
-    if isinstance(event, CallbackQuery):
-        await event.answer(f"{titles[action]}…")
     await render(event, f"⏳ {titles[action]} прокси…")
     try:
         await cli.proxy_action(action)
@@ -133,6 +131,7 @@ async def do_proxy_action(event: Message | CallbackQuery, action: str) -> None:
 
 @router.callback_query(F.data.startswith("px:"))
 async def cb_proxy_action(call: CallbackQuery) -> None:
+    await ack(call)
     await do_proxy_action(call, call.data.split(":", 1)[1])
 
 
@@ -168,7 +167,7 @@ async def cmd_traffic(message: Message) -> None:
 
 @router.callback_query(F.data == "m:traffic")
 async def cb_traffic(call: CallbackQuery) -> None:
-    await call.answer()
+    await ack(call)
     try:
         await show_traffic(call)
     except Exception as exc:
@@ -178,12 +177,13 @@ async def cb_traffic(call: CallbackQuery) -> None:
 # ── Доступность из России ────────────────────────────────────────────────────
 
 async def show_availability(event: Message | CallbackQuery, probes: bool = False,
-                            note: str = "") -> None:
+                            note: str = "", force_new: bool = False) -> None:
     state = await (cli.availability_details() if probes else cli.availability_status())
     text = availability_text(state, with_probes=probes)
     if note:
         text = f"{note}\n\n{text}"
-    await render(event, text, kb.availability_menu(bool(state.get("auto_check"))))
+    await render(event, text, kb.availability_menu(bool(state.get("auto_check"))),
+                 force_new=force_new)
 
 
 @router.message(Command("availability"))
@@ -197,7 +197,7 @@ async def cmd_availability(message: Message) -> None:
 @router.callback_query(F.data == "a:show")
 async def cb_availability(call: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await call.answer()
+    await ack(call)
     try:
         await show_availability(call)
     except Exception as exc:
@@ -206,7 +206,7 @@ async def cb_availability(call: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "a:probes")
 async def cb_availability_probes(call: CallbackQuery) -> None:
-    await call.answer()
+    await ack(call)
     try:
         await show_availability(call, probes=True)
     except Exception as exc:
@@ -214,8 +214,6 @@ async def cb_availability_probes(call: CallbackQuery) -> None:
 
 
 async def do_check(event: Message | CallbackQuery) -> None:
-    if isinstance(event, CallbackQuery):
-        await event.answer("Опрашиваю зонды…")
     await render(event, "⏳ Опрашиваю российские зонды, это до минуты…")
     try:
         await cli.availability_check()
@@ -228,7 +226,11 @@ async def do_check(event: Message | CallbackQuery) -> None:
         await report_error(event, exc)
         await show_availability(event)
         return
-    await show_availability(event, probes=True, note="✅ Проверка выполнена")
+    # Результат проверки — уведомление: по нему смотрят, что было в прошлый
+    # раз и когда именно, а меню такую историю не хранит.
+    state = await cli.availability_details()
+    await notice(event, availability_text(state, with_probes=True), move=False)
+    await show_availability(event, force_new=True)
 
 
 @router.message(Command("check"))
@@ -238,23 +240,32 @@ async def cmd_check(message: Message) -> None:
 
 @router.callback_query(F.data == "a:check")
 async def cb_check(call: CallbackQuery) -> None:
+    await ack(call)
     await do_check(call)
 
 
 @router.callback_query(F.data == "a:auto")
 async def cb_autocheck(call: CallbackQuery) -> None:
+    # Ответить надо сразу: `availability on` переписывает юнит и дёргает
+    # systemctl, а это на слабом сервере десяток секунд — за них подтверждение
+    # успевает протухнуть.
+    await ack(call)
+    await render(call, "⏳ Меняю расписание проверок…")
     try:
-        state = await cli.availability_status()
-        await cli.availability_autocheck(not state.get("auto_check"))
-        await call.answer("Готово")
-        await show_availability(call)
+        report = await cli.availability_status()
+        on = not report.get("auto_check")
+        await cli.availability_autocheck(on)
     except Exception as exc:
         await report_error(call, exc)
+        await show_availability(call)
+        return
+    await show_availability(call, note="✅ Автопроверка включена" if on
+                            else "⏸ Автопроверка выключена")
 
 
 @router.callback_query(F.data == "a:interval")
 async def cb_interval(call: CallbackQuery, state: FSMContext) -> None:
-    await call.answer()
+    await ack(call)
     await state.set_state(Ask.interval)
     await render(
         call,
@@ -283,7 +294,7 @@ async def set_interval(message: Message, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "a:threshold")
 async def cb_threshold(call: CallbackQuery, state: FSMContext) -> None:
-    await call.answer()
+    await ack(call)
     await state.set_state(Ask.threshold)
     await render(
         call,
@@ -333,7 +344,7 @@ async def show_backups(event: Message | CallbackQuery, note: str = "") -> None:
 @router.callback_query(F.data == "b:show")
 async def cb_backups(call: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await call.answer()
+    await ack(call)
     try:
         await show_backups(call)
     except Exception as exc:
@@ -344,8 +355,6 @@ async def do_backup(event: Message | CallbackQuery) -> None:
     if not await cli.is_manager():
         await show_backups(event, "⚠️ Бэкапы доступны только в режиме Manager")
         return
-    if isinstance(event, CallbackQuery):
-        await event.answer("Собираю архив…")
     await render(event, "⏳ Собираю архив…")
     try:
         await cli.create_backup()
@@ -382,6 +391,7 @@ async def cmd_backup(message: Message) -> None:
 
 @router.callback_query(F.data == "b:make")
 async def cb_backup_make(call: CallbackQuery) -> None:
+    await ack(call)
     await do_backup(call)
 
 
@@ -395,31 +405,31 @@ async def show_autobackup(event: Message | CallbackQuery, note: str = "") -> Non
 @router.callback_query(F.data == "b:auto")
 async def cb_autobackup(call: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await call.answer()
+    await ack(call)
     await show_autobackup(call)
 
 
 @router.callback_query(F.data == "b:auto:toggle")
 async def cb_autobackup_toggle(call: CallbackQuery) -> None:
+    await ack(call)
     cfg = config.load()
     cfg.autobackup["enabled"] = not cfg.autobackup.get("enabled")
     config.save(cfg)
-    await call.answer("Включён" if cfg.autobackup["enabled"] else "Выключен")
     await show_autobackup(call)
 
 
 @router.callback_query(F.data == "b:auto:file")
 async def cb_autobackup_file(call: CallbackQuery) -> None:
+    await ack(call)
     cfg = config.load()
     cfg.autobackup["send_file"] = not cfg.autobackup.get("send_file", True)
     config.save(cfg)
-    await call.answer("Готово")
     await show_autobackup(call)
 
 
 @router.callback_query(F.data == "b:auto:time")
 async def cb_autobackup_time(call: CallbackQuery, state: FSMContext) -> None:
-    await call.answer()
+    await ack(call)
     await state.set_state(Ask.backup_time)
     await render(call, "<b>Время автобэкапа</b>\n\nПришлите время в формате ЧЧ:ММ "
                        "по времени сервера.", kb.cancel("b:auto"))
@@ -461,7 +471,7 @@ async def cmd_settings(message: Message) -> None:
 @router.callback_query(F.data == "s:show")
 async def cb_settings(call: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    await call.answer()
+    await ack(call)
     try:
         await show_settings(call)
     except Exception as exc:
@@ -470,17 +480,17 @@ async def cb_settings(call: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("s:toggle:"))
 async def cb_settings_toggle(call: CallbackQuery) -> None:
+    await ack(call)
     key = call.data.split(":")[2]
     cfg = config.load()
     cfg.notify[key] = not cfg.notify.get(key, True)
     config.save(cfg)
-    await call.answer("Включено" if cfg.notify[key] else "Выключено")
     await show_settings(call)
 
 
 @router.callback_query(F.data == "s:intervals")
 async def cb_intervals(call: CallbackQuery) -> None:
-    await call.answer()
+    await ack(call)
     cfg = config.load()
     await render(call, "<b>Периоды проверок</b>\n\nКак часто бот сверяется с "
                        "состоянием сервера. На квоту Globalping это не влияет: "
@@ -490,7 +500,7 @@ async def cb_intervals(call: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("s:int:"))
 async def cb_interval_ask(call: CallbackQuery, state: FSMContext) -> None:
     key = call.data.split(":")[2]
-    await call.answer()
+    await ack(call)
     await state.set_state(Ask.notify_interval)
     await state.update_data(interval_key=key)
     titles = {"availability": "доступности", "proxy": "прокси", "limits": "лимитов"}

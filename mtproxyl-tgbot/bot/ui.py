@@ -55,6 +55,17 @@ async def _delete(bot, chat_id: int | None, message_id: int | None) -> None:
         log.debug("не удалось удалить %s: %s", message_id, exc)
 
 
+async def ack(call: CallbackQuery, text: str = "") -> None:
+    """Ответить Telegram на нажатие. Делать это надо первым же действием: у
+    ответа короткий срок годности, и если сперва выполнить команду, которая
+    идёт десяток секунд, Telegram скажет «query is too old», а обработчик
+    свалится с исключением — кнопка со стороны человека просто зависнет."""
+    try:
+        await call.answer(text)
+    except TelegramBadRequest as exc:
+        log.debug("подтверждение кнопки не прошло: %s", exc)
+
+
 async def render(
     event: Message | CallbackQuery,
     text: str,
