@@ -1,0 +1,247 @@
+"""Тексты сообщений. Разметка HTML: её проще не сломать чужой строкой."""
+
+from __future__ import annotations
+
+import html
+from datetime import datetime, timezone
+from typing import Any
+from urllib.parse import urlsplit
+
+LEVEL_ICON = {"green": "🟢", "yellow": "🟡", "red": "🔴"}
+
+
+def esc(value: Any) -> str:
+    return html.escape(str(value), quote=False)
+
+
+def human_bytes(num: Any) -> str:
+    try:
+        value = float(num or 0)
+    except (TypeError, ValueError):
+        return "0 Б"
+    for unit in ("Б", "КБ", "МБ", "ГБ", "ТБ"):
+        if value < 1024 or unit == "ТБ":
+            return f"{value:.0f} {unit}" if unit == "Б" else f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} ТБ"
+
+
+def human_duration(seconds: Any) -> str:
+    try:
+        total = int(seconds or 0)
+    except (TypeError, ValueError):
+        return "—"
+    if total < 60:
+        return f"{total} с"
+    if total < 3600:
+        return f"{total // 60} мин"
+    if total < 86400:
+        return f"{total // 3600} ч {total % 3600 // 60} мин"
+    return f"{total // 86400} д {total % 86400 // 3600} ч"
+
+
+def age_since(iso: str) -> str:
+    """Сколько прошло с момента в RFC3339. Пусто — «—»."""
+    if not iso:
+        return "—"
+    try:
+        moment = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return "—"
+    delta = (datetime.now(timezone.utc) - moment).total_seconds()
+    return f"{human_duration(delta)} назад"
+
+
+# ── Экраны ───────────────────────────────────────────────────────────────────
+
+def status_text(st: dict, md: dict) -> str:
+    running = st.get("status") == "running"
+    icon = "🟢" if running else "🔴"
+    mode_name = "Reanimator" if md.get("mode") == "reanimator" else "Manager"
+    lines = [
+        f"<b>MTProxyL v{esc(st.get('version', '?'))}</b> · {esc(mode_name)}",
+        "",
+        f"{icon} Прокси: <b>{'работает' if running else 'остановлен'}</b>",
+        f"Порт: <code>{esc(st.get('port', '?'))}</code>",
+        f"Домен (SNI): <code>{esc(st.get('domain') or '—')}</code>",
+    ]
+    if running:
+        lines.append(f"Аптайм: {human_duration(st.get('uptime'))}")
+    lines.append(f"Соединений: {esc(st.get('connections', 0))}")
+    lines.append(f"Трафик: {human_bytes(st.get('traffic_total'))}")
+    if md.get("mode") == "reanimator":
+        lines.append(f"Цель: <code>{esc(md.get('detected_mode') or 'неизвестна')}</code>")
+    return "\n".join(lines)
+
+
+def users_page_text(users: list[dict], page: int, per_page: int) -> str:
+    total = len(users)
+    if not total:
+        return "<b>Пользователи</b>\n\nПока никого. Кнопка ниже добавит первого."
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = max(0, min(page, pages - 1))
+    active = sum(1 for u in users if u.get("enabled"))
+    head = [
+        f"<b>Пользователи</b> · {total} шт., активных {active}",
+        f"Страница {page + 1} из {pages}",
+    ]
+    return "\n".join(head)
+
+
+def user_card(user: dict) -> str:
+    label = esc(user.get("label", "?"))
+    on = user.get("enabled", True)
+    lines = [
+        f"<b>{label}</b> — {'🟢 включён' if on else '⛔ выключен'}",
+        "",
+        f"Трафик: {human_bytes(user.get('total_bytes'))}"
+        f" (↓ {human_bytes(user.get('total_in'))} ↑ {human_bytes(user.get('total_out'))})",
+    ]
+    limits = []
+    if user.get("max_conns"):
+        limits.append(f"соединений ≤ {user['max_conns']}")
+    if user.get("max_ips"):
+        limits.append(f"адресов ≤ {user['max_ips']}")
+    if user.get("quota_bytes"):
+        limits.append(f"квота {human_bytes(user['quota_bytes'])}")
+    if user.get("expires"):
+        limits.append(f"до {esc(user['expires'])}")
+    lines.append("Лимиты: " + (", ".join(limits) if limits else "не заданы"))
+    if user.get("ip_history"):
+        lines.append(f"Адресов в истории: {len(user['ip_history'])}")
+    return "\n".join(lines)
+
+
+def link_text(label: str, tg_link: str) -> str:
+    """Ссылка кнопкой и она же текстом — второе для копирования вручную."""
+    web = web_link(tg_link)
+    return (
+        f"<b>{esc(label)}</b>\n\n"
+        f'👉 <b><a href="{esc(tg_link)}">Подключиться</a></b>\n\n'
+        f"<code>{esc(web)}</code>"
+    )
+
+
+def web_link(tg_link: str) -> str:
+    """tg://proxy?… → https://t.me/proxy?… — то же самое, но открывается везде."""
+    parts = urlsplit(tg_link)
+    return f"https://t.me/proxy?{parts.query}" if parts.query else tg_link
+
+
+def traffic_text(report: dict) -> str:
+    users = report.get("users") or []
+    rows = sorted(users, key=lambda u: u.get("total") or 0, reverse=True)
+    lines = ["<b>Трафик по пользователям</b>", ""]
+    if not rows:
+        lines.append("Данных пока нет.")
+        return "\n".join(lines)
+
+    directional = report.get("directional")
+    for user in rows[:30]:
+        name = esc(user.get("user", "?"))
+        mark = "" if user.get("enabled", True) else " ⛔"
+        if directional:
+            lines.append(
+                f"<b>{name}</b>{mark} — {human_bytes(user.get('total'))}"
+                f" (↓ {human_bytes(user.get('in'))} ↑ {human_bytes(user.get('out'))})"
+            )
+        else:
+            lines.append(f"<b>{name}</b>{mark} — {human_bytes(user.get('total'))}")
+    if len(rows) > 30:
+        lines.append(f"\n…и ещё {len(rows) - 30}")
+
+    lines.append("")
+    if not report.get("persistent"):
+        lines.append("<i>Счётчики цели: обнуляются вместе с её перезапуском.</i>")
+    if not directional:
+        lines.append("<i>Цель отдаёт только общую сумму, без деления на ↓/↑.</i>")
+    return "\n".join(lines)
+
+
+def availability_text(state: dict, with_probes: bool = False) -> str:
+    result = state.get("result") or {}
+    target = state.get("target") or {}
+    quota = state.get("quota") or {}
+    lines = ["<b>Доступность из России</b>", ""]
+
+    error = result.get("error")
+    if not result:
+        lines.append("Проверок ещё не было.")
+    elif error:
+        lines.append(f"⚠️ Свежего результата нет: {esc(error)}")
+    else:
+        icon = LEVEL_ICON.get(result.get("level", "red"), "🔴")
+        lines.append(
+            f"{icon} <b>{result.get('percentage', 0):.0f}%</b> — "
+            f"{result.get('success_probes', 0)} из {result.get('total_probes', 0)} зондов"
+        )
+        lines.append(f"Проверено: {age_since(result.get('checked_at', ''))}")
+
+    host = target.get("host") or "не определён"
+    sni = target.get("sni")
+    lines.append(f"Цель: <code>{esc(host)}:{esc(target.get('port', 0))}</code>"
+                 + (f" (SNI {esc(sni)})" if sni else ""))
+    lines.append(
+        f"Автопроверка: {'каждые ' + str(state.get('interval', 15)) + ' мин' if state.get('auto_check') else 'выключена'}"
+        f" · порог {state.get('threshold', 50)}%"
+    )
+    lines.append(
+        f"Квота: {quota.get('remaining', 0)} из {quota.get('budget', 0)} кредитов"
+        + ("" if quota.get("has_token") else " (без токена)")
+    )
+
+    if with_probes and result.get("probes"):
+        bad = [p for p in result["probes"] if not p.get("tls_success")]
+        good = [p for p in result["probes"] if p.get("tls_success")]
+        if good:
+            lines += ["", "<b>Дошли:</b>"]
+            lines += [f"✅ {esc(p.get('city') or '?')}, {esc(p.get('network') or '?')}" for p in good[:15]]
+        if bad:
+            lines += ["", "<b>Не дошли:</b>"]
+            lines += [
+                f"❌ {esc(p.get('city') or '?')}, {esc(p.get('network') or '?')} — {esc(p.get('error') or 'нет ответа')}"
+                for p in bad[:15]
+            ]
+    return "\n".join(lines)
+
+
+def settings_text(cfg, manager: bool) -> str:
+    notify = cfg.notify
+    def flag(key: str) -> str:
+        return "включено" if notify.get(key, True) else "выключено"
+
+    lines = [
+        "<b>Настройки бота</b>",
+        "",
+        f"Доступность ниже порога: <b>{flag('availability')}</b>"
+        f" · проверка каждые {cfg.interval('availability')} мин",
+        f"Прокси упал / поднялся: <b>{flag('proxy')}</b>"
+        f" · проверка каждые {cfg.interval('proxy')} мин",
+        f"Лимиты пользователей: <b>{flag('limits')}</b>"
+        f" · проверка каждые {cfg.interval('limits')} мин",
+    ]
+    if manager:
+        auto = cfg.autobackup
+        state = f"в {auto.get('time', '05:30')}" if auto.get("enabled") else "выключен"
+        lines.append(f"Итог автобэкапа: <b>{flag('backup')}</b>")
+        lines.append(f"Автобэкап: <b>{state}</b>"
+                     + (" · файл в чат" if auto.get("send_file") else " · без файла"))
+    lines += ["", f"Администраторов: {len(cfg.admins)}"]
+    return "\n".join(lines)
+
+
+HELP_TEXT = """<b>MTProxyL — команды</b>
+
+/menu — главное меню кнопками
+/status — состояние прокси
+/users — список пользователей
+/link — ссылка и QR-код
+/traffic — трафик по пользователям
+/availability — доступность из России
+/check — проверить доступность прямо сейчас
+/start_proxy, /stop_proxy, /restart_proxy — управление прокси
+/backup — сделать бэкап и прислать сюда (только Manager)
+/settings — уведомления и таймеры
+/help — эта справка
+
+Всё то же самое есть кнопками — /menu."""

@@ -26,3 +26,7 @@ opencode.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Python (телеграм-бот)
+__pycache__/
+*.pyc

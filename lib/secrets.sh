@@ -224,6 +224,30 @@ secret_toggle() {
 }
 
 # Установить лимиты
+# Срок действия в том виде, в каком его понимает движок: голая дата для него
+# не значение времени, а обрывок, и конфиг с ней он читать отказывается —
+# у цели реаниматора это означает, что она больше не стартует.
+# Возвращает "0", если срок снимают.
+_normalize_expiry() {
+    local _v="$1"
+    case "$_v" in
+        ""|0|never|нет) echo "0"; return 0 ;;
+    esac
+    # Форму проверяем регуляркой, существование даты — календарём: 2027-13-99
+    # выглядит правильно, но движок его не примет и цель не поднимется.
+    if [[ "$_v" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        date -d "$_v" +%s &>/dev/null || { log_error "Такой даты не существует: ${_v}"; return 1; }
+        # «до 1 января» человек понимает как «включая первое».
+        echo "${_v}T23:59:59Z"; return 0
+    fi
+    if [[ "$_v" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$ ]]; then
+        date -d "$_v" +%s &>/dev/null || { log_error "Такой даты не существует: ${_v}"; return 1; }
+        echo "$_v"; return 0
+    fi
+    log_error "Срок: YYYY-MM-DD, полная дата RFC3339 или 0"
+    return 1
+}
+
 secret_set_limits() {
     local label="$1" max_conns="${2:-}" max_ips="${3:-}" quota="${4:-}" expires="${5:-}"
     local idx=-1 i
@@ -246,15 +270,9 @@ secret_set_limits() {
         SECRETS_QUOTA[$idx]="$quota_bytes"
     fi
     if [ -n "$expires" ]; then
-        if [ "$expires" = "0" ] || [ "$expires" = "never" ]; then
-            SECRETS_EXPIRES[$idx]="0"
-        elif [[ "$expires" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-            SECRETS_EXPIRES[$idx]="${expires}T23:59:59Z"
-        elif [[ "$expires" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]]; then
-            SECRETS_EXPIRES[$idx]="$expires"
-        else
-            log_error "Срок: YYYY-MM-DD или 0"; return 1
-        fi
+        local _exp
+        _exp=$(_normalize_expiry "$expires") || return 1
+        SECRETS_EXPIRES[$idx]="$_exp"
     fi
 
     save_secrets
@@ -953,6 +971,10 @@ target_user_setlimits() {
     local _label="$1" _conns="${2:-0}" _ips="${3:-0}" _quota="${4:-0}" _expires="${5:-}"
     _target_users_ready || return 1
     [ -n "$(_target_user_state "$_label")" ] || { log_error "Пользователь '${_label}' не найден у цели"; return 1; }
+
+    # Проверяем до записи: негодный срок должен упереться здесь, а не в
+    # отказавшемся стартовать движке с уже испорченным конфигом.
+    _expires=$(_normalize_expiry "$_expires") || return 1
 
     backup_target_config "users" "true" || true
     # Ноль означает «без ограничения», а движок понимает это как отсутствие

@@ -154,9 +154,9 @@ show_main_menu() {
             # Цели на сервере нет — добавляем пункт установки оригинального
             # telemt: чинить пока нечего. Нумерация остаётся сплошной,
             # поэтому номера двух последних пунктов зависят от этого.
-            local _n_telemt="__none__" _n_setup=12 _n_uninstall=13
+            local _n_telemt="__none__" _n_setup=13 _n_uninstall=14
             if _no_telemt_target; then
-                _n_telemt=12; _n_setup=13; _n_uninstall=14
+                _n_telemt=13; _n_setup=14; _n_uninstall=15
             fi
             echo -e "  ${BRIGHT_CYAN}[1]${NC}   Управление прокси"
             echo -e "  ${BRIGHT_CYAN}[2]${NC}   Пользователи цели"
@@ -165,10 +165,11 @@ show_main_menu() {
             echo -e "  ${BRIGHT_CYAN}[5]${NC}   Логи и трафик"
             echo -e "  ${BRIGHT_CYAN}[6]${NC}   NFT лимитер, Zapret2 и фиксы"
             echo -e "  ${BRIGHT_CYAN}[7]${NC}   Обновление MTProxyL"
-            echo -e "  ${BRIGHT_CYAN}[8]${NC}   Дополнения (утилиты)"
-            echo -e "  ${BRIGHT_CYAN}[9]${NC}   Цель / режим (Manager ⇄ Reanimator)"
-            echo -e "  ${BRIGHT_CYAN}[10]${NC}  Редактировать конфиг цели"
-            echo -e "  ${BRIGHT_CYAN}[11]${NC}  Информация"
+            echo -e "  ${BRIGHT_CYAN}[8]${NC}   Телеграм бот  ${DIM}$(tgbot_status_line)${NC}"
+            echo -e "  ${BRIGHT_CYAN}[9]${NC}   Дополнения (утилиты)"
+            echo -e "  ${BRIGHT_CYAN}[10]${NC}  Цель / режим (Manager ⇄ Reanimator)"
+            echo -e "  ${BRIGHT_CYAN}[11]${NC}  Редактировать конфиг цели"
+            echo -e "  ${BRIGHT_CYAN}[12]${NC}  Информация"
             echo ""
             [ "$_n_telemt" != "__none__" ] && \
                 echo -e "  ${GREEN}[${_n_telemt}]${NC}  Установить telemt (официальный установщик)"
@@ -185,10 +186,11 @@ show_main_menu() {
                 5)  tui_traffic_menu ;;
                 6)  tui_nft_menu ;;
                 7)  tui_backup_menu ;;
-                8)  tui_addons_menu ;;
-                9)  tui_target_menu ;;
-                10) edit_target_config || true; press_any_key ;;
-                11) show_server_info; press_any_key ;;
+                8)  tui_tgbot_menu ;;
+                9)  tui_addons_menu ;;
+                10) tui_target_menu ;;
+                11) edit_target_config || true; press_any_key ;;
+                12) show_server_info; press_any_key ;;
                 "$_n_telemt")    install_original_telemt || true; press_any_key ;;
                 "$_n_setup")     run_installer ;;
                 "$_n_uninstall") uninstall; exit 0 ;;
@@ -206,12 +208,13 @@ show_main_menu() {
             echo -e "  ${BRIGHT_CYAN}[9]${NC}   Обновление и бэкапы"
             echo -e "  ${BRIGHT_CYAN}[10]${NC}  Режим эксперта (override поверх config.toml)"
             echo -e "  ${BRIGHT_CYAN}[11]${NC}  Режим супер эксперта (свой config.toml)"
-            echo -e "  ${BRIGHT_CYAN}[12]${NC}  Дополнения (утилиты)"
-            echo -e "  ${BRIGHT_CYAN}[13]${NC}  Цель / режим (Manager ⇄ Reanimator)"
-            echo -e "  ${BRIGHT_CYAN}[14]${NC}  Информация"
+            echo -e "  ${BRIGHT_CYAN}[12]${NC}  Телеграм бот  ${DIM}$(tgbot_status_line)${NC}"
+            echo -e "  ${BRIGHT_CYAN}[13]${NC}  Дополнения (утилиты)"
+            echo -e "  ${BRIGHT_CYAN}[14]${NC}  Цель / режим (Manager ⇄ Reanimator)"
+            echo -e "  ${BRIGHT_CYAN}[15]${NC}  Информация"
             echo ""
-            echo -e "  ${BRIGHT_CYAN}[15]${NC}  Установка / переустановка"
-            echo -e "  ${RED}[16]${NC}  Удаление"
+            echo -e "  ${BRIGHT_CYAN}[16]${NC}  Установка / переустановка"
+            echo -e "  ${RED}[17]${NC}  Удаление"
             echo -e "  ${BRIGHT_CYAN}[0]${NC}   Выход"
             echo ""
             choice=$(read_choice "выбор" "0")
@@ -227,11 +230,12 @@ show_main_menu() {
                 9)  tui_backup_menu ;;
                 10) tui_expert_menu ;;
                 11) tui_superexpert_menu ;;
-                12) tui_addons_menu ;;
-                13) tui_target_menu ;;
-                14) show_server_info; press_any_key ;;
-                15) run_installer ;;
-                16) uninstall; exit 0 ;;
+                12) tui_tgbot_menu ;;
+                13) tui_addons_menu ;;
+                14) tui_target_menu ;;
+                15) show_server_info; press_any_key ;;
+                16) run_installer ;;
+                17) uninstall; exit 0 ;;
                 0)  exit 0 ;;
             esac
         fi

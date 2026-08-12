@@ -295,6 +295,11 @@ SVC_EOF
         log_success "Снимки истории IP: каждые $(_ip_history_interval_minutes) мин"
     fi
 
+    install_availability_timer
+    log_success "Проверка доступности из РФ: каждые $(availability_interval_minutes) мин"
+
+    offer_tgbot_install
+
     # Итог
     show_install_summary
 
@@ -304,6 +309,28 @@ SVC_EOF
     read -rn 256 -t 0.05 _ 2>/dev/null || true
     load_settings; load_secrets
     show_main_menu
+}
+
+# Телеграм-бот при первой установке. По умолчанию «нет»: для него нужен
+# заведённый у BotFather токен, а он есть не у всех и не сразу.
+offer_tgbot_install() {
+    tgbot_installed 2>/dev/null && return 0
+    echo ""
+    echo -e "  ${DIM}────────────────────────────────────────${NC}"
+    echo ""
+    echo -e "  ${BRIGHT_CYAN}${BOLD}Телеграм-бот${NC}"
+    echo ""
+    echo -e "  ${DIM}Управление прокси кнопками в Telegram: пользователи, ссылки${NC}"
+    echo -e "  ${DIM}с QR-кодами, трафик, доступность из России и уведомления,${NC}"
+    echo -e "  ${DIM}когда прокси упал или его перестали видеть из РФ.${NC}"
+    echo ""
+    echo -e "  ${DIM}Понадобится токен от @BotFather. Поставить можно и позже:${NC}"
+    echo -e "  ${DIM}главное меню → Телеграм бот.${NC}"
+    echo ""
+    echo -en "  ${BOLD}Установить телеграм-бота? [y/N]:${NC} "
+    local _yn; read_line _yn
+    [[ "$_yn" =~ ^[yYдД] ]] || { log_info "Пропускаем — поставите когда понадобится"; return 0; }
+    tgbot_install
 }
 
 # ── Общий блок фиксов (NFT/Zapret2/MEKO) — manager и reanimator ──
@@ -508,6 +535,9 @@ uninstall() {
     if panel_installed 2>/dev/null; then
         echo -e "  ${DIM}- Веб-панель MTProxyL-Panel (спросим отдельно)${NC}"
     fi
+    if tgbot_installed 2>/dev/null; then
+        echo -e "  ${DIM}- Телеграм-бот${NC}"
+    fi
     echo ""
     echo -e "  ${GREEN}НЕ будет удалено:${NC}"
     echo -e "  ${DIM}- Docker (сам движок)${NC}"
@@ -557,6 +587,19 @@ uninstall() {
         fi
     fi
 
+    # Телеграм-бот: без MTProxyL он бесполезен — все его команды идут в скрипт,
+    # который сейчас исчезнет.
+    if tgbot_installed 2>/dev/null; then
+        echo ""
+        log_info "Удаляем телеграм-бота: без MTProxyL ему нечем управлять"
+        systemctl disable --now "$TGBOT_SERVICE" &>/dev/null
+        rm -f "/etc/systemd/system/${TGBOT_SERVICE}" "$TGBOT_SUDOERS"
+        systemctl daemon-reload 2>/dev/null
+        rm -rf "$TGBOT_DIR"
+        userdel "$TGBOT_USER" 2>/dev/null || true
+        log_success "Телеграм-бот удалён"
+    fi
+
     # Selfmask и PQ nginx
     if [ "${SELFMASK_ENABLED:-false}" = "true" ] || [ -d "${SELFMASK_PQ_PREFIX:-/opt/mtproxyl-nginx}" ]; then
         echo ""
@@ -584,6 +627,7 @@ uninstall() {
     systemctl disable mtproxyl.service >/dev/null 2>&1 || true
     rm -f /etc/systemd/system/mtproxyl.service
     remove_ip_history_timer >/dev/null 2>&1 || true
+    remove_availability_timer >/dev/null 2>&1 || true
     systemctl daemon-reload >/dev/null 2>&1 || true
 
     # Гео-блокировка
