@@ -55,6 +55,10 @@ type View struct {
 	Quota     globalping.QuotaState
 	AutoCheck bool
 	Interval  time.Duration
+	// AvailabilityEnabled=false — внешняя проверка выключена в конфиге панели.
+	// Тогда о ней пишется одна строка, а не «проверок ещё не было»: ждать
+	// нечего, и обещать первую проверку было бы неправдой.
+	AvailabilityEnabled bool
 
 	// Uplink — состояние исходящей связи и движка. nil, если наблюдение ещё не
 	// дало первого результата.
@@ -114,7 +118,11 @@ func RenderStatus(v View) string {
 	}
 
 	if v.Result == nil {
-		b.WriteString("Проверок ещё не было — первая пройдёт в ближайшие минуты.\n")
+		if !v.AvailabilityEnabled {
+			b.WriteString("<b>Доступность из РФ</b>: проверка выключена в конфиге панели.\n")
+		} else {
+			b.WriteString("Проверок ещё не было — первая пройдёт в ближайшие минуты.\n")
+		}
 		writeFooter(&b, v)
 		// Первые четверть часа после запуска вердикта доступности ещё нет, а
 		// связь с дата-центрами уже наблюдается — показываем то, что знаем.
@@ -397,6 +405,10 @@ func writeTarget(b *strings.Builder, v View) {
 }
 
 func writeFooter(b *strings.Builder, v View) {
+	if !v.AvailabilityEnabled {
+		// Строка про автопроверку без самой проверки только запутала бы.
+		return
+	}
 	if v.AutoCheck {
 		b.WriteString("Автопроверка: включена, раз в " + humanInterval(v.Interval) + "\n")
 	} else {

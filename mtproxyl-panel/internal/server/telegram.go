@@ -344,7 +344,7 @@ func (s *Server) registerTelegramRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	mux.Handle("POST /api/telegram/test", protected(func(w http.ResponseWriter, r *http.Request) {
 		if s.telegram == nil {
 			writeError(w, http.StatusBadRequest, "disabled",
-				"Проверка доступности выключена в конфиге панели — боту нечего сообщать")
+				"Бот не запущен — панель поднялась без него")
 			return
 		}
 		username, err := s.telegram.TestConnection(r.Context())
@@ -414,34 +414,42 @@ func (s *Server) telegramStatus() map[string]any {
 // его на вердикты. Живёт здесь, а не в registerTelegramRoutes: боту нужен уже
 // собранный Checker, а маршруты регистрируются независимо от него.
 func (s *Server) startTelegramBot(client *mtproxylctl.Client) {
-	if s.availability == nil {
-		return
-	}
 	// Наблюдатель за исходящей связью. Живёт рядом с проверкой доступности, но
 	// независимо от неё: они смотрят в разные стороны и ловят разные аварии.
+	//
+	// Именно поэтому запускается и тогда, когда внешняя проверка выключена в
+	// конфиге: её данные идут из интернета и стоят квоты, а эти — локальные,
+	// от самого движка. Терять мониторинг связи вместе с ней незачем.
 	s.uplink = uplink.NewWatcher(
 		uplink.NewClient(s.cfg.Telemt.URL, s.cfg.Telemt.AuthHeader),
 		uplink.DefaultInterval,
 		s.telegramStore.connectFailThreshold,
 	)
 
-	bot := tgbot.New(tgbot.Deps{
-		RunCheckNow:    s.availability.RunCheckNow,
-		Snapshot:       s.availability.Store().Get,
-		Quota:          s.availability.Quota,
-		AutoCheck:      s.availabilityOverride.autoCheckEnabled,
-		Target:         s.availabilityTarget(client),
-		Interval:       s.cfg.Globalping.Interval(),
-		UplinkSnapshot: s.uplink.Snapshot,
-		Persist:        s.telegramStore.saveState,
-	}, s.telegramStore.botState())
+	deps := tgbot.Deps{
+		UplinkSnapshot:      s.uplink.Snapshot,
+		Persist:             s.telegramStore.saveState,
+		AvailabilityEnabled: s.availability != nil,
+	}
+	if s.availability != nil {
+		deps.RunCheckNow = s.availability.RunCheckNow
+		deps.Snapshot = s.availability.Store().Get
+		deps.Quota = s.availability.Quota
+		deps.AutoCheck = s.availabilityOverride.autoCheckEnabled
+		deps.Target = s.availabilityTarget(client)
+		deps.Interval = s.cfg.Globalping.Interval()
+	}
+
+	bot := tgbot.New(deps, s.telegramStore.botState())
 
 	s.telegram = bot
 	bot.Reconfigure(s.telegramStore.botConfig())
 
 	// Подписка ставится до старта проверки: первый же вердикт должен попасть
 	// в чат, а не потеряться из-за того, что бот ещё не слушал.
-	s.availability.SetOnResult(bot.OnResult)
+	if s.availability != nil {
+		s.availability.SetOnResult(bot.OnResult)
+	}
 	s.uplink.SetOnResult(bot.OnUplink)
 	bot.Start(context.Background())
 	go s.uplink.Start(context.Background())

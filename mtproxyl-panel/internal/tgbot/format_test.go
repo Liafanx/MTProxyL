@@ -32,13 +32,14 @@ func sampleResult(total, ok int) *globalping.CheckResult {
 
 func baseView(r *globalping.CheckResult) View {
 	return View{
-		Result:    r,
-		Target:    globalping.Target{Host: "tg-plug.example.uz", Port: 443, SNI: "tg-plug.example.uz"},
-		Quota:     globalping.QuotaState{Budget: 250, Remaining: 180},
-		AutoCheck: true,
-		Interval:  15 * time.Minute,
-		Threshold: 60,
-		Now:       time.Date(2026, 8, 11, 17, 30, 0, 0, time.Local),
+		Result:              r,
+		Target:              globalping.Target{Host: "tg-plug.example.uz", Port: 443, SNI: "tg-plug.example.uz"},
+		Quota:               globalping.QuotaState{Budget: 250, Remaining: 180},
+		AutoCheck:           true,
+		AvailabilityEnabled: true,
+		Interval:            15 * time.Minute,
+		Threshold:           60,
+		Now:                 time.Date(2026, 8, 11, 17, 30, 0, 0, time.Local),
 	}
 }
 
@@ -491,5 +492,28 @@ func TestRenderStatusMuteForever(t *testing.T) {
 
 	if out := RenderStatus(v); !strings.Contains(out, "заглушены до отмены") {
 		t.Errorf("нет напоминания о бессрочной паузе:\n%s", out)
+	}
+}
+
+// Внешняя проверка может быть выключена в конфиге панели — тогда бот всё равно
+// работает и показывает связь с дата-центрами, которая от неё не зависит.
+func TestRenderStatusWithoutAvailabilityCheck(t *testing.T) {
+	v := baseView(nil)
+	v.AvailabilityEnabled = false
+	v.Uplink = liveUplink()
+
+	out := RenderStatus(v)
+
+	if !strings.Contains(out, "проверка выключена в конфиге панели") {
+		t.Errorf("не сказано, что внешняя проверка выключена:\n%s", out)
+	}
+	if strings.Contains(out, "Проверок ещё не было") {
+		t.Errorf("обещана первая проверка, которой не будет:\n%s", out)
+	}
+	if strings.Contains(out, "Автопроверка:") {
+		t.Errorf("показана автопроверка при выключенной проверке:\n%s", out)
+	}
+	if !strings.Contains(out, "Связь с Telegram") {
+		t.Errorf("блок связи пропал вместе с выключенной проверкой:\n%s", out)
 	}
 }

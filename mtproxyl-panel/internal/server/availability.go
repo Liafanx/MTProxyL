@@ -39,11 +39,15 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 			s.cfg.Globalping.EffectiveProbeLimit(),
 		)
 		s.availability.SetAutoCheck(s.availabilityOverride.autoCheckEnabled)
-		s.startTelegramBot(client)
 		go s.availability.Start(context.Background())
 	} else {
 		log.Println("[globalping] проверка доступности выключена в конфиге панели")
 	}
+
+	// Бот и наблюдение за связью с дата-центрами поднимаются независимо от
+	// внешней проверки: они читают движок локально и работают, даже когда
+	// проверка зондами выключена в конфиге.
+	s.startTelegramBot(client)
 
 	// Краткий статус — его опрашивает индикатор на дашборде.
 	mux.Handle("GET /api/availability/status", protected(func(w http.ResponseWriter, r *http.Request) {

@@ -75,6 +75,9 @@ type Deps struct {
 	// UplinkSnapshot отдаёт последний вердикт наблюдения за связью с
 	// дата-центрами; nil, если наблюдение выключено.
 	UplinkSnapshot func() *uplink.Status
+	// AvailabilityEnabled=false — внешняя проверка выключена в конфиге панели.
+	// Бот при этом работает: связь с дата-центрами он наблюдает сам.
+	AvailabilityEnabled bool
 	// Persist сохраняет PersistedState. Может быть nil — тогда состояние
 	// живёт до перезапуска.
 	Persist func(PersistedState) error
@@ -595,24 +598,25 @@ func (b *Bot) deliver(ctx context.Context, d delivery) {
 	messageID := b.state.MessageID
 	inc := b.state.Incidents
 	view := View{
-		Result:         b.lastGood,
-		Failure:        b.lastFail,
-		Uplink:         b.lastUplink,
-		Quota:          zeroQuota(b.deps.Quota),
-		AutoCheck:      b.deps.AutoCheck == nil || b.deps.AutoCheck(),
-		Interval:       b.deps.Interval,
-		Banners:        d.Banners,
-		PrevPercentage: d.PrevPercentage,
-		PrevKnown:      d.PrevKnown,
-		AlertSince:     d.AlertSince,
-		UplinkSince:    d.UplinkSince,
-		EngineSince:    d.EngineSince,
-		PrevIP:         d.PrevIP,
-		NewIP:          d.NewIP,
-		MutedUntil:     inc.MutedUntil,
-		MuteForever:    inc.MuteForever,
-		Threshold:      cfg.AlertThreshold,
-		Now:            b.now(),
+		Result:              b.lastGood,
+		Failure:             b.lastFail,
+		Uplink:              b.lastUplink,
+		AvailabilityEnabled: b.deps.AvailabilityEnabled,
+		Quota:               zeroQuota(b.deps.Quota),
+		AutoCheck:           b.deps.AutoCheck == nil || b.deps.AutoCheck(),
+		Interval:            b.deps.Interval,
+		Banners:             d.Banners,
+		PrevPercentage:      d.PrevPercentage,
+		PrevKnown:           d.PrevKnown,
+		AlertSince:          d.AlertSince,
+		UplinkSince:         d.UplinkSince,
+		EngineSince:         d.EngineSince,
+		PrevIP:              d.PrevIP,
+		NewIP:               d.NewIP,
+		MutedUntil:          inc.MutedUntil,
+		MuteForever:         inc.MuteForever,
+		Threshold:           cfg.AlertThreshold,
+		Now:                 b.now(),
 	}
 	targetFn := b.deps.Target
 	sinceEdit := view.Now.Sub(b.lastEditAt)
