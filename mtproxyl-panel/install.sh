@@ -86,8 +86,11 @@ toml_value() {
       if (current_key == key) {
         value = substr(line, index(line, "=") + 1)
         gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
-        gsub(/^"/, "", value)
-        gsub(/"$/, "", value)
+        # Одинарные кавычки в TOML — такая же строка, как двойные (литеральная).
+        # Мы их не пишем, но конфиг правят и руками, а неснятая кавычка потом
+        # уезжает в sudoers, и visudo отвергает файл целиком.
+        gsub(/^"|"$/, "", value)
+        gsub(/^'"'"'|'"'"'$/, "", value)
         print value
         exit
       }
@@ -440,6 +443,20 @@ install_mtproxyl_sudoers() {
 
   [ -n "$_script" ] || _script="/opt/mtproxyl/mtproxyl.sh"
   [ -n "$_install_dir" ] || _install_dir="/opt/mtproxyl"
+
+  # Пути идут в sudoers как есть, а он принимает только абсолютный путь без
+  # пробелов и кавычек. Проверяем здесь: иначе visudo забракует сотню строк
+  # разом, и в этом потоке не разглядеть, что виноват один ключ конфига.
+  for _p in "$_script:script_path" "$_install_dir:install_dir"; do
+    _v=${_p%:*}; _k=${_p##*:}
+    if [ -n "$(printf '%s' "$_v" | tr -d 'A-Za-z0-9/._-')" ]; then
+      die "В $CONFIG_FILE ключ mtproxyl.$_k = $_v — кавычки, пробелы и прочие лишние знаки в пути sudoers не принимает"
+    fi
+    case "$_v" in
+      /*) ;;
+      *) die "В $CONFIG_FILE ключ mtproxyl.$_k = $_v — нужен абсолютный путь" ;;
+    esac
+  done
 
   _visudo=$(command -v visudo 2>/dev/null || true)
 

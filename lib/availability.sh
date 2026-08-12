@@ -716,9 +716,11 @@ _availability_migrate_from_panel() {
 
     if [ -r "$_cfg" ] && [ -z "$(availability_token)" ]; then
         local _ctok _chost
-        _ctok=$(awk '/^\[globalping\]/{f=1;next} /^\[/{f=0} f && /^[[:space:]]*api_token[[:space:]]*=/{gsub(/.*=[[:space:]]*"?|"[[:space:]]*$/,""); print; exit}' "$_cfg" 2>/dev/null)
+        # Кавычки снимаем и одинарные: в TOML это такая же строка, а конфиг
+        # панели правят руками.
+        _ctok=$(awk '/^\[globalping\]/{f=1;next} /^\[/{f=0} f && /^[[:space:]]*api_token[[:space:]]*=/{gsub(/.*=[[:space:]]*["'"'"']?|["'"'"'][[:space:]]*$/,""); print; exit}' "$_cfg" 2>/dev/null)
         [ -n "$_ctok" ] && availability_set_token "$_ctok" 2>/dev/null
-        _chost=$(awk '/^\[globalping\]/{f=1;next} /^\[/{f=0} f && /^[[:space:]]*override_host[[:space:]]*=/{gsub(/.*=[[:space:]]*"?|"[[:space:]]*$/,""); print; exit}' "$_cfg" 2>/dev/null)
+        _chost=$(awk '/^\[globalping\]/{f=1;next} /^\[/{f=0} f && /^[[:space:]]*override_host[[:space:]]*=/{gsub(/.*=[[:space:]]*["'"'"']?|["'"'"'][[:space:]]*$/,""); print; exit}' "$_cfg" 2>/dev/null)
         [ -n "$_chost" ] && [ -z "${AVAILABILITY_HOST:-}" ] && { AVAILABILITY_HOST="$_chost"; _changed="true"; }
     fi
 
