@@ -1092,6 +1092,21 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 					"Нужен числовой Telegram ID администратора")
 				return
 			}
+		} else {
+			// Пустые поля — это «переустановить с прежним токеном». Если
+			// прежнего нет, скрипту пришлось бы спрашивать, а терминала у него
+			// тут не будет: лучше отказать сразу и объяснить, чем оставить
+			// операцию висеть.
+			st, err := client.TgbotStatus(r.Context())
+			if err != nil {
+				writeCLIError(w, "mtproxyl_error", err)
+				return
+			}
+			if !st.Configured {
+				writeError(w, http.StatusBadRequest, "token_required",
+					"Бот ещё не настроен: укажите токен от @BotFather и свой Telegram ID")
+				return
+			}
 		}
 		started := runner.Start("tgbot:install", func(ctx context.Context) (string, error) {
 			return client.TgbotInstall(ctx, token, body.Admin)

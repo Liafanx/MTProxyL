@@ -324,7 +324,20 @@ _tgbot_check_token() {
     return 0
 }
 
+# Мастер требует терминала. Из панели его запускать нельзя: read_line там
+# возвращает "yes" на каждый вопрос, и цикл переспрашивания становится вечным.
+_tgbot_interactive() {
+    [ "${MTPROXYL_ASSUME_YES:-}" = "1" ] && return 1
+    [ -t 0 ] || return 1
+    return 0
+}
+
 _tgbot_ask_token() {
+    _tgbot_interactive || {
+        log_error "Нужны токен бота и Telegram ID администратора"
+        log_info "В панели заполните оба поля формы; в терминале — mtproxyl tgbot install"
+        return 1
+    }
     echo ""
     echo -e "  ${BOLD}Шаг 1. Токен бота${NC}"
     echo -e "  ${DIM}1) В Telegram откройте ${BOLD}@BotFather${NC}${DIM} и отправьте /newbot${NC}"
@@ -332,8 +345,8 @@ _tgbot_ask_token() {
     echo -e "  ${DIM}3) BotFather пришлёт строку вида 1234567890:AAH...  — это токен${NC}"
     echo ""
 
-    local _token
-    while true; do
+    local _token _try
+    for _try in 1 2 3; do
         echo -en "  ${BOLD}Токен:${NC} "
         read_line _token
         _token=$(echo "$_token" | tr -d '[:space:]')
@@ -347,6 +360,8 @@ _tgbot_ask_token() {
         chmod 600 "${TGBOT_DIR}/.token.tmp"
         return 0
     done
+    log_error "Три попытки подряд не подошли — установка прервана"
+    return 1
 }
 
 # ID узнаём у самого Telegram: человеку не нужно искать сторонних ботов, а
@@ -379,7 +394,8 @@ _tgbot_ask_admin() {
 
     if [ -z "$_id" ]; then
         echo -e "  ${DIM}Автоматически не вышло. Узнать ID можно у бота @userinfobot${NC}"
-        while true; do
+        local _try
+        for _try in 1 2 3; do
             echo -en "  ${BOLD}Ваш Telegram ID:${NC} "
             read_line _id
             _id=$(echo "$_id" | tr -cd '0-9')
@@ -387,6 +403,7 @@ _tgbot_ask_admin() {
             log_warn "Нужны только цифры"
         done
     fi
+    [ -n "$_id" ] || { log_error "Без Telegram ID бот никого не пустит"; return 1; }
     printf '%s' "$_id" > "${TGBOT_DIR}/.admin.tmp"
     chmod 600 "${TGBOT_DIR}/.admin.tmp"
 }
@@ -489,16 +506,12 @@ tgbot_install() {
     echo -e "  ${DIM}Каталог: ${TGBOT_DIR}, служба: ${TGBOT_SERVICE}${NC}"
     echo ""
 
-    _tgbot_install_deps || return 1
-    _tgbot_ensure_user || return 1
-
     mkdir -p "${TGBOT_DIR}/bot"
-    log_info "Качаем код бота..."
-    _tgbot_fetch_sources || { log_error "Исходники бота скачать не удалось"; return 1; }
-    _tgbot_build_venv || return 1
 
-    # Переустановка поверх настроенного бота не должна снова спрашивать токен.
-    local _token="" _admin=""
+    # Про токен спрашиваем до тяжёлой части: иначе венв с aiogram ставится две
+    # минуты, и только потом выясняется, что заводить бота нечем.
+    # Переустановка поверх настроенного не спрашивает — токен уже есть.
+    local _token="" _admin="" _write_config="false"
     if [ -n "$_opt_token" ]; then
         _token=$(printf '%s' "$_opt_token" | tr -d '[:space:]')
         _admin=$(printf '%s' "$_opt_admin" | tr -cd '0-9')
@@ -506,20 +519,29 @@ tgbot_install() {
             log_error "Не похоже на токен: ожидается 1234567890:AAH..."
             return 1
         }
-        _tgbot_check_token "$_token" || return 1
         [ -n "$_admin" ] || { log_error "Нужен числовой Telegram ID администратора"; return 1; }
-        _tgbot_write_config "$_token" "$_admin" || return 1
+        _tgbot_check_token "$_token" || return 1
+        _write_config="true"
     elif tgbot_configured; then
         log_info "Токен и администраторы уже заданы — оставляем как есть"
         log_info "Изменить: меню бота → Настроить, или mtproxyl tgbot setup"
     else
         _tgbot_ask_token || return 1
         _token=$(cat "${TGBOT_DIR}/.token.tmp")
-        _tgbot_ask_admin "$_token"
+        _tgbot_ask_admin "$_token" || { rm -f "${TGBOT_DIR}/.token.tmp"; return 1; }
         _admin=$(cat "${TGBOT_DIR}/.admin.tmp")
         rm -f "${TGBOT_DIR}/.token.tmp" "${TGBOT_DIR}/.admin.tmp"
-        _tgbot_write_config "$_token" "$_admin" || return 1
+        _write_config="true"
     fi
+
+    _tgbot_install_deps || return 1
+    _tgbot_ensure_user || return 1
+
+    log_info "Качаем код бота..."
+    _tgbot_fetch_sources || { log_error "Исходники бота скачать не удалось"; return 1; }
+    _tgbot_build_venv || return 1
+
+    [ "$_write_config" = "true" ] && { _tgbot_write_config "$_token" "$_admin" || return 1; }
 
     _tgbot_write_sudoers || return 1
     _tgbot_write_service

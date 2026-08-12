@@ -92,6 +92,10 @@ export function TgbotPage() {
 
   const installed = status?.installed ?? false;
   const serviceUp = status?.active ?? false;
+  // Пустые поля означают «переустановить с прежним токеном» — это возможно,
+  // только если токен уже сохранён. Иначе установщику нечем заводить бота.
+  const configured = status?.configured ?? false;
+  const canInstall = configured || (token.trim() !== '' && admin.trim() !== '');
 
   if (!supported) {
     return (
@@ -209,13 +213,18 @@ export function TgbotPage() {
             </div>
           </div>
           <p className="text-xs text-text-secondary">
-            {installed
+            {configured
               ? 'Оставьте поля пустыми, чтобы переустановить бота с прежним токеном: обновятся код, зависимости и права sudo.'
               : 'Ставится в /opt/mtproxyl-tgbot: python в venv, отдельная служба от пользователя без прав. Занимает пару минут.'}
           </p>
-          <Button disabled={busy || installing} onClick={() => void install()}>
+          <Button disabled={busy || installing || !canInstall} onClick={() => void install()}>
             {installed ? 'Переустановить' : 'Установить бота'}
           </Button>
+          {!canInstall && (
+            <p className="text-xs text-warning">
+              Заполните оба поля: без токена и вашего Telegram ID бота не завести.
+            </p>
+          )}
         </CardContent>
       </Card>
 
