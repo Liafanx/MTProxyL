@@ -8,8 +8,8 @@ import { ErrorAlert } from '@/components/ErrorAlert';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { OperationProgress } from '@/components/OperationProgress';
 import { StatusDot } from '@/components/StatusDot';
-import { useManagerOnly } from '@/hooks/useMtproxyl';
-import { mtproxylApi, tgbotApi, type MtproxylOperation, type TgbotStatus } from '@/lib/api';
+import { useManagerOnly, useMtproxylOperation } from '@/hooks/useMtproxyl';
+import { tgbotApi, type TgbotStatus } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 const NOTIFY_LABELS: Array<[string, string]> = [
@@ -36,7 +36,6 @@ export function TgbotPage() {
   const [supported, setSupported] = useState(true);
   const [message, setMessage] = useState('');
   const [hint, setHint] = useState('');
-  const [operation, setOperation] = useState<MtproxylOperation | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [logs, setLogs] = useState('');
@@ -53,29 +52,20 @@ export function TgbotPage() {
       setMessage(res.message ?? '');
       setStatus(res.status ?? null);
       setHint(res.hint ?? '');
-      setOperation(res.operation ?? null);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось получить состояние бота');
     }
   }, []);
 
+  // Установка тянет venv и aiogram — это минуты. Слот операции общий на
+  // панель, поэтому берём из него только своё и гасим результат на сервере:
+  // иначе отчёт вернётся при следующем открытии страницы.
+  const { operation, start, dismiss, running: installing } = useMtproxylOperation(load, ['tgbot:']);
+
   useEffect(() => {
     void load();
   }, [load]);
-
-  // Установка тянет venv и aiogram — это минуты, поэтому за ней следим тем же
-  // опросом операции, что и за остальными долгими командами.
-  useEffect(() => {
-    if (operation?.phase !== 'running') return;
-    const timer = setInterval(async () => {
-      const res = await mtproxylApi.status().catch(() => null);
-      if (!res) return;
-      setOperation(res.operation ?? null);
-      if (res.operation?.phase !== 'running') void load();
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [operation?.phase, load]);
 
   const act = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -92,8 +82,7 @@ export function TgbotPage() {
 
   const install = () =>
     act(async () => {
-      const op = await tgbotApi.install(token.trim(), Number(admin.trim() || 0));
-      setOperation(op);
+      start(await tgbotApi.install(token.trim(), Number(admin.trim() || 0)));
       setToken('');
       setAdmin('');
     });
@@ -102,7 +91,7 @@ export function TgbotPage() {
     act(async () => setLogs((await tgbotApi.logs(120)).lines || 'Журнал пуст'));
 
   const installed = status?.installed ?? false;
-  const running = status?.active ?? false;
+  const serviceUp = status?.active ?? false;
 
   if (!supported) {
     return (
@@ -117,7 +106,7 @@ export function TgbotPage() {
     <div className="space-y-4">
       <PageTitle />
       {error && <ErrorAlert message={error} onRetry={() => void load()} />}
-      {operation && <OperationProgress operation={operation} />}
+      <OperationProgress operation={operation} onDismiss={dismiss} />
 
       <Card>
         <CardHeader className="flex-row items-center justify-between">
@@ -128,13 +117,13 @@ export function TgbotPage() {
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
           <div className="flex items-center gap-2">
-            <StatusDot status={!installed ? 'error' : running ? 'ok' : 'warn'} />
+            <StatusDot status={!installed ? 'error' : serviceUp ? 'ok' : 'warn'} />
             <span className="font-medium">
               {!installed
                 ? 'Не установлен'
                 : !status?.configured
                   ? 'Установлен, но не настроен'
-                  : running
+                  : serviceUp
                     ? 'Работает'
                     : 'Остановлен'}
             </span>
@@ -157,11 +146,11 @@ export function TgbotPage() {
           {installed && (
             <div className="flex flex-wrap gap-2 pt-1">
               <Button size="sm" disabled={busy} className="gap-2"
-                onClick={() => void act(() => tgbotApi.service(running ? 'restart' : 'start'))}>
-                {running ? <RefreshCw className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                {running ? 'Перезапустить' : 'Запустить'}
+                onClick={() => void act(() => tgbotApi.service(serviceUp ? 'restart' : 'start'))}>
+                {serviceUp ? <RefreshCw className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                {serviceUp ? 'Перезапустить' : 'Запустить'}
               </Button>
-              {running && (
+              {serviceUp && (
                 <Button size="sm" variant="outline" disabled={busy} className="gap-2"
                   onClick={() => void act(() => tgbotApi.service('stop'))}>
                   <Square className="h-4 w-4" /> Остановить
@@ -224,7 +213,7 @@ export function TgbotPage() {
               ? 'Оставьте поля пустыми, чтобы переустановить бота с прежним токеном: обновятся код, зависимости и права sudo.'
               : 'Ставится в /opt/mtproxyl-tgbot: python в venv, отдельная служба от пользователя без прав. Занимает пару минут.'}
           </p>
-          <Button disabled={busy || operation?.phase === 'running'} onClick={() => void install()}>
+          <Button disabled={busy || installing} onClick={() => void install()}>
             {installed ? 'Переустановить' : 'Установить бота'}
           </Button>
         </CardContent>
