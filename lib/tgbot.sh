@@ -86,27 +86,58 @@ _tgbot_install_deps() {
     [ ${#_missing[@]} -eq 0 ] && return 0
 
     log_info "Ставим зависимости: ${_missing[*]}"
+    _tgbot_warn_low_disk
     _wait_apt 2>/dev/null || true
+    local _rc=0
     case "$(detect_os)" in
         debian)
-            apt-get update -qq && apt-get install -y -qq "${_missing[@]}" ;;
+            # update отдельно от install: с чужим сломанным репозиторием он
+            # вернёт ошибку, а через && установка тогда просто не начнётся.
+            apt-get update -qq || log_warn "apt update прошёл с ошибками — ставим из того, что уже в индексе"
+            apt-get install -y -qq "${_missing[@]}" || _rc=1 ;;
         rhel)
             # В RHEL venv входит в python3, отдельного пакета нет.
             local _pkgs=("${_missing[@]/python3-venv/python3}")
-            yum install -y -q "${_pkgs[@]}" ;;
+            yum install -y -q "${_pkgs[@]}" || _rc=1 ;;
         alpine)
-            apk add --no-cache python3 py3-pip curl libqrencode-tools 2>/dev/null ;;
+            apk add --no-cache python3 py3-pip curl libqrencode-tools || _rc=1 ;;
         *)
             log_warn "Неизвестный дистрибутив — поставьте вручную: ${_missing[*]}"
             return 1 ;;
     esac
+    [ "$_rc" -eq 0 ] || log_warn "Менеджер пакетов отчитался об ошибке — проверяем, чего не хватает"
 
+    # Смотрим не на код возврата, а на то, что реально появилось: пакетный
+    # менеджер спотыкается о чужой репозиторий или забитый диск и тянет за
+    # собой не то, о чём мы просили.
     python3 -c "import ensurepip" &>/dev/null || {
         log_error "python3-venv так и не появился — без него бота не поставить"
         log_info "Поставьте вручную и повторите: apt install python3-venv"
         return 1
     }
+    command -v curl &>/dev/null || {
+        log_error "curl так и не появился — без него не скачать код бота"
+        log_info "Поставьте вручную и повторите: apt install curl"
+        return 1
+    }
+    # QR — не повод отказывать в установке: бот пришлёт саму ссылку.
+    command -v qrencode &>/dev/null || {
+        log_warn "qrencode не установился — QR-кода к ссылке не будет, только сама ссылка"
+        log_info "Поставить можно позже: apt install qrencode"
+    }
     return 0
+}
+
+# Места нужно около 300 МБ: venv с aiogram плюс кэш пакетного менеджера. На
+# забитом диске apt и pip падают на полпути, и разбираться в этом потом
+# труднее, чем прочитать предупреждение сейчас.
+_tgbot_warn_low_disk() {
+    local _free
+    _free=$(df -Pm "$(dirname "$TGBOT_DIR")" 2>/dev/null | awk 'NR==2{print $4}')
+    [[ "$_free" =~ ^[0-9]+$ ]] || return 0
+    [ "$_free" -ge 400 ] && return 0
+    log_warn "На диске свободно ${_free} МБ, установке нужно около 300 МБ"
+    log_info "Освободите место, иначе apt и pip оборвутся на полпути: apt clean, journalctl --vacuum-size=100M"
 }
 
 # ── Исходники ─────────────────────────────────────────────────
@@ -576,6 +607,10 @@ tgbot_install() {
 
     if tgbot_service_active; then
         log_success "Бот запущен"
+        # Повторяем в итоге: предупреждение о qrencode осталось в самом начале
+        # длинной установки, а из панели её читают уже свёрнутой.
+        command -v qrencode &>/dev/null || \
+            log_warn "qrencode отсутствует: ссылки придут без QR-кода (apt install qrencode)"
         echo ""
         echo -e "  ${DIM}Откройте бота в Telegram и отправьте /start${NC}"
         echo -e "  ${DIM}Логи: journalctl -u ${TGBOT_SERVICE} -f${NC}"
