@@ -165,6 +165,11 @@ func writeUplink(b *strings.Builder, v View) {
 	fmt.Fprintf(b, "%s <b>Связь с Telegram — %s</b>\n", levelDot(globalpingLevel(u.Level)), uplinkVerdict(u))
 	b.WriteString("<i>выход: прокси → дата-центры</i>\n\n")
 
+	// Причины идут отдельными строками, а не в заголовке: там они складывались
+	// в неразборчивую строку с двойным тире.
+	for _, p := range u.Problems {
+		b.WriteString("⚠️ " + esc(p) + "\n")
+	}
 	fmt.Fprintf(b, "Писатели: <b>%d</b> живых / %d нужно\n", u.AliveWriters, u.RequiredWriters)
 	if u.HasFailRate && u.Attempts > 0 {
 		fmt.Fprintf(b, "Ошибок подключения: %.1f%% (%d из %d)\n", u.FailRate*100, u.Fails, u.Attempts)
@@ -178,10 +183,14 @@ func writeUplink(b *strings.Builder, v View) {
 }
 
 func uplinkVerdict(u *uplink.Status) string {
-	if len(u.Problems) == 0 {
+	switch {
+	case len(u.Problems) == 0:
 		return "норма"
+	case u.AliveWriters == 0:
+		return "связи нет"
+	default:
+		return "с перебоями"
 	}
-	return u.Problems[0]
 }
 
 // globalpingLevel переводит уровень наблюдателя в тот же светофор, которым
@@ -527,6 +536,22 @@ func oneLine(s string) string {
 
 // stampShort — время без секунд. Блок связи обновляется раз в минуту, и
 // секунды в нём ничего не добавляют.
+// plural выбирает форму слова: «1 день», «2 дня», «5 дней».
+func plural(n int, one, few, many string) string {
+	n %= 100
+	if n >= 11 && n <= 14 {
+		return many
+	}
+	switch n % 10 {
+	case 1:
+		return one
+	case 2, 3, 4:
+		return few
+	default:
+		return many
+	}
+}
+
 func stampShort(t time.Time) string {
 	if t.IsZero() {
 		return "—"
@@ -565,7 +590,10 @@ func duration(now, since time.Time) string {
 		return "меньше минуты"
 	case d < time.Hour:
 		return fmt.Sprintf("%d мин", int(d.Minutes()))
-	default:
+	case d < 24*time.Hour:
 		return fmt.Sprintf("%d ч %d мин", int(d.Hours()), int(d.Minutes())%60)
+	default:
+		days := int(d.Hours()) / 24
+		return fmt.Sprintf("%d %s %d ч", days, plural(days, "день", "дня", "дней"), int(d.Hours())%24)
 	}
 }
