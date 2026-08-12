@@ -1,16 +1,58 @@
-"""Мелочи, общие для всех обработчиков."""
+"""Экран бота: одно меню на чат, всегда внизу.
+
+Меню — не сообщение, а место. Каждый новый экран занимает то же сообщение, а
+когда меню приходится подвинуть (пришло уведомление, человек написал команду),
+старое удаляется и появляется новое — внизу. В истории остаются только
+уведомления: ссылки, ошибки, сообщения наблюдателей.
+"""
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from .cli import CliError
 from .format import esc
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class Menu:
+    message_id: int
+    text: str
+    markup: InlineKeyboardMarkup | None
+
+
+_menus: dict[int, Menu] = {}
+
+
+def _chat_id(event: Message | CallbackQuery) -> int | None:
+    message = event.message if isinstance(event, CallbackQuery) else event
+    return message.chat.id if message else None
+
+
+def _message_of(event: Message | CallbackQuery) -> Message | None:
+    return event.message if isinstance(event, CallbackQuery) else event
+
+
+async def _delete(bot, chat_id: int | None, message_id: int | None) -> None:
+    """Удаление «по возможности»: сообщение могли убрать руками, и падать
+    из-за этого экран не должен."""
+    if bot is None or chat_id is None or message_id is None:
+        return
+    try:
+        await bot.delete_message(chat_id, message_id)
+    except TelegramBadRequest as exc:
+        log.debug("не удалось удалить %s: %s", message_id, exc)
 
 
 async def render(
@@ -19,23 +61,95 @@ async def render(
     markup: InlineKeyboardMarkup | None = None,
     force_new: bool = False,
 ) -> None:
-    """Показать экран: правкой прежнего сообщения, если пришли по кнопке."""
-    if isinstance(event, CallbackQuery) and event.message and not force_new:
+    """Показать экран в меню чата."""
+    chat_id = _chat_id(event)
+    message = _message_of(event)
+    if chat_id is None or message is None:
+        return
+
+    current = _menus.get(chat_id)
+
+    # Нажали кнопку на текущем меню — правим его на месте: так экран не прыгает
+    # и не мигает, а меню и без того самое нижнее.
+    if (
+        not force_new
+        and isinstance(event, CallbackQuery)
+        and current is not None
+        and event.message is not None
+        and event.message.message_id == current.message_id
+    ):
         try:
             await event.message.edit_text(text, reply_markup=markup, disable_web_page_preview=True)
+            _menus[chat_id] = Menu(current.message_id, text, markup)
             return
         except TelegramBadRequest as exc:
             # «message is not modified» — обычное дело при повторном нажатии
             # «Обновить», когда с прошлого раза ничего не изменилось.
             if "message is not modified" in str(exc):
+                _menus[chat_id] = Menu(current.message_id, text, markup)
                 return
-            log.debug("не удалось отредактировать сообщение: %s", exc)
-        await event.message.answer(text, reply_markup=markup, disable_web_page_preview=True)
+            log.debug("правка меню не удалась, шлём новое: %s", exc)
+
+    await _delete(message.bot, chat_id, current.message_id if current else None)
+    sent = await message.answer(text, reply_markup=markup, disable_web_page_preview=True)
+    _menus[chat_id] = Menu(sent.message_id, text, markup)
+
+
+async def notice(
+    event: Message | CallbackQuery,
+    text: str,
+    *,
+    photo: bytes | None = None,
+    filename: str = "qr.png",
+    markup: InlineKeyboardMarkup | None = None,
+    move: bool = True,
+) -> None:
+    """Сообщение, которое остаётся в истории. Меню после него съезжает вниз;
+    move=False — когда вызывающий всё равно сейчас нарисует новый экран."""
+    message = _message_of(event)
+    chat_id = _chat_id(event)
+    if message is None or chat_id is None:
         return
 
-    message = event.message if isinstance(event, CallbackQuery) else event
-    if message:
+    if photo is not None:
+        await message.answer_photo(
+            BufferedInputFile(photo, filename=filename),
+            caption=text,
+            reply_markup=markup,
+        )
+    else:
         await message.answer(text, reply_markup=markup, disable_web_page_preview=True)
+
+    if move:
+        await move_menu_down(event)
+
+
+async def move_menu_down(event: Message | CallbackQuery) -> None:
+    """Переложить меню под последнее сообщение, сохранив его содержимое."""
+    message = _message_of(event)
+    if message is None:
+        return
+    await move_menu_down_in(message.bot, _chat_id(event))
+
+
+async def move_menu_down_in(bot, chat_id: int | None) -> None:
+    """То же для наблюдателей: у них есть только bot и чат, без сообщения."""
+    if chat_id is None:
+        return
+    current = _menus.get(chat_id)
+    if current is None:
+        return
+    await _delete(bot, chat_id, current.message_id)
+    sent = await bot.send_message(
+        chat_id, current.text, reply_markup=current.markup, disable_web_page_preview=True
+    )
+    _menus[chat_id] = Menu(sent.message_id, current.text, current.markup)
+
+
+def forget_menu(chat_id: int | None) -> None:
+    """Забыть меню чата — например, когда его сообщение уже удалено."""
+    if chat_id is not None:
+        _menus.pop(chat_id, None)
 
 
 async def report_error(event: Message | CallbackQuery, exc: Exception) -> None:
@@ -46,11 +160,8 @@ async def report_error(event: Message | CallbackQuery, exc: Exception) -> None:
         log.exception("необработанная ошибка")
         text = f"⚠️ Внутренняя ошибка: {esc(type(exc).__name__)}"
     if isinstance(event, CallbackQuery):
-        await event.answer("Не получилось", show_alert=False)
-        if event.message:
-            await event.message.answer(text)
-    else:
-        await event.answer(text)
+        await event.answer("Не получилось")
+    await notice(event, text)
 
 
 def stale_button() -> str:

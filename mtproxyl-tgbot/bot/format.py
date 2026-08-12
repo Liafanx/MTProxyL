@@ -74,18 +74,62 @@ def status_text(st: dict, md: dict) -> str:
     return "\n".join(lines)
 
 
-def users_page_text(users: list[dict], page: int, per_page: int) -> str:
+# ── Таблицы ──────────────────────────────────────────────────────────────────
+# Telegram не умеет markdown-таблицы, зато умеет моноширинный блок — в нём
+# колонки держатся сами. Ширина под узкий экран телефона: длиннее ~34 символов
+# строка переносится и таблица рассыпается.
+
+# Ширина колонки считается в символах, а эмодзи занимает две клетки. Поэтому
+# в колонке-маркере эмодзи должно быть в каждой строке — иначе строки с ним
+# окажутся на клетку шире соседних и таблица поедет.
+def _cell(value: str, width: int, right: bool = False) -> str:
+    text = str(value)
+    if len(text) > width:
+        text = text[: width - 1] + "…"
+    return text.rjust(width) if right else text.ljust(width)
+
+
+def _table(header: list[tuple[str, int, bool]], rows: list[list[str]]) -> str:
+    """header — (заголовок, ширина, выравнивание вправо)."""
+    lines = [" ".join(_cell(title, width, right) for title, width, right in header)]
+    lines.append("─" * min(sum(w for _, w, _ in header) + len(header) - 1, 40))
+    for row in rows:
+        lines.append(" ".join(
+            _cell(value, width, right) for value, (_, width, right) in zip(row, header)
+        ))
+    return "<pre>" + esc("\n".join(lines)) + "</pre>"
+
+
+def users_page_text(users: list[dict], page: int, per_page: int, note: str = "") -> str:
     total = len(users)
+    head = f"{note}\n\n" if note else ""
     if not total:
-        return "<b>Пользователи</b>\n\nПока никого. Кнопка ниже добавит первого."
+        return f"{head}<b>Пользователи</b>\n\nПока никого. Кнопка ниже добавит первого."
     pages = max(1, (total + per_page - 1) // per_page)
     page = max(0, min(page, pages - 1))
     active = sum(1 for u in users if u.get("enabled"))
-    head = [
-        f"<b>Пользователи</b> · {total} шт., активных {active}",
-        f"Страница {page + 1} из {pages}",
-    ]
-    return "\n".join(head)
+    chunk = users[page * per_page:(page + 1) * per_page]
+
+    rows = []
+    for user in chunk:
+        mark = "🟢" if user.get("enabled", True) else "⛔"
+        limits = "".join([
+            "с" if user.get("max_conns") else "",
+            "а" if user.get("max_ips") else "",
+            "к" if user.get("quota_bytes") else "",
+            "д" if user.get("expires") else "",
+        ])
+        rows.append([mark, user.get("label", "?"), human_bytes(user.get("total_bytes")), limits])
+
+    table = _table(
+        [("", 1, False), ("Имя", 14, False), ("Трафик", 9, True), ("Лим", 4, False)],
+        rows,
+    )
+    return (
+        f"{head}<b>Пользователи</b> · {total} шт., активных {active}\n"
+        f"Страница {page + 1} из {pages}\n{table}\n"
+        "<i>Лим: с — соединения, а — адреса, к — квота, д — срок</i>"
+    )
 
 
 def user_card(user: dict) -> str:
@@ -131,30 +175,44 @@ def web_link(tg_link: str) -> str:
 def traffic_text(report: dict) -> str:
     users = report.get("users") or []
     rows = sorted(users, key=lambda u: u.get("total") or 0, reverse=True)
-    lines = ["<b>Трафик по пользователям</b>", ""]
     if not rows:
-        lines.append("Данных пока нет.")
-        return "\n".join(lines)
+        return "<b>Трафик по пользователям</b>\n\nДанных пока нет."
 
-    directional = report.get("directional")
-    for user in rows[:30]:
-        name = esc(user.get("user", "?"))
-        mark = "" if user.get("enabled", True) else " ⛔"
-        if directional:
-            lines.append(
-                f"<b>{name}</b>{mark} — {human_bytes(user.get('total'))}"
-                f" (↓ {human_bytes(user.get('in'))} ↑ {human_bytes(user.get('out'))})"
-            )
-        else:
-            lines.append(f"<b>{name}</b>{mark} — {human_bytes(user.get('total'))}")
-    if len(rows) > 30:
-        lines.append(f"\n…и ещё {len(rows) - 30}")
+    shown = rows[:25]
+    table = _table(
+        [("", 1, False), ("Имя", 13, False), ("Трафик", 9, True), ("Соед", 4, True), ("IP", 3, True)],
+        [
+            [
+                "🟢" if u.get("enabled", True) else "⛔",
+                u.get("user", "?"),
+                human_bytes(u.get("total")),
+                str(u.get("connections") or 0),
+                str(u.get("unique_ips") or 0),
+            ]
+            for u in shown
+        ],
+    )
 
-    lines.append("")
-    if not report.get("persistent"):
-        lines.append("<i>Счётчики цели: обнуляются вместе с её перезапуском.</i>")
-    if not directional:
+    total_conns = sum(int(u.get("connections") or 0) for u in rows)
+    total_ips = sum(int(u.get("unique_ips") or 0) for u in rows)
+    total_bytes = sum(int(u.get("total") or 0) for u in rows)
+
+    lines = ["<b>Трафик по пользователям</b>", table]
+    lines.append(
+        f"Всего: {human_bytes(total_bytes)} · соединений {total_conns} · адресов {total_ips}"
+    )
+    if len(rows) > len(shown):
+        lines.append(f"Показаны {len(shown)} из {len(rows)} по объёму трафика.")
+    if report.get("directional"):
+        top = shown[0]
+        lines.append(
+            f"<i>{esc(top.get('user', '?'))}: ↓ {human_bytes(top.get('in'))}"
+            f" ↑ {human_bytes(top.get('out'))}</i>"
+        )
+    else:
         lines.append("<i>Цель отдаёт только общую сумму, без деления на ↓/↑.</i>")
+    if not report.get("persistent"):
+        lines.append("<i>Счётчики цели обнуляются вместе с её перезапуском.</i>")
     return "\n".join(lines)
 
 
@@ -191,16 +249,30 @@ def availability_text(state: dict, with_probes: bool = False) -> str:
     )
 
     if with_probes and result.get("probes"):
-        bad = [p for p in result["probes"] if not p.get("tls_success")]
-        good = [p for p in result["probes"] if p.get("tls_success")]
-        if good:
-            lines += ["", "<b>Дошли:</b>"]
-            lines += [f"✅ {esc(p.get('city') or '?')}, {esc(p.get('network') or '?')}" for p in good[:15]]
-        if bad:
-            lines += ["", "<b>Не дошли:</b>"]
+        probes = sorted(result["probes"], key=lambda p: not p.get("tls_success"))
+        lines.append(_table(
+            [("", 1, False), ("Город", 13, False), ("Провайдер", 15, False)],
+            [
+                [
+                    "✅" if p.get("tls_success") else "❌",
+                    p.get("city") or "?",
+                    p.get("network") or "?",
+                ]
+                for p in probes[:25]
+            ],
+        ))
+        # Причины отказа одинаковы у большинства зондов — списком они бы
+        # заняли экран, а сгруппированные читаются одной строкой.
+        reasons: dict[str, int] = {}
+        for probe in probes:
+            if not probe.get("tls_success"):
+                reason = (probe.get("error") or "нет ответа").rstrip(".")
+                reasons[reason] = reasons.get(reason, 0) + 1
+        if reasons:
+            lines.append("<b>Почему не дошли:</b>")
             lines += [
-                f"❌ {esc(p.get('city') or '?')}, {esc(p.get('network') or '?')} — {esc(p.get('error') or 'нет ответа')}"
-                for p in bad[:15]
+                f"• {esc(reason)} — {count}"
+                for reason, count in sorted(reasons.items(), key=lambda kv: -kv[1])
             ]
     return "\n".join(lines)
 

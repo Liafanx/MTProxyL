@@ -9,7 +9,7 @@ import sys
 from aiogram import BaseMiddleware, Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramUnauthorizedError
+from aiogram.exceptions import TelegramBadRequest, TelegramUnauthorizedError
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, CallbackQuery, Message, TelegramObject
 
@@ -48,6 +48,24 @@ class AdminOnly(BaseMiddleware):
         return await handler(event, data)
 
 
+class CleanChat(BaseMiddleware):
+    """В истории должны остаться только уведомления бота, а не переписка с
+    ним. Команды и ответы на вопросы удаляем после обработки — до неё нельзя,
+    обработчику ещё нужен текст."""
+
+    async def __call__(self, handler, event: TelegramObject, data: dict):
+        try:
+            return await handler(event, data)
+        finally:
+            if isinstance(event, Message):
+                try:
+                    await event.delete()
+                except TelegramBadRequest as exc:
+                    # Право удалять входящие в личной переписке есть всегда, но
+                    # сообщение могли убрать раньше — и это не повод шуметь.
+                    log.debug("не удалось удалить сообщение: %s", exc)
+
+
 async def main() -> int:
     logging.basicConfig(
         level=logging.INFO,
@@ -66,6 +84,7 @@ async def main() -> int:
     dp = Dispatcher(storage=MemoryStorage())
     dp.message.middleware(AdminOnly())
     dp.callback_query.middleware(AdminOnly())
+    dp.message.middleware(CleanChat())
     dp.include_router(handlers_users.router)
     dp.include_router(handlers_ops.router)
 

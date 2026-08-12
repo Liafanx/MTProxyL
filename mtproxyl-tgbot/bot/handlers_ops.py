@@ -55,7 +55,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    await message.answer(HELP_TEXT)
+    await render(message, HELP_TEXT, kb.back_only())
 
 
 @router.callback_query(F.data == "m:root")
@@ -95,11 +95,14 @@ async def cb_status(call: CallbackQuery) -> None:
         await report_error(call, exc)
 
 
-async def show_proxy(event: Message | CallbackQuery) -> None:
+async def show_proxy(event: Message | CallbackQuery, note: str = "") -> None:
     st = await cli.status()
     md = await cli.mode()
     running = st.get("status") == "running"
-    await render(event, status_text(st, md), kb.proxy_menu(running))
+    text = status_text(st, md)
+    if note:
+        text = f"{note}\n\n{text}"
+    await render(event, text, kb.proxy_menu(running))
 
 
 @router.callback_query(F.data == "m:proxy")
@@ -113,16 +116,19 @@ async def cb_proxy(call: CallbackQuery) -> None:
 
 async def do_proxy_action(event: Message | CallbackQuery, action: str) -> None:
     titles = {"start": "Запускаю", "stop": "Останавливаю", "restart": "Перезапускаю"}
+    done = {"start": "Запущен", "stop": "Остановлен", "restart": "Перезапущен"}
+    # Пока команда идёт (перезапуск движка — это секунды), экран должен
+    # говорить об этом, иначе кажется, что кнопка не сработала.
     if isinstance(event, CallbackQuery):
         await event.answer(f"{titles[action]}…")
-    else:
-        await event.answer(f"{titles[action]} прокси…")
+    await render(event, f"⏳ {titles[action]} прокси…")
     try:
         await cli.proxy_action(action)
     except Exception as exc:
         await report_error(event, exc)
+        await show_proxy(event)
         return
-    await show_proxy(event)
+    await show_proxy(event, f"✅ {done[action]}")
 
 
 @router.callback_query(F.data.startswith("px:"))
@@ -171,10 +177,13 @@ async def cb_traffic(call: CallbackQuery) -> None:
 
 # ── Доступность из России ────────────────────────────────────────────────────
 
-async def show_availability(event: Message | CallbackQuery, probes: bool = False) -> None:
+async def show_availability(event: Message | CallbackQuery, probes: bool = False,
+                            note: str = "") -> None:
     state = await (cli.availability_details() if probes else cli.availability_status())
-    await render(event, availability_text(state, with_probes=probes),
-                 kb.availability_menu(bool(state.get("auto_check"))))
+    text = availability_text(state, with_probes=probes)
+    if note:
+        text = f"{note}\n\n{text}"
+    await render(event, text, kb.availability_menu(bool(state.get("auto_check"))))
 
 
 @router.message(Command("availability"))
@@ -186,7 +195,8 @@ async def cmd_availability(message: Message) -> None:
 
 
 @router.callback_query(F.data == "a:show")
-async def cb_availability(call: CallbackQuery) -> None:
+async def cb_availability(call: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
     await call.answer()
     try:
         await show_availability(call)
@@ -204,22 +214,21 @@ async def cb_availability_probes(call: CallbackQuery) -> None:
 
 
 async def do_check(event: Message | CallbackQuery) -> None:
-    note = "Опрашиваю российские зонды, это до минуты…"
     if isinstance(event, CallbackQuery):
-        await event.answer(note, show_alert=False)
-    else:
-        await event.answer(note)
+        await event.answer("Опрашиваю зонды…")
+    await render(event, "⏳ Опрашиваю российские зонды, это до минуты…")
     try:
         await cli.availability_check()
     except CliError as exc:
-        # Отказ по квоте или частоте — не ошибка: показываем причину и то,
-        # что уже известно.
-        await report_error(event, exc)
+        # Отказ по квоте или частоте — не ошибка сервера, а просьба подождать:
+        # показываем причину прямо на экране вместе с прошлым вердиктом.
+        await show_availability(event, note=f"⚠️ {esc(exc)}")
         return
     except Exception as exc:
         await report_error(event, exc)
+        await show_availability(event)
         return
-    await show_availability(event, probes=True)
+    await show_availability(event, probes=True, note="✅ Проверка выполнена")
 
 
 @router.message(Command("check"))
@@ -247,10 +256,12 @@ async def cb_autocheck(call: CallbackQuery) -> None:
 async def cb_interval(call: CallbackQuery, state: FSMContext) -> None:
     await call.answer()
     await state.set_state(Ask.interval)
-    await call.message.answer(
-        "Как часто проверять доступность? Пришлите число минут (1–1440).\n"
+    await render(
+        call,
+        "<b>Период проверки доступности</b>\n\nПришлите число минут (1–1440).\n"
         "Каждая проверка тратит кредиты Globalping: 20 зондов раз в 15 минут — "
-        "80 кредитов в час из 250.\n\nОтмена — /menu"
+        "80 кредитов в час из 250.",
+        kb.cancel("a:show"),
     )
 
 
@@ -258,7 +269,8 @@ async def cb_interval(call: CallbackQuery, state: FSMContext) -> None:
 async def set_interval(message: Message, state: FSMContext) -> None:
     value = (message.text or "").strip()
     if not value.isdigit() or not 1 <= int(value) <= 1440:
-        await message.answer("Нужно целое число от 1 до 1440. Отмена — /menu")
+        await render(message, "⚠️ Нужно целое число от 1 до 1440.\n\nПришлите другое.",
+                     kb.cancel("a:show"))
         return
     await state.clear()
     try:
@@ -266,17 +278,18 @@ async def set_interval(message: Message, state: FSMContext) -> None:
     except Exception as exc:
         await report_error(message, exc)
         return
-    await message.answer(f"Период проверки: {value} мин")
-    await show_availability(message)
+    await show_availability(message, note=f"✅ Период проверки: {value} мин")
 
 
 @router.callback_query(F.data == "a:threshold")
 async def cb_threshold(call: CallbackQuery, state: FSMContext) -> None:
     await call.answer()
     await state.set_state(Ask.threshold)
-    await call.message.answer(
-        "Ниже какого процента доступности присылать предупреждение?\n"
-        "Пришлите число от 0 до 100.\n\nОтмена — /menu"
+    await render(
+        call,
+        "<b>Порог уведомления</b>\n\nНиже какого процента доступности присылать "
+        "предупреждение? Пришлите число от 0 до 100.",
+        kb.cancel("a:show"),
     )
 
 
@@ -284,7 +297,8 @@ async def cb_threshold(call: CallbackQuery, state: FSMContext) -> None:
 async def set_threshold(message: Message, state: FSMContext) -> None:
     value = (message.text or "").strip()
     if not value.isdigit() or int(value) > 100:
-        await message.answer("Нужно целое число от 0 до 100. Отмена — /menu")
+        await render(message, "⚠️ Нужно целое число от 0 до 100.\n\nПришлите другое.",
+                     kb.cancel("a:show"))
         return
     await state.clear()
     try:
@@ -292,13 +306,12 @@ async def set_threshold(message: Message, state: FSMContext) -> None:
     except Exception as exc:
         await report_error(message, exc)
         return
-    await message.answer(f"Порог уведомления: {value}%")
-    await show_availability(message)
+    await show_availability(message, note=f"✅ Порог уведомления: {value}%")
 
 
 # ── Бэкапы (только режим менеджера) ──────────────────────────────────────────
 
-async def show_backups(event: Message | CallbackQuery) -> None:
+async def show_backups(event: Message | CallbackQuery, note: str = "") -> None:
     if not await cli.is_manager():
         await render(event, "Бэкапы доступны только в режиме Manager: в реаниматоре "
                             "данные принадлежат чужой установке.", kb.back_only())
@@ -312,12 +325,14 @@ async def show_backups(event: Message | CallbackQuery) -> None:
         count = f"\nВсего архивов: {len(items)}"
     except CliError:
         last, count = "", ""
-    await render(event, f"<b>Бэкапы</b>\n\nАвтобэкап: <b>{state}</b>{count}{last}",
+    head = f"{note}\n\n" if note else ""
+    await render(event, f"{head}<b>Бэкапы</b>\n\nАвтобэкап: <b>{state}</b>{count}{last}",
                  kb.backups_menu())
 
 
 @router.callback_query(F.data == "b:show")
-async def cb_backups(call: CallbackQuery) -> None:
+async def cb_backups(call: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
     await call.answer()
     try:
         await show_backups(call)
@@ -327,39 +342,37 @@ async def cb_backups(call: CallbackQuery) -> None:
 
 async def do_backup(event: Message | CallbackQuery) -> None:
     if not await cli.is_manager():
-        await report_error(event, CliError("Бэкапы доступны только в режиме Manager"))
+        await show_backups(event, "⚠️ Бэкапы доступны только в режиме Manager")
         return
-    note = "Собираю архив…"
     if isinstance(event, CallbackQuery):
-        await event.answer(note)
-        chat = event.message
-    else:
-        chat = event
-        await event.answer(note)
+        await event.answer("Собираю архив…")
+    await render(event, "⏳ Собираю архив…")
     try:
         await cli.create_backup()
         items = await cli.backups()
     except Exception as exc:
         await report_error(event, exc)
+        await show_backups(event)
         return
     if not items:
-        await chat.answer("Бэкап создан, но список архивов пуст — проверьте mtproxyl backup")
+        await show_backups(event, "⚠️ Архив создан, но список пуст — проверьте mtproxyl backup")
         return
+
     newest = max(items, key=lambda i: i.get("mtime") or 0)
-    await send_backup_file(chat, newest.get("name", ""))
-
-
-async def send_backup_file(chat, name: str) -> None:
-    """Архив едет через CLI: каталог бэкапов боту напрямую не доступен."""
-    if not name:
-        return
+    name = newest.get("name", "")
+    # Архив едет через CLI: каталог бэкапов боту напрямую не доступен.
     try:
         data = await cli.run_bytes("backup", "cat", name, timeout=300)
     except Exception as exc:
-        await chat.answer(f"⚠️ Не удалось прочитать архив: {esc(exc)}")
+        await show_backups(event, f"⚠️ Не удалось прочитать архив: {esc(exc)}")
         return
-    await chat.answer_document(BufferedInputFile(data, filename=name),
-                               caption=f"Бэкап <code>{esc(name)}</code>")
+
+    message = event.message if isinstance(event, CallbackQuery) else event
+    await message.answer_document(
+        BufferedInputFile(data, filename=name),
+        caption=f"💾 Бэкап <code>{esc(name)}</code>",
+    )
+    await show_backups(event, "✅ Архив отправлен")
 
 
 @router.message(Command("backup"))
@@ -372,12 +385,18 @@ async def cb_backup_make(call: CallbackQuery) -> None:
     await do_backup(call)
 
 
-@router.callback_query(F.data == "b:auto")
-async def cb_autobackup(call: CallbackQuery) -> None:
-    await call.answer()
+async def show_autobackup(event: Message | CallbackQuery, note: str = "") -> None:
     cfg = config.load()
-    await render(call, "<b>Автобэкап</b>\n\nАрхив собирается по расписанию и, если "
-                       "включено, приходит сюда файлом.", kb.autobackup_menu(cfg))
+    head = f"{note}\n\n" if note else ""
+    await render(event, f"{head}<b>Автобэкап</b>\n\nАрхив собирается по расписанию и, "
+                        "если включено, приходит сюда файлом.", kb.autobackup_menu(cfg))
+
+
+@router.callback_query(F.data == "b:auto")
+async def cb_autobackup(call: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await call.answer()
+    await show_autobackup(call)
 
 
 @router.callback_query(F.data == "b:auto:toggle")
@@ -385,8 +404,8 @@ async def cb_autobackup_toggle(call: CallbackQuery) -> None:
     cfg = config.load()
     cfg.autobackup["enabled"] = not cfg.autobackup.get("enabled")
     config.save(cfg)
-    await call.answer("Готово")
-    await render(call, "<b>Автобэкап</b>", kb.autobackup_menu(cfg))
+    await call.answer("Включён" if cfg.autobackup["enabled"] else "Выключен")
+    await show_autobackup(call)
 
 
 @router.callback_query(F.data == "b:auto:file")
@@ -395,38 +414,40 @@ async def cb_autobackup_file(call: CallbackQuery) -> None:
     cfg.autobackup["send_file"] = not cfg.autobackup.get("send_file", True)
     config.save(cfg)
     await call.answer("Готово")
-    await render(call, "<b>Автобэкап</b>", kb.autobackup_menu(cfg))
+    await show_autobackup(call)
 
 
 @router.callback_query(F.data == "b:auto:time")
 async def cb_autobackup_time(call: CallbackQuery, state: FSMContext) -> None:
     await call.answer()
     await state.set_state(Ask.backup_time)
-    await call.message.answer(
-        "Во сколько собирать бэкап? Пришлите время в формате ЧЧ:ММ "
-        "по времени сервера.\n\nОтмена — /menu"
-    )
+    await render(call, "<b>Время автобэкапа</b>\n\nПришлите время в формате ЧЧ:ММ "
+                       "по времени сервера.", kb.cancel("b:auto"))
 
 
 @router.message(Ask.backup_time, ~F.text.startswith("/"))
 async def set_backup_time(message: Message, state: FSMContext) -> None:
     value = (message.text or "").strip()
     if not TIME_RE.match(value):
-        await message.answer("Формат ЧЧ:ММ, например 05:30. Отмена — /menu")
+        await render(message, "⚠️ Формат ЧЧ:ММ, например 05:30.\n\nПришлите другое.",
+                     kb.cancel("b:auto"))
         return
     await state.clear()
     cfg = config.load()
     cfg.autobackup["time"] = value
     config.save(cfg)
-    await message.answer(f"Автобэкап в {value}")
+    await show_autobackup(message, f"✅ Автобэкап в {value}")
 
 
 # ── Настройки бота ───────────────────────────────────────────────────────────
 
-async def show_settings(event: Message | CallbackQuery) -> None:
+async def show_settings(event: Message | CallbackQuery, note: str = "") -> None:
     cfg = config.load()
     manager = await cli.is_manager()
-    await render(event, settings_text(cfg, manager), kb.settings_menu(cfg, manager))
+    text = settings_text(cfg, manager)
+    if note:
+        text = f"{note}\n\n{text}"
+    await render(event, text, kb.settings_menu(cfg, manager))
 
 
 @router.message(Command("settings"))
@@ -438,7 +459,8 @@ async def cmd_settings(message: Message) -> None:
 
 
 @router.callback_query(F.data == "s:show")
-async def cb_settings(call: CallbackQuery) -> None:
+async def cb_settings(call: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
     await call.answer()
     try:
         await show_settings(call)
@@ -471,19 +493,21 @@ async def cb_interval_ask(call: CallbackQuery, state: FSMContext) -> None:
     await call.answer()
     await state.set_state(Ask.notify_interval)
     await state.update_data(interval_key=key)
-    await call.message.answer("Пришлите число минут (1–1440).\n\nОтмена — /menu")
+    titles = {"availability": "доступности", "proxy": "прокси", "limits": "лимитов"}
+    await render(call, f"<b>Период проверки {titles.get(key, key)}</b>\n\n"
+                       "Пришлите число минут (1–1440).", kb.cancel("s:intervals"))
 
 
 @router.message(Ask.notify_interval, ~F.text.startswith("/"))
 async def set_notify_interval(message: Message, state: FSMContext) -> None:
     value = (message.text or "").strip()
     if not value.isdigit() or not 1 <= int(value) <= 1440:
-        await message.answer("Нужно целое число от 1 до 1440. Отмена — /menu")
+        await render(message, "⚠️ Нужно целое число от 1 до 1440.\n\nПришлите другое.",
+                     kb.cancel("s:intervals"))
         return
     data = await state.get_data()
     await state.clear()
     cfg = config.load()
     cfg.intervals[data.get("interval_key", "proxy")] = int(value)
     config.save(cfg)
-    await message.answer(f"Период: {value} мин")
-    await show_settings(message)
+    await show_settings(message, f"✅ Период: {value} мин")

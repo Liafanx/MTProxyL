@@ -17,7 +17,7 @@ from datetime import date, datetime
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
 
-from . import cli, config
+from . import cli, config, ui
 from .cli import CliError
 from .format import LEVEL_ICON, esc, human_bytes
 
@@ -30,6 +30,9 @@ async def broadcast(bot: Bot, text: str) -> None:
     for admin in config.load().admins:
         try:
             await bot.send_message(admin, text, disable_web_page_preview=True)
+            # Уведомление остаётся в истории, а меню съезжает под него: иначе
+            # оно оказалось бы выше и человек листал бы вверх за кнопками.
+            await ui.move_menu_down_in(bot, admin)
         except TelegramAPIError as exc:
             log.warning("не удалось написать %s: %s", admin, exc)
 

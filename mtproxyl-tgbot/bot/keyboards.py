@@ -50,6 +50,14 @@ def back_only(target: str = "m:root") -> InlineKeyboardMarkup:
     )
 
 
+# Диалоги живут в том же сообщении, что и меню, поэтому у каждого вопроса
+# должна быть кнопка выхода: иначе из него не выбраться, не написав команду.
+def cancel(target: str = "m:root") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="Отмена", callback_data=target)]]
+    )
+
+
 def proxy_menu(running: bool) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     if running:
