@@ -137,8 +137,7 @@ async def do_user_add(message: Message, state: FSMContext) -> None:
     except Exception as exc:
         await report_error(message, exc)
         return
-    await send_link(message, label, move_menu=False)
-    await show_card(message, label, f"✅ Добавлен <b>{esc(label)}</b>")
+    await send_link(message, label, f"✅ Добавлен <b>{esc(label)}</b>")
 
 
 # ── Включение, переименование, удаление ──────────────────────────────────────
@@ -361,17 +360,20 @@ async def make_qr(url: str) -> bytes | None:
     return out if proc.returncode == 0 and out else None
 
 
-async def send_link(event: Message | CallbackQuery, label: str, move_menu: bool = True) -> None:
-    """Ссылка — уведомление: её пересылают и к ней возвращаются, поэтому она
-    остаётся в истории, а не подменяется следующим экраном."""
+async def send_link(event: Message | CallbackQuery, label: str, note: str = "") -> None:
+    """Ссылка с QR — такой же экран меню, как остальные: пересылают её из
+    чата целиком, а копить их в истории незачем."""
     try:
         tg_link = await cli.secret_link(label)
     except Exception as exc:
         await report_error(event, exc)
         return
     png = await make_qr(web_link(tg_link))
-    await notice(event, link_text(label, tg_link), photo=png,
-                 filename=f"{label}.png", move=move_menu)
+    text = link_text(label, tg_link)
+    if note:
+        text = f"{note}\n\n{text}"
+    await render(event, text, kb.link_card(kb.key_for(label)),
+                 photo=png, filename=f"{label}.png")
 
 
 @router.message(Command("link"))
@@ -387,8 +389,7 @@ async def cmd_link(message: Message) -> None:
         if _find(users, label) is None:
             await show_users(message, 0, f"Пользователя <b>{esc(label)}</b> нет")
             return
-        await send_link(message, label, move_menu=False)
-        await show_card(message, label)
+        await send_link(message, label)
         return
     await render(message, "<b>Ссылки на прокси</b>\n\nВыберите пользователя.",
                  kb.users_page(users, 0, "l"))

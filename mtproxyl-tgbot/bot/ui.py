@@ -2,8 +2,8 @@
 
 Меню — не сообщение, а место. Каждый новый экран занимает то же сообщение, а
 когда меню приходится подвинуть (пришло уведомление, человек написал команду),
-старое удаляется и появляется новое — внизу. В истории остаются только
-уведомления: ссылки, ошибки, сообщения наблюдателей.
+старое удаляется и появляется новое — внизу. В истории остаётся только то,
+ради чего в неё заглядывают: сообщения наблюдателей, сбои и файлы бэкапов.
 """
 
 from __future__ import annotations
@@ -30,6 +30,10 @@ class Menu:
     message_id: int
     text: str
     markup: InlineKeyboardMarkup | None
+    # Экран со ссылкой — это фото с подписью. Правкой текста его не обновить,
+    # поэтому такой меню-экран всегда пересоздаётся, а при переносе вниз
+    # отправляется тем же file_id, а не заново загруженной картинкой.
+    file_id: str | None = None
 
 
 _menus: dict[int, Menu] = {}
@@ -71,6 +75,8 @@ async def render(
     text: str,
     markup: InlineKeyboardMarkup | None = None,
     force_new: bool = False,
+    photo: bytes | None = None,
+    filename: str = "qr.png",
 ) -> None:
     """Показать экран в меню чата."""
     chat_id = _chat_id(event)
@@ -80,12 +86,22 @@ async def render(
 
     current = _menus.get(chat_id)
 
+    if photo is not None:
+        await _delete(message.bot, chat_id, current.message_id if current else None)
+        sent = await message.answer_photo(
+            BufferedInputFile(photo, filename=filename), caption=text, reply_markup=markup
+        )
+        file_id = sent.photo[-1].file_id if sent.photo else None
+        _menus[chat_id] = Menu(sent.message_id, text, markup, file_id)
+        return
+
     # Нажали кнопку на текущем меню — правим его на месте: так экран не прыгает
     # и не мигает, а меню и без того самое нижнее.
     if (
         not force_new
         and isinstance(event, CallbackQuery)
         and current is not None
+        and current.file_id is None
         and event.message is not None
         and event.message.message_id == current.message_id
     ):
@@ -110,27 +126,17 @@ async def notice(
     event: Message | CallbackQuery,
     text: str,
     *,
-    photo: bytes | None = None,
-    filename: str = "qr.png",
     markup: InlineKeyboardMarkup | None = None,
     move: bool = True,
 ) -> None:
-    """Сообщение, которое остаётся в истории. Меню после него съезжает вниз;
+    """Сообщение, которое остаётся в истории: то, к чему возвращаются, —
+    сообщения наблюдателей и сбои. Меню после него съезжает вниз;
     move=False — когда вызывающий всё равно сейчас нарисует новый экран."""
     message = _message_of(event)
     chat_id = _chat_id(event)
     if message is None or chat_id is None:
         return
-
-    if photo is not None:
-        await message.answer_photo(
-            BufferedInputFile(photo, filename=filename),
-            caption=text,
-            reply_markup=markup,
-        )
-    else:
-        await message.answer(text, reply_markup=markup, disable_web_page_preview=True)
-
+    await message.answer(text, reply_markup=markup, disable_web_page_preview=True)
     if move:
         await move_menu_down(event)
 
@@ -151,10 +157,15 @@ async def move_menu_down_in(bot, chat_id: int | None) -> None:
     if current is None:
         return
     await _delete(bot, chat_id, current.message_id)
-    sent = await bot.send_message(
-        chat_id, current.text, reply_markup=current.markup, disable_web_page_preview=True
-    )
-    _menus[chat_id] = Menu(sent.message_id, current.text, current.markup)
+    if current.file_id:
+        sent = await bot.send_photo(
+            chat_id, current.file_id, caption=current.text, reply_markup=current.markup
+        )
+    else:
+        sent = await bot.send_message(
+            chat_id, current.text, reply_markup=current.markup, disable_web_page_preview=True
+        )
+    _menus[chat_id] = Menu(sent.message_id, current.text, current.markup, current.file_id)
 
 
 def forget_menu(chat_id: int | None) -> None:

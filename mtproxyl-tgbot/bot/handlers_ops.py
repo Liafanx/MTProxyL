@@ -21,7 +21,7 @@ from .format import (
     status_text,
     traffic_text,
 )
-from .ui import ack, notice, render, report_error
+from .ui import ack, render, report_error
 
 log = logging.getLogger(__name__)
 router = Router(name="ops")
@@ -226,11 +226,7 @@ async def do_check(event: Message | CallbackQuery) -> None:
         await report_error(event, exc)
         await show_availability(event)
         return
-    # Результат проверки — уведомление: по нему смотрят, что было в прошлый
-    # раз и когда именно, а меню такую историю не хранит.
-    state = await cli.availability_details()
-    await notice(event, availability_text(state, with_probes=True), move=False)
-    await show_availability(event, force_new=True)
+    await show_availability(event, probes=True, note="✅ Проверка выполнена")
 
 
 @router.message(Command("check"))
