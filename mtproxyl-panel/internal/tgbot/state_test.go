@@ -193,16 +193,3 @@ func TestDecideThresholdIsConfigurable(t *testing.T) {
 		t.Errorf("при нулевом пороге берётся умолчание %d%%, авария не ожидалась", DefaultThreshold)
 	}
 }
-
-func TestBannerForEvents(t *testing.T) {
-	cases := map[Event]Banner{
-		EventNone:      BannerNone,
-		EventDown:      BannerDown,
-		EventRecovered: BannerRecovered,
-	}
-	for e, want := range cases {
-		if got := bannerFor(e); got != want {
-			t.Errorf("bannerFor(%v) = %v, want %v", e, got, want)
-		}
-	}
-}

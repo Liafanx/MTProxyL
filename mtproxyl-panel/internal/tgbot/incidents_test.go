@@ -67,7 +67,9 @@ func TestEngineErrorLeavesUplinkIncidentUntouched(t *testing.T) {
 	now := time.Now()
 	in := Incidents{Uplink: IncidentState{Active: true, Since: now.Add(-time.Hour), LastNotify: now}}
 
-	st := &uplink.Status{EngineError: "движок telemt не отвечает"}
+	// FailedPolls выше порога: одиночный сбой опроса тревогой не считается,
+	// движок перезапускается за секунды.
+	st := &uplink.Status{EngineError: "движок telemt не отвечает", FailedPolls: 3}
 	d := DecideUplink(in, st, now)
 
 	if d.UplinkEvent != EventNone {
@@ -222,5 +224,15 @@ func TestAnyActiveSeesEveryIncident(t *testing.T) {
 	}
 	if !(Incidents{Engine: IncidentState{Active: true}}).AnyActive() {
 		t.Error("не замечена авария движка")
+	}
+}
+
+// Одиночный сбой опроса — не тревога. Иначе каждый перезапуск движка
+// (обновление, смена настроек) приходил бы парой «упал» — «вернулся».
+func TestSingleFailedPollIsNotAnEngineIncident(t *testing.T) {
+	st := &uplink.Status{EngineError: "движок telemt не отвечает", FailedPolls: 1}
+
+	if d := DecideUplink(Incidents{}, st, time.Now()); d.EngineEvent != EventNone {
+		t.Errorf("EngineEvent = %v при одиночном сбое, ожидалось молчание", d.EngineEvent)
 	}
 }

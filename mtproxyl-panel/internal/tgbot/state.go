@@ -99,15 +99,3 @@ func (a AlertState) incident() IncidentState {
 func (a *AlertState) setIncident(i IncidentState) {
 	a.Active, a.Since, a.LastNotify = i.Active, i.Since, i.LastNotify
 }
-
-// bannerFor переводит событие в шапку сообщения.
-func bannerFor(e Event) Banner {
-	switch e {
-	case EventDown:
-		return BannerDown
-	case EventRecovered:
-		return BannerRecovered
-	default:
-		return BannerNone
-	}
-}

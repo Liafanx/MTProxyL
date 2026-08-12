@@ -240,10 +240,17 @@ func (b *Bot) applyConfig(cfg Config) {
 	// запуске, и без перезапуска смена админа не дошла бы до проверки прав на
 	// кнопках — их продолжал бы принимать прежний.
 	sameLoop := prev.Token == cfg.Token && prev.Enabled == cfg.Enabled && prev.AdminID == cfg.AdminID
+	// Прежнему админу подсказки команд надо снять: Telegram держит их на чат и
+	// сам не забывает, так что иначе у бывшего владельца они остались бы
+	// навсегда.
+	oldAdmin, oldClient, ctx := prev.AdminID, b.client, b.baseCtx
 	b.mu.Unlock()
 
 	if !started || sameLoop {
 		return
+	}
+	if oldAdmin != 0 && oldAdmin != cfg.AdminID && oldClient != nil && ctx != nil {
+		go b.unregisterCommands(ctx, oldClient, oldAdmin)
 	}
 	b.restartPolling()
 }
@@ -351,6 +358,13 @@ func (b *Bot) worker(ctx context.Context) {
 	}
 }
 
+func (b *Bot) requestRedraw() {
+	select {
+	case b.redraw <- struct{}{}:
+	default:
+	}
+}
+
 // coalesce даёт второму источнику короткое окно, чтобы подоспеть, и только
 // потом оценивает всё разом.
 //
@@ -421,25 +435,62 @@ func (b *Bot) evaluateAndDeliver(ctx context.Context) {
 	now := b.now()
 
 	b.mu.Lock()
+	hasUplink := b.pendingUplink != nil
+	b.mu.Unlock()
+
+	// Внешний адрес выясняется ДО захвата состояния. Это сетевой запрос: при
+	// протухшем кэше он обходит несколько сервисов и может занять секунды.
+	// Раньше он делался в середине оценки, между снимком состояния и его
+	// записью, — и всё, что успевало измениться за это время (например,
+	// поставленная в чате пауза), затиралось устаревшим снимком и в таком виде
+	// сохранялось на диск. Теперь всё изменение состояния атомарно.
+	var ip PublicIPResult
+	if hasUplink {
+		ip = b.resolver.PublicIPFresh(ctx)
+	}
+
+	b.mu.Lock()
 	inc := b.state.Incidents
 	result, uplinkStatus := b.pendingResult, b.pendingUplink
 	b.pendingResult, b.pendingUplink = nil, nil
 	threshold := b.cfg.AlertThreshold
-	b.mu.Unlock()
 
 	d := delivery{Now: now}
+	var av Decision
+	var up UplinkDecision
+	haveAv, haveUp := false, false
 
 	if result != nil {
-		av := Decide(inc.Availability, result, threshold, now)
+		av = Decide(inc.Availability, result, threshold, now)
 		inc.Availability = av.State
-		d.addAvailability(av)
+		haveAv = true
 	}
 
 	if uplinkStatus != nil {
-		up := DecideUplink(inc, uplinkStatus, now)
+		up = DecideUplink(inc, uplinkStatus, now)
 		inc = up.State
+		haveUp = true
+
+		prevIP := inc.LastKnownIP
+		known, pending, changed := DecideIPChange(prevIP, b.pendingIP, ip.IP, ip.Fresh)
+		b.pendingIP = pending
+		inc.LastKnownIP = known
+		if changed {
+			d.PrevIP, d.NewIP, d.ipChanged = prevIP, known, true
+		}
+	}
+
+	// Порядок шапок — по важности: упавший движок объясняет всё остальное,
+	// поэтому идёт первым, а разовые события — последними.
+	if haveUp {
+		d.addEngine(up)
+	}
+	if haveAv {
+		d.addAvailability(av)
+	}
+	if haveUp {
 		d.addUplink(up)
-		inc = b.notePublicIP(inc, uplinkStatus, &d)
+		d.addOneShots(up)
 	}
 
 	// Пауза глушит только звук. Инциденты считаются и запоминаются как обычно —
@@ -455,7 +506,6 @@ func (b *Bot) evaluateAndDeliver(ctx context.Context) {
 		}
 	}
 
-	b.mu.Lock()
 	b.state.Incidents = inc
 	persist, state := b.deps.Persist, b.state
 	b.mu.Unlock()
@@ -467,38 +517,6 @@ func (b *Bot) evaluateAndDeliver(ctx context.Context) {
 	}
 
 	b.deliver(ctx, d)
-}
-
-// notePublicIP сверяет внешний адрес сервера с прежним. Живёт здесь, а не в
-// наблюдателе за связью: адрес узнаёт резолвер бота, и он же умеет отличать
-// свежий ответ от отданного по кэшу.
-func (b *Bot) notePublicIP(inc Incidents, _ *uplink.Status, d *delivery) Incidents {
-	res := b.resolver.PublicIPFresh(context.Background())
-
-	b.mu.Lock()
-	pending := b.pendingIP
-	b.mu.Unlock()
-
-	known, pending, changed := DecideIPChange(inc.LastKnownIP, pending, res.IP, res.Fresh)
-
-	b.mu.Lock()
-	b.pendingIP = pending
-	b.mu.Unlock()
-
-	if changed {
-		d.Banners = append(d.Banners, BannerIPChanged)
-		d.PrevIP, d.NewIP = inc.LastKnownIP, known
-		d.Loud = true
-	}
-	inc.LastKnownIP = known
-	return inc
-}
-
-func (b *Bot) requestRedraw() {
-	select {
-	case b.redraw <- struct{}{}:
-	default:
-	}
 }
 
 // delivery — что показать и как: тихой правкой или новым сообщением со звуком.
@@ -515,6 +533,9 @@ type delivery struct {
 	UplinkSince    time.Time
 	EngineSince    time.Time
 	PrevIP, NewIP  string
+	// ipChanged — внешний адрес сервера сменился; шапка добавляется вместе с
+	// остальными разовыми событиями, чтобы порядок был предсказуем.
+	ipChanged bool
 
 	// Force — правка нужна немедленно, в обход ограничения частоты: команда
 	// или кнопка от человека, ждущего ответа.
@@ -534,11 +555,12 @@ func (d *delivery) addAvailability(av Decision) {
 	}
 }
 
-// addUplink добавляет шапки движка и связи. Движок идёт первым: если он лежит,
-// это объясняет всё остальное.
-func (d *delivery) addUplink(up UplinkDecision) {
-	d.UplinkSince, d.EngineSince = up.UplinkSince, up.EngineSince
-
+// addEngine, addUplink и addOneShots разнесены намеренно: порядок шапок
+// значим, а собирается он в вызывающем коде. Упавший движок объясняет и
+// падение доступности, и потерю связи, поэтому идёт первым; разовые события
+// (перезапуск, смена адреса) — последними, они менее срочные.
+func (d *delivery) addEngine(up UplinkDecision) {
+	d.EngineSince = up.EngineSince
 	switch up.EngineEvent {
 	case EventDown:
 		d.Banners = append(d.Banners, BannerEngineDown)
@@ -547,16 +569,27 @@ func (d *delivery) addUplink(up UplinkDecision) {
 		d.Banners = append(d.Banners, BannerEngineOK)
 		d.Loud = true
 	}
-	if up.Restarted {
-		d.Banners = append(d.Banners, BannerEngineRestarted)
-		d.Loud = true
-	}
+}
+
+func (d *delivery) addUplink(up UplinkDecision) {
+	d.UplinkSince = up.UplinkSince
 	switch up.UplinkEvent {
 	case EventDown:
 		d.Banners = append(d.Banners, BannerUplinkDown)
 		d.Loud = true
 	case EventRecovered:
 		d.Banners = append(d.Banners, BannerUplinkOK)
+		d.Loud = true
+	}
+}
+
+func (d *delivery) addOneShots(up UplinkDecision) {
+	if up.Restarted {
+		d.Banners = append(d.Banners, BannerEngineRestarted)
+		d.Loud = true
+	}
+	if d.ipChanged {
+		d.Banners = append(d.Banners, BannerIPChanged)
 		d.Loud = true
 	}
 }

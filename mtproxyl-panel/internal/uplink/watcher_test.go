@@ -195,19 +195,90 @@ func TestEngineDownDoesNotProduceLinkIncident(t *testing.T) {
 	c := NewClient("http://127.0.0.1:1", "") // никто не слушает
 	c.http.Timeout = 200 * time.Millisecond
 
-	st := newTestWatcher(c).Poll(context.Background())
+	w := newTestWatcher(c)
+	st := w.Poll(context.Background())
 
 	if st.EngineUp {
 		t.Error("EngineUp = true при недоступном движке")
 	}
-	if !st.EngineBad() {
-		t.Error("EngineBad = false при недоступном движке")
+	// Один сорвавшийся опрос — ещё не авария: движок перезапускается за
+	// секунды, и тревожить по своим же плановым действиям незачем.
+	if st.EngineBad() {
+		t.Error("тревога о движке поднята с первого же сорвавшегося опроса")
 	}
 	if st.Bad() {
 		t.Errorf("падение движка объявлено ещё и аварией связи: %v", st.Problems)
 	}
 	if st.Applicable {
 		t.Error("Applicable = true, хотя данных не получили")
+	}
+
+	// А вот когда движок не отвечает несколько опросов подряд — это уже авария.
+	w.Poll(context.Background())
+	st = w.Poll(context.Background())
+	if !st.EngineBad() {
+		t.Errorf("после %d сорвавшихся опросов подряд тревоги о движке нет", st.FailedPolls)
+	}
+	if st.Bad() {
+		t.Errorf("падение движка объявлено ещё и аварией связи: %v", st.Problems)
+	}
+}
+
+// Движок отвечает, а телеметрия связи — нет: сменилась авторизация, версия
+// старее нужной, эндпоинт выключен. Без счётчика сорвавшихся опросов такая
+// поломка не давала бы ни одной тревоги вообще — наблюдение молча переставало
+// бы работать.
+func TestBrokenTelemetryWithLiveEngineEventuallyAlerts(t *testing.T) {
+	c := fakeTelemt(t, func(path string, w http.ResponseWriter) {
+		if healthyEngine(path, w) {
+			return
+		}
+		if path == "/v1/runtime/me_quality" {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"ok":false,"error":{"code":"forbidden","message":"нет доступа"}}`))
+		}
+	})
+	w := newTestWatcher(c)
+
+	if st := w.Poll(context.Background()); st.EngineBad() {
+		t.Error("тревога поднята с первого сбоя телеметрии")
+	}
+	w.Poll(context.Background())
+	st := w.Poll(context.Background())
+
+	if !st.EngineBad() {
+		t.Error("постоянная поломка телеметрии не дала ни одной тревоги — наблюдение молча умерло")
+	}
+}
+
+// Успешный опрос обнуляет счётчик: два разрозненных сбоя за час аварией не
+// являются.
+func TestSuccessfulPollResetsFailureStreak(t *testing.T) {
+	broken := true
+	c := fakeTelemt(t, func(path string, w http.ResponseWriter) {
+		if broken && path == "/v1/health" {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"ok":false,"error":{"code":"boom"}}`))
+			return
+		}
+		if healthyEngine(path, w) {
+			return
+		}
+		if path == "/v1/runtime/me_quality" {
+			ok(w, productionDCs)
+		}
+	})
+	w := newTestWatcher(c)
+
+	w.Poll(context.Background())
+	w.Poll(context.Background())
+	broken = false
+	if st := w.Poll(context.Background()); st.FailedPolls != 0 || st.EngineBad() {
+		t.Errorf("успешный опрос не обнулил счётчик: FailedPolls=%d", st.FailedPolls)
+	}
+	broken = true
+	if st := w.Poll(context.Background()); st.EngineBad() {
+		t.Error("одиночный сбой после успешного опроса объявлен аварией")
 	}
 }
 

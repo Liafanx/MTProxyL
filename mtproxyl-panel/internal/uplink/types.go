@@ -79,8 +79,3 @@ type SystemInfo struct {
 	ProcessStartedAt int64  `json:"process_started_at_epoch_secs"`
 	UptimeSeconds    int64  `json:"uptime_seconds"`
 }
-
-// Summary — то, что нам нужно из /v1/stats/summary.
-type Summary struct {
-	UptimeSeconds int64 `json:"uptime_seconds"`
-}

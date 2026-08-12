@@ -42,6 +42,7 @@ type Watcher struct {
 	mu       sync.Mutex
 	last     *Status
 	prev     counterSnapshot
+	failed   int
 	onResult func(*Status)
 }
 
@@ -99,6 +100,15 @@ func (w *Watcher) Poll(ctx context.Context) *Status {
 	st := w.collect(ctx)
 
 	w.mu.Lock()
+	// Считаем сорвавшиеся опросы подряд: по одному судить нельзя, движок
+	// перезапускается за секунды.
+	if st.EngineError != "" {
+		w.failed++
+	} else {
+		w.failed = 0
+	}
+	st.FailedPolls = w.failed
+	st.evaluate(w.threshold())
 	w.last = st
 	fn := w.onResult
 	w.mu.Unlock()
@@ -118,7 +128,6 @@ func (w *Watcher) collect(ctx context.Context) *Status {
 	health, err := w.client.Health(ctx)
 	if err != nil {
 		st.EngineError = err.Error()
-		st.evaluate(w.threshold())
 		return st
 	}
 	st.EngineUp = health.Status == "ok" || health.Status == ""
@@ -133,7 +142,6 @@ func (w *Watcher) collect(ctx context.Context) *Status {
 	me, err := w.client.MeQuality(ctx)
 	if err != nil {
 		st.EngineError = err.Error()
-		st.evaluate(w.threshold())
 		return st
 	}
 	// Здесь и проходит граница, которую нельзя размывать: ошибка запроса уже
@@ -145,7 +153,6 @@ func (w *Watcher) collect(ctx context.Context) *Status {
 		if st.NotApplicableReason == "" {
 			st.NotApplicableReason = "функция выключена в конфиге движка"
 		}
-		st.evaluate(w.threshold())
 		return st
 	}
 
@@ -160,7 +167,6 @@ func (w *Watcher) collect(ctx context.Context) *Status {
 		}
 	}
 
-	st.evaluate(w.threshold())
 	return st
 }
 
