@@ -165,7 +165,11 @@ _tgbot_build_venv() {
         }
     fi
     log_info "Ставим aiogram (может занять минуту)..."
-    "${TGBOT_VENV}/bin/python" -m pip install --quiet --upgrade pip 2>/dev/null || true
+    # Проверку «а нет ли pip поновее» отключаем: она ходит в сеть отдельно от
+    # установки и на сервере с закрытым исходящим печатает пугающий WARNING,
+    # хотя сами зависимости при этом ставятся.
+    local -x PIP_DISABLE_PIP_VERSION_CHECK=1
+    "${TGBOT_VENV}/bin/python" -m pip install --quiet --upgrade pip &>/dev/null || true
     if ! "${TGBOT_VENV}/bin/python" -m pip install --quiet -r "${TGBOT_DIR}/requirements.txt"; then
         log_error "pip не смог поставить зависимости"
         log_info "Повторите вручную: ${TGBOT_VENV}/bin/python -m pip install -r ${TGBOT_DIR}/requirements.txt"

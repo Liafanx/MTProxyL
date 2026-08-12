@@ -561,11 +561,23 @@ _target_current_table() {
     local _table
     if _table=$(_metrics_user_table 2>/dev/null) && [ -n "$_table" ]; then
         echo "SOURCE|metrics"
+        declare -A _MET_SEEN=()
         local _u _i _o
         while IFS='|' read -r _u _i _o _; do
             [ -z "$_u" ] && continue
+            _MET_SEEN["$_u"]=1
             printf '%s|%s|%s|%s\n' "$_u" "${_i:-0}" "${_o:-0}" "$(( ${_i:-0} + ${_o:-0} ))"
         done <<< "$_table"
+        # Метрики знают только тех, кто что-то передал с запуска цели. Молчунов
+        # дописываем нулями из конфига: иначе после перезапуска цели список
+        # схлопывается до одного активного, а накопленный трафик остальных
+        # уходит в строку «удалённые пользователи».
+        local _st _lb
+        while IFS='|' read -r _st _lb _; do
+            [ -n "$_lb" ] || continue
+            [ -n "${_MET_SEEN[$_lb]:-}" ] && continue
+            printf '%s|0|0|0\n' "$_lb"
+        done < <(_target_section_pairs "access.users" 2>/dev/null)
         return 0
     fi
 
@@ -873,6 +885,20 @@ _traffic_json_reanimator() {
         while IFS='|' read -r _u _i _o _c; do
             [ -n "$_u" ] && _CONNS["$_u"]="${_c:-0}"
         done <<< "$(_metrics_user_table 2>/dev/null)"
+        # Выключенных метрики не показывают вовсе, поэтому статус берём из
+        # конфига цели: там отключённый пользователь помечен, а не удалён.
+        local _st _lb
+        while IFS='|' read -r _st _lb _; do
+            [ -n "$_lb" ] || continue
+            [ "$_st" = "off" ] && _ENABLED["$_lb"]="false"
+        done < <(_target_section_pairs "access.users" 2>/dev/null)
+        # Уникальные адреса есть только у API — метрики их не считают.
+        local _json _au _aen _ac _aips _aoct
+        if _json=$(_get_telemt_users_json 2>/dev/null); then
+            while IFS='|' read -r _au _aen _ac _aips _aoct; do
+                [ -n "$_au" ] && _IPS["$_au"]="${_aips:-0}"
+            done <<< "$(_target_user_stats "$_json")"
+        fi
     else
         local _json _u _en _c _ips _oct
         if _json=$(_get_telemt_users_json 2>/dev/null); then

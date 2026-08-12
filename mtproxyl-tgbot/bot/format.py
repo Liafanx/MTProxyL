@@ -204,11 +204,14 @@ def traffic_text(report: dict) -> str:
     if len(rows) > len(shown):
         lines.append(f"Показаны {len(shown)} из {len(rows)} по объёму трафика.")
     if report.get("directional"):
-        top = shown[0]
-        lines.append(
-            f"<i>{esc(top.get('user', '?'))}: ↓ {human_bytes(top.get('in'))}"
-            f" ↑ {human_bytes(top.get('out'))}</i>"
-        )
+        # Первой строкой может стоять сборная «удалённые пользователи» — она в
+        # пример по направлениям не годится, это не один человек.
+        top = next((u for u in shown if not u.get("deleted")), None)
+        if top:
+            lines.append(
+                f"<i>{esc(top.get('user', '?'))}: ↓ {human_bytes(top.get('in'))}"
+                f" ↑ {human_bytes(top.get('out'))}</i>"
+            )
     else:
         lines.append("<i>Цель отдаёт только общую сумму, без деления на ↓/↑.</i>")
     if not report.get("persistent"):
