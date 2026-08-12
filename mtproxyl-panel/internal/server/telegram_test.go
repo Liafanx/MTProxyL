@@ -12,6 +12,7 @@ import (
 
 	"github.com/Liafanx/mtproxyl-panel/internal/config"
 	"github.com/Liafanx/mtproxyl-panel/internal/tgbot"
+	"github.com/Liafanx/mtproxyl-panel/internal/uplink"
 )
 
 const goodToken = "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
@@ -367,5 +368,68 @@ func TestBotTokenPattern(t *testing.T) {
 		if got := botTokenRe.MatchString(token); got != want {
 			t.Errorf("botTokenRe(%q) = %v, want %v", token, got, want)
 		}
+	}
+}
+
+// Файл из первой версии бота уже лежит у пользователей. Обновление обязано
+// прочитать его без потерь: новых ключей там нет, и ноль в них означает
+// «инцидента не было», а не «авария» — ложной тревоги задним числом быть не
+// должно.
+func TestTelegramStoreReadsPreUplinkFile(t *testing.T) {
+	dir := t.TempDir()
+	old := `{"enabled":true,"token":"` + goodToken + `","admin_id":555,"alert_threshold":60,` +
+		`"status_message_id":4242,"alert_active":true,"alert_since_unix":1750000000,` +
+		`"last_alert_unix":1750001000,"last_percentage":45,"has_percentage":true}`
+	if err := os.WriteFile(filepath.Join(dir, telegramBotFile), []byte(old), 0o600); err != nil {
+		t.Fatalf("подготовка: %v", err)
+	}
+
+	s := newTelegramBotStore(dir)
+
+	cfg := s.botConfig()
+	if !cfg.Enabled || cfg.Token != goodToken || cfg.AdminID != 555 {
+		t.Errorf("настройки из старого файла потеряны: %+v", cfg)
+	}
+
+	st := s.botState()
+	if st.MessageID != 4242 {
+		t.Errorf("MessageID = %d — бот прислал бы новое сообщение вместо правки старого", st.MessageID)
+	}
+	if !st.Incidents.Availability.Active || st.Incidents.Availability.LastPct != 45 {
+		t.Errorf("состояние аварии доступности потеряно: %+v", st.Incidents.Availability)
+	}
+	if st.Incidents.Uplink.Active || st.Incidents.Engine.Active {
+		t.Errorf("новые инциденты прочитались активными из старого файла: %+v", st.Incidents)
+	}
+	if st.Incidents.Muted(time.Now()) {
+		t.Error("из старого файла прочиталась пауза, которой там нет")
+	}
+	if s.connectFailThreshold() != uplink.DefaultFailRateThreshold {
+		t.Errorf("порог ошибок = %v, ожидалось умолчание", s.connectFailThreshold())
+	}
+}
+
+// И наоборот: запись поверх старого файла не должна терять его поля.
+func TestTelegramStoreUpgradesFileInPlace(t *testing.T) {
+	dir := t.TempDir()
+	old := `{"enabled":true,"token":"` + goodToken + `","admin_id":555,"status_message_id":4242}`
+	if err := os.WriteFile(filepath.Join(dir, telegramBotFile), []byte(old), 0o600); err != nil {
+		t.Fatalf("подготовка: %v", err)
+	}
+
+	s := newTelegramBotStore(dir)
+	if err := s.saveState(tgbot.PersistedState{
+		MessageID: 4242,
+		Incidents: tgbot.Incidents{Uplink: tgbot.IncidentState{Active: true}},
+	}); err != nil {
+		t.Fatalf("saveState: %v", err)
+	}
+
+	reloaded := newTelegramBotStore(dir)
+	if !reloaded.hasToken() || reloaded.botConfig().AdminID != 555 {
+		t.Errorf("настройки потеряны при дозаписи состояния: %+v", reloaded.botConfig())
+	}
+	if !reloaded.botState().Incidents.Uplink.Active {
+		t.Error("новое состояние не сохранилось")
 	}
 }
