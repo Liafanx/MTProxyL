@@ -3,6 +3,7 @@ package uplink
 import (
 	"context"
 	"log"
+	"sort"
 	"sync"
 	"time"
 )
@@ -43,6 +44,8 @@ type Watcher struct {
 	last     *Status
 	prev     counterSnapshot
 	failed   int
+	short    int
+	errored  int
 	onResult func(*Status)
 }
 
@@ -108,7 +111,28 @@ func (w *Watcher) Poll(ctx context.Context) *Status {
 		w.failed = 0
 	}
 	st.FailedPolls = w.failed
-	st.evaluate(w.threshold())
+
+	// То же для неполного пула и высокой доли ошибок. Под наплывом клиентов
+	// движок поднимает целевое число писателей, и живые догоняют цель не сразу
+	// — это штатное расширение пула, а не авария.
+	threshold := w.threshold()
+	switch {
+	case !st.Applicable || st.EngineError != "":
+		// Данных нет — серию не продолжаем и не обрываем: судить не о чем.
+	default:
+		if st.AliveWriters > 0 && st.AliveWriters < st.RequiredWriters {
+			w.short++
+		} else {
+			w.short = 0
+		}
+		if st.HasFailRate && st.Attempts > 0 && st.FailRate*100 > threshold {
+			w.errored++
+		} else {
+			w.errored = 0
+		}
+	}
+	st.ShortPolls, st.ErrorPolls = w.short, w.errored
+	st.evaluate(threshold)
 	w.last = st
 	fn := w.onResult
 	w.mu.Unlock()
@@ -132,6 +156,12 @@ func (w *Watcher) collect(ctx context.Context) *Status {
 	}
 	st.EngineUp = health.Status == "ok" || health.Status == ""
 	st.EngineReadOnly = health.ReadOnly
+
+	if sum, err := w.client.Summary(ctx); err == nil {
+		st.Connections = sum.ConnectionsTotal
+		st.ConnectionsBad = sum.ConnectionsBadTotal
+		st.TopBadClasses = topClasses(sum.ConnectionsBadByClass, 2)
+	}
 
 	if info, err := w.client.SystemInfo(ctx); err == nil {
 		st.Version = info.Version
@@ -214,4 +244,19 @@ func (w *Watcher) delta(cur UpstreamCounters) (attempts, fails uint64, ok bool) 
 		return 0, 0, false
 	}
 	return cur.ConnectAttemptTotal - prev.attempt, cur.ConnectFailTotal - prev.fail, true
+}
+
+// topClasses оставляет несколько самых частых классов ошибок: полный список
+// на десяток строк в сообщении не нужен, а два-три верхних объясняют картину.
+func topClasses(classes []ClassCount, n int) []ClassCount {
+	if len(classes) == 0 {
+		return nil
+	}
+	sorted := make([]ClassCount, len(classes))
+	copy(sorted, classes)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Count > sorted[j].Count })
+	if len(sorted) > n {
+		sorted = sorted[:n]
+	}
+	return sorted
 }

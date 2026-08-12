@@ -212,7 +212,7 @@ func (b *Bot) setMute(ctx context.Context, client *Client, chatID int64, d time.
 	case forever:
 		text = "🔕 Тревоги заглушены до отмены. Снять — /unmute"
 	case d > 0:
-		text = "🔕 Тревоги заглушены до " + inc.MutedUntil.Local().Format("15:04") + ". Снять — /unmute"
+		text = "🔕 Тревоги заглушены до " + inc.MutedUntil.In(localZone()).Format("15:04") + ". Снять — /unmute"
 	case inc.AnyActive():
 		text = "🔔 Пауза снята. Внимание: авария всё ещё продолжается — смотрите статус."
 	default:

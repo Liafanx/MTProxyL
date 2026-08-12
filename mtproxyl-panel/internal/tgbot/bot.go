@@ -464,6 +464,11 @@ func (b *Bot) evaluateAndDeliver(ctx context.Context) {
 		av = Decide(inc.Availability, result, threshold, now)
 		inc.Availability = av.State
 		haveAv = true
+		// Свежий вердикт проверки обязан попасть в сообщение немедленно.
+		// Прореживание тихих правок заведено против ежеминутной телеметрии, а
+		// проверка идёт раз в 15 минут: попав в чужое окно, её результат
+		// потерялся бы, и в чате ещё четверть часа висело бы старое время.
+		d.Force = true
 	}
 
 	if uplinkStatus != nil {
@@ -598,13 +603,22 @@ func (d *delivery) addOneShots(up UplinkDecision) {
 // «Обновить», команда, включение бота, старт панели.
 func (b *Bot) handleRedraw(ctx context.Context) {
 	b.mu.Lock()
-	if b.lastGood == nil && b.deps.Snapshot != nil {
+	// Перечитываем последние вердикты из хранилищ, а не полагаемся только на
+	// подписку: кнопка «Обновить» и /status обещают показать текущее состояние,
+	// и брать его надо у источника.
+	if b.deps.Snapshot != nil {
 		if snap := b.deps.Snapshot(); snap != nil && snap.Error == "" && snap.TotalProbes > 0 {
-			b.lastGood = snap
+			if b.lastGood == nil || snap.CheckedAt.After(b.lastGood.CheckedAt) {
+				b.lastGood = snap
+			}
 		}
 	}
-	if b.lastUplink == nil && b.deps.UplinkSnapshot != nil {
-		b.lastUplink = b.deps.UplinkSnapshot()
+	if b.deps.UplinkSnapshot != nil {
+		if snap := b.deps.UplinkSnapshot(); snap != nil {
+			if b.lastUplink == nil || snap.CheckedAt.After(b.lastUplink.CheckedAt) {
+				b.lastUplink = snap
+			}
+		}
 	}
 	inc := b.state.Incidents
 	force := b.forceRedraw

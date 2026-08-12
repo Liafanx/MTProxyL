@@ -79,3 +79,23 @@ type SystemInfo struct {
 	ProcessStartedAt int64  `json:"process_started_at_epoch_secs"`
 	UptimeSeconds    int64  `json:"uptime_seconds"`
 }
+
+// ClassCount — счётчик ошибок одного класса из сводки движка.
+type ClassCount struct {
+	Class string `json:"class"`
+	Count int64  `json:"count"`
+}
+
+// Summary — сводка движка из /v1/stats/summary: та же, что панель показывает
+// на дашборде карточками «Всего соединений», «Ошибочных», «Активных IP».
+//
+// Раз телеметрию и так опрашиваем раз в минуту, эти числа достаются даром, а
+// человеку они говорят о нагрузке и о том, чем именно отваливаются клиенты.
+type Summary struct {
+	UptimeSeconds          int64        `json:"uptime_seconds"`
+	ConnectionsTotal       int64        `json:"connections_total"`
+	ConnectionsBadTotal    int64        `json:"connections_bad_total"`
+	HandshakeTimeoutsTotal int64        `json:"handshake_timeouts_total"`
+	ConfiguredUsers        int64        `json:"configured_users"`
+	ConnectionsBadByClass  []ClassCount `json:"connections_bad_by_class"`
+}

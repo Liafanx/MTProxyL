@@ -128,10 +128,53 @@ func TestIncompleteWriterPoolIsYellow(t *testing.T) {
 		}
 	})
 
-	st := newTestWatcher(c).Poll(context.Background())
+	w := newTestWatcher(c)
+
+	// Одиночный неполный пул — не авария: под наплывом клиентов движок
+	// поднимает целевое число писателей, и живые догоняют цель не мгновенно.
+	if st := w.Poll(context.Background()); st.Bad() {
+		t.Fatalf("расширение пула объявлено аварией с первого опроса: %v", st.Problems)
+	}
+	w.Poll(context.Background())
+	st := w.Poll(context.Background())
 
 	if !st.Bad() || st.Level != LevelYellow {
-		t.Fatalf("неполный пул: Bad=%v Level=%s, ожидалось true/yellow", st.Bad(), st.Level)
+		t.Fatalf("устойчиво неполный пул: Bad=%v Level=%s, ожидалось true/yellow", st.Bad(), st.Level)
+	}
+}
+
+// Ровно тот случай, который зашумил боевой прогон на нагруженном прокси:
+// пул расширяется под нагрузку, живые писатели догоняют цель за минуту-две.
+// Тревоги быть не должно вообще.
+func TestPoolCatchingUpUnderLoadIsNotAnIncident(t *testing.T) {
+	alive := 6
+	c := fakeTelemt(t, func(path string, w http.ResponseWriter) {
+		if healthyEngine(path, w) {
+			return
+		}
+		if path == "/v1/runtime/me_quality" {
+			ok(w, `{"enabled":true,"data":{"dc_rtt":[
+			 {"dc":4,"rtt_ema_ms":52,"alive_writers":`+itoa(int64(alive))+`,"required_writers":10,"coverage_pct":60}]}}`)
+		}
+	})
+	w := newTestWatcher(c)
+
+	// Две минуты пул догоняет…
+	if st := w.Poll(context.Background()); st.Bad() {
+		t.Fatalf("тревога на первой минуте расширения пула: %v", st.Problems)
+	}
+	alive = 8
+	if st := w.Poll(context.Background()); st.Bad() {
+		t.Fatalf("тревога на второй минуте расширения пула: %v", st.Problems)
+	}
+	// …и догнал.
+	alive = 10
+	st := w.Poll(context.Background())
+	if st.Bad() {
+		t.Errorf("тревога после того, как пул догнал цель: %v", st.Problems)
+	}
+	if st.ShortPolls != 0 {
+		t.Errorf("ShortPolls = %d, серия должна была оборваться", st.ShortPolls)
 	}
 }
 
@@ -440,10 +483,19 @@ func TestHighFailRateIsAnIncident(t *testing.T) {
 
 	w.Poll(context.Background())
 	attempts, fails = 1100, 180 // 80 неудач на 100 попыток
+
+	// Первый всплеск ошибок — ещё не авария: клиенты массово переподключаются
+	// после обрыва, и доля скачет сама по себе.
+	if st := w.Poll(context.Background()); st.Bad() {
+		t.Fatalf("одиночный всплеск ошибок объявлен аварией: %v", st.Problems)
+	}
+	attempts, fails = 1200, 260
+	w.Poll(context.Background())
+	attempts, fails = 1300, 340
 	st := w.Poll(context.Background())
 
 	if !st.Bad() {
-		t.Fatal("доля ошибок 80%% не объявлена аварией")
+		t.Fatal("устойчиво высокая доля ошибок не объявлена аварией")
 	}
 	if !strings.Contains(st.Problems[0], "неудачных подключений") {
 		t.Errorf("причина = %q", st.Problems[0])

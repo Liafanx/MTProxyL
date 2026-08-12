@@ -112,6 +112,7 @@ func RenderStatus(v View) string {
 			// Блок связи нужен и здесь: он наблюдается раз в минуту и не зависит
 			// от того, успела ли пройти проверка доступности.
 			writeUplink(&b, v)
+			writeZone(&b, v)
 			return clamp(b.String())
 		}
 		b.WriteString("\nНиже — последний известный вердикт.\n\n")
@@ -127,6 +128,7 @@ func RenderStatus(v View) string {
 		// Первые четверть часа после запуска вердикта доступности ещё нет, а
 		// связь с дата-центрами уже наблюдается — показываем то, что знаем.
 		writeUplink(&b, v)
+		writeZone(&b, v)
 		return clamp(b.String())
 	}
 
@@ -139,6 +141,7 @@ func RenderStatus(v View) string {
 	writeFooter(&b, v)
 
 	writeUplink(&b, v)
+	writeZone(&b, v)
 	// Зонды — последними: их обрезка считает уже занятое место, поэтому блок
 	// связи, поставленный сюда, влезает всегда, а ужимается список зондов. Если
 	// поменять местами, при полусотне зондов блок связи просто не поместится —
@@ -183,11 +186,50 @@ func writeUplink(b *strings.Builder, v View) {
 		fmt.Fprintf(b, "Ошибок подключения: %.1f%% (%d из %d)\n", u.FailRate*100, u.Fails, u.Attempts)
 	}
 	writeDCs(b, u.DCs)
+	writeLoad(b, u)
 	if u.Version != "" {
 		fmt.Fprintf(b, "Движок: %s, работает %s\n", esc(u.Version),
 			duration(v.Now, v.Now.Add(-time.Duration(u.UptimeSeconds)*time.Second)))
 	}
 	b.WriteString("Проверено: " + stampShort(u.CheckedAt) + "\n")
+}
+
+// writeLoad — справка о нагрузке: сколько соединений обслужено и сколько из
+// них сорвалось. На вердикт не влияет: «ошибочные» здесь про клиентов
+// (обрезанный ClientHello, таймаут рукопожатия), а не про связь с
+// дата-центрами, и на публичном прокси их всегда заметная доля.
+func writeLoad(b *strings.Builder, u *uplink.Status) {
+	if u.Connections <= 0 {
+		return
+	}
+	fmt.Fprintf(b, "\nСоединений: %s", groupDigits(u.Connections))
+	if u.ConnectionsBad > 0 {
+		fmt.Fprintf(b, ", из них с ошибкой %s (%.0f%%)",
+			groupDigits(u.ConnectionsBad),
+			float64(u.ConnectionsBad)/float64(u.Connections)*100)
+	}
+	b.WriteString("\n")
+	for _, c := range u.TopBadClasses {
+		if c.Count > 0 && c.Class != "" {
+			fmt.Fprintf(b, "  %s — %s\n", esc(c.Class), groupDigits(c.Count))
+		}
+	}
+}
+
+// groupDigits разделяет тысячи узкими пробелами: 15198 читается плохо.
+func groupDigits(n int64) string {
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 4 {
+		return s
+	}
+	var out []byte
+	for i, c := range []byte(s) {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			out = append(out, ' ')
+		}
+		out = append(out, c)
+	}
+	return string(out)
 }
 
 func uplinkVerdict(u *uplink.Status) string {
@@ -356,7 +398,7 @@ func muteNote(v View) string {
 	case v.MuteForever:
 		return "🔕 <b>Тревоги заглушены до отмены</b> — /unmute\n"
 	case !v.MutedUntil.IsZero() && v.Now.Before(v.MutedUntil):
-		return "🔕 <b>Тревоги заглушены до " + v.MutedUntil.Local().Format("15:04") + "</b> — /unmute\n"
+		return "🔕 <b>Тревоги заглушены до " + v.MutedUntil.In(localZone()).Format("15:04") + "</b> — /unmute\n"
 	}
 	return ""
 }
@@ -416,6 +458,18 @@ func writeFooter(b *strings.Builder, v View) {
 	}
 	if v.Quota.Budget > 0 {
 		fmt.Fprintf(b, "Квота Globalping: %d / %d кредитов\n", v.Quota.Remaining, v.Quota.Budget)
+	}
+}
+
+// writeZone печатает пояс один раз на всё сообщение: повторять его у каждой
+// метки времени было бы шумом.
+func writeZone(b *strings.Builder, v View) {
+	when := v.Now
+	if v.Result != nil && !v.Result.CheckedAt.IsZero() {
+		when = v.Result.CheckedAt
+	}
+	if note := zoneNote(when); note != "" {
+		b.WriteString("\n<i>время сервера: " + note + "</i>\n")
 	}
 }
 
@@ -568,14 +622,40 @@ func stampShort(t time.Time) string {
 	if t.IsZero() {
 		return "—"
 	}
-	return t.Local().Format("02.01.2006, 15:04")
+	return t.In(localZone()).Format("02.01.2006, 15:04")
+}
+
+// zoneNote — обозначение часового пояса, в котором показано время.
+//
+// Без него расхождение с интерфейсом панели выглядит поломкой: там время
+// форматирует браузер в зоне читателя, а здесь — сервер в своей. Плюс сам
+// сервер могли переключить, и полезно видеть, в какой зоне бот сейчас пишет.
+func zoneNote(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	name, offset := t.In(localZone()).Zone()
+	sign, hours, mins := "+", offset/3600, (offset%3600)/60
+	if offset < 0 {
+		sign, hours, mins = "-", -hours, -mins
+	}
+	utc := fmt.Sprintf("UTC%s%02d", sign, hours)
+	if mins != 0 {
+		utc += fmt.Sprintf(":%02d", mins)
+	}
+	// У многих зон имя выглядит как «+05» — дублировать его рядом с UTC+05
+	// незачем.
+	if name != "" && !strings.HasPrefix(name, "+") && !strings.HasPrefix(name, "-") {
+		return name + ", " + utc
+	}
+	return utc
 }
 
 func stamp(t time.Time) string {
 	if t.IsZero() {
 		return "—"
 	}
-	return t.Local().Format("02.01.2006, 15:04:05")
+	return t.In(localZone()).Format("02.01.2006, 15:04:05")
 }
 
 func humanInterval(d time.Duration) string {

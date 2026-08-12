@@ -150,3 +150,11 @@ func (c *Client) SystemInfo(ctx context.Context) (*SystemInfo, error) {
 	}
 	return &out, nil
 }
+
+func (c *Client) Summary(ctx context.Context) (*Summary, error) {
+	var out Summary
+	if err := c.get(ctx, "/v1/stats/summary", &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

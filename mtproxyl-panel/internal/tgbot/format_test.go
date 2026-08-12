@@ -2,6 +2,7 @@ package tgbot
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -515,5 +516,102 @@ func TestRenderStatusWithoutAvailabilityCheck(t *testing.T) {
 	}
 	if !strings.Contains(out, "Связь с Telegram") {
 		t.Errorf("блок связи пропал вместе с выключенной проверкой:\n%s", out)
+	}
+}
+
+// ── Часовой пояс ────────────────────────────────────────────────────────────
+
+// Панель форматирует время в браузере читателя, бот — на сервере. Без явного
+// указания зоны расхождение выглядит поломкой.
+func TestRenderStatusShowsServerZone(t *testing.T) {
+	out := RenderStatus(baseView(sampleResult(2, 2)))
+
+	if !strings.Contains(out, "время сервера:") {
+		t.Errorf("не указана зона, в которой показано время:\n%s", out)
+	}
+}
+
+func TestZoneNoteFormat(t *testing.T) {
+	resetZoneCache()
+	t.Cleanup(resetZoneCache)
+
+	tashkent := time.FixedZone("+05", 5*3600)
+	tzCached, tzCheckAt = tashkent, time.Now()
+
+	if got := zoneNote(time.Now()); got != "UTC+05" {
+		t.Errorf("zoneNote = %q, ожидалось UTC+05", got)
+	}
+
+	tzCached, tzCheckAt = time.FixedZone("MSK", 3*3600), time.Now()
+	if got := zoneNote(time.Now()); got != "MSK, UTC+03" {
+		t.Errorf("zoneNote = %q, ожидалось «MSK, UTC+03»", got)
+	}
+
+	tzCached, tzCheckAt = time.FixedZone("-0330", -3*3600-1800), time.Now()
+	if got := zoneNote(time.Now()); got != "UTC-03:30" {
+		t.Errorf("zoneNote = %q, ожидалось UTC-03:30", got)
+	}
+}
+
+// Смена пояса на сервере должна подхватываться без перезапуска панели: Go
+// определяет time.Local один раз за процесс, поэтому зону перечитываем сами.
+func TestLocalZoneIsRereadAfterTTL(t *testing.T) {
+	resetZoneCache()
+	t.Cleanup(func() {
+		resetZoneCache()
+		tzEnv, tzNow = os.Getenv, time.Now
+	})
+
+	zone := "UTC"
+	tzEnv = func(k string) string {
+		if k == "TZ" {
+			return zone
+		}
+		return ""
+	}
+	base := time.Now()
+	tzNow = func() time.Time { return base }
+
+	if got := localZone().String(); got != "UTC" {
+		t.Fatalf("зона = %q, ожидалась UTC", got)
+	}
+
+	zone = "Asia/Tashkent"
+	// В пределах TTL зона не перечитывается — лишних обращений к диску не надо.
+	if got := localZone().String(); got != "UTC" {
+		t.Errorf("зона перечитана раньше срока: %q", got)
+	}
+
+	tzNow = func() time.Time { return base.Add(tzRecheck + time.Minute) }
+	if got := localZone().String(); got != "Asia/Tashkent" {
+		t.Errorf("зона = %q, смена пояса не подхватилась", got)
+	}
+}
+
+// ── Нагрузка ────────────────────────────────────────────────────────────────
+
+func TestRenderStatusShowsLoad(t *testing.T) {
+	v := baseView(sampleResult(2, 2))
+	u := liveUplink()
+	u.Connections = 15198
+	u.ConnectionsBad = 2105
+	u.TopBadClasses = []uplink.ClassCount{{Class: "TLS handshake — bad client", Count: 1998}}
+	v.Uplink = u
+
+	out := RenderStatus(v)
+
+	for _, want := range []string{"Соединений: 15 198", "с ошибкой", "TLS handshake"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("в блоке нагрузки нет %q\n---\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderStatusHidesLoadWhenUnknown(t *testing.T) {
+	v := baseView(sampleResult(2, 2))
+	v.Uplink = liveUplink() // без счётчиков соединений
+
+	if out := RenderStatus(v); strings.Contains(out, "Соединений:") {
+		t.Errorf("показан пустой блок нагрузки:\n%s", out)
 	}
 }
