@@ -650,3 +650,66 @@ export const availabilityApi = {
       body: JSON.stringify({ enabled }),
     }),
 };
+
+// ── Телеграм-бот ─────────────────────────────────────────────────────────────
+
+export interface TgbotConfig {
+  admins: number[];
+  notify: Record<string, boolean>;
+  intervals: Record<string, number>;
+  autobackup: { enabled: boolean; time: string; send_file: boolean };
+  has_token: boolean;
+}
+
+export interface TgbotStatus {
+  installed: boolean;
+  configured: boolean;
+  /** Служба запущена сейчас. */
+  active: boolean;
+  /** Включён автозапуск при загрузке сервера. */
+  enabled: boolean;
+  dir: string;
+  service: string;
+  config: TgbotConfig;
+}
+
+export interface TgbotStatusResponse {
+  /** false — установленный MTProxyL старше бота. */
+  supported: boolean;
+  message?: string;
+  status?: TgbotStatus;
+  /** Подсказка про @BotFather — приходит с сервера, чтобы не расходилась с CLI. */
+  hint?: string;
+  operation?: MtproxylOperation;
+}
+
+const TGBOT_BASE = `${BASE}/api/tgbot`;
+
+export const tgbotApi = {
+  status: () => request<TgbotStatusResponse>(TGBOT_BASE, '/status'),
+  logs: (lines = 100) =>
+    request<{ lines: string }>(TGBOT_BASE, `/logs?lines=${lines}`),
+  /** Пустой токен — переустановка поверх настроенного бота, без смены токена. */
+  install: (token: string, admin: number) =>
+    request<MtproxylOperation>(TGBOT_BASE, '/install', {
+      method: 'POST',
+      body: JSON.stringify({ token, admin }),
+    }),
+  service: (action: 'start' | 'stop' | 'restart' | 'update') =>
+    request<{ output: string }>(TGBOT_BASE, '/service', {
+      method: 'POST',
+      body: JSON.stringify({ action }),
+    }),
+  uninstall: () =>
+    request<{ output: string }>(TGBOT_BASE, '/uninstall', { method: 'POST' }),
+  admin: (id: number, remove = false) =>
+    request<TgbotStatusResponse>(TGBOT_BASE, '/admins', {
+      method: 'POST',
+      body: JSON.stringify({ id, remove }),
+    }),
+  set: (key: string, value: string) =>
+    request<TgbotStatusResponse>(TGBOT_BASE, '/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ key, value }),
+    }),
+};

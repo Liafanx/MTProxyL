@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, LogOut, X, Sun, Moon, ToggleLeft, Globe, Archive, ShieldAlert, MapPin, Route, SlidersHorizontal, Gauge, FileCode, Puzzle, Radar, Wrench } from 'lucide-react';
+import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, LogOut, X, Sun, Moon, ToggleLeft, Globe, Archive, ShieldAlert, MapPin, Route, SlidersHorizontal, Gauge, FileCode, Puzzle, Radar, Wrench, Bot } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
@@ -31,6 +31,7 @@ const mtproxylNavItems = [
   { to: '/expert', icon: SlidersHorizontal, label: 'Экспертные параметры', managerOnly: true },
   { to: '/superexpert', icon: FileCode, label: 'Супер эксперт', managerOnly: true },
   { to: '/maintenance', icon: Wrench, label: 'Обслуживание', managerOnly: false },
+  { to: '/tgbot', icon: Bot, label: 'Телеграм-бот', managerOnly: false },
   { to: '/addons', icon: Puzzle, label: 'Дополнения', managerOnly: false },
 ];
 

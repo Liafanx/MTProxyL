@@ -391,10 +391,99 @@ _tgbot_ask_admin() {
     chmod 600 "${TGBOT_DIR}/.admin.tmp"
 }
 
+# Состояние бота одной строкой JSON — его читает панель.
+tgbot_status_json() {
+    local _installed="false" _configured="false" _active="false" _enabled="false"
+    tgbot_installed && _installed="true"
+    tgbot_configured && _configured="true"
+    tgbot_service_active && _active="true"
+    systemctl is-enabled "$TGBOT_SERVICE" &>/dev/null && _enabled="true"
+
+    local _cfg='{}'
+    if [ -s "$TGBOT_CONFIG" ] && command -v jq &>/dev/null; then
+        # Токен наружу не отдаём — только признак, что он есть.
+        _cfg=$(jq -c '{admins: (.admins // []),
+                       notify: (.notify // {}),
+                       intervals: (.intervals // {}),
+                       autobackup: (.autobackup // {}),
+                       has_token: ((.token // "") != "")}' "$TGBOT_CONFIG" 2>/dev/null) || _cfg='{}'
+    fi
+
+    printf '{"installed":%s,"configured":%s,"active":%s,"enabled":%s,"dir":"%s","service":"%s","config":%s}\n' \
+        "$_installed" "$_configured" "$_active" "$_enabled" \
+        "$TGBOT_DIR" "$TGBOT_SERVICE" "$_cfg"
+}
+
+# Последние строки журнала службы — панель показывает их как есть.
+tgbot_logs_json() {
+    local _n="${1:-50}"
+    [[ "$_n" =~ ^[0-9]+$ ]] || _n=50
+    [ "$_n" -gt 500 ] && _n=500
+    local _out
+    _out=$(journalctl -u "$TGBOT_SERVICE" -n "$(( _n * 4 ))" --no-pager -o short-iso 2>/dev/null \
+           | grep -vE "sudo\[|pam_unix|COMMAND=" | tail -n "$_n")
+    printf '{"lines":"%s"}\n' "$(json_escape "$_out")"
+}
+
+# Изменить одну настройку бота. Ключи те же, что в config.json.
+tgbot_set_param() {
+    local _key="$1" _val="$2"
+    command -v jq &>/dev/null || { log_error "Нужен jq"; return 1; }
+    tgbot_installed || { log_error "Бот не установлен"; return 1; }
+    [ -s "$TGBOT_CONFIG" ] || printf '{}' > "$TGBOT_CONFIG"
+
+    local _expr=""
+    case "$_key" in
+        notify.availability|notify.proxy|notify.limits|notify.backup)
+            case "$_val" in
+                true|false) ;;
+                *) log_error "Ожидается true или false"; return 1 ;;
+            esac
+            _expr=".${_key} = ${_val}" ;;
+        intervals.availability|intervals.proxy|intervals.limits)
+            [[ "$_val" =~ ^[0-9]+$ ]] && [ "$_val" -ge 1 ] && [ "$_val" -le 1440 ] || {
+                log_error "Ожидается число от 1 до 1440"; return 1; }
+            _expr=".${_key} = ${_val}" ;;
+        autobackup.enabled|autobackup.send_file)
+            case "$_val" in
+                true|false) ;;
+                *) log_error "Ожидается true или false"; return 1 ;;
+            esac
+            _expr=".${_key} = ${_val}" ;;
+        autobackup.time)
+            [[ "$_val" =~ ^([01]?[0-9]|2[0-3]):[0-5][0-9]$ ]] || {
+                log_error "Ожидается время в формате ЧЧ:ММ"; return 1; }
+            _expr=".${_key} = \"${_val}\"" ;;
+        *)
+            log_error "Неизвестная настройка: ${_key}"
+            log_info "Доступны: notify.*, intervals.*, autobackup.*"
+            return 1 ;;
+    esac
+
+    local _tmp; _tmp=$(mktemp "${TGBOT_DIR}/.config.XXXXXX") || return 1
+    if ! jq "$_expr" "$TGBOT_CONFIG" > "$_tmp" 2>/dev/null; then
+        rm -f "$_tmp"; log_error "Не удалось изменить настройку"; return 1
+    fi
+    mv -f "$_tmp" "$TGBOT_CONFIG"
+    chown "$TGBOT_USER":"$TGBOT_USER" "$TGBOT_CONFIG" 2>/dev/null || true
+    chmod 600 "$TGBOT_CONFIG"
+    log_success "${_key} = ${_val}"
+}
+
 # ── Установка ─────────────────────────────────────────────────
 
+# --token/--admin — установка без вопросов, ими пользуется панель: терминала
+# у неё нет, а мастер с ожиданием /start там негде показать.
 tgbot_install() {
     check_root
+    local _opt_token="" _opt_admin=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --token) _opt_token="${2:-}"; shift 2 ;;
+            --admin) _opt_admin="${2:-}"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
     echo ""
     echo -e "  ${BOLD}Установка телеграм-бота MTProxyL${NC}"
     echo -e "  ${DIM}Каталог: ${TGBOT_DIR}, служба: ${TGBOT_SERVICE}${NC}"
@@ -410,7 +499,17 @@ tgbot_install() {
 
     # Переустановка поверх настроенного бота не должна снова спрашивать токен.
     local _token="" _admin=""
-    if tgbot_configured; then
+    if [ -n "$_opt_token" ]; then
+        _token=$(printf '%s' "$_opt_token" | tr -d '[:space:]')
+        _admin=$(printf '%s' "$_opt_admin" | tr -cd '0-9')
+        _tgbot_validate_token "$_token" || {
+            log_error "Не похоже на токен: ожидается 1234567890:AAH..."
+            return 1
+        }
+        _tgbot_check_token "$_token" || return 1
+        [ -n "$_admin" ] || { log_error "Нужен числовой Telegram ID администратора"; return 1; }
+        _tgbot_write_config "$_token" "$_admin" || return 1
+    elif tgbot_configured; then
         log_info "Токен и администраторы уже заданы — оставляем как есть"
         log_info "Изменить: меню бота → Настроить, или mtproxyl tgbot setup"
     else
@@ -505,7 +604,12 @@ tgbot_remove_admin() {
     chown "$TGBOT_USER":"$TGBOT_USER" "$TGBOT_CONFIG" 2>/dev/null || true
     chmod 600 "$TGBOT_CONFIG"
     log_success "Администратор ${_id} убран"
-    [ "$(_tgbot_admin_count)" = "0" ] && log_warn "Администраторов не осталось — бот никого не пустит"
+    # Не `[ … ] && log_warn`: последней строкой функции такая связка вернула бы
+    # 1, когда админы остались, и вызывающий счёл бы удаление неудачным.
+    if [ "$(_tgbot_admin_count)" = "0" ]; then
+        log_warn "Администраторов не осталось — бот никого не пустит"
+    fi
+    return 0
 }
 
 # Обновление кода бота отдельно от venv: зависимости меняются редко, а
@@ -524,11 +628,13 @@ tgbot_update_sources() {
 
 tgbot_uninstall() {
     check_root
-    echo ""
-    log_warn "Будут удалены служба, каталог ${TGBOT_DIR} и права sudo бота"
-    echo -en "  ${BOLD}Удалить телеграм-бота? (y/N):${NC} "
-    local _c; read_line _c
-    [[ "$_c" =~ ^[yYдД] ]] || { log_info "Отменено"; return 0; }
+    if [ "${1:-}" != "--yes" ]; then
+        echo ""
+        log_warn "Будут удалены служба, каталог ${TGBOT_DIR} и права sudo бота"
+        echo -en "  ${BOLD}Удалить телеграм-бота? (y/N):${NC} "
+        local _c; read_line _c
+        [[ "$_c" =~ ^[yYдД] ]] || { log_info "Отменено"; return 0; }
+    fi
 
     systemctl disable --now "$TGBOT_SERVICE" &>/dev/null
     rm -f "/etc/systemd/system/${TGBOT_SERVICE}" "$TGBOT_SUDOERS"
@@ -561,22 +667,35 @@ tgbot_show_status() {
 handle_tgbot_command() {
     local _sub="${1:-status}"; shift 2>/dev/null || true
     case "$_sub" in
-        install)    tgbot_install ;;
+        install)    tgbot_install "$@" ;;
         setup)      tgbot_setup ;;
-        uninstall)  tgbot_uninstall ;;
+        uninstall)  tgbot_uninstall "${1:-}" ;;
+        set)        check_root; tgbot_set_param "${1:-}" "${2:-}" ;;
         update)     check_root; tgbot_update_sources && log_success "Код бота обновлён" ;;
         start)      check_root; systemctl start "$TGBOT_SERVICE" && log_success "Запущен" ;;
         stop)       check_root; systemctl stop "$TGBOT_SERVICE" && log_success "Остановлен" ;;
         restart)    check_root; systemctl restart "$TGBOT_SERVICE" && log_success "Перезапущен" ;;
-        logs)       journalctl -u "$TGBOT_SERVICE" -n "${1:-50}" --no-pager ;;
+        logs)
+            if [ "${1:-}" = "--json" ]; then
+                check_root; tgbot_logs_json "${2:-50}"
+            else
+                journalctl -u "$TGBOT_SERVICE" -n "$(( ${1:-50} * 4 ))" --no-pager \
+                    | grep -vE "sudo\[|pam_unix|COMMAND=" | tail -n "${1:-50}"
+            fi ;;
         admin-add)  tgbot_add_admin "${1:-}" ;;
         admin-rm)   tgbot_remove_admin "${1:-}" ;;
-        status)     tgbot_show_status ;;
+        status)
+            if [ "${1:-}" = "--json" ]; then
+                check_root; tgbot_status_json
+            else
+                tgbot_show_status
+            fi ;;
         *)
             echo -e "  ${BOLD}Телеграм-бот:${NC}"
             echo -e "    ${GREEN}tgbot install${NC}      Установить или переустановить"
             echo -e "    ${GREEN}tgbot setup${NC}        Задать токен и администратора заново"
-            echo -e "    ${GREEN}tgbot status${NC}       Состояние"
+            echo -e "    ${GREEN}tgbot status${NC}       Состояние (--json для машинного вывода)"
+            echo -e "    ${GREEN}tgbot set${NC} K V      Уведомления и таймеры (notify.*, intervals.*, autobackup.*)"
             echo -e "    ${GREEN}tgbot start|stop|restart${NC}"
             echo -e "    ${GREEN}tgbot logs${NC} [N]     Журнал службы"
             echo -e "    ${GREEN}tgbot admin-add${NC} ID Добавить администратора"

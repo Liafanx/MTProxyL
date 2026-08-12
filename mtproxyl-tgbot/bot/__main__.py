@@ -75,7 +75,7 @@ class CleanChat(BaseMiddleware):
                     log.debug("не удалось удалить сообщение: %s", exc)
 
 
-async def on_error(event: ErrorEvent) -> bool:
+async def on_error(event: ErrorEvent, bot: Bot) -> bool:
     """Последний рубеж: без него сбой в обработчике оставляет человека перед
     экраном «⏳ …» без объяснений."""
     log.exception("необработанный сбой: %s", event.exception)
@@ -87,7 +87,9 @@ async def on_error(event: ErrorEvent) -> bool:
         chat = update.callback_query.message.chat.id
     if chat is not None:
         try:
-            await event.bot.send_message(
+            # bot приходит аргументом: у ErrorEvent своего bot нет, и обращение
+            # к нему роняло сам обработчик ошибок.
+            await bot.send_message(
                 chat, "⚠️ Что-то пошло не так. Откройте меню заново: /menu")
         except TelegramAPIError:
             pass

@@ -550,6 +550,20 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability check --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability on
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability off
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability token *
+# Телеграм-бот. Токен передаётся аргументом установки, поэтому правило на неё
+# отдельное и с ним же ограничен формат: только то, что похоже на токен.
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot status --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot logs --json [0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot install --token [0-9]* --admin [0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot install
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot update
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot start
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot stop
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot restart
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot uninstall --yes
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot admin-add [0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot admin-rm [0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot set [a-z]*.[a-z_]* *
 EOF
 
   if [ -n "$_visudo" ]; then

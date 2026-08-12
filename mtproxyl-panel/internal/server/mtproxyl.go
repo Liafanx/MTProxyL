@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/Liafanx/mtproxyl-panel/internal/auth"
 	"github.com/Liafanx/mtproxyl-panel/internal/mtproxylctl"
@@ -1018,5 +1019,164 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		if _, err := w.Write(data); err != nil {
 			log.Printf("[mtproxyl] не удалось отдать бэкап %s: %s", name, err)
 		}
+	}))
+
+	// ── Телеграм-бот ────────────────────────────────────────────────────────
+	// Ставит и настраивает бота тот же CLI; панель показывает состояние и
+	// нажимает кнопки. Доступно в обоих режимах — бот от режима не зависит,
+	// только бэкапы внутри него отключаются в реаниматоре.
+	tgbotStatus := func(w http.ResponseWriter, r *http.Request) {
+		st, err := client.TgbotStatus(r.Context())
+		if err != nil {
+			if errors.Is(err, mtproxylctl.ErrTgbotUnsupported) {
+				writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
+					"supported": false,
+					"message": "Установленный MTProxyL не умеет управлять телеграм-ботом — " +
+						"обновите его: mtproxyl update",
+				}})
+				return
+			}
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
+			"supported": true,
+			"status":    st,
+			"hint":      mtproxylctl.TgbotTokenHint(),
+			"operation": runner.Status(),
+		}})
+	}
+
+	mux.Handle("GET /api/tgbot/status", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		tgbotStatus(w, r)
+	}))
+
+	mux.Handle("GET /api/tgbot/logs", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		lines, _ := strconv.Atoi(r.URL.Query().Get("lines"))
+		out, err := client.TgbotLogs(r.Context(), lines)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"lines": out}})
+	}))
+
+	// Установка тянет venv и aiogram — это минуты, поэтому она уходит в тот же
+	// раннер, что и прочие долгие операции, с журналом по шагам.
+	mux.Handle("POST /api/tgbot/install", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var body struct {
+			Token string `json:"token"`
+			Admin int64  `json:"admin"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "Не удалось разобрать запрос")
+			return
+		}
+		token := strings.TrimSpace(body.Token)
+		if token != "" {
+			if err := mtproxylctl.ValidateTgbotToken(token); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_token", err.Error())
+				return
+			}
+			if body.Admin <= 0 {
+				writeError(w, http.StatusBadRequest, "invalid_admin",
+					"Нужен числовой Telegram ID администратора")
+				return
+			}
+		}
+		started := runner.Start("tgbot:install", func(ctx context.Context) (string, error) {
+			return client.TgbotInstall(ctx, token, body.Admin)
+		})
+		if !started {
+			writeError(w, http.StatusConflict, "operation_busy",
+				"Другая операция MTProxyL уже выполняется")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
+	}))
+
+	mux.Handle("POST /api/tgbot/service", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var body struct {
+			Action string `json:"action"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "Не удалось разобрать запрос")
+			return
+		}
+		// Обновление кода перекачивает файлы и перезапускает службу — секунды,
+		// но не мгновение; остальное быстро.
+		out, err := client.TgbotService(r.Context(), body.Action)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	mux.Handle("POST /api/tgbot/uninstall", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		out, err := client.TgbotUninstall(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	mux.Handle("POST /api/tgbot/admins", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var body struct {
+			ID     int64 `json:"id"`
+			Remove bool  `json:"remove"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "Не удалось разобрать запрос")
+			return
+		}
+		if _, err := client.TgbotAdmin(r.Context(), body.ID, !body.Remove); err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		tgbotStatus(w, r)
+	}))
+
+	mux.Handle("PUT /api/tgbot/settings", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var body struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "Не удалось разобрать запрос")
+			return
+		}
+		if _, err := client.TgbotSet(r.Context(), body.Key, strings.TrimSpace(body.Value)); err != nil {
+			var ce *mtproxylctl.CommandError
+			if errors.As(err, &ce) {
+				writeCLIError(w, "mtproxyl_error", err)
+				return
+			}
+			writeError(w, http.StatusBadRequest, "invalid_setting", err.Error())
+			return
+		}
+		tgbotStatus(w, r)
 	}))
 }

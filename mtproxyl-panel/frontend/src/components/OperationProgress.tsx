@@ -23,6 +23,7 @@ const OPERATION_LABELS: Record<string, string> = {
   'nft:zapret2-wscale': 'Настройка окна Zapret2',
   'nft:preset:classic': 'Переключение лимитера в classic',
   'nft:preset:smart': 'Переключение лимитера в smart',
+  'tgbot:install': 'Установка телеграм-бота',
 };
 
 function label(name?: string): string {

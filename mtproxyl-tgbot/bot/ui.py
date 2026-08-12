@@ -182,7 +182,9 @@ async def report_error(event: Message | CallbackQuery, exc: Exception) -> None:
         log.exception("необработанная ошибка")
         text = f"⚠️ Внутренняя ошибка: {esc(type(exc).__name__)}"
     if isinstance(event, CallbackQuery):
-        await event.answer("Не получилось")
+        # Через ack, а не напрямую: подтверждение могло уже протухнуть, и
+        # сообщать об ошибке падением поверх ошибки — плохая идея.
+        await ack(event, "Не получилось")
     await notice(event, text)
 
 
