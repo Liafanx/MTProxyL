@@ -169,8 +169,15 @@ _tgbot_build_venv() {
     # установки и на сервере с закрытым исходящим печатает пугающий WARNING,
     # хотя сами зависимости при этом ставятся.
     local -x PIP_DISABLE_PIP_VERSION_CHECK=1
-    "${TGBOT_VENV}/bin/python" -m pip install --quiet --upgrade pip &>/dev/null || true
-    if ! "${TGBOT_VENV}/bin/python" -m pip install --quiet -r "${TGBOT_DIR}/requirements.txt"; then
+    # Установка зависимостей — самое тяжёлое место во всей установке, а идёт
+    # она фоном, пока человек работает в терминале или в панели. Отдаём ей
+    # остатки процессора и диска: на VPS с гигабайтом памяти именно это
+    # различает «минуту ставится» и «минуту всё не отвечает».
+    local _nice=()
+    command -v nice   &>/dev/null && _nice+=(nice -n 10)
+    command -v ionice &>/dev/null && _nice+=(ionice -c 2 -n 7)
+    "${_nice[@]}" "${TGBOT_VENV}/bin/python" -m pip install --quiet --upgrade pip &>/dev/null || true
+    if ! "${_nice[@]}" "${TGBOT_VENV}/bin/python" -m pip install --quiet -r "${TGBOT_DIR}/requirements.txt"; then
         log_error "pip не смог поставить зависимости"
         log_info "Повторите вручную: ${TGBOT_VENV}/bin/python -m pip install -r ${TGBOT_DIR}/requirements.txt"
         return 1
@@ -269,6 +276,16 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=${TGBOT_VENV}/bin/python -m bot
 Restart=on-failure
 RestartSec=10
+
+# Бот — фон, и опросы он ведёт сам по себе. На VPS с одним-двумя ядрами он не
+# должен отбирать процессор и диск у человека в терминале или в панели; всё,
+# что бот запускает через sudo, наследует ту же уступчивость.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+# Остановку ждём двадцать секунд, а не полторы минуты по умолчанию: терять
+# боту нечего, а перезапуск из панели всё это время выглядел бы зависшим.
+TimeoutStopSec=20
 
 # CapabilityBoundingSet и NoNewPrivileges не задаём: они урезали бы sudo,
 # которым бот зовёт MTProxyL — тот падает без setuid/setgid.

@@ -16,6 +16,7 @@ import time
 from typing import Any
 
 SCRIPT = os.environ.get("MTPROXYL_SCRIPT", "/opt/mtproxyl/mtproxyl.sh")
+SETTINGS = os.environ.get("MTPROXYL_SETTINGS", "/opt/mtproxyl/settings.conf")
 USE_SUDO = os.environ.get("MTPROXYL_TGBOT_SUDO", "1") != "0"
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -134,11 +135,27 @@ async def status() -> dict:
     return await _cached("status", 3.0, lambda: run_json("status", "--json", timeout=30))
 
 
+def _settings_stamp() -> tuple:
+    try:
+        st = os.stat(SETTINGS)
+    except OSError:
+        return ()
+    return (st.st_mtime_ns, st.st_size)
+
+
 async def mode() -> dict:
-    # Режим меняют из меню MTProxyL, не из бота, и стоит этот вызов дороже
-    # прочих: в реаниматоре он заново ищет цель. Секунда на каждое открытие
-    # меню — это заметно, а двухминутная давность ответа ни на что не влияет.
-    return await _cached("mode", 120.0, lambda: run_json("mode", "--json", timeout=30))
+    # Вызов дороже прочих: в реаниматоре он заново ищет цель, а меню его
+    # открывает каждый раз. Но режим меняют из меню MTProxyL, и бот об этом
+    # никак не узнаёт — с одним лишь сроком годности он до двух минут рисовал
+    # бы кнопки чужого режима. Поэтому кэш сбрасывается по метке settings.conf:
+    # там режим и записан, а один stat не стоит ничего.
+    stamp = _settings_stamp()
+    hit = _cache.get("mode")
+    if hit and time.monotonic() - hit[0] < 120.0 and hit[1][0] == stamp:
+        return hit[1][1]
+    value = await run_json("mode", "--json", timeout=30)
+    _cache["mode"] = (time.monotonic(), (stamp, value))
+    return value
 
 
 async def is_manager() -> bool:
