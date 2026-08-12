@@ -80,33 +80,24 @@ func Decide(st AlertState, r *globalping.CheckResult, threshold float64, now tim
 	d.State.LastPct = r.Percentage
 	d.State.HasPct = true
 
-	if r.Percentage < threshold {
-		switch {
-		case !st.Active:
-			// Первое падение. Сюда же попадает самый первый в жизни вердикт,
-			// если он сразу плохой: панель могли поднять уже на забаненном
-			// адресе, и молчать об этом вреднее, чем разбудить.
-			d.Event = EventDown
-			d.State.Active = true
-			d.State.Since = now
-			d.State.LastNotify = now
-			d.AlertSince = now
-		case now.Sub(st.LastNotify) >= alertRepeat:
-			d.Event = EventDown
-			d.State.LastNotify = now
-		}
-		return d
-	}
-
-	if st.Active {
-		d.Event = EventRecovered
-		d.State.Active = false
-		d.State.Since = time.Time{}
-		d.State.LastNotify = now
-		// AlertSince остаётся прежним: он нужен, чтобы сказать, сколько авария
-		// длилась, — и только после этого забывается.
-	}
+	// Сам автомат общий для всех аварий — доступности, связи с дата-центрами и
+	// движка (см. decideIncident в incidents.go). Здесь остаётся только то, что
+	// свойственно именно доступности: проценты и порог.
+	incident, event, since := decideIncident(st.incident(), r.Percentage < threshold, now)
+	d.State.setIncident(incident)
+	d.Event = event
+	d.AlertSince = since
 	return d
+}
+
+// incident/setIncident связывают состояние доступности с общим автоматом:
+// у него те же три поля плюс проценты, которые автомату не нужны.
+func (a AlertState) incident() IncidentState {
+	return IncidentState{Active: a.Active, Since: a.Since, LastNotify: a.LastNotify}
+}
+
+func (a *AlertState) setIncident(i IncidentState) {
+	a.Active, a.Since, a.LastNotify = i.Active, i.Since, i.LastNotify
 }
 
 // bannerFor переводит событие в шапку сообщения.

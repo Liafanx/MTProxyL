@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Liafanx/mtproxyl-panel/internal/globalping"
+	"github.com/Liafanx/mtproxyl-panel/internal/uplink"
 )
 
 // Banner — шапка над телом сообщения. Тело у всех трёх видов одинаковое:
@@ -21,6 +22,18 @@ const (
 	BannerDown
 	// BannerRecovered — вернулись выше порога.
 	BannerRecovered
+	// BannerEngineDown — движок недоступен или ушёл в режим только чтения.
+	BannerEngineDown
+	// BannerEngineOK — движок вернулся.
+	BannerEngineOK
+	// BannerUplinkDown — прокси потерял связь с дата-центрами Telegram.
+	BannerUplinkDown
+	// BannerUplinkOK — связь с дата-центрами восстановлена.
+	BannerUplinkOK
+	// BannerEngineRestarted и BannerIPChanged — одноразовые: у них нет
+	// «восстановления», о них просто сообщают один раз.
+	BannerEngineRestarted
+	BannerIPChanged
 )
 
 // Failure — сорвавшаяся попытка проверки. Живёт отдельно от вердикта: неудача
@@ -43,15 +56,32 @@ type View struct {
 	AutoCheck bool
 	Interval  time.Duration
 
-	Banner Banner
+	// Uplink — состояние исходящей связи и движка. nil, если наблюдение ещё не
+	// дало первого результата.
+	Uplink *uplink.Status
+
+	// Banners — шапки события. Их может быть несколько: доступность и связь
+	// независимы и могут сорваться одновременно, но сообщение всё равно одно.
+	Banners []Banner
 	// PrevPercentage — доступность до события, для строки «было X% → стало Y%».
 	// PrevKnown отличает «раньше было 0%» от «раньше ничего не было».
 	PrevPercentage float64
 	PrevKnown      bool
-	// AlertSince — когда началась авария, для «длится N».
+	// AlertSince — когда началась авария доступности, для «длится N».
 	AlertSince time.Time
-	Threshold  float64
-	Now        time.Time
+	// UplinkSince и EngineSince — то же для двух других аварий.
+	UplinkSince time.Time
+	EngineSince time.Time
+	// PrevIP и NewIP заполняются, когда сменился внешний адрес сервера.
+	PrevIP, NewIP string
+
+	// MutedUntil и MuteForever — пауза тревог. Пока она идёт, в шапке висит
+	// напоминание: иначе легко забыть, что сирена выключена.
+	MutedUntil  time.Time
+	MuteForever bool
+
+	Threshold float64
+	Now       time.Time
 }
 
 const (
@@ -66,7 +96,7 @@ const (
 func RenderStatus(v View) string {
 	var b strings.Builder
 
-	writeBanner(&b, v)
+	writeBanners(&b, v)
 
 	if v.Failure != nil {
 		b.WriteString("⚠️ <b>Проверка не удалась</b>\n")
@@ -75,6 +105,9 @@ func RenderStatus(v View) string {
 		if v.Result == nil {
 			b.WriteString("\nУдачных проверок пока не было.\n")
 			writeFooter(&b, v)
+			// Блок связи нужен и здесь: он наблюдается раз в минуту и не зависит
+			// от того, успела ли пройти проверка доступности.
+			writeUplink(&b, v)
 			return clamp(b.String())
 		}
 		b.WriteString("\nНиже — последний известный вердикт.\n\n")
@@ -83,6 +116,9 @@ func RenderStatus(v View) string {
 	if v.Result == nil {
 		b.WriteString("Проверок ещё не было — первая пройдёт в ближайшие минуты.\n")
 		writeFooter(&b, v)
+		// Первые четверть часа после запуска вердикта доступности ещё нет, а
+		// связь с дата-центрами уже наблюдается — показываем то, что знаем.
+		writeUplink(&b, v)
 		return clamp(b.String())
 	}
 
@@ -94,8 +130,97 @@ func RenderStatus(v View) string {
 	b.WriteString("Проверено: " + stamp(r.CheckedAt) + "\n")
 	writeFooter(&b, v)
 
+	writeUplink(&b, v)
+	// Зонды — последними: их обрезка считает уже занятое место, поэтому блок
+	// связи, поставленный сюда, влезает всегда, а ужимается список зондов. Если
+	// поменять местами, при полусотне зондов блок связи просто не поместится —
+	// то есть пропадёт ровно тогда, когда он нужнее всего.
 	writeProbes(&b, r)
 	return clamp(b.String())
+}
+
+// writeUplink — второй блок сообщения: исходящая связь прокси с
+// дата-центрами Telegram. Отвечает на вопрос, которого не видит проверка
+// зондами: снаружи прокси может быть здоров, а писать в Telegram не может.
+func writeUplink(b *strings.Builder, v View) {
+	u := v.Uplink
+	if u == nil {
+		return
+	}
+
+	b.WriteString("\n──────────\n\n")
+
+	switch {
+	case u.EngineError != "":
+		b.WriteString("⚠️ <b>Связь с Telegram — нет данных</b>\n")
+		b.WriteString(esc(u.EngineError) + "\n")
+		return
+	case !u.Applicable:
+		// Не авария: часть установок работает без middle proxy. Формулировка та
+		// же, что в панели, чтобы бот и интерфейс говорили одно и то же.
+		b.WriteString("<b>Связь с Telegram</b>: данные недоступны — " + esc(u.NotApplicableReason) + "\n")
+		return
+	}
+
+	fmt.Fprintf(b, "%s <b>Связь с Telegram — %s</b>\n", levelDot(globalpingLevel(u.Level)), uplinkVerdict(u))
+	b.WriteString("<i>выход: прокси → дата-центры</i>\n\n")
+
+	fmt.Fprintf(b, "Писатели: <b>%d</b> живых / %d нужно\n", u.AliveWriters, u.RequiredWriters)
+	if u.HasFailRate && u.Attempts > 0 {
+		fmt.Fprintf(b, "Ошибок подключения: %.1f%% (%d из %d)\n", u.FailRate*100, u.Fails, u.Attempts)
+	}
+	writeDCs(b, u.DCs)
+	if u.Version != "" {
+		fmt.Fprintf(b, "Движок: %s, работает %s\n", esc(u.Version),
+			duration(v.Now, v.Now.Add(-time.Duration(u.UptimeSeconds)*time.Second)))
+	}
+	b.WriteString("Проверено: " + stampShort(u.CheckedAt) + "\n")
+}
+
+func uplinkVerdict(u *uplink.Status) string {
+	if len(u.Problems) == 0 {
+		return "норма"
+	}
+	return u.Problems[0]
+}
+
+// globalpingLevel переводит уровень наблюдателя в тот же светофор, которым
+// обозначается доступность, — чтобы в одном сообщении цвета читались одинаково.
+func globalpingLevel(l uplink.Level) globalping.Level {
+	switch l {
+	case uplink.LevelGreen:
+		return globalping.LevelGreen
+	case uplink.LevelYellow:
+		return globalping.LevelYellow
+	default:
+		return globalping.LevelRed
+	}
+}
+
+// writeDCs печатает дата-центры по два в строке. Показываем все, включая те,
+// где писателей нет: на живом сервере это штатно, и человеку полезно видеть
+// картину целиком — но решение об аварии по ним не принимается.
+func writeDCs(b *strings.Builder, dcs []uplink.DCRtt) {
+	if len(dcs) == 0 {
+		return
+	}
+	b.WriteString("\n")
+	for i, dc := range dcs {
+		mark := "✅"
+		if dc.AliveWriters == 0 {
+			mark = "⚪"
+		}
+		rtt := "—"
+		if dc.RTTEmaMs != nil {
+			rtt = fmt.Sprintf("%.0f мс", *dc.RTTEmaMs)
+		}
+		fmt.Fprintf(b, "%s DC %d: %s", mark, dc.DC, rtt)
+		if i%2 == 1 || i == len(dcs)-1 {
+			b.WriteString("\n")
+		} else {
+			b.WriteString("   ")
+		}
+	}
 }
 
 // clamp — последняя страховка от предела Telegram. Список зондов режется своей
@@ -115,8 +240,28 @@ func clamp(s string) string {
 	return cut + "…"
 }
 
-func writeBanner(b *strings.Builder, v View) {
-	switch v.Banner {
+// writeBanners печатает шапки событий. Порядок — по важности: упавший движок
+// объясняет всё остальное, поэтому идёт первым.
+func writeBanners(b *strings.Builder, v View) {
+	wrote := false
+	for _, banner := range v.Banners {
+		if banner == BannerNone {
+			continue
+		}
+		writeBanner(b, v, banner)
+		wrote = true
+	}
+	if muted := muteNote(v); muted != "" {
+		b.WriteString(muted)
+		wrote = true
+	}
+	if wrote {
+		b.WriteString("\n──────────\n\n")
+	}
+}
+
+func writeBanner(b *strings.Builder, v View, banner Banner) {
+	switch banner {
 	case BannerDown:
 		b.WriteString("🚨 <b>ПАДЕНИЕ ДОСТУПНОСТИ</b>\n")
 		writeChange(b, v)
@@ -126,15 +271,77 @@ func writeBanner(b *strings.Builder, v View) {
 			fmt.Fprintf(b, "Порог алерта: %.0f%%\n", v.Threshold)
 		}
 		b.WriteString("Часто это значит, что адрес попал под фильтр у части операторов.\n")
-		b.WriteString("\n──────────\n\n")
+
 	case BannerRecovered:
 		b.WriteString("✅ <b>ДОСТУПНОСТЬ ВОССТАНОВЛЕНА</b>\n")
 		writeChange(b, v)
 		if since := duration(v.Now, v.AlertSince); since != "" {
 			b.WriteString("Авария длилась " + since + "\n")
 		}
-		b.WriteString("\n──────────\n\n")
+
+	case BannerUplinkDown:
+		b.WriteString("🚨 <b>ПРОКСИ ПОТЕРЯЛ СВЯЗЬ С TELEGRAM</b>\n")
+		if v.Uplink != nil {
+			for _, p := range v.Uplink.Problems {
+				b.WriteString(esc(p) + "\n")
+			}
+		}
+		if since := duration(v.Now, v.UplinkSince); since != "" {
+			b.WriteString("Длится " + since + "\n")
+		}
+		// Это принципиально другая авария, чем падение доступности, и человеку
+		// надо сразу понимать разницу: снаружи прокси при этом здоров.
+		b.WriteString("Снаружи прокси доступен — режут выход к дата-центрам, а не вход к прокси.\n")
+
+	case BannerUplinkOK:
+		b.WriteString("✅ <b>СВЯЗЬ С TELEGRAM ВОССТАНОВЛЕНА</b>\n")
+		if since := duration(v.Now, v.UplinkSince); since != "" {
+			b.WriteString("Авария длилась " + since + "\n")
+		}
+
+	case BannerEngineDown:
+		b.WriteString("🚨 <b>ДВИЖОК НЕДОСТУПЕН</b>\n")
+		if v.Uplink != nil {
+			switch {
+			case v.Uplink.EngineReadOnly:
+				b.WriteString("Движок работает в режиме только чтения.\n")
+			case v.Uplink.EngineError != "":
+				b.WriteString(esc(v.Uplink.EngineError) + "\n")
+			}
+		}
+		if since := duration(v.Now, v.EngineSince); since != "" {
+			b.WriteString("Длится " + since + "\n")
+		}
+
+	case BannerEngineOK:
+		b.WriteString("✅ <b>ДВИЖОК СНОВА НА СВЯЗИ</b>\n")
+		if since := duration(v.Now, v.EngineSince); since != "" {
+			b.WriteString("Недоступен был " + since + "\n")
+		}
+
+	case BannerEngineRestarted:
+		b.WriteString("♻️ <b>Движок перезапустился</b>\n")
+		if v.Uplink != nil && v.Uplink.UptimeSeconds > 0 {
+			b.WriteString("Работает " + duration(v.Now, v.Now.Add(-time.Duration(v.Uplink.UptimeSeconds)*time.Second)) + "\n")
+		}
+
+	case BannerIPChanged:
+		b.WriteString("📍 <b>Сменился внешний адрес сервера</b>\n")
+		fmt.Fprintf(b, "Было <code>%s</code> → стало <code>%s</code>\n", esc(v.PrevIP), esc(v.NewIP))
+		b.WriteString("Проверьте DNS и ссылки для клиентов — прежний адрес больше не отвечает.\n")
 	}
+}
+
+// muteNote напоминает о выключенной сирене. Без этой строки легко поставить
+// паузу на время работ и забыть о ней до следующей настоящей аварии.
+func muteNote(v View) string {
+	switch {
+	case v.MuteForever:
+		return "🔕 <b>Тревоги заглушены до отмены</b> — /unmute\n"
+	case !v.MutedUntil.IsZero() && v.Now.Before(v.MutedUntil):
+		return "🔕 <b>Тревоги заглушены до " + v.MutedUntil.Local().Format("15:04") + "</b> — /unmute\n"
+	}
+	return ""
 }
 
 func writeChange(b *strings.Builder, v View) {
@@ -294,6 +501,15 @@ func oneLine(s string) string {
 		return string([]rune(s)[:80]) + "…"
 	}
 	return s
+}
+
+// stampShort — время без секунд. Блок связи обновляется раз в минуту, и
+// секунды в нём ничего не добавляют.
+func stampShort(t time.Time) string {
+	if t.IsZero() {
+		return "—"
+	}
+	return t.Local().Format("02.01.2006, 15:04")
 }
 
 func stamp(t time.Time) string {

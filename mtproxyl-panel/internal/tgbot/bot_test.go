@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Liafanx/mtproxyl-panel/internal/globalping"
+	"github.com/Liafanx/mtproxyl-panel/internal/uplink"
 )
 
 // recorder — подставной Bot API, который запоминает вызовы. reply решает, что
@@ -114,7 +115,7 @@ func TestDeliverEditsExistingMessage(t *testing.T) {
 	b, rec := newTestBot(t, Deps{}, PersistedState{MessageID: 77})
 	b.lastGood = verdict(95)
 
-	b.deliver(context.Background(), Decision{Event: EventNone})
+	b.deliver(context.Background(), delivery{Now: b.now()})
 
 	if rec.count("editMessageText") != 1 {
 		t.Errorf("вызовы: %v, ожидалась одна правка", rec.methods())
@@ -130,7 +131,7 @@ func TestDeliverRecreatesMessageOnEvent(t *testing.T) {
 	b, rec := newTestBot(t, Deps{}, PersistedState{MessageID: 77})
 	b.lastGood = verdict(55)
 
-	b.deliver(context.Background(), Decision{Event: EventDown, AlertSince: b.now()})
+	b.deliver(context.Background(), delivery{Loud: true, Banners: []Banner{BannerDown}, AlertSince: b.now(), Now: b.now()})
 
 	methods := rec.methods()
 	if len(methods) < 2 || methods[0] != "sendMessage" || methods[1] != "deleteMessage" {
@@ -157,7 +158,7 @@ func TestDeliverTombstonesUndeletableMessage(t *testing.T) {
 		apiFailure(w, 400, "Bad Request: message can't be deleted")
 	}
 
-	b.deliver(context.Background(), Decision{Event: EventDown})
+	b.deliver(context.Background(), delivery{Loud: true, Banners: []Banner{BannerDown}, Now: b.now()})
 
 	edit := rec.find("editMessageText")
 	if edit == nil {
@@ -177,7 +178,7 @@ func TestDeliverSendsNewWhenMessageGone(t *testing.T) {
 		apiFailure(w, 400, "Bad Request: message to edit not found")
 	}
 
-	b.deliver(context.Background(), Decision{Event: EventNone})
+	b.deliver(context.Background(), delivery{Now: b.now()})
 
 	if rec.count("sendMessage") != 1 {
 		t.Errorf("вызовы %v, ожидалась отправка нового сообщения", rec.methods())
@@ -199,7 +200,7 @@ func TestDeliverTreatsNotModifiedAsSuccess(t *testing.T) {
 		apiFailure(w, 400, "Bad Request: message is not modified")
 	}
 
-	b.deliver(context.Background(), Decision{Event: EventNone})
+	b.deliver(context.Background(), delivery{Now: b.now()})
 
 	if got := b.Status().LastError; got != "" {
 		t.Errorf("LastError = %q, повтор того же текста ошибкой не является", got)
@@ -214,7 +215,7 @@ func TestDeliverDoesNothingWhenDisabled(t *testing.T) {
 	b.cfg.Enabled = false
 	b.lastGood = verdict(95)
 
-	b.deliver(context.Background(), Decision{Event: EventNone})
+	b.deliver(context.Background(), delivery{Now: b.now()})
 
 	if len(rec.methods()) != 0 {
 		t.Errorf("выключенный бот сходил в Telegram: %v", rec.methods())
@@ -226,7 +227,7 @@ func TestDeliverDoesNothingWithoutAdmin(t *testing.T) {
 	b.cfg.AdminID = 0
 	b.lastGood = verdict(95)
 
-	b.deliver(context.Background(), Decision{Event: EventNone})
+	b.deliver(context.Background(), delivery{Now: b.now()})
 
 	if len(rec.methods()) != 0 {
 		t.Errorf("без ID админа бот сходил в Telegram: %v", rec.methods())
@@ -289,15 +290,16 @@ func TestHandleResultPersistsAlertState(t *testing.T) {
 		},
 	}, PersistedState{MessageID: 77})
 
-	b.handleResult(context.Background(), verdict(40))
+	b.absorbAvailability(verdict(40))
+	b.evaluateAndDeliver(context.Background())
 
 	mu.Lock()
 	defer mu.Unlock()
 	if len(saved) == 0 {
 		t.Fatal("состояние не сохранено")
 	}
-	if !saved[0].Alert.Active {
-		t.Errorf("Alert.Active = false после падения ниже порога: %+v", saved[0].Alert)
+	if !saved[0].Incidents.Availability.Active {
+		t.Errorf("Alert.Active = false после падения ниже порога: %+v", saved[0].Incidents.Availability)
 	}
 }
 
@@ -307,8 +309,10 @@ func TestHandleResultKeepsLastGoodOnFailure(t *testing.T) {
 	b, _ := newTestBot(t, Deps{}, PersistedState{MessageID: 77})
 	good := verdict(95)
 
-	b.handleResult(context.Background(), good)
-	b.handleResult(context.Background(), &globalping.CheckResult{Error: "сервис не отвечает"})
+	b.absorbAvailability(good)
+	b.evaluateAndDeliver(context.Background())
+	b.absorbAvailability(&globalping.CheckResult{Error: "сервис не отвечает"})
+	b.evaluateAndDeliver(context.Background())
 
 	if b.lastGood != good {
 		t.Error("последний удачный вердикт потерян")
@@ -461,7 +465,7 @@ func TestDeliverExplainsChatNotFound(t *testing.T) {
 		apiFailure(w, 400, "Bad Request: chat not found")
 	}
 
-	b.deliver(context.Background(), Decision{Event: EventNone})
+	b.deliver(context.Background(), delivery{Now: b.now()})
 
 	if got := b.Status().LastError; !strings.Contains(got, "/start") {
 		t.Errorf("LastError = %q, ожидалась подсказка про /start", got)
@@ -553,4 +557,136 @@ func TestConcurrentReconfigureIsSafe(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+// ── Схлопывание событий и частота правок ────────────────────────────────────
+
+func uplinkOK() *uplink.Status {
+	return &uplink.Status{EngineUp: true, Applicable: true, AliveWriters: 65, RequiredWriters: 43, Level: uplink.LevelGreen}
+}
+
+func uplinkDown() *uplink.Status {
+	st := uplinkOK()
+	st.AliveWriters = 0
+	st.Level = uplink.LevelRed
+	st.Problems = []string{"нет ни одного живого писателя"}
+	return st
+}
+
+// Главное правило: два источника, сорвавшиеся одновременно, дают ОДНО
+// сообщение с двумя шапками. Иначе человек получает два уведомления подряд,
+// и каждое знает только про свою половину происходящего.
+func TestSimultaneousIncidentsProduceOneMessage(t *testing.T) {
+	b, rec := newTestBot(t, Deps{}, PersistedState{MessageID: 77})
+
+	b.absorbAvailability(verdict(20)) // ниже порога
+	b.absorbUplink(uplinkDown())
+	b.evaluateAndDeliver(context.Background())
+
+	if n := rec.count("sendMessage"); n != 1 {
+		t.Fatalf("отправлено %d сообщений, ожидалось одно: %v", n, rec.methods())
+	}
+	text, _ := rec.find("sendMessage").Body["text"].(string)
+	if !strings.Contains(text, "ПАДЕНИЕ ДОСТУПНОСТИ") {
+		t.Errorf("в сообщении нет тревоги о доступности:\n%s", text)
+	}
+	if !strings.Contains(text, "ПОТЕРЯЛ СВЯЗЬ С TELEGRAM") {
+		t.Errorf("в сообщении нет тревоги о связи:\n%s", text)
+	}
+}
+
+// Тихие правки прорежаются: наблюдение идёт раз в минуту, и в спокойное время
+// сообщение менялось бы только цифрами RTT — полторы тысячи правок в сутки.
+func TestQuietEditsAreThrottled(t *testing.T) {
+	b, rec := newTestBot(t, Deps{}, PersistedState{MessageID: 77})
+	now := b.now()
+
+	b.absorbUplink(uplinkOK())
+	b.evaluateAndDeliver(context.Background())
+	if rec.count("editMessageText") != 1 {
+		t.Fatalf("первая правка не прошла: %v", rec.methods())
+	}
+
+	// Минуту спустя — ещё один спокойный вердикт, правки быть не должно.
+	b.now = func() time.Time { return now.Add(time.Minute) }
+	b.absorbUplink(uplinkOK())
+	b.evaluateAndDeliver(context.Background())
+	if rec.count("editMessageText") != 1 {
+		t.Errorf("правка прошла через минуту, ожидалось прореживание: %v", rec.methods())
+	}
+
+	// Через шесть минут — можно.
+	b.now = func() time.Time { return now.Add(6 * time.Minute) }
+	b.absorbUplink(uplinkOK())
+	b.evaluateAndDeliver(context.Background())
+	if rec.count("editMessageText") != 2 {
+		t.Errorf("правка не прошла через шесть минут: %v", rec.methods())
+	}
+}
+
+// Тревога прореживание игнорирует: авария есть авария.
+func TestLoudEventIgnoresThrottle(t *testing.T) {
+	b, rec := newTestBot(t, Deps{}, PersistedState{MessageID: 77})
+
+	b.absorbUplink(uplinkOK())
+	b.evaluateAndDeliver(context.Background())
+
+	b.absorbUplink(uplinkDown())
+	b.evaluateAndDeliver(context.Background())
+
+	if rec.count("sendMessage") != 1 {
+		t.Errorf("тревога не доставлена сразу: %v", rec.methods())
+	}
+}
+
+// Пауза глушит звук, но не мешает считать инциденты: иначе после её снятия
+// авария выглядела бы новой и разбудила бы ещё раз.
+func TestMuteSilencesButKeepsCounting(t *testing.T) {
+	b, rec := newTestBot(t, Deps{}, PersistedState{
+		MessageID: 77,
+		Incidents: Incidents{MutedUntil: time.Date(2026, 8, 11, 18, 0, 0, 0, time.UTC)},
+	})
+
+	b.absorbUplink(uplinkDown())
+	b.evaluateAndDeliver(context.Background())
+
+	if rec.count("sendMessage") != 0 {
+		t.Errorf("во время паузы ушло звуковое сообщение: %v", rec.methods())
+	}
+	if !b.state.Incidents.Uplink.Active {
+		t.Error("во время паузы инцидент не зафиксирован — после снятия он будет объявлен новым")
+	}
+}
+
+func TestUplinkVerdictReachesMessage(t *testing.T) {
+	b, rec := newTestBot(t, Deps{}, PersistedState{MessageID: 77})
+
+	b.absorbUplink(uplinkOK())
+	b.evaluateAndDeliver(context.Background())
+
+	edit := rec.find("editMessageText")
+	if edit == nil {
+		t.Fatalf("вызовы %v", rec.methods())
+	}
+	if text, _ := edit.Body["text"].(string); !strings.Contains(text, "Связь с Telegram") {
+		t.Errorf("блок связи не попал в сообщение:\n%s", text)
+	}
+}
+
+func TestOnUplinkNeverBlocks(t *testing.T) {
+	b := New(Deps{}, PersistedState{})
+
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 1000; i++ {
+			b.OnUplink(uplinkOK())
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("OnUplink заблокировался — наблюдение встало бы вместе с ним")
+	}
 }

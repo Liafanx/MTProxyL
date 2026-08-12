@@ -83,11 +83,28 @@ func (r *Resolver) Describe(ctx context.Context, host string) HostInfo {
 }
 
 func (r *Resolver) serverIP(ctx context.Context) string {
+	return r.PublicIPFresh(ctx).IP
+}
+
+// PublicIPResult отличает свежий ответ от отданного по кэшу или после сбоя.
+//
+// Разница важна ровно в одном месте — решении «сменился ли адрес сервера».
+// Резолвер намеренно отдаёт последнее известное значение, когда сервисы
+// определения IP не ответили, и без признака свежести такой ответ был бы
+// неотличим от настоящего наблюдения.
+type PublicIPResult struct {
+	IP    string
+	Fresh bool
+}
+
+// PublicIPFresh возвращает внешний адрес сервера и признак того, что его
+// действительно сейчас сообщили, а не достали из кэша.
+func (r *Resolver) PublicIPFresh(ctx context.Context) PublicIPResult {
 	r.mu.Lock()
 	if r.cachedIP != "" && r.now().Sub(r.fetchedAt) < publicIPTTL {
 		ip := r.cachedIP
 		r.mu.Unlock()
-		return ip
+		return PublicIPResult{IP: ip, Fresh: false}
 	}
 	r.mu.Unlock()
 
@@ -97,12 +114,12 @@ func (r *Resolver) serverIP(ctx context.Context) string {
 		// пустой строки, а сервисы определения IP регулярно недоступны.
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		return r.cachedIP
+		return PublicIPResult{IP: r.cachedIP, Fresh: false}
 	}
 
 	r.mu.Lock()
 	r.cachedIP = ip
 	r.fetchedAt = r.now()
 	r.mu.Unlock()
-	return ip
+	return PublicIPResult{IP: ip, Fresh: true}
 }

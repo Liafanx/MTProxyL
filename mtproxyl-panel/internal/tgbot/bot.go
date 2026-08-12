@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Liafanx/mtproxyl-panel/internal/globalping"
+	"github.com/Liafanx/mtproxyl-panel/internal/uplink"
 )
 
 const (
@@ -26,6 +27,14 @@ const (
 	// pollBackoffMin/Max — пауза после сетевого сбоя опроса.
 	pollBackoffMin = time.Second
 	pollBackoffMax = 30 * time.Second
+
+	// coalesceWindow — сколько ждать второй источник, прежде чем оценивать.
+	// Достаточно, чтобы совпавшие по времени вердикты попали в одну доставку,
+	// и незаметно для человека.
+	coalesceWindow = 2 * time.Second
+
+	// quietEditInterval — минимальная пауза между тихими правками сообщения.
+	quietEditInterval = 5 * time.Minute
 
 	// tombstone заменяет прежнее сообщение, если удалить его не вышло:
 	// Telegram не даёт боту удалять свои сообщения старше 48 часов.
@@ -50,7 +59,7 @@ type Config struct {
 // PersistedState — то, что обязано пережить перезапуск панели.
 type PersistedState struct {
 	MessageID int
-	Alert     AlertState
+	Incidents Incidents
 }
 
 // Deps — всё, что боту нужно от остальной панели. Функциями, а не ссылкой на
@@ -63,6 +72,9 @@ type Deps struct {
 	AutoCheck   func() bool
 	Target      func(context.Context) (globalping.Target, error)
 	Interval    time.Duration
+	// UplinkSnapshot отдаёт последний вердикт наблюдения за связью с
+	// дата-центрами; nil, если наблюдение выключено.
+	UplinkSnapshot func() *uplink.Status
 	// Persist сохраняет PersistedState. Может быть nil — тогда состояние
 	// живёт до перезапуска.
 	Persist func(PersistedState) error
@@ -93,9 +105,26 @@ type Bot struct {
 	lastErr  string
 	running  bool
 
-	// results принимает вердикты от проверки. Ёмкость 1 с вытеснением: если
-	// воркер занят, копится не очередь, а только самый свежий результат.
+	lastUplink *uplink.Status
+	// pending* — то, что пришло и ещё не оценено. Оценка идёт один раз на
+	// такт, после короткого окна ожидания: иначе два источника, сработавшие
+	// одновременно, дали бы две доставки подряд.
+	pendingResult *globalping.CheckResult
+	pendingUplink *uplink.Status
+	// pendingIP — новый внешний адрес, ждущий подтверждения вторым свежим
+	// наблюдением. В памяти, не на диске: это защита от разовой ошибки
+	// сервиса определения IP, а не состояние, которое надо помнить.
+	pendingIP  string
+	lastEditAt time.Time
+	// forceRedraw просит следующую перерисовку пройти в обход ограничения
+	// частоты: её ждёт человек, нажавший кнопку или набравший команду.
+	forceRedraw bool
+
+	// results и uplinks принимают вердикты источников. Ёмкость 1 с
+	// вытеснением: если воркер занят, копится не очередь, а только самый
+	// свежий результат.
 	results chan *globalping.CheckResult
+	uplinks chan *uplink.Status
 	// redraw просит перерисовать сообщение без нового измерения.
 	redraw chan struct{}
 
@@ -115,6 +144,7 @@ func New(deps Deps, state PersistedState) *Bot {
 		now:      time.Now,
 		state:    state,
 		results:  make(chan *globalping.CheckResult, 1),
+		uplinks:  make(chan *uplink.Status, 1),
 		redraw:   make(chan struct{}, 1),
 	}
 }
@@ -159,6 +189,26 @@ func (b *Bot) OnResult(r *globalping.CheckResult) {
 		}
 		select {
 		case b.results <- r:
+		default:
+		}
+	}
+}
+
+// OnUplink — подписчик наблюдения за связью с дата-центрами. Тот же контракт,
+// что у OnResult: возвращается мгновенно, копится только самый свежий вердикт.
+func (b *Bot) OnUplink(st *uplink.Status) {
+	if st == nil {
+		return
+	}
+	select {
+	case b.uplinks <- st:
+	default:
+		select {
+		case <-b.uplinks:
+		default:
+		}
+		select {
+		case b.uplinks <- st:
 		default:
 		}
 	}
@@ -279,28 +329,53 @@ func (b *Bot) worker(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case r := <-b.results:
-			b.handleResult(ctx, r)
+			b.absorbAvailability(r)
+			b.coalesce(ctx)
+		case u := <-b.uplinks:
+			b.absorbUplink(u)
+			b.coalesce(ctx)
 		case <-b.redraw:
 			b.handleRedraw(ctx)
 		}
 	}
 }
 
-func (b *Bot) requestRedraw() {
-	select {
-	case b.redraw <- struct{}{}:
-	default:
+// coalesce даёт второму источнику короткое окно, чтобы подоспеть, и только
+// потом оценивает всё разом.
+//
+// Без окна получалось бы так: проверка доступности идёт раз в 15 минут,
+// наблюдение за связью — раз в минуту, и каждые пятнадцать минут их будильники
+// совпадают. Воркер разобрал бы два результата подряд и прислал два сообщения,
+// каждое из которых знает только про свою половину происходящего.
+func (b *Bot) coalesce(ctx context.Context) {
+	timer := time.NewTimer(coalesceWindow)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case r := <-b.results:
+			b.absorbAvailability(r)
+		case u := <-b.uplinks:
+			b.absorbUplink(u)
+		case <-timer.C:
+			b.evaluateAndDeliver(ctx)
+			return
+		}
 	}
 }
 
-// handleResult — новый вердикт: обновить память, решить, было ли событие, и
-// доставить сообщение.
-func (b *Bot) handleResult(ctx context.Context, r *globalping.CheckResult) {
+// absorbAvailability запоминает вердикт проверки доступности, не оценивая его.
+func (b *Bot) absorbAvailability(r *globalping.CheckResult) {
+	if r == nil {
+		return
+	}
 	now := b.now()
 
 	b.mu.Lock()
-	failed := r.Error != "" || r.TotalProbes == 0
-	if failed {
+	defer b.mu.Unlock()
+
+	if r.Error != "" || r.TotalProbes == 0 {
 		// Неудача не обнуляет доступность: последний удачный вердикт остаётся
 		// на месте, а рядом появляется объяснение, почему свежих цифр нет.
 		b.lastFail = &Failure{Reason: r.Error, At: r.CheckedAt}
@@ -314,10 +389,57 @@ func (b *Bot) handleResult(ctx context.Context, r *globalping.CheckResult) {
 		b.lastGood = r
 		b.lastFail = nil
 	}
-	decision := Decide(b.state.Alert, r, b.cfg.AlertThreshold, now)
-	b.state.Alert = decision.State
-	persist := b.deps.Persist
-	state := b.state
+	b.pendingResult = r
+}
+
+// absorbUplink запоминает вердикт наблюдения за связью, не оценивая его.
+func (b *Bot) absorbUplink(st *uplink.Status) {
+	if st == nil {
+		return
+	}
+	b.mu.Lock()
+	b.lastUplink = st
+	b.pendingUplink = st
+	b.mu.Unlock()
+}
+
+// evaluateAndDeliver — единственное место, где считаются инциденты и меняется
+// сохранённое состояние. Ровно один раз на такт: так гарантируется и одна
+// доставка, и отсутствие гонок между двумя источниками.
+func (b *Bot) evaluateAndDeliver(ctx context.Context) {
+	now := b.now()
+
+	b.mu.Lock()
+	inc := b.state.Incidents
+	result, uplinkStatus := b.pendingResult, b.pendingUplink
+	b.pendingResult, b.pendingUplink = nil, nil
+	threshold := b.cfg.AlertThreshold
+	b.mu.Unlock()
+
+	d := delivery{Now: now}
+
+	if result != nil {
+		av := Decide(inc.Availability, result, threshold, now)
+		inc.Availability = av.State
+		d.addAvailability(av)
+	}
+
+	if uplinkStatus != nil {
+		up := DecideUplink(inc, uplinkStatus, now)
+		inc = up.State
+		d.addUplink(up)
+		inc = b.notePublicIP(inc, uplinkStatus, &d)
+	}
+
+	// Пауза глушит только звук. Инциденты считаются и запоминаются как обычно —
+	// иначе после снятия паузы бот считал бы аварию новой и разбудил бы ещё раз.
+	if inc.Muted(now) {
+		d.Loud = false
+	}
+
+	b.mu.Lock()
+	b.state.Incidents = inc
+	persist, state := b.deps.Persist, b.state
 	b.mu.Unlock()
 
 	if persist != nil {
@@ -326,11 +448,103 @@ func (b *Bot) handleResult(ctx context.Context, r *globalping.CheckResult) {
 		}
 	}
 
-	b.deliver(ctx, decision)
+	b.deliver(ctx, d)
+}
+
+// notePublicIP сверяет внешний адрес сервера с прежним. Живёт здесь, а не в
+// наблюдателе за связью: адрес узнаёт резолвер бота, и он же умеет отличать
+// свежий ответ от отданного по кэшу.
+func (b *Bot) notePublicIP(inc Incidents, _ *uplink.Status, d *delivery) Incidents {
+	res := b.resolver.PublicIPFresh(context.Background())
+
+	b.mu.Lock()
+	pending := b.pendingIP
+	b.mu.Unlock()
+
+	known, pending, changed := DecideIPChange(inc.LastKnownIP, pending, res.IP, res.Fresh)
+
+	b.mu.Lock()
+	b.pendingIP = pending
+	b.mu.Unlock()
+
+	if changed {
+		d.Banners = append(d.Banners, BannerIPChanged)
+		d.PrevIP, d.NewIP = inc.LastKnownIP, known
+		d.Loud = true
+	}
+	inc.LastKnownIP = known
+	return inc
+}
+
+func (b *Bot) requestRedraw() {
+	select {
+	case b.redraw <- struct{}{}:
+	default:
+	}
+}
+
+// delivery — что показать и как: тихой правкой или новым сообщением со звуком.
+//
+// Шапок может быть несколько, а сообщение всё равно одно: две аварии,
+// сорвавшиеся одновременно, не должны приходить двумя уведомлениями.
+type delivery struct {
+	Loud    bool
+	Banners []Banner
+
+	PrevPercentage float64
+	PrevKnown      bool
+	AlertSince     time.Time
+	UplinkSince    time.Time
+	EngineSince    time.Time
+	PrevIP, NewIP  string
+
+	// Force — правка нужна немедленно, в обход ограничения частоты: команда
+	// или кнопка от человека, ждущего ответа.
+	Force bool
+	Now   time.Time
+}
+
+func (d *delivery) addAvailability(av Decision) {
+	d.PrevPercentage, d.PrevKnown, d.AlertSince = av.Prev, av.PrevKnown, av.AlertSince
+	switch av.Event {
+	case EventDown:
+		d.Banners = append(d.Banners, BannerDown)
+		d.Loud = true
+	case EventRecovered:
+		d.Banners = append(d.Banners, BannerRecovered)
+		d.Loud = true
+	}
+}
+
+// addUplink добавляет шапки движка и связи. Движок идёт первым: если он лежит,
+// это объясняет всё остальное.
+func (d *delivery) addUplink(up UplinkDecision) {
+	d.UplinkSince, d.EngineSince = up.UplinkSince, up.EngineSince
+
+	switch up.EngineEvent {
+	case EventDown:
+		d.Banners = append(d.Banners, BannerEngineDown)
+		d.Loud = true
+	case EventRecovered:
+		d.Banners = append(d.Banners, BannerEngineOK)
+		d.Loud = true
+	}
+	if up.Restarted {
+		d.Banners = append(d.Banners, BannerEngineRestarted)
+		d.Loud = true
+	}
+	switch up.UplinkEvent {
+	case EventDown:
+		d.Banners = append(d.Banners, BannerUplinkDown)
+		d.Loud = true
+	case EventRecovered:
+		d.Banners = append(d.Banners, BannerUplinkOK)
+		d.Loud = true
+	}
 }
 
 // handleRedraw перерисовывает сообщение по тому, что уже известно: кнопка
-// «Обновить», включение бота, старт панели.
+// «Обновить», команда, включение бота, старт панели.
 func (b *Bot) handleRedraw(ctx context.Context) {
 	b.mu.Lock()
 	if b.lastGood == nil && b.deps.Snapshot != nil {
@@ -338,42 +552,66 @@ func (b *Bot) handleRedraw(ctx context.Context) {
 			b.lastGood = snap
 		}
 	}
-	st := b.state.Alert
+	if b.lastUplink == nil && b.deps.UplinkSnapshot != nil {
+		b.lastUplink = b.deps.UplinkSnapshot()
+	}
+	inc := b.state.Incidents
+	force := b.forceRedraw
+	b.forceRedraw = false
 	b.mu.Unlock()
 
-	b.deliver(ctx, Decision{
-		Event:      EventNone,
-		Prev:       st.LastPct,
-		PrevKnown:  st.HasPct,
-		AlertSince: st.Since,
-		State:      st,
+	b.deliver(ctx, delivery{
+		PrevPercentage: inc.Availability.LastPct,
+		PrevKnown:      inc.Availability.HasPct,
+		AlertSince:     inc.Availability.Since,
+		UplinkSince:    inc.Uplink.Since,
+		EngineSince:    inc.Engine.Since,
+		Force:          force,
+		Now:            b.now(),
 	})
 }
 
 // deliver собирает текст и кладёт его в чат: тихой правкой, если ничего не
 // случилось, и новым сообщением, если случилось. Правка не даёт звука —
 // потому событию и нужна отправка заново.
-func (b *Bot) deliver(ctx context.Context, d Decision) {
+func (b *Bot) deliver(ctx context.Context, d delivery) {
 	b.mu.Lock()
 	client, cfg := b.client, b.cfg
 	messageID := b.state.MessageID
+	inc := b.state.Incidents
 	view := View{
 		Result:         b.lastGood,
 		Failure:        b.lastFail,
+		Uplink:         b.lastUplink,
 		Quota:          zeroQuota(b.deps.Quota),
 		AutoCheck:      b.deps.AutoCheck == nil || b.deps.AutoCheck(),
 		Interval:       b.deps.Interval,
-		Banner:         bannerFor(d.Event),
-		PrevPercentage: d.Prev,
+		Banners:        d.Banners,
+		PrevPercentage: d.PrevPercentage,
 		PrevKnown:      d.PrevKnown,
 		AlertSince:     d.AlertSince,
+		UplinkSince:    d.UplinkSince,
+		EngineSince:    d.EngineSince,
+		PrevIP:         d.PrevIP,
+		NewIP:          d.NewIP,
+		MutedUntil:     inc.MutedUntil,
+		MuteForever:    inc.MuteForever,
 		Threshold:      cfg.AlertThreshold,
 		Now:            b.now(),
 	}
 	targetFn := b.deps.Target
+	sinceEdit := view.Now.Sub(b.lastEditAt)
 	b.mu.Unlock()
 
 	if !cfg.Enabled || client == nil || cfg.AdminID == 0 {
+		return
+	}
+
+	// Тихие правки — не чаще, чем раз в quietEditInterval. Наблюдение за связью
+	// идёт раз в минуту, и в спокойное время сообщение менялось бы только
+	// цифрами RTT и отметкой времени — полторы тысячи правок в сутки ради
+	// ничего. Событие, команда и первое сообщение ограничение обходят.
+	if !d.Loud && !d.Force && messageID != 0 && sinceEdit < quietEditInterval {
 		return
 	}
 	if view.Threshold <= 0 {
@@ -392,15 +630,23 @@ func (b *Bot) deliver(ctx context.Context, d Decision) {
 	text := RenderStatus(view)
 	kb := keyboard()
 
-	if d.Event == EventNone && messageID != 0 {
+	// Тихая правка — когда события не было. Событие требует звука, а правка
+	// его не даёт, поэтому там сообщение отправляется заново.
+	//
+	// Отдельный случай — Force без события: команда «покажи статус». Она тоже
+	// переотправляет сообщение, но без звука: человек попросил показать статус,
+	// и он должен оказаться внизу чата, а не остаться где-то выше в истории.
+	if !d.Loud && !d.Force && messageID != 0 {
 		err := client.EditMessageText(ctx, cfg.AdminID, messageID, text, kb)
 		if err == nil {
+			b.noteEdit()
 			b.setLastError("")
 			return
 		}
 		if apiErr, ok := asAPIError(err); ok {
 			if apiErr.IsNotModified() {
 				// Вердикт повторился слово в слово — это норма, а не сбой.
+				b.noteEdit()
 				b.setLastError("")
 				return
 			}
@@ -416,11 +662,14 @@ func (b *Bot) deliver(ctx context.Context, d Decision) {
 		}
 	}
 
-	sent, err := client.SendMessage(ctx, cfg.AdminID, text, kb, false)
+	// Звук — только у настоящих событий. Ответ на команду переезжает вниз чата
+	// молча: человек и так смотрит на экран.
+	sent, err := client.SendMessage(ctx, cfg.AdminID, text, kb, !d.Loud)
 	if err != nil {
 		b.reportError("отправка сообщения", err)
 		return
 	}
+	b.noteEdit()
 	b.setLastError("")
 
 	b.mu.Lock()
@@ -468,6 +717,14 @@ func zeroQuota(fn func() globalping.QuotaState) globalping.QuotaState {
 		return globalping.QuotaState{}
 	}
 	return fn()
+}
+
+// noteEdit запоминает время последней правки — по нему считается пауза между
+// тихими правками.
+func (b *Bot) noteEdit() {
+	b.mu.Lock()
+	b.lastEditAt = b.now()
+	b.mu.Unlock()
 }
 
 func (b *Bot) setLastError(msg string) {

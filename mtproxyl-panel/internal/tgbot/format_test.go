@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Liafanx/mtproxyl-panel/internal/globalping"
+	"github.com/Liafanx/mtproxyl-panel/internal/uplink"
 )
 
 func sampleResult(total, ok int) *globalping.CheckResult {
@@ -128,7 +129,7 @@ func TestRenderStatusShortMessageIsNotTruncated(t *testing.T) {
 
 func TestRenderStatusDownBanner(t *testing.T) {
 	v := baseView(sampleResult(20, 11))
-	v.Banner = BannerDown
+	v.Banners = []Banner{BannerDown}
 	v.PrevPercentage = 95
 	v.PrevKnown = true
 	v.AlertSince = v.Now.Add(-25 * time.Minute)
@@ -148,7 +149,7 @@ func TestRenderStatusDownBanner(t *testing.T) {
 
 func TestRenderStatusRecoveredBanner(t *testing.T) {
 	v := baseView(sampleResult(20, 18))
-	v.Banner = BannerRecovered
+	v.Banners = []Banner{BannerRecovered}
 	v.PrevPercentage = 55
 	v.PrevKnown = true
 	v.AlertSince = v.Now.Add(-90 * time.Minute)
@@ -279,7 +280,7 @@ func TestRenderStatusClampsEvenWithoutProbes(t *testing.T) {
 		Percentage: 55, TotalProbes: 20, SuccessProbes: 11,
 		CheckedAt: time.Now(), Level: globalping.LevelYellow,
 	})
-	v.Banner = BannerDown
+	v.Banners = []Banner{BannerDown}
 	v.PrevKnown = true
 	v.PrevPercentage = 95
 	v.Target.Host = strings.Repeat("длинный-хост.", 400)
@@ -306,5 +307,189 @@ func TestClampCutsOnLineBoundary(t *testing.T) {
 	// Обрыв по границе строки не разрывает теги разметки.
 	if strings.Count(out, "<") != strings.Count(out, ">") {
 		t.Error("обрезка разорвала HTML-тег")
+	}
+}
+
+// ── Второй блок: связь с дата-центрами ──────────────────────────────────────
+
+func liveUplink() *uplink.Status {
+	rtt := 142.0
+	return &uplink.Status{
+		CheckedAt:       time.Date(2026, 8, 11, 17, 34, 2, 0, time.Local),
+		EngineUp:        true,
+		Version:         "1.2.3",
+		UptimeSeconds:   3600,
+		Applicable:      true,
+		AliveWriters:    65,
+		RequiredWriters: 43,
+		DCs: []uplink.DCRtt{
+			{DC: 1, RTTEmaMs: &rtt, AliveWriters: 19, RequiredWriters: 3, CoveragePct: 100},
+			{DC: 3, RTTEmaMs: nil, AliveWriters: 0, RequiredWriters: 3, CoveragePct: 0},
+		},
+		HasFailRate: true,
+		Attempts:    1000,
+		Fails:       4,
+		FailRate:    0.004,
+		Level:       uplink.LevelGreen,
+	}
+}
+
+func TestRenderStatusHasUplinkBlock(t *testing.T) {
+	v := baseView(sampleResult(20, 19))
+	v.Uplink = liveUplink()
+
+	out := RenderStatus(v)
+
+	for _, want := range []string{
+		"Связь с Telegram — норма",
+		"выход: прокси → дата-центры",
+		"Писатели: <b>65</b> живых / 43 нужно",
+		"Ошибок подключения: 0.4%",
+		"DC 1: 142 мс",
+		"Движок: 1.2.3",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("в блоке связи нет %q\n---\n%s", want, out)
+		}
+	}
+	// Дата-центр без писателей показывается, но аварией не объявляется.
+	if !strings.Contains(out, "DC 3: —") {
+		t.Errorf("дата-центр без RTT не показан:\n%s", out)
+	}
+}
+
+// Блок связи обязан идти до списка зондов: обрезка считает уже занятое место,
+// и поставленный после зондов блок при полусотне зондов просто не поместился бы.
+func TestUplinkBlockComesBeforeProbes(t *testing.T) {
+	v := baseView(sampleResult(50, 25))
+	long := strings.Repeat("Очень Длинное Имя Провайдера ", 6)
+	for i := range v.Result.Probes {
+		v.Result.Probes[i].Network = long
+	}
+	v.Uplink = liveUplink()
+
+	out := RenderStatus(v)
+
+	if n := len([]rune(out)); n > MessageLimit {
+		t.Fatalf("длина %d рун превышает предел %d", n, MessageLimit)
+	}
+	uplinkAt := strings.Index(out, "Связь с Telegram")
+	probesAt := strings.Index(out, "<b>Зонды (50):</b>")
+	if uplinkAt < 0 {
+		t.Fatalf("блок связи вытеснен списком зондов:\n%s", out)
+	}
+	if probesAt >= 0 && uplinkAt > probesAt {
+		t.Error("блок связи стоит после списка зондов — при полусотне зондов он пропадёт")
+	}
+}
+
+// Выключенный middle proxy — не авария: так работает часть установок.
+func TestRenderStatusUplinkNotApplicable(t *testing.T) {
+	v := baseView(sampleResult(2, 2))
+	v.Uplink = &uplink.Status{EngineUp: true, Applicable: false, NotApplicableReason: "функция выключена в конфиге движка"}
+
+	out := RenderStatus(v)
+
+	if !strings.Contains(out, "данные недоступны — функция выключена в конфиге движка") {
+		t.Errorf("нет объяснения про выключенный middle proxy:\n%s", out)
+	}
+	if strings.Contains(out, "ПОТЕРЯЛ СВЯЗЬ") {
+		t.Errorf("выключенный middle proxy показан как авария:\n%s", out)
+	}
+}
+
+func TestRenderStatusUplinkNoData(t *testing.T) {
+	v := baseView(sampleResult(2, 2))
+	v.Uplink = &uplink.Status{EngineError: "движок telemt не отвечает"}
+
+	out := RenderStatus(v)
+
+	if !strings.Contains(out, "Связь с Telegram — нет данных") {
+		t.Errorf("нет строки об отсутствии данных:\n%s", out)
+	}
+	if !strings.Contains(out, "движок telemt не отвечает") {
+		t.Errorf("не показана причина:\n%s", out)
+	}
+}
+
+func TestRenderStatusUplinkDownBanner(t *testing.T) {
+	v := baseView(sampleResult(20, 19))
+	u := liveUplink()
+	u.AliveWriters = 0
+	u.Level = uplink.LevelRed
+	u.Problems = []string{"нет ни одного живого писателя — прокси не может писать в Telegram"}
+	v.Uplink = u
+	v.Banners = []Banner{BannerUplinkDown}
+	v.UplinkSince = v.Now.Add(-4 * time.Minute)
+
+	out := RenderStatus(v)
+
+	for _, want := range []string{
+		"ПРОКСИ ПОТЕРЯЛ СВЯЗЬ С TELEGRAM",
+		"не может писать в Telegram",
+		"Длится 4 мин",
+		"режут выход к дата-центрам, а не вход к прокси",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("в тревоге нет %q\n---\n%s", want, out)
+		}
+	}
+}
+
+// Две аварии сразу дают одно сообщение с двумя шапками, а не два сообщения.
+func TestRenderStatusShowsSeveralBanners(t *testing.T) {
+	v := baseView(sampleResult(20, 5))
+	v.Uplink = liveUplink()
+	v.Banners = []Banner{BannerEngineDown, BannerDown}
+	v.PrevKnown = true
+	v.PrevPercentage = 95
+
+	out := RenderStatus(v)
+
+	if !strings.Contains(out, "ДВИЖОК НЕДОСТУПЕН") {
+		t.Errorf("нет шапки движка:\n%s", out)
+	}
+	if !strings.Contains(out, "ПАДЕНИЕ ДОСТУПНОСТИ") {
+		t.Errorf("нет шапки доступности:\n%s", out)
+	}
+}
+
+func TestRenderStatusIPChangedBanner(t *testing.T) {
+	v := baseView(sampleResult(2, 2))
+	v.Banners = []Banner{BannerIPChanged}
+	v.PrevIP, v.NewIP = "203.0.113.10", "198.51.100.7"
+
+	out := RenderStatus(v)
+
+	if !strings.Contains(out, "Сменился внешний адрес сервера") {
+		t.Errorf("нет шапки смены адреса:\n%s", out)
+	}
+	if !strings.Contains(out, "198.51.100.7") || !strings.Contains(out, "203.0.113.10") {
+		t.Errorf("не показаны оба адреса:\n%s", out)
+	}
+}
+
+// Пока сирена выключена, об этом надо напоминать в каждом сообщении: иначе
+// легко поставить паузу на время работ и забыть о ней.
+func TestRenderStatusShowsMuteNote(t *testing.T) {
+	v := baseView(sampleResult(2, 2))
+	v.MutedUntil = v.Now.Add(30 * time.Minute)
+
+	out := RenderStatus(v)
+
+	if !strings.Contains(out, "Тревоги заглушены до") {
+		t.Errorf("нет напоминания о паузе:\n%s", out)
+	}
+	if !strings.Contains(out, "/unmute") {
+		t.Errorf("не сказано, как снять паузу:\n%s", out)
+	}
+}
+
+func TestRenderStatusMuteForever(t *testing.T) {
+	v := baseView(sampleResult(2, 2))
+	v.MuteForever = true
+
+	if out := RenderStatus(v); !strings.Contains(out, "заглушены до отмены") {
+		t.Errorf("нет напоминания о бессрочной паузе:\n%s", out)
 	}
 }
