@@ -66,8 +66,9 @@ type TelegramBotConfig struct {
 	MutedUntilUnix int64 `json:"muted_until_unix,omitempty"`
 	MuteForever    bool  `json:"mute_forever,omitempty"`
 
-	// ConnectFailThreshold — доля неудачных подключений к дата-центрам, выше
-	// которой поднимается тревога.
+	// ConnectFailThreshold — доля отказов БЕЗ ПОВТОРА при подключении к
+	// дата-центрам, выше которой поднимается тревога. Имя поля осталось прежним
+	// ради совместимости с уже записанными файлами настроек.
 	ConnectFailThreshold *float64 `json:"connect_fail_threshold,omitempty"`
 }
 
@@ -316,7 +317,7 @@ func (s *Server) registerTelegramRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		}
 		if body.ConnectFailThreshold != nil && (*body.ConnectFailThreshold < 1 || *body.ConnectFailThreshold > 100) {
 			writeError(w, http.StatusBadRequest, "invalid_connect_threshold",
-				"Порог ошибок подключения — от 1 до 100 процентов")
+				"Порог отказов без повтора — от 1 до 100 процентов")
 			return
 		}
 

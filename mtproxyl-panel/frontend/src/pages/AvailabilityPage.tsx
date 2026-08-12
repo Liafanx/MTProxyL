@@ -412,7 +412,7 @@ function TelegramBotForm() {
     if (failThreshold.trim()) {
       const value = Number(failThreshold.trim());
       if (!Number.isFinite(value) || value < 1 || value > 100) {
-        setError('Порог ошибок подключения — от 1 до 100 процентов');
+        setError('Порог отказов без повтора — от 1 до 100 процентов');
         return;
       }
       patch.connect_fail_threshold = value;
@@ -526,7 +526,7 @@ function TelegramBotForm() {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          <label className="text-xs text-text-secondary w-28 shrink-0">Ошибки связи</label>
+          <label className="text-xs text-text-secondary w-28 shrink-0">Отказы связи</label>
           <Input
             type="number"
             min={1}
@@ -537,7 +537,9 @@ function TelegramBotForm() {
             className="max-w-[100px]"
           />
           <span className="text-xs text-text-secondary">
-            % — доля неудачных подключений к дата-центрам, выше которой приходит алерт
+            % — доля отказов без повтора при подключении к дата-центрам, выше которой приходит
+            алерт. Обычные неудачные попытки сюда не входят: движок штатно пробует несколько
+            маршрутов и берёт первый ответивший
           </span>
         </div>
 

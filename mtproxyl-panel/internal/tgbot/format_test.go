@@ -332,6 +332,7 @@ func liveUplink() *uplink.Status {
 		Attempts:    1000,
 		Fails:       4,
 		FailRate:    0.004,
+		HardFails:   0,
 		Level:       uplink.LevelGreen,
 	}
 }
@@ -346,7 +347,8 @@ func TestRenderStatusHasUplinkBlock(t *testing.T) {
 		"Связь с Telegram — норма",
 		"выход: прокси → дата-центры",
 		"Писатели: <b>65</b> живых / 43 нужно",
-		"Ошибок подключения: 0.4%",
+		"Попыток подключения: 1000",
+		"отброшено ретраев",
 		"DC 1: 142 мс",
 		"Движок: 1.2.3",
 	} {

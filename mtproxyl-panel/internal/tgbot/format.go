@@ -183,7 +183,14 @@ func writeUplink(b *strings.Builder, v View) {
 	}
 	fmt.Fprintf(b, "Писатели: <b>%d</b> живых / %d нужно\n", u.AliveWriters, u.RequiredWriters)
 	if u.HasFailRate && u.Attempts > 0 {
-		fmt.Fprintf(b, "Ошибок подключения: %.1f%% (%d из %d)\n", u.FailRate*100, u.Fails, u.Attempts)
+		// Обычные неудачные попытки — справка, а не признак аварии: движок
+		// долбится сразу в несколько точек и берёт первую ответившую, поэтому
+		// отброшенные ретраи попадают сюда даже при исправной связи.
+		fmt.Fprintf(b, "Попыток подключения: %d, отброшено ретраев %.0f%%\n",
+			u.Attempts, u.FailRate*100)
+		if u.HardFails > 0 {
+			fmt.Fprintf(b, "Отказов без повтора: <b>%d</b> (%.0f%%)\n", u.HardFails, u.HardRate*100)
+		}
 	}
 	writeDCs(b, u.DCs)
 	writeLoad(b, u)

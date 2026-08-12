@@ -30,6 +30,7 @@ type counterSnapshot struct {
 	startAt int64 // process_started_at_epoch_secs на момент снимка
 	attempt uint64
 	fail    uint64
+	hard    uint64
 }
 
 // Watcher опрашивает движок в фоне и отдаёт вердикт подписчику.
@@ -125,7 +126,9 @@ func (w *Watcher) Poll(ctx context.Context) *Status {
 		} else {
 			w.short = 0
 		}
-		if st.HasFailRate && st.Attempts > 0 && st.FailRate*100 > threshold {
+		// Считаем только отказы без повтора: обычные неудачные попытки — это
+		// отброшенные ретраи, их доля на нагруженном прокси штатно велика.
+		if st.HasFailRate && st.Attempts > 0 && st.HardRate*100 > threshold {
 			w.errored++
 		} else {
 			w.errored = 0
@@ -191,9 +194,10 @@ func (w *Watcher) collect(ctx context.Context) *Status {
 	st.AliveWriters, st.RequiredWriters = sumWriters(me.Data.DCRtt)
 
 	if up, err := w.client.UpstreamQuality(ctx); err == nil && up.Counters != nil {
-		st.Attempts, st.Fails, st.HasFailRate = w.delta(*up.Counters)
+		st.Attempts, st.Fails, st.HardFails, st.HasFailRate = w.delta(*up.Counters)
 		if st.HasFailRate && st.Attempts > 0 {
 			st.FailRate = float64(st.Fails) / float64(st.Attempts)
+			st.HardRate = float64(st.HardFails) / float64(st.Attempts)
 		}
 	}
 
@@ -227,7 +231,7 @@ func (w *Watcher) noteStart(startedAt int64) bool {
 // считается как отношение, а не «в минуту», поэтому пропущенные опросы её не
 // портят: если панель спала двадцать минут, дельта просто посчитается за эти
 // двадцать минут.
-func (w *Watcher) delta(cur UpstreamCounters) (attempts, fails uint64, ok bool) {
+func (w *Watcher) delta(cur UpstreamCounters) (attempts, fails, hard uint64, ok bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -235,15 +239,20 @@ func (w *Watcher) delta(cur UpstreamCounters) (attempts, fails uint64, ok bool) 
 	w.prev.taken = true
 	w.prev.attempt = cur.ConnectAttemptTotal
 	w.prev.fail = cur.ConnectFailTotal
+	w.prev.hard = cur.ConnectFailfastHardErrorTotal
 
 	switch {
 	case !prev.taken:
-		return 0, 0, false
-	case cur.ConnectAttemptTotal < prev.attempt || cur.ConnectFailTotal < prev.fail:
+		return 0, 0, 0, false
+	case cur.ConnectAttemptTotal < prev.attempt || cur.ConnectFailTotal < prev.fail ||
+		cur.ConnectFailfastHardErrorTotal < prev.hard:
 		// Счётчики поехали назад — движок перезапустился, окно рвём.
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
-	return cur.ConnectAttemptTotal - prev.attempt, cur.ConnectFailTotal - prev.fail, true
+	return cur.ConnectAttemptTotal - prev.attempt,
+		cur.ConnectFailTotal - prev.fail,
+		cur.ConnectFailfastHardErrorTotal - prev.hard,
+		true
 }
 
 // topClasses оставляет несколько самых частых классов ошибок: полный список

@@ -465,8 +465,9 @@ func TestZeroAttemptsIsNotAnIncident(t *testing.T) {
 	}
 }
 
-func TestHighFailRateIsAnIncident(t *testing.T) {
-	attempts, fails := uint64(1000), uint64(100)
+// Тревогу поднимают только отказы БЕЗ ПОВТОРА.
+func TestSustainedHardFailuresAreAnIncident(t *testing.T) {
+	attempts, fails, hard := uint64(1000), uint64(100), uint64(0)
 	c := fakeTelemt(t, func(path string, w http.ResponseWriter) {
 		if healthyEngine(path, w) {
 			return
@@ -476,29 +477,68 @@ func TestHighFailRateIsAnIncident(t *testing.T) {
 			ok(w, productionDCs)
 		case "/v1/runtime/upstream_quality":
 			ok(w, `{"enabled":true,"counters":{"connect_attempt_total":`+utoa(attempts)+
-				`,"connect_fail_total":`+utoa(fails)+`}}`)
+				`,"connect_fail_total":`+utoa(fails)+
+				`,"connect_failfast_hard_error_total":`+utoa(hard)+`}}`)
 		}
 	})
 	w := newTestWatcher(c)
 
 	w.Poll(context.Background())
-	attempts, fails = 1100, 180 // 80 неудач на 100 попыток
+	attempts, fails, hard = 1100, 180, 60 // 60 жёстких отказов на 100 попыток
 
-	// Первый всплеск ошибок — ещё не авария: клиенты массово переподключаются
-	// после обрыва, и доля скачет сама по себе.
+	// Первый всплеск — ещё не авария: сеть моргнула, движок переключил маршрут.
 	if st := w.Poll(context.Background()); st.Bad() {
-		t.Fatalf("одиночный всплеск ошибок объявлен аварией: %v", st.Problems)
+		t.Fatalf("одиночный всплеск отказов объявлен аварией: %v", st.Problems)
 	}
-	attempts, fails = 1200, 260
+	attempts, fails, hard = 1200, 260, 130
 	w.Poll(context.Background())
-	attempts, fails = 1300, 340
+	attempts, fails, hard = 1300, 340, 200
 	st := w.Poll(context.Background())
 
 	if !st.Bad() {
-		t.Fatal("устойчиво высокая доля ошибок не объявлена аварией")
+		t.Fatal("устойчивые отказы без повтора не объявлены аварией")
 	}
-	if !strings.Contains(st.Problems[0], "неудачных подключений") {
+	if !strings.Contains(st.Problems[0], "отказов без повтора") {
 		t.Errorf("причина = %q", st.Problems[0])
+	}
+}
+
+// Ровно тот случай, который заваливал чат тревогами на боевом прокси: движок
+// долбится в несколько точек подключения и берёт первую ответившую, поэтому
+// отброшенные ретраи дают высокую долю connect_fail_total при полностью
+// исправной связи — 62 живых писателя из 43 нужных, все дата-центры отвечают.
+func TestHighRetryRateWithoutHardFailuresIsNotAnIncident(t *testing.T) {
+	attempts, fails := uint64(1000), uint64(0)
+	c := fakeTelemt(t, func(path string, w http.ResponseWriter) {
+		if healthyEngine(path, w) {
+			return
+		}
+		switch path {
+		case "/v1/runtime/me_quality":
+			ok(w, productionDCs)
+		case "/v1/runtime/upstream_quality":
+			ok(w, `{"enabled":true,"counters":{"connect_attempt_total":`+utoa(attempts)+
+				`,"connect_fail_total":`+utoa(fails)+
+				`,"connect_failfast_hard_error_total":0}}`)
+		}
+	})
+	w := newTestWatcher(c)
+
+	// Четыре опроса подряд с долей 61% — и ни одной тревоги.
+	var st *Status
+	for i := 0; i < 4; i++ {
+		attempts += 1838
+		fails += 1128
+		st = w.Poll(context.Background())
+		if st.Bad() {
+			t.Fatalf("отброшенные ретраи объявлены аварией на опросе %d: %v", i+1, st.Problems)
+		}
+	}
+	if st.FailRate < 0.6 {
+		t.Fatalf("FailRate = %.2f — тест перестал воспроизводить исходный случай", st.FailRate)
+	}
+	if st.HardFails != 0 {
+		t.Errorf("HardFails = %d, ожидалось 0", st.HardFails)
 	}
 }
 
@@ -550,4 +590,38 @@ func itoa(v int64) string {
 		buf[i] = '-'
 	}
 	return string(buf[i:])
+}
+
+// Снимок ровно того сообщения, которым бот заваливал чат: доля неудачных
+// подключений 61% (1128 из 1838), при этом писателей 62 из 43 нужных и все
+// дата-центры отвечают. Тревоги быть не должно ни на каком опросе.
+func TestReportedFalseAlarmSnapshotStaysQuiet(t *testing.T) {
+	attempts, fails := uint64(100000), uint64(50000)
+	c := fakeTelemt(t, func(path string, w http.ResponseWriter) {
+		if healthyEngine(path, w) {
+			return
+		}
+		switch path {
+		case "/v1/runtime/me_quality":
+			ok(w, productionDCs)
+		case "/v1/runtime/upstream_quality":
+			ok(w, `{"enabled":true,"counters":{"connect_attempt_total":`+utoa(attempts)+
+				`,"connect_fail_total":`+utoa(fails)+
+				`,"connect_failfast_hard_error_total":0}}`)
+		}
+	})
+	w := newTestWatcher(c)
+
+	for i := 0; i < 5; i++ {
+		attempts += 1838
+		fails += 1128 // те самые 61%
+		st := w.Poll(context.Background())
+		if st.Bad() {
+			t.Fatalf("опрос %d: тревога при исправной связи (%d писателей из %d): %v",
+				i+1, st.AliveWriters, st.RequiredWriters, st.Problems)
+		}
+		if st.Level != LevelGreen {
+			t.Errorf("опрос %d: Level = %s, ожидался green", i+1, st.Level)
+		}
+	}
 }
