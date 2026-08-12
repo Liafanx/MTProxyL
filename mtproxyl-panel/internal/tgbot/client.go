@@ -159,6 +159,28 @@ type InlineKeyboardMarkup struct {
 	InlineKeyboard [][]InlineKeyboardButton `json:"inline_keyboard"`
 }
 
+// KeyboardButton — кнопка постоянной клавиатуры под полем ввода. Нажатие
+// отправляет её текст обычным сообщением.
+type KeyboardButton struct {
+	Text string `json:"text"`
+}
+
+// ReplyKeyboardMarkup — постоянная клавиатура. Она не часть сообщения, а
+// элемент поля ввода: достаточно прислать её один раз, дальше живёт сама.
+// На одном сообщении она и inline-кнопки одновременно быть не могут — у
+// сообщения только один reply_markup, и он занят кнопками статуса.
+type ReplyKeyboardMarkup struct {
+	Keyboard       [][]KeyboardButton `json:"keyboard"`
+	ResizeKeyboard bool               `json:"resize_keyboard"`
+	IsPersistent   bool               `json:"is_persistent"`
+}
+
+// BotCommand — команда для подсказок при наборе «/».
+type BotCommand struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+}
+
 // ── Вызовы ──────────────────────────────────────────────────────────────────
 
 // GetMe проверяет токен и заодно узнаёт имя бота для панели.
@@ -172,7 +194,7 @@ func (c *Client) GetMe(ctx context.Context) (*User, error) {
 
 // SendMessage отправляет новое сообщение и возвращает его — нужен message_id,
 // чтобы дальше править именно его.
-func (c *Client) SendMessage(ctx context.Context, chatID int64, text string, kb *InlineKeyboardMarkup, silent bool) (*Message, error) {
+func (c *Client) SendMessage(ctx context.Context, chatID int64, text string, kb any, silent bool) (*Message, error) {
 	req := map[string]any{
 		"chat_id":                  chatID,
 		"text":                     text,
@@ -213,6 +235,28 @@ func (c *Client) DeleteMessage(ctx context.Context, chatID int64, messageID int)
 		"chat_id":    chatID,
 		"message_id": messageID,
 	}, nil)
+}
+
+// SetMyCommands регистрирует список команд, чтобы Telegram показывал подсказки
+// при наборе «/». Область — конкретный чат: посторонний, нашедший бота, не
+// увидит даже списка. Но пока админ не нажал /start, чата не существует, и
+// Telegram ответит ошибкой — вызывающий откатывается на общий список.
+func (c *Client) SetMyCommands(ctx context.Context, commands []BotCommand, chatID int64) error {
+	req := map[string]any{"commands": commands}
+	if chatID != 0 {
+		req["scope"] = map[string]any{"type": "chat", "chat_id": chatID}
+	}
+	return c.call(ctx, c.http, "setMyCommands", req, nil)
+}
+
+// DeleteMyCommands снимает подсказки — при выключении бота или смене админа,
+// чтобы список не остался висеть у прежнего владельца.
+func (c *Client) DeleteMyCommands(ctx context.Context, chatID int64) error {
+	req := map[string]any{}
+	if chatID != 0 {
+		req["scope"] = map[string]any{"type": "chat", "chat_id": chatID}
+	}
+	return c.call(ctx, c.http, "deleteMyCommands", req, nil)
 }
 
 // AnswerCallbackQuery гасит «часики» на кнопке. show_alert=true показывает

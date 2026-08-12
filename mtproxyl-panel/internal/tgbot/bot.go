@@ -435,6 +435,13 @@ func (b *Bot) evaluateAndDeliver(ctx context.Context) {
 	// иначе после снятия паузы бот считал бы аварию новой и разбудил бы ещё раз.
 	if inc.Muted(now) {
 		d.Loud = false
+	} else if !inc.MutedUntil.IsZero() {
+		// Пауза истекла сама. Если авария всё ещё идёт, надо сказать вслух:
+		// молчание после окончания паузы читается как «всё наладилось».
+		inc.MutedUntil = time.Time{}
+		if inc.AnyActive() {
+			d.Loud = true
+		}
 	}
 
 	b.mu.Lock()
@@ -750,6 +757,7 @@ func (b *Bot) poll(ctx context.Context, client *Client, adminID int64) {
 		b.username = me.Username
 		b.mu.Unlock()
 	}
+	b.registerCommands(ctx, client, adminID)
 
 	offset := 0
 	backoff := pollBackoffMin
@@ -815,18 +823,44 @@ func (b *Bot) handleUpdate(ctx context.Context, client *Client, adminID int64, u
 }
 
 func (b *Bot) handleMessage(ctx context.Context, client *Client, adminID int64, m *Message) {
-	if !strings.HasPrefix(strings.TrimSpace(m.Text), "/start") {
+	cmd := normalizeCommand(m.Text)
+	if cmd == "" || !strings.HasPrefix(cmd, "/") {
 		return
 	}
+
 	// На /start отвечаем всем, пока админ не задан: иначе оператору неоткуда
 	// узнать свой ID — Telegram его нигде не показывает. Как только ID
-	// известен, посторонние получают отказ.
+	// известен, посторонние получают отказ на любую команду.
 	if adminID != 0 && m.Chat.ID != adminID {
 		_, _ = client.SendMessage(ctx, m.Chat.ID, "Этот бот обслуживает чужую панель.", nil, true)
 		return
 	}
-	if _, err := client.SendMessage(ctx, m.Chat.ID, RenderStartReply(m.Chat.ID, m.Chat.ID == adminID), nil, false); err != nil {
+	if adminID == 0 && cmd != cmdStart {
+		return
+	}
+	b.handleCommand(ctx, client, m.Chat.ID, cmd)
+}
+
+// replyStart отвечает на /start и заодно ставит постоянную клавиатуру.
+func (b *Bot) replyStart(ctx context.Context, client *Client, chatID int64) {
+	b.mu.Lock()
+	adminID := b.cfg.AdminID
+	b.mu.Unlock()
+
+	known := chatID == adminID
+	var kb any
+	if known {
+		// Клавиатура — только своему: постороннему она ни к чему.
+		kb = replyKeyboard()
+	}
+	if _, err := client.SendMessage(ctx, chatID, RenderStartReply(chatID, known), kb, false); err != nil {
 		log.Printf("[tgbot] ответ на /start не ушёл: %s", err)
+		return
+	}
+	if known {
+		// Теперь чат точно существует — можно сузить подсказки команд до него.
+		b.registerCommands(ctx, client, adminID)
+		b.forceStatus()
 	}
 }
 
@@ -870,6 +904,18 @@ func (b *Bot) handleCallback(ctx context.Context, client *Client, adminID int64,
 				}
 			}()
 		}
+
+	case callbackMute30:
+		_ = client.AnswerCallbackQuery(ctx, q.ID, "Пауза на 30 минут", false)
+		b.setMute(ctx, client, q.From.ID, 30*time.Minute, false)
+
+	case callbackMute2h:
+		_ = client.AnswerCallbackQuery(ctx, q.ID, "Пауза на 2 часа", false)
+		b.setMute(ctx, client, q.From.ID, 2*time.Hour, false)
+
+	case callbackMuteOn:
+		_ = client.AnswerCallbackQuery(ctx, q.ID, "Пауза до отмены", false)
+		b.setMute(ctx, client, q.From.ID, 0, true)
 
 	default:
 		_ = client.AnswerCallbackQuery(ctx, q.ID, "", false)
