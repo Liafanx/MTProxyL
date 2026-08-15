@@ -233,6 +233,7 @@ _tui_traffic_menu_reanimator() {
         if [ $_rc -ne 0 ]; then
             log_warn "Статистика недоступна: $(_telemt_api_unavailable_reason)"
             [ $_rc -eq 2 ] && log_info "Включите [server.api] enabled = true в конфиге цели и перезапустите её"
+            _telemt_api_bridge_hint
         else
             local _tot_oct _tot_conn _tot_ips
             _tot_oct=$(_json_sum_field "$_json" "total_octets")

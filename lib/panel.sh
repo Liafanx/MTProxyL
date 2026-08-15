@@ -153,10 +153,18 @@ panel_install() {
     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
         local _api_port; _api_port=$(_get_telemt_api_port 2>/dev/null)
         if [ -n "$_api_port" ]; then
-            log_info "API обнаруженной цели: http://127.0.0.1:${_api_port}"
+            # У цели в bridge-сети адрес не 127.0.0.1: панели нужен тот же
+            # адрес, по которому ходим мы сами.
+            local _api_host; _api_host=$(_telemt_api_host 2>/dev/null || echo "127.0.0.1")
+            log_info "API обнаруженной цели: http://${_api_host}:${_api_port}"
+            if [ "$_api_host" != "127.0.0.1" ]; then
+                log_warn "Это адрес контейнера — он меняется при пересоздании цели"
+                log_info "Устойчивее опубликовать порт: -p 127.0.0.1:${_api_port}:${_api_port}"
+            fi
             if ! _telemt_api_enabled 2>/dev/null; then
                 log_warn "API цели сейчас недоступен: $(_telemt_api_unavailable_reason 2>/dev/null)"
                 log_warn "Без работающего API панель не сможет показывать данные"
+                _telemt_api_bridge_hint 2>/dev/null || true
             fi
         else
             log_warn "Не удалось определить порт API цели — уточните его в конфиге цели"

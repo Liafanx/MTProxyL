@@ -1228,6 +1228,7 @@ _health_check_reanimator() {
         echo -e "  ${GREEN}${SYM_CHECK}${NC} Пользователей: ${_act} активных / ${_dis} выключенных"
     else
         echo -e "  ${RED}${SYM_CROSS}${NC} API цели: $(_telemt_api_unavailable_reason)"
+        _telemt_api_bridge_hint
     fi
 
     # Метрики цели (Prometheus)

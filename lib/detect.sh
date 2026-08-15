@@ -169,14 +169,35 @@ _telemt_api_enabled() {
     [ "$_en" != "false" ]
 }
 
+# Адрес, по которому API цели виден с хоста. У контейнера в bridge-сети своя
+# петля: 127.0.0.1 внутри него — это он сам, а не мы, и достучаться туда с
+# хоста нельзя ни при каких портах. Зато его адрес в сети docker доступен —
+# если движок слушает не только петлю. Публикация порта (-p) тоже подходит и
+# ловится обычной проверкой 127.0.0.1, поэтому её пробуем первой.
+_telemt_api_host() {
+    [ "${DETECTED_NETWORK_MODE:-host}" = "bridge" ] || { echo "127.0.0.1"; return 0; }
+    local _port; _port=$(_get_telemt_api_port "${1:-$DETECTED_CONFIG_PATH}")
+    if curl -s -o /dev/null --max-time 1 --connect-timeout 1 "http://127.0.0.1:${_port}/v1/health" 2>/dev/null; then
+        echo "127.0.0.1"
+        return 0
+    fi
+    local _cip; _cip=$(docker_container_ip 2>/dev/null)
+    if [ -n "$_cip" ]; then
+        echo "$_cip"
+        return 0
+    fi
+    echo "127.0.0.1"
+}
+
 # JSON с /v1/users API цели.
 # Коды: 0 — успех, 2 — API выключен в конфиге, 3 — включён, но не отвечает.
 _get_telemt_users_json() {
     local _cfg="${1:-$DETECTED_CONFIG_PATH}"
     _telemt_api_enabled "$_cfg" || return 2
     local _port; _port=$(_get_telemt_api_port "$_cfg")
+    local _host; _host=$(_telemt_api_host "$_cfg")
     local _json
-    _json=$(curl -s --max-time 3 --connect-timeout 2 "http://127.0.0.1:${_port}/v1/users" 2>/dev/null) || return 3
+    _json=$(curl -s --max-time 3 --connect-timeout 2 "http://${_host}:${_port}/v1/users" 2>/dev/null) || return 3
     [ -z "$_json" ] && return 3
     grep -qE '"ok"[[:space:]]*:[[:space:]]*false' <<< "$_json" && return 3
     grep -q '"data"' <<< "$_json" || return 3
@@ -195,7 +216,47 @@ _telemt_api_unavailable_reason() {
         echo "[server.api] enabled = false в конфиге цели"
         return
     fi
-    echo "API не отвечает на 127.0.0.1:$(_get_telemt_api_port "$_cfg")"
+    local _port; _port=$(_get_telemt_api_port "$_cfg")
+    if [ "${DETECTED_NETWORK_MODE:-host}" = "bridge" ]; then
+        local _listen; _listen=$(_toml_get_string_in_section "server.api" "listen" "$_cfg")
+        case "${_listen}" in
+            127.*|localhost*|"[::1]"*)
+                echo "цель в Docker bridge, а API слушает петлю контейнера ${_listen} — снаружи она недоступна"
+                return ;;
+        esac
+        echo "API не отвечает на $(_telemt_api_host "$_cfg"):${_port} (цель в Docker bridge)"
+        return
+    fi
+    echo "API не отвечает на 127.0.0.1:${_port}"
+}
+
+# Что делать, когда API цели в контейнере недоступен. Печатается там же, где
+# показана причина: без этого совет «включите API» не помогает — он уже включён.
+_telemt_api_bridge_hint() {
+    [ "${DETECTED_NETWORK_MODE:-host}" = "bridge" ] || return 0
+    local _cfg="${1:-$DETECTED_CONFIG_PATH}"
+    local _port; _port=$(_get_telemt_api_port "$_cfg")
+    local _cip; _cip=$(docker_container_ip 2>/dev/null)
+    echo ""
+    echo -e "  ${BOLD}Цель работает в Docker bridge.${NC}"
+    echo -e "  ${DIM}127.0.0.1 внутри контейнера — сам контейнер, а не хост,${NC}"
+    echo -e "  ${DIM}поэтому API, привязанный к петле, с хоста не виден.${NC}"
+    echo ""
+    echo -e "  ${DIM}В конфиге цели:${NC}"
+    echo -e "    ${GREEN}[server.api]${NC}"
+    echo -e "    ${GREEN}enabled = true${NC}"
+    echo -e "    ${GREEN}listen = \"0.0.0.0:${_port}\"${NC}"
+    echo -e "    ${GREEN}whitelist = [\"127.0.0.0/8\", \"172.16.0.0/12\", \"10.0.0.0/8\"]${NC}"
+    echo -e "  ${DIM}Белый список важен: с хостом контейнер общается через адрес${NC}"
+    echo -e "  ${DIM}сети docker, и со списком по умолчанию (только 127.0.0.0/8)${NC}"
+    echo -e "  ${DIM}движок отклонит наши запросы уже после подключения.${NC}"
+    echo ""
+    if [ -n "$_cip" ]; then
+        echo -e "  ${DIM}После перезапуска цели MTProxyL сам пойдёт на ${_cip}:${_port}.${NC}"
+    fi
+    echo -e "  ${DIM}Наружу это не открывает: порт контейнера доступен только${NC}"
+    echo -e "  ${DIM}хосту, пока он не опубликован через -p.${NC}"
+    echo -e "  ${DIM}Другой путь — опубликовать порт: -p 127.0.0.1:${_port}:${_port}${NC}"
 }
 
 # Строки «пользователь|tg-ссылка» из ответа API цели, только IPv4.
@@ -229,6 +290,7 @@ show_target_links_ipv4() {
     if [ $_rc -ne 0 ]; then
         log_warn "Ссылки недоступны: $(_telemt_api_unavailable_reason)"
         [ $_rc -eq 2 ] && log_info "Включите [server.api] enabled = true в ${DETECTED_CONFIG_PATH:-конфиге цели} и перезапустите цель"
+        _telemt_api_bridge_hint
         return 1
     fi
 
