@@ -236,14 +236,15 @@ async def secret_limits(label: str, conns: int, ips: int, quota: int, expires: s
     return out
 
 
-async def secret_link(label: str) -> str:
-    """tg://-ссылка одного пользователя. Печатается строкой, JSON тут нет."""
+async def secret_links(label: str) -> list[str]:
+    """tg://-ссылки одного пользователя. Печатаются строками, JSON тут нет.
+    Их может быть несколько: с выключенной маскировкой движок принимает и
+    dd, и ee, и обе ссылки настоящие."""
     out = await run("secret", "link", label, timeout=60)
-    for line in out.splitlines():
-        line = line.strip()
-        if line.startswith("tg://"):
-            return line
-    raise CliError(f"MTProxyL не вернул ссылку для «{label}»")
+    links = [ln.strip() for ln in out.splitlines() if ln.strip().startswith("tg://")]
+    if not links:
+        raise CliError(f"MTProxyL не вернул ссылку для «{label}»")
+    return links
 
 
 async def create_backup() -> str:

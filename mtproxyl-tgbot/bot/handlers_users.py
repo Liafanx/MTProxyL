@@ -364,12 +364,13 @@ async def send_link(event: Message | CallbackQuery, label: str, note: str = "") 
     """Ссылка с QR — такой же экран меню, как остальные: пересылают её из
     чата целиком, а копить их в истории незачем."""
     try:
-        tg_link = await cli.secret_link(label)
+        tg_links = await cli.secret_links(label)
     except Exception as exc:
         await report_error(event, exc)
         return
-    png = await make_qr(web_link(tg_link))
-    text = link_text(label, tg_link)
+    # QR — на первую ссылку: их бывает две (dd и ee), а картинка в экране одна.
+    png = await make_qr(web_link(tg_links[0]))
+    text = link_text(label, tg_links)
     if note:
         text = f"{note}\n\n{text}"
     await render(event, text, kb.link_card(kb.key_for(label)),

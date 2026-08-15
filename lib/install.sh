@@ -501,9 +501,12 @@ show_install_summary() {
         local i
         for i in "${!SECRETS_LABELS[@]}"; do
             [ "${SECRETS_ENABLED[$i]}" = "true" ] || continue
-            local fs; fs=$(build_faketls_secret "${SECRETS_KEYS[$i]}")
             echo -e "  ${BRIGHT_GREEN}${SECRETS_LABELS[$i]}:${NC}"
-            echo -e "  ${CYAN}tg://proxy?server=${server_ip}&port=${PROXY_PORT}&secret=${fs}${NC}"
+            local _kind _fs
+            while IFS='|' read -r _kind _fs; do
+                [ -n "$_fs" ] || continue
+                echo -e "  ${DIM}$(link_kind_title "$_kind"):${NC} ${CYAN}tg://proxy?server=${server_ip}&port=${PROXY_PORT}&secret=${_fs}${NC}"
+            done <<< "$(build_link_secrets "${SECRETS_KEYS[$i]}")"
             echo ""
         done
     fi

@@ -251,6 +251,68 @@ build_faketls_secret() {
     fi
 }
 
+# Какие виды ссылок движок принимает прямо сейчас — по одному имени в строке,
+# в том же порядке, в каком telemt печатает их в журнале при запуске.
+# У менеджера правду знает settings.conf: конфиг движка мы из него и
+# генерируем. В режиме супер эксперта и у чужой цели конфиг ведём не мы,
+# поэтому режимы читаем прямо из [general.modes]; ключа там нет — берём
+# умолчание telemt (classic и secure выключены, tls включён).
+engine_link_modes() {
+    local _cfg="${1:-}"
+    if [ -z "$_cfg" ] \
+        && [ "${MTPROXYL_MODE:-manager}" = "manager" ] \
+        && ! _superexpert_active 2>/dev/null; then
+        [ "${MASKING_ENABLED:-true}" = "false" ] && echo "secure"
+        echo "tls"
+        return 0
+    fi
+    [ -n "$_cfg" ] || _cfg=$(_engine_config_path 2>/dev/null)
+    local _c="" _s="" _t=""
+    if [ -n "$_cfg" ] && [ -f "$_cfg" ]; then
+        _c=$(_toml_get_string_in_section "general.modes" "classic" "$_cfg" 2>/dev/null)
+        _s=$(_toml_get_string_in_section "general.modes" "secure"  "$_cfg" 2>/dev/null)
+        _t=$(_toml_get_string_in_section "general.modes" "tls"     "$_cfg" 2>/dev/null)
+    fi
+    [ "$_c" = "true" ] && echo "classic"
+    [ "$_s" = "true" ] && echo "secure"
+    [ "$_t" != "false" ] && echo "tls"
+    return 0
+}
+
+# Строки "вид|секрет" на один сырой секрет — по строке на каждый включённый
+# вид ссылки. Пока маскировка была единственным переключателем, хватало
+# одного секрета; с выключенной маскировкой движок принимает и dd, и ee, и
+# показывать только один из них значило бы прятать половину рабочих ссылок.
+build_link_secrets() {
+    local _raw="$1" _domain="${2:-$PROXY_DOMAIN}" _cfg="${3:-}"
+    local _mode _hex="" _has_dd=""
+    while read -r _mode; do
+        case "$_mode" in
+            classic) printf 'classic|%s\n' "$_raw" ;;
+            secure)  _has_dd=1; printf 'secure|dd%s\n' "$_raw" ;;
+            tls)
+                # ee без домена — не ссылка, а обрубок. Отдаём вместо неё dd:
+                # так вело себя и старое построение ссылок.
+                if [ -z "$_domain" ]; then
+                    [ -n "$_has_dd" ] || printf 'secure|dd%s\n' "$_raw"
+                    continue
+                fi
+                [ -n "$_hex" ] || _hex=$(domain_to_hex "$_domain")
+                printf 'tls|ee%s%s\n' "$_raw" "$_hex" ;;
+        esac
+    done < <(engine_link_modes "$_cfg")
+}
+
+# Как называть вид ссылки в меню.
+link_kind_title() {
+    case "$1" in
+        classic) echo "classic" ;;
+        secure)  echo "dd · secure" ;;
+        tls)     echo "ee · TLS" ;;
+        *)       echo "$1" ;;
+    esac
+}
+
 _iso_to_epoch() {
     local ts="$1"
     [ -z "$ts" ] && { echo "0"; return; }

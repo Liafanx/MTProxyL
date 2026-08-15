@@ -98,24 +98,35 @@ secret_add() {
     save_secrets
     [ "$no_restart" != "true" ] && reload_proxy_config 2>/dev/null || true
 
-    local full_secret server_ip server_port
-    full_secret=$(build_faketls_secret "$raw_secret")
+    local server_ip server_port
     server_ip=$(proxy_link_host)
     server_port=$(proxy_link_port)
 
     log_success "Секрет '${label}' создан"
     echo ""
-    echo -e "  ${BOLD}Ссылка для Telegram:${NC}"
-    echo -e "  ${CYAN}tg://proxy?server=${server_ip}&port=${server_port}&secret=${full_secret}${NC}"
+    _print_secret_links "$server_ip" "$server_port" "$raw_secret" "true"
     echo ""
-    echo -e "  ${BOLD}Веб-ссылка:${NC}"
-    echo -e "  ${CYAN}https://t.me/proxy?server=${server_ip}&port=${server_port}&secret=${full_secret}${NC}"
+}
 
-    if command -v qrencode &>/dev/null; then
+# Ссылки одного секрета всех включённых видов. QR — только на первую: с
+# выключенной маскировкой видов два, и два QR-кода в терминале не помещаются.
+_print_secret_links() {
+    local _ip="$1" _port="$2" _raw="$3" _qr="${4:-false}"
+    local _kind _sec _first=1 _title
+    while IFS='|' read -r _kind _sec; do
+        [ -n "$_sec" ] || continue
+        _title="$(link_kind_title "$_kind")"
+        echo -e "  ${BOLD}Ссылка для Telegram${NC} ${DIM}(${_title})${NC}"
+        echo -e "  ${CYAN}tg://proxy?server=${_ip}&port=${_port}&secret=${_sec}${NC}"
+        echo -e "  ${BOLD}Веб-ссылка${NC} ${DIM}(${_title})${NC}"
+        echo -e "  ${CYAN}https://t.me/proxy?server=${_ip}&port=${_port}&secret=${_sec}${NC}"
+        if [ "$_qr" = "true" ] && [ $_first -eq 1 ] && command -v qrencode &>/dev/null; then
+            echo ""
+            qrencode -t ANSIUTF8 "tg://proxy?server=${_ip}&port=${_port}&secret=${_sec}" 2>/dev/null | sed 's/^/  /'
+        fi
+        _first=0
         echo ""
-        qrencode -t ANSIUTF8 "tg://proxy?server=${server_ip}&port=${server_port}&secret=${full_secret}" 2>/dev/null | sed 's/^/  /'
-    fi
-    echo ""
+    done <<< "$(build_link_secrets "$_raw")"
 }
 
 # Удалить секрет
@@ -173,16 +184,13 @@ secret_rotate() {
     save_secrets
     reload_proxy_config 2>/dev/null || true
 
-    local full_secret server_ip server_port
-    full_secret=$(build_faketls_secret "$new_secret")
+    local server_ip server_port
     server_ip=$(proxy_link_host)
     server_port=$(proxy_link_port)
 
     log_success "Секрет '${label}' обновлён"
     echo ""
-    echo -e "  ${BOLD}Новая ссылка:${NC}"
-    echo -e "  ${CYAN}tg://proxy?server=${server_ip}&port=${server_port}&secret=${full_secret}${NC}"
-    echo ""
+    _print_secret_links "$server_ip" "$server_port" "$new_secret"
 }
 
 # Включить/выключить секрет
@@ -504,8 +512,9 @@ secret_list() {
     done
     echo ""
 }
-# Ссылка для секрета
-get_proxy_link() {
+# Все рабочие ссылки секрета — по одной в строке. С выключенной маскировкой
+# движок принимает и dd, и ee, и обе ссылки настоящие.
+get_proxy_links() {
     local label="${1:-}"
     local server_ip server_port
     server_ip=$(proxy_link_host)
@@ -525,9 +534,19 @@ get_proxy_link() {
     done
     [ $idx -eq -1 ] && { log_error "Секрет '${label}' не найден"; return 1; }
 
-    local full_secret
-    full_secret=$(build_faketls_secret "${SECRETS_KEYS[$idx]}")
-    echo "tg://proxy?server=${server_ip}&port=${server_port}&secret=${full_secret}"
+    local _kind _sec
+    while IFS='|' read -r _kind _sec; do
+        [ -n "$_sec" ] || continue
+        echo "tg://proxy?server=${server_ip}&port=${server_port}&secret=${_sec}"
+    done <<< "$(build_link_secrets "${SECRETS_KEYS[$idx]}")"
+}
+
+# Одна ссылка — первая из списка. Её ждут те, кто читает вывод строкой:
+# QR-код и телеграм-бот.
+get_proxy_link() {
+    local _links
+    _links=$(get_proxy_links "${1:-}") || return 1
+    printf '%s\n' "$_links" | head -1
 }
 
 # Получить список меток включённых секретов для конфига
@@ -570,13 +589,11 @@ secret_clone() {
     save_secrets
     reload_proxy_config 2>/dev/null || true
 
-    local full_secret server_ip server_port
-    full_secret=$(build_faketls_secret "${SECRETS_KEYS[-1]}")
+    local server_ip server_port
     server_ip=$(proxy_link_host)
     server_port=$(proxy_link_port)
     log_success "Секрет '${new}' клонирован из '${src}'"
-    echo -e "  ${CYAN}tg://proxy?server=${server_ip}&port=${server_port}&secret=${full_secret}${NC}"
-    echo ""
+    _print_secret_links "$server_ip" "$server_port" "${SECRETS_KEYS[-1]}"
 }
 
 # Переименование
@@ -778,6 +795,15 @@ _target_user_state() {
     printf '%s' "$_row"
 }
 
+# Ссылок у пользователя может быть несколько (dd и ee сразу) — печатаем
+# каждую своей строкой, иначе вторая уезжает без отступа и цвета.
+_echo_links() {
+    local _l
+    while IFS= read -r _l; do
+        [ -n "$_l" ] && echo -e "  ${CYAN}${_l}${NC}"
+    done <<< "$1"
+}
+
 _target_user_secret() {
     _target_section_pairs "access.users" | awk -F'|' -v l="$1" '$2 == l { print $3; exit }'
 }
@@ -786,10 +812,25 @@ _target_user_limit() {
     _target_section_pairs "$2" | awk -F'|' -v l="$1" '$2 == l { print $3; exit }'
 }
 
-# Ссылка строится по конфигу цели, а не по нашим настройкам: домен и режим
-# маскировки у чужого движка свои.
+# Ссылки строятся по конфигу цели, а не по нашим настройкам: домен и режим
+# маскировки у чужого движка свои. Может вернуть несколько строк — по одной
+# на каждый включённый вид ссылки.
 target_user_link() {
     local _label="$1" _raw _domain _mask _full _ip _port
+
+    # Если API цели отвечает — ссылки уже собраны самим движком, включая dd и
+    # ee сразу. Свои строить незачем: у него правда о включённых режимах.
+    local _json _u _l _from_api=""
+    if _json=$(_get_telemt_users_json 2>/dev/null); then
+        while IFS='|' read -r _u _l; do
+            [ "$_u" = "$_label" ] && [ -n "$_l" ] && _from_api+="${_l}"$'\n'
+        done <<< "$(_target_links_ipv4 "$_json")"
+    fi
+    if [ -n "$_from_api" ]; then
+        printf '%s' "$_from_api"
+        return 0
+    fi
+
     _raw=$(_target_user_secret "$_label")
     [ -n "$_raw" ] || return 1
     _domain=$(_toml_get_string_in_section "censorship" "tls_domain" "$DETECTED_CONFIG_PATH")
@@ -854,8 +895,8 @@ target_user_add() {
     local _link; _link=$(target_user_link "$_label")
     if [ -n "$_link" ]; then
         echo ""
-        echo -e "  ${BOLD}Ссылка для Telegram:${NC}"
-        echo -e "  ${CYAN}${_link}${NC}"
+        echo -e "  ${BOLD}Ссылки для Telegram:${NC}"
+        _echo_links "$_link"
         echo ""
     fi
     _target_users_apply
@@ -908,7 +949,7 @@ target_user_rotate() {
     fi
     log_success "Ключ пользователя '${_label}' обновлён — старый перестанет работать"
     local _link; _link=$(target_user_link "$_label")
-    [ -n "$_link" ] && { echo ""; echo -e "  ${CYAN}${_link}${NC}"; echo ""; }
+    [ -n "$_link" ] && { echo ""; _echo_links "$_link"; echo ""; }
     _target_users_apply
 }
 
@@ -1133,18 +1174,22 @@ handle_target_user_command() {
             target_user_setlimits "$_l" "${1:-0}" "${2:-0}" "${3:-0}" "${4:-}" ;;
         limits)   target_user_show_limits "${1:-}" ;;
         link)
-            local _link; _link=$(target_user_link "${1:-}") || {
+            local _links; _links=$(target_user_link "${1:-}") || {
                 log_error "Пользователь '${1:-}' не найден у цели"; return 1; }
-            echo -e "  ${CYAN}${_link}${NC}"; echo "" ;;
+            _echo_links "$_links"
+            echo "" ;;
         qr)
-            local _link; _link=$(target_user_link "${1:-}") || {
+            local _links; _links=$(target_user_link "${1:-}") || {
                 log_error "Пользователь '${1:-}' не найден у цели"; return 1; }
+            # QR — на первую ссылку: их у пользователя может быть несколько.
+            local _link; _link=$(printf '%s\n' "$_links" | head -1)
             if command -v qrencode &>/dev/null; then
                 echo ""; qrencode -t ANSIUTF8 "$_link" | sed 's/^/  /'
             else
                 echo -e "  ${DIM}qrencode не установлен: apt install qrencode${NC}"
             fi
-            echo -e "  ${CYAN}${_link}${NC}"; echo "" ;;
+            _echo_links "$_links"
+            echo "" ;;
         clone)
             log_error "Клонирование недоступно в реаниматоре"
             log_info "Лимиты цели заданы её администратором — добавьте пользователя и задайте лимиты явно"
@@ -1219,17 +1264,20 @@ handle_secret_command() {
             check_root
             local l="$1"; shift 2>/dev/null || true
             secret_set_limits "$l" "${1:-0}" "${2:-0}" "${3:-0}" "${4:-}" ;;
-        link)     get_proxy_link "${1:-}"; echo "" ;;
+        link)     get_proxy_links "${1:-}"; echo "" ;;
         clone)    check_root; secret_clone "$1" "$2" ;;
         rename)   check_root; secret_rename "$1" "$2" ;;
         qr)
-            local link; link=$(get_proxy_link "${1:-}") || return 1
+            local links; links=$(get_proxy_links "${1:-}") || return 1
+            local link; link=$(printf '%s\n' "$links" | head -1)
             if command -v qrencode &>/dev/null; then
                 echo ""; qrencode -t ANSIUTF8 "$link" | sed 's/^/  /'
             else
                 echo -e "  ${DIM}qrencode не установлен: apt install qrencode${NC}"
             fi
-            echo -e "  ${CYAN}${link}${NC}"; echo "" ;;
+            # QR один — на первую ссылку, но остальные виды тоже рабочие.
+            _echo_links "$links"
+            echo "" ;;
         *)
             echo -e "  ${BOLD}Управление секретами:${NC}"
             echo -e "    ${GREEN}secret add${NC} <метка>        Добавить"

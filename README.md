@@ -319,12 +319,20 @@ mtproxyl secret list                   # Список с трафиком
 mtproxyl secret rotate alice           # Новый ключ
 mtproxyl secret enable alice           # Включить
 mtproxyl secret disable alice          # Выключить
-mtproxyl secret link alice             # Ссылка tg://
+mtproxyl secret link alice             # Ссылки tg:// (все рабочие виды)
 mtproxyl secret clone alice bob        # Клонировать
 mtproxyl secret rename alice bob       # Переименовать
 mtproxyl secret limits alice           # Лимиты
 mtproxyl secret setlimits alice 100 5 10G 2026-12-31
 ```
+
+Ссылок на пользователя может быть несколько, и все они рабочие: движок
+принимает те виды, что включены в `[general.modes]` его конфига. С включённой
+маскировкой это только `ee` (TLS), с выключенной — ещё и `dd` (secure), а в
+своём конфиге можно включить и `classic`. Меню «Ссылки на прокси», вывод после
+`secret add` и `secret link` показывают их все; QR-код рисуется на первую.
+У чужой цели ссылки берутся из её API — ровно те, что telemt печатает в
+журнале при запуске.
 
 <a id="cli-settings"></a>
 

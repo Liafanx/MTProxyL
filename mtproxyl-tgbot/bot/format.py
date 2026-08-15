@@ -5,7 +5,7 @@ from __future__ import annotations
 import html
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 LEVEL_ICON = {"green": "🟢", "yellow": "🟡", "red": "🔴"}
 
@@ -165,14 +165,31 @@ def user_card(user: dict) -> str:
     return "\n".join(lines)
 
 
-def link_text(label: str, tg_link: str) -> str:
-    """Ссылка кнопкой и она же текстом — второе для копирования вручную."""
-    web = web_link(tg_link)
-    return (
-        f"<b>{esc(label)}</b>\n\n"
-        f'👉 <b><a href="{esc(tg_link)}">Подключиться</a></b>\n\n'
-        f"<code>{esc(web)}</code>"
-    )
+def link_text(label: str, tg_links: str | list[str]) -> str:
+    """Ссылка кнопкой и она же текстом — второе для копирования вручную.
+    Ссылок может быть несколько: с выключенной маскировкой движок принимает и
+    dd, и ee. Первая — основная, остальные идут следом подписанными."""
+    links = [tg_links] if isinstance(tg_links, str) else list(tg_links)
+    parts = [
+        f"<b>{esc(label)}</b>",
+        "",
+        f'👉 <b><a href="{esc(links[0])}">Подключиться</a></b>',
+        "",
+        f"<code>{esc(web_link(links[0]))}</code>",
+    ]
+    for extra in links[1:]:
+        parts += ["", f"<i>{esc(_link_kind(extra))}</i>", f"<code>{esc(web_link(extra))}</code>"]
+    return "\n".join(parts)
+
+
+def _link_kind(tg_link: str) -> str:
+    """Вид ссылки виден по началу секрета: ee — TLS-маскировка, dd — secure."""
+    secret = parse_qs(urlsplit(tg_link).query).get("secret", [""])[0]
+    if secret.startswith("ee"):
+        return "ещё одна ссылка (ee · TLS)"
+    if secret.startswith("dd"):
+        return "ещё одна ссылка (dd · secure)"
+    return "ещё одна ссылка"
 
 
 def web_link(tg_link: str) -> str:
