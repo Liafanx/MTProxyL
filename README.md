@@ -637,6 +637,8 @@ mtproxyl update-check         # Есть ли новая версия (JSON, roo
 mtproxyl panel status         # Состояние панели
 mtproxyl panel install        # Установить / переустановить
 mtproxyl panel restart        # Перезапустить
+mtproxyl panel disable        # Выключить, не удаляя (снять с автозапуска)
+mtproxyl panel enable         # Включить обратно
 mtproxyl panel password       # Сменить пароль администратора
 mtproxyl panel cert           # Выпустить сертификат Let's Encrypt
 mtproxyl panel uninstall      # Удалить
@@ -1157,8 +1159,15 @@ ssh -L 8080:127.0.0.1:8080 <пользователь>@<ваш-сервер>
 ```bash
 mtproxyl panel status      # состояние
 mtproxyl panel restart     # перезапуск
+mtproxyl panel disable     # выключить, не удаляя
+mtproxyl panel enable      # включить обратно
 mtproxyl panel uninstall   # удаление (спросит, оставить ли конфиг и данные)
 ```
+
+`disable` останавливает службу и снимает её с автозапуска — после
+перезагрузки панель не поднимется. Бинарник, конфиг, пароль и сертификаты
+остаются на месте, `enable` возвращает всё как было. То же в меню:
+**Дополнения → Веб-панель**, пункт «Выключить (без удаления)».
 
 Отдельно, без MTProxyL — тем же `install.sh`, что и для установки:
 

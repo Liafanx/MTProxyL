@@ -33,9 +33,19 @@ panel_status_line() {
     fi
     if systemctl is-active "$PANEL_SERVICE" &>/dev/null; then
         echo -e "${GREEN}работает${NC}${_vs}"
+    elif ! systemctl is-enabled "$PANEL_SERVICE" &>/dev/null; then
+        # Выключена намеренно — это не то же самое, что «упала»: снятая с
+        # автозапуска служба не поднимется и после перезагрузки.
+        echo -e "${DIM}выключена${NC}${_vs}"
     else
         echo -e "${YELLOW}установлена, не запущена${NC}${_vs}"
     fi
+}
+
+# Включена ли панель в автозапуск. Отдельно от is-active: остановленная
+# вручную служба вернётся после перезагрузки, а снятая с автозапуска — нет.
+panel_autostart_on() {
+    systemctl is-enabled "$PANEL_SERVICE" &>/dev/null
 }
 
 # Имя, на которое выписан сертификат панели — по другому адресу браузер её
@@ -400,6 +410,37 @@ panel_restart() {
         || log_error "Не удалось перезапустить панель"
 }
 
+# Выключить панель, не удаляя: служба останавливается и снимается с
+# автозапуска, всё остальное — бинарник, конфиг, пароль, сертификаты — на
+# месте. Удаление для этого слишком грубо: после него панель ставят заново
+# и заново настраивают.
+panel_disable() {
+    check_root || return 1
+    panel_installed || { log_error "Панель не установлена"; return 1; }
+    if ! systemctl is-active "$PANEL_SERVICE" &>/dev/null && ! panel_autostart_on; then
+        log_info "Панель уже выключена"
+        return 0
+    fi
+    systemctl disable --now "$PANEL_SERVICE" &>/dev/null || {
+        log_error "Не удалось выключить панель"
+        return 1
+    }
+    log_success "Панель выключена: служба остановлена и снята с автозапуска"
+    log_info "Файлы и настройки остались — включить обратно: mtproxyl panel enable"
+}
+
+panel_enable() {
+    check_root || return 1
+    panel_installed || { log_error "Панель не установлена"; return 1; }
+    systemctl enable --now "$PANEL_SERVICE" &>/dev/null || {
+        log_error "Не удалось включить панель — журнал: journalctl -u ${PANEL_SERVICE} -n 50"
+        return 1
+    }
+    log_success "Панель включена"
+    local _addr; _addr=$(panel_listen_addr)
+    [ -n "$_addr" ] && log_info "Адрес: $(panel_scheme)://${_addr}"
+}
+
 panel_show_status() {
     echo ""
     draw_header "MTPROXYL-PANEL"
@@ -712,6 +753,8 @@ handle_panel_command() {
         install)   panel_install ;;
         uninstall) panel_uninstall ;;
         restart)   panel_restart ;;
+        disable|off) panel_disable ;;
+        enable|on)   panel_enable ;;
         password)  panel_password ;;
         cert)      panel_issue_cert "${2:-}" "${3:-}" ;;
         status)    panel_show_status ;;
@@ -720,6 +763,8 @@ handle_panel_command() {
             echo -e "    ${GREEN}panel status${NC}     Состояние"
             echo -e "    ${GREEN}panel install${NC}    Установить / переустановить"
             echo -e "    ${GREEN}panel restart${NC}    Перезапустить"
+            echo -e "    ${GREEN}panel disable${NC}    Выключить, не удаляя (снять с автозапуска)"
+            echo -e "    ${GREEN}panel enable${NC}     Включить обратно"
             echo -e "    ${GREEN}panel password${NC}   Сменить пароль администратора"
             echo -e "    ${GREEN}panel cert${NC} [домен] [email]"
             echo -e "                     Выпустить сертификат Let's Encrypt"
@@ -734,6 +779,10 @@ tui_panel_menu() {
         clear_screen
         panel_show_status
 
+        local _toggle="Выключить (без удаления)"
+        if panel_installed && ! panel_autostart_on; then
+            _toggle="Включить"
+        fi
         if panel_installed; then
             echo -e "  ${CYAN}[1]${NC}  Перезапустить"
             echo -e "  ${CYAN}[2]${NC}  Переустановить / перенастроить"
@@ -741,6 +790,7 @@ tui_panel_menu() {
             echo -e "  ${CYAN}[4]${NC}  Показать логи"
             echo -e "  ${CYAN}[5]${NC}  Удалить"
             echo -e "  ${CYAN}[6]${NC}  Выпустить сертификат Let's Encrypt"
+            echo -e "  ${CYAN}[7]${NC}  ${_toggle}"
             if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
                 echo -e "      ${DIM}порт 80 занят Selfmask — выпуск это учитывает${NC}"
             fi
@@ -763,6 +813,8 @@ tui_panel_menu() {
                 4) journalctl -u "$PANEL_SERVICE" -n 50 --no-pager; press_any_key ;;
                 5) panel_uninstall; press_any_key ;;
                 6) panel_issue_cert; press_any_key ;;
+                7) if panel_autostart_on; then panel_disable; else panel_enable; fi
+                   press_any_key ;;
                 0|"") return ;;
             esac
         else
