@@ -11,6 +11,9 @@ declare -a SECRETS_MAX_IPS=()
 declare -a SECRETS_QUOTA=()
 declare -a SECRETS_EXPIRES=()
 declare -a SECRETS_NOTES=()
+# Рекламная метка на пользователя ([access.user_ad_tags] у движка). Пусто —
+# метки нет; общая метка из настроек остаётся в [general] и не отменяется.
+declare -a SECRETS_ADTAG=()
 
 save_secrets() {
     mkdir -p "$INSTALL_DIR"
@@ -18,12 +21,15 @@ save_secrets() {
     tmp=$(_mktemp "$INSTALL_DIR") || { log_error "Не удалось создать временный файл"; return 1; }
 
     echo "# MTProxyL — база секретов v${VERSION}" > "$tmp"
-    echo "# Формат: LABEL|SECRET|CREATED_TS|ENABLED|MAX_CONNS|MAX_IPS|QUOTA_BYTES|EXPIRES|NOTES" >> "$tmp"
+    echo "# Формат: LABEL|SECRET|CREATED_TS|ENABLED|MAX_CONNS|MAX_IPS|QUOTA_BYTES|EXPIRES|NOTES|AD_TAG" >> "$tmp"
 
     if [ ${#SECRETS_LABELS[@]} -gt 0 ]; then
         local i
         for i in "${!SECRETS_LABELS[@]}"; do
-            echo "${SECRETS_LABELS[$i]}|${SECRETS_KEYS[$i]}|${SECRETS_CREATED[$i]}|${SECRETS_ENABLED[$i]}|${SECRETS_MAX_CONNS[$i]:-0}|${SECRETS_MAX_IPS[$i]:-0}|${SECRETS_QUOTA[$i]:-0}|${SECRETS_EXPIRES[$i]:-0}|${SECRETS_NOTES[$i]:-}" >> "$tmp"
+            # Заметка идёт не последней, поэтому «|» в ней сдвинул бы поля —
+            # вырезаем разделитель, а не ломаем строку.
+            local _note="${SECRETS_NOTES[$i]:-}"; _note="${_note//|/ }"
+            echo "${SECRETS_LABELS[$i]}|${SECRETS_KEYS[$i]}|${SECRETS_CREATED[$i]}|${SECRETS_ENABLED[$i]}|${SECRETS_MAX_CONNS[$i]:-0}|${SECRETS_MAX_IPS[$i]:-0}|${SECRETS_QUOTA[$i]:-0}|${SECRETS_EXPIRES[$i]:-0}|${_note}|${SECRETS_ADTAG[$i]:-}" >> "$tmp"
         done
     fi
 
@@ -34,11 +40,11 @@ save_secrets() {
 load_secrets() {
     SECRETS_LABELS=(); SECRETS_KEYS=(); SECRETS_CREATED=(); SECRETS_ENABLED=()
     SECRETS_MAX_CONNS=(); SECRETS_MAX_IPS=(); SECRETS_QUOTA=()
-    SECRETS_EXPIRES=(); SECRETS_NOTES=()
+    SECRETS_EXPIRES=(); SECRETS_NOTES=(); SECRETS_ADTAG=()
 
     [ -f "$SECRETS_FILE" ] || return 0
 
-    while IFS='|' read -r label secret created enabled max_conns max_ips quota expires notes; do
+    while IFS='|' read -r label secret created enabled max_conns max_ips quota expires notes adtag; do
         [[ "$label" =~ ^[[:space:]]*# ]] && continue
         [[ "$label" =~ ^[[:space:]]*$ ]] && continue
         [ -z "$secret" ] && continue
@@ -66,6 +72,10 @@ load_secrets() {
         fi
         SECRETS_EXPIRES+=("$_ex")
         SECRETS_NOTES+=("${notes:-}")
+        # Поля метки нет в базах до 1.4.9 — там она просто пустая.
+        local _at="${adtag:-}"
+        [[ "$_at" =~ ^[0-9a-fA-F]{32}$ ]] || _at=""
+        SECRETS_ADTAG+=("$_at")
     done < "$SECRETS_FILE"
 }
 
@@ -94,6 +104,7 @@ secret_add() {
     SECRETS_QUOTA+=("0")
     SECRETS_EXPIRES+=("0")
     SECRETS_NOTES+=("")
+    SECRETS_ADTAG+=("")
 
     save_secrets
     [ "$no_restart" != "true" ] && reload_proxy_config 2>/dev/null || true
@@ -147,20 +158,20 @@ secret_remove() {
         [ "$confirm" != "yes" ] && { log_info "Отменено"; return 0; }
     fi
 
-    local -a nl=() nk=() nc=() ne=() nmc=() nmi=() nq=() nex=() nn=()
+    local -a nl=() nk=() nc=() ne=() nmc=() nmi=() nq=() nex=() nn=() nat=()
     for i in "${!SECRETS_LABELS[@]}"; do
         [ "$i" -eq "$idx" ] && continue
         nl+=("${SECRETS_LABELS[$i]}"); nk+=("${SECRETS_KEYS[$i]}")
         nc+=("${SECRETS_CREATED[$i]}"); ne+=("${SECRETS_ENABLED[$i]}")
         nmc+=("${SECRETS_MAX_CONNS[$i]:-0}"); nmi+=("${SECRETS_MAX_IPS[$i]:-0}")
         nq+=("${SECRETS_QUOTA[$i]:-0}"); nex+=("${SECRETS_EXPIRES[$i]:-0}")
-        nn+=("${SECRETS_NOTES[$i]:-}")
+        nn+=("${SECRETS_NOTES[$i]:-}"); nat+=("${SECRETS_ADTAG[$i]:-}")
     done
     SECRETS_LABELS=("${nl[@]}"); SECRETS_KEYS=("${nk[@]}")
     SECRETS_CREATED=("${nc[@]}"); SECRETS_ENABLED=("${ne[@]}")
     SECRETS_MAX_CONNS=("${nmc[@]}"); SECRETS_MAX_IPS=("${nmi[@]}")
     SECRETS_QUOTA=("${nq[@]}"); SECRETS_EXPIRES=("${nex[@]}")
-    SECRETS_NOTES=("${nn[@]}")
+    SECRETS_NOTES=("${nn[@]}"); SECRETS_ADTAG=("${nat[@]}")
 
     save_secrets
     [ "$no_restart" != "true" ] && reload_proxy_config 2>/dev/null || true
@@ -286,6 +297,39 @@ secret_set_limits() {
     save_secrets
     reload_proxy_config 2>/dev/null || true
     log_success "Лимиты обновлены для '${label}'"
+}
+
+# Рекламная метка отдельного пользователя — секция [access.user_ad_tags]
+# у движка. Общая метка в [general] от этого не отменяется: она остаётся для
+# всех, у кого своей нет.
+secret_set_adtag() {
+    local label="$1" tag="${2:-}"
+    local idx=-1 i
+    for i in "${!SECRETS_LABELS[@]}"; do
+        [ "${SECRETS_LABELS[$i]}" = "$label" ] && { idx=$i; break; }
+    done
+    [ $idx -eq -1 ] && { log_error "Секрет '${label}' не найден"; return 1; }
+
+    case "$tag" in
+        remove|none|"-"|"0")
+            SECRETS_ADTAG[$idx]=""
+            save_secrets
+            reload_proxy_config 2>/dev/null || true
+            log_success "Метка снята с '${label}'"
+            return 0 ;;
+    esac
+    if [ -z "$tag" ]; then
+        echo "${SECRETS_ADTAG[$idx]:-}"
+        return 0
+    fi
+    if ! [[ "$tag" =~ ^[0-9a-fA-F]{32}$ ]]; then
+        log_error "Метка: ровно 32 hex-символа (её выдаёт @MTProxybot)"
+        return 1
+    fi
+    SECRETS_ADTAG[$idx]="$tag"
+    save_secrets
+    reload_proxy_config 2>/dev/null || true
+    log_success "Метка задана для '${label}'"
 }
 
 # Список секретов
@@ -452,7 +496,7 @@ secret_list_json() {
         json_escape_fast "${SECRETS_NOTES[$_i]:-}";        _notes_esc="$_JSON_ESCAPE_OUT"
         if [ "${SECRETS_ENABLED[$_i]}" = "true" ]; then _enabled_str=true; else _enabled_str=false; fi
 
-        printf '{"label":"%s","secret":"%s","created":%s,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"%s","total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":[%s]}' \
+        printf '{"label":"%s","secret":"%s","created":%s,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"%s","ad_tag":"%s","total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":[%s]}' \
             "$_label_esc" \
             "$_secret_esc" \
             "${SECRETS_CREATED[$_i]:-0}" \
@@ -462,6 +506,7 @@ secret_list_json() {
             "${SECRETS_QUOTA[$_i]:-0}" \
             "$_expires_esc" \
             "$_notes_esc" \
+            "${SECRETS_ADTAG[$_i]:-}" \
             "${_uin:-0}" "${_uout:-0}" "$(( ${_uin:-0} + ${_uout:-0} ))" \
             "${_IP_HIST_JSON[$_label]:-}"
     done
@@ -585,6 +630,7 @@ secret_clone() {
     SECRETS_QUOTA+=("${SECRETS_QUOTA[$idx]:-0}")
     SECRETS_EXPIRES+=("${SECRETS_EXPIRES[$idx]:-0}")
     SECRETS_NOTES+=("${SECRETS_NOTES[$idx]:-}")
+    SECRETS_ADTAG+=("${SECRETS_ADTAG[$idx]:-}")
 
     save_secrets
     reload_proxy_config 2>/dev/null || true
@@ -657,7 +703,7 @@ _TARGET_USER_MARK='#mtproxyl-off '
 
 # Секции цели, где пользователь упоминается по метке. Порядок важен только для
 # вывода — удаляем и переименовываем во всех.
-_TARGET_LIMIT_SECTIONS='access.user_max_tcp_conns access.user_max_unique_ips access.user_data_quota access.user_expirations'
+_TARGET_LIMIT_SECTIONS='access.user_max_tcp_conns access.user_max_unique_ips access.user_data_quota access.user_expirations access.user_ad_tags'
 
 _target_users_ready() {
     if [ -z "${DETECTED_CONFIG_PATH:-}" ] || [ ! -f "$DETECTED_CONFIG_PATH" ]; then
@@ -885,12 +931,17 @@ _target_config_user_limits() {
     while IFS='|' read -r _st _lb _v; do
         [ -n "$_lb" ] && _EXP["$_lb"]="$_v"
     done < <(_target_section_pairs "access.user_expirations" 2>/dev/null)
+    declare -A _ADT=()
+    while IFS='|' read -r _st _lb _v; do
+        [ -n "$_lb" ] && _ADT["$_lb"]="$_v"
+    done < <(_target_section_pairs "access.user_ad_tags" 2>/dev/null)
 
     while IFS='|' read -r _st _lb _v; do
         [ "$_st" = "on" ] || continue
         [ -n "$_lb" ] || continue
-        printf '%s|%s|%s|%s|%s\n' "$_lb" \
-            "${_CONN[$_lb]:-}" "${_UIPS[$_lb]:-}" "${_QUOTA[$_lb]:-}" "${_EXP[$_lb]:-}"
+        printf '%s|%s|%s|%s|%s|%s\n' "$_lb" \
+            "${_CONN[$_lb]:-}" "${_UIPS[$_lb]:-}" "${_QUOTA[$_lb]:-}" "${_EXP[$_lb]:-}" \
+            "${_ADT[$_lb]:-}"
     done < <(_target_section_pairs "access.users" 2>/dev/null) | LC_ALL=C sort
 }
 
@@ -930,8 +981,9 @@ _target_api_user_limits() {
             # Движок отдаёт смещение, в конфиге стоит Z — это один момент
             # времени, и расходиться из-за записи они не должны.
             sub(/\+00:00$/, "Z", e)
-            printf "%s|%s|%s|%s|%s\n", u, num($0, "max_tcp_conns"), \
-                num($0, "max_unique_ips"), num($0, "data_quota_bytes"), e
+            printf "%s|%s|%s|%s|%s|%s\n", u, num($0, "max_tcp_conns"), \
+                num($0, "max_unique_ips"), num($0, "data_quota_bytes"), e, \
+                str($0, "user_ad_tag")
         }
     ' | LC_ALL=C sort
 }
@@ -1088,7 +1140,7 @@ target_user_rename() {
         [ -n "$_val" ] || continue
         _toml_safe_unset "$_from" "$_sect" "$DETECTED_CONFIG_PATH" || true
         case "$_sect" in
-            access.user_expirations) _target_set_in_section "$_to" "\"${_val}\"" "$_sect" ;;
+            access.user_expirations|access.user_ad_tags) _target_set_in_section "$_to" "\"${_val}\"" "$_sect" ;;
             *)                       _target_set_in_section "$_to" "$_val" "$_sect" ;;
         esac
     done
@@ -1133,6 +1185,33 @@ _target_users_set_limit() {
     fi
 }
 
+# Рекламная метка пользователя цели — та же секция, что и у менеджера.
+target_user_adtag() {
+    local _label="$1" _tag="${2:-}"
+    _target_users_ready || return 1
+    [ -n "$(_target_user_state "$_label")" ] || {
+        log_error "Пользователь '${_label}' не найден у цели"; return 1; }
+
+    if [ -z "$_tag" ]; then
+        _target_user_limit "$_label" "access.user_ad_tags"
+        return 0
+    fi
+    backup_target_config "users" "true" || true
+    case "$_tag" in
+        remove|none|"-"|"0")
+            _target_users_set_limit "$_label" "access.user_ad_tags" "" str
+            log_success "Метка снята с '${_label}'" ;;
+        *)
+            if ! [[ "$_tag" =~ ^[0-9a-fA-F]{32}$ ]]; then
+                log_error "Метка: ровно 32 hex-символа (её выдаёт @MTProxybot)"
+                return 1
+            fi
+            _target_users_set_limit "$_label" "access.user_ad_tags" "$_tag" str
+            log_success "Метка задана для '${_label}'" ;;
+    esac
+    _target_users_apply
+}
+
 target_users_list_json() {
     _target_users_ready || { printf '[]\n'; return 1; }
     local _json
@@ -1147,7 +1226,7 @@ target_users_list_json() {
     local _TDB_SRC=""
     _load_target_db
 
-    declare -A _LIM_CONNS=() _LIM_IPS=() _LIM_QUOTA=() _LIM_EXPIRES=()
+    declare -A _LIM_CONNS=() _LIM_IPS=() _LIM_QUOTA=() _LIM_EXPIRES=() _LIM_ADTAG=()
     local _st _nm _vl
     while IFS='|' read -r _st _nm _vl; do
         [ -n "$_nm" ] && _LIM_CONNS["$_nm"]="$_vl"
@@ -1161,6 +1240,9 @@ target_users_list_json() {
     while IFS='|' read -r _st _nm _vl; do
         [ -n "$_nm" ] && _LIM_EXPIRES["$_nm"]="$_vl"
     done < <(_target_section_pairs "access.user_expirations")
+    while IFS='|' read -r _st _nm _vl; do
+        [ -n "$_nm" ] && _LIM_ADTAG["$_nm"]="$_vl"
+    done < <(_target_section_pairs "access.user_ad_tags")
 
     declare -A _IP_HIST=()
     if [ -f "$_TARGET_USER_IPS_DB" ]; then
@@ -1191,15 +1273,17 @@ target_users_list_json() {
         _ips="${_LIM_IPS[$_label]:-0}";      [[ "$_ips" =~ ^[0-9]+$ ]]    || _ips=0
         _quota="${_LIM_QUOTA[$_label]:-0}";  [[ "$_quota" =~ ^[0-9]+$ ]]  || _quota=0
         _expires="${_LIM_EXPIRES[$_label]:-}"
+        local _adtag="${_LIM_ADTAG[$_label]:-}"
+        [[ "$_adtag" =~ ^[0-9a-fA-F]{32}$ ]] || _adtag=""
 
         json_escape_fast "$_label";    _label_esc="$_JSON_ESCAPE_OUT"
         json_escape_fast "$_secret";   _secret_esc="$_JSON_ESCAPE_OUT"
         json_escape_fast "$_expires";  _expires_esc="$_JSON_ESCAPE_OUT"
         if [ "$_state" = "on" ]; then _enabled_str=true; else _enabled_str=false; fi
 
-        printf '{"label":"%s","secret":"%s","created":0,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"","total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":[%s]}' \
+        printf '{"label":"%s","secret":"%s","created":0,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"","ad_tag":"%s","total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":[%s]}' \
             "$_label_esc" "$_secret_esc" "$_enabled_str" \
-            "$_conns" "$_ips" "$_quota" "$_expires_esc" \
+            "$_conns" "$_ips" "$_quota" "$_expires_esc" "$_adtag" \
             "${_TDB_IN[$_label]:-0}" "${_TDB_OUT[$_label]:-0}" "${_TDB_TOTAL[$_label]:-0}" \
             "${_IP_HIST[$_label]:-}"
     done < <(_target_section_pairs "access.users")
@@ -1264,6 +1348,7 @@ handle_target_user_command() {
             local _l="$1"; shift 2>/dev/null || true
             target_user_setlimits "$_l" "${1:-0}" "${2:-0}" "${3:-0}" "${4:-}" ;;
         limits)   target_user_show_limits "${1:-}" ;;
+        adtag)    check_root; target_user_adtag "${1:-}" "${2:-}" ;;
         link)
             local _links; _links=$(target_user_link "${1:-}") || {
                 log_error "Пользователь '${1:-}' не найден у цели"; return 1; }
@@ -1298,6 +1383,8 @@ handle_target_user_command() {
             echo -e "    ${GREEN}secret rename${NC} <из> <в>     Переименовать"
             echo -e "    ${GREEN}secret limits${NC} [метка]      Лимиты"
             echo -e "    ${GREEN}secret setlimits${NC} <метка> <соед> <ip> <квота> [срок]"
+            echo -e "    ${GREEN}secret adtag${NC} <метка> <32hex|remove>"
+            echo -e "                              Рекламная метка пользователя"
             echo -e "    ${GREEN}secret link${NC} <метка>        Ссылка"
             echo -e "    ${GREEN}secret qr${NC} <метка>          QR-код"
             ;;
@@ -1351,6 +1438,7 @@ handle_secret_command() {
         enable)   check_root; secret_toggle "$1" enable ;;
         disable)  check_root; secret_toggle "$1" disable ;;
         limits)   secret_show_limits "$1" ;;
+        adtag)    check_root; secret_set_adtag "$1" "${2:-}" ;;
         setlimits)
             check_root
             local l="$1"; shift 2>/dev/null || true

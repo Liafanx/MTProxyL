@@ -522,6 +522,19 @@ TOML_EOF
                 echo "${SECRETS_LABELS[$i]} = \"${SECRETS_EXPIRES[$i]}\"" >> "$tmp"
         done
     fi
+    # Своя рекламная метка пользователя. Общая из [general] остаётся в силе
+    # для всех остальных — секция её не отменяет, а перекрывает поимённо.
+    local has_adtag=false
+    for i in "${!SECRETS_LABELS[@]}"; do
+        [ "${SECRETS_ENABLED[$i]}" = "true" ] && [ -n "${SECRETS_ADTAG[$i]:-}" ] && has_adtag=true
+    done
+    if $has_adtag; then
+        echo "" >> "$tmp"; echo "[access.user_ad_tags]" >> "$tmp"
+        for i in "${!SECRETS_LABELS[@]}"; do
+            [ "${SECRETS_ENABLED[$i]}" = "true" ] && [ -n "${SECRETS_ADTAG[$i]:-}" ] && \
+                echo "${SECRETS_LABELS[$i]} = \"${SECRETS_ADTAG[$i]}\"" >> "$tmp"
+        done
+    fi
 
     # Upstreams
     # Shadowsocks движок принимает только при выключенном ME, а ME можно

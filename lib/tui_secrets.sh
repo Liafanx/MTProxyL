@@ -16,6 +16,7 @@ tui_target_users_menu() {
         echo -e "  ${DIM}[6]${NC} Лимиты"
         echo -e "  ${DIM}[7]${NC} Переименовать"
         echo -e "  ${DIM}[8]${NC} Ссылка и QR-код"
+        echo -e "  ${DIM}[9]${NC} Рекламная метка"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         local l
@@ -71,6 +72,15 @@ tui_target_users_menu() {
                     fi
                 fi
                 press_any_key ;;
+            9)
+                echo -en "  ${BOLD}Метка пользователя:${NC} "; read_line l
+                if [ -n "$l" ]; then
+                    echo -e "  ${DIM}Сейчас: $(target_user_adtag "$l" | grep . || echo 'нет')${NC}"
+                    echo -e "  ${DIM}32 hex-символа от @MTProxybot, 'remove' — снять${NC}"
+                    echo -en "  ${BOLD}Рекламная метка:${NC} "; local at; read_line at
+                    [ -n "$at" ] && { target_user_adtag "$l" "$at" || true; }
+                fi
+                press_any_key ;;
             0)  return ;;
         esac
     done
@@ -105,6 +115,7 @@ tui_secrets_menu() {
         echo -e "  ${DIM}[10]${NC} Изменить ключ на свой"
         echo -e "  ${DIM}[11]${NC} Экспорт секретов"
         echo -e "  ${DIM}[12]${NC} Импорт секретов"
+        echo -e "  ${DIM}[13]${NC} Рекламная метка пользователя"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
@@ -217,11 +228,24 @@ tui_secrets_menu() {
                         SECRETS_CREATED+=("$(date +%s)"); SECRETS_ENABLED+=("${_e:-true}")
                         SECRETS_MAX_CONNS+=("${_mc:-0}"); SECRETS_MAX_IPS+=("${_mi:-0}")
                         SECRETS_QUOTA+=("${_q:-0}"); SECRETS_EXPIRES+=("${_ex:-0}")
-                        SECRETS_NOTES+=("${_n:-}"); added=$((added+1))
+                        SECRETS_NOTES+=("${_n:-}"); SECRETS_ADTAG+=("")
+                        added=$((added+1))
                     done < "$f"
                     [ $added -gt 0 ] && { save_secrets; reload_proxy_config 2>/dev/null || true; }
                     log_success "Импортировано: ${added}, пропущено: ${skipped}"
                 else log_error "Файл не найден"; fi; press_any_key ;;
+            13)
+                echo -en "  ${BOLD}Метка или #:${NC} "; local l; read_line l
+                if [[ "$l" =~ ^[0-9]+$ ]] && [ "$l" -ge 1 ] && [ "$l" -le "${#SECRETS_LABELS[@]}" ]; then
+                    l="${SECRETS_LABELS[$((l - 1))]}"; fi
+                if [ -n "$l" ]; then
+                    echo -e "  ${DIM}Своя метка перекрывает общую из настроек, остальных не трогает.${NC}"
+                    echo -e "  ${DIM}Сейчас: $(secret_set_adtag "$l" | grep . || echo 'нет')${NC}"
+                    echo -e "  ${DIM}32 hex-символа от @MTProxybot, 'remove' — снять${NC}"
+                    echo -en "  ${BOLD}Рекламная метка:${NC} "; local at; read_line at
+                    [ -n "$at" ] && { secret_set_adtag "$l" "$at" || true; }
+                fi
+                press_any_key ;;
             0|"") return ;;
         esac
     done

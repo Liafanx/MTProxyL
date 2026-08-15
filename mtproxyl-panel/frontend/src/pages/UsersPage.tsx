@@ -56,6 +56,12 @@ async function applyMtproxylLimits(label: string, data: Record<string, unknown>)
     // MTProxyL принимает ГГГГ-ММ-ДД; из формы приходит полный RFC3339.
     expires: expiration ? expiration.slice(0, 10) : '0',
   });
+  // Метка живёт в отдельной секции конфига, и у MTProxyL для неё отдельная
+  // команда: в лимиты её не сложить. Форма отдаёт пустую строку, когда поле
+  // очистили, — это снятие метки.
+  if ('user_ad_tag' in data) {
+    await mtproxylUsersApi.setAdTag(label, data.user_ad_tag ? String(data.user_ad_tag) : '');
+  }
 }
 
 function QuotaCell({ user, entry }: { user: UserInfo; entry?: QuotaEntry }) {

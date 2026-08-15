@@ -256,6 +256,7 @@ ${TGBOT_USER} ALL=(root) NOPASSWD: ${_script} secret enable [A-Za-z0-9]*
 ${TGBOT_USER} ALL=(root) NOPASSWD: ${_script} secret disable [A-Za-z0-9]*
 ${TGBOT_USER} ALL=(root) NOPASSWD: ${_script} secret rename [A-Za-z0-9]* [A-Za-z0-9]*
 ${TGBOT_USER} ALL=(root) NOPASSWD: ${_script} secret setlimits [A-Za-z0-9]* * * * *
+${TGBOT_USER} ALL=(root) NOPASSWD: ${_script} secret adtag [A-Za-z0-9]* *
 ${TGBOT_USER} ALL=(root) NOPASSWD: ${_script} secret link [A-Za-z0-9]*
 
 # Доступность из России

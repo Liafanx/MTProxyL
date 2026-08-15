@@ -103,7 +103,12 @@ export function UserFormDialog({
         payload.username = form.username;
       }
       if (form.secret) payload.secret = form.secret;
-      if (form.user_ad_tag) payload.user_ad_tag = form.user_ad_tag;
+      // Пустое поле у telemt — ошибка «must be exactly 32 hex characters»,
+      // снимает метку только null. Ключ шлём, лишь когда он реально изменился:
+      // отсутствие ключа означает «оставить как есть».
+      const adTag = String(form.user_ad_tag ?? '').trim();
+      if (adTag) payload.user_ad_tag = adTag;
+      else if (initialData?.user_ad_tag) payload.user_ad_tag = null;
       if (form.max_tcp_conns !== '' && form.max_tcp_conns !== undefined && Number(form.max_tcp_conns) > 0) {
         payload.max_tcp_conns = Number(form.max_tcp_conns);
       }

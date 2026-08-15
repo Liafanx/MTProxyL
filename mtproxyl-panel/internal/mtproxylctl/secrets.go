@@ -22,6 +22,9 @@ type Secret struct {
 	// Expires is "0" for no expiry, otherwise an RFC3339 timestamp.
 	Expires string `json:"expires"`
 	Notes   string `json:"notes"`
+	// AdTag is the per-user ad tag ([access.user_ad_tags]); empty means the
+	// user falls back to the shared tag from [general].
+	AdTag string `json:"ad_tag"`
 	// TotalIn and TotalOut are 0 when the traffic source cannot tell
 	// direction apart (the reanimator's API-only path) — TotalBytes stays
 	// authoritative in that case, same as on the Traffic page.
@@ -179,5 +182,26 @@ func (c *Client) SetSecretLimits(ctx context.Context, label string, l SecretLimi
 	}
 
 	out, err := c.run(ctx, "secret", "setlimits", label, conns, ips, quota, expires)
+	return stripANSI(out), err
+}
+
+// adTagRe matches what @MTProxybot issues: exactly 32 hex characters. The CLI
+// checks it too; this keeps a malformed tag from reaching the engine config.
+var adTagRe = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
+
+// SetSecretAdTag sets or clears the per-user ad tag. An empty tag removes it;
+// the shared tag from [general] stays in force for everyone else.
+func (c *Client) SetSecretAdTag(ctx context.Context, label, tag string) (string, error) {
+	if err := ValidateSecretLabel(label); err != nil {
+		return "", err
+	}
+	arg := "remove"
+	if tag != "" {
+		if !adTagRe.MatchString(tag) {
+			return "", fmt.Errorf("рекламная метка: ровно 32 hex-символа")
+		}
+		arg = tag
+	}
+	out, err := c.run(ctx, "secret", "adtag", label, arg)
 	return stripANSI(out), err
 }

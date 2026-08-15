@@ -297,6 +297,11 @@ export const mtproxylUsersApi = {
       method: 'POST',
       body: JSON.stringify(limits),
     }),
+  setAdTag: (label: string, adTag: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/adtag`, {
+      method: 'POST',
+      body: JSON.stringify({ ad_tag: adTag }),
+    }),
   toggle: (label: string, enabled: boolean) =>
     request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/toggle`, {
       method: 'POST',
