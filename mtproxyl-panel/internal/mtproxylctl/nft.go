@@ -46,8 +46,11 @@ var nftParamKeyRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]{1,63}$`)
 
 // nftParamValueRe rejects anything that is not a plain scalar. Real values are
 // rates ("15/second"), durations ("60s"), integers, booleans, enum words,
-// hex marks ("0x40") and port lists ("443,9000-9100").
-var nftParamValueRe = regexp.MustCompile(`^[A-Za-z0-9_,:/.-]*$`)
+// hex marks ("0x40"), port lists ("443,9000-9100") and interface lists
+// ("awg* wg* tun*"). The value travels as one argv element, never as a shell
+// string, so a space inside it is not a separator; MTProxyL stores it single
+// quoted, and a quote is not in the allowed set.
+var nftParamValueRe = regexp.MustCompile(`^[A-Za-z0-9_,:/.* -]*$`)
 
 // ValidateNftParam checks a key/value pair before it reaches the CLI.
 func ValidateNftParam(key, value string) error {

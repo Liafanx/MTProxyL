@@ -1038,6 +1038,14 @@ tui_zapret2_settings() {
         fi
         echo -e "  ${DIM}[10]${NC} Доп. порты  [${ZAPRET2_EXTRA_PORTS:-нет}]  ${DIM}— через запятую, можно диапазоны${NC}"
         echo -e "  ${DIM}[12]${NC} UID:GID     [${ZAPRET2_UID}:${ZAPRET2_GID}]  ${DIM}— под кого nfqws2 сбрасывает права${NC}"
+        local _mport_note="из конфига"
+        [ -n "${ZAPRET2_PORT:-}" ] && _mport_note="задан вручную"
+        echo -e "  ${DIM}[13]${NC} Основной порт [$(zapret2_main_port)]  ${DIM}— ${_mport_note}${NC}"
+        local _ipf="${DIM}выключен${NC}"
+        [ "${ZAPRET2_FILTER_IP_ENABLED:-true}" = "true" ] && [ -n "${ZAPRET2_FILTER_IP:-}" ] \
+            && _ipf="${ZAPRET2_FILTER_IP}"
+        echo -e "  ${DIM}[14]${NC} Фильтр по IP  [${_ipf}]  ${DIM}— правила только для этого адреса${NC}"
+        echo -e "  ${DIM}[15]${NC} Мимо очереди  [${ZAPRET2_EXCLUDE_IFACES:-нет}]  ${DIM}— интерфейсы VPN${NC}"
         local _z_bridge="false"
         if zapret2_is_bridge_target; then
             _z_bridge="true"
@@ -1190,6 +1198,98 @@ tui_zapret2_settings() {
                 else
                     log_error "UID и GID — числа 0..65535"
                 fi
+                press_any_key ;;
+            13)
+                echo ""
+                echo -e "  ${DIM}По умолчанию берётся порт прокси из конфига (${PROXY_PORT:-443}).${NC}"
+                echo -e "  ${DIM}Менять стоит, когда клиенты приходят на другой порт:${NC}"
+                echo -e "  ${DIM}проброс, балансировщик, свой DNAT.${NC}"
+                echo -e "  ${DIM}Пусто — вернуться к порту из конфига.${NC}"
+                echo -en "  Основной порт [$(zapret2_main_port)]: "
+                local _mp; read_line _mp
+                if [ -z "$_mp" ]; then
+                    if [ -n "${ZAPRET2_PORT:-}" ]; then
+                        ZAPRET2_PORT=""; save_nft_settings
+                        log_success "Основной порт снова из конфига: ${PROXY_PORT:-443}"
+                        zapret2_update_config
+                    fi
+                elif [[ "$_mp" =~ ^[0-9]+$ ]] && [ "$_mp" -ge 1 ] && [ "$_mp" -le 65535 ]; then
+                    ZAPRET2_PORT="$_mp"; save_nft_settings
+                    log_success "Основной порт = ${_mp}"
+                    log_info "Фильтр nfqws2: $(zapret2_filter_ports)"
+                    zapret2_update_config
+                else
+                    log_error "Порт — число 1..65535"
+                fi
+                press_any_key ;;
+            14)
+                echo ""
+                echo -e "  ${DIM}С фильтром очередь получает только трафик этого адреса —${NC}"
+                echo -e "  ${DIM}чужой транзит на том же порту проходит мимо.${NC}"
+                echo -e "  ${DIM}Только IPv4: домен в правило nft подставить нельзя.${NC}"
+                echo -e "  ${DIM}Нужен адрес из пакетов: за NAT это частный адрес сервера,${NC}"
+                echo -e "  ${DIM}а не тот, под которым он виден снаружи.${NC}"
+                echo -e "  ${DIM}«off» — выключить фильтр, «auto» — определить адрес заново.${NC}"
+                echo -en "  IP [${ZAPRET2_FILTER_IP:-не задан}]: "
+                local _fip; read_line _fip
+                case "${_fip,,}" in
+                    "") ;;
+                    off|нет|выкл)
+                        ZAPRET2_FILTER_IP_ENABLED="false"; save_nft_settings
+                        log_success "Фильтр по IP выключен — правила ловят весь трафик на порту"
+                        zapret2_update_config ;;
+                    auto)
+                        local _det; _det=$(zapret2_detect_local_ip 2>/dev/null)
+                        if zapret2_validate_ipv4 "${_det:-}"; then
+                            ZAPRET2_FILTER_IP="$_det"; ZAPRET2_FILTER_IP_ENABLED="true"
+                            save_nft_settings
+                            log_success "Фильтр по IP = ${_det}"
+                            zapret2_update_config
+                        else
+                            log_error "Не удалось определить IPv4 сервера — задайте адрес вручную"
+                        fi ;;
+                    *)
+                        if zapret2_validate_ipv4 "$_fip"; then
+                            ZAPRET2_FILTER_IP="$_fip"; ZAPRET2_FILTER_IP_ENABLED="true"
+                            save_nft_settings
+                            log_success "Фильтр по IP = ${_fip}"
+                            zapret2_update_config
+                        else
+                            log_error "Нужен IPv4-адрес, например 1.2.3.4 (домен не подойдёт)"
+                        fi ;;
+                esac
+                press_any_key ;;
+            15)
+                echo ""
+                echo -e "  ${DIM}Трафик этих интерфейсов проходит мимо очереди.${NC}"
+                echo -e "  ${DIM}Туннели (AmneziaWG, WireGuard, OpenVPN) несут чужой HTTPS,${NC}"
+                echo -e "  ${DIM}и десинк по тому же порту ломает его вместе с нашим.${NC}"
+                echo -e "  ${DIM}Список через пробел, можно с «*». «std» — ${ZAPRET2_DEFAULT_EXCLUDE_IFACES}.${NC}"
+                echo -e "  ${DIM}«off» — не исключать ничего.${NC}"
+                local _present; _present=$(zapret2_tunnel_ifaces_present)
+                [ -n "$_present" ] && echo -e "  ${DIM}Сейчас на сервере: ${_present% }${NC}"
+                echo -en "  Интерфейсы [${ZAPRET2_EXCLUDE_IFACES:-нет}]: "
+                local _ifs; read_line _ifs
+                case "${_ifs,,}" in
+                    "") ;;
+                    off|нет|выкл)
+                        ZAPRET2_EXCLUDE_IFACES=""; save_nft_settings
+                        log_success "Ничего не исключаем"
+                        zapret2_update_config ;;
+                    std)
+                        ZAPRET2_EXCLUDE_IFACES="$ZAPRET2_DEFAULT_EXCLUDE_IFACES"; save_nft_settings
+                        log_success "Мимо очереди: ${ZAPRET2_EXCLUDE_IFACES}"
+                        zapret2_update_config ;;
+                    *)
+                        # Имя интерфейса и «*» — всё, что попадёт в правило nft.
+                        if [[ "$_ifs" =~ ^[A-Za-z0-9_.*@:-]+([[:space:]]+[A-Za-z0-9_.*@:-]+)*$ ]]; then
+                            ZAPRET2_EXCLUDE_IFACES="$_ifs"; save_nft_settings
+                            log_success "Мимо очереди: ${ZAPRET2_EXCLUDE_IFACES}"
+                            zapret2_update_config
+                        else
+                            log_error "Только имена интерфейсов через пробел, например: wg0 tun*"
+                        fi ;;
+                esac
                 press_any_key ;;
             0|"") return ;;
         esac

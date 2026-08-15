@@ -119,6 +119,20 @@ ZAPRET2_GID="$ZAPRET2_DEFAULT_GID"
 # Доп. порты/диапазоны для --filter-tcp, через запятую (напр. "8443,9000-9100").
 # Порт прокси добавляется автоматически и здесь не нужен.
 ZAPRET2_EXTRA_PORTS=""
+# Основной порт. Пусто — берём порт прокси из конфига, как и раньше; задан —
+# правила и фильтр nfqws2 идут по нему. Нужно там, где прокси слушает один
+# порт, а до клиентов доходит другой (проброс, балансировщик, свой DNAT).
+ZAPRET2_PORT=""
+# Сузить правила до конкретного адреса сервера: без этого очередь ловит весь
+# трафик на этом порту, включая чужой транзитный. Пусто — определяем сам
+# адрес при установке; выключено — правила без фильтра по IP, как раньше.
+ZAPRET2_FILTER_IP_ENABLED="true"
+ZAPRET2_FILTER_IP=""
+# Интерфейсы, чей трафик проходит мимо очереди: список через пробел, можно с
+# «*». Туннели (AmneziaWG, WireGuard, OpenVPN) несут чужой HTTPS, и десинк по
+# порту 443 ломает его вместе с нашим. Пусто — не исключаем ничего.
+ZAPRET2_EXCLUDE_IFACES=""
+ZAPRET2_DEFAULT_EXCLUDE_IFACES="awg* wg* tun*"
 ZAPRET2_APPLIED="false"
 ZAPRET2_SERVICE_ENABLED="false"
 
@@ -186,6 +200,10 @@ ZAPRET2_SPLIT_LEN='${ZAPRET2_SPLIT_LEN}'
 ZAPRET2_WIN_SYNACK='${ZAPRET2_WIN_SYNACK}'
 ZAPRET2_WIN_ACK='${ZAPRET2_WIN_ACK}'
 ZAPRET2_EXTRA_PORTS='${ZAPRET2_EXTRA_PORTS}'
+ZAPRET2_PORT='${ZAPRET2_PORT}'
+ZAPRET2_FILTER_IP_ENABLED='${ZAPRET2_FILTER_IP_ENABLED}'
+ZAPRET2_FILTER_IP='${ZAPRET2_FILTER_IP}'
+ZAPRET2_EXCLUDE_IFACES='${ZAPRET2_EXCLUDE_IFACES}'
 ZAPRET2_QNUM='${ZAPRET2_QNUM}'
 ZAPRET2_FWMARK='${ZAPRET2_FWMARK}'
 ZAPRET2_ORIG_TW_REUSE='${ZAPRET2_ORIG_TW_REUSE}'
@@ -233,6 +251,8 @@ load_nft_settings() {
                 ZAPRET2_APPLIED|ZAPRET2_SERVICE_ENABLED|\
                 ZAPRET2_OUT_RANGE|ZAPRET2_IN_RANGE|ZAPRET2_SPLIT_LEN|\
                 ZAPRET2_WIN_SYNACK|ZAPRET2_WIN_ACK|ZAPRET2_EXTRA_PORTS|\
+                ZAPRET2_PORT|ZAPRET2_FILTER_IP_ENABLED|ZAPRET2_FILTER_IP|\
+                ZAPRET2_EXCLUDE_IFACES|\
                 ZAPRET2_QNUM|ZAPRET2_FWMARK|ZAPRET2_DEBUG|ZAPRET2_ORIG_TW_REUSE|\
                 ZAPRET2_UID|ZAPRET2_GID)
                     printf -v "$_key" '%s' "$_val"
@@ -1463,10 +1483,65 @@ zapret2_download_bundle() {
     return 0
 }
 
-# Список портов для --filter-tcp: порт прокси + ZAPRET2_EXTRA_PORTS.
+# Основной порт zapret2. По умолчанию это порт прокси из конфига; заданный
+# вручную ZAPRET2_PORT его перекрывает.
+zapret2_main_port() {
+    if [[ "${ZAPRET2_PORT:-}" =~ ^[0-9]+$ ]] && [ "$ZAPRET2_PORT" -ge 1 ] && [ "$ZAPRET2_PORT" -le 65535 ]; then
+        echo "$ZAPRET2_PORT"
+        return 0
+    fi
+    echo "${PROXY_PORT:-443}"
+}
+
+# Совпадение по адресу сервера для правила nft: "ip saddr X " / "ip daddr X "
+# или пусто, если фильтр выключен либо адрес не задан. Пробел на конце — часть
+# строки правила, дальше подставляется остальное условие.
+zapret2_ip_match() {
+    local _dir="$1"
+    [ "${ZAPRET2_FILTER_IP_ENABLED:-true}" = "true" ] || return 0
+    [ -n "${ZAPRET2_FILTER_IP:-}" ] || return 0
+    printf 'ip %s %s ' "$_dir" "$ZAPRET2_FILTER_IP"
+}
+
+# Адрес, который реально стоит в заголовках наших пакетов. Публичный адрес
+# для этого не годится: за NAT (Oracle, Hetzner cloud NAT) в пакет попадает
+# частный, и правило с публичным не сработает ни разу — zapret2 будет
+# «работать» вхолостую.
+zapret2_detect_local_ip() {
+    local _ip
+    _ip=$(ip -4 route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]\+\).*/\1/p' | head -1)
+    [ -n "$_ip" ] || _ip=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9]+(\.[0-9]+){3}$' | head -1)
+    zapret2_validate_ipv4 "${_ip:-}" || return 1
+    echo "$_ip"
+}
+
+# Только IPv4 и только адрес: домен в правило подставить нельзя — nft его не
+# разрешает, и вся таблица не применится.
+zapret2_validate_ipv4() {
+    local _ip="$1" _o
+    [[ "$_ip" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || return 1
+    for _o in "${BASH_REMATCH[@]:1:4}"; do
+        [ "$_o" -le 255 ] || return 1
+    done
+    return 0
+}
+
+# Интерфейсы, которые сейчас есть на сервере и похожи на туннель. Нужны при
+# установке: молча пустить чужой VPN-трафик через очередь — это сломать его.
+zapret2_tunnel_ifaces_present() {
+    local _if
+    for _if in /sys/class/net/*; do
+        _if="${_if##*/}"
+        case "$_if" in
+            awg*|wg*|tun*) printf '%s ' "$_if" ;;
+        esac
+    done
+}
+
+# Список портов для --filter-tcp: основной порт + ZAPRET2_EXTRA_PORTS.
 # Формат nfqws2: port1[-port2] через запятую, количество не ограничено.
 zapret2_filter_ports() {
-    local _port="${PROXY_PORT:-443}"
+    local _port; _port=$(zapret2_main_port)
     local _list="$_port"
     local _p
     if [ -n "${ZAPRET2_EXTRA_PORTS:-}" ]; then
@@ -1639,6 +1714,22 @@ BYPASS_MATCH="${ZAPRET2_BYPASS_MATCH}"
 IS_BRIDGE="${_is_bridge}"
 IS_PRECISE="${_is_precise}"
 CONTAINER="${DETECTED_CONTAINER}"
+# Адрес сервера в правилах: очередь берёт трафик только нашего прокси.
+# Пусто — фильтра по IP нет.
+SADDR="$(zapret2_ip_match saddr)"
+DADDR="$(zapret2_ip_match daddr)"
+# Интерфейсы, чей трафик проходит мимо очереди (туннели VPN).
+EXCLUDE_IFACES="${ZAPRET2_EXCLUDE_IFACES}"
+
+# accept для исключённых интерфейсов — первым правилом цепочки.
+iface_accept() {
+    local _chain="\$1" _dir="\$2" _if
+    [ -n "\$EXCLUDE_IFACES" ] || return 0
+    for _if in \$EXCLUDE_IFACES; do
+        [ -n "\$_if" ] || continue
+        nft "add rule ip \$TABLE \$_chain \$_dir \"\$_if\" counter accept"
+    done
+}
 
 # Файл в sysctl.d отрабатывает при загрузке, но параметр могли поменять
 # руками — задаём его на каждый старт.
@@ -1681,21 +1772,25 @@ if [ "\$IS_BRIDGE" = "true" ]; then
 
     nft "add chain ip \$TABLE forward { type filter hook forward priority mangle; policy accept; }"
     nft "add rule ip \$TABLE forward ct state invalid counter drop"
+    iface_accept forward iifname
+    iface_accept forward oifname
     nft "add rule ip \$TABLE forward \$BYPASS_MATCH ct mark \$CT_MARK counter accept"
     nft "add rule ip \$TABLE forward \${DADDR_MATCH}meta mark and \$FWMARK == 0x00000000 tcp dport \$PORT counter queue num \$QNUM bypass"
     nft "add rule ip \$TABLE forward \${SADDR_MATCH}meta mark and \$FWMARK == 0x00000000 tcp sport \$PORT counter queue num \$QNUM bypass"
 else
     nft "add chain ip \$TABLE postrouting { type filter hook postrouting priority srcnat + 1; policy accept; }"
+    iface_accept postrouting oifname
     nft "add rule ip \$TABLE postrouting \$BYPASS_MATCH ct mark \$CT_MARK counter accept"
-    nft "add rule ip \$TABLE postrouting meta mark and \$FWMARK == 0x00000000 tcp sport \$PORT counter queue num \$QNUM bypass"
+    nft "add rule ip \$TABLE postrouting meta mark and \$FWMARK == 0x00000000 \${SADDR}tcp sport \$PORT counter queue num \$QNUM bypass"
 
     nft "add chain ip \$TABLE prerouting { type filter hook prerouting priority mangle; policy accept; }"
     nft "add rule ip \$TABLE prerouting ct state invalid counter drop"
+    iface_accept prerouting iifname
     nft "add rule ip \$TABLE prerouting \$BYPASS_MATCH ct mark \$CT_MARK counter accept"
-    nft "add rule ip \$TABLE prerouting meta mark and \$FWMARK == 0x00000000 tcp dport \$PORT counter queue num \$QNUM bypass"
+    nft "add rule ip \$TABLE prerouting meta mark and \$FWMARK == 0x00000000 \${DADDR}tcp dport \$PORT counter queue num \$QNUM bypass"
 fi
 
-echo "MTProxyL: NFT table \$TABLE applied (ports=\$PORT qnum=\$QNUM bridge=\$IS_BRIDGE precise=\$IS_PRECISE)"
+echo "MTProxyL: NFT table \$TABLE applied (ports=\$PORT qnum=\$QNUM bridge=\$IS_BRIDGE precise=\$IS_PRECISE ip=\${SADDR:-any} skip=\${EXCLUDE_IFACES:-none})"
 
 exec ${ZAPRET2_BIN} @${ZAPRET2_CONF}
 NFTSTART
@@ -1952,6 +2047,18 @@ zapret2_remove_sysctl() {
     log_success "Параметры ядра zapret2 сняты"
 }
 
+# Правила «пропустить мимо очереди» для исключённых интерфейсов. Ставятся
+# первыми в цепочке: до них трафик туннеля успевал попасть в очередь, и
+# nfqws2 корёжил чужой HTTPS вместе с нашим.
+_zapret2_iface_accept() {
+    local _table="$1" _chain="$2" _dir="$3" _if
+    [ -n "${ZAPRET2_EXCLUDE_IFACES:-}" ] || return 0
+    for _if in $ZAPRET2_EXCLUDE_IFACES; do
+        [ -n "$_if" ] || continue
+        nft "add rule ip $_table $_chain $_dir \"$_if\" counter accept"
+    done
+}
+
 zapret2_apply_nft() {
     ensure_nftables_installed || return 1
     zapret2_apply_sysctl
@@ -1964,7 +2071,7 @@ zapret2_apply_nft() {
 
     printf -v _combined_mark '0x%08x' "$(( _fwmark | _ct_mark ))"
 
-    if [ -z "${PROXY_PORT:-}" ]; then
+    if [ -z "${PROXY_PORT:-}" ] && [ -z "${ZAPRET2_PORT:-}" ]; then
         log_error "Порт не задан — невозможно применить NFT правила zapret2"
         return 1
     fi
@@ -1998,6 +2105,8 @@ zapret2_apply_nft() {
 
         nft "add chain ip $_table forward { type filter hook forward priority mangle; policy accept; }"
         nft "add rule ip $_table forward ct state invalid counter drop"
+        _zapret2_iface_accept "$_table" forward iifname
+        _zapret2_iface_accept "$_table" forward oifname
         nft "add rule ip $_table forward ${ZAPRET2_BYPASS_MATCH} ct mark ${_ct_mark} counter accept"
         nft "add rule ip $_table forward ${_daddr_match}meta mark and $_fwmark == 0x00000000 tcp dport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
         nft "add rule ip $_table forward ${_saddr_match}meta mark and $_fwmark == 0x00000000 tcp sport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
@@ -2005,16 +2114,28 @@ zapret2_apply_nft() {
         return 0
     fi
 
+    # Адрес сервера в правиле: очередь получает только трафик нашего прокси,
+    # а не всё, что идёт через этот порт мимо нас.
+    local _sa _da
+    _sa=$(zapret2_ip_match saddr)
+    _da=$(zapret2_ip_match daddr)
+
     nft "add chain ip $_table postrouting { type filter hook postrouting priority srcnat + 1; policy accept; }"
+    _zapret2_iface_accept "$_table" postrouting oifname
     nft "add rule ip $_table postrouting ${ZAPRET2_BYPASS_MATCH} ct mark ${_ct_mark} counter accept"
-    nft "add rule ip $_table postrouting meta mark and $_fwmark == 0x00000000 tcp sport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
+    nft "add rule ip $_table postrouting meta mark and $_fwmark == 0x00000000 ${_sa}tcp sport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
 
     nft "add chain ip $_table prerouting { type filter hook prerouting priority mangle; policy accept; }"
     nft "add rule ip $_table prerouting ct state invalid counter drop"
+    _zapret2_iface_accept "$_table" prerouting iifname
     nft "add rule ip $_table prerouting ${ZAPRET2_BYPASS_MATCH} ct mark ${_ct_mark} counter accept"
-    nft "add rule ip $_table prerouting meta mark and $_fwmark == 0x00000000 tcp dport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
+    nft "add rule ip $_table prerouting meta mark and $_fwmark == 0x00000000 ${_da}tcp dport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
 
-    log_success "NFT таблица ${_table} применена (порты=${_port} qnum=${ZAPRET2_QNUM})"
+    local _ip_note=" ip=все"
+    [ -n "$_sa" ] && _ip_note=" ip=${ZAPRET2_FILTER_IP}"
+    local _if_note=""
+    [ -n "${ZAPRET2_EXCLUDE_IFACES:-}" ] && _if_note=" кроме: ${ZAPRET2_EXCLUDE_IFACES}"
+    log_success "NFT таблица ${_table} применена (порты=${_port} qnum=${ZAPRET2_QNUM}${_ip_note}${_if_note})"
 }
 
 zapret2_remove_nft() {
@@ -2182,6 +2303,38 @@ zapret2_update_config() {
     fi
 }
 
+# Область действия правил при установке: адрес сервера и туннели, которые
+# трогать нельзя. Спрашивать про это нечего — значения видны из системы, а
+# поменять их можно в настройках zapret2.
+zapret2_autoconfigure_scope() {
+    if [ "${ZAPRET2_FILTER_IP_ENABLED:-true}" = "true" ] && [ -z "${ZAPRET2_FILTER_IP:-}" ]; then
+        local _ip; _ip=$(zapret2_detect_local_ip 2>/dev/null)
+        if zapret2_validate_ipv4 "${_ip:-}"; then
+            ZAPRET2_FILTER_IP="$_ip"
+            log_info "Правила сузим до адреса сервера: ${_ip}"
+            local _pub; _pub=$(get_public_ip 2>/dev/null)
+            if zapret2_validate_ipv4 "${_pub:-}" && [ "$_pub" != "$_ip" ]; then
+                log_info "Снаружи сервер виден как ${_pub} — в пакетах стоит ${_ip}, правила по нему"
+            fi
+        else
+            # Без адреса фильтр смысла не имеет, но и молча ронять установку
+            # из-за него нельзя: правила по портам работают и так.
+            ZAPRET2_FILTER_IP_ENABLED="false"
+            log_warn "Не удалось определить IPv4 сервера — правила будут без фильтра по адресу"
+        fi
+    fi
+
+    if [ -z "${ZAPRET2_EXCLUDE_IFACES:-}" ]; then
+        local _tun; _tun=$(zapret2_tunnel_ifaces_present)
+        if [ -n "$_tun" ]; then
+            ZAPRET2_EXCLUDE_IFACES="$ZAPRET2_DEFAULT_EXCLUDE_IFACES"
+            log_warn "Найдены туннели: ${_tun%% }"
+            log_info "Их трафик пустим мимо очереди (${ZAPRET2_EXCLUDE_IFACES}) — иначе десинк сломает VPN"
+        fi
+    fi
+    save_nft_settings
+}
+
 zapret2_install() {
     echo ""
     echo -e "  ${BRIGHT_CYAN}${BOLD}Zapret2 MTProto fix${NC}"
@@ -2258,6 +2411,8 @@ zapret2_install() {
             _restore_limiter_service="false"
         fi
     fi
+
+    zapret2_autoconfigure_scope
 
     zapret2_write_conf
     zapret2_write_lua
@@ -2575,6 +2730,10 @@ _NFT_SETTABLE=(
     "ZAPRET2_QNUM|range:0:65535|Номер очереди NFQUEUE"
     "ZAPRET2_FWMARK|custom:_validate_nft_fwmark|fwmark для пропуска обработанных пакетов"
     "ZAPRET2_EXTRA_PORTS|custom:_validate_nft_ports|Дополнительные порты/диапазоны"
+    "ZAPRET2_PORT|custom:_validate_nft_optional_port|Основной порт (пусто = порт прокси)"
+    "ZAPRET2_FILTER_IP_ENABLED|bool|Сужать правила до адреса сервера"
+    "ZAPRET2_FILTER_IP|custom:_validate_nft_optional_ipv4|IPv4 сервера для правил (пусто = определить самим)"
+    "ZAPRET2_EXCLUDE_IFACES|custom:_validate_nft_ifaces|Интерфейсы мимо очереди, через пробел (wg* tun*)"
     "ZAPRET2_UID|range:0:65535|UID, под который nfqws2 сбрасывает привилегии"
     "ZAPRET2_GID|range:0:65535|GID, под который nfqws2 сбрасывает привилегии"
     "ZAPRET2_DEBUG|bool|Подробный лог Zapret2"
@@ -2612,6 +2771,20 @@ _validate_nft_ports() {
             echo "Формат: порты и диапазоны через запятую (443,9000-9100)"; return 1; }
     done
     return 0
+}
+
+# Пусто — «определить самим». Домен не годится: в правило nft он не встанет.
+_validate_nft_optional_ipv4() {
+    [ -z "$1" ] && return 0
+    zapret2_validate_ipv4 "$1" && return 0
+    echo "Нужен IPv4-адрес, например 1.2.3.4 (домен подставить нельзя)"; return 1
+}
+
+# Имена интерфейсов через пробел, можно с «*»: wg0, tun*, awg*.
+_validate_nft_ifaces() {
+    [ -z "$1" ] && return 0
+    [[ "$1" =~ ^[A-Za-z0-9_.*@:-]+([[:space:]]+[A-Za-z0-9_.*@:-]+)*$ ]] && return 0
+    echo "Формат: имена интерфейсов через пробел, можно с '*' (например: wg* tun*)"; return 1
 }
 
 _nft_find_settable() {

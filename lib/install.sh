@@ -368,6 +368,7 @@ run_fix_arsenal_wizard() {
                 fi
             fi
 
+            zapret2_autoconfigure_scope
             zapret2_write_conf
             zapret2_write_lua
             zapret2_write_service

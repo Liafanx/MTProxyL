@@ -12,8 +12,8 @@ func TestValidateNftParamRejectsInjection(t *testing.T) {
 		{"NFT_IOS_RATE", "1/second; id"},
 		{"NFT_IOS_RATE", "$(id)"},
 		{"NFT_IOS_RATE", "`id`"},
-		{"NFT_IOS_RATE", "a b"}, // whitespace
-		{"NFT_IOS_RATE", "a\nb"},
+		{"NFT_IOS_RATE", "a\nb"}, // newlines are still not scalars
+		{"NFT_IOS_RATE", "a\tb"},
 		{"NFT_IOS_RATE", "--flag"}, // would be read as an option
 		{"NFT_IOS_RATE", "x'y"},
 		{"NFT_IOS_RATE", `x"y`},
@@ -40,6 +40,10 @@ func TestValidateNftParamAcceptsRealValues(t *testing.T) {
 		{"ZAPRET2_EXTRA_PORTS", "443,9000-9100"},
 		{"NFT_IOS_LIMIT_ENABLED", "true"},
 		{"IOS2_TARGET_PORT", ""}, // empty means "use the proxy port"
+		// Interface list: spaces and "*" are part of the value, and it
+		// travels as one argv element.
+		{"ZAPRET2_EXCLUDE_IFACES", "awg* wg* tun*"},
+		{"ZAPRET2_FILTER_IP", "10.0.0.5"},
 	}
 	for _, c := range good {
 		if err := ValidateNftParam(c.key, c.value); err != nil {
