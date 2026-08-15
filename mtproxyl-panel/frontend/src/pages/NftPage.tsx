@@ -93,9 +93,31 @@ export function NftPage() {
     [edits, status],
   );
 
+  /**
+   * Что переприменять после сохранения — решают изменённые ключи.
+   *
+   * Раньше действие выбиралось по сохранённому NFT_MODE, и правка параметров
+   * zapret2 при NFT_MODE=smart запускала лимитер, а тот по своей же
+   * взаимоисключающей логике останавливал zapret2. Возвращает null, когда
+   * применять нечего: подсистема не установлена или сейчас не работает.
+   */
+  const applyActionFor = (keys: string[]): NftAction | null => {
+    const zapret = keys.some((k) => k.startsWith('ZAPRET2_'));
+    const limiter = keys.some((k) => !k.startsWith('ZAPRET2_'));
+    const limiterAction: NftAction = status?.nft.mode === 'smart' ? 'smart' : 'apply';
+    if (zapret && !limiter) return status?.zapret2.applied ? 'zapret2-start' : null;
+    if (limiter && !zapret) return limiterAction;
+    // Задели обе стороны — переприменяем ту, что защищает сейчас: включать
+    // выключенную защиту молча, за компанию с сохранением, нельзя.
+    switch (status ? activeDefense(status) : 'none') {
+      case 'zapret2': return 'zapret2-start';
+      case 'smart':   return 'smart';
+      case 'classic': return 'apply';
+      default:        return null;
+    }
+  };
+
   // saveChanged пишет параметры и, если попросили, переприменяет правила.
-  // Действие зависит от активного пресета: smart строится своей командой, и
-  // обычный apply пересобрал бы classic.
   const saveChanged = async (thenApply: boolean) => {
     if (dirty.length === 0) return;
     setSaving(true);
@@ -108,9 +130,15 @@ export function NftPage() {
       }
       setError(null);
 
-      if (thenApply) {
-        const action: NftAction = status?.nft.mode === 'smart' ? 'smart' : 'apply';
+      const action = thenApply ? applyActionFor(dirty) : null;
+      if (action) {
         start(await mtproxylNetApi.nftAction(action));
+      } else if (thenApply) {
+        setNotice(
+          `Сохранено параметров: ${dirty.length}. Применять пока нечего: ` +
+          'подсистема этих параметров не установлена или остановлена.',
+        );
+        await load();
       } else {
         setNotice(
           `Сохранено параметров: ${dirty.length}. Чтобы значения вступили в силу, примените правила заново.`,

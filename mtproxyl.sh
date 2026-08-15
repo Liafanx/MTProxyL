@@ -20,7 +20,7 @@ export LC_NUMERIC=C
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="1.4.9"
+VERSION="1.5.0"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -67,7 +67,7 @@ fi
 
 # Загрузка библиотек
 LIB_DIR="${INSTALL_DIR}/lib"
-for _lib in colors utils settings detect secrets config docker engine traffic availability geoblock geoip upstream backup nft selfmask panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_tgbot tui_detect expert_catalog expert_mode settings_cli install; do
+for _lib in colors utils settings detect secrets config docker engine traffic availability dc geoblock geoip upstream backup nft selfmask panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_tgbot tui_detect expert_catalog expert_mode settings_cli install; do
     if [ -f "${LIB_DIR}/${_lib}.sh" ]; then
         # shellcheck source=/dev/null
         source "${LIB_DIR}/${_lib}.sh"
@@ -451,6 +451,13 @@ cli_main() {
             # будет работать.
             load_settings 2>/dev/null
             handle_tgbot_command "$@"
+            ;;
+
+        dc)
+            # Данные о дата-центрах отдаёт движок текущего режима, значит нужны
+            # и настройки, и результат детекта: у реаниматора это чужая цель.
+            load_settings; load_detect_settings
+            handle_dc_command "$@"
             ;;
 
         availability)

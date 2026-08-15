@@ -346,3 +346,33 @@ HELP_TEXT = """<b>MTProxyL — команды</b>
 /help — эта справка
 
 Всё то же самое есть кнопками — /menu."""
+
+
+def dc_text(report: dict) -> str:
+    """Таблица дата-центров: RTT, писатели, покрытие."""
+    if not report.get("available"):
+        why = report.get("error") or "данных нет"
+        return f"<b>Дата-центры Telegram</b>\n\n{esc(why)}"
+    rows = report.get("dcs") or []
+    threshold = int(report.get("threshold") or 80)
+    table = _table(
+        [("", 1, False), ("DC", 6, False), ("RTT", 6, True), ("Писат.", 7, True), ("Покр.", 5, True)],
+        [
+            [
+                "✅" if d.get("ok") else "⚠️",
+                str(d.get("dc")),
+                f"{int(d.get('rtt_ms') or 0)} мс",
+                f"{int(d.get('alive_writers') or 0)}/{int(d.get('required_writers') or 0)}",
+                f"{int(d.get('coverage_pct') or 0)}%",
+            ]
+            for d in rows
+        ],
+    )
+    coverage = int(report.get("coverage_pct") or 0)
+    icon = "🟢" if coverage >= threshold else "🔴"
+    return (
+        f"<b>Дата-центры Telegram</b>\n"
+        f"{icon} Покрытие {coverage}% при пороге {threshold}% — писателей "
+        f"{report.get('alive_writers', 0)} из {report.get('required_writers', 0)}\n{table}\n"
+        "<i>Писатели: живых / нужно. Это связь движка с Telegram, не доступность прокси.</i>"
+    )

@@ -43,12 +43,30 @@ interface GatesData {
   [key: string]: unknown;
 }
 
+interface DcEntry {
+  dc: number;
+  rtt_ms: number | null;
+  alive_writers: number;
+  required_writers: number;
+  coverage_pct: number;
+}
+
+interface DcsData {
+  middle_proxy_enabled: boolean;
+  dcs: DcEntry[];
+}
+
 interface UserTrafficData {
   total_octets: number;
   active_unique_ips: number;
 }
 
-const ENDPOINTS = ['/v1/health', '/v1/stats/summary', '/v1/system/info', '/v1/runtime/gates'];
+const ENDPOINTS = [
+  '/v1/health', '/v1/stats/summary', '/v1/system/info', '/v1/runtime/gates', '/v1/stats/dcs',
+];
+
+/** Порог покрытия, ниже которого DC считается просевшим — как у CLI и бота. */
+const DC_THRESHOLD = 80;
 
 export function DashboardPage() {
   const { data: wsData, errors, connected, refresh } = useWsSubscription('dashboard', ENDPOINTS, 5);
@@ -57,6 +75,7 @@ export function DashboardPage() {
   const summary = useEndpoint<SummaryData>(wsData, '/v1/stats/summary');
   const system = useEndpoint<SystemInfoData>(wsData, '/v1/system/info');
   const gates = useEndpoint<GatesData>(wsData, '/v1/runtime/gates');
+  const dcs = useEndpoint<DcsData>(wsData, '/v1/stats/dcs');
 
   const { data: usersData } = usePolling<UserTrafficData[]>(
     () => telemt.get('/v1/users'),
@@ -174,6 +193,10 @@ export function DashboardPage() {
           />
         )}
 
+        {/* Дата-центры Telegram: связь движка с Telegram, а не доступность
+            прокси снаружи. Числа те же, что показывает `mtproxyl dc`. */}
+        {dcs && <DcCard data={dcs} />}
+
         {/* System Info */}
         {system && (
           <CollapsibleSection title="Информация о системе">
@@ -239,6 +262,58 @@ function formatDuration(totalSeconds: number): string {
  * профиль сборки как «unknown». Без обработки на дашборде получается список
  * чисел, по которому непонятно, что хорошо, а что плохо.
  */
+function DcCard({ data }: { data: DcsData }) {
+  const rows = data.dcs ?? [];
+  if (!data.middle_proxy_enabled || rows.length === 0) return null;
+  const alive = rows.reduce((s, d) => s + (d.alive_writers || 0), 0);
+  const required = rows.reduce((s, d) => s + (d.required_writers || 0), 0);
+  const coverage = required > 0 ? Math.min(100, Math.round((alive * 100) / required)) : 100;
+  const ok = coverage >= DC_THRESHOLD;
+  return (
+    <CollapsibleSection
+      title={`Дата-центры Telegram — покрытие ${coverage}%${ok ? '' : ' (просело)'}`}
+    >
+      <div className="overflow-x-auto -mx-4 px-4">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-text-secondary border-b border-border">
+              <th className="py-2 pr-4 font-medium">DC</th>
+              <th className="py-2 pl-4 font-medium text-right">RTT</th>
+              <th className="py-2 pl-4 font-medium text-right">Писатели</th>
+              <th className="py-2 pl-4 font-medium text-right">Покрытие</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((d) => {
+              const cov = Math.round(d.coverage_pct ?? 0);
+              return (
+                <tr key={d.dc} className="border-b border-border last:border-0">
+                  <td className="py-2 pr-4 text-text-primary">
+                    <StatusDot status={cov >= DC_THRESHOLD ? 'ok' : 'warn'} size="sm" /> DC {d.dc}
+                  </td>
+                  <td className="py-2 pl-4 text-right font-mono text-xs">
+                    {d.rtt_ms == null ? '—' : `${Math.round(d.rtt_ms)} мс`}
+                  </td>
+                  <td className="py-2 pl-4 text-right font-mono text-xs">
+                    {d.alive_writers} / {d.required_writers}
+                  </td>
+                  <td className={`py-2 pl-4 text-right ${cov >= DC_THRESHOLD ? '' : 'text-warning'}`}>
+                    {cov}%
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-text-secondary/70 mt-2">
+        Писателей живо {alive} из {required}. Это связь движка с Telegram, а не доступность
+        прокси для клиентов.
+      </p>
+    </CollapsibleSection>
+  );
+}
+
 function describeSystemField(
   key: string,
   value: unknown,

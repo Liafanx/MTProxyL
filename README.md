@@ -606,6 +606,10 @@ mtproxyl ip-history on        # Включить обратно
 ```
 
 ```bash
+mtproxyl dc                   # Дата-центры Telegram: RTT, писатели, покрытие
+mtproxyl dc status --json     # То же машинным форматом (панель, бот)
+mtproxyl dc threshold 80      # Порог покрытия, % — ниже него бот уведомит
+
 mtproxyl availability status  # Последний вердикт, цель, квота, порог
 mtproxyl availability check   # Проверить прямо сейчас
 mtproxyl availability details # Вердикт со списком зондов (JSON)

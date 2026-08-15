@@ -174,6 +174,11 @@ async def traffic() -> dict:
     return await _cached("traffic", 5.0, lambda: run_json("traffic", "--json", timeout=60))
 
 
+async def dc_status() -> dict:
+    """Доступность дата-центров Telegram глазами самого движка."""
+    return await run_json("dc", "status", "--json", timeout=30)
+
+
 async def availability_status() -> dict:
     return await run_json("availability", "status", "--json", timeout=30)
 

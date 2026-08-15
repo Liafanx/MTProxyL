@@ -505,6 +505,7 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script secret disable [A-Za-z0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script secret rename [A-Za-z0-9]* [A-Za-z0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script secret setlimits [A-Za-z0-9]* * * * *
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script secret adtag [A-Za-z0-9]* *
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script dc status --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup list --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup cat mtproxyl-[0-9]*.tar.gz
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script restore ${_install_dir}/backups/mtproxyl-[0-9]*.tar.gz
