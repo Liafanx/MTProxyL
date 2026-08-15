@@ -28,6 +28,10 @@ UNKNOWN_SNI_ACTION="mask"
 PROXY_SECRET_URL=""
 PROXY_CONFIG_V4_URL=""
 PROXY_CONFIG_V6_URL=""
+# Только оптимизация: telemt на сервере нет и не нужен, работаем как набор
+# host-фиксов (zapret2, лимитер, By-MEKO, гео). Всё, что требует движка,
+# из меню уходит — включая жалобы на его отсутствие.
+TOOLS_ONLY="false"
 IP_HISTORY_LIMIT="200"
 # Как часто снимать адреса в историю, минут. 0 — только при открытой панели.
 IP_HISTORY_INTERVAL="5"
@@ -133,6 +137,7 @@ PROXY_CONFIG_V6_URL='${PROXY_CONFIG_V6_URL}'
 # Автообновление
 
 # Автоматическая ротация секретов
+TOOLS_ONLY='${TOOLS_ONLY}'
 IP_HISTORY_LIMIT='${IP_HISTORY_LIMIT}'
 IP_HISTORY_INTERVAL='${IP_HISTORY_INTERVAL}'
 BACKUP_RETENTION_DAYS='${BACKUP_RETENTION_DAYS}'
@@ -338,7 +343,7 @@ load_settings() {
                 MASKING_ENABLED|MASKING_HOST|MASKING_PORT|MASKING_RELAY_MAX_BYTES|\
                 UNKNOWN_SNI_ACTION|\
                 PROXY_SECRET_URL|PROXY_CONFIG_V4_URL|PROXY_CONFIG_V6_URL|\
-                BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT|IP_HISTORY_INTERVAL|\
+                BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT|IP_HISTORY_INTERVAL|TOOLS_ONLY|\
                 AVAILABILITY_ENABLED|AVAILABILITY_INTERVAL|AVAILABILITY_PROBES|\
                 AVAILABILITY_THRESHOLD|AVAILABILITY_HOST|AVAILABILITY_PORT|AVAILABILITY_SNI|\
                 SELFMASK_ENABLED|SELFMASK_DOMAIN|SELFMASK_SITE_SOURCE|SELFMASK_SITE_DIR|\

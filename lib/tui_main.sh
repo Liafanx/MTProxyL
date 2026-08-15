@@ -58,7 +58,15 @@ show_main_menu() {
         fi
 
         if [ "$_reanimator" = "true" ]; then
-            echo -e "  ${BOLD}Режим:${NC}       ${BRIGHT_CYAN}Reanimator${NC}  ${BOLD}Статус:${NC} ${status_str}"
+            if [ "${TOOLS_ONLY:-false}" = "true" ]; then
+                echo -e "  ${BOLD}Режим:${NC}       ${BRIGHT_CYAN}Только оптимизация${NC}"
+            else
+                echo -e "  ${BOLD}Режим:${NC}       ${BRIGHT_CYAN}Reanimator${NC}  ${BOLD}Статус:${NC} ${status_str}"
+            fi
+            if [ "${TOOLS_ONLY:-false}" = "true" ]; then
+                echo -e "  ${DIM}Движок не наш и не нужен: MTProxyL здесь — набор фиксов${NC}"
+                echo -e "  ${DIM}для хоста (zapret2, лимитер, оптимизация, гео).${NC}"
+            else
             echo -e "  ${BOLD}Цель:${NC}        ${DETECTED_MODE:-unknown}$([ -n "$DETECTED_CONTAINER" ] && echo " (${DETECTED_CONTAINER})")"
             echo -e "  ${BOLD}Конфиг цели:${NC} ${DETECTED_CONFIG_PATH:-${DIM}не найден${NC}}"
             if _no_telemt_target; then
@@ -73,7 +81,9 @@ show_main_menu() {
                 else
                     echo -e "  ${YELLOW}⚠ telemt на сервере не найден — чинить нечего${NC}"
                     echo -e "  ${DIM}  Поставить оригинальный telemt: пункт «Установить telemt» ниже${NC}"
+                    echo -e "  ${DIM}  Нужны только фиксы и оптимизация? Цель/режим → «Только оптимизация»${NC}"
                 fi
+            fi
             fi
         else
             echo -e "  ${BOLD}Движок:${NC}      telemt v$(get_telemt_version)  ${BOLD}Статус:${NC} ${status_str}"
@@ -90,6 +100,12 @@ show_main_menu() {
                 [ -n "$_prob" ] && echo -e "  ${RED}Контейнер:${NC}   ${_prob}"
             fi
         fi
+        if [ "$_reanimator" = "true" ] && [ "${TOOLS_ONLY:-false}" = "true" ]; then
+            # Ни порта, ни домена, ни счётчиков у нас нет: движок чужой и
+            # трогать его мы не собираемся. Показывать его домен-заглушку —
+            # обманывать. Дальше сразу состояние фиксов.
+            :
+        else
         echo -e "  ${BOLD}Порт:${NC}        ${PROXY_PORT}            ${BOLD}Работает:${NC} ${uptime_str}"
         # Порт цели разошёлся с нашим — фиксы висят не на том порту
         if [ "$_reanimator" = "true" ] && [ -n "${DETECTED_PORT:-}" ] && [ "${DETECTED_PORT}" != "${PROXY_PORT}" ]; then
@@ -112,6 +128,7 @@ show_main_menu() {
         else
             echo -e "  ${BOLD}Трафик:${NC}      ${SYM_DOWN} $(format_bytes "$t_in")  ${SYM_UP} $(format_bytes "$t_out")  ${BOLD}Соед.:${NC} ${conns}  ${BOLD}Уник. IP:${NC} ${uips}"
             echo -e "  ${BOLD}Секреты:${NC}     ${active} активных / ${disabled} выключенных"
+        fi
         fi
 
         load_nft_settings 2>/dev/null
@@ -152,7 +169,33 @@ show_main_menu() {
         # пунктов зависит от режима: в reanimator скрыто всё, что требует
         # владения конфигом/движком цели, поэтому нумерация своя.
         local choice
-        if [ "$_reanimator" = "true" ]; then
+        if [ "$_reanimator" = "true" ] && [ "${TOOLS_ONLY:-false}" = "true" ]; then
+            # Только то, что не требует движка. Пункты про пользователей,
+            # ссылки и трафик цели здесь показывать нечем.
+            echo -e "  ${BRIGHT_CYAN}[1]${NC}   NFT лимитер, Zapret2 и фиксы"
+            echo -e "  ${BRIGHT_CYAN}[2]${NC}   Безопасность и маршрутизация"
+            echo -e "  ${BRIGHT_CYAN}[3]${NC}   Дополнения (утилиты)"
+            echo -e "  ${BRIGHT_CYAN}[4]${NC}   Обновление MTProxyL"
+            echo -e "  ${BRIGHT_CYAN}[5]${NC}   Информация"
+            echo -e "  ${BRIGHT_CYAN}[6]${NC}   Цель / режим — вернуться к работе с движком"
+            echo ""
+            echo -e "  ${BRIGHT_CYAN}[7]${NC}   Установка / переустановка"
+            echo -e "  ${RED}[8]${NC}   Удаление"
+            echo -e "  ${BRIGHT_CYAN}[0]${NC}   Выход"
+            echo ""
+            choice=$(read_choice "выбор" "0")
+            case "$choice" in
+                1) tui_nft_menu ;;
+                2) tui_security_menu ;;
+                3) tui_addons_menu ;;
+                4) tui_backup_menu ;;
+                5) show_server_info; press_any_key ;;
+                6) tui_target_menu ;;
+                7) run_installer ;;
+                8) uninstall; exit 0 ;;
+                0) exit 0 ;;
+            esac
+        elif [ "$_reanimator" = "true" ]; then
             # Цели на сервере нет — добавляем пункт установки оригинального
             # telemt: чинить пока нечего. Нумерация остаётся сплошной,
             # поэтому номера двух последних пунктов зависят от этого.

@@ -1802,6 +1802,35 @@ run_reanimator_installer() {
         fi
     fi
 
+    # Прокси на сервере может быть не telemt вовсе: свой, teleproxy, что угодно.
+    # Тогда движок нам не нужен целиком — нужны только фиксы хоста, и спрашивать
+    # про конфиг, порт и домен незачем.
+    if _no_telemt_target && { [ -z "${DETECTED_CONFIG_PATH:-}" ] || [ ! -f "${DETECTED_CONFIG_PATH:-}" ]; }; then
+        echo ""
+        echo -e "  ${BOLD}Нужны только оптимизация и фиксы?${NC}"
+        echo -e "  ${DIM}Если прокси у вас свой — другая реализация MTProto или${NC}"
+        echo -e "  ${DIM}вообще другой сервис — MTProxyL может работать как набор${NC}"
+        echo -e "  ${DIM}host-фиксов: zapret2, SYN-лимитер, оптимизация By-MEKO,${NC}"
+        echo -e "  ${DIM}гео-блокировка, дополнения. Конфиг и домен не спросим,${NC}"
+        echo -e "  ${DIM}про отсутствие telemt больше не напомним.${NC}"
+        echo -en "  ${BOLD}Включить режим «только оптимизация»? [y/N]:${NC} "
+        local _tools_yn; read_line _tools_yn
+        if [[ "$_tools_yn" =~ ^[yY] ]]; then
+            TOOLS_ONLY="true"
+            MTPROXYL_MODE="reanimator"
+            DETECTED_MODE="none"
+            DETECTED_NETWORK_MODE="host"
+            PROXY_PORT="${DETECTED_PORT:-443}"
+            save_settings
+            save_detect_settings 2>/dev/null || true
+            log_success "Режим «только оптимизация» включён"
+            log_info "Фиксы настраиваются в меню «NFT лимитер, Zapret2 и фиксы»"
+            log_info "Вернуть работу с движком: Цель / режим → «Только оптимизация»"
+            show_main_menu
+            return 0
+        fi
+    fi
+
     if [ -z "${DETECTED_CONFIG_PATH:-}" ] || [ ! -f "${DETECTED_CONFIG_PATH:-}" ]; then
         echo ""
         echo -e "  ${BOLD}Укажите путь к конфигу telemt вручную (Enter — пропустить):${NC}"

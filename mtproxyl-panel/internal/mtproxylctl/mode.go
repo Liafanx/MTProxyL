@@ -24,6 +24,11 @@ func (m Mode) Valid() bool {
 // ModeStatus is the output of `mtproxyl mode --json`.
 type ModeStatus struct {
 	Mode Mode `json:"mode"`
+	// ToolsOnly means the host runs somebody else's proxy (or none) and
+	// MTProxyL is kept only for host-level fixes: zapret2, the SYN limiter,
+	// By-MEKO tuning, geo blocking. There is no engine to ask about users,
+	// links or traffic.
+	ToolsOnly bool `json:"tools_only"`
 	// DetectedMode describes how a reanimator target is deployed
 	// (docker/local/mtproxymax/config_only/...); "unknown" in manager mode.
 	DetectedMode   string `json:"detected_mode"`
