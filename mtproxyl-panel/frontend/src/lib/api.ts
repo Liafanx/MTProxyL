@@ -393,6 +393,7 @@ export interface TrafficReport {
     session_in: number;
     session_out: number;
     connections: number;
+    unique_ips: number;
   };
   users: TrafficUser[];
 }

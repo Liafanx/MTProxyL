@@ -229,6 +229,8 @@ async def check_autobackup(bot: Bot, state: dict) -> None:
     for admin in cfg.admins:
         try:
             await bot.send_document(admin, BufferedInputFile(data, filename=name))
+            # Файл лёг поверх меню — возвращаем меню вниз, как после broadcast.
+            await ui.move_menu_down_in(bot, admin)
         except TelegramAPIError as exc:
             log.warning("не удалось отправить бэкап %s: %s", admin, exc)
 

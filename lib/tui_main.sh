@@ -26,7 +26,7 @@ show_main_menu() {
         local _reanimator="false"
         [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && _reanimator="true"
 
-        local status_str uptime_str t_in t_out conns
+        local status_str uptime_str t_in t_out conns uips="—"
         if [ "$_running" = "true" ]; then
             status_str=$(draw_status running)
             local up_secs; up_secs=$(get_proxy_uptime)
@@ -34,6 +34,8 @@ show_main_menu() {
             if [ "$_reanimator" != "true" ]; then
                 flush_traffic_to_disk 2>/dev/null || true
                 read -r t_in t_out conns <<< "$(get_persistent_stats)"
+                # Уникальные IP считает только API движка: в метриках их нет.
+                uips=$(_engine_unique_ips 2>/dev/null) || uips="—"
             fi
         else
             status_str=$(draw_status stopped)
@@ -97,7 +99,7 @@ show_main_menu() {
         echo -e "  ${BOLD}Домен(SNI):${NC}  $(_current_sni_domain 2>/dev/null || echo "$PROXY_DOMAIN")"
         if [ "$_reanimator" = "true" ]; then
             if [ "$_target_stats_ok" = "true" ]; then
-                echo -e "  ${BOLD}Трафик:${NC}      $(format_bytes "${TARGET_STATS_OCTETS:-0}")  ${BOLD}Соед.:${NC} ${conns}"
+                echo -e "  ${BOLD}Трафик:${NC}      $(format_bytes "${TARGET_STATS_OCTETS:-0}")  ${BOLD}Соед.:${NC} ${conns}  ${BOLD}Уник. IP:${NC} ${TARGET_STATS_IPS:-0}"
                 echo -e "  ${BOLD}Секреты:${NC}     ${active} активных / ${disabled} выключенных"
             else
                 local _api_why; _api_why=$(_telemt_api_unavailable_reason 2>/dev/null)
@@ -105,10 +107,10 @@ show_main_menu() {
                 echo -e "  ${BOLD}Секреты:${NC}     ${DIM}н/д${NC}"
             fi
         elif _superexpert_active; then
-            echo -e "  ${BOLD}Трафик:${NC}      ${SYM_DOWN} $(format_bytes "$t_in")  ${SYM_UP} $(format_bytes "$t_out")  ${BOLD}Соед.:${NC} ${conns}"
+            echo -e "  ${BOLD}Трафик:${NC}      ${SYM_DOWN} $(format_bytes "$t_in")  ${SYM_UP} $(format_bytes "$t_out")  ${BOLD}Соед.:${NC} ${conns}  ${BOLD}Уник. IP:${NC} ${uips}"
             echo -e "  ${BOLD}Секреты:${NC}     ${active} ${DIM}(из вашего конфига)${NC}"
         else
-            echo -e "  ${BOLD}Трафик:${NC}      ${SYM_DOWN} $(format_bytes "$t_in")  ${SYM_UP} $(format_bytes "$t_out")  ${BOLD}Соед.:${NC} ${conns}"
+            echo -e "  ${BOLD}Трафик:${NC}      ${SYM_DOWN} $(format_bytes "$t_in")  ${SYM_UP} $(format_bytes "$t_out")  ${BOLD}Соед.:${NC} ${conns}  ${BOLD}Уник. IP:${NC} ${uips}"
             echo -e "  ${BOLD}Секреты:${NC}     ${active} активных / ${disabled} выключенных"
         fi
 

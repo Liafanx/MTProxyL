@@ -150,6 +150,18 @@ tui_traffic_menu() {
         echo -e "  ${SYM_DOWN} Скачано:    $(format_bytes "$s_in")"
         echo -e "  ${SYM_UP} Отправлено: $(format_bytes "$s_out")"
         echo -e "  ${BOLD}Активных соединений:${NC} ${s_conns}"
+        # Уникальные IP отдаёт только API движка — метрики их не считают.
+        declare -A _UIPS=()
+        local _uips_total="н/д" _eu _een _ec _eips _eoct _rows_api
+        if _rows_api=$(_engine_user_stats 2>/dev/null); then
+            _uips_total=0
+            while IFS='|' read -r _eu _een _ec _eips _eoct; do
+                [ -n "$_eu" ] || continue
+                _UIPS["$_eu"]="${_eips:-0}"
+                _uips_total=$(( _uips_total + ${_eips:-0} ))
+            done <<< "$_rows_api"
+        fi
+        echo -e "  ${BOLD}Уникальных IP:${NC}       ${_uips_total}"
         echo ""
 
         echo -e "  ${BOLD}По пользователям${NC}"
@@ -176,7 +188,7 @@ tui_traffic_menu() {
             read -r su_in su_out su_conns <<< "$(get_user_stats "$label")"
             echo -e "  ${GREEN}${SYM_OK}${NC} ${BOLD}${label}${NC}"
             echo -e "    Всего: ${SYM_DOWN} $(format_bytes "$u_in")  ${SYM_UP} $(format_bytes "$u_out")"
-            echo -e "    Сессия: ${SYM_DOWN} $(format_bytes "$su_in")  ${SYM_UP} $(format_bytes "$su_out")  соед: ${su_conns}"
+            echo -e "    Сессия: ${SYM_DOWN} $(format_bytes "$su_in")  ${SYM_UP} $(format_bytes "$su_out")  соед: ${su_conns}  уник. IP: ${_UIPS[$label]:-0}"
         done
         echo ""
         echo -e "  ${DIM}[1]${NC} Потоковые логи"

@@ -7,7 +7,7 @@ import { Header } from '@/components/layout/Header';
 import { formatBytes } from '@/lib/utils';
 import { mtproxylNetApi, type TrafficReport, type TrafficUser } from '@/lib/api';
 
-type SortKey = 'total' | 'in' | 'out' | 'connections' | 'user';
+type SortKey = 'total' | 'in' | 'out' | 'connections' | 'unique_ips' | 'user';
 
 /**
  * Откуда взяты числа и насколько им можно верить.
@@ -135,6 +135,7 @@ export function TrafficPage() {
                       <Metric label="Передано" value={formatBytes(report.totals.total)} />
                     )}
                     <Metric label="Соединений" value={String(report.totals.connections)} />
+                    <Metric label="Уникальных IP" value={String(report.totals.unique_ips ?? 0)} />
                     <Metric
                       label="Пользователей"
                       value={String(report.users.filter((u) => !u.deleted).length)}
@@ -205,6 +206,14 @@ export function TrafficPage() {
                               onSort={toggleSort}
                               align="right"
                             />
+                            <SortHeader
+                              label="Уник. IP"
+                              k="unique_ips"
+                              sortKey={sortKey}
+                              asc={asc}
+                              onSort={toggleSort}
+                              align="right"
+                            />
                             <th className="py-2 pl-4 font-medium text-right">Состояние</th>
                           </tr>
                         </thead>
@@ -253,6 +262,7 @@ function Row({ user, directional }: { user: TrafficUser; directional: boolean })
         {formatBytes(user.total)}
       </td>
       <td className="py-2 pl-4 text-right text-text-secondary">{user.connections}</td>
+      <td className="py-2 pl-4 text-right text-text-secondary">{user.unique_ips ?? 0}</td>
       <td className="py-2 pl-4 text-right">
         {user.deleted ? (
           <span className="text-xs text-text-secondary">удалён</span>

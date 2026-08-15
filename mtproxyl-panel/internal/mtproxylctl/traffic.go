@@ -34,6 +34,7 @@ type TrafficTotals struct {
 	SessionIn   int64 `json:"session_in"`
 	SessionOut  int64 `json:"session_out"`
 	Connections int64 `json:"connections"`
+	UniqueIPs   int64 `json:"unique_ips"`
 }
 
 // TrafficReport is the output of `mtproxyl traffic --json`. The two flags say

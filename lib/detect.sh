@@ -365,6 +365,23 @@ _engine_config_path() {
     fi
 }
 
+# Строки "пользователь|enabled|соединения|уник. IP|октеты" из API движка
+# текущего режима. Уникальные IP есть только у API: Prometheus их не считает,
+# поэтому в режиме менеджера без этого вызова колонка всегда была нулевой.
+_engine_user_stats() {
+    local _json
+    _json=$(_get_telemt_users_json "$(_engine_config_path)" 2>/dev/null) || return 1
+    _target_user_stats "$_json"
+}
+
+# Сумма активных уникальных IP по движку текущего режима.
+# Ненулевой код возврата = API недоступен, показывать «н/д», а не ноль.
+_engine_unique_ips() {
+    local _json
+    _json=$(_get_telemt_users_json "$(_engine_config_path)" 2>/dev/null) || return 1
+    _json_sum_field "$_json" "active_unique_ips"
+}
+
 # Отвечает ли Prometheus-эндпоинт цели. Метрики движка в telemt по
 # умолчанию выключены (metrics_listen/metrics_port закомментированы),
 # поэтому это отдельная от API проверка.
@@ -530,16 +547,19 @@ TARGET_STATS_OCTETS=0
 TARGET_STATS_CONNS=0
 TARGET_STATS_ACTIVE=0
 TARGET_STATS_DISABLED=0
+TARGET_STATS_IPS=0
 
 fetch_target_stats() {
     TARGET_STATS_OCTETS=0
     TARGET_STATS_CONNS=0
     TARGET_STATS_ACTIVE=0
     TARGET_STATS_DISABLED=0
+    TARGET_STATS_IPS=0
     local _json
     _json=$(_get_telemt_users_json) || return 1
     TARGET_STATS_OCTETS=$(_json_sum_field "$_json" "total_octets")
     TARGET_STATS_CONNS=$(_json_sum_field "$_json" "current_connections")
+    TARGET_STATS_IPS=$(_json_sum_field "$_json" "active_unique_ips")
     TARGET_STATS_ACTIVE=$(_json_count_bool_field "$_json" "enabled" "true")
     TARGET_STATS_DISABLED=$(_json_count_bool_field "$_json" "enabled" "false")
     # Если версия API не отдаёт "enabled" — считаем всех найденных

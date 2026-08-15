@@ -68,7 +68,16 @@ def status_text(st: dict, md: dict) -> str:
     if running:
         lines.append(f"Аптайм: {human_duration(st.get('uptime'))}")
     lines.append(f"Соединений: {esc(st.get('connections', 0))}")
-    lines.append(f"Трафик: {human_bytes(st.get('traffic_total'))}")
+    lines.append(f"Уникальных IP: {esc(st.get('unique_ips', 0))}")
+    # traffic_total есть в обоих режимах; in/out — только у менеджера, у цели
+    # API направления не разделяет.
+    traffic = f"Трафик: {human_bytes(st.get('traffic_total'))}"
+    if st.get("traffic_in") is not None or st.get("traffic_out") is not None:
+        traffic += (
+            f" (↓ {human_bytes(st.get('traffic_in'))}"
+            f" ↑ {human_bytes(st.get('traffic_out'))})"
+        )
+    lines.append(traffic)
     if md.get("mode") == "reanimator":
         lines.append(f"Цель: <code>{esc(md.get('detected_mode') or 'неизвестна')}</code>")
     return "\n".join(lines)

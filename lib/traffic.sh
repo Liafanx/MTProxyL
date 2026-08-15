@@ -779,6 +779,15 @@ _traffic_json_manager() {
         done < <(_metrics_user_table 2>/dev/null)
     fi
 
+    # Уникальные IP знает только API движка — в Prometheus такой метрики нет.
+    declare -A _IPS=()
+    if $_running; then
+        local _au _aen _ac _aips _aoct
+        while IFS='|' read -r _au _aen _ac _aips _aoct; do
+            [ -n "$_au" ] && _IPS["$_au"]="${_aips:-0}"
+        done < <(_engine_user_stats 2>/dev/null)
+    fi
+
     declare -A _SNAP_IN=() _SNAP_OUT=()
     local _user_snap_file="${INSTALL_DIR}/relay_stats/user_session_snapshot"
     if [ -f "$_user_snap_file" ]; then
@@ -800,7 +809,7 @@ _traffic_json_manager() {
         done
     fi
 
-    local _rows="" _first=1
+    local _rows="" _first=1 _tot_ips=0
     local _si _so _ui _uo _unsaved_in _unsaved_out _en _label_esc _row
     declare -A _KNOWN=()
     for label in "${_labels[@]}"; do
@@ -835,10 +844,11 @@ _traffic_json_manager() {
         json_escape_fast "$label"; _label_esc="$_JSON_ESCAPE_OUT"
         [ $_first -eq 1 ] || _rows+=","
         _first=0
-        printf -v _row '{"user":"%s","in":%s,"out":%s,"total":%s,"session_in":%s,"session_out":%s,"connections":%s,"unique_ips":0,"enabled":%s,"deleted":false}' \
+        printf -v _row '{"user":"%s","in":%s,"out":%s,"total":%s,"session_in":%s,"session_out":%s,"connections":%s,"unique_ips":%s,"enabled":%s,"deleted":false}' \
             "$_label_esc" "$_ui" "$_uo" "$(( _ui + _uo ))" \
-            "${_ci:-0}" "${_co:-0}" "${_CUR_CONNS[$label]:-0}" "$_en"
+            "${_ci:-0}" "${_co:-0}" "${_CUR_CONNS[$label]:-0}" "${_IPS[$label]:-0}" "$_en"
         _rows+="$_row"
+        _tot_ips=$(( _tot_ips + ${_IPS[$label]:-0} ))
     done
 
     # Трафик удалённых пользователей учтён в TOTAL: собираем остаток отдельной
@@ -857,9 +867,9 @@ _traffic_json_manager() {
     fi
 
     printf '{"mode":"manager","source":"db","directional":true,"persistent":true,'
-    printf '"totals":{"in":%d,"out":%d,"total":%d,"session_in":%d,"session_out":%d,"connections":%d},' \
+    printf '"totals":{"in":%d,"out":%d,"total":%d,"session_in":%d,"session_out":%d,"connections":%d,"unique_ips":%d},' \
         "${t_in:-0}" "${t_out:-0}" "$(( ${t_in:-0} + ${t_out:-0} ))" \
-        "${s_in:-0}" "${s_out:-0}" "${conns:-0}"
+        "${s_in:-0}" "${s_out:-0}" "${conns:-0}" "${_tot_ips:-0}"
     printf '"users":[%s]}\n' "$_rows"
 }
 
@@ -917,7 +927,7 @@ _traffic_json_reanimator() {
     local _directional="false"
     [ "$_src" = "metrics" ] && _directional="true"
 
-    local _ti=0 _to=0 _tt=0 _tc=0
+    local _ti=0 _to=0 _tt=0 _tc=0 _tp=0
     local _si=0 _so=0
     local _rows="" _first=1
     declare -A _SEEN=()
@@ -933,6 +943,7 @@ _traffic_json_reanimator() {
         _ti=$(( _ti + _ai )); _to=$(( _to + _ao )); _tt=$(( _tt + _at ))
         _si=$(( _si + ${_i:-0} )); _so=$(( _so + ${_o:-0} ))
         _tc=$(( _tc + ${_CONNS[$_u]:-0} ))
+        _tp=$(( _tp + ${_IPS[$_u]:-0} ))
         [ $_first -eq 1 ] || _rows+=","
         _first=0
         # Без "$(...)" на каждого пользователя: три подстановки в строке — это
@@ -966,8 +977,8 @@ _traffic_json_reanimator() {
 
     printf '{"mode":"reanimator","source":"%s","directional":%s,"persistent":true,' \
         "$_src" "$_directional"
-    printf '"totals":{"in":%d,"out":%d,"total":%d,"session_in":%d,"session_out":%d,"connections":%d},' \
-        "$_ti" "$_to" "$_tt" "$_si" "$_so" "$_tc"
+    printf '"totals":{"in":%d,"out":%d,"total":%d,"session_in":%d,"session_out":%d,"connections":%d,"unique_ips":%d},' \
+        "$_ti" "$_to" "$_tt" "$_si" "$_so" "$_tc" "$_tp"
     printf '"users":[%s]}\n' "$_rows"
 }
 
@@ -1048,7 +1059,7 @@ show_status() {
         echo -e "  ${BOLD}Домен(SNI):${NC}  $(_current_sni_domain 2>/dev/null || echo '?')"
         if fetch_target_stats 2>/dev/null; then
             echo -e "  ${BOLD}Трафик:${NC}      $(format_bytes "${TARGET_STATS_OCTETS:-0}")"
-            echo -e "  ${BOLD}Соединения:${NC}  ${TARGET_STATS_CONNS:-0}"
+            echo -e "  ${BOLD}Соединения:${NC}  ${TARGET_STATS_CONNS:-0}  ${BOLD}Уник. IP:${NC} ${TARGET_STATS_IPS:-0}"
             echo -e "  ${BOLD}Пользователи:${NC} ${TARGET_STATS_ACTIVE:-0} активных / ${TARGET_STATS_DISABLED:-0} выключенных"
         else
             echo -e "  ${BOLD}Трафик:${NC}      ${DIM}н/д — $(_telemt_api_unavailable_reason 2>/dev/null)${NC}"
@@ -1077,7 +1088,7 @@ show_status() {
     echo -e "  ${BOLD}Порт:${NC}        ${PROXY_PORT}            ${BOLD}Время работы:${NC} ${uptime_str}"
     echo -e "  ${BOLD}Домен:${NC}       ${PROXY_DOMAIN}"
     echo -e "  ${BOLD}Трафик:${NC}      ${SYM_DOWN} $(format_bytes "$traffic_in")  ${SYM_UP} $(format_bytes "$traffic_out")"
-    echo -e "  ${BOLD}Соединения:${NC}  ${connections}"
+    echo -e "  ${BOLD}Соединения:${NC}  ${connections}  ${BOLD}Уник. IP:${NC} $(_engine_unique_ips 2>/dev/null || echo 'н/д')"
     echo -e "  ${BOLD}Секреты:${NC}     ${active} активных / ${disabled} выключенных"
     echo ""
 }
@@ -1094,19 +1105,26 @@ show_status_json() {
     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
         # Направления трафика API цели не разделяет — отдаём одну сумму,
         # чтобы не выдавать чужие данные за in/out.
-        local _octets=0
+        local _octets=0 _ips=0
         if fetch_target_stats 2>/dev/null; then
             _octets="${TARGET_STATS_OCTETS:-0}"
             connections="${TARGET_STATS_CONNS:-0}"
+            _ips="${TARGET_STATS_IPS:-0}"
         fi
-        printf '{"version":"%s","mode":"reanimator","status":"%s","target":"%s","config":"%s","port":%d,"domain":"%s","uptime":%d,"connections":%d,"traffic_total":%d}\n' \
+        printf '{"version":"%s","mode":"reanimator","status":"%s","target":"%s","config":"%s","port":%d,"domain":"%s","uptime":%d,"connections":%d,"unique_ips":%d,"traffic_total":%d}\n' \
             "$VERSION" "$status" "${DETECTED_MODE:-unknown}" "${DETECTED_CONFIG_PATH:-}" \
-            "$PROXY_PORT" "$(_current_sni_domain 2>/dev/null)" "$uptime_secs" "${connections:-0}" "${_octets:-0}"
+            "$PROXY_PORT" "$(_current_sni_domain 2>/dev/null)" "$uptime_secs" "${connections:-0}" \
+            "${_ips:-0}" "${_octets:-0}"
         return
     fi
 
-    printf '{"version":"%s","mode":"manager","status":"%s","port":%d,"domain":"%s","uptime":%d,"connections":%d,"traffic_in":%d,"traffic_out":%d}\n' \
-        "$VERSION" "$status" "$PROXY_PORT" "$PROXY_DOMAIN" "$uptime_secs" "${connections:-0}" "${traffic_in:-0}" "${traffic_out:-0}"
+    # traffic_total дублирует сумму направлений: потребители статуса (бот,
+    # панель) читают одно поле в обоих режимах, а не гадают по mode.
+    local _mips=0
+    [ "$status" = "running" ] && _mips=$(_engine_unique_ips 2>/dev/null || echo 0)
+    printf '{"version":"%s","mode":"manager","status":"%s","port":%d,"domain":"%s","uptime":%d,"connections":%d,"unique_ips":%d,"traffic_in":%d,"traffic_out":%d,"traffic_total":%d}\n' \
+        "$VERSION" "$status" "$PROXY_PORT" "$PROXY_DOMAIN" "$uptime_secs" "${connections:-0}" \
+        "${_mips:-0}" "${traffic_in:-0}" "${traffic_out:-0}" "$(( ${traffic_in:-0} + ${traffic_out:-0} ))"
 }
 
 show_config() {
