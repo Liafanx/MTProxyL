@@ -850,10 +850,101 @@ target_user_link() {
     printf 'tg://proxy?server=%s&port=%s&secret=%s' "$_ip" "$_port" "$_full"
 }
 
-# Общий хвост всех правок: цель читает конфиг только при старте.
+# Успела ли цель подхватить правку сама. telemt следит за файлом конфига и
+# применяет пользователей на ходу — сигнала ему для этого не нужно. Сверяем
+# состав включённых в конфиге с тем, что отдаёт API: сошлось — перезапускать
+# нечего. Не сошлось (другой движок, старая версия, API молчит) — вызывающий
+# уходит на прежнюю ветку с перезапуском, то есть хуже не станет.
+# Спасибо @Roger639 за замеры (issue #26).
+_target_users_hot_applied() {
+    local _want _have _try
+    _want=$(_target_config_user_limits 2>/dev/null)
+    [ -n "$_want" ] || return 1
+    for _try in 1 2 3 4 5 6; do
+        _have=$(_target_api_user_limits 2>/dev/null)
+        [ -n "$_have" ] && [ "$_want" = "$_have" ] && return 0
+        sleep 0.5
+    done
+    return 1
+}
+
+# «Имя|соединения|адреса|квота|срок» по включённым пользователям конфига.
+# Пустое поле — ограничения нет: движок понимает это как отсутствие строки.
+_target_config_user_limits() {
+    declare -A _CONN=() _UIPS=() _QUOTA=() _EXP=()
+    local _st _lb _v
+    while IFS='|' read -r _st _lb _v; do
+        [ -n "$_lb" ] && _CONN["$_lb"]="$_v"
+    done < <(_target_section_pairs "access.user_max_tcp_conns" 2>/dev/null)
+    while IFS='|' read -r _st _lb _v; do
+        [ -n "$_lb" ] && _UIPS["$_lb"]="$_v"
+    done < <(_target_section_pairs "access.user_max_unique_ips" 2>/dev/null)
+    while IFS='|' read -r _st _lb _v; do
+        [ -n "$_lb" ] && _QUOTA["$_lb"]="$_v"
+    done < <(_target_section_pairs "access.user_data_quota" 2>/dev/null)
+    while IFS='|' read -r _st _lb _v; do
+        [ -n "$_lb" ] && _EXP["$_lb"]="$_v"
+    done < <(_target_section_pairs "access.user_expirations" 2>/dev/null)
+
+    while IFS='|' read -r _st _lb _v; do
+        [ "$_st" = "on" ] || continue
+        [ -n "$_lb" ] || continue
+        printf '%s|%s|%s|%s|%s\n' "$_lb" \
+            "${_CONN[$_lb]:-}" "${_UIPS[$_lb]:-}" "${_QUOTA[$_lb]:-}" "${_EXP[$_lb]:-}"
+    done < <(_target_section_pairs "access.users" 2>/dev/null) | LC_ALL=C sort
+}
+
+# То же самое, но так, как это видит сам движок — из его API.
+_target_api_user_limits() {
+    local _json
+    _json=$(_get_telemt_users_json 2>/dev/null) || return 1
+    printf '%s' "$_json" | tr -d '\n' | awk '
+        function first_string(s,   p, q) {
+            p = index(s, "\""); if (!p) return ""
+            s = substr(s, p + 1); q = index(s, "\"")
+            return q ? substr(s, 1, q - 1) : ""
+        }
+        function raw_after(s, k,   p) {
+            p = index(s, "\"" k "\""); if (!p) return ""
+            s = substr(s, p + length(k) + 2)
+            p = index(s, ":"); if (!p) return ""
+            s = substr(s, p + 1); sub(/^[ \t]+/, "", s)
+            return s
+        }
+        function num(s, k,   v) {
+            v = raw_after(s, k)
+            if (match(v, /^[0-9]+/)) return substr(v, RSTART, RLENGTH)
+            return ""
+        }
+        function str(s, k,   v, q) {
+            v = raw_after(s, k)
+            if (substr(v, 1, 1) != "\"") return ""
+            v = substr(v, 2); q = index(v, "\"")
+            return q ? substr(v, 1, q - 1) : ""
+        }
+        BEGIN { RS = "\"username\"" }
+        NR == 1 { next }
+        {
+            u = first_string($0); if (u == "") next
+            e = str($0, "expiration_rfc3339")
+            # Движок отдаёт смещение, в конфиге стоит Z — это один момент
+            # времени, и расходиться из-за записи они не должны.
+            sub(/\+00:00$/, "Z", e)
+            printf "%s|%s|%s|%s|%s\n", u, num($0, "max_tcp_conns"), \
+                num($0, "max_unique_ips"), num($0, "data_quota_bytes"), e
+        }
+    ' | LC_ALL=C sort
+}
+
+# Общий хвост всех правок: у движка, который читает конфиг только при старте,
+# без перезапуска ничего не изменится.
 _target_users_apply() {
     if ! is_proxy_running; then
         log_info "Цель не запущена — изменения применятся при её запуске"
+        return 0
+    fi
+    if _target_users_hot_applied; then
+        log_success "Цель применила изменения на ходу — перезапуск не нужен"
         return 0
     fi
     echo -en "  ${BOLD}Перезапустить цель, чтобы применить? [Y/n]:${NC} "
