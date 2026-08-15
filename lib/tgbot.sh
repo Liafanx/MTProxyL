@@ -505,13 +505,13 @@ tgbot_set_param() {
 
     local _expr=""
     case "$_key" in
-        notify.availability|notify.proxy|notify.limits|notify.backup)
+        notify.availability|notify.dc|notify.proxy|notify.limits|notify.backup)
             case "$_val" in
                 true|false) ;;
                 *) log_error "Ожидается true или false"; return 1 ;;
             esac
             _expr=".${_key} = ${_val}" ;;
-        intervals.availability|intervals.proxy|intervals.limits)
+        intervals.availability|intervals.dc|intervals.proxy|intervals.limits)
             [[ "$_val" =~ ^[0-9]+$ ]] && [ "$_val" -ge 1 ] && [ "$_val" -le 1440 ] || {
                 log_error "Ожидается число от 1 до 1440"; return 1; }
             _expr=".${_key} = ${_val}" ;;
@@ -521,13 +521,25 @@ tgbot_set_param() {
                 *) log_error "Ожидается true или false"; return 1 ;;
             esac
             _expr=".${_key} = ${_val}" ;;
+        proxy)
+            # Пусто — ходим в Telegram напрямую. Иначе только socks5: схему
+            # проверяем здесь, потому что дальше её увидит уже сам aiogram, и
+            # опечатка обернулась бы падением службы при старте.
+            if [ -z "$_val" ] || [ "$_val" = "off" ] || [ "$_val" = "none" ]; then
+                _expr='.proxy = ""'
+            elif [[ "$_val" =~ ^socks5h?://([^:/@[:space:]]+(:[^@/[:space:]]*)?@)?[A-Za-z0-9._-]+:[0-9]{1,5}$ ]]; then
+                _expr=".proxy = \"${_val}\""
+            else
+                log_error "Ожидается socks5://[логин:пароль@]хост:порт или 'off'"
+                return 1
+            fi ;;
         autobackup.time)
             [[ "$_val" =~ ^([01]?[0-9]|2[0-3]):[0-5][0-9]$ ]] || {
                 log_error "Ожидается время в формате ЧЧ:ММ"; return 1; }
             _expr=".${_key} = \"${_val}\"" ;;
         *)
             log_error "Неизвестная настройка: ${_key}"
-            log_info "Доступны: notify.*, intervals.*, autobackup.*"
+            log_info "Доступны: notify.*, intervals.*, autobackup.*, proxy"
             return 1 ;;
     esac
 

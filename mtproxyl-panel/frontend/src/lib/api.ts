@@ -664,6 +664,8 @@ export interface TgbotConfig {
   notify: Record<string, boolean>;
   intervals: Record<string, number>;
   autobackup: { enabled: boolean; time: string; send_file: boolean };
+  /** Локальный SOCKS5 для похода в Telegram; пусто — напрямую. */
+  proxy?: string;
   has_token: boolean;
 }
 

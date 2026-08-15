@@ -255,6 +255,22 @@ export function TgbotPage() {
 
           <Card>
             <CardHeader>
+              <CardTitle>Прокси для Telegram</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-xs text-text-secondary">
+                Нужен, когда серверы Telegram с этого хоста недоступны: бот пойдёт к ним
+                через локальный SOCKS5. Поднимаете его вы — MTProxyL прокси не ставит и за
+                ним не следит. Пустое поле — ходить напрямую. Настройка применяется при
+                перезапуске бота.
+              </p>
+              <ProxyRow value={status.config.proxy ?? ''} disabled={busy}
+                onSave={(v) => void act(() => tgbotApi.set('proxy', v))} />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
               <CardTitle>Как часто сверяться</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -363,6 +379,22 @@ function PageTitle() {
 
 /** Поле «минут» с кнопкой сохранения: правка чисел на каждый нажатый символ
  *  дёргала бы CLI и переписывала конфиг бота. */
+function ProxyRow({ value, disabled, onSave }: {
+  value: string; disabled?: boolean; onSave: (v: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  return (
+    <div className="flex items-center gap-2">
+      <Input value={draft} disabled={disabled} placeholder="socks5://127.0.0.1:1080"
+        onChange={(e) => setDraft(e.target.value)} className="max-w-[320px]" />
+      <Button size="sm" disabled={disabled || draft === value} onClick={() => onSave(draft.trim())}>
+        Сохранить
+      </Button>
+    </div>
+  );
+}
+
 function IntervalRow({
   title, minutes, disabled, onSave,
 }: {

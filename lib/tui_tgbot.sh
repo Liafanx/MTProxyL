@@ -46,6 +46,7 @@ tui_tgbot_menu() {
         echo -e "  ${CYAN}[7]${NC}  Журнал службы"
         echo -e "  ${CYAN}[8]${NC}  Обновить код бота"
         echo -e "  ${CYAN}[9]${NC}  Переустановить"
+        echo -e "  ${CYAN}[11]${NC} Прокси для Telegram: $(_tui_tgbot_proxy_line)"
         echo -e "  ${RED}[10]${NC} Удалить бота"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
@@ -70,6 +71,7 @@ tui_tgbot_menu() {
             7)  journalctl -u "$TGBOT_SERVICE" -n 60 --no-pager; press_any_key ;;
             8)  tgbot_update_sources && log_success "Код обновлён, бот перезапущен"; press_any_key ;;
             9)  tgbot_install; press_any_key ;;
+            11) _tui_tgbot_proxy; press_any_key ;;
             10) tgbot_uninstall; press_any_key; return ;;
             0|"") return ;;
         esac
@@ -108,10 +110,38 @@ _tgbot_flag() {
         && echo -e "${GREEN}вкл${NC}" || echo -e "${DIM}выкл${NC}"
 }
 
+# Через что бот ходит в Telegram. Пусто в конфиге — напрямую.
+_tui_tgbot_proxy_line() {
+    local _p=""
+    command -v jq &>/dev/null && [ -s "$TGBOT_CONFIG" ] && \
+        _p=$(jq -r '.proxy // ""' "$TGBOT_CONFIG" 2>/dev/null)
+    if [ -n "$_p" ] && [ "$_p" != "null" ]; then
+        echo -e "${GREEN}${_p}${NC}"
+    else
+        echo -e "${DIM}напрямую${NC}"
+    fi
+}
+
+# Локальный SOCKS5 на случай, когда серверы Telegram с хоста недоступны.
+_tui_tgbot_proxy() {
+    echo ""
+    echo -e "  ${DIM}Бот пойдёт к Telegram через локальный SOCKS5. Поднимаете его вы —${NC}"
+    echo -e "  ${DIM}MTProxyL прокси не ставит и за ним не следит.${NC}"
+    echo -e "  ${DIM}Формат: socks5://[логин:пароль@]хост:порт, 'off' — напрямую.${NC}"
+    echo -en "  ${BOLD}Прокси:${NC} "
+    local _v; read_line _v
+    [ -n "$_v" ] || return 0
+    tgbot_set_param proxy "$_v" || return 1
+    # Сессию бот создаёт на старте — без перезапуска настройка не применится.
+    systemctl restart "$TGBOT_SERVICE" 2>/dev/null \
+        && log_success "Бот перезапущен" \
+        || log_warn "Перезапустите бота вручную, чтобы настройка применилась"
+}
+
 _tui_tgbot_notify_lines() {
     command -v jq &>/dev/null || return 0
     [ -s "$TGBOT_CONFIG" ] || return 0
-    echo -e "  ${BOLD}Уведомления:${NC} доступность $(_tgbot_flag availability), прокси $(_tgbot_flag proxy), лимиты $(_tgbot_flag limits), бэкапы $(_tgbot_flag backup)"
+    echo -e "  ${BOLD}Уведомления:${NC} доступность $(_tgbot_flag availability), DC $(_tgbot_flag dc), прокси $(_tgbot_flag proxy), лимиты $(_tgbot_flag limits), бэкапы $(_tgbot_flag backup)"
 }
 
 _tui_tgbot_notify() {

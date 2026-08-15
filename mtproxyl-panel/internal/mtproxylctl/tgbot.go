@@ -141,16 +141,23 @@ func (c *Client) TgbotAdmin(ctx context.Context, id int64, add bool) (string, er
 // tgbotSettable lists the keys the panel may change, with how to check them.
 var tgbotSettable = map[string]string{
 	"notify.availability":    "bool",
+	"notify.dc":              "bool",
 	"notify.proxy":           "bool",
 	"notify.limits":          "bool",
 	"notify.backup":          "bool",
 	"intervals.availability": "minutes",
+	"intervals.dc":           "minutes",
 	"intervals.proxy":        "minutes",
 	"intervals.limits":       "minutes",
 	"autobackup.enabled":     "bool",
 	"autobackup.send_file":   "bool",
 	"autobackup.time":        "time",
+	"proxy":                  "proxy",
 }
+
+// proxyRe: локальный SOCKS5 для бота. Схему проверяем и здесь, и в bash —
+// aiogram увидит её только при старте службы, и опечатка стоила бы падения.
+var proxyRe = regexp.MustCompile(`^socks5h?://([^:/@\s]+(:[^@/\s]*)?@)?[A-Za-z0-9._-]+:[0-9]{1,5}$`)
 
 var timeRe = regexp.MustCompile(`^([01]?[0-9]|2[0-3]):[0-5][0-9]$`)
 
@@ -174,6 +181,11 @@ func (c *Client) TgbotSet(ctx context.Context, key, value string) (string, error
 	case "time":
 		if !timeRe.MatchString(value) {
 			return "", fmt.Errorf("ожидается время в формате ЧЧ:ММ")
+		}
+	case "proxy":
+		// Пустое значение — «ходить напрямую», это штатный способ выключить.
+		if value != "" && value != "off" && !proxyRe.MatchString(value) {
+			return "", fmt.Errorf("ожидается socks5://[логин:пароль@]хост:порт")
 		}
 	}
 	out, err := c.run(ctx, "tgbot", "set", key, value)

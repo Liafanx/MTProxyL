@@ -8,6 +8,7 @@ import sys
 
 from aiogram import BaseMiddleware, Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.exceptions import (
     TelegramAPIError,
@@ -110,7 +111,20 @@ async def main() -> int:
                   "Настройте: mtproxyl tgbot setup", config.CONFIG_PATH)
         return 1
 
-    bot = Bot(cfg.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    # Прокси задан — весь разговор с Telegram идёт через него. Схему socks5://
+    # умеет не сам aiohttp, а aiohttp-socks; он в requirements, но у бота,
+    # обновлённого без пересборки venv, его может не быть — тогда честнее
+    # сказать об этом в журнал, чем падать при первом же запросе.
+    session = None
+    if cfg.proxy:
+        try:
+            session = AiohttpSession(proxy=cfg.proxy)
+            log.info("Telegram через прокси %s", cfg.proxy)
+        except Exception as exc:
+            log.error("не удалось поднять сессию через прокси %s: %s", cfg.proxy, exc)
+            log.error("проверьте, что в venv стоит aiohttp-socks: mtproxyl tgbot update")
+            raise
+    bot = Bot(cfg.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML), session=session)
     dp = Dispatcher(storage=MemoryStorage())
     dp.message.middleware(AdminOnly())
     dp.callback_query.middleware(AdminOnly())
