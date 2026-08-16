@@ -737,3 +737,70 @@ export const tgbotApi = {
       body: JSON.stringify({ key, value }),
     }),
 };
+
+// ── Маршрут до Telegram через WARP ──────────────────────────────────────────
+// Правила ставит MTProxyL в ядро, панель только показывает и просит включить.
+// Включение уводит минуты на разведку эндпоинтов Cloudflare, поэтому ответ —
+// операция, за которой панель следит так же, как за сменой режима.
+
+const WARP_BASE = `${BASE}/api/warp`;
+
+/** Куда выходим по версии самого Cloudflare. */
+export interface WarpExit {
+  ip: string;
+  loc: string;
+  colo: string;
+  /** false — туннель не ответил: служба может работать, а маршрута нет. */
+  confirmed: boolean;
+}
+
+export interface WarpStatus {
+  enabled: boolean;
+  /** socks — вариант A, iface — вариант B. */
+  mode: 'socks' | 'iface';
+  proto: string;
+  endpoint: string;
+  location: string;
+  installed: boolean;
+  version: string;
+  socks_active: boolean;
+  redirect_active: boolean;
+  iface_active: boolean;
+  nft_applied: boolean;
+  cidr_count: number;
+  socks_port: number;
+  redirect_port: number;
+  /** Счётчик nft: сколько пакетов до Telegram ушло в туннель. */
+  matched_packets: number;
+  exit: WarpExit;
+}
+
+export interface WarpStatusResponse {
+  /** false — установленный MTProxyL старше этой возможности. */
+  supported: boolean;
+  message?: string;
+  status?: WarpStatus;
+}
+
+export interface WarpSettingsPatch {
+  location?: string;
+  endpoint?: string;
+  proto?: string;
+}
+
+export const warpApi = {
+  status: () => request<WarpStatusResponse>(WARP_BASE, '/status'),
+  enable: (mode: 'socks' | 'iface') =>
+    request<MtproxylOperation>(WARP_BASE, '/enable', {
+      method: 'POST',
+      body: JSON.stringify({ mode }),
+    }),
+  disable: () => request<MtproxylOperation>(WARP_BASE, '/disable', { method: 'POST' }),
+  scan: () => request<MtproxylOperation>(WARP_BASE, '/scan', { method: 'POST' }),
+  reapply: () => request<MtproxylOperation>(WARP_BASE, '/reapply', { method: 'POST' }),
+  save: (patch: WarpSettingsPatch) =>
+    request<WarpStatusResponse>(WARP_BASE, '/settings', {
+      method: 'PUT',
+      body: JSON.stringify(patch),
+    }),
+};

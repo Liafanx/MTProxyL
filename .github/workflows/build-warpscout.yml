@@ -1,0 +1,133 @@
+name: Сборка warpscout (запасной бинарник для маршрута через WARP)
+
+# MTProxyL сначала берёт релиз оригинального проекта, а этот ассет — запас:
+# на случай, когда оригинальный релиз недоступен или уехал от того, что зовёт
+# lib/warp.sh. Собираем из своего форка, чтобы запас не зависел от чужого CI.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Версия warpscout (тег форка без v)'
+        required: true
+        default: '0.14.0'
+      fork_ref:
+        description: 'Ветка или тег в Liafanx/warpscout'
+        required: true
+        default: 'master'
+      push_release:
+        description: 'Опубликовать как Release?'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  build:
+    name: Сборка ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+      - name: Забрать форк warpscout
+        uses: actions/checkout@v4
+        with:
+          repository: Liafanx/warpscout
+          ref: ${{ github.event.inputs.fork_ref }}
+
+      - name: Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: false
+
+      - name: Сборка статического бинарника
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: '0'
+        run: |
+          set -eu
+          VER="${{ github.event.inputs.version }}"
+          go build -trimpath -ldflags "-s -w -X main.version=${VER}" -o warpscout .
+          file warpscout
+
+      - name: Проверка ключей, на которые рассчитывает MTProxyL
+        if: matrix.arch == 'amd64'
+        run: |
+          set -eu
+          # Форк может уехать от оригинала. Пусть это ломает сборку здесь, а не
+          # разведку эндпоинтов на сервере пользователя.
+          HELP="$(./warpscout scan -h 2>&1 || true)$(./warpscout socks -h 2>&1 || true)"
+          for flag in best conf endpoint country node table-off no-dns plain; do
+            echo "$HELP" | grep -q -- "-${flag}" || { echo "нет ключа -${flag}"; exit 1; }
+          done
+          ./warpscout version
+
+      - name: Упаковка
+        run: |
+          set -eu
+          ARCHIVE="mtproxyl-warpscout-${{ github.event.inputs.version }}-linux-${{ matrix.arch }}.tar.gz"
+          tar czf "${ARCHIVE}" warpscout
+          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - name: Загрузка артефакта
+        uses: actions/upload-artifact@v4
+        with:
+          name: warpscout-${{ matrix.arch }}
+          path: ${{ env.ARCHIVE }}
+          retention-days: 7
+
+  release:
+    name: Публикация Release
+    needs: build
+    if: github.event.inputs.push_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Скачать артефакты
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Показать файлы
+        run: find artifacts -type f -maxdepth 3
+
+      - name: Создать Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: warpscout-${{ github.event.inputs.version }}
+          name: "warpscout ${{ github.event.inputs.version }} (сборка MTProxyL)"
+          body: |
+            ## warpscout ${{ github.event.inputs.version }}
+
+            Запасной бинарник для маршрута до Telegram через WARP. Собран из
+            форка [Liafanx/warpscout](https://github.com/Liafanx/warpscout),
+            ветка `${{ github.event.inputs.fork_ref }}`.
+
+            MTProxyL берёт его, только если релиз оригинального проекта
+            [vernette/warpscout](https://github.com/vernette/warpscout)
+            недоступен или не понимает нужные ключи.
+
+            - `linux/amd64`
+            - `linux/arm64`
+
+            ### Ручная проверка
+            ```bash
+            tar xzf mtproxyl-warpscout-*.tar.gz
+            ./warpscout version
+            ./warpscout register -a /tmp/warp-account.json
+            ./warpscout scan -a /tmp/warp-account.json -p awg -best -plain
+            ```
+          files: |
+            artifacts/warpscout-amd64/*.tar.gz
+            artifacts/warpscout-arm64/*.tar.gz
+          draft: false
+          prerelease: false

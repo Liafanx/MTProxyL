@@ -569,6 +569,18 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability check --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability on
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability off
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability token *
+# Маршрут до Telegram через WARP. Включение уводит минуты на разведку
+# эндпоинтов Cloudflare, поэтому панель зовёт его фоновой операцией.
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp status --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp on socks
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp on iface
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp off
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp scan
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp reapply
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp location [A-Za-z]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp endpoint [0-9a-fA-F]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp endpoint clear
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp proto [a-z]*
 # Телеграм-бот. Токен передаётся аргументом установки, поэтому правило на неё
 # отдельное и с ним же ограничен формат: только то, что похоже на токен.
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot status --json

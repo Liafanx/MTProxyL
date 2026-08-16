@@ -155,6 +155,8 @@ show_main_menu() {
 
         echo -e "  ${BOLD}MEKO оптим.:${NC} $(meko_opt_status 2>/dev/null || echo "${DIM}—${NC}")"
         echo -e "  ${BOLD}Selfmask:${NC}    $(selfmask_status_line 2>/dev/null || echo "${DIM}—${NC}")"
+        # Только когда включён: на обычной установке строка была бы шумом.
+        warp_menu_line 2>/dev/null || true
 
         if [ -n "$_UPDATE_AVAILABLE" ]; then
             echo ""

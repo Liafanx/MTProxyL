@@ -67,7 +67,7 @@ fi
 
 # Загрузка библиотек
 LIB_DIR="${INSTALL_DIR}/lib"
-for _lib in colors utils settings detect secrets config docker engine traffic availability dc geoblock geoip upstream backup nft selfmask panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_tgbot tui_detect expert_catalog expert_mode settings_cli install; do
+for _lib in colors utils settings detect secrets config docker engine traffic availability dc warp geoblock geoip upstream backup nft selfmask panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_tgbot tui_warp tui_detect expert_catalog expert_mode settings_cli install; do
     if [ -f "${LIB_DIR}/${_lib}.sh" ]; then
         # shellcheck source=/dev/null
         source "${LIB_DIR}/${_lib}.sh"
@@ -458,6 +458,13 @@ cli_main() {
             # и настройки, и результат детекта: у реаниматора это чужая цель.
             load_settings; load_detect_settings
             handle_dc_command "$@"
+            ;;
+
+        warp)
+            # Правила живут в ядре и не зависят от режима: в туннель уходят
+            # подсети Telegram, чей бы прокси на хосте ни стоял.
+            load_settings; load_detect_settings
+            handle_warp_command "$@"
             ;;
 
         availability)

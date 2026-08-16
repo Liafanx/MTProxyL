@@ -13,9 +13,11 @@ tui_security_menu() {
             sni_label="${GREEN}Mask${NC} (перенаправление)"
         fi
         echo -e "  ${DIM}[1]${NC} Гео-блокировка"
+        # Работает в любом режиме: правила в ядре, а не в конфиге движка.
+        echo -e "  ${DIM}[2]${NC} Telegram через WARP: $(_tui_warp_state_label)"
         if [ "${MTPROXYL_MODE:-manager}" = "manager" ] && ! _superexpert_active; then
-            echo -e "  ${DIM}[2]${NC} Upstream-маршруты"
-            echo -e "  ${DIM}[3]${NC} SNI-политика: ${sni_label}"
+            echo -e "  ${DIM}[3]${NC} Upstream-маршруты"
+            echo -e "  ${DIM}[4]${NC} SNI-политика: ${sni_label}"
         elif _superexpert_active; then
             # Оба пункта пишут в генерируемый config.toml, который в этом
             # режиме всё равно заменяется файлом пользователя.
@@ -33,11 +35,12 @@ tui_security_menu() {
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
             1) tui_geoblock_menu ;;
-            2)
+            2) tui_warp_menu ;;
+            3)
                 _require_manager_mode || { press_any_key; continue; }
                 _require_no_superexpert || { press_any_key; continue; }
                 tui_upstream_menu ;;
-            3)
+            4)
                 _require_manager_mode || { press_any_key; continue; }
                 _require_no_superexpert || { press_any_key; continue; }
                 echo ""
