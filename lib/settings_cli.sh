@@ -21,6 +21,7 @@ _SETTINGS_SETTABLE=(
     "BACKUP_RETENTION_DAYS|range:0:3650|Сколько дней хранить бэкапы (0 — не удалять)"
     "IP_HISTORY_LIMIT|range:1:100000|Сколько IP хранить в истории на пользователя"
     "IP_HISTORY_INTERVAL|range:0:1440|Как часто снимать адреса в историю, минут (0 — выключить)"
+    "DC_THRESHOLD|range:0:100|Порог покрытия дата-центров Telegram, % (0 — без предупреждений)"
     "AVAILABILITY_ENABLED|bool|Проверять доступность из России по расписанию"
     "AVAILABILITY_INTERVAL|range:1:1440|Как часто проверять доступность, минут"
     "AVAILABILITY_PROBES|range:1:50|Сколько российских зондов опрашивать (кредит за зонд)"
@@ -154,7 +155,7 @@ settings_set_param() {
     # и в реаниматоре, и при супер эксперте: чужой конфиг они не трогают.
     local _own_setting="false"
     case "$_key" in
-        BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT|IP_HISTORY_INTERVAL|AVAILABILITY_*)
+        BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT|IP_HISTORY_INTERVAL|AVAILABILITY_*|DC_THRESHOLD)
             _own_setting="true" ;;
     esac
     if [ "$_own_setting" != "true" ]; then
@@ -175,7 +176,7 @@ settings_set_param() {
             [ "$_key" = "PROXY_API_PORT" ] && \
                 log_warn "Поправьте url в конфиге панели: /etc/mtproxyl-panel/config.toml"
             ;;
-        BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT|\
+        BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT|DC_THRESHOLD|\
         AVAILABILITY_THRESHOLD|AVAILABILITY_HOST|AVAILABILITY_PORT|AVAILABILITY_SNI|AVAILABILITY_PROBES)
             # Настройки самого MTProxyL — в конфиг движка не попадают.
             ;;

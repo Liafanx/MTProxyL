@@ -47,7 +47,7 @@ export function AvailabilityCard() {
 
   useEffect(() => {
     void load();
-    // Проверка идёт раз в 15 минут, чаще опрашивать нечего.
+    // Проверка идёт по таймеру, минутами, а не секундами — чаще опрашивать нечего.
     const id = setInterval(load, 60_000);
     return () => clearInterval(id);
   }, [load]);

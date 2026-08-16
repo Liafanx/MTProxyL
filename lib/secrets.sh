@@ -79,6 +79,89 @@ load_secrets() {
     done < "$SECRETS_FILE"
 }
 
+# Импорт секретов из файла. Форматов два: экспорт из меню (без момента
+# создания) и сама база секретов — её отдаёт «сохранить секреты перед
+# удалением». Различаются они третьим полем: у базы там метка времени, у
+# экспорта — enabled. Без этой проверки поля базы разъезжались на одно, и
+# лимит IP приезжал в квоту (issue #29).
+secret_import_file() {
+    local _file="${1:-}"
+    [ -f "$_file" ] || { log_error "Файл не найден: ${_file}"; return 1; }
+
+    local _added=0 _dup=0 _bad=0 _line
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        [[ "$_line" =~ ^[[:space:]]*# ]] && continue
+        [[ "$_line" =~ ^[[:space:]]*$ ]] && continue
+
+        local _oldIFS="$IFS"
+        declare -a _f=()
+        IFS='|' read -ra _f <<< "$_line"
+        IFS="$_oldIFS"
+
+        local _l="${_f[0]:-}" _k="${_f[1]:-}"
+        [[ "$_l" =~ ^[a-zA-Z0-9_-]+$ ]] && [ ${#_l} -le 32 ] || { _bad=$((_bad + 1)); continue; }
+        [[ "$_k" =~ ^[0-9a-fA-F]{32}$ ]] || { _bad=$((_bad + 1)); continue; }
+
+        local _cr _en _mc _mi _q _ex _n _at
+        if [[ "${_f[2]:-}" =~ ^[0-9]{9,}$ ]]; then
+            _cr="${_f[2]}";     _en="${_f[3]:-true}"; _mc="${_f[4]:-0}"; _mi="${_f[5]:-0}"
+            _q="${_f[6]:-0}";   _ex="${_f[7]:-0}";    _n="${_f[8]:-}";   _at="${_f[9]:-}"
+        else
+            _cr="$(date +%s)";  _en="${_f[2]:-true}"; _mc="${_f[3]:-0}"; _mi="${_f[4]:-0}"
+            _q="${_f[5]:-0}";   _ex="${_f[6]:-0}";    _n="${_f[7]:-}";   _at="${_f[8]:-}"
+        fi
+
+        local _i _exists=false
+        for _i in "${!SECRETS_LABELS[@]}"; do
+            [ "${SECRETS_LABELS[$_i]}" = "$_l" ] && { _exists=true; break; }
+        done
+        if $_exists; then _dup=$((_dup + 1)); continue; fi
+
+        # Дальше — те же проверки, что в load_secrets: чужой файл может
+        # принести что угодно, а в базе должны лежать только числа.
+        [[ "$_mc" =~ ^[0-9]+$ ]] || _mc="0"
+        [[ "$_mi" =~ ^[0-9]+$ ]] || _mi="0"
+        [[ "$_q"  =~ ^[0-9]+$ ]] || _q="0"
+        [ "$_en" = "true" ] || [ "$_en" = "false" ] || _en="true"
+        if [ "$_ex" != "0" ] && ! [[ "$_ex" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9:Z+.-]+)?$ ]]; then
+            _ex="0"
+        fi
+        [[ "$_at" =~ ^[0-9a-fA-F]{32}$ ]] || _at=""
+
+        SECRETS_LABELS+=("$_l");   SECRETS_KEYS+=("$_k")
+        SECRETS_CREATED+=("$_cr"); SECRETS_ENABLED+=("$_en")
+        SECRETS_MAX_CONNS+=("$_mc"); SECRETS_MAX_IPS+=("$_mi")
+        SECRETS_QUOTA+=("$_q");    SECRETS_EXPIRES+=("$_ex")
+        SECRETS_NOTES+=("${_n//|/ }"); SECRETS_ADTAG+=("$_at")
+        _added=$((_added + 1))
+    done < "$_file"
+
+    if [ "$_added" -gt 0 ]; then
+        save_secrets
+        reload_proxy_config 2>/dev/null || true
+    fi
+    log_success "Импортировано: ${_added}, пропущено дубликатов: ${_dup}, строк с ошибкой: ${_bad}"
+    return 0
+}
+
+# Экспорт секретов в файл того же формата, что читает secret_import_file.
+secret_export_file() {
+    local _file="${1:-}"
+    [ -n "$_file" ] || { log_error "Требуется имя файла"; return 1; }
+
+    local _tmp; _tmp=$(_mktemp "$(dirname "$_file")") || { log_error "Не удалось создать временный файл"; return 1; }
+    echo "# label|key|enabled|max_conns|max_ips|quota|expires|notes|ad_tag" > "$_tmp"
+    local _i
+    for _i in "${!SECRETS_LABELS[@]}"; do
+        # «|» в заметке сдвинул бы поля при обратном импорте.
+        local _note="${SECRETS_NOTES[$_i]:-}"; _note="${_note//|/ }"
+        echo "${SECRETS_LABELS[$_i]}|${SECRETS_KEYS[$_i]}|${SECRETS_ENABLED[$_i]}|${SECRETS_MAX_CONNS[$_i]:-0}|${SECRETS_MAX_IPS[$_i]:-0}|${SECRETS_QUOTA[$_i]:-0}|${SECRETS_EXPIRES[$_i]:-0}|${_note}|${SECRETS_ADTAG[$_i]:-}" >> "$_tmp"
+    done
+    chmod 600 "$_tmp"
+    mv "$_tmp" "$_file"
+    log_success "Экспортировано ${#SECRETS_LABELS[@]} секретов в ${_file}"
+}
+
 # Добавить секрет
 secret_add() {
     local label="$1" custom_secret="${2:-}" no_restart="${3:-false}"

@@ -61,7 +61,14 @@ async def check_dc(bot: Bot, state: dict) -> None:
     if not report.get("available"):
         return
 
-    threshold = int(report.get("threshold") or 80)
+    # Нулевой порог — предупреждения выключены целиком (mtproxyl dc threshold 0).
+    # Забываем и прошлое состояние: иначе после включения прилетит «просело»
+    # про давно прошедшую просадку.
+    threshold = int(report.get("threshold") or 0)
+    if threshold <= 0:
+        state.pop("dc_bad", None)
+        return
+
     coverage = int(report.get("coverage_pct") or 0)
     bad = coverage < threshold
     was_bad = state.get("dc_bad")

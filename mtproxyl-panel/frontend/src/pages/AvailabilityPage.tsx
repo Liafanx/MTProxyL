@@ -13,6 +13,7 @@ import {
   type AvailabilityProbe,
   type AvailabilityLevel,
   type AvailabilityQuota,
+  type AvailabilitySchedule,
   type AvailabilityTargetResponse,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -34,6 +35,7 @@ export function AvailabilityPage() {
   const [result, setResult] = useState<AvailabilityResult | null>(null);
   const [quota, setQuota] = useState<AvailabilityQuota | undefined>();
   const [autoCheck, setAutoCheck] = useState(true);
+  const [schedule, setSchedule] = useState<AvailabilitySchedule>({});
   const [message, setMessage] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
@@ -48,6 +50,7 @@ export function AvailabilityPage() {
       setResult(res.result ?? null);
       setQuota(res.quota);
       setAutoCheck(res.auto_check ?? true);
+      setSchedule(res);
       setMessage(res.message);
       setError(null);
     } catch (e) {
@@ -68,9 +71,10 @@ export function AvailabilityPage() {
       const res = await availabilityApi.check();
       setEnabled(res.enabled);
       setResult(res.result ?? null);
-      setQuota(res.quota);
-      setAutoCheck(res.auto_check ?? autoCheck);
       setMessage(res.message);
+      // Проверка отвечает одним результатом — квоту и расписание она не
+      // пересчитывает, а потраченные кредиты показать надо.
+      void load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось запустить проверку');
     } finally {
@@ -106,7 +110,9 @@ export function AvailabilityPage() {
 
         {error && <ErrorAlert message={error} onRetry={load} />}
 
-        {enabled && <AutoCheckToggle enabled={autoCheck} onChange={setAutoCheck} />}
+        {enabled && (
+          <AutoCheckToggle enabled={autoCheck} schedule={schedule} onChange={setAutoCheck} />
+        )}
 
         {enabled && <QuotaBanner quota={quota} />}
 
@@ -187,15 +193,50 @@ export function AvailabilityPage() {
   );
 }
 
+/** Русское склонение для числительных: 1 минута, 2 минуты, 5 минут. */
+function plural(n: number, one: string, few: string, many: string): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
+}
+
+/**
+ * Период автопроверки задаётся в MTProxyL (AVAILABILITY_INTERVAL), а не панелью,
+ * поэтому берём его из ответа CLI: раньше здесь стояли зашитые 15 минут, и у
+ * тех, кто поменял период, панель говорила неправду.
+ */
+function scheduleLine(s: AvailabilitySchedule): string {
+  const parts: string[] = [];
+  if (s.interval && s.interval > 0) {
+    parts.push(`Проверка идёт сама раз в ${s.interval} ${plural(s.interval, 'минуту', 'минуты', 'минут')}`);
+  } else {
+    parts.push('Проверка идёт сама по расписанию');
+  }
+  if (s.probes && s.probes > 0) {
+    parts.push(`${s.probes} ${plural(s.probes, 'зонд', 'зонда', 'зондов')} за раз`);
+  }
+  if (s.next_run) {
+    const at = new Date(s.next_run);
+    if (!Number.isNaN(at.getTime())) {
+      parts.push(`следующая в ${at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`);
+    }
+  }
+  return parts.join(' · ');
+}
+
 /**
  * Проверка по расписанию. Выключенная не отменяет «Проверить сейчас» — она для
  * тех, кто хочет проверять руками и не тратить квоту фоном.
  */
 function AutoCheckToggle({
   enabled,
+  schedule,
   onChange,
 }: {
   enabled: boolean;
+  schedule: AvailabilitySchedule;
   onChange: (v: boolean) => void;
 }) {
   const [saving, setSaving] = useState(false);
@@ -223,10 +264,13 @@ function AutoCheckToggle({
           {enabled ? 'включена' : 'выключена'}
         </span>
         <div className="text-xs text-text-secondary mt-0.5">
-          {enabled
-            ? 'Проверка идёт сама раз в 15 минут'
-            : 'Проверки идут только по кнопке «Проверить сейчас»'}
+          {enabled ? scheduleLine(schedule) : 'Проверки идут только по кнопке «Проверить сейчас»'}
         </div>
+        {enabled && schedule.timer_active === false && (
+          <div className="text-xs text-warning mt-0.5">
+            Таймер не запущен — по расписанию проверок не будет
+          </div>
+        )}
         {error && <div className="text-xs text-danger mt-1">{error}</div>}
       </div>
       <Button onClick={toggle} disabled={saving} size="sm" variant="outline">

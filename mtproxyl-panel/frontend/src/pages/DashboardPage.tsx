@@ -11,10 +11,12 @@ import { AvailabilityCard } from '@/components/AvailabilityCard';
 import { MtproxylUpdateBanner } from '@/components/MtproxylUpdateCard';
 import { useWsSubscription, useEndpoint } from '@/hooks/useWebSocket';
 import { usePolling } from '@/hooks/usePolling';
-import { telemt } from '@/lib/api';
+import { telemt, mtproxylSettingsApi } from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { formatUptime, formatNumber, formatBytes } from '@/lib/utils';
 import { Activity, Clock, Users, ArrowUpDown, Globe } from 'lucide-react';
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 interface HealthData {
   status: string;
@@ -65,8 +67,12 @@ const ENDPOINTS = [
   '/v1/health', '/v1/stats/summary', '/v1/system/info', '/v1/runtime/gates', '/v1/stats/dcs',
 ];
 
-/** Порог покрытия, ниже которого DC считается просевшим — как у CLI и бота. */
-const DC_THRESHOLD = 80;
+/**
+ * Порог покрытия DC на случай, когда настройку прочитать не удалось: у CLI и
+ * бота значение по умолчанию то же. Настоящий берём из DC_THRESHOLD в
+ * settings.conf — он общий на панель, бота и меню.
+ */
+const DC_THRESHOLD_FALLBACK = 80;
 
 export function DashboardPage() {
   const { data: wsData, errors, connected, refresh } = useWsSubscription('dashboard', ENDPOINTS, 5);
@@ -94,6 +100,8 @@ export function DashboardPage() {
 
   const isHealthy = health?.status === 'ok';
   const firstError = Object.values(errors)[0];
+
+  const dcThreshold = useDcThreshold();
 
   return (
     <div>
@@ -195,7 +203,14 @@ export function DashboardPage() {
 
         {/* Дата-центры Telegram: связь движка с Telegram, а не доступность
             прокси снаружи. Числа те же, что показывает `mtproxyl dc`. */}
-        {dcs && <DcCard data={dcs} />}
+        {dcs && (
+          <DcCard
+            data={dcs}
+            threshold={dcThreshold.value}
+            editable={dcThreshold.editable}
+            onSave={dcThreshold.save}
+          />
+        )}
 
         {/* System Info */}
         {system && (
@@ -262,13 +277,56 @@ function formatDuration(totalSeconds: number): string {
  * профиль сборки как «unknown». Без обработки на дашборде получается список
  * чисел, по которому непонятно, что хорошо, а что плохо.
  */
-function DcCard({ data }: { data: DcsData }) {
+/**
+ * Порог покрытия DC. Живёт в настройках MTProxyL, потому что по нему пишет и
+ * телеграм-бот: два независимых порога расходились бы, и панель показывала бы
+ * «просело» тогда, когда бот молчит. У MTProxyL старее 1.5.0 настройки нет —
+ * тогда показываем значение по умолчанию и не даём его править.
+ */
+function useDcThreshold() {
+  const [value, setValue] = useState(DC_THRESHOLD_FALLBACK);
+  const [editable, setEditable] = useState(false);
+
+  useEffect(() => {
+    mtproxylSettingsApi
+      .list()
+      .then((list) => {
+        const found = list.find((p) => p.key === 'DC_THRESHOLD');
+        if (!found) return;
+        const n = Number(found.value);
+        if (Number.isInteger(n) && n >= 0 && n <= 100) setValue(n);
+        setEditable(true);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const save = useCallback(async (next: number) => {
+    await mtproxylSettingsApi.set('DC_THRESHOLD', String(next));
+    setValue(next);
+  }, []);
+
+  return { value, editable, save };
+}
+
+function DcCard({
+  data,
+  threshold,
+  editable,
+  onSave,
+}: {
+  data: DcsData;
+  threshold: number;
+  editable: boolean;
+  onSave: (next: number) => Promise<void>;
+}) {
   const rows = data.dcs ?? [];
-  if (!data.middle_proxy_enabled || rows.length === 0) return null;
   const alive = rows.reduce((s, d) => s + (d.alive_writers || 0), 0);
   const required = rows.reduce((s, d) => s + (d.required_writers || 0), 0);
   const coverage = required > 0 ? Math.min(100, Math.round((alive * 100) / required)) : 100;
-  const ok = coverage >= DC_THRESHOLD;
+  // Нулевой порог — предупреждения выключены: цифры показываем, приговор нет.
+  const ok = threshold <= 0 || coverage >= threshold;
+  const rowOk = (cov: number) => (threshold <= 0 ? cov > 0 : cov >= threshold);
+  if (!data.middle_proxy_enabled || rows.length === 0) return null;
   return (
     <CollapsibleSection
       title={`Дата-центры Telegram — покрытие ${coverage}%${ok ? '' : ' (просело)'}`}
@@ -289,7 +347,7 @@ function DcCard({ data }: { data: DcsData }) {
               return (
                 <tr key={d.dc} className="border-b border-border last:border-0">
                   <td className="py-2 pr-4 text-text-primary">
-                    <StatusDot status={cov >= DC_THRESHOLD ? 'ok' : 'warn'} size="sm" /> DC {d.dc}
+                    <StatusDot status={rowOk(cov) ? 'ok' : 'warn'} size="sm" /> DC {d.dc}
                   </td>
                   <td className="py-2 pl-4 text-right font-mono text-xs">
                     {d.rtt_ms == null ? '—' : `${Math.round(d.rtt_ms)} мс`}
@@ -297,7 +355,7 @@ function DcCard({ data }: { data: DcsData }) {
                   <td className="py-2 pl-4 text-right font-mono text-xs">
                     {d.alive_writers} / {d.required_writers}
                   </td>
-                  <td className={`py-2 pl-4 text-right ${cov >= DC_THRESHOLD ? '' : 'text-warning'}`}>
+                  <td className={`py-2 pl-4 text-right ${rowOk(cov) ? '' : 'text-warning'}`}>
                     {cov}%
                   </td>
                 </tr>
@@ -310,7 +368,77 @@ function DcCard({ data }: { data: DcsData }) {
         Писателей живо {alive} из {required}. Это связь движка с Telegram, а не доступность
         прокси для клиентов.
       </p>
+      <DcThresholdForm threshold={threshold} editable={editable} onSave={onSave} />
     </CollapsibleSection>
+  );
+}
+
+/**
+ * Порог, ниже которого покрытие считается просевшим. Тот же, по которому пишет
+ * телеграм-бот, поэтому его правка отсюда меняет и уведомления. Ноль —
+ * предупреждений нет ни здесь, ни в боте.
+ */
+function DcThresholdForm({
+  threshold,
+  editable,
+  onSave,
+}: {
+  threshold: number;
+  editable: boolean;
+  onSave: (next: number) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(String(threshold));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setDraft(String(threshold));
+  }, [threshold]);
+
+  if (!editable) {
+    return (
+      <p className="text-xs text-text-secondary/70 mt-1">
+        Порог {threshold}% задаётся в MTProxyL: <code>mtproxyl dc threshold</code>.
+      </p>
+    );
+  }
+
+  const submit = async () => {
+    const n = Number(draft.trim());
+    if (!Number.isInteger(n) || n < 0 || n > 100) {
+      setError('Порог: целое число от 0 до 100');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await onSave(n);
+      setSaved(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось сохранить порог');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 flex items-center gap-2 flex-wrap text-xs text-text-secondary">
+      <span>Порог, %:</span>
+      <Input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        inputMode="numeric"
+        className="w-20 h-8"
+      />
+      <Button onClick={submit} disabled={saving || draft === String(threshold)} size="sm" variant="outline">
+        {saving ? 'Сохраняем…' : 'Сохранить'}
+      </Button>
+      <span>0 — не предупреждать; тот же порог использует телеграм-бот.</span>
+      {saved && !error && <span className="text-success">Сохранено</span>}
+      {error && <span className="text-danger">{error}</span>}
+    </div>
   );
 }
 

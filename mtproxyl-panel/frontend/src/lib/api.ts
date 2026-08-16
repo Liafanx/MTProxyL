@@ -595,20 +595,36 @@ export interface AvailabilityQuota {
   has_token: boolean;
 }
 
-export interface AvailabilityStatusResponse {
+/**
+ * Расписание проверок — то, что оператор задал в MTProxyL. Раньше панель
+ * печатала «раз в 15 минут» независимо от настроек; всё это приходит от CLI.
+ */
+export interface AvailabilitySchedule {
+  /** Идут ли проверки по расписанию. Кнопка «Проверить сейчас» работает всегда. */
+  auto_check?: boolean;
+  /** Живёт ли systemd-таймер: автопроверка включена, а таймер мог не встать. */
+  timer_active?: boolean;
+  /** Период автопроверки, минут. */
+  interval?: number;
+  /** Сколько зондов опрашивается за проверку (кредит за зонд). */
+  probes?: number;
+  /** Порог доступности для уведомления в телеграм-боте, %. */
+  threshold?: number;
+  /** Время следующей проверки, RFC3339. Пусто, если таймер не запущен. */
+  next_run?: string;
+}
+
+export interface AvailabilityStatusResponse extends AvailabilitySchedule {
   enabled: boolean;
   status?: AvailabilityResult | null;
   quota?: AvailabilityQuota;
-  /** Идут ли проверки по расписанию. Кнопка «Проверить сейчас» работает всегда. */
-  auto_check?: boolean;
   message?: string;
 }
 
-export interface AvailabilityDetailsResponse {
+export interface AvailabilityDetailsResponse extends AvailabilitySchedule {
   enabled: boolean;
   result?: AvailabilityResult | null;
   quota?: AvailabilityQuota;
-  auto_check?: boolean;
   message?: string;
 }
 

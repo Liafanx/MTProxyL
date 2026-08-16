@@ -141,7 +141,7 @@ _tui_tgbot_proxy() {
 _tui_tgbot_notify_lines() {
     command -v jq &>/dev/null || return 0
     [ -s "$TGBOT_CONFIG" ] || return 0
-    echo -e "  ${BOLD}Уведомления:${NC} доступность $(_tgbot_flag availability), DC $(_tgbot_flag dc), прокси $(_tgbot_flag proxy), лимиты $(_tgbot_flag limits), бэкапы $(_tgbot_flag backup)"
+    echo -e "  ${BOLD}Уведомления:${NC} доступность $(_tgbot_flag availability), DC $(_tgbot_flag dc)$([ "$(_dc_threshold)" -eq 0 ] && echo " ${DIM}(порог выключен)${NC}"), прокси $(_tgbot_flag proxy), лимиты $(_tgbot_flag limits), бэкапы $(_tgbot_flag backup)"
 }
 
 _tui_tgbot_notify() {
@@ -151,26 +151,43 @@ _tui_tgbot_notify() {
         echo ""
         echo -e "  ${DIM}Бот пишет при смене состояния, а не на каждой проверке.${NC}"
         echo ""
+        local _dc_thr; _dc_thr=$(_dc_threshold)
+        local _dc_thr_line="ниже ${_dc_thr}%"
+        [ "$_dc_thr" -eq 0 ] && _dc_thr_line="порог выключен"
         echo -e "  ${CYAN}[1]${NC}  Доступность ниже порога: $(_tgbot_flag availability)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.availability' 15) мин)${NC}"
-        echo -e "  ${CYAN}[6]${NC}  Дата-центры Telegram ниже порога: $(_tgbot_flag dc)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.dc' 15) мин)${NC}"
-        echo -e "  ${CYAN}[2]${NC}  Прокси упал / поднялся: $(_tgbot_flag proxy)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.proxy' 5) мин)${NC}"
-        echo -e "  ${CYAN}[3]${NC}  Лимиты пользователей: $(_tgbot_flag limits)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.limits' 60) мин)${NC}"
-        echo -e "  ${CYAN}[4]${NC}  Итог автобэкапа: $(_tgbot_flag backup)"
+        echo -e "  ${CYAN}[2]${NC}  Дата-центры Telegram, ${_dc_thr_line}: $(_tgbot_flag dc)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.dc' 15) мин)${NC}"
+        echo -e "  ${CYAN}[3]${NC}  Прокси упал / поднялся: $(_tgbot_flag proxy)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.proxy' 5) мин)${NC}"
+        echo -e "  ${CYAN}[4]${NC}  Лимиты пользователей: $(_tgbot_flag limits)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.limits' 60) мин)${NC}"
+        echo -e "  ${CYAN}[5]${NC}  Итог автобэкапа: $(_tgbot_flag backup)"
         echo ""
-        echo -e "  ${CYAN}[5]${NC}  Изменить период проверки"
+        echo -e "  ${CYAN}[6]${NC}  Изменить период проверки"
+        echo -e "  ${CYAN}[7]${NC}  Порог покрытия дата-центров: ${_dc_thr}%"
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
         local c; c=$(read_choice "выбор" "0")
         case "$c" in
             1) _tgbot_cfg_set '.notify.availability = (.notify.availability | not)' ;;
-            2) _tgbot_cfg_set '.notify.proxy = (.notify.proxy | not)' ;;
-            3) _tgbot_cfg_set '.notify.limits = (.notify.limits | not)' ;;
-            4) _tgbot_cfg_set '.notify.backup = (.notify.backup | not)' ;;
-            5) _tui_tgbot_interval ;;
-            6) _tgbot_cfg_set '.notify.dc = (.notify.dc | not)' ;;
+            2) _tgbot_cfg_set '.notify.dc = (.notify.dc | not)' ;;
+            3) _tgbot_cfg_set '.notify.proxy = (.notify.proxy | not)' ;;
+            4) _tgbot_cfg_set '.notify.limits = (.notify.limits | not)' ;;
+            5) _tgbot_cfg_set '.notify.backup = (.notify.backup | not)' ;;
+            6) _tui_tgbot_interval ;;
+            7) _tui_tgbot_dc_threshold ;;
             0|"") return ;;
         esac
     done
+}
+
+# Порог общий для бота, панели и CLI — он живёт в настройках MTProxyL, а не в
+# конфиге бота, поэтому и меняется командой dc.
+_tui_tgbot_dc_threshold() {
+    echo ""
+    echo -e "  ${DIM}Ниже этого покрытия бот пишет о просадке. 0 — не писать вовсе.${NC}"
+    echo -en "  ${BOLD}Порог, %${NC} ${DIM}(сейчас $(_dc_threshold))${NC}: "
+    local _v; read_line _v
+    [ -n "$_v" ] || return 0
+    dc_set_threshold "$_v" || true
+    press_any_key
 }
 
 _tui_tgbot_interval() {

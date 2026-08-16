@@ -200,40 +200,13 @@ tui_secrets_menu() {
                     else log_error "Секрет '${l}' не найден"; fi
                 fi; press_any_key ;;
             11)
-                local exp_file="/tmp/mtproxyl-secrets-$(date +%Y%m%d).csv"
-                echo "# label|key|enabled|max_conns|max_ips|quota|expires|notes" > "$exp_file"
-                local ii; for ii in "${!SECRETS_LABELS[@]}"; do
-                    echo "${SECRETS_LABELS[$ii]}|${SECRETS_KEYS[$ii]}|${SECRETS_ENABLED[$ii]}|${SECRETS_MAX_CONNS[$ii]:-0}|${SECRETS_MAX_IPS[$ii]:-0}|${SECRETS_QUOTA[$ii]:-0}|${SECRETS_EXPIRES[$ii]:-0}|${SECRETS_NOTES[$ii]:-}" >> "$exp_file"
-                done
-                log_success "Экспортировано в ${exp_file}"; press_any_key ;;
+                secret_export_file "/tmp/mtproxyl-secrets-$(date +%Y%m%d).csv" || true
+                press_any_key ;;
             12)
+                echo -e "  ${DIM}Подойдёт и экспорт из пункта [11], и сама база ${SECRETS_FILE}${NC}"
                 echo -en "  ${BOLD}Файл для импорта:${NC} "; local f; read_line f
-                if [ -f "$f" ]; then
-                    local added=0 skipped=0
-                    while IFS='|' read -r _l _k _e _mc _mi _q _ex _n; do
-                        # Пропуск комментариев и пустых строк
-                        [[ "$_l" =~ ^[[:space:]]*# ]] && continue
-                        [[ "$_l" =~ ^[[:space:]]*$ ]] && continue
-                        # Валидация метки и ключа
-                        [[ "$_l" =~ ^[a-zA-Z0-9_-]+$ ]] || continue
-                        [[ "$_k" =~ ^[a-fA-F0-9]{32}$ ]] || continue
-                        # Проверка дубликатов
-                        local exists=false ii
-                        for ii in "${!SECRETS_LABELS[@]}"; do
-                            [ "${SECRETS_LABELS[$ii]}" = "$_l" ] && { exists=true; break; }
-                        done
-                        if $exists; then skipped=$((skipped+1)); continue; fi
-                        # Добавление
-                        SECRETS_LABELS+=("$_l"); SECRETS_KEYS+=("$_k")
-                        SECRETS_CREATED+=("$(date +%s)"); SECRETS_ENABLED+=("${_e:-true}")
-                        SECRETS_MAX_CONNS+=("${_mc:-0}"); SECRETS_MAX_IPS+=("${_mi:-0}")
-                        SECRETS_QUOTA+=("${_q:-0}"); SECRETS_EXPIRES+=("${_ex:-0}")
-                        SECRETS_NOTES+=("${_n:-}"); SECRETS_ADTAG+=("")
-                        added=$((added+1))
-                    done < "$f"
-                    [ $added -gt 0 ] && { save_secrets; reload_proxy_config 2>/dev/null || true; }
-                    log_success "Импортировано: ${added}, пропущено: ${skipped}"
-                else log_error "Файл не найден"; fi; press_any_key ;;
+                [ -n "$f" ] && { secret_import_file "$f" || true; }
+                press_any_key ;;
             13)
                 echo -en "  ${BOLD}Метка или #:${NC} "; local l; read_line l
                 if [[ "$l" =~ ^[0-9]+$ ]] && [ "$l" -ge 1 ] && [ "$l" -le "${#SECRETS_LABELS[@]}" ]; then

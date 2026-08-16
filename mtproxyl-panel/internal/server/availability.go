@@ -30,13 +30,9 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 			writeAvailabilityUnavailable(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
-			"enabled":    true,
-			"status":     rawOrNil(st.Result),
-			"quota":      rawOrNil(st.Quota),
-			"auto_check": st.AutoCheck,
-			"message":    st.Message,
-		}})
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: availabilityEnvelope(st, map[string]any{
+			"status": rawOrNil(st.Result),
+		})})
 	}))
 
 	// Полный результат со списком зондов — страница «Доступность».
@@ -46,13 +42,9 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 			writeAvailabilityUnavailable(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
-			"enabled":    true,
-			"result":     rawOrNil(st.Result),
-			"quota":      rawOrNil(st.Quota),
-			"auto_check": st.AutoCheck,
-			"message":    st.Message,
-		}})
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: availabilityEnvelope(st, map[string]any{
+			"result": rawOrNil(st.Result),
+		})})
 	}))
 
 	// Что проверяем. GET отдаёт и заданное руками, и то, что вышло бы само —
@@ -164,6 +156,27 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 			"result":  json.RawMessage(result),
 		}})
 	}))
+}
+
+// availabilityEnvelope adds the schedule to a response. Period, probe count and
+// threshold are the operator's own settings — the page used to print «раз в 15
+// минут» regardless of what MTProxyL was actually told to do.
+func availabilityEnvelope(st *mtproxylctl.AvailabilityState, extra map[string]any) map[string]any {
+	out := map[string]any{
+		"enabled":      true,
+		"quota":        rawOrNil(st.Quota),
+		"auto_check":   st.AutoCheck,
+		"timer_active": st.TimerActive,
+		"interval":     st.Interval,
+		"probes":       st.Probes,
+		"threshold":    st.Threshold,
+		"next_run":     st.NextRun,
+		"message":      st.Message,
+	}
+	for k, v := range extra {
+		out[k] = v
+	}
+	return out
 }
 
 // availabilityTargetPayload splits what the script reports into the shape the

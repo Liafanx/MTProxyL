@@ -8,12 +8,21 @@
 # пользователи; здесь наоборот: доходим ли мы до Telegram.
 
 # Порог общего покрытия, ниже которого считаем, что связь с DC просела.
+# Ноль — предупреждений нет вовсе: таблица остаётся, приговора не выносим.
 DC_THRESHOLD_DEFAULT=80
 
 _dc_threshold() {
     local _v="${DC_THRESHOLD:-$DC_THRESHOLD_DEFAULT}"
-    [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 1 ] && [ "$_v" -le 100 ] || _v="$DC_THRESHOLD_DEFAULT"
+    [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 0 ] && [ "$_v" -le 100 ] || _v="$DC_THRESHOLD_DEFAULT"
     echo "$_v"
+}
+
+# Порог, по которому помечаем строки таблицы. При выключенных предупреждениях
+# отмечаем только полностью мёртвый DC: это факт, а не тревога.
+_dc_mark_threshold() {
+    local _t; _t=$(_dc_threshold)
+    [ "$_t" -eq 0 ] && _t=1
+    echo "$_t"
 }
 
 # GET к API движка текущего режима. Коды: 0 — успех, 2 — API выключен,
@@ -104,15 +113,18 @@ dc_status_json() {
     local _n _pct _alive _req
     IFS='|' read -r _n _pct _alive _req <<< "$(_dc_summary "$_rows")"
 
-    local _verdict="ok"
-    [ "$_pct" -lt "$_thr" ] && _verdict="degraded"
-    [ "$_pct" -eq 0 ] && _verdict="down"
+    # При нулевом пороге приговора нет: бот молчит, панель ничего не красит.
+    local _verdict="ok" _mark; _mark=$(_dc_mark_threshold)
+    if [ "$_thr" -gt 0 ]; then
+        [ "$_pct" -lt "$_thr" ] && _verdict="degraded"
+        [ "$_pct" -eq 0 ] && _verdict="down"
+    fi
 
     local _first=1 _out="" _d _rtt _aw _rw _cov _avl _ok
     while IFS='|' read -r _d _rtt _aw _rw _cov _avl; do
         [ -n "$_d" ] || continue
         _ok=true
-        [ "${_cov%%.*}" -lt "$_thr" ] 2>/dev/null && _ok=false
+        [ "${_cov%%.*}" -lt "$_mark" ] 2>/dev/null && _ok=false
         [ $_first -eq 1 ] || _out+=","
         _first=0
         _out+=$(printf '{"dc":%s,"rtt_ms":%.0f,"alive_writers":%d,"required_writers":%d,"coverage_pct":%.0f,"available_pct":%.0f,"ok":%s}' \
@@ -150,13 +162,13 @@ dc_show() {
         return 1
     fi
 
-    local _thr; _thr=$(_dc_threshold)
+    local _thr _lim; _thr=$(_dc_threshold); _lim=$(_dc_mark_threshold)
     printf "     %-8s %6s  %10s  %8s\n" "DC" "RTT" "Писатели" "Покрытие"
     echo -e "  ${DIM}$(_repeat '─' 42)${NC}"
     local _d _rtt _aw _rw _cov _avl _mark
     while IFS='|' read -r _d _rtt _aw _rw _cov _avl; do
         [ -n "$_d" ] || continue
-        if [ "${_cov%%.*}" -ge "$_thr" ] 2>/dev/null; then _mark="✅"; else _mark="⚠️"; fi
+        if [ "${_cov%%.*}" -ge "$_lim" ] 2>/dev/null; then _mark="✅"; else _mark="⚠️"; fi
         printf "  %s %-8s %3.0f мс %5d / %-4d %6.0f%%\n" \
             "$_mark" "DC ${_d}" "${_rtt:-0}" "${_aw:-0}" "${_rw:-0}" "${_cov:-0}"
     done <<< "$_rows"
@@ -164,23 +176,34 @@ dc_show() {
     local _n _pct _alive _req
     IFS='|' read -r _n _pct _alive _req <<< "$(_dc_summary "$_rows")"
     echo ""
-    if [ "$_pct" -lt "$_thr" ]; then
-        echo -e "  ${YELLOW}Общее покрытие: ${_pct}%${NC} ${DIM}(порог ${_thr}%, писателей ${_alive} из ${_req})${NC}"
+    local _note="порог ${_thr}%, писателей ${_alive} из ${_req}"
+    [ "$_thr" -eq 0 ] && _note="порог выключен, писателей ${_alive} из ${_req}"
+    if [ "$_thr" -gt 0 ] && [ "$_pct" -lt "$_thr" ]; then
+        echo -e "  ${YELLOW}Общее покрытие: ${_pct}%${NC} ${DIM}(${_note})${NC}"
     else
-        echo -e "  ${GREEN}Общее покрытие: ${_pct}%${NC} ${DIM}(порог ${_thr}%, писателей ${_alive} из ${_req})${NC}"
+        echo -e "  ${GREEN}Общее покрытие: ${_pct}%${NC} ${DIM}(${_note})${NC}"
     fi
     echo ""
 }
 
+# Порог покрытия. Ноль (он же off) выключает предупреждения целиком — и в боте,
+# и в панели: таблица остаётся, но «просело» больше никто не скажет.
 dc_set_threshold() {
-    local _v="$1"
-    if ! [[ "$_v" =~ ^[0-9]+$ ]] || [ "$_v" -lt 1 ] || [ "$_v" -gt 100 ]; then
-        log_error "Порог: число 1..100 (процент покрытия)"
+    local _v="${1:-}"
+    case "$_v" in
+        off|OFF|выкл|disable|none) _v=0 ;;
+    esac
+    if ! [[ "$_v" =~ ^[0-9]+$ ]] || [ "$_v" -gt 100 ]; then
+        log_error "Порог: число 0..100 (процент покрытия), 0 или off — без предупреждений"
         return 1
     fi
     DC_THRESHOLD="$_v"
     save_settings
-    log_success "Порог покрытия DC: ${_v}%"
+    if [ "$_v" -eq 0 ]; then
+        log_success "Предупреждения о просадке DC выключены"
+    else
+        log_success "Порог покрытия DC: ${_v}%"
+    fi
 }
 
 handle_dc_command() {
@@ -192,7 +215,7 @@ handle_dc_command() {
             echo -e "  ${BOLD}Доступность дата-центров Telegram:${NC}"
             echo -e "    ${GREEN}dc status${NC}          Таблица DC: RTT, писатели, покрытие"
             echo -e "    ${GREEN}dc status --json${NC}   То же машинным форматом"
-            echo -e "    ${GREEN}dc threshold${NC} <N>   Порог покрытия, % (сейчас $(_dc_threshold))"
+            echo -e "    ${GREEN}dc threshold${NC} <N>   Порог покрытия, % — 0 или off без предупреждений (сейчас $(_dc_threshold))"
             ;;
     esac
 }

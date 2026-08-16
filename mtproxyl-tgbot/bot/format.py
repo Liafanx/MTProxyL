@@ -355,7 +355,7 @@ def dc_text(report: dict) -> str:
         why = report.get("error") or "данных нет"
         return f"<b>Дата-центры Telegram</b>\n\n{esc(why)}"
     rows = report.get("dcs") or []
-    threshold = int(report.get("threshold") or 80)
+    threshold = int(report.get("threshold") or 0)
     table = _table(
         [("", 1, False), ("DC", 6, False), ("RTT", 6, True), ("Писат.", 7, True), ("Покр.", 5, True)],
         [
@@ -370,10 +370,12 @@ def dc_text(report: dict) -> str:
         ],
     )
     coverage = int(report.get("coverage_pct") or 0)
-    icon = "🟢" if coverage >= threshold else "🔴"
+    # Порог 0 — предупреждения выключены: показываем цифры без приговора.
+    icon = "🟢" if threshold <= 0 or coverage >= threshold else "🔴"
+    limit = "порог выключен" if threshold <= 0 else f"порог {threshold}%"
     return (
         f"<b>Дата-центры Telegram</b>\n"
-        f"{icon} Покрытие {coverage}% при пороге {threshold}% — писателей "
+        f"{icon} Покрытие {coverage}%, {limit} — писателей "
         f"{report.get('alive_writers', 0)} из {report.get('required_writers', 0)}\n{table}\n"
         "<i>Писатели: живых / нужно. Это связь движка с Telegram, не доступность прокси.</i>"
     )
