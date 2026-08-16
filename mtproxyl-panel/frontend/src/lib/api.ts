@@ -595,10 +595,7 @@ export interface AvailabilityQuota {
   has_token: boolean;
 }
 
-/**
- * Расписание проверок — то, что оператор задал в MTProxyL. Раньше панель
- * печатала «раз в 15 минут» независимо от настроек; всё это приходит от CLI.
- */
+/** Расписание проверок — то, что оператор задал в MTProxyL. */
 export interface AvailabilitySchedule {
   /** Идут ли проверки по расписанию. Кнопка «Проверить сейчас» работает всегда. */
   auto_check?: boolean;
@@ -739,9 +736,7 @@ export const tgbotApi = {
 };
 
 // ── Маршрут до Telegram через WARP ──────────────────────────────────────────
-// Правила ставит MTProxyL в ядро, панель только показывает и просит включить.
-// Включение уводит минуты на разведку эндпоинтов Cloudflare, поэтому ответ —
-// операция, за которой панель следит так же, как за сменой режима.
+// Правила ставит MTProxyL, включение идёт фоновой операцией: разведка минуты.
 
 const WARP_BASE = `${BASE}/api/warp`;
 
@@ -756,8 +751,8 @@ export interface WarpExit {
 
 export interface WarpStatus {
   enabled: boolean;
-  /** socks — вариант A, iface — вариант B. */
-  mode: 'socks' | 'iface';
+  /** socks — A, iface — B, upstream — C. */
+  mode: 'socks' | 'iface' | 'upstream';
   proto: string;
   endpoint: string;
   location: string;
@@ -790,7 +785,7 @@ export interface WarpSettingsPatch {
 
 export const warpApi = {
   status: () => request<WarpStatusResponse>(WARP_BASE, '/status'),
-  enable: (mode: 'socks' | 'iface') =>
+  enable: (mode: 'socks' | 'iface' | 'upstream') =>
     request<MtproxylOperation>(WARP_BASE, '/enable', {
       method: 'POST',
       body: JSON.stringify({ mode }),

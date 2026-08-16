@@ -12,13 +12,7 @@ import { useMtproxylOperation } from '@/hooks/useMtproxyl';
 import { warpApi, type MtproxylOperation, type WarpStatus } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
-/**
- * Маршрут до Telegram через Cloudflare WARP. В туннель уходят только подсети
- * Telegram — клиенты приходят на сервер напрямую, их путь не меняется.
- *
- * Правила ставит MTProxyL в ядро, поэтому страница ничего не делает сама:
- * включение уводит минуты на разведку эндпоинтов и идёт фоновой операцией.
- */
+/** Маршрут до Telegram через WARP: в туннель уходят только подсети Telegram. */
 export function WarpPage() {
   const [status, setStatus] = useState<WarpStatus | null>(null);
   const [unsupported, setUnsupported] = useState<string | null>(null);
@@ -51,8 +45,7 @@ export function WarpPage() {
 
   const { operation, start, dismiss, running } = useMtproxylOperation(load, ['warp:']);
 
-  // Всё, кроме правки настроек, идёт фоновой операцией: разведка эндпоинтов
-  // занимает минуты, и ответ приходит раньше, чем она закончится.
+  // Всё, кроме настроек, идёт фоновой операцией: разведка занимает минуты.
   const act = async (fn: () => Promise<MtproxylOperation>) => {
     setBusy(true);
     setError(null);
@@ -119,6 +112,15 @@ export function WarpPage() {
                   <Waypoints size={14} /> Вариант B — интерфейс WireGuard
                 </Button>
                 <Button
+                  onClick={() => void act(() => warpApi.enable('upstream'))}
+                  disabled={busy || running}
+                  variant={status.enabled && status.mode === 'upstream' ? 'default' : 'outline'}
+                  size="sm"
+                  className="gap-2"
+                >
+                  <Waypoints size={14} /> Вариант C — socks5-upstream движка
+                </Button>
+                <Button
                   onClick={() => void act(() => warpApi.disable())}
                   disabled={busy || running || !status.enabled}
                   variant="outline"
@@ -158,8 +160,16 @@ export function WarpPage() {
 }
 
 function StateCard({ status }: { status: WarpStatus }) {
-  const variant = status.mode === 'iface' ? 'B — интерфейс WireGuard' : 'A — SOCKS5 + redsocks';
-  const working = status.enabled && status.exit.confirmed && status.nft_applied;
+  const variant =
+    status.mode === 'iface'
+      ? 'B — интерфейс WireGuard'
+      : status.mode === 'upstream'
+        ? 'C — socks5-upstream движка'
+        : 'A — SOCKS5 + redsocks';
+  const working =
+    status.enabled &&
+    status.exit.confirmed &&
+    (status.mode === 'upstream' ? status.socks_active : status.nft_applied);
 
   return (
     <Card className="p-4 space-y-3">
@@ -195,15 +205,19 @@ function StateCard({ status }: { status: WarpStatus }) {
         />
         <Cell label="Подсетей Telegram" value={String(status.cidr_count)} />
         <Cell
-          label={status.mode === 'iface' ? 'Интерфейс' : 'Туннель и редирект'}
+          label={status.mode === 'iface' ? 'Интерфейс' : 'Туннель'}
           value={
             status.mode === 'iface'
               ? status.iface_active
                 ? 'поднят'
                 : 'нет'
-              : `${status.socks_active ? 'socks ✓' : 'socks ✗'} · ${
-                  status.redirect_active ? 'redsocks ✓' : 'redsocks ✗'
-                }`
+              : status.mode === 'upstream'
+                ? status.socks_active
+                  ? 'socks ✓'
+                  : 'socks ✗'
+                : `${status.socks_active ? 'socks ✓' : 'socks ✗'} · ${
+                    status.redirect_active ? 'redsocks ✓' : 'redsocks ✗'
+                  }`
           }
         />
         <Cell label="warpscout" value={status.installed ? status.version || 'установлен' : 'нет'} />
@@ -223,12 +237,7 @@ function Cell({ label, value }: { label: string; value: string }) {
   );
 }
 
-/**
- * Middle proxy и WARP несовместимы, и об этом надо сказать до включения, а не
- * после: ключи ME-рукопожатия выводятся из адреса и порта, которые CGNAT
- * Cloudflare меняет. MTProxyL всё равно откажется включаться, но человеку
- * полезнее прочитать причину заранее.
- */
+/** Про несовместимость с ME полезнее прочитать до включения, а не после. */
 function WarningMe() {
   return (
     <p className="text-xs text-warning/90">
@@ -264,9 +273,20 @@ function VariantsHelp() {
             ядра wireguard и пакет wireguard-tools.
           </p>
         </div>
+        <div>
+          <div className="text-text-primary font-medium">Вариант C — socks5-upstream движка</div>
+          <p className="text-xs text-text-secondary mt-1">
+            Правил в ядре нет вовсе: туннель поднимает warpscout, а telemt сам ходит
+            через него по своему конфигу. Самый простой путь, если движок наш.
+            Подводные камни: только режим менеджера — конфигом должны владеть мы;
+            через socks уходит весь исходящий трафик движка, и локальный mask-бэкенд
+            приходится возвращать на прямой маршрут отдельной областью (MTProxyL
+            делает это сам).
+          </p>
+        </div>
         <p className="text-xs text-text-secondary">
-          Проще так: сначала B, и если разведка не находит живых эндпоинтов — значит
-          wg режут, берите A.
+          Проще так: свой telemt — берите C; чужая цель или не telemt — B, а если
+          разведка не находит живых эндпоинтов (wg режут) — A.
         </p>
       </div>
     </CollapsibleSection>
@@ -333,7 +353,7 @@ function SettingsForm({ status, onSaved }: { status: WarpStatus; onSaved: () => 
           </span>
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-text-secondary">Протокол (вариант A)</span>
+          <span className="text-xs text-text-secondary">Протокол (варианты A и C)</span>
           <select
             value={proto}
             onChange={(e) => setProto(e.target.value)}

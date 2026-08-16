@@ -6,7 +6,9 @@ _tui_warp_state_label() {
         echo -e "${DIM}выключен${NC}"
         return 0
     fi
-    local _variant="A"; [ "$(_warp_mode)" = "iface" ] && _variant="B"
+    local _variant="A"
+    [ "$(_warp_mode)" = "iface" ] && _variant="B"
+    [ "$(_warp_mode)" = "upstream" ] && _variant="C"
     if warp_route_ready >/dev/null 2>&1; then
         echo -e "${GREEN}вариант ${_variant}${NC}"
     else
@@ -14,9 +16,7 @@ _tui_warp_state_label() {
     fi
 }
 
-# Разница между вариантами решает, встанет ли это вообще: A проходит там, где
-# обычный WireGuard режут по сигнатуре, B живёт дольше без присмотра. Поэтому
-# объяснение висит в меню, а не прячется в README.
+# Объяснение висит в меню: от выбора зависит, встанет ли это вообще.
 _tui_warp_explain() {
     echo -e "  ${BOLD}Вариант A — SOCKS5 warpscout + redsocks${NC} ${DIM}(по умолчанию)${NC}"
     echo -e "    ${DIM}Туннель поднимает сам warpscout, ядро ни при чём. Умеет awg и${NC}"
@@ -34,8 +34,18 @@ _tui_warp_explain() {
     echo -e "    ${DIM}блокируют по сигнатуре, рукопожатия не будет вовсе;${NC}"
     echo -e "    ${DIM}нужен модуль ядра wireguard и пакет wireguard-tools.${NC}"
     echo ""
-    echo -e "  ${DIM}Проще так: сначала B, и если разведка не находит живых${NC}"
-    echo -e "  ${DIM}эндпоинтов — значит wg режут, берите A.${NC}"
+    echo ""
+    echo -e "  ${BOLD}Вариант C — socks5-upstream в конфиге движка${NC}"
+    echo -e "    ${DIM}Правил в ядре нет вовсе: туннель поднимает warpscout, а telemt${NC}"
+    echo -e "    ${DIM}сам ходит через него по своему конфигу. Самый простой путь,${NC}"
+    echo -e "    ${DIM}если движок наш.${NC}"
+    echo -e "    ${DIM}Подводные камни: только режим менеджера (конфиг чужой цели мы${NC}"
+    echo -e "    ${DIM}не ведём); через socks уходит весь исходящий трафик движка, и${NC}"
+    echo -e "    ${DIM}локальный mask-бэкенд приходится возвращать на прямой маршрут${NC}"
+    echo -e "    ${DIM}отдельной областью — MTProxyL делает это сам.${NC}"
+    echo ""
+    echo -e "  ${DIM}Проще так: свой telemt — берите C; чужая цель или не telemt —${NC}"
+    echo -e "  ${DIM}B, а если разведка не находит живых эндпоинтов (wg режут) — A.${NC}"
 }
 
 tui_warp_menu() {
@@ -50,6 +60,7 @@ tui_warp_menu() {
         if [ "${WARP_ENABLED:-false}" = "true" ]; then
             local _variant="A — SOCKS5 + redsocks"
             [ "$(_warp_mode)" = "iface" ] && _variant="B — интерфейс ${WARP_IFACE}"
+            [ "$(_warp_mode)" = "upstream" ] && _variant="C — socks5-upstream движка"
             echo -e "  ${BOLD}Состояние:${NC} $(_tui_warp_state_label) ${DIM}(${_variant})${NC}"
             echo -e "  ${BOLD}Эндпоинт:${NC}  ${WARP_ENDPOINT:-${DIM}выбирается разведкой${NC}}"
             local _exit; _exit=$(warp_exit_info 2>/dev/null)
@@ -65,16 +76,17 @@ tui_warp_menu() {
 
         echo -e "  ${DIM}[1]${NC} Включить вариант A ${DIM}(SOCKS5 + redsocks, обфускация)${NC}"
         echo -e "  ${DIM}[2]${NC} Включить вариант B ${DIM}(интерфейс WireGuard)${NC}"
-        echo -e "  ${DIM}[3]${NC} Выключить"
+        echo -e "  ${DIM}[3]${NC} Включить вариант C ${DIM}(socks5-upstream движка, без правил)${NC}"
+        echo -e "  ${DIM}[4]${NC} Выключить"
         echo ""
-        echo -e "  ${DIM}[4]${NC} Локация выхода: ${WARP_LOCATION:-лучший по задержке}"
-        echo -e "  ${DIM}[5]${NC} Разведка эндпоинтов"
-        echo -e "  ${DIM}[6]${NC} Эндпоинт: ${WARP_ENDPOINT:-выбирается разведкой}"
-        echo -e "  ${DIM}[7]${NC} Протокол варианта A: ${WARP_PROTO:-awg}"
-        echo -e "  ${DIM}[8]${NC} Подробное состояние"
-        echo -e "  ${DIM}[9]${NC} Чем отличаются варианты"
-        echo -e "  ${DIM}[10]${NC} Переприменить правила"
-        echo -e "  ${DIM}[11]${NC} Удалить warpscout и службы"
+        echo -e "  ${DIM}[5]${NC} Локация выхода: ${WARP_LOCATION:-лучший по задержке}"
+        echo -e "  ${DIM}[6]${NC} Разведка эндпоинтов"
+        echo -e "  ${DIM}[7]${NC} Эндпоинт: ${WARP_ENDPOINT:-выбирается разведкой}"
+        echo -e "  ${DIM}[8]${NC} Протокол вариантов A и C: ${WARP_PROTO:-awg}"
+        echo -e "  ${DIM}[9]${NC} Подробное состояние"
+        echo -e "  ${DIM}[10]${NC} Чем отличаются варианты"
+        echo -e "  ${DIM}[11]${NC} Переприменить правила"
+        echo -e "  ${DIM}[12]${NC} Удалить warpscout и службы"
         echo -e "  ${DIM}[0]${NC} Назад"
         echo ""
 
@@ -82,15 +94,16 @@ tui_warp_menu() {
         case "$choice" in
             1) _tui_warp_enable socks ;;
             2) _tui_warp_enable iface ;;
-            3) warp_disable; press_any_key ;;
-            4) _tui_warp_location ;;
-            5) warp_scan_show; press_any_key ;;
-            6) _tui_warp_endpoint ;;
-            7) _tui_warp_proto ;;
-            8) warp_status; press_any_key ;;
-            9) echo ""; _tui_warp_explain; press_any_key ;;
-            10) warp_reapply; press_any_key ;;
-            11)
+            3) _tui_warp_enable upstream ;;
+            4) warp_disable; press_any_key ;;
+            5) _tui_warp_location ;;
+            6) warp_scan_show; press_any_key ;;
+            7) _tui_warp_endpoint ;;
+            8) _tui_warp_proto ;;
+            9) warp_status; press_any_key ;;
+            10) echo ""; _tui_warp_explain; press_any_key ;;
+            11) warp_reapply; press_any_key ;;
+            12)
                 echo ""
                 echo -en "  ${BOLD}Удалить warpscout, службы и правила? [y/N]:${NC} "
                 local _yn; read_line _yn
@@ -108,6 +121,9 @@ _tui_warp_enable() {
         echo -e "  ${DIM}Вариант B работает только по чистому WireGuard. Если его режут${NC}"
         echo -e "  ${DIM}по сигнатуре, разведка не найдёт ни одного живого эндпоинта —${NC}"
         echo -e "  ${DIM}тогда берите вариант A.${NC}"
+    elif [ "$_mode" = "upstream" ]; then
+        echo -e "  ${DIM}Вариант C ничего не пишет в ядро: маршрут задаёт сам движок,${NC}"
+        echo -e "  ${DIM}поэтому нужен режим менеджера — конфигом должны владеть мы.${NC}"
     else
         echo -e "  ${DIM}Вариант A поднимает туннель в самом warpscout: обфускация awg${NC}"
         echo -e "  ${DIM}проходит там, где обычный WireGuard блокируют.${NC}"
@@ -156,7 +172,7 @@ _tui_warp_endpoint() {
 
 _tui_warp_proto() {
     echo ""
-    echo -e "  ${BOLD}Протокол туннеля (вариант A)${NC}"
+    echo -e "  ${BOLD}Протокол туннеля (варианты A и C)${NC}"
     echo -e "  ${DIM}[1]${NC} awg ${DIM}— обфусцированный WireGuard, проходит чаще всего${NC}"
     echo -e "  ${DIM}[2]${NC} wg  ${DIM}— обычный WireGuard, быстрее, но заметнее${NC}"
     echo -e "  ${DIM}[3]${NC} masque ${DIM}— второй транспорт Cloudflare поверх QUIC${NC}"

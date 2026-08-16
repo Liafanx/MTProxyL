@@ -158,9 +158,8 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 	}))
 }
 
-// availabilityEnvelope adds the schedule to a response. Period, probe count and
-// threshold are the operator's own settings — the page used to print «раз в 15
-// минут» regardless of what MTProxyL was actually told to do.
+// availabilityEnvelope adds the schedule: period, probes and threshold are the
+// operator's own settings, not panel constants.
 func availabilityEnvelope(st *mtproxylctl.AvailabilityState, extra map[string]any) map[string]any {
 	out := map[string]any{
 		"enabled":      true,

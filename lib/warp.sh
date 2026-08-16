@@ -1,16 +1,6 @@
 #!/bin/bash
 # MTProxyL — маршрут до Telegram через Cloudflare WARP (warpscout).
-#
-# Нужно там, где серверы Telegram с хоста недоступны: в туннель уводится не весь
-# трафик сервера, а только подсети Telegram — клиенты продолжают приходить
-# напрямую, и обратный путь не меняется. Работает в любом режиме MTProxyL,
-# потому что правила живут в ядре: чужая цель реаниматора и посторонний прокси
-# в tools-only попадают в туннель ровно так же, как свой telemt.
-#
-# Вариант A (socks)  — warpscout поднимает SOCKS5 поверх туннеля, redsocks
-#                      заворачивает в него соединения по правилу nft.
-# Вариант B (iface)  — из разведки берётся конфиг WireGuard, поднимается
-#                      интерфейс, трафик уводит policy routing по метке.
+# Вариант A — SOCKS5 + redsocks, вариант B — интерфейс WireGuard.
 
 WARPSCOUT_VERSION="0.14.0"
 WARPSCOUT_UPSTREAM_REPO="vernette/warpscout"
@@ -21,6 +11,8 @@ WARP_RT_TABLE="51820"
 # Бит метки свой: у zapret2 заняты 0x40000000 и 0x40000, пересечься нельзя.
 WARP_FWMARK_DEFAULT="0x100000"
 
+WARP_UPSTREAM_NAME="warp"
+WARP_UPSTREAM_LOCAL="warplocal"
 WARP_SOCKS_UNIT="mtproxyl-warp-socks.service"
 WARP_REDSOCKS_UNIT="mtproxyl-warp-redsocks.service"
 WARP_IFACE_UNIT="mtproxyl-warp-iface.service"
@@ -42,10 +34,9 @@ _warp_fwmark() {
     echo "$_v"
 }
 
-_warp_mode()  { case "${WARP_MODE:-socks}" in iface) echo "iface" ;; *) echo "socks" ;; esac; }
+_warp_mode()  { case "${WARP_MODE:-socks}" in iface) echo "iface" ;; upstream) echo "upstream" ;; *) echo "socks" ;; esac; }
 _warp_proto() {
-    # У интерфейса выбора нет: awg и masque умеет только userspace-туннель
-    # самого warpscout, ядру их не отдать.
+    # У интерфейса выбора нет: awg и masque живут только в туннеле warpscout.
     [ "$(_warp_mode)" = "iface" ] && { echo "wg"; return; }
     case "${WARP_PROTO:-awg}" in wg|masque|masque-h2) echo "${WARP_PROTO}" ;; *) echo "awg" ;; esac
 }
@@ -81,9 +72,7 @@ _warp_bin_version() {
     "$_b" version 2>/dev/null | head -1 | tr -d '\r'
 }
 
-# Проверка, что скачанный warpscout — тот, на который рассчитаны наши команды.
-# Форк может уехать от оригинала, и лучше сказать об этом при установке, чем
-# получить пустой вывод разведки в момент, когда прокси уже без Telegram.
+# Понимает ли бинарник ключи, которыми мы его зовём.
 _warp_bin_usable() {
     local _b; _b=$(_warp_bin)
     [ -x "$_b" ] || return 1
@@ -107,9 +96,7 @@ warp_install_binary() {
 
     local _arch; _arch=$(_warp_arch) || { log_error "Архитектура $(uname -m) не поддерживается"; return 1; }
 
-    # Сначала релиз оригинального проекта, потом наша сборка из форка: она
-    # лежит ассетом релиза MTProxyL и служит запасом на случай, когда оригинал
-    # уедет от того, что мы зовём, или его релиз окажется недоступен.
+    # Сначала релиз оригинального проекта, запасной — наша сборка из форка.
     local _sources=(
         "https://github.com/${WARPSCOUT_UPSTREAM_REPO}/releases/download/v${WARPSCOUT_VERSION}/warpscout_${WARPSCOUT_VERSION}_linux_${_arch}.tar.gz"
         "https://github.com/${GITHUB_REPO}/releases/download/warpscout-${WARPSCOUT_VERSION}/mtproxyl-warpscout-${WARPSCOUT_VERSION}-linux-${_arch}.tar.gz"
@@ -145,8 +132,7 @@ warp_install_binary() {
     log_success "warpscout $(_warp_bin_version) установлен: $(_warp_bin)"
 }
 
-# Учётка WARP — обычная бесплатная регистрация у Cloudflare, без неё не работает
-# ни одна команда warpscout.
+# Бесплатная учётка Cloudflare — без неё warpscout не работает.
 _warp_ensure_account() {
     [ -s "$(_warp_account)" ] && return 0
     log_info "Регистрируем учётную запись WARP..."
@@ -161,8 +147,7 @@ _warp_ensure_account() {
 
 # ── Выбор эндпоинта ─────────────────────────────────────────────────────────
 
-# «DE,NL» — страны, «FRA,AMS» — узлы Cloudflare. Разделяем по длине токена:
-# коды стран двухбуквенные, коды узлов трёхбуквенные (по коду аэропорта).
+# «DE,NL» — страны (две буквы), «FRA,AMS» — узлы Cloudflare (три).
 _warp_location_args() {
     local _raw="${WARP_LOCATION:-}"
     [ -n "$_raw" ] || return 0
@@ -192,8 +177,7 @@ _warp_scan_args() {
     printf '%s\n' "${_a[@]}"
 }
 
-# Разведка. Возвращает адрес лучшего эндпоинта на stdout — прогресс warpscout
-# пишет в stderr, поэтому вывод годится для подстановки как есть.
+# Лучший эндпоинт на stdout; прогресс warpscout уходит в stderr.
 warp_scan_best() {
     local _target="${1:-}"
     local -a _args=()
@@ -208,9 +192,7 @@ warp_scan_best() {
     echo "$_out"
 }
 
-# Действующий эндпоинт: закреплённый проверяем одной точечной разведкой, и
-# только если он молчит — ищем заново. Полная разведка занимает минуты, гонять
-# её на каждом рестарте службы незачем.
+# Закреплённый эндпоинт проверяем точечно; молчит — ищем заново.
 warp_resolve_endpoint() {
     local _pin="${WARP_ENDPOINT:-}"
     if [ -n "$_pin" ]; then
@@ -227,12 +209,10 @@ warp_resolve_endpoint() {
 
 # ── Подсети Telegram ────────────────────────────────────────────────────────
 
-# Официальный список Telegram. Именно в этих подсетях живут и DC, и middle
-# proxy, адреса которых движок берёт из proxy-multi.conf.
+# Официальный список подсетей Telegram.
 _WARP_CIDR_URL="https://core.telegram.org/resources/cidr.txt"
 
-# Запасной список — на случай, когда core.telegram.org недоступен, а он
-# недоступен ровно там, где всё это и понадобилось.
+# Запасной список: core.telegram.org недоступен ровно там, где всё это нужно.
 _warp_cidr_fallback() {
     cat <<'EOF'
 91.108.4.0/22
@@ -285,8 +265,7 @@ _warp_cidr_list() {
 
 # ── Правила nft ─────────────────────────────────────────────────────────────
 
-# Подсети docker-мостов: трафик контейнера идёт через forward, и его правило —
-# в prerouting, а не в output. Пустой список — обычная установка на хосте.
+# Подсети docker-мостов: их трафик ловится в prerouting, а не в output.
 _warp_bridge_nets() {
     ip -4 route show 2>/dev/null \
         | awk '$1 ~ /^(172\.1[6-9]|172\.2[0-9]|172\.3[01]|10\.|192\.168)\./ && $2 == "dev" && $3 ~ /^(docker|br-)/ {print $1}' \
@@ -321,17 +300,14 @@ _warp_generate_nft() {
                 echo "nft add chain inet ${WARP_NFT_TABLE} prerouting '{ type nat hook prerouting priority -100; policy accept; }'"
                 echo "nft add rule inet ${WARP_NFT_TABLE} prerouting meta l4proto tcp ip saddr { ${_bridges} } ip daddr @tg4 counter redirect to :${_port}"
             fi
-            # Порт redsocks слушает на всех адресах — иначе контейнер до него не
-            # достучится. Снаружи он не нужен никому: это открытый проксирующий
-            # порт, и его закрываем правилом, а не надеждой на файрвол хостера.
+            # Порт слушает на всех адресах ради контейнеров — снаружи закрываем.
             echo "nft add chain inet ${WARP_NFT_TABLE} input '{ type filter hook input priority -150; policy accept; }'"
             echo "nft add rule inet ${WARP_NFT_TABLE} input iifname lo accept"
             [ -n "$_bridges" ] && echo "nft add rule inet ${WARP_NFT_TABLE} input ip saddr { ${_bridges} } tcp dport ${_port} accept"
             echo "nft add rule inet ${WARP_NFT_TABLE} input tcp dport ${_port} drop"
         else
             local _mark; _mark=$(_warp_fwmark)
-            # mangle/output — метку ставим до выбора маршрута, ядро после этого
-            # перевыбирает его по ip rule.
+            # Метку ставим до выбора маршрута — ядро перевыберет его по ip rule.
             echo "nft add chain inet ${WARP_NFT_TABLE} output '{ type route hook output priority -150; policy accept; }'"
             echo "nft add rule inet ${WARP_NFT_TABLE} output ip daddr @tg4 counter meta mark set meta mark or ${_mark}"
             echo "nft add rule inet ${WARP_NFT_TABLE} output ip6 daddr @tg6 counter meta mark set meta mark or ${_mark}"
@@ -339,8 +315,7 @@ _warp_generate_nft() {
                 echo "nft add chain inet ${WARP_NFT_TABLE} prerouting '{ type filter hook prerouting priority -150; policy accept; }'"
                 echo "nft add rule inet ${WARP_NFT_TABLE} prerouting ip saddr { ${_bridges} } ip daddr @tg4 counter meta mark set meta mark or ${_mark}"
             fi
-            # Адрес внутри туннеля свой, и пакеты контейнера с приватным
-            # источником Cloudflare отбросит — подменяем источник на выходе.
+            # Пакеты с приватным источником Cloudflare отбросит — подменяем.
             echo "nft add chain inet ${WARP_NFT_TABLE} postrouting '{ type nat hook postrouting priority 100; policy accept; }'"
             echo "nft add rule inet ${WARP_NFT_TABLE} postrouting oifname ${WARP_IFACE} masquerade"
         fi
@@ -358,9 +333,7 @@ _warp_write_socks_runner() {
     local _runner; _runner=$(_warp_runner)
     cat > "$_runner" <<EOF
 #!/bin/bash
-# Запуск SOCKS5 поверх WARP. Перед стартом сверяемся, жив ли эндпоинт:
-# у warpscout socks нет ни переподключения, ни запасного узла, поэтому
-# отвалившийся эндпоинт лечится только новой разведкой при следующем старте.
+# SOCKS5 поверх WARP; перед стартом сверяем, жив ли эндпоинт.
 set -u
 INSTALL_DIR="${INSTALL_DIR:-/opt/mtproxyl}"
 SETTINGS_FILE="\${INSTALL_DIR}/settings.conf"
@@ -476,8 +449,7 @@ ExecStop=/usr/bin/wg-quick down $(_warp_conf)
 WantedBy=multi-user.target
 EOF
 
-    # Маршрут и правило живут отдельной службой: интерфейс может подняться
-    # заново, а таблица маршрутов при этом остаётся нашей.
+    # Маршрут и правило — отдельной службой: интерфейс может подняться заново.
     cat > "/etc/systemd/system/${WARP_ROUTE_UNIT}" <<EOF
 [Unit]
 Description=MTProxyL WARP policy routing
@@ -508,8 +480,7 @@ _warp_generate_iface_conf() {
     "$(_warp_bin)" scan "${_args[@]}" >/dev/null 2>&1
     [ -s "$(_warp_conf)" ] || { log_error "warpscout не отдал конфиг WireGuard"; return 1; }
     chmod 600 "$(_warp_conf)"
-    # DNS в конфиге сменил бы резолвер всему серверу — просим warpscout его не
-    # писать, но проверяем: строка DNS в wg-quick правит /etc/resolv.conf.
+    # Строка DNS в wg-quick переписала бы /etc/resolv.conf всему серверу.
     sed -i '/^DNS[[:space:]]*=/d' "$(_warp_conf)"
     return 0
 }
@@ -518,6 +489,7 @@ _warp_generate_iface_conf() {
 
 _warp_need_packages() {
     local -a _need=()
+    [ "$(_warp_mode)" = "upstream" ] && return 0
     if [ "$(_warp_mode)" = "socks" ]; then
         command -v redsocks &>/dev/null || [ -x /usr/sbin/redsocks ] || _need+=("redsocks")
     else
@@ -558,12 +530,8 @@ _warp_need_packages() {
 
 # ── Middle proxy: почему он несовместим ─────────────────────────────────────
 
-# Ключи ME-рукопожатия выводятся из адреса И порта, с которых мы пришли: движок
-# считает их по своей стороне, Telegram — по своей. CGNAT Cloudflare меняет и
-# адрес, и порт, стороны получают разные ключи, и ни один писатель не встаёт.
-# Проверено на стенде: с включённым ME покрытие падает до нуля и не поднимается,
-# даже если подставить движку выходной адрес WARP через middle_proxy_nat_ip —
-# порт всё равно чужой. Поэтому WARP включается только на прямой маршрутизации.
+# ME с WARP несовместим: ключи рукопожатия зависят от адреса и порта, а выход
+# Cloudflare меняет и то, и другое. Замеры — в README и CHANGELOG.
 _warp_me_enabled() {
     local _cfg; _cfg=$(_engine_config_path 2>/dev/null)
     [ -n "$_cfg" ] && [ -r "$_cfg" ] || return 1
@@ -613,16 +581,50 @@ _warp_me_gate() {
 
 # ── Включение и выключение ──────────────────────────────────────────────────
 
+# Вариант C: маршрут задаёт сам движок, правил в ядре нет. Записи upstream
+# живут в нашем config.toml, поэтому только режим менеджера.
+_warp_local_mask_backend() {
+    [ "${SELFMASK_ENABLED:-false}" = "true" ] && return 0
+    case "${MASKING_HOST:-}" in 127.0.0.1|localhost|::1) return 0 ;; esac
+    return 1
+}
+
+_warp_apply_upstream() {
+    upstream_add "$WARP_UPSTREAM_NAME" socks5 "127.0.0.1:$(_warp_socks_port)" "" "" 1 "" "" \
+        || { log_error "Не удалось добавить upstream ${WARP_UPSTREAM_NAME}"; return 1; }
+
+    # Локальный mask-бэкенд через socks недостижим: туннель резолвит 127.0.0.1
+    # у себя. Уводим только загрузку TLS-метаданных обратно на прямой маршрут.
+    if _warp_local_mask_backend; then
+        upstream_add "$WARP_UPSTREAM_LOCAL" direct "" "" "" 1 "" "local" || true
+        handle_expert_command set censorship tls_fetch_scope local >/dev/null 2>&1 \
+            || log_warn "Не удалось задать censorship.tls_fetch_scope — маскировка может не подтянуть сертификат"
+    fi
+    return 0
+}
+
+_warp_drop_upstream() {
+    upstream_remove "$WARP_UPSTREAM_NAME" >/dev/null 2>&1 || true
+    upstream_remove "$WARP_UPSTREAM_LOCAL" >/dev/null 2>&1 || true
+    handle_expert_command clear censorship tls_fetch_scope >/dev/null 2>&1 || true
+}
+
 warp_enable() {
     check_root
     local _mode="${1:-$(_warp_mode)}"
     case "$_mode" in
         socks|a|A) WARP_MODE="socks" ;;
         iface|b|B) WARP_MODE="iface" ;;
-        *) log_error "Вариант: socks (A) или iface (B)"; return 1 ;;
+        upstream|c|C) WARP_MODE="upstream" ;;
+        *) log_error "Вариант: socks (A), iface (B) или upstream (C)"; return 1 ;;
     esac
 
-    # Гейт до установки пакетов: с включённым ME включать нечего.
+    if [ "$WARP_MODE" = "upstream" ]; then
+        _require_manager_mode || { log_info "В реаниматоре и tools-only берите вариант A или B"; return 1; }
+        _require_no_superexpert || return 1
+    fi
+
+    # С включённым ME включать нечего.
     _warp_me_gate || return 1
 
     _warp_need_packages || return 1
@@ -640,19 +642,25 @@ warp_enable() {
     WARP_ENDPOINT="$_ep"
     log_success "Эндпоинт: ${_ep}"
 
-    _warp_generate_nft
+    [ "$(_warp_mode)" = "upstream" ] || _warp_generate_nft
 
-    if [ "$(_warp_mode)" = "socks" ]; then
+    if [ "$(_warp_mode)" != "iface" ]; then
         _warp_write_socks_runner
-        _warp_write_redsocks_conf
         _warp_write_socks_units
         systemctl enable --now "$WARP_SOCKS_UNIT" >/dev/null 2>&1
-        # Туннель поднимается не мгновенно, а redsocks без него бесполезен.
+        # Туннель поднимается не мгновенно.
         local _i
         for _i in $(seq 1 30); do
             ss -ltn 2>/dev/null | grep -q ":$(_warp_socks_port)\b" && break
             sleep 1
         done
+    fi
+
+    if [ "$(_warp_mode)" = "upstream" ]; then
+        _warp_apply_upstream || return 1
+        is_proxy_running && restart_proxy_container
+    elif [ "$(_warp_mode)" = "socks" ]; then
+        _warp_write_redsocks_conf
         systemctl enable --now "$WARP_REDSOCKS_UNIT" >/dev/null 2>&1
     else
         _warp_generate_iface_conf "$_ep" || return 1
@@ -676,6 +684,10 @@ warp_enable() {
 
 warp_disable() {
     check_root
+    if [ "$(_warp_mode)" = "upstream" ]; then
+        _warp_drop_upstream
+        is_proxy_running && restart_proxy_container
+    fi
     systemctl disable --now "$WARP_REDSOCKS_UNIT" >/dev/null 2>&1 || true
     systemctl disable --now "$WARP_SOCKS_UNIT" >/dev/null 2>&1 || true
     systemctl disable --now "$WARP_ROUTE_UNIT" >/dev/null 2>&1 || true
@@ -717,12 +729,10 @@ _warp_nft_applied() {
     nft list table inet "${WARP_NFT_TABLE}" >/dev/null 2>&1
 }
 
-# Куда мы выходим на самом деле. Спрашиваем сам Cloudflare: в его ответе есть
-# поле warp=on/off, то есть туннель подтверждает не наша догадка, а тот, к кому
-# мы подключились. В варианте A спрашиваем через SOCKS, в B — через интерфейс.
+# Выход по версии самого Cloudflare: в его ответе есть warp=on/off.
 warp_exit_info() {
     local _url="https://www.cloudflare.com/cdn-cgi/trace" _out=""
-    if [ "$(_warp_mode)" = "socks" ] && _warp_unit_active "$WARP_SOCKS_UNIT"; then
+    if [ "$(_warp_mode)" != "iface" ] && _warp_unit_active "$WARP_SOCKS_UNIT"; then
         _out=$(curl -fsS --max-time 10 -x "socks5h://127.0.0.1:$(_warp_socks_port)" "$_url" 2>/dev/null)
     elif [ "$(_warp_mode)" = "iface" ] && ip link show "$WARP_IFACE" >/dev/null 2>&1; then
         _out=$(curl -fsS --max-time 10 --interface "$WARP_IFACE" "$_url" 2>/dev/null)
@@ -737,8 +747,7 @@ warp_exit_info() {
     echo "${_ip:-?}|${_loc:-?}|${_colo:-?}"
 }
 
-# Сколько пакетов правило успело увести в туннель. Единственное доказательство,
-# что в WARP уходит именно трафик Telegram, а не «служба вроде запущена».
+# Сколько пакетов правило увело в туннель.
 warp_matched_packets() {
     nft list table inet "${WARP_NFT_TABLE}" 2>/dev/null \
         | grep -E '@tg[46]' \
@@ -746,10 +755,18 @@ warp_matched_packets() {
         | awk '{s += $2} END {print s + 0}'
 }
 
-# Дешёвая проверка: службы на месте и правила применены. Годится для строк
-# меню, которые рисуются на каждом шаге — сетевой пробы там быть не должно.
+# Дешёвая проверка без сети: службы на месте и правила применены.
 warp_route_ready() {
     [ "${WARP_ENABLED:-false}" = "true" ] || return 1
+    if [ "$(_warp_mode)" = "upstream" ]; then
+        _warp_unit_active "$WARP_SOCKS_UNIT" || return 1
+        load_upstreams 2>/dev/null
+        local _i
+        for _i in "${!UPSTREAM_NAMES[@]}"; do
+            [ "${UPSTREAM_NAMES[$_i]}" = "$WARP_UPSTREAM_NAME" ] && return 0
+        done
+        return 1
+    fi
     if [ "$(_warp_mode)" = "socks" ]; then
         _warp_unit_active "$WARP_SOCKS_UNIT" || return 1
         _warp_unit_active "$WARP_REDSOCKS_UNIT" || return 1
@@ -760,8 +777,7 @@ warp_route_ready() {
     _warp_nft_applied
 }
 
-# Полная проверка: к дешёвой добавляется ответ Cloudflare с warp=on. Ходит в
-# сеть, поэтому зовём её после включения и в подробном состоянии, а не в меню.
+# Полная проверка: плюс ответ Cloudflare с warp=on, ходит в сеть.
 warp_check_route() {
     warp_route_ready || return 1
     warp_exit_info >/dev/null 2>&1
@@ -782,6 +798,7 @@ warp_status() {
     local _mode; _mode=$(_warp_mode)
     local _title="вариант A — SOCKS5 + redsocks"
     [ "$_mode" = "iface" ] && _title="вариант B — интерфейс ${WARP_IFACE}"
+    [ "$_mode" = "upstream" ] && _title="вариант C — socks5-upstream движка"
     echo -e "  ${BOLD}Режим:${NC}        ${_title}"
     echo -e "  ${BOLD}Протокол:${NC}     $(_warp_proto)"
     echo -e "  ${BOLD}Эндпоинт:${NC}     ${WARP_ENDPOINT:-${DIM}выбирается разведкой${NC}}"
@@ -796,7 +813,14 @@ warp_status() {
     fi
 
     echo ""
-    if [ "$_mode" = "socks" ]; then
+    if [ "$_mode" = "upstream" ]; then
+        echo -e "  ${BOLD}Туннель:${NC}      $(_warp_unit_active "$WARP_SOCKS_UNIT" && echo -e "${GREEN}работает${NC}" || echo -e "${RED}лежит${NC}") ${DIM}(socks5 на 127.0.0.1:$(_warp_socks_port))${NC}"
+        echo -e "  ${BOLD}Upstream:${NC}     $(warp_route_ready >/dev/null 2>&1 && echo -e "${GREEN}прописан в конфиге движка${NC}" || echo -e "${RED}нет${NC}")"
+        echo ""
+        echo -e "  ${DIM}Связь с дата-центрами Telegram: mtproxyl dc${NC}"
+        echo ""
+        return 0
+    elif [ "$_mode" = "socks" ]; then
         echo -e "  ${BOLD}Туннель:${NC}      $(_warp_unit_active "$WARP_SOCKS_UNIT" && echo -e "${GREEN}работает${NC}" || echo -e "${RED}лежит${NC}") ${DIM}(${WARP_SOCKS_UNIT})${NC}"
         echo -e "  ${BOLD}Редирект:${NC}     $(_warp_unit_active "$WARP_REDSOCKS_UNIT" && echo -e "${GREEN}работает${NC}" || echo -e "${RED}лежит${NC}") ${DIM}(порт $(_warp_redir_port))${NC}"
     else
@@ -835,10 +859,12 @@ warp_status_json() {
         "$([ -n "$_exit_ip" ] && echo true || echo false)"
 }
 
-# Строка для главного меню — коротко и только когда включено.
+# Строка главного меню — только когда включено.
 warp_menu_line() {
     [ "${WARP_ENABLED:-false}" = "true" ] || return 0
-    local _variant="A"; [ "$(_warp_mode)" = "iface" ] && _variant="B"
+    local _variant="A"
+    [ "$(_warp_mode)" = "iface" ] && _variant="B"
+    [ "$(_warp_mode)" = "upstream" ] && _variant="C"
     local _state="${RED}лежит${NC}"
     warp_route_ready >/dev/null 2>&1 && _state="${GREEN}работает${NC}"
     local _where="${WARP_LOCATION:-авто}"
@@ -887,7 +913,7 @@ warp_set_proto() {
     return 0
 }
 
-# Разведка руками: показать, что живо, и запомнить лучший адрес.
+# Разведка руками.
 warp_scan_show() {
     check_root
     [ -x "$(_warp_bin)" ] || { log_error "warpscout не установлен: mtproxyl warp install"; return 1; }
@@ -918,7 +944,7 @@ handle_warp_command() {
         *)
             echo -e "  ${BOLD}Маршрут до Telegram через WARP:${NC}"
             echo -e "    ${GREEN}warp status${NC} [--json]  Состояние, выход, службы"
-            echo -e "    ${GREEN}warp on${NC} socks|iface   Включить вариант A (socks) или B (iface)"
+            echo -e "    ${GREEN}warp on${NC} <вариант>     socks (A), iface (B) или upstream (C)"
             echo -e "    ${GREEN}warp off${NC}              Выключить, вернуть прямой ход"
             echo -e "    ${GREEN}warp scan${NC}             Разведка: найти лучший эндпоинт"
             echo -e "    ${GREEN}warp location${NC} <A>     Страны (DE,NL) или узлы (FRA,AMS), clear — авто"

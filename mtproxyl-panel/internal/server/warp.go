@@ -10,9 +10,8 @@ import (
 	"github.com/Liafanx/mtproxyl-panel/internal/mtproxylctl"
 )
 
-// registerWarpRoutes wires «Telegram через WARP». Turning it on scans Cloudflare
-// endpoints and takes minutes, so it goes through the same operation runner as
-// mode switches — the request returns at once and the panel follows the log.
+// registerWarpRoutes wires «Telegram через WARP»: enabling scans endpoints for
+// minutes, so it goes through the same operation runner as mode switches.
 func (s *Server) registerWarpRoutes(
 	mux *http.ServeMux,
 	jwtSecret []byte,
@@ -32,8 +31,7 @@ func (s *Server) registerWarpRoutes(
 		return true
 	}
 
-	// start hands a long command to the runner; a busy runner is a conflict,
-	// not a failure — the caller retries when the current one finishes.
+	// start hands a long command to the runner; busy is a conflict, not a failure.
 	start := func(w http.ResponseWriter, name string, fn func(context.Context) (string, error)) {
 		if !runner.Start(name, fn) {
 			writeError(w, http.StatusConflict, "operation_busy",
@@ -73,11 +71,13 @@ func (s *Server) registerWarpRoutes(
 			Mode string `json:"mode"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "bad_request", "Ожидается {\"mode\": \"socks\"|\"iface\"}")
+			writeError(w, http.StatusBadRequest, "bad_request", "Ожидается {\"mode\": \"socks\"|\"iface\"|\"upstream\"}")
 			return
 		}
-		if req.Mode != "socks" && req.Mode != "iface" {
-			writeError(w, http.StatusBadRequest, "invalid_mode", "Вариант: socks (A) или iface (B)")
+		switch req.Mode {
+		case "socks", "iface", "upstream":
+		default:
+			writeError(w, http.StatusBadRequest, "invalid_mode", "Вариант: socks (A), iface (B) или upstream (C)")
 			return
 		}
 		mode := req.Mode

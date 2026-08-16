@@ -8,12 +8,8 @@ import (
 	"strings"
 )
 
-// The WARP route lives in MTProxyL: the rules are kernel rules, and they have
-// to survive the panel being closed. Everything here only asks the script.
-
-// WarpExit is where Cloudflare says we come out. Confirmed is false when the
-// tunnel did not answer — the panel shows that as «не подтверждён», because a
-// running service is not the same as a working route.
+// WarpExit is where Cloudflare says we come out; Confirmed is false when the
+// tunnel did not answer.
 type WarpExit struct {
 	IP        string `json:"ip"`
 	Loc       string `json:"loc"`
@@ -24,15 +20,14 @@ type WarpExit struct {
 // WarpStatus is `mtproxyl warp status --json`.
 type WarpStatus struct {
 	Enabled bool `json:"enabled"`
-	// Mode is "socks" (вариант A) or "iface" (вариант B).
+	// Mode: socks (A), iface (B) или upstream (C).
 	Mode      string `json:"mode"`
 	Proto     string `json:"proto"`
 	Endpoint  string `json:"endpoint"`
 	Location  string `json:"location"`
 	Installed bool   `json:"installed"`
 	Version   string `json:"version"`
-	// SocksActive and RedirectActive matter in mode socks, IfaceActive in mode
-	// iface; the script always reports all three.
+	// socks — в режимах socks и upstream, redirect — только в socks.
 	SocksActive    bool `json:"socks_active"`
 	RedirectActive bool `json:"redirect_active"`
 	IfaceActive    bool `json:"iface_active"`
@@ -40,8 +35,7 @@ type WarpStatus struct {
 	CidrCount      int  `json:"cidr_count"`
 	SocksPort      int  `json:"socks_port"`
 	RedirectPort   int  `json:"redirect_port"`
-	// MatchedPackets is what the nft counter saw: the only evidence that
-	// Telegram traffic really goes into the tunnel.
+	// MatchedPackets is the nft counter: proof the route is actually used.
 	MatchedPackets int64    `json:"matched_packets"`
 	Exit           WarpExit `json:"exit"`
 }
@@ -73,11 +67,12 @@ func (c *Client) WarpGetStatus(ctx context.Context) (*WarpStatus, error) {
 	return &st, nil
 }
 
-// WarpEnable turns the route on. Both modes scan for a live endpoint first, so
-// this runs for minutes — the caller is expected to be the operation runner.
+// WarpEnable turns the route on; the endpoint scan takes minutes.
 func (c *Client) WarpEnable(ctx context.Context, mode string) (string, error) {
-	if mode != "socks" && mode != "iface" {
-		return "", fmt.Errorf("вариант: socks (A) или iface (B)")
+	switch mode {
+	case "socks", "iface", "upstream":
+	default:
+		return "", fmt.Errorf("вариант: socks (A), iface (B) или upstream (C)")
 	}
 	out, err := c.run(ctx, "warp", "on", mode)
 	return stripANSI(out), err
@@ -101,8 +96,7 @@ func (c *Client) WarpReapply(ctx context.Context) (string, error) {
 	return stripANSI(out), err
 }
 
-// warpLocationRe is a comma-separated list of country codes (DE) and Cloudflare
-// node codes (FRA). Empty means «best by latency».
+// Country codes (DE) and Cloudflare node codes (FRA), comma-separated.
 var warpLocationRe = regexp.MustCompile(`^[A-Za-z]{2,3}(,[A-Za-z]{2,3})*$`)
 
 // WarpSetLocation pins where to come out; an empty value restores automatic.
@@ -131,8 +125,7 @@ func (c *Client) WarpSetEndpoint(ctx context.Context, ep string) (string, error)
 	return stripANSI(out), err
 }
 
-// WarpSetProto picks the tunnel protocol. Only mode socks honours it: the
-// kernel interface speaks plain WireGuard and nothing else.
+// WarpSetProto picks the protocol; only mode socks honours it.
 func (c *Client) WarpSetProto(ctx context.Context, proto string) (string, error) {
 	switch proto {
 	case "awg", "wg", "masque", "masque-h2":

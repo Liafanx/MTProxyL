@@ -202,11 +202,7 @@ function plural(n: number, one: string, few: string, many: string): string {
   return many;
 }
 
-/**
- * Период автопроверки задаётся в MTProxyL (AVAILABILITY_INTERVAL), а не панелью,
- * поэтому берём его из ответа CLI: раньше здесь стояли зашитые 15 минут, и у
- * тех, кто поменял период, панель говорила неправду.
- */
+/** Расписание берём из ответа CLI: период задаётся в MTProxyL, не здесь. */
 function scheduleLine(s: AvailabilitySchedule): string {
   const parts: string[] = [];
   if (s.interval && s.interval > 0) {
