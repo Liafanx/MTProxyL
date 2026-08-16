@@ -339,6 +339,7 @@ HELP_TEXT = """<b>MTProxyL — команды</b>
 /link — ссылка и QR-код
 /traffic — трафик по пользователям
 /availability — доступность из России
+/dc — дата-центры Telegram: RTT, писатели, покрытие
 /check — проверить доступность прямо сейчас
 /start_proxy, /stop_proxy, /restart_proxy — управление прокси
 /backup — сделать бэкап и прислать сюда (только Manager)

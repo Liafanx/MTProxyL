@@ -43,11 +43,11 @@ tui_tgbot_menu() {
         echo -e "  ${CYAN}[4]${NC}  Администраторы: добавить / убрать"
         echo -e "  ${CYAN}[5]${NC}  Уведомления и таймеры"
         echo -e "  ${CYAN}[6]${NC}  Автобэкап в телеграм"
-        echo -e "  ${CYAN}[7]${NC}  Журнал службы"
-        echo -e "  ${CYAN}[8]${NC}  Обновить код бота"
-        echo -e "  ${CYAN}[9]${NC}  Переустановить"
-        echo -e "  ${CYAN}[11]${NC} Прокси для Telegram: $(_tui_tgbot_proxy_line)"
-        echo -e "  ${RED}[10]${NC} Удалить бота"
+        echo -e "  ${CYAN}[7]${NC}  Прокси для Telegram: $(_tui_tgbot_proxy_line)"
+        echo -e "  ${CYAN}[8]${NC}  Журнал службы"
+        echo -e "  ${CYAN}[9]${NC}  Обновить код бота"
+        echo -e "  ${CYAN}[10]${NC} Переустановить"
+        echo -e "  ${RED}[11]${NC} Удалить бота"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -68,11 +68,11 @@ tui_tgbot_menu() {
             4)  _tui_tgbot_admins; press_any_key ;;
             5)  _tui_tgbot_notify ;;
             6)  _tui_tgbot_autobackup ;;
-            7)  journalctl -u "$TGBOT_SERVICE" -n 60 --no-pager; press_any_key ;;
-            8)  tgbot_update_sources && log_success "Код обновлён, бот перезапущен"; press_any_key ;;
-            9)  tgbot_install; press_any_key ;;
-            11) _tui_tgbot_proxy; press_any_key ;;
-            10) tgbot_uninstall; press_any_key; return ;;
+            7)  _tui_tgbot_proxy; press_any_key ;;
+            8)  journalctl -u "$TGBOT_SERVICE" -n 60 --no-pager; press_any_key ;;
+            9)  tgbot_update_sources && log_success "Код обновлён, бот перезапущен"; press_any_key ;;
+            10) tgbot_install; press_any_key ;;
+            11) tgbot_uninstall; press_any_key; return ;;
             0|"") return ;;
         esac
     done
@@ -152,6 +152,7 @@ _tui_tgbot_notify() {
         echo -e "  ${DIM}Бот пишет при смене состояния, а не на каждой проверке.${NC}"
         echo ""
         echo -e "  ${CYAN}[1]${NC}  Доступность ниже порога: $(_tgbot_flag availability)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.availability' 15) мин)${NC}"
+        echo -e "  ${CYAN}[6]${NC}  Дата-центры Telegram ниже порога: $(_tgbot_flag dc)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.dc' 15) мин)${NC}"
         echo -e "  ${CYAN}[2]${NC}  Прокси упал / поднялся: $(_tgbot_flag proxy)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.proxy' 5) мин)${NC}"
         echo -e "  ${CYAN}[3]${NC}  Лимиты пользователей: $(_tgbot_flag limits)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.limits' 60) мин)${NC}"
         echo -e "  ${CYAN}[4]${NC}  Итог автобэкапа: $(_tgbot_flag backup)"
@@ -166,6 +167,7 @@ _tui_tgbot_notify() {
             3) _tgbot_cfg_set '.notify.limits = (.notify.limits | not)' ;;
             4) _tgbot_cfg_set '.notify.backup = (.notify.backup | not)' ;;
             5) _tui_tgbot_interval ;;
+            6) _tgbot_cfg_set '.notify.dc = (.notify.dc | not)' ;;
             0|"") return ;;
         esac
     done
@@ -174,13 +176,14 @@ _tui_tgbot_notify() {
 _tui_tgbot_interval() {
     echo ""
     echo -e "  ${BOLD}Какой период менять?${NC}"
-    echo -e "    ${CYAN}[1]${NC} доступность   ${CYAN}[2]${NC} прокси   ${CYAN}[3]${NC} лимиты"
+    echo -e "    ${CYAN}[1]${NC} доступность   ${CYAN}[2]${NC} прокси   ${CYAN}[3]${NC} лимиты   ${CYAN}[4]${NC} дата-центры"
     local _what; _what=$(read_choice "выбор" "0")
     local _key
     case "$_what" in
         1) _key="availability" ;;
         2) _key="proxy" ;;
         3) _key="limits" ;;
+        4) _key="dc" ;;
         *) return ;;
     esac
     echo -en "  ${BOLD}Минут${NC} ${DIM}(текущее $(_tgbot_cfg_get ".intervals.${_key}" 15))${NC}: "

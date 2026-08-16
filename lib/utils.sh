@@ -477,7 +477,9 @@ check_for_update() {
     local _remote_ver
     _remote_ver=$(curl -fsS --max-time 5 "${GITHUB_RAW}/version" 2>/dev/null | tr -d '[:space:]')
     [ -z "$_remote_ver" ] && return 0
-    if [ "$_remote_ver" != "$VERSION" ]; then
+    # Только строго новее: на dev-сборке локальная версия обгоняет ветку, и
+    # «доступно обновление 1.4.9 → 1.4.8» звалось бы откатом назад.
+    if _version_gt "$_remote_ver" "$VERSION"; then
         _UPDATE_AVAILABLE="$_remote_ver"
     else
         _UPDATE_AVAILABLE=""

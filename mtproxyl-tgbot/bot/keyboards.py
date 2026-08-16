@@ -37,10 +37,11 @@ def main_menu(manager: bool) -> InlineKeyboardMarkup:
     kb.button(text="🔗 Ссылки", callback_data="l:list:0")
     kb.button(text="📊 Трафик", callback_data="m:traffic")
     kb.button(text="🇷🇺 Доступность", callback_data="a:show")
+    kb.button(text="🌍 Дата-центры", callback_data="dc:show")
     if manager:
         kb.button(text="💾 Бэкапы", callback_data="b:show")
     kb.button(text="⚙️ Настройки", callback_data="s:show")
-    kb.adjust(2, 2, 2, 2)
+    kb.adjust(2, 2, 2, 2, 2)
     return kb.as_markup()
 
 
