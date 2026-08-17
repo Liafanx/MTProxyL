@@ -71,6 +71,14 @@ _upstream_warn_no_default_route() {
     log_info "Оставьте хотя бы один включённый маршрут с пустым scopes"
 }
 
+# Перезапуск после правки маршрутов. Пачка изменений выставляет
+# UPSTREAM_DEFER_RESTART и перезапускает движок один раз в конце.
+_upstream_restart_if_needed() {
+    [ "${UPSTREAM_DEFER_RESTART:-false}" = "true" ] && return 0
+    is_proxy_running && restart_proxy_container
+    return 0
+}
+
 save_upstreams() {
     mkdir -p "$INSTALL_DIR"
     local tmp; tmp=$(_mktemp "$INSTALL_DIR") || return 1
@@ -195,7 +203,7 @@ upstream_add() {
     UPSTREAM_SCOPES+=("$scopes")
 
     save_upstreams
-    is_proxy_running && restart_proxy_container
+    _upstream_restart_if_needed
     log_success "Upstream '${name}' добавлен (${type})"
     [ -n "$scopes" ] && _upstream_warn_no_default_route
     return 0
@@ -229,7 +237,7 @@ upstream_remove() {
     UPSTREAM_SCOPES=("${ns[@]}")
 
     save_upstreams
-    is_proxy_running && restart_proxy_container
+    _upstream_restart_if_needed
     log_success "Upstream '${name}' удалён"
 }
 
@@ -299,7 +307,7 @@ upstream_toggle() {
     esac
 
     save_upstreams
-    is_proxy_running && restart_proxy_container
+    _upstream_restart_if_needed
     log_success "Upstream '${name}': ${UPSTREAM_ENABLED[$idx]}"
     _upstream_warn_no_default_route
     return 0

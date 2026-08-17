@@ -34,6 +34,10 @@ _warp_fwmark() {
     echo "$_v"
 }
 
+_warp_variant_letter() {
+    case "$(_warp_mode)" in iface) echo "B" ;; upstream) echo "C" ;; *) echo "A" ;; esac
+}
+
 _warp_mode()  { case "${WARP_MODE:-socks}" in iface) echo "iface" ;; upstream) echo "upstream" ;; *) echo "socks" ;; esac; }
 _warp_proto() {
     # У интерфейса выбора нет: awg и masque живут только в туннеле warpscout.
@@ -571,10 +575,11 @@ _warp_me_gate() {
     local _yn; read_line _yn
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Ничего не меняем — WARP не включён"; return 1; }
 
-    handle_expert_command set general use_middle_proxy false || {
+    handle_expert_command set general use_middle_proxy false --no-apply >/dev/null || {
         log_error "Не удалось выключить middle proxy"
         return 1
     }
+    _WARP_CONFIG_DIRTY="true"
     log_success "Middle proxy выключен — движок пойдёт к дата-центрам напрямую"
     return 0
 }
@@ -589,24 +594,84 @@ _warp_local_mask_backend() {
     return 1
 }
 
+# Чужие маршруты без области: движок раскладывает между ними трафик по весу,
+# и часть пошла бы мимо туннеля. Имена запоминаем, чтобы вернуть при выключении.
+_warp_foreign_default_upstreams() {
+    load_upstreams 2>/dev/null
+    local _i _out=""
+    for _i in "${!UPSTREAM_NAMES[@]}"; do
+        [ "${UPSTREAM_ENABLED[$_i]}" = "true" ] || continue
+        [ -n "${UPSTREAM_SCOPES[$_i]:-}" ] && continue
+        case "${UPSTREAM_NAMES[$_i]}" in "$WARP_UPSTREAM_NAME"|"$WARP_UPSTREAM_LOCAL") continue ;; esac
+        _out+="${_out:+,}${UPSTREAM_NAMES[$_i]}"
+    done
+    printf '%s' "$_out"
+}
+
 _warp_apply_upstream() {
-    upstream_add "$WARP_UPSTREAM_NAME" socks5 "127.0.0.1:$(_warp_socks_port)" "" "" 1 "" "" \
-        || { log_error "Не удалось добавить upstream ${WARP_UPSTREAM_NAME}"; return 1; }
+    local _others; _others=$(_warp_foreign_default_upstreams)
+    if [ -n "$_others" ]; then
+        echo ""
+        log_warn "Есть другие маршруты без области: ${_others}"
+        echo -e "  ${DIM}Движок раскладывает трафик между всеми такими маршрутами по весу —${NC}"
+        echo -e "  ${DIM}часть соединений пойдёт мимо туннеля. Их нужно выключить.${NC}"
+        if [ "${MTPROXYL_ASSUME_YES:-}" != "1" ]; then
+            echo -en "  ${BOLD}Выключить их на время работы WARP? [Y/n]:${NC} "
+            local _yn; read_line _yn
+            [[ "$_yn" =~ ^[nN] ]] && { log_error "Без этого вариант C работать не будет"; return 1; }
+        fi
+    fi
+
+    UPSTREAM_DEFER_RESTART="true"
+    local _rc=0 _name
+    local _old="$IFS"; IFS=','
+    local -a _list=(); read -ra _list <<< "$_others"
+    IFS="$_old"
+    for _name in "${_list[@]}"; do
+        [ -n "$_name" ] || continue
+        upstream_toggle "$_name" disable >/dev/null 2>&1 || true
+    done
+    WARP_DISABLED_UPSTREAMS="$_others"
+
+    upstream_remove "$WARP_UPSTREAM_NAME" >/dev/null 2>&1 || true
+    upstream_add "$WARP_UPSTREAM_NAME" socks5 "127.0.0.1:$(_warp_socks_port)" "" "" 1 "" "" >/dev/null \
+        || { log_error "Не удалось добавить upstream ${WARP_UPSTREAM_NAME}"; _rc=1; }
 
     # Локальный mask-бэкенд через socks недостижим: туннель резолвит 127.0.0.1
-    # у себя. Уводим только загрузку TLS-метаданных обратно на прямой маршрут.
-    if _warp_local_mask_backend; then
-        upstream_add "$WARP_UPSTREAM_LOCAL" direct "" "" "" 1 "" "local" || true
-        handle_expert_command set censorship tls_fetch_scope local >/dev/null 2>&1 \
+    # у себя. Возвращаем только загрузку TLS-метаданных на прямой маршрут.
+    upstream_remove "$WARP_UPSTREAM_LOCAL" >/dev/null 2>&1 || true
+    if [ $_rc -eq 0 ] && _warp_local_mask_backend; then
+        upstream_add "$WARP_UPSTREAM_LOCAL" direct "" "" "" 1 "" "local" >/dev/null || true
+        handle_expert_command set censorship tls_fetch_scope local --no-apply >/dev/null 2>&1 \
             || log_warn "Не удалось задать censorship.tls_fetch_scope — маскировка может не подтянуть сертификат"
     fi
+
+    UPSTREAM_DEFER_RESTART="false"
+    [ $_rc -eq 0 ] || return 1
+
+    log_success "Маршрут движка: socks5 127.0.0.1:$(_warp_socks_port)"
+    [ -n "$_others" ] && log_info "Выключены на время работы WARP: ${_others}"
+    _warp_local_mask_backend && log_info "Загрузка TLS-метаданных с локального бэкенда идёт мимо туннеля"
     return 0
 }
 
 _warp_drop_upstream() {
+    load_upstreams 2>/dev/null
+    UPSTREAM_DEFER_RESTART="true"
     upstream_remove "$WARP_UPSTREAM_NAME" >/dev/null 2>&1 || true
     upstream_remove "$WARP_UPSTREAM_LOCAL" >/dev/null 2>&1 || true
-    handle_expert_command clear censorship tls_fetch_scope >/dev/null 2>&1 || true
+    handle_expert_command clear censorship tls_fetch_scope --no-apply >/dev/null 2>&1 || true
+
+    local _name
+    local _old="$IFS"; IFS=','
+    local -a _list=(); read -ra _list <<< "${WARP_DISABLED_UPSTREAMS:-}"
+    IFS="$_old"
+    for _name in "${_list[@]}"; do
+        [ -n "$_name" ] || continue
+        upstream_toggle "$_name" enable >/dev/null 2>&1 && log_info "Маршрут '${_name}' включён обратно"
+    done
+    WARP_DISABLED_UPSTREAMS=""
+    UPSTREAM_DEFER_RESTART="false"
 }
 
 warp_enable() {
@@ -625,6 +690,7 @@ warp_enable() {
     fi
 
     # С включённым ME включать нечего.
+    _WARP_CONFIG_DIRTY="false"
     _warp_me_gate || return 1
 
     _warp_need_packages || return 1
@@ -658,7 +724,7 @@ warp_enable() {
 
     if [ "$(_warp_mode)" = "upstream" ]; then
         _warp_apply_upstream || return 1
-        is_proxy_running && restart_proxy_container
+        _WARP_CONFIG_DIRTY="true"
     elif [ "$(_warp_mode)" = "socks" ]; then
         _warp_write_redsocks_conf
         systemctl enable --now "$WARP_REDSOCKS_UNIT" >/dev/null 2>&1
@@ -672,8 +738,14 @@ warp_enable() {
     WARP_ENABLED="true"
     save_settings
 
+    # Один перезапуск на все правки конфига: и выключенный ME, и маршруты.
+    if [ "$_WARP_CONFIG_DIRTY" = "true" ]; then
+        generate_telemt_config >/dev/null 2>&1 || true
+        is_proxy_running && restart_proxy_container >/dev/null 2>&1
+    fi
+
     if warp_check_route; then
-        log_success "Трафик до Telegram идёт через WARP (вариант $([ "$(_warp_mode)" = "socks" ] && echo A || echo B))"
+        log_success "Трафик до Telegram идёт через WARP (вариант $(_warp_variant_letter))"
     else
         log_warn "Правила применены, но проверка маршрута не подтвердила выход через WARP"
         log_info "Смотрите: mtproxyl warp status, journalctl -u ${WARP_SOCKS_UNIT}"
@@ -684,10 +756,8 @@ warp_enable() {
 
 warp_disable() {
     check_root
-    if [ "$(_warp_mode)" = "upstream" ]; then
-        _warp_drop_upstream
-        is_proxy_running && restart_proxy_container
-    fi
+    local _was_upstream="false"
+    [ "$(_warp_mode)" = "upstream" ] && { _warp_drop_upstream; _was_upstream="true"; }
     systemctl disable --now "$WARP_REDSOCKS_UNIT" >/dev/null 2>&1 || true
     systemctl disable --now "$WARP_SOCKS_UNIT" >/dev/null 2>&1 || true
     systemctl disable --now "$WARP_ROUTE_UNIT" >/dev/null 2>&1 || true
@@ -698,7 +768,14 @@ warp_disable() {
     ip route flush table "$WARP_RT_TABLE" 2>/dev/null || true
     WARP_ENABLED="false"
     save_settings
+    if [ "$_was_upstream" = "true" ]; then
+        generate_telemt_config >/dev/null 2>&1 || true
+        is_proxy_running && restart_proxy_container >/dev/null 2>&1
+    fi
     log_success "Маршрут до Telegram через WARP выключен — трафик идёт напрямую"
+    if _warp_me_enabled; then :; else
+        log_info "Middle proxy остался выключенным: mtproxyl expert clear general use_middle_proxy"
+    fi
 }
 
 warp_remove() {
@@ -816,6 +893,8 @@ warp_status() {
     if [ "$_mode" = "upstream" ]; then
         echo -e "  ${BOLD}Туннель:${NC}      $(_warp_unit_active "$WARP_SOCKS_UNIT" && echo -e "${GREEN}работает${NC}" || echo -e "${RED}лежит${NC}") ${DIM}(socks5 на 127.0.0.1:$(_warp_socks_port))${NC}"
         echo -e "  ${BOLD}Upstream:${NC}     $(warp_route_ready >/dev/null 2>&1 && echo -e "${GREEN}прописан в конфиге движка${NC}" || echo -e "${RED}нет${NC}")"
+        local _rogue; _rogue=$(_warp_foreign_default_upstreams)
+        [ -n "$_rogue" ] && log_warn "Маршруты без области мимо туннеля: ${_rogue}"
         echo ""
         echo -e "  ${DIM}Связь с дата-центрами Telegram: mtproxyl dc${NC}"
         echo ""
@@ -862,9 +941,7 @@ warp_status_json() {
 # Строка главного меню — только когда включено.
 warp_menu_line() {
     [ "${WARP_ENABLED:-false}" = "true" ] || return 0
-    local _variant="A"
-    [ "$(_warp_mode)" = "iface" ] && _variant="B"
-    [ "$(_warp_mode)" = "upstream" ] && _variant="C"
+    local _variant; _variant=$(_warp_variant_letter)
     local _state="${RED}лежит${NC}"
     warp_route_ready >/dev/null 2>&1 && _state="${GREEN}работает${NC}"
     local _where="${WARP_LOCATION:-авто}"

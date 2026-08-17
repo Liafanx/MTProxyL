@@ -6,9 +6,7 @@ _tui_warp_state_label() {
         echo -e "${DIM}выключен${NC}"
         return 0
     fi
-    local _variant="A"
-    [ "$(_warp_mode)" = "iface" ] && _variant="B"
-    [ "$(_warp_mode)" = "upstream" ] && _variant="C"
+    local _variant; _variant=$(_warp_variant_letter)
     if warp_route_ready >/dev/null 2>&1; then
         echo -e "${GREEN}вариант ${_variant}${NC}"
     else

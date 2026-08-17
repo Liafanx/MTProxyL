@@ -461,9 +461,8 @@ cli_main() {
             ;;
 
         warp)
-            # Правила живут в ядре и не зависят от режима: в туннель уходят
-            # подсети Telegram, чей бы прокси на хосте ни стоял.
-            load_settings; load_detect_settings
+            # Вариант C правит маршруты движка, поэтому грузим и их.
+            load_settings; load_secrets; load_upstreams; load_detect_settings
             handle_warp_command "$@"
             ;;
 
