@@ -54,6 +54,26 @@ _warp_redir_port() {
     [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 1 ] && [ "$_v" -le 65535 ] || _v="41081"
     echo "$_v"
 }
+# Цель в docker bridge не достучится до петли хоста — тогда слушаем все адреса
+# и закрываем порт правилом, а в конфиг цели идёт адрес шлюза моста.
+_warp_target_is_bridge() {
+    [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] || return 1
+    [ "${DETECTED_NETWORK_MODE:-host}" = "bridge" ]
+}
+
+_warp_socks_listen() {
+    _warp_target_is_bridge && { echo "0.0.0.0"; return 0; }
+    echo "127.0.0.1"
+}
+
+_warp_socks_reachable_host() {
+    if _warp_target_is_bridge; then
+        local _gw; _gw=$(ip -4 route show 2>/dev/null | awk '$3 ~ /^(docker|br-)/ && $1 ~ /\// {print $NF; exit}')
+        [ -n "$_gw" ] && { echo "$_gw"; return 0; }
+    fi
+    echo "127.0.0.1"
+}
+
 _warp_mtu() {
     local _v="${WARP_MTU:-1280}"
     [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 1000 ] && [ "$_v" -le 1500 ] || _v="1280"
@@ -290,10 +310,19 @@ _warp_generate_nft() {
         echo "nft add table inet ${WARP_NFT_TABLE}"
         echo "nft add set inet ${WARP_NFT_TABLE} tg4 '{ type ipv4_addr; flags interval; }'"
         echo "nft add set inet ${WARP_NFT_TABLE} tg6 '{ type ipv6_addr; flags interval; }'"
-        [ -n "$_v4" ] && echo "nft add element inet ${WARP_NFT_TABLE} tg4 '{ ${_v4} }'"
-        [ -n "$_v6" ] && echo "nft add element inet ${WARP_NFT_TABLE} tg6 '{ ${_v6} }'"
+        if [ "$_mode" != "upstream" ]; then
+            [ -n "$_v4" ] && echo "nft add element inet ${WARP_NFT_TABLE} tg4 '{ ${_v4} }'"
+            [ -n "$_v6" ] && echo "nft add element inet ${WARP_NFT_TABLE} tg6 '{ ${_v6} }'"
+        fi
 
-        if [ "$_mode" = "socks" ]; then
+        if [ "$_mode" = "upstream" ]; then
+            # Порт открыт на все адреса ради цели в docker bridge — снаружи закрываем.
+            local _sp; _sp=$(_warp_socks_port)
+            echo "nft add chain inet ${WARP_NFT_TABLE} input '{ type filter hook input priority -150; policy accept; }'"
+            echo "nft add rule inet ${WARP_NFT_TABLE} input iifname lo accept"
+            [ -n "$_bridges" ] && echo "nft add rule inet ${WARP_NFT_TABLE} input ip saddr { ${_bridges} } tcp dport ${_sp} accept"
+            echo "nft add rule inet ${WARP_NFT_TABLE} input tcp dport ${_sp} drop"
+        elif [ "$_mode" = "socks" ]; then
             local _port; _port=$(_warp_redir_port)
             # nat/output — трафик самого хоста (движок службой или сеть host).
             echo "nft add chain inet ${WARP_NFT_TABLE} output '{ type nat hook output priority -100; policy accept; }'"
@@ -368,8 +397,9 @@ if [ -z "\$EP" ]; then
     exit 1
 fi
 printf '{"endpoint":"%s","proto":"%s","picked_at":%s}\n' "\$EP" "\$PROTO" "\$(date +%s)" > "\$STATE"
-exec "\$BIN" socks -a "\$ACCOUNT" -e "\$EP" -p "\$PROTO" -l 127.0.0.1 -port "\$PORT"
+exec "\$BIN" socks -a "\$ACCOUNT" -e "\$EP" -p "\$PROTO" -l LISTEN_ADDR -port "\$PORT"
 EOF
+    sed -i "s/LISTEN_ADDR/$(_warp_socks_listen)/" "$_runner"
     chmod 700 "$_runner"
 }
 
@@ -608,6 +638,56 @@ _warp_foreign_default_upstreams() {
     printf '%s' "$_out"
 }
 
+_warp_owns_engine_config() {
+    [ "${MTPROXYL_MODE:-manager}" = "manager" ] || return 1
+    [ "${TOOLS_ONLY:-false}" = "true" ] && return 1
+    _superexpert_active 2>/dev/null && return 1
+    return 0
+}
+
+# Конфиг не наш — правит его владелец. Печатаем ровно то, что нужно дописать.
+_warp_upstream_manual_hint() {
+    local _addr; _addr="$(_warp_socks_reachable_host):$(_warp_socks_port)"
+    if _warp_owns_engine_config; then
+        log_info "В этом режиме MTProxyL правит конфиг сам — руками ничего не нужно"
+        echo -e "  ${DIM}Ниже — то же самое, если хотите свериться.${NC}"
+    fi
+    local _cfg; _cfg=$(_engine_config_path 2>/dev/null)
+    echo ""
+    log_info "Туннель поднят, дальше — правка конфига движка (он не наш)"
+    echo -e "  ${BOLD}1.${NC} Допишите в ${_cfg:-конфиг цели}:"
+    echo ""
+    echo -e "  ${DIM}[[upstreams]]${NC}"
+    echo -e "  ${DIM}type = \"socks5\"${NC}"
+    echo -e "  ${DIM}address = \"${_addr}\"${NC}"
+    echo -e "  ${DIM}weight = 1${NC}"
+    echo -e "  ${DIM}enabled = true${NC}"
+    echo ""
+    echo -e "  ${BOLD}2.${NC} Выключите там же остальные маршруты без ${DIM}scopes${NC}"
+    echo -e "     ${DIM}(enabled = false): запрос без области движок раскладывает${NC}"
+    echo -e "     ${DIM}между всеми такими маршрутами по весу, и часть соединений${NC}"
+    echo -e "     ${DIM}пойдёт мимо туннеля. Если маршрутов там нет вовсе — ничего не нужно.${NC}"
+    echo ""
+    echo -e "  ${BOLD}3.${NC} Если mask-бэкенд у цели локальный (127.0.0.1), добавьте туда же:"
+    echo ""
+    echo -e "  ${DIM}[censorship]${NC}"
+    echo -e "  ${DIM}tls_fetch_scope = \"local\"${NC}"
+    echo ""
+    echo -e "  ${DIM}[[upstreams]]${NC}"
+    echo -e "  ${DIM}type = \"direct\"${NC}"
+    echo -e "  ${DIM}scopes = \"local\"${NC}"
+    echo -e "  ${DIM}weight = 1${NC}"
+    echo -e "  ${DIM}enabled = true${NC}"
+    echo ""
+    echo -e "  ${BOLD}4.${NC} Перезапустите цель: ${GREEN}mtproxyl restart${NC}"
+    echo ""
+    echo -e "  ${DIM}Конфиг цели можно открыть отсюда: mtproxyl target-config show${NC}"
+    _warp_target_is_bridge && \
+        echo -e "  ${DIM}Цель в docker bridge, поэтому адрес шлюза, а не 127.0.0.1.${NC}"
+    echo -e "  ${DIM}Проверить после перезапуска: mtproxyl warp status${NC}"
+    echo ""
+}
+
 _warp_apply_upstream() {
     local _others; _others=$(_warp_foreign_default_upstreams)
     if [ -n "$_others" ]; then
@@ -684,10 +764,6 @@ warp_enable() {
         *) log_error "Вариант: socks (A), iface (B) или upstream (C)"; return 1 ;;
     esac
 
-    if [ "$WARP_MODE" = "upstream" ]; then
-        _require_manager_mode || { log_info "В реаниматоре и tools-only берите вариант A или B"; return 1; }
-        _require_no_superexpert || return 1
-    fi
 
     # С включённым ME включать нечего.
     _WARP_CONFIG_DIRTY="false"
@@ -708,7 +784,11 @@ warp_enable() {
     WARP_ENDPOINT="$_ep"
     log_success "Эндпоинт: ${_ep}"
 
-    [ "$(_warp_mode)" = "upstream" ] || _warp_generate_nft
+    # Вариант C правил не ставит; исключение — закрытый снаружи порт socks,
+    # когда его пришлось открыть на все адреса ради цели в docker bridge.
+    if [ "$(_warp_mode)" != "upstream" ] || [ "$(_warp_socks_listen)" != "127.0.0.1" ]; then
+        _warp_generate_nft
+    fi
 
     if [ "$(_warp_mode)" != "iface" ]; then
         _warp_write_socks_runner
@@ -723,8 +803,13 @@ warp_enable() {
     fi
 
     if [ "$(_warp_mode)" = "upstream" ]; then
-        _warp_apply_upstream || return 1
-        _WARP_CONFIG_DIRTY="true"
+        [ "$(_warp_socks_listen)" = "127.0.0.1" ] || sh "$(_warp_nft_script)" 2>/dev/null || true
+        if _warp_owns_engine_config; then
+            _warp_apply_upstream || return 1
+            _WARP_CONFIG_DIRTY="true"
+        else
+            _warp_upstream_manual_hint
+        fi
     elif [ "$(_warp_mode)" = "socks" ]; then
         _warp_write_redsocks_conf
         systemctl enable --now "$WARP_REDSOCKS_UNIT" >/dev/null 2>&1
@@ -757,7 +842,14 @@ warp_enable() {
 warp_disable() {
     check_root
     local _was_upstream="false"
-    [ "$(_warp_mode)" = "upstream" ] && { _warp_drop_upstream; _was_upstream="true"; }
+    if [ "$(_warp_mode)" = "upstream" ]; then
+        if _warp_owns_engine_config; then
+            _warp_drop_upstream
+            _was_upstream="true"
+        else
+            log_info "Уберите запись socks5-upstream из конфига цели и перезапустите её"
+        fi
+    fi
     systemctl disable --now "$WARP_REDSOCKS_UNIT" >/dev/null 2>&1 || true
     systemctl disable --now "$WARP_SOCKS_UNIT" >/dev/null 2>&1 || true
     systemctl disable --now "$WARP_ROUTE_UNIT" >/dev/null 2>&1 || true
@@ -837,6 +929,12 @@ warp_route_ready() {
     [ "${WARP_ENABLED:-false}" = "true" ] || return 1
     if [ "$(_warp_mode)" = "upstream" ]; then
         _warp_unit_active "$WARP_SOCKS_UNIT" || return 1
+        if ! _warp_owns_engine_config; then
+            local _cfg; _cfg=$(_engine_config_path 2>/dev/null)
+            [ -r "$_cfg" ] || return 1
+            grep -q "$(_warp_socks_reachable_host):$(_warp_socks_port)" "$_cfg"
+            return $?
+        fi
         load_upstreams 2>/dev/null
         local _i
         for _i in "${!UPSTREAM_NAMES[@]}"; do
@@ -867,7 +965,7 @@ warp_status() {
 
     if [ "${WARP_ENABLED:-false}" != "true" ]; then
         log_info "Выключен — трафик до Telegram идёт напрямую"
-        echo -e "  ${DIM}Включить: mtproxyl warp on socks (вариант A) или mtproxyl warp on iface (вариант B)${NC}"
+        echo -e "  ${DIM}Включить: mtproxyl warp on socks (A), iface (B) или upstream (C)${NC}"
         echo ""
         return 0
     fi
@@ -893,8 +991,12 @@ warp_status() {
     if [ "$_mode" = "upstream" ]; then
         echo -e "  ${BOLD}Туннель:${NC}      $(_warp_unit_active "$WARP_SOCKS_UNIT" && echo -e "${GREEN}работает${NC}" || echo -e "${RED}лежит${NC}") ${DIM}(socks5 на 127.0.0.1:$(_warp_socks_port))${NC}"
         echo -e "  ${BOLD}Upstream:${NC}     $(warp_route_ready >/dev/null 2>&1 && echo -e "${GREEN}прописан в конфиге движка${NC}" || echo -e "${RED}нет${NC}")"
-        local _rogue; _rogue=$(_warp_foreign_default_upstreams)
-        [ -n "$_rogue" ] && log_warn "Маршруты без области мимо туннеля: ${_rogue}"
+        if _warp_owns_engine_config; then
+            local _rogue; _rogue=$(_warp_foreign_default_upstreams)
+            [ -n "$_rogue" ] && log_warn "Маршруты без области мимо туннеля: ${_rogue}"
+        else
+            echo -e "  ${DIM}Конфиг цели правится вручную: mtproxyl warp hint${NC}"
+        fi
         echo ""
         echo -e "  ${DIM}Связь с дата-центрами Telegram: mtproxyl dc${NC}"
         echo ""
@@ -1018,6 +1120,7 @@ handle_warp_command() {
         endpoint)    warp_set_endpoint "${2:-}" ;;
         proto)       warp_set_proto "${2:-}" ;;
         cidr)        check_root; warp_update_cidr ;;
+        hint)        _warp_upstream_manual_hint ;;
         *)
             echo -e "  ${BOLD}Маршрут до Telegram через WARP:${NC}"
             echo -e "    ${GREEN}warp status${NC} [--json]  Состояние, выход, службы"
@@ -1027,6 +1130,7 @@ handle_warp_command() {
             echo -e "    ${GREEN}warp location${NC} <A>     Страны (DE,NL) или узлы (FRA,AMS), clear — авто"
             echo -e "    ${GREEN}warp endpoint${NC} <A>     Закрепить адрес, clear — выбирать разведкой"
             echo -e "    ${GREEN}warp proto${NC} <P>        awg (по умолчанию), wg, masque"
+            echo -e "    ${GREEN}warp hint${NC}             Что дописать в конфиг чужой цели для варианта C"
             echo -e "    ${GREEN}warp reapply${NC}          Переприменить правила и список подсетей"
             echo -e "    ${GREEN}warp remove${NC}           Удалить warpscout и его службы"
             ;;
