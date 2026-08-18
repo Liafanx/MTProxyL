@@ -89,7 +89,8 @@ _tui_migrate_ssh() {
     echo -e "  ${DIM}метка, маскировка, Zapret2, Selfmask, панель и бот.${NC}"
     echo -e "  ${DIM}Вход только по ключу; A-запись домена переводите сами.${NC}"
     echo ""
-    echo -en "  ${BOLD}Новый сервер [root@1.2.3.4:22]:${NC} "
+    echo -e "  ${DIM}Например: root@203.0.113.10 или root@203.0.113.10:2222${NC}"
+    echo -en "  ${BOLD}Новый сервер:${NC} "
     local _t; read_line _t
     [ -n "$_t" ] || { log_info "Отменено"; return 0; }
     handle_migrate_command "$_t"

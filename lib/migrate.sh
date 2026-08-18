@@ -50,6 +50,59 @@ _mig_scp() {
     scp -q "${_o[@]}" "$_src" "${_MIG_USER}@${_h}:${_dst}"
 }
 
+# Ключ хоста сменился. После переустановки системы на том же адресе это норма,
+# но выглядит ровно как подмена сервера — решает человек, молча не чиним.
+_mig_host_key_changed() {
+    local -a _o=(); local _l
+    while IFS= read -r _l; do _o+=("$_l"); done < <(_mig_ssh_opts)
+    local _out
+    _out=$(ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "${_o[@]}" \
+        "${_MIG_USER}@${_MIG_HOST}" true 2>&1)
+    case "$_out" in
+        *"REMOTE HOST IDENTIFICATION HAS CHANGED"*|*"Host key verification failed"*) return 0 ;;
+    esac
+    return 1
+}
+
+# Запись в known_hosts у нестандартного порта хранится как [хост]:порт.
+_mig_forget_host_key() {
+    ssh-keygen -R "$_MIG_HOST" >/dev/null 2>&1 || true
+    [ "$_MIG_PORT" = "22" ] || ssh-keygen -R "[${_MIG_HOST}]:${_MIG_PORT}" >/dev/null 2>&1 || true
+}
+
+_mig_new_host_fingerprint() {
+    ssh-keyscan -p "$_MIG_PORT" -t ed25519 "$_MIG_HOST" 2>/dev/null \
+        | ssh-keygen -lf - 2>/dev/null | head -1
+}
+
+_mig_handle_host_key_change() {
+    _mig_host_key_changed || return 0
+
+    echo ""
+    log_warn "Ключ хоста ${_MIG_HOST} не совпадает с запомненным"
+    echo -e "  ${DIM}Так бывает, когда на том же адресе переустановили систему —${NC}"
+    echo -e "  ${DIM}новая система генерирует свои ключи. Точно так же выглядит и${NC}"
+    echo -e "  ${DIM}подмена сервера: если систему вы не переставляли — остановитесь.${NC}"
+    local _fp; _fp=$(_mig_new_host_fingerprint)
+    [ -n "$_fp" ] && echo -e "  ${DIM}Отпечаток, который отдаёт сервер сейчас:${NC} ${_fp}"
+    echo ""
+
+    if [ "${MTPROXYL_NONINTERACTIVE:-false}" = "true" ]; then
+        log_error "Забыть старый ключ и повторить: ssh-keygen -R ${_MIG_HOST}"
+        return 1
+    fi
+    echo -en "  ${BOLD}Систему на ${_MIG_HOST} переставляли — забыть старый ключ? [y/N]:${NC} "
+    local _yn; read_line _yn
+    [[ "$_yn" =~ ^[yY] ]] || {
+        log_error "Оставили как есть. Разберитесь с ключом хоста и повторите переезд"
+        log_info "Забыть вручную: ssh-keygen -R ${_MIG_HOST}"
+        return 1
+    }
+    _mig_forget_host_key
+    log_success "Старый ключ хоста забыт — новый запомним при подключении"
+    return 0
+}
+
 # Пароли мы не храним и не подставляем: связь только по ключу. Если ключа нет,
 # зовём ssh-copy-id — пароль вводит хозяин сервера и он никуда не попадает.
 _mig_ensure_auth() {
@@ -58,6 +111,14 @@ _mig_ensure_auth() {
 
     local -a _o=(); local _l
     while IFS= read -r _l; do _o+=("$_l"); done < <(_mig_ssh_opts)
+    if ssh -o BatchMode=yes "${_o[@]}" "${_MIG_USER}@${_MIG_HOST}" true 2>/dev/null; then
+        log_success "SSH: вход по ключу работает"
+        return 0
+    fi
+
+    # Сначала ключ хоста: пока он не сойдётся, не сработает ни вход по ключу,
+    # ни ssh-copy-id, и оба соврут, что дело в правах.
+    _mig_handle_host_key_change || return 1
     if ssh -o BatchMode=yes "${_o[@]}" "${_MIG_USER}@${_MIG_HOST}" true 2>/dev/null; then
         log_success "SSH: вход по ключу работает"
         return 0
@@ -83,7 +144,10 @@ _mig_ensure_auth() {
         log_info "Ключа нет — создаём"
         ssh-keygen -t ed25519 -N "" -f "${HOME}/.ssh/id_ed25519" >/dev/null || return 1
     }
-    ssh-copy-id -p "$_MIG_PORT" ${_MIG_KEY:+-i "${_MIG_KEY}.pub"} "${_MIG_USER}@${_MIG_HOST}" || return 1
+    # Свои опции отдаём и ssh-copy-id: со своими умолчаниями он спотыкался
+    # о ключ хоста там, где обычное подключение уже проходило.
+    ssh-copy-id -p "$_MIG_PORT" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 \
+        ${_MIG_KEY:+-i "${_MIG_KEY}.pub"} "${_MIG_USER}@${_MIG_HOST}" || return 1
     ssh -o BatchMode=yes "${_o[@]}" "${_MIG_USER}@${_MIG_HOST}" true 2>/dev/null || {
         log_error "Ключ скопирован, но вход всё равно не работает"
         return 1
