@@ -199,13 +199,29 @@ _mig_quote() {
 }
 
 # Лимиты, квоты, сроки и заметки аргументами не передашь — везём файл целиком.
+# Снимок делается до установки на той стороне: при переезде «на себя» файл к
+# этому моменту уже переписан установщиком, и везти было бы нечего.
+_MIG_SECRETS_SNAPSHOT=""
+
+_mig_snapshot_secrets() {
+    [ -f "$SECRETS_FILE" ] || return 0
+    _MIG_SECRETS_SNAPSHOT=$(mktemp /tmp/.mtproxyl-migrate-secrets.XXXXXX) || { _MIG_SECRETS_SNAPSHOT=""; return 0; }
+    chmod 600 "$_MIG_SECRETS_SNAPSHOT"
+    cat "$SECRETS_FILE" > "$_MIG_SECRETS_SNAPSHOT"
+}
+
 _mig_push_secrets() {
-    local _f="${CONFIG_DIR}/secrets.conf"
-    [ -f "$_f" ] || return 0
+    [ -n "$_MIG_SECRETS_SNAPSHOT" ] && [ -f "$_MIG_SECRETS_SNAPSHOT" ] || return 0
     log_info "Переносим лимиты и квоты пользователей..."
-    _mig_scp "$_f" "/tmp/mtproxyl-secrets.conf" || { log_warn "secrets.conf не доехал — лимиты останутся пустыми"; return 0; }
-    _mig_ssh "install -m 600 -o root -g root /tmp/mtproxyl-secrets.conf ${CONFIG_DIR}/secrets.conf && rm -f /tmp/mtproxyl-secrets.conf && mtproxyl restart >/dev/null 2>&1" \
-        || log_warn "Не удалось положить secrets.conf на новом сервере"
+    if ! _mig_scp "$_MIG_SECRETS_SNAPSHOT" "/tmp/mtproxyl-secrets.conf"; then
+        log_warn "secrets.conf не доехал — секреты на месте, лимиты и квоты пустые"
+        return 0
+    fi
+    if _mig_ssh "install -m 600 -o root -g root /tmp/mtproxyl-secrets.conf ${SECRETS_FILE} && rm -f /tmp/mtproxyl-secrets.conf && mtproxyl restart" </dev/null >/dev/null 2>&1; then
+        log_success "Лимиты, квоты, сроки и заметки перенесены"
+    else
+        log_warn "Не удалось положить secrets.conf на новом сервере"
+    fi
 }
 
 _mig_push_panel() {
@@ -218,7 +234,9 @@ _mig_push_panel() {
     _mig_scp "$_cfg" "/tmp/mtproxyl-panel-config.toml" || { log_warn "Конфиг панели не доехал"; return 0; }
     _mig_ssh "mkdir -p /etc/mtproxyl-panel && install -m 600 /tmp/mtproxyl-panel-config.toml ${_cfg} && rm -f /tmp/mtproxyl-panel-config.toml" \
         || { log_warn "Не удалось положить конфиг панели"; return 0; }
-    if _mig_ssh "mtproxyl panel install" </dev/null; then
+    # MTPROXYL_NONINTERACTIVE — чтобы установщик не начал сам выпускать
+    # сертификат: отвечать на той стороне некому, а A-запись ещё не переехала.
+    if _mig_ssh "MTPROXYL_NONINTERACTIVE=true mtproxyl panel install" </dev/null; then
         log_success "Панель установлена, пароль администратора прежний"
     else
         log_warn "Панель не установилась — поставьте на новом сервере: mtproxyl panel install"
@@ -255,6 +273,7 @@ migrate_run() {
     _mig_check_local || return 1
     _mig_ensure_auth || return 1
     _mig_check_remote || return 1
+    _mig_snapshot_secrets
 
     local -a _args=(); local _l
     while IFS= read -r _l; do _args+=("$_l"); done < <(_mig_build_args)
@@ -315,6 +334,7 @@ migrate_run() {
     if [ "$_MIG_WITH_PANEL" != "no" ]; then _mig_push_panel; fi
     if [ "$_MIG_WITH_TGBOT" != "no" ]; then _mig_push_tgbot; fi
 
+    [ -n "$_MIG_SECRETS_SNAPSHOT" ] && rm -f "$_MIG_SECRETS_SNAPSHOT"
     _mig_finish
 }
 
