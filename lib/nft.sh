@@ -2589,7 +2589,7 @@ zapret2_check_wscale() {
             echo ""
             echo -e "  ${BOLD}Необходимо изменить win ACK: ${_current_win_ack} → ${_win_ack_rec}${NC}"
             echo -en "  Применить? [Y/n]: "
-            local _yn; read_line _yn
+            local _yn; _fix_read _yn ""
             if [[ ! "$_yn" =~ ^[nN] ]]; then
                 ZAPRET2_WIN_ACK="$_win_ack_rec"
                 save_nft_settings
@@ -2598,11 +2598,11 @@ zapret2_check_wscale() {
             fi
         elif [ "$_win_ack_rec" != "$_current_win_ack" ] && [ "$_current_real" -lt 1400 ]; then
             echo ""
-            echo -e "  ${DIM}Текущее значение работает. Оптимизировать?${NC}"
+            echo -e "  ${DIM}Текущее значение работает, но окно можно приблизить к пределу.${NC}"
             echo -e "  ${DIM}win ACK ${_current_win_ack} (${_current_real} байт) → ${_win_ack_rec} (${_real_win} байт)${NC}"
-            echo -en "  Оптимизировать? [y/N]: "
-            local _yn; read_line _yn
-            if [[ "$_yn" =~ ^[yY] ]]; then
+            echo -en "  Оптимизировать? [Y/n]: "
+            local _yn; _fix_read _yn ""
+            if [[ ! "$_yn" =~ ^[nN] ]]; then
                 ZAPRET2_WIN_ACK="$_win_ack_rec"
                 save_nft_settings
                 log_success "win ACK установлен: ${_win_ack_rec}"

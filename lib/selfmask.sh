@@ -1208,7 +1208,9 @@ _selfmask_apply_mtproxyl_settings() {
     MASKING_PORT="${SELFMASK_NGINX_BACKEND_PORT}"
     UNKNOWN_SNI_ACTION="mask"
 
-    auto_set_fake_cert_len "${SELFMASK_DOMAIN}" 2>/dev/null || \
+    # Длину берём из своего же сертификата: по сети на 443 этого домена
+    # отвечает прокси, а не nginx Selfmask, и замер никогда не удавался.
+    auto_set_fake_cert_len "${SELFMASK_DOMAIN}" "$(_selfmask_cert_dir)/fullchain.pem" 2>/dev/null || \
         log_warn "Не удалось определить fake_cert_len для '${SELFMASK_DOMAIN}', оставляем ${FAKE_CERT_LEN:-2048}"
 
     save_settings
@@ -1370,6 +1372,40 @@ HOOKEOF
 # Панель со своим ACME на нашем домене обречена: порт 80 занят нашим nginx.
 # Отдаём ей копию сертификата certbot и снимаем acme_domain — заодно панель
 # перестаёт слушать 80 вовсе (см. internal/server/server.go).
+# Отдать панели текущий сертификат Selfmask. Нужно после переустановки панели
+# (в том числе при переезде): свой файл она делает самоподписанным, и в её
+# интерфейсе вместо домена снова появляется голый IP.
+selfmask_sync_panel_cert() {
+    local _panel_cfg="/etc/mtproxyl-panel/config.toml"
+    local _panel_certs="/var/lib/mtproxyl-panel/certs"
+    local _cert_dir; _cert_dir="$(_selfmask_cert_dir)"
+
+    [ -f "$_panel_cfg" ] || { log_info "Панель не установлена — отдавать сертификат некому"; return 0; }
+    id mtproxyl-panel &>/dev/null || { log_info "Пользователя панели нет"; return 0; }
+    if [ "${SELFMASK_ENABLED:-false}" != "true" ] || [ -z "${SELFMASK_DOMAIN:-}" ]; then
+        log_info "Selfmask выключен — своего сертификата у нас нет"
+        return 0
+    fi
+    [ -f "${_cert_dir}/fullchain.pem" ] || { log_error "Сертификат Selfmask не найден: ${_cert_dir}"; return 1; }
+
+    # Панель со своим или чужим сертификатом трогать нельзя — это выбор хозяина.
+    if ! grep -qF "${_panel_certs}/panel.crt" "$_panel_cfg" 2>/dev/null; then
+        log_warn "Панель настроена на свой сертификат — не трогаем"
+        log_info "Чтобы она взяла наш: пропишите cert_file = \"${_panel_certs}/panel.crt\""
+        return 0
+    fi
+
+    mkdir -p "$_panel_certs"
+    install -o mtproxyl-panel -g mtproxyl-panel -m 0644 \
+        "${_cert_dir}/fullchain.pem" "${_panel_certs}/panel.crt" 2>/dev/null || {
+        log_error "Не удалось скопировать сертификат для панели"; return 1; }
+    install -o mtproxyl-panel -g mtproxyl-panel -m 0600 \
+        "${_cert_dir}/privkey.pem" "${_panel_certs}/panel.key" 2>/dev/null || {
+        log_error "Не удалось скопировать ключ для панели"; return 1; }
+    systemctl restart mtproxyl-panel 2>/dev/null || true
+    log_success "Панель получила сертификат Selfmask — она снова на ${SELFMASK_DOMAIN}"
+}
+
 _selfmask_handoff_cert_to_panel() {
     local _panel_cfg="/etc/mtproxyl-panel/config.toml"
     local _panel_certs="/var/lib/mtproxyl-panel/certs"
@@ -1823,6 +1859,7 @@ handle_selfmask_command() {
         setup)   selfmask_setup ;;
         apply)   selfmask_apply ;;
         pq-install) selfmask_install_pq_tools ;;
+        panel-cert) check_root; selfmask_sync_panel_cert ;;
         set)     selfmask_set_param "$1" "$2" ;;
         settable) selfmask_settable_json ;;
         verify)  selfmask_verify ;;
@@ -1835,6 +1872,7 @@ handle_selfmask_command() {
             echo -e "    ${GREEN}selfmask apply${NC}    Применить по сохранённым параметрам"
             echo -e "    ${GREEN}selfmask set${NC} K V   Изменить параметр"
             echo -e "    ${GREEN}selfmask settable${NC} Список параметров (JSON)"
+            echo -e "    ${GREEN}selfmask panel-cert${NC} Отдать сертификат веб-панели"
             echo -e "    ${GREEN}selfmask verify${NC}   Проверка"
             echo -e "    ${GREEN}selfmask disable${NC}  Отключить"
             echo -e "    ${GREEN}selfmask menu${NC}     Открыть меню"

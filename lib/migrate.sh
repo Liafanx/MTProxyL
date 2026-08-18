@@ -150,6 +150,9 @@ _mig_ensure_auth() {
     # о ключ хоста там, где обычное подключение уже проходило.
     ssh-copy-id -p "$_MIG_PORT" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 \
         ${_MIG_KEY:+-i "${_MIG_KEY}.pub"} "${_MIG_USER}@${_MIG_HOST}" || return 1
+    # Пароль набирали вслепую и, возможно, не с первого раза: лишние Enter
+    # иначе ответят за пользователя на ближайшие вопросы.
+    drain_tty_input
     ssh -o BatchMode=yes "${_o[@]}" "${_MIG_USER}@${_MIG_HOST}" true 2>/dev/null || {
         log_error "Ключ скопирован, но вход всё равно не работает"
         return 1
@@ -165,8 +168,7 @@ _mig_check_local() {
     fi
     [ -f "$SETTINGS_FILE" ] || { log_error "Настройки не найдены — переносить нечего"; return 1; }
     if _superexpert_active 2>/dev/null; then
-        log_warn "Включён режим супер эксперта — ваш config.toml туда не поедет"
-        log_info "После переезда положите его на новом сервере и включите режим заново"
+        log_info "Включён режим супер эксперта — ваш config.toml поедет вместе с остальным"
     fi
     return 0
 }
@@ -362,6 +364,40 @@ _mig_quote() {
 # этому моменту уже переписан установщиком, и везти было бы нечего.
 _MIG_SECRETS_SNAPSHOT=""
 
+_MIG_SUPEREXPERT_SNAPSHOT=""
+
+_mig_snapshot_superexpert() {
+    _superexpert_active 2>/dev/null || return 0
+    [ -f "$SUPEREXPERT_FILE" ] || return 0
+    _MIG_SUPEREXPERT_SNAPSHOT=$(mktemp /tmp/.mtproxyl-migrate-superexpert.XXXXXX) || { _MIG_SUPEREXPERT_SNAPSHOT=""; return 0; }
+    chmod 600 "$_MIG_SUPEREXPERT_SNAPSHOT"
+    cat "$SUPEREXPERT_FILE" > "$_MIG_SUPEREXPERT_SNAPSHOT"
+}
+
+# Свой config.toml везём как есть и включаем режим на новой машине. Выключить
+# его там можно в любой момент: файл при этом не удаляется, а MTProxyL
+# возвращается к своему сгенерированному конфигу из перенесённых настроек.
+_mig_push_superexpert() {
+    [ -n "$_MIG_SUPEREXPERT_SNAPSHOT" ] && [ -f "$_MIG_SUPEREXPERT_SNAPSHOT" ] || return 0
+    log_info "Переносим конфиг режима супер эксперта..."
+    if ! _mig_scp "$_MIG_SUPEREXPERT_SNAPSHOT" "/tmp/mtproxyl-superexpert.toml"; then
+        log_warn "Конфиг супер эксперта не доехал — режим на новой машине не включаем"
+        return 0
+    fi
+    if ! _mig_ssh "install -m 600 -o root -g root /tmp/mtproxyl-superexpert.toml ${SUPEREXPERT_FILE} && rm -f /tmp/mtproxyl-superexpert.toml" \
+        </dev/null >/dev/null 2>&1; then
+        log_warn "Не удалось положить конфиг супер эксперта"
+        return 0
+    fi
+    if _mig_ssh "MTPROXYL_ASSUME_YES=1 mtproxyl superexpert on" </dev/null >/dev/null 2>&1; then
+        log_success "Режим супер эксперта включён, конфиг ваш"
+        log_warn "Проверьте в нём адреса: старый IP там останется как есть"
+        _mig_ssh "mtproxyl restart" </dev/null >/dev/null 2>&1 || true
+    else
+        log_warn "Конфиг положили, но режим не включился — на новом сервере: mtproxyl superexpert on"
+    fi
+}
+
 _mig_snapshot_secrets() {
     [ -f "$SECRETS_FILE" ] || return 0
     _MIG_SECRETS_SNAPSHOT=$(mktemp /tmp/.mtproxyl-migrate-secrets.XXXXXX) || { _MIG_SECRETS_SNAPSHOT=""; return 0; }
@@ -399,10 +435,16 @@ _mig_push_panel() {
         || { log_warn "Не удалось положить конфиг панели"; return 0; }
     # MTPROXYL_NONINTERACTIVE — чтобы установщик не начал сам выпускать
     # сертификат: отвечать на той стороне некому, а A-запись ещё не переехала.
-    if _mig_ssh "MTPROXYL_NONINTERACTIVE=true mtproxyl panel install" </dev/null; then
-        log_success "Панель установлена, пароль администратора прежний"
-    else
+    if ! _mig_ssh "MTPROXYL_NONINTERACTIVE=true mtproxyl panel install" </dev/null; then
         log_warn "Панель не установилась — поставьте на новом сервере: mtproxyl panel install"
+        return 0
+    fi
+    log_success "Панель установлена, пароль администратора прежний"
+    # Свой сертификат панель делает самоподписанным, и её адрес снова
+    # становится голым IP. Если Selfmask на новой машине уже поднялся —
+    # отдаём ей тот же сертификат, что и раньше.
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+        _mig_ssh "mtproxyl selfmask panel-cert" </dev/null 2>&1 | grep -aE '\[✓\]|\[!\]|\[i\]' || true
     fi
 }
 
@@ -416,7 +458,20 @@ _mig_push_tgbot() {
         log_warn "Токен или админов бота прочитать не вышло — поставьте бота на новом сервере вручную"
         return 0
     fi
-    if ! _mig_ssh "mtproxyl tgbot install --token $(_mig_quote "$_token") --admin $(_mig_quote "$_first")" </dev/null; then
+    # С сервера в РФ до Telegram часто нет доступа. Там бот не заработает, а
+    # установка растянется на минуты и будет выглядеть зависшей.
+    local _code
+    _code=$(_mig_ssh "curl -sS --max-time 15 -o /dev/null -w '%{http_code}' https://api.telegram.org 2>/dev/null || true" \
+        </dev/null 2>/dev/null | tr -cd '0-9' | tail -c 3)
+    if [ "${_code:-000}" = "000" ]; then
+        log_warn "С нового сервера не видно api.telegram.org — бота не ставим"
+        log_info "Там он всё равно не запустится: сначала дайте серверу доступ к Telegram"
+        log_info "Когда появится: mtproxyl tgbot install --token <токен> --admin <id>"
+        return 0
+    fi
+    # Сборка venv на слабой машине идёт минутами; ограничение спасает от
+    # переезда, который висит без конца.
+    if ! _mig_ssh "timeout 900 mtproxyl tgbot install --token $(_mig_quote "$_token") --admin $(_mig_quote "$_first")" </dev/null; then
         log_warn "Бот не установился — поставьте на новом сервере: mtproxyl tgbot install"
         return 0
     fi
@@ -438,6 +493,7 @@ _mig_ask_extras() {
     [ "${MTPROXYL_NONINTERACTIVE:-false}" = "true" ] && return 0
     [ "$_MIG_DRY" = "true" ] && return 0
 
+    drain_tty_input
     local _yn
     if panel_installed 2>/dev/null && [ "$_MIG_WITH_PANEL" = "ask" ]; then
         echo ""
@@ -469,6 +525,7 @@ migrate_run() {
     _mig_ensure_auth || return 1
     _mig_check_remote || return 1
     _mig_snapshot_secrets
+    _mig_snapshot_superexpert
 
     _mig_ask_extras
 
@@ -485,6 +542,8 @@ migrate_run() {
     echo -e "  ${BOLD}Секретов:${NC}   ${#SECRETS_LABELS[@]}"
     echo -e "  ${BOLD}Метка:${NC}      ${AD_TAG:-${DIM}нет${NC}}"
     echo -e "  ${BOLD}Selfmask:${NC}   $([ "${SELFMASK_ENABLED:-false}" = "true" ] && echo "${SELFMASK_DOMAIN} (${SELFMASK_CERT_MODE:-letsencrypt})" || echo "${DIM}выключен${NC}")"
+    _superexpert_active 2>/dev/null && \
+        echo -e "  ${BOLD}Супер эксперт:${NC} свой config.toml едет вместе с остальным"
     echo -e "  ${BOLD}Панель:${NC}     $(if ! panel_installed 2>/dev/null; then echo "${DIM}не установлена${NC}"; elif [ "$_MIG_WITH_PANEL" = "no" ]; then echo "${DIM}пропускаем${NC}"; else echo "переносим"; fi)"
     echo -e "  ${BOLD}Бот:${NC}        $(if ! tgbot_installed 2>/dev/null; then echo "${DIM}не установлен${NC}"; elif [ "$_MIG_WITH_TGBOT" = "no" ]; then echo "${DIM}пропускаем${NC}"; else echo "переносим"; fi)"
     echo ""
@@ -543,11 +602,13 @@ migrate_run() {
     fi
 
     _mig_push_secrets
+    _mig_push_superexpert
 
     if [ "$_MIG_WITH_PANEL" != "no" ]; then _mig_push_panel; fi
     if [ "$_MIG_WITH_TGBOT" != "no" ]; then _mig_push_tgbot; fi
 
     [ -n "$_MIG_SECRETS_SNAPSHOT" ] && rm -f "$_MIG_SECRETS_SNAPSHOT"
+    [ -n "$_MIG_SUPEREXPERT_SNAPSHOT" ] && rm -f "$_MIG_SUPEREXPERT_SNAPSHOT"
     _mig_finish
 }
 

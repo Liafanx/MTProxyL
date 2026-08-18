@@ -65,6 +65,9 @@ run_installer() {
     fi
     log_success "Зависимости в порядке"
 
+    # Подкачка до docker: без неё установка на маленькой машине упирается в OOM.
+    offer_swap_if_low_ram
+
     # Docker
     install_docker || exit 1
     wait_for_docker || exit 1
@@ -334,18 +337,6 @@ offer_tgbot_install() {
 }
 
 # ── Общий блок фиксов (NFT/Zapret2/MEKO) — manager и reanimator ──
-# Ответ на вопрос мастера. При установке аргументами читать некому — берём
-# заранее заданный ответ и печатаем его, чтобы лог выглядел как диалог.
-_fix_read() {
-    local _var="$1" _preset="${2-}"
-    if [ "${MTPROXYL_NONINTERACTIVE:-false}" = "true" ]; then
-        printf -v "$_var" '%s' "$_preset"
-        echo "${_preset:-<по умолчанию>}"
-        return 0
-    fi
-    read_line "$_var"
-}
-
 run_fix_arsenal_wizard() {
     # Zapret2 MTProto fix
     echo ""

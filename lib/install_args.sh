@@ -256,6 +256,9 @@ run_installer_args() {
     echo ""
 
     _install_args_deps || return 1
+    # Подкачка до docker: на машине с гигабайтом памяти сборка и запуск иначе
+    # упираются в OOM, и установка выглядит зависшей.
+    offer_swap_if_low_ram
     install_docker || return 1
     wait_for_docker || return 1
 

@@ -534,6 +534,10 @@ cli_main() {
             handle_panel_command "$@"
             ;;
 
+        swap)
+            handle_swap_command "$@"
+            ;;
+
         migrate)
             # Переезд копирует свою же установку — нужны и настройки, и секреты.
             check_root; load_settings; load_secrets; load_detect_settings
