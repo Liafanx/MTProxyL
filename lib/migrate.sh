@@ -166,11 +166,18 @@ _mig_build_args() {
         _a+=(--zapret2 yes)
     else
         _a+=(--zapret2 no)
-        case "${NFT_MODE:-}" in
-            smart)   _a+=(--syn-limiter meko) ;;
-            classic) _a+=(--syn-limiter classic) ;;
-            *)       _a+=(--syn-limiter off) ;;
-        esac
+        # NFT_MODE осмыслен только при включённом лимитере: по умолчанию там
+        # «classic», и без этой проверки переезд ставил бы лимитер тем, у кого
+        # его не было.
+        if [ "${NFT_ENABLED:-false}" != "true" ]; then
+            _a+=(--syn-limiter off)
+        else
+            case "${NFT_MODE:-}" in
+                smart)   _a+=(--syn-limiter meko) ;;
+                classic) _a+=(--syn-limiter classic) ;;
+                *)       _a+=(--syn-limiter off) ;;
+            esac
+        fi
         case "${NFT_OTHER_ACTION:-}" in
             reject) _a+=(--limiter-action reject) ;;
             drop)   _a+=(--limiter-action drop) ;;
@@ -246,26 +253,27 @@ _mig_push_panel() {
 _mig_push_tgbot() {
     tgbot_installed 2>/dev/null || return 0
     log_info "Переносим телеграм-бота..."
-    local _token _admins
+    local _token _first
     _token=$(jq -r '.token // empty' "$TGBOT_CONFIG" 2>/dev/null)
-    _admins=$(jq -r '(.admins // []) | join(",")' "$TGBOT_CONFIG" 2>/dev/null)
-    if [ -z "$_token" ] || [ -z "$_admins" ]; then
+    _first=$(jq -r '(.admins // []) | .[0] // empty' "$TGBOT_CONFIG" 2>/dev/null)
+    if [ -z "$_token" ] || [ -z "$_first" ]; then
         log_warn "Токен или админов бота прочитать не вышло — поставьте бота на новом сервере вручную"
         return 0
     fi
-    local _first="${_admins%%,*}"
-    if _mig_ssh "mtproxyl tgbot install --token $(_mig_quote "$_token") --admin $(_mig_quote "$_first")" </dev/null; then
-        # Остальных админов добавляем по одному: у install только первый.
-        local _a
-        for _a in ${_admins//,/ }; do
-            [ "$_a" = "$_first" ] && continue
-            _mig_ssh "mtproxyl tgbot admin-add $(_mig_quote "$_a")" </dev/null >/dev/null 2>&1 || true
-        done
-        log_success "Бот установлен, токен и админы прежние"
-        log_warn "Два бота на одном токене не уживутся — старого остановите"
-    else
+    if ! _mig_ssh "mtproxyl tgbot install --token $(_mig_quote "$_token") --admin $(_mig_quote "$_first")" </dev/null; then
         log_warn "Бот не установился — поставьте на новом сервере: mtproxyl tgbot install"
+        return 0
     fi
+    # Остальные админы, уведомления и интервалы живут в том же файле — везём
+    # его целиком, добавлять по одному нечего.
+    if _mig_scp "$TGBOT_CONFIG" "/tmp/mtproxyl-tgbot-config.json" && \
+       _mig_ssh "install -m 600 -o ${TGBOT_USER} -g ${TGBOT_USER} /tmp/mtproxyl-tgbot-config.json ${TGBOT_CONFIG} && rm -f /tmp/mtproxyl-tgbot-config.json && systemctl restart ${TGBOT_SERVICE}" </dev/null >/dev/null 2>&1; then
+        log_success "Бот установлен: токен, админы и уведомления прежние"
+    else
+        log_success "Бот установлен с прежним токеном"
+        log_warn "Настройки уведомлений не доехали — проверьте меню бота на новом сервере"
+    fi
+    log_warn "Два бота на одном токене не уживутся — старого остановите"
 }
 
 migrate_run() {
