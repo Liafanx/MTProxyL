@@ -183,6 +183,15 @@ _install_args_validate() {
             *) log_error "--sni-policy: mask, drop, accept или reject_handshake"; _ok=false ;;
         esac
     fi
+    # docker меряет лимит ядрами этой машины: 4 на одноядерной он не примет и
+    # уронит контейнер уже после установки. Ловим здесь, а не там.
+    if [ -n "$_IA_CPUS" ]; then
+        local _cores; _cores=$(nproc 2>/dev/null || echo 1)
+        if ! awk -v v="$_IA_CPUS" -v c="$_cores" 'BEGIN{exit !(v+0>0 && v+0<=c+0)}' 2>/dev/null; then
+            log_error "--cpus ${_IA_CPUS}: на этой машине ядер ${_cores}, docker примет от 0.01 до ${_cores}"
+            _ok=false
+        fi
+    fi
 
     local _s _label _key
     for _s in "${_IA_SECRETS[@]}"; do
@@ -282,8 +291,11 @@ run_installer_args() {
     esac
     [ -n "$_IA_SNI_POLICY" ] && UNKNOWN_SNI_ACTION="$_IA_SNI_POLICY"
     [ -n "$_IA_AD_TAG" ] && AD_TAG="$_IA_AD_TAG"
-    [ -n "$_IA_CPUS" ] && PROXY_CPUS="$_IA_CPUS"
-    [ -n "$_IA_MEMORY" ] && PROXY_MEMORY="$_IA_MEMORY"
+    # Лимиты берутся только из аргументов: при установке поверх старой (--force)
+    # донашивать чужие значения — верный способ получить контейнер, который
+    # docker на этой машине запустить откажется.
+    PROXY_CPUS="$_IA_CPUS"
+    PROXY_MEMORY="$_IA_MEMORY"
 
     _install_args_secrets
 
