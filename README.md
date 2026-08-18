@@ -143,7 +143,7 @@ mtproxyl install --help          # полный список аргументо�
 | `--ad-tag <32 hex>` | рекламная метка |
 | `--mask on\|off` | маскировка трафика |
 | `--sni-policy mask\|drop\|accept\|reject_handshake` | что делать с чужим SNI |
-| `--cpus N`, `--memory 512m` | лимиты контейнера |
+| `--cpus N`, `--memory 512m` | лимиты контейнера; без них — без ограничений. `--cpus` не может превышать число ядер машины, иначе docker не запустит контейнер |
 | `--zapret2 yes\|no` | Zapret2 MTProto fix, по умолчанию да |
 | `--syn-limiter meko\|classic\|off` | SYN-лимитер, если Zapret2 не ставится |
 | `--limiter-action icmp\|reject\|drop` | действие для не-iOS в режиме meko |
