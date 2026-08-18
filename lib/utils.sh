@@ -182,16 +182,28 @@ parse_human_bytes() {
     esac
 }
 
+# Адрес сервера для ссылок и правил. IPv4 в приоритете: tg://-ссылка с голым
+# IPv6 не открывается, а по цепочке через `||` сервис, ответивший пустотой с
+# кодом 0, обрывал перебор — и адрес оставался пустым или приходил IPv6.
 get_public_ip() {
     if [ -n "${CUSTOM_IP}" ]; then
         echo "${CUSTOM_IP}"; return 0
     fi
-    local ip=""
-    ip=$(curl -s --max-time 3 https://api.ipify.org 2>/dev/null) ||
-    ip=$(curl -s --max-time 3 https://ifconfig.me 2>/dev/null) ||
-    ip=$(curl -s --max-time 3 https://icanhazip.com 2>/dev/null) ||
-    ip=""
-    echo "$ip"
+    local _svc _ip=""
+    for _svc in https://api.ipify.org https://ifconfig.me https://icanhazip.com; do
+        _ip=$(curl -4 -s --max-time 3 "$_svc" 2>/dev/null | tr -d '[:space:]')
+        validate_ip_literal "$_ip" && { echo "$_ip"; return 0; }
+    done
+    # Наружу не достучались — берём свой глобальный IPv4, мимо docker-мостов.
+    _ip=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 \
+        | grep -vE '^(172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.)' | head -1)
+    validate_ip_literal "$_ip" && { echo "$_ip"; return 0; }
+    # IPv4 нет вовсе — отдаём IPv6: ссылка неудобна, но адрес верный.
+    for _svc in https://api64.ipify.org https://ifconfig.me; do
+        _ip=$(curl -s --max-time 3 "$_svc" 2>/dev/null | tr -d '[:space:]')
+        [ -n "$_ip" ] && { echo "$_ip"; return 0; }
+    done
+    echo ""
 }
 
 # ── Публичные host/port для tg://-ссылок ───────────────────────
