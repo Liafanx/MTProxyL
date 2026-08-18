@@ -412,7 +412,12 @@ migrate_run() {
 
 _mig_finish() {
     local _new_ip
-    _new_ip=$(_mig_ssh "curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print \$1}'" </dev/null 2>/dev/null | tr -d '\r\n')
+    # Тот же порядок, что и у самого MTProxyL: IPv4 наружу, потом свой
+    # глобальный адрес мимо docker-мостов. hostname -I отдавал первым что попало.
+    _new_ip=$(_mig_ssh "curl -4 -fsS --max-time 10 https://api.ipify.org 2>/dev/null \
+        || ip -4 -o addr show scope global 2>/dev/null | awk '{print \$4}' | cut -d/ -f1 \
+           | grep -vE '^(172\\.(1[6-9]|2[0-9]|3[01])\\.|169\\.254\\.)' | head -1" \
+        </dev/null 2>/dev/null | tr -d '\r\n')
     [ -n "$_new_ip" ] || _new_ip="$_MIG_HOST"
 
     echo ""
