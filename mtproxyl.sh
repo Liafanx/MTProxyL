@@ -20,7 +20,7 @@ export LC_NUMERIC=C
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="1.5.1"
+VERSION="1.5.2"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -67,7 +67,7 @@ fi
 
 # Загрузка библиотек
 LIB_DIR="${INSTALL_DIR}/lib"
-for _lib in colors utils settings detect secrets config docker engine traffic availability dc warp geoblock geoip upstream backup nft selfmask panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_tgbot tui_warp tui_detect expert_catalog expert_mode settings_cli install; do
+for _lib in colors utils settings detect secrets config docker engine traffic availability dc warp geoblock geoip upstream backup nft selfmask panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_tgbot tui_warp tui_detect expert_catalog expert_mode settings_cli install install_args migrate; do
     if [ -f "${LIB_DIR}/${_lib}.sh" ]; then
         # shellcheck source=/dev/null
         source "${LIB_DIR}/${_lib}.sh"
@@ -534,8 +534,20 @@ cli_main() {
             handle_panel_command "$@"
             ;;
 
+        migrate)
+            # Переезд копирует свою же установку — нужны и настройки, и секреты.
+            check_root; load_settings; load_secrets; load_detect_settings
+            handle_migrate_command "$@"
+            ;;
+
         install)
-            run_installer
+            # Без аргументов — прежний мастер; с аргументами ставим молча.
+            if [ $# -gt 0 ]; then
+                load_settings 2>/dev/null || true
+                run_installer_args "$@"
+            else
+                run_installer
+            fi
             ;;
 
         menu)

@@ -578,7 +578,7 @@ self_update() {
     if [ -z "$_lib_list" ]; then
         log_warn "Не удалось извлечь список библиотек из нового скрипта"
         log_info "Используем резервный список"
-        _lib_list="colors utils settings secrets config docker engine traffic availability dc warp tui_warp tgbot tui_tgbot geoblock geoip upstream backup nft selfmask panel detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode settings_cli install"
+        _lib_list="colors utils settings secrets config docker engine traffic availability dc warp tui_warp tgbot tui_tgbot geoblock geoip upstream backup nft selfmask panel detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode settings_cli install install_args migrate"
     fi
 
     local _total=0 _ok=0 _failed=0 _skipped=0
@@ -858,8 +858,10 @@ show_cli_help() {
     echo -e "  ${BOLD}Доступность:${NC}    availability status|check|details|target|on|off|token"
     echo -e "  ${BOLD}Telegram/WARP:${NC}  warp status|on socks|on iface|off|scan|location|endpoint|proto"
     echo -e "  ${BOLD}Бэкапы:${NC}         backup [--encrypt] | restore <файл>"
+    echo -e "  ${BOLD}Переезд:${NC}        migrate <[user@]хост[:порт]> [--dry-run] ${DIM}(только менеджер)${NC}"
     echo -e "  ${BOLD}Reanimator:${NC}     mode [manager|reanimator] | detect | edit-config\n                  install-telemt | uninstall-telemt"
-    echo -e "  ${BOLD}Система:${NC}        install | menu | update [--no-restart] | update-check | uninstall\n                  version | help"
+    echo -e "  ${BOLD}Система:${NC}        install [аргументы] | menu | update [--no-restart] | update-check\n                  uninstall | version | help"
+    echo -e "  ${DIM}Установка без вопросов: mtproxyl install --help${NC}"
     echo ""
 }
 

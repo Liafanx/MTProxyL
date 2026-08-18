@@ -42,6 +42,7 @@ tui_addons_menu() {
         echo -e "  ${CYAN}[6]${NC}  Веб-панель MTProxyL-Panel  ${DIM}$(panel_status_line)${NC}"
         echo -e "  ${CYAN}[7]${NC}  $([ "$_geoip_installed" = "true" ] && echo "Переустановить" || echo "Установить") базу GeoIP"
         echo -e "  ${CYAN}[8]${NC}  Доступность из России  ${DIM}$(availability_status_line)${NC}"
+        echo -e "  ${CYAN}[9]${NC}  Дата-центры Telegram  ${DIM}(доходим ли мы до DC)${NC}"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -96,6 +97,34 @@ tui_addons_menu() {
                 ;;
             8)
                 tui_availability_menu
+                ;;
+            9)
+                tui_dc_menu
+                ;;
+            0|"") return ;;
+        esac
+    done
+}
+
+# ── Дата-центры Telegram ──────────────────────────────────────
+# Та же таблица, что у команды `mtproxyl dc`: из меню её не хватало.
+# «Доступность из России» отвечает на обратный вопрос — доходят ли до нас.
+tui_dc_menu() {
+    while true; do
+        clear_screen
+        dc_show || true
+        echo -e "  ${CYAN}[1]${NC}  Проверить заново"
+        echo -e "  ${CYAN}[2]${NC}  Порог покрытия ${DIM}($(_dc_threshold)%, 0 — без предупреждений)${NC}"
+        echo ""
+        echo -e "  ${DIM}[0]${NC}  Назад"
+        echo ""
+        local choice; choice=$(read_choice "выбор" "0")
+        case "$choice" in
+            1) ;;
+            2)
+                echo -en "  ${BOLD}Порог в процентах${NC} ${DIM}(0..100, 0 или off — без предупреждений)${NC}: "
+                local _v; read_line _v
+                [ -n "$_v" ] && { dc_set_threshold "$_v"; press_any_key; }
                 ;;
             0|"") return ;;
         esac

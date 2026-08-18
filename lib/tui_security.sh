@@ -7,11 +7,12 @@ tui_security_menu() {
         draw_header "БЕЗОПАСНОСТЬ И МАРШРУТИЗАЦИЯ"
         echo ""
         local sni_label
-        if [ "$UNKNOWN_SNI_ACTION" = "drop" ]; then
-            sni_label="${RED}Drop${NC} (строгий)"
-        else
-            sni_label="${GREEN}Mask${NC} (перенаправление)"
-        fi
+        case "$UNKNOWN_SNI_ACTION" in
+            drop)             sni_label="${RED}Drop${NC} (строгий)" ;;
+            accept)           sni_label="${YELLOW}Accept${NC} (пропускать)" ;;
+            reject_handshake) sni_label="${YELLOW}Reject handshake${NC} (TLS-отказ)" ;;
+            *)                sni_label="${GREEN}Mask${NC} (перенаправление)" ;;
+        esac
         echo -e "  ${DIM}[1]${NC} Гео-блокировка"
         # Работает в любом режиме: правила в ядре, а не в конфиге движка.
         echo -e "  ${DIM}[2]${NC} Telegram через WARP: $(_tui_warp_state_label)"
@@ -44,14 +45,27 @@ tui_security_menu() {
                 _require_manager_mode || { press_any_key; continue; }
                 _require_no_superexpert || { press_any_key; continue; }
                 echo ""
-                echo -e "  ${BOLD}SNI-политика${NC}"
-                echo -e "  ${DIM}[1]${NC} ${GREEN}Mask${NC}  — перенаправлять на mask backend"
-                echo -e "  ${DIM}[2]${NC} ${RED}Drop${NC}  — закрывать соединение"
+                echo -e "  ${BOLD}Что делать с чужим SNI${NC}"
+                echo -e "  ${DIM}[1]${NC} ${GREEN}Mask${NC}              — перенаправлять на mask backend"
+                echo -e "  ${DIM}[2]${NC} ${RED}Drop${NC}              — молча закрывать соединение"
+                echo -e "  ${DIM}[3]${NC} ${YELLOW}Accept${NC}            — пропускать как есть, разбирается backend"
+                echo -e "  ${DIM}[4]${NC} ${YELLOW}Reject handshake${NC}  — отвечать TLS-алертом, как обычный сервер"
+                echo -e "  ${DIM}Accept и reject_handshake нужны, когда за mask backend стоит${NC}"
+                echo -e "  ${DIM}свой веб-сервер или Nginx Proxy Manager с чужими доменами.${NC}"
                 local sc; sc=$(read_choice "выбор" "0")
+                local _new=""
                 case "$sc" in
-                    1) UNKNOWN_SNI_ACTION="mask"; save_settings; reload_proxy_config 2>/dev/null || true; log_success "SNI: Mask" ;;
-                    2) UNKNOWN_SNI_ACTION="drop"; save_settings; reload_proxy_config 2>/dev/null || true; log_success "SNI: Drop" ;;
-                esac; press_any_key ;;
+                    1) _new="mask" ;;
+                    2) _new="drop" ;;
+                    3) _new="accept" ;;
+                    4) _new="reject_handshake" ;;
+                esac
+                if [ -n "$_new" ]; then
+                    UNKNOWN_SNI_ACTION="$_new"; save_settings
+                    reload_proxy_config 2>/dev/null || true
+                    log_success "SNI-политика: ${UNKNOWN_SNI_ACTION}"
+                fi
+                press_any_key ;;
             0|"") return ;;
         esac
     done

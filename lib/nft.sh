@@ -2324,12 +2324,16 @@ zapret2_autoconfigure_scope() {
         fi
     fi
 
+    # Исключаем ровно те туннели, что есть сейчас, а не шаблоны на всё сразу:
+    # маска awg* задевает и интерфейсы, которые появятся позже без ведома хозяина.
     if [ -z "${ZAPRET2_EXCLUDE_IFACES:-}" ]; then
         local _tun; _tun=$(zapret2_tunnel_ifaces_present)
+        _tun="${_tun% }"
         if [ -n "$_tun" ]; then
-            ZAPRET2_EXCLUDE_IFACES="$ZAPRET2_DEFAULT_EXCLUDE_IFACES"
-            log_warn "Найдены туннели: ${_tun%% }"
-            log_info "Их трафик пустим мимо очереди (${ZAPRET2_EXCLUDE_IFACES}) — иначе десинк сломает VPN"
+            ZAPRET2_EXCLUDE_IFACES="$_tun"
+            log_warn "Найдены туннели: ${_tun}"
+            log_info "Их трафик пустим мимо очереди — иначе десинк сломает VPN"
+            log_info "Список правится: меню NFT → Zapret2 → интерфейсы мимо очереди"
         fi
     fi
     save_nft_settings

@@ -1596,13 +1596,21 @@ selfmask_setup() {
         echo -e "    Шаблон:   $(_selfmask_template_label "${SELFMASK_SITE_SOURCE:-stub}")"
         echo -e "    Backend:  127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}"
         echo ""
-        echo -en "  ${BOLD}Переустановить / обновить настройку? [y/N]:${NC} "
-        local _re
-        read_line _re
-        [[ "$_re" =~ ^[yY] ]] || return 0
+        if [ "${MTPROXYL_NONINTERACTIVE:-false}" != "true" ]; then
+            echo -en "  ${BOLD}Переустановить / обновить настройку? [y/N]:${NC} "
+            local _re
+            read_line _re
+            [[ "$_re" =~ ^[yY] ]] || return 0
+        fi
     fi
 
-    _selfmask_collect_params       || return 1
+    # При установке аргументами параметры уже разложены по переменным.
+    if [ "${MTPROXYL_NONINTERACTIVE:-false}" = "true" ]; then
+        [ -n "${SELFMASK_DOMAIN:-}" ] || { log_error "Selfmask: домен не задан"; return 1; }
+        log_info "Домен ${SELFMASK_DOMAIN}, сертификат ${SELFMASK_CERT_MODE}, шаблон $(_selfmask_template_label "${SELFMASK_SITE_SOURCE:-stub}")"
+    else
+        _selfmask_collect_params   || return 1
+    fi
     _selfmask_install_deps         || return 1
     _selfmask_install_pq_nginx     || return 1
     _selfmask_deploy_site          || return 1

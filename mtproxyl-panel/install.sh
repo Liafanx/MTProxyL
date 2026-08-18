@@ -574,6 +574,7 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability token *
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp status --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp on socks
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp on iface
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp on upstream
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp off
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp scan
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp reapply

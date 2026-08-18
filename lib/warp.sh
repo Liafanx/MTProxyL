@@ -173,7 +173,7 @@ _warp_ensure_account() {
 
 # «DE,NL» — страны (две буквы), «FRA,AMS» — узлы Cloudflare (три).
 _warp_location_args() {
-    local _raw="${WARP_LOCATION:-}"
+    local _raw="${1-${WARP_LOCATION:-}}"
     [ -n "$_raw" ] || return 0
     local _tok _countries="" _nodes=""
     local _old="$IFS"; IFS=','
@@ -1058,9 +1058,10 @@ warp_set_location() {
     case "$_v" in
         clear|auto|"") WARP_LOCATION=""; save_settings; log_success "Локация: лучший по задержке"; return 0 ;;
     esac
+    # Разбираем то, что ввели, а не то, что уже сохранено.
     local _norm=""
     local _line
-    while IFS= read -r _line; do _norm+="${_norm:+ }${_line}"; done < <(_warp_location_args)
+    while IFS= read -r _line; do _norm+="${_norm:+ }${_line}"; done < <(_warp_location_args "$_v")
     [ -n "$_norm" ] || { log_error "Локация: коды стран (DE,NL) или узлов Cloudflare (FRA,AMS)"; return 1; }
     WARP_LOCATION="$_v"
     save_settings

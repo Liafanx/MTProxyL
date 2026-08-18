@@ -334,6 +334,18 @@ offer_tgbot_install() {
 }
 
 # ── Общий блок фиксов (NFT/Zapret2/MEKO) — manager и reanimator ──
+# Ответ на вопрос мастера. При установке аргументами читать некому — берём
+# заранее заданный ответ и печатаем его, чтобы лог выглядел как диалог.
+_fix_read() {
+    local _var="$1" _preset="${2-}"
+    if [ "${MTPROXYL_NONINTERACTIVE:-false}" = "true" ]; then
+        printf -v "$_var" '%s' "$_preset"
+        echo "${_preset:-<по умолчанию>}"
+        return 0
+    fi
+    read_line "$_var"
+}
+
 run_fix_arsenal_wizard() {
     # Zapret2 MTProto fix
     echo ""
@@ -347,7 +359,7 @@ run_fix_arsenal_wizard() {
     echo -e "  ${DIM}При установке заменяет SYN limiter.${NC}"
     echo ""
     echo -en "  ${BOLD}Установить Zapret2 MTProto fix? [Y/n]:${NC} "
-    local _yn_zapret2; read_line _yn_zapret2
+    local _yn_zapret2; _fix_read _yn_zapret2 "${_FIX_ANS_ZAPRET2-}"
     local _zapret2_installed="false"
     if [[ ! "$_yn_zapret2" =~ ^[nN] ]]; then
         load_nft_settings 2>/dev/null || true
@@ -407,7 +419,7 @@ run_fix_arsenal_wizard() {
     echo -e "    ${DIM}[0]${NC} Не применять"
     echo ""
     echo -en "  ${BOLD}Применить NFT limiter? [1 по умолчанию]:${NC} "
-    local _nft_choice; read_line _nft_choice
+    local _nft_choice; _fix_read _nft_choice "${_FIX_ANS_LIMITER-}"
 
     # Отказ — это отказ: без флага ниже применялись правила режима по
     # умолчанию, и каскад через реаниматор ломался.
@@ -428,7 +440,8 @@ run_fix_arsenal_wizard() {
         echo -e "    ${CYAN}[2]${NC} reject (tcp reset)  ${DIM}(оригинал By-MEKO)${NC}"
         echo -e "    ${YELLOW}[3]${NC} drop  ${DIM}(не рекомендуется)${NC}"
         echo ""
-        local _action_choice; read -erp "  Выбор [1]: " _action_choice
+        echo -en "  Выбор [1]: "
+        local _action_choice; _fix_read _action_choice "${_FIX_ANS_OTHER_ACTION-}"
         case "${_action_choice:-1}" in
             2) NFT_OTHER_ACTION="reject" ;;
             3) NFT_OTHER_ACTION="drop" ;;
@@ -477,7 +490,7 @@ run_fix_arsenal_wizard() {
     echo -e "  ${DIM}Текущие значения ядра будут сохранены для отката.${NC}"
     echo ""
     echo -en "  ${BOLD}Применить оптимизацию By-MEKO? [Y/n]:${NC} "
-    local _meko_choice; read_line _meko_choice
+    local _meko_choice; _fix_read _meko_choice "${_FIX_ANS_MEKO-}"
     if [[ ! "$_meko_choice" =~ ^[nN] ]]; then
         load_nft_settings 2>/dev/null || true
         meko_opt_apply || log_warn "Не удалось применить оптимизацию By-MEKO"
