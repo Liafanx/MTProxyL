@@ -233,11 +233,17 @@ _install_args_validate() {
     [ "$_ok" = "true" ]
 }
 
-# Порт, который просили, либо первый свободный от него же.
+# Порт: что просили; иначе прежний из настроек (его держит наш же контейнер и
+# освободит при пересоздании); иначе первый свободный, но не занятый нами же.
 _install_args_pick_port() {
-    local _want="$1" _fallback="$2"
+    local _want="$1" _current="$2" _from="$3" _taken="$4"
     if [ -n "$_want" ]; then echo "$_want"; return 0; fi
-    find_free_metrics_port "$_fallback" 9199 2>/dev/null || echo "$_fallback"
+    if [ -n "$_current" ] && [ "$_current" != "$_taken" ]; then echo "$_current"; return 0; fi
+    local _p; _p=$(find_free_metrics_port "$_from" 9199 2>/dev/null) || _p="$_from"
+    if [ -n "$_taken" ] && [ "$_p" = "$_taken" ]; then
+        _p=$(find_free_metrics_port "$((_taken + 1))" 9199 2>/dev/null) || _p="$((_taken + 1))"
+    fi
+    echo "${_p:-$_from}"
 }
 
 run_installer_args() {
@@ -278,8 +284,14 @@ run_installer_args() {
         log_warn "Порт ${PROXY_PORT} уже занят — контейнер может не подняться"
         show_port_listener "$PROXY_PORT" 2>/dev/null || true
     fi
-    PROXY_METRICS_PORT=$(_install_args_pick_port "$_IA_METRICS_PORT" "${PROXY_METRICS_PORT:-9090}")
-    PROXY_API_PORT=$(_install_args_pick_port "$_IA_API_PORT" "${PROXY_API_PORT:-9091}")
+    # Прежние порты берём в расчёт только у существующей установки: на чистой
+    # машине это просто значения по умолчанию, и держаться за них незачем.
+    local _prev_metrics="" _prev_api=""
+    if [ -f "$SETTINGS_FILE" ]; then
+        _prev_metrics="${PROXY_METRICS_PORT:-}"; _prev_api="${PROXY_API_PORT:-}"
+    fi
+    PROXY_METRICS_PORT=$(_install_args_pick_port "$_IA_METRICS_PORT" "$_prev_metrics" 9090 "$PROXY_PORT")
+    PROXY_API_PORT=$(_install_args_pick_port "$_IA_API_PORT" "$_prev_api" 9091 "$PROXY_METRICS_PORT")
     if [ "$PROXY_API_PORT" = "$PROXY_METRICS_PORT" ] || [ "$PROXY_API_PORT" = "$PROXY_PORT" ]; then
         log_error "Порт API (${PROXY_API_PORT}) совпадает с портом прокси или метрик"
         return 1

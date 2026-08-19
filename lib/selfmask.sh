@@ -953,17 +953,34 @@ EOF
     local -a _mail_args=(--register-unsafely-without-email)
     [ -n "${SELFMASK_CERT_EMAIL:-}" ] && _mail_args=(-m "$SELFMASK_CERT_EMAIL")
 
-    if certbot certonly --webroot -w "$SELFMASK_SITE_DIR" \
+    # Вывод certbot нужен целиком: без него причина отказа терялась, и любая
+    # неудача выглядела как проблема с DNS или портом 80.
+    local _cb_out
+    if _cb_out=$(certbot certonly --webroot -w "$SELFMASK_SITE_DIR" \
         -d "$SELFMASK_DOMAIN" \
         --non-interactive --agree-tos \
         "${_mail_args[@]}" \
-        --cert-name "$SELFMASK_DOMAIN" &>/dev/null; then
+        --cert-name "$SELFMASK_DOMAIN" 2>&1); then
         log_success "Сертификат получен"
-    else
-        log_error "Не удалось получить сертификат"
-        log_info "Проверьте DNS домена и доступность порта 80 извне"
-        return 1
+        return 0
     fi
+
+    log_error "Не удалось получить сертификат"
+    case "$_cb_out" in
+        *rateLimited*|*"too many certificates"*)
+            log_error "Let's Encrypt упёрся в лимит по этому домену — с DNS и портом 80 всё в порядке"
+            local _retry
+            _retry=$(printf '%s\n' "$_cb_out" | grep -oE 'retry after [0-9-]+ [0-9:]+ UTC' | head -1)
+            [ -n "$_retry" ] && log_info "Повторить можно после: ${_retry#retry after }"
+            log_info "Лимит — 5 сертификатов на один и тот же набор доменов за 168 часов"
+            log_info "Пока он не истёк: mtproxyl selfmask setup с самоподписанным сертификатом"
+            ;;
+        *)
+            log_info "Проверьте DNS домена и доступность порта 80 извне"
+            printf '%s\n' "$_cb_out" | tail -5 | sed 's/^/    /'
+            ;;
+    esac
+    return 1
 }
 
 _selfmask_configure_nginx() {
