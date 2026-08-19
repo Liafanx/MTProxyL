@@ -316,7 +316,7 @@ _mig_build_args() {
     done
 
     load_nft_settings 2>/dev/null || true
-    if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
+    if zapret2_in_effect; then
         _a+=(--zapret2 yes)
     else
         _a+=(--zapret2 no)

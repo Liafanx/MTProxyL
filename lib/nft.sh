@@ -1349,6 +1349,15 @@ zapret2_has_residue() {
     return 1
 }
 
+# Zapret2 в деле — это установлен И работает. Остановленный zapret2 рядом с
+# включённым лимитером — обычная замена одного другим, и переносить надо
+# лимитер, а не zapret2.
+zapret2_in_effect() {
+    [ "${ZAPRET2_APPLIED:-false}" = "true" ] || return 1
+    systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null 2>&1 && return 0
+    [ "${ZAPRET2_SERVICE_ENABLED:-false}" = "true" ]
+}
+
 zapret2_status() {
     if [ "${ZAPRET2_APPLIED:-false}" != "true" ]; then
         echo -e "${DIM}не установлен${NC}"
