@@ -571,6 +571,11 @@ draw_status() {
 }
 
 press_any_key() {
+    # Клавишу нажимать некому — при установке аргументами и из панели просто
+    # идём дальше, иначе процесс встаёт до таймаута.
+    if [ "${MTPROXYL_NONINTERACTIVE:-false}" = "true" ] || [ "${MTPROXYL_ASSUME_YES:-}" = "1" ] || [ ! -t 0 ]; then
+        return 0
+    fi
     echo ""
     echo -en "  ${DIM}Нажмите любую клавишу...${NC}"
     read -rsn1
@@ -584,9 +589,9 @@ press_any_key() {
 # заранее заданный ответ и печатаем его, чтобы лог выглядел как диалог.
 _fix_read() {
     local _var="$1" _preset="${2-}"
-    if [ "${MTPROXYL_NONINTERACTIVE:-false}" = "true" ]; then
+    if [ "${MTPROXYL_NONINTERACTIVE:-false}" = "true" ] && [ -n "$_preset" ]; then
         printf -v "$_var" '%s' "$_preset"
-        echo "${_preset:-<по умолчанию>}"
+        echo "$_preset"
         return 0
     fi
     read_line "$_var"
@@ -601,6 +606,13 @@ read_line() {
         printf -v "$__var" '%s' "yes"
         return 0
     fi
+    # Установка аргументами: отвечать некому, а ждать ввода — значит зависнуть.
+    # Пустой ответ равен нажатому Enter, то есть значению по умолчанию.
+    if [ "${MTPROXYL_NONINTERACTIVE:-false}" = "true" ]; then
+        printf -v "$__var" '%s' ""
+        echo "<по умолчанию>"
+        return 0
+    fi
     IFS= read -er __ans || true
     [ -z "$__ans" ] && [ -t 0 ] && echo ""
     printf -v "$__var" '%s' "$__ans"
@@ -611,7 +623,7 @@ read_choice() {
     local default="${2:-}"
     # В неинтерактивном режиме берём значение по умолчанию — оно везде
     # выставлено на рекомендуемый вариант.
-    if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ]; then
+    if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ] || [ "${MTPROXYL_NONINTERACTIVE:-false}" = "true" ]; then
         echo "$default"
         return 0
     fi
