@@ -50,10 +50,10 @@ _argsgen_defaults() {
     _AG_VAL[mask]="$([ "${MASKING_ENABLED:-true}" = "false" ] && echo "выкл" || echo "вкл"), ${UNKNOWN_SNI_ACTION:-mask}"
 
     _AG_ON[fixes]="yes"
-    if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
+    if zapret2_in_effect; then
         _AG_VAL[fixes]="zapret2"
     elif [ "${NFT_ENABLED:-false}" = "true" ]; then
-        _AG_VAL[fixes]="лимитер ${NFT_MODE:-classic}"
+        _AG_VAL[fixes]="SYN-лимитер ${NFT_MODE:-classic}"
     else
         _AG_VAL[fixes]="ничего"
     fi
@@ -99,7 +99,7 @@ _argsgen_build() {
     fi
 
     if [ "${_AG_ON[fixes]}" = "yes" ]; then
-        if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
+        if zapret2_in_effect; then
             _a+=(--zapret2 yes)
         else
             _a+=(--zapret2 no)
