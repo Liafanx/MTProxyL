@@ -134,7 +134,7 @@ for lib in colors utils settings secrets config docker engine traffic availabili
             echo "" >&2
             echo "  В ветке '${BRANCH}' файла lib/${lib}.sh нет." >&2
             echo "  Похоже, install.sh взят из другой ветки. Укажите ту же ветку явно:" >&2
-            echo "    sudo bash \$0 --branch <ветка> [-- <аргументы установки>]" >&2
+            echo "    sudo bash $0 --branch <ветка> [-- <аргументы установки>]" >&2
         else
             echo "  Установка прервана. Повторите попытку через 10–30 секунд." >&2
         fi
