@@ -387,6 +387,14 @@ handle_superexpert_command() {
 generate_telemt_config() {
     mkdir -p "$CONFIG_DIR"; chmod 700 "$CONFIG_DIR"
 
+    # Маршруты собираются из массивов в памяти. Команда, которая не звала
+    # load_upstreams (установка аргументами, sni-policy, selfmask), молча
+    # вычистила бы из конфига все upstream'ы: после загрузки их всегда хотя бы
+    # один — подразумеваемый direct.
+    if [ "${#UPSTREAM_NAMES[@]}" -eq 0 ]; then
+        load_upstreams 2>/dev/null || true
+    fi
+
     # Режим супер эксперта: конфиг ведёт пользователь, мы только кладём его
     # файл на место config.toml. Ни настройки, ни секреты, ни override не
     # применяются — это и есть смысл режима.

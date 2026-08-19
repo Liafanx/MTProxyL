@@ -86,6 +86,17 @@ _dc_summary() {
     '
 }
 
+# Просят ли ME в конфиге движка. У telemt он включён по умолчанию, поэтому
+# «нет строки» — это тоже «включён». Нужно, чтобы отличить выключенный ME от
+# ещё не поднятого: первые полминуты после старта API отдаёт
+# middle_proxy_enabled=false, пока инициализируется пул писателей.
+_dc_me_configured() {
+    local _cfg; _cfg=$(_engine_config_path 2>/dev/null)
+    [ -n "$_cfg" ] && [ -f "$_cfg" ] || return 0
+    grep -qE '^[[:space:]]*use_middle_proxy[[:space:]]*=[[:space:]]*false' "$_cfg" && return 1
+    return 0
+}
+
 # Машинный отчёт. Всегда печатает документ: «нет данных» — тоже ответ.
 dc_status_json() {
     local _json _rc
@@ -104,9 +115,18 @@ dc_status_json() {
     if [ -z "$_rows" ]; then
         # Middle proxy выключен — движок ходит в Telegram напрямую, и писателей
         # к DC у него просто нет. Это не поломка, а другой режим работы.
-        printf '{"available":false,"middle_proxy":%s,"threshold":%d,"verdict":"off",' "$_me" "$_thr"
-        printf '"error":"%s","dcs":[]}\n' \
-            "$([ "$_me" = "true" ] && echo "движок не отдал ни одного DC" || echo "middle proxy выключен — писателей к DC нет")"
+        local _verdict_off="off" _err
+        if [ "$_me" = "true" ]; then
+            _err="движок не отдал ни одного DC"
+        elif _dc_me_configured; then
+            # В конфиге ME включён, а движок ещё не поднял пул — это старт.
+            _verdict_off="warmup"
+            _err="middle proxy ещё поднимается — пул писателей инициализируется"
+        else
+            _err="middle proxy выключен — писателей к DC нет"
+        fi
+        printf '{"available":false,"middle_proxy":%s,"threshold":%d,"verdict":"%s",' "$_me" "$_thr" "$_verdict_off"
+        printf '"error":"%s","dcs":[]}\n' "$_err"
         return 0
     fi
 
@@ -153,8 +173,13 @@ dc_show() {
     local _rows; _rows=$(_dc_rows "$_json")
     if [ -z "$_rows" ]; then
         if grep -qE '"middle_proxy_enabled"[[:space:]]*:[[:space:]]*false' <<< "$_json"; then
-            log_info "Middle proxy выключен — движок ходит в Telegram напрямую"
-            echo -e "  ${DIM}Писателей к DC в этом режиме нет, проверять нечего.${NC}"
+            if _dc_me_configured; then
+                log_info "Middle proxy ещё поднимается — пул писателей инициализируется"
+                echo -e "  ${DIM}После запуска движка это занимает до минуты. Повторите проверку.${NC}"
+            else
+                log_info "Middle proxy выключен — движок ходит в Telegram напрямую"
+                echo -e "  ${DIM}Писателей к DC в этом режиме нет, проверять нечего.${NC}"
+            fi
         else
             log_warn "Движок не отдал ни одного DC"
         fi
