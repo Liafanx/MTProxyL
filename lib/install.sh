@@ -40,6 +40,8 @@ run_installer() {
     fi
     MTPROXYL_MODE="manager"
 
+    installer_pick_engine_backend
+
     draw_header "УСТАНОВКА"
     echo ""
 
@@ -65,12 +67,16 @@ run_installer() {
     fi
     log_success "Зависимости в порядке"
 
-    # Подкачка до docker: без неё установка на маленькой машине упирается в OOM.
+    # Подкачка до движка: без неё установка на маленькой машине упирается в OOM.
     offer_swap_if_low_ram
 
-    # Docker
-    install_docker || exit 1
-    wait_for_docker || exit 1
+    if [ "${ENGINE_BACKEND:-docker}" = "binary" ]; then
+        binengine_fetch "${ENGINE_VERSION:-latest}" || exit 1
+        ENGINE_VERSION=$(binengine_version)
+    else
+        install_docker || exit 1
+        wait_for_docker || exit 1
+    fi
 
     echo ""
     draw_header "НАСТРОЙКА ПРОКСИ"
@@ -263,37 +269,26 @@ run_installer() {
 
     run_fix_arsenal_wizard
 
+    # Автозапуск ставим до движка: снятие прежнего юнита дёргает
+    # «mtproxyl stop», и делать это после старта — значит остановить только что
+    # запущенный движок.
+    install_autostart_unit
+    engine_clear_other_carrier
+
     # Запуск
     echo ""
     draw_header "ЗАПУСК ПРОКСИ"
     echo ""
     run_proxy_container || {
         log_error "Не удалось запустить прокси"
-        echo -e "  ${DIM}Проверьте: docker logs mtproxyl${NC}"
+        if [ "${ENGINE_BACKEND:-docker}" = "binary" ]; then
+            echo -e "  ${DIM}Проверьте: journalctl -u ${ENGINE_SERVICE} -n 50${NC}"
+        else
+            echo -e "  ${DIM}Проверьте: docker logs mtproxyl${NC}"
+        fi
     }
 
-    # Автозапуск
     if command -v systemctl &>/dev/null; then
-        cat > /etc/systemd/system/mtproxyl.service << 'SVC_EOF'
-[Unit]
-Description=MTProxyL Telegram Proxy
-After=network-online.target docker.service
-Wants=network-online.target
-Requires=docker.service
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/usr/local/bin/mtproxyl start
-ExecStop=/usr/local/bin/mtproxyl stop
-
-[Install]
-WantedBy=multi-user.target
-SVC_EOF
-        systemctl daemon-reload
-        systemctl enable mtproxyl.service 2>/dev/null
-        log_success "Автозапуск включён"
-
         install_ip_history_timer
         log_success "Снимки истории IP: каждые $(_ip_history_interval_minutes) мин"
     fi
@@ -312,6 +307,90 @@ SVC_EOF
     read -rn 256 -t 0.05 _ 2>/dev/null || true
     load_settings; load_secrets
     show_main_menu
+}
+
+# Чем менеджер будет держать движок. Docker привычнее, бинарник экономит
+# время установки и память: сам Docker тогда не ставится вовсе.
+installer_pick_engine_backend() {
+    ENGINE_VERSION=""
+    # Бинарник живёт службой systemd. Без него (Alpine с OpenRC) выбирать не из
+    # чего — молча предложить и упасть на запуске было бы хуже.
+    if ! command -v systemctl &>/dev/null; then
+        ENGINE_BACKEND="docker"
+        log_info "Движок: Docker-образ (бинарнику нужен systemd, а его здесь нет)"
+        return 0
+    fi
+    echo ""
+    draw_header "ДВИЖОК"
+    echo ""
+    echo -e "  ${BOLD}[1]${NC} Docker-образ ${DIM}— контейнер mtproxyl (по умолчанию)${NC}"
+    echo -e "  ${BOLD}[2]${NC} Бинарник MTProxyL-Telemt ${DIM}— служба systemd, без Docker${NC}"
+    echo ""
+    echo -e "  ${DIM}Бинарник ставится за секунды и не тянет за собой Docker: на${NC}"
+    echo -e "  ${DIM}свежей машине это минус несколько минут и сотни мегабайт.${NC}"
+    echo -e "  ${DIM}Управление, конфиг, панель и бот работают одинаково —${NC}"
+    echo -e "  ${DIM}меняется только то, чем запущен движок. Сменить можно позже:${NC}"
+    echo -e "  ${DIM}главное меню → Движок.${NC}"
+    echo ""
+    local _ec; _ec=$(_fix_read_choice "выбор" "1" "${_FIX_ANS_ENGINE-}")
+    if [ "$_ec" = "2" ]; then
+        ENGINE_BACKEND="binary"
+        log_success "Движок: бинарник MTProxyL-Telemt"
+    else
+        ENGINE_BACKEND="docker"
+        log_success "Движок: Docker-образ"
+    fi
+
+    [ "$ENGINE_BACKEND" = "binary" ] || return 0
+
+    echo ""
+    echo -e "  ${BOLD}Версия telemt${NC}"
+    echo -en "  ${DIM}Взять последнюю? [Y/n]:${NC} "
+    local _lv; _fix_read _lv "${_FIX_ANS_ENGINE_VERSION-}"
+    if [[ "$_lv" =~ ^[nN] ]]; then
+        _telemt_pick_version
+        ENGINE_VERSION="${_TELEMT_PICKED_VERSION}"
+    fi
+    [ -n "$ENGINE_VERSION" ] && log_info "Версия движка: ${ENGINE_VERSION}" \
+        || log_info "Версия движка: последняя"
+}
+
+# Автозапуск. У бинарного движка он свой — mtproxyl-telemt.service стартует
+# сам; оболочка mtproxyl.service тогда лишняя и вдобавок опасна: её ExecStart
+# дёргал бы systemctl restart на юнит, который systemd поднимает в этот же миг.
+install_autostart_unit() {
+    command -v systemctl &>/dev/null || return 0
+
+    if [ "${ENGINE_BACKEND:-docker}" = "binary" ]; then
+        if [ -f /etc/systemd/system/mtproxyl.service ]; then
+            systemctl disable --now mtproxyl.service &>/dev/null || true
+            rm -f /etc/systemd/system/mtproxyl.service
+        fi
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable "$ENGINE_SERVICE" &>/dev/null || true
+        log_success "Автозапуск: ${ENGINE_SERVICE}.service"
+        return 0
+    fi
+
+    cat > /etc/systemd/system/mtproxyl.service << 'SVC_EOF'
+[Unit]
+Description=MTProxyL Telegram Proxy
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/mtproxyl start
+ExecStop=/usr/local/bin/mtproxyl stop
+
+[Install]
+WantedBy=multi-user.target
+SVC_EOF
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable mtproxyl.service 2>/dev/null
+    log_success "Автозапуск включён"
 }
 
 # Телеграм-бот при первой установке. По умолчанию «нет»: для него нужен
@@ -497,7 +576,7 @@ show_install_summary() {
     echo -e "  ${BOLD}Сервер:${NC} ${server_ip:-?}"
     echo -e "  ${BOLD}Порт:${NC}   ${PROXY_PORT}"
     echo -e "  ${BOLD}Домен:${NC} ${PROXY_DOMAIN}"
-    echo -e "  ${BOLD}Движок:${NC} telemt (Rust)"
+    echo -e "  ${BOLD}Движок:${NC} telemt (Rust), $(engine_backend_title)"
     echo ""
 
     if [ -n "$server_ip" ]; then
@@ -533,7 +612,11 @@ uninstall() {
     echo ""
     echo -e "  ${YELLOW}Будет удалено:${NC}"
     if [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
-        echo -e "  ${DIM}- Контейнер и Docker-образ MTProxyL${NC}"
+        if engine_is_binary; then
+            echo -e "  ${DIM}- Движок MTProxyL-Telemt: бинарник и служба${NC}"
+        else
+            echo -e "  ${DIM}- Контейнер и Docker-образ MTProxyL${NC}"
+        fi
     fi
     echo -e "  ${DIM}- Конфигурация и секреты${NC}"
     echo -e "  ${DIM}- Systemd-сервисы MTProxyL${NC}"
@@ -549,6 +632,7 @@ uninstall() {
     echo ""
     echo -e "  ${GREEN}НЕ будет удалено:${NC}"
     echo -e "  ${DIM}- Docker (сам движок)${NC}"
+    echo -e "  ${DIM}- Оригинальный telemt, если он стоит отдельно${NC}"
     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
         echo -e "  ${DIM}- Обнаруженная цель (контейнер/процесс/конфиг telemt) — она не наша${NC}"
     fi
@@ -642,7 +726,10 @@ uninstall() {
     log_info "Удаление гео-блокировки..."
     geoblock_remove_all >/dev/null 2>&1 || true
 
-    if [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
+    if [ "${MTPROXYL_MODE:-manager}" = "manager" ] && engine_is_binary; then
+        log_info "Удаление движка MTProxyL-Telemt..."
+        binengine_purge
+    elif [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
         # Docker контейнер
         log_info "Удаление контейнера..."
         docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true

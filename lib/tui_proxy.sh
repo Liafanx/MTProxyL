@@ -12,7 +12,11 @@ tui_proxy_menu() {
         [ "${MTPROXYL_MODE:-manager}" = "manager" ] && _manager="true"
         if [ "$_manager" = "true" ]; then
             local _cst; _cst=$(own_container_state 2>/dev/null)
-            echo -e "  Контейнер: ${_cst}"
+            if engine_is_binary; then
+                echo -e "  Движок:    ${_cst} ${DIM}(${ENGINE_SERVICE}.service)${NC}"
+            else
+                echo -e "  Контейнер: ${_cst}"
+            fi
             if [ "$_cst" != "running" ] && [ "$_cst" != "absent" ]; then
                 local _prob; _prob=$(own_container_problem 2>/dev/null)
                 [ -n "$_prob" ] && echo -e "  ${RED}Проблема:${NC} ${_prob}"
@@ -24,7 +28,13 @@ tui_proxy_menu() {
         echo -e "  ${DIM}[3]${NC} Перезапустить"
         echo -e "  ${DIM}[4]${NC} Логи"
         echo -e "  ${DIM}[5]${NC} Диагностика"
-        [ "$_manager" = "true" ] && echo -e "  ${DIM}[6]${NC} Удалить контейнер ${DIM}(образ и конфиг сохранятся)${NC}"
+        if [ "$_manager" = "true" ]; then
+            if engine_is_binary; then
+                echo -e "  ${DIM}[6]${NC} Снять службу движка ${DIM}(бинарник и конфиг сохранятся)${NC}"
+            else
+                echo -e "  ${DIM}[6]${NC} Удалить контейнер ${DIM}(образ и конфиг сохранятся)${NC}"
+            fi
+        fi
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
@@ -39,9 +49,13 @@ tui_proxy_menu() {
                     press_any_key; continue
                 fi
                 echo ""
-                echo -e "  ${DIM}Контейнер будет остановлен и удалён. Образ, конфиг и секреты${NC}"
+                if engine_is_binary; then
+                    echo -e "  ${DIM}Служба будет остановлена и снята. Бинарник, конфиг и секреты${NC}"
+                else
+                    echo -e "  ${DIM}Контейнер будет остановлен и удалён. Образ, конфиг и секреты${NC}"
+                fi
                 echo -e "  ${DIM}сохранятся — прокси поднимется заново пунктом [1].${NC}"
-                echo -en "  ${BOLD}Удалить контейнер? [y/N]:${NC} "
+                echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
                 local _yn; read_line _yn
                 [[ "$_yn" =~ ^[yY] ]] && { remove_own_container || true; } || log_info "Отменено"
                 press_any_key ;;

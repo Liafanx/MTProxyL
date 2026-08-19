@@ -342,17 +342,58 @@ panel_uninstall() {
         log_warn "Установщик недоступен, удаляем вручную"
         systemctl disable --now "$PANEL_SERVICE" &>/dev/null || true
         rm -f "$PANEL_BINARY" "/etc/systemd/system/${PANEL_SERVICE}.service"
-        rm -f "/etc/sudoers.d/${PANEL_SERVICE}" "/etc/sudoers.d/${PANEL_SERVICE}-mtproxyl"
+        rm -f "/etc/sudoers.d/${PANEL_SERVICE}" "/etc/sudoers.d/${PANEL_SERVICE}-mtproxyl" \
+              "/etc/sudoers.d/${PANEL_SERVICE}-engine"
         systemctl daemon-reload &>/dev/null || true
     fi
     log_success "Панель удалена"
+}
+
+# Права панели на журнал бинарного движка. Установщик панели прописывает их
+# сам, но движок можно сменить и после установки панели — тогда логи движка
+# в ней замолкают, пока не появится это правило.
+panel_grant_engine_journal() {
+    panel_installed 2>/dev/null || return 0
+    command -v systemctl &>/dev/null || return 0
+    local _user; _user=$(_panel_system_user)
+    [ -n "$_user" ] || return 0
+    local _sc _jc
+    _sc=$(command -v systemctl); _jc=$(command -v journalctl)
+    [ -n "$_sc" ] && [ -n "$_jc" ] || return 0
+
+    local _f="/etc/sudoers.d/${PANEL_SERVICE}-engine"
+    local _tmp; _tmp=$(_mktemp) || return 1
+    cat > "$_tmp" <<SUDO_EOF
+# MTProxyL: журнал движка ${ENGINE_SERVICE}.service для веб-панели
+${_user} ALL=(root) NOPASSWD: ${_sc} restart ${ENGINE_SERVICE}
+${_user} ALL=(root) NOPASSWD: ${_sc} start ${ENGINE_SERVICE}
+${_user} ALL=(root) NOPASSWD: ${_jc} -u ${ENGINE_SERVICE} -n * --no-pager -o short-iso
+${_user} ALL=(root) NOPASSWD: ${_jc} -u ${ENGINE_SERVICE} -n * --since * --no-pager -o short-iso
+${_user} ALL=(root) NOPASSWD: ${_jc} -u ${ENGINE_SERVICE} -f --no-pager -o short-iso
+${_user} ALL=(root) NOPASSWD: ${_jc} -u ${ENGINE_SERVICE} -f --since * --no-pager -o short-iso
+SUDO_EOF
+    if command -v visudo &>/dev/null && ! visudo -cf "$_tmp" >/dev/null 2>&1; then
+        log_warn "Правило sudo для журнала движка отклонено visudo — пропускаем"
+        rm -f "$_tmp"; return 1
+    fi
+    install -m 0440 "$_tmp" "$_f" && rm -f "$_tmp" \
+        && log_success "Панель получила доступ к журналу ${ENGINE_SERVICE}"
+}
+
+# Пользователь, от которого работает панель: в юните он и записан.
+_panel_system_user() {
+    local _u
+    _u=$(systemctl show "$PANEL_SERVICE" -p User --value 2>/dev/null)
+    [ -n "$_u" ] && { echo "$_u"; return 0; }
+    grep -oE '^[[:space:]]*User=.*' "/etc/systemd/system/${PANEL_SERVICE}.service" 2>/dev/null \
+        | head -1 | cut -d= -f2- | tr -d ' '
 }
 
 # Отключить интеграцию с MTProxyL, не удаляя панель. Нужно при удалении
 # MTProxyL: иначе остаётся sudoers на путь, которого больше нет, и он
 # сработает, если путь появится снова.
 _panel_detach_mtproxyl() {
-    rm -f "/etc/sudoers.d/${PANEL_SERVICE}-mtproxyl"
+    rm -f "/etc/sudoers.d/${PANEL_SERVICE}-mtproxyl" "/etc/sudoers.d/${PANEL_SERVICE}-engine"
 
     local _cfg="${PANEL_CONFIG_DIR}/config.toml"
     if [ -f "$_cfg" ]; then

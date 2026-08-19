@@ -69,6 +69,7 @@ restore_backup() {
     log_success "Восстановлено из: $(basename "$backup_file")"
     echo ""
     echo -e "  ${BOLD}Восстановленные параметры:${NC}"
+    [ "${MTPROXYL_MODE:-manager}" = "manager" ] && echo -e "    Движок: $(engine_backend_title)"
     echo -e "    Порт:   ${PROXY_PORT}"
     echo -e "    Домен:  ${PROXY_DOMAIN}"
     echo -e "    Секретов: ${#SECRETS_LABELS[@]}"

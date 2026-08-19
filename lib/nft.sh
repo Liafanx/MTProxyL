@@ -884,7 +884,7 @@ ios_fix_remove() {
 
 # ── iOS Fix v2 — MSS + redirect ──────────────────────────────
 _ios2_check_client_mss() {
-    local _cfg="${CONFIG_DIR}/config.toml"
+    local _cfg; _cfg=$(engine_config_path)
     if [ -f "$_cfg" ] && grep -qE '^client_mss[[:space:]]*=' "$_cfg" 2>/dev/null; then
         echo ""
         echo -e "  ${RED}${BOLD}⚠ ВНИМАНИЕ!${NC}"

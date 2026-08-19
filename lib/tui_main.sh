@@ -86,7 +86,7 @@ show_main_menu() {
             fi
             fi
         else
-            echo -e "  ${BOLD}Движок:${NC}      telemt v$(get_telemt_version)  ${BOLD}Статус:${NC} ${status_str}"
+            echo -e "  ${BOLD}Движок:${NC}      telemt v$(get_telemt_version)$(engine_is_binary && echo " ${DIM}(бинарник)${NC}")  ${BOLD}Статус:${NC} ${status_str}"
             # Показываем только когда режим включён — выключенный не упоминаем
             if _superexpert_active; then
                 echo -e "  ${YELLOW}${BOLD}Режим супер эксперта включён${NC} ${DIM}(конфиг: ${SUPEREXPERT_FILE})${NC}"
@@ -97,7 +97,7 @@ show_main_menu() {
             # падает в цикле) — показываем причину, а не просто «ОСТАНОВЛЕН».
             if [ "$_running" != "true" ]; then
                 local _prob; _prob=$(own_container_problem 2>/dev/null)
-                [ -n "$_prob" ] && echo -e "  ${RED}Контейнер:${NC}   ${_prob}"
+                [ -n "$_prob" ] && echo -e "  ${RED}Движок:${NC}      ${_prob}"
             fi
         fi
         if [ "$_reanimator" = "true" ] && [ "${TOOLS_ONLY:-false}" = "true" ]; then

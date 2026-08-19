@@ -8,6 +8,8 @@ _FIX_ANS_ZAPRET2=""
 _FIX_ANS_LIMITER=""
 _FIX_ANS_OTHER_ACTION=""
 _FIX_ANS_MEKO=""
+_FIX_ANS_ENGINE=""
+_FIX_ANS_ENGINE_VERSION=""
 
 # Пусто — «не задано»: такие параметры остаются на значениях по умолчанию.
 _IA_PORT=""; _IA_METRICS_PORT=""; _IA_API_PORT=""
@@ -18,6 +20,7 @@ _IA_SECRETS=()
 _IA_SELFMASK_DOMAIN=""; _IA_SELFMASK_CERT=""; _IA_SELFMASK_EMAIL=""
 _IA_SELFMASK_TEMPLATE=""; _IA_SELFMASK_BACKEND_PORT=""
 _IA_GEOIP=""
+_IA_ENGINE=""; _IA_ENGINE_VERSION=""
 _IA_FORCE="false"
 
 install_args_help() {
@@ -25,6 +28,12 @@ install_args_help() {
   Установка менеджера аргументами (без вопросов)
 
     mtproxyl install --mode manager [параметры]
+
+  Движок
+    --engine docker|binary     чем держать telemt: контейнер (по умолчанию)
+                               или бинарник MTProxyL-Telemt под systemd
+    --engine-version <тег>     версия telemt для бинарника (по умолчанию
+                               последняя), например 3.4.25
 
   Прокси
     --port N                   порт прокси (по умолчанию 443)
@@ -36,8 +45,8 @@ install_args_help() {
     --ad-tag <32 hex>          рекламная метка
     --mask on|off              маскировка трафика (по умолчанию on)
     --sni-policy <политика>    mask, drop, accept или reject_handshake
-    --cpus N                   лимит CPU контейнера
-    --memory 512m              лимит памяти контейнера
+    --cpus N                   лимит CPU контейнера (только --engine docker)
+    --memory 512m              лимит памяти контейнера (только --engine docker)
 
   Обход блокировок
     --zapret2 yes|no           Zapret2 MTProto fix (по умолчанию yes)
@@ -105,6 +114,13 @@ _install_args_parse() {
                     log_info "Реаниматор чинит чужую цель — её параметры берутся с сервера, а не из ключей"
                     return 1
                 fi ;;
+            --engine)
+                case "${_v,,}" in
+                    docker|контейнер) _IA_ENGINE="docker" ;;
+                    binary|bin|бинарник) _IA_ENGINE="binary" ;;
+                    *) log_error "--engine: docker или binary"; return 1 ;;
+                esac ;;
+            --engine-version) _IA_ENGINE_VERSION="$_v" ;;
             --port)          _IA_PORT="$_v" ;;
             --metrics-port)  _IA_METRICS_PORT="$_v" ;;
             --api-port)      _IA_API_PORT="$_v" ;;
@@ -194,6 +210,23 @@ _install_args_validate() {
             *) log_error "--sni-policy: mask, drop, accept или reject_handshake"; _ok=false ;;
         esac
     fi
+    if [ -n "$_IA_ENGINE_VERSION" ] && [ "$_IA_ENGINE" = "docker" ]; then
+        log_error "--engine-version имеет смысл только с --engine binary"
+        _ok=false
+    fi
+    if [ "$_IA_ENGINE" = "binary" ] && { [ -n "$_IA_CPUS" ] || [ -n "$_IA_MEMORY" ]; }; then
+        log_error "--cpus и --memory задают лимиты контейнера — с --engine binary их нет"
+        log_info "Ограничить бинарник можно через systemd: CPUQuota, MemoryMax"
+        _ok=false
+    fi
+    if [ "$_IA_ENGINE" = "binary" ] && ! command -v systemctl &>/dev/null; then
+        log_error "--engine binary: движок работает службой systemd, а systemd на этой машине нет"
+        _ok=false
+    fi
+    if [ "$_IA_ENGINE" = "binary" ] && ! binengine_arch >/dev/null 2>&1; then
+        log_error "--engine binary: под архитектуру $(uname -m) сборок telemt нет"
+        _ok=false
+    fi
     # docker меряет лимит ядрами этой машины: 4 на одноядерной он не примет и
     # уронит контейнер уже после установки. Ловим здесь, а не там.
     if [ -n "$_IA_CPUS" ]; then
@@ -273,15 +306,33 @@ run_installer_args() {
     echo ""
 
     _install_args_deps || return 1
-    # Подкачка до docker: на машине с гигабайтом памяти сборка и запуск иначе
+    # Подкачка до движка: на машине с гигабайтом памяти сборка и запуск иначе
     # упираются в OOM, и установка выглядит зависшей.
     offer_swap_if_low_ram
-    install_docker || return 1
-    wait_for_docker || return 1
+
+    # Без --engine на существующей установке остаёмся на том же движке:
+    # молча вернуть контейнер тому, кто ушёл на бинарник, — не то, о чём просили.
+    if [ -n "$_IA_ENGINE" ]; then
+        ENGINE_BACKEND="$_IA_ENGINE"
+    elif [ ! -f "$SETTINGS_FILE" ]; then
+        ENGINE_BACKEND="docker"
+    fi
+    ENGINE_BACKEND="${ENGINE_BACKEND:-docker}"
+    ENGINE_VERSION=""
+    if [ "$ENGINE_BACKEND" = "binary" ]; then
+        log_info "Движок: бинарник MTProxyL-Telemt, без Docker"
+        binengine_fetch "${_IA_ENGINE_VERSION:-latest}" || return 1
+        ENGINE_VERSION=$(binengine_version)
+    else
+        log_info "Движок: Docker-образ"
+        [ -n "$_IA_ENGINE_VERSION" ] && log_warn "--engine-version не применяется к Docker-движку"
+        install_docker || return 1
+        wait_for_docker || return 1
+    fi
 
     PROXY_PORT="${_IA_PORT:-${PROXY_PORT:-443}}"
     if ! is_port_available "$PROXY_PORT" 2>/dev/null; then
-        log_warn "Порт ${PROXY_PORT} уже занят — контейнер может не подняться"
+        log_warn "Порт ${PROXY_PORT} уже занят — движок может не подняться"
         show_port_listener "$PROXY_PORT" 2>/dev/null || true
     fi
     # Прежние порты берём в расчёт только у существующей установки: на чистой
@@ -334,12 +385,19 @@ run_installer_args() {
 
     run_fix_arsenal_wizard
 
+    install_autostart_unit
+    engine_clear_other_carrier
+
     echo ""
     draw_header "ЗАПУСК ПРОКСИ"
     echo ""
     run_proxy_container || {
         log_error "Не удалось запустить прокси"
-        echo -e "  ${DIM}Проверьте: docker logs mtproxyl${NC}"
+        if engine_is_binary; then
+            echo -e "  ${DIM}Проверьте: journalctl -u ${ENGINE_SERVICE} -n 50${NC}"
+        else
+            echo -e "  ${DIM}Проверьте: docker logs mtproxyl${NC}"
+        fi
     }
 
     _install_args_autostart
@@ -403,28 +461,7 @@ _install_args_secrets() {
 }
 
 _install_args_autostart() {
-    if command -v systemctl &>/dev/null; then
-        cat > /etc/systemd/system/mtproxyl.service << 'SVC_EOF'
-[Unit]
-Description=MTProxyL Telegram Proxy
-After=network-online.target docker.service
-Wants=network-online.target
-Requires=docker.service
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/usr/local/bin/mtproxyl start
-ExecStop=/usr/local/bin/mtproxyl stop
-
-[Install]
-WantedBy=multi-user.target
-SVC_EOF
-        systemctl daemon-reload
-        systemctl enable mtproxyl.service 2>/dev/null
-        log_success "Автозапуск включён"
-        install_ip_history_timer
-    fi
+    command -v systemctl &>/dev/null && install_ip_history_timer
     install_availability_timer
 }
 

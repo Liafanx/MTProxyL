@@ -423,7 +423,7 @@ _engine_config_path() {
     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
         printf '%s' "${DETECTED_CONFIG_PATH:-}"
     else
-        printf '%s' "${CONFIG_DIR}/config.toml"
+        printf '%s' "$(engine_config_path)"
     fi
 }
 
@@ -1236,7 +1236,7 @@ offer_reapply_fixes() {
 # либо сгенерированный конфиг)
 _own_install_exists() {
     [ "$(own_container_state 2>/dev/null)" != "absent" ] && return 0
-    [ -f "${CONFIG_DIR}/config.toml" ]
+    [ -f "$(engine_config_path)" ]
 }
 
 switch_to_manager_mode() {
@@ -1293,6 +1293,20 @@ switch_to_manager_mode() {
 # Аргументом, а не вопросом: панель спрашивает пользователя сама.
 _dispose_own_container() {
     local _choice="$1"
+    if engine_is_binary; then
+        case "$_choice" in
+            remove) binengine_remove_service ;;
+            stop)
+                systemctl stop "$ENGINE_SERVICE" &>/dev/null \
+                    && log_success "Движок остановлен (служба оставлена)" \
+                    || log_warn "Не удалось остановить ${ENGINE_SERVICE}" ;;
+            keep)
+                log_info "Движок оставлен как есть"
+                log_warn "Он продолжит занимать порт ${PROXY_PORT:-443} — цель реаниматора может не запуститься" ;;
+            *) log_error "Неизвестное решение по движку: ${_choice}"; return 1 ;;
+        esac
+        return
+    fi
     case "$_choice" in
         remove)
             remove_own_container ;;
@@ -1338,12 +1352,16 @@ switch_to_reanimator_mode() {
     local _own_state; _own_state=$(own_container_state 2>/dev/null)
     if [ "$_own_state" != "absent" ]; then
         echo ""
-        echo -e "  ${BOLD}Свой контейнер ${CONTAINER_NAME}:${NC} ${_own_state}"
+        if engine_is_binary; then
+            echo -e "  ${BOLD}Свой движок ${ENGINE_SERVICE}:${NC} ${_own_state}"
+        else
+            echo -e "  ${BOLD}Свой контейнер ${CONTAINER_NAME}:${NC} ${_own_state}"
+        fi
         echo -e "  ${DIM}Он занимает порт ${PROXY_PORT:-443} и будет мешать цели реаниматора.${NC}"
         if [ -z "$_container_choice" ]; then
             echo ""
-            echo -e "  ${DIM}[1]${NC} Остановить и удалить контейнер ${DIM}(рекомендуется)${NC}"
-            echo -e "  ${DIM}[2]${NC} Только остановить, контейнер оставить"
+            echo -e "  ${DIM}[1]${NC} Остановить и снять службу/контейнер ${DIM}(рекомендуется)${NC}"
+            echo -e "  ${DIM}[2]${NC} Только остановить, не снимать"
             echo -e "  ${DIM}[3]${NC} Не трогать"
             local _oc; _oc=$(read_choice "выбор" "1")
             case "$_oc" in

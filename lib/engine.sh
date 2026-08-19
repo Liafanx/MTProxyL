@@ -26,6 +26,7 @@ except:
 
 # Получить текущую версию
 engine_current_version() {
+    engine_is_binary && { binengine_version; return; }
     local ver
     ver=$(cat "${INSTALL_DIR}/.telemt_version" 2>/dev/null)
     [ -n "$ver" ] && { echo "$ver"; return; }
@@ -38,6 +39,7 @@ engine_current_version() {
 engine_update_to() {
     local target_tag="$1"
     [ -z "$target_tag" ] && { log_error "Укажите версию"; return 1; }
+    engine_is_binary && { binengine_update_to "$target_tag"; return; }
 
     log_info "Получение информации о версии ${target_tag}..."
 
@@ -114,6 +116,7 @@ except: print('?')
 
 # Откат к предыдущей версии
 engine_rollback() {
+    engine_is_binary && { binengine_rollback; return; }
     local images
     images=$(docker images --format '{{.Tag}}' "${DOCKER_IMAGE_BASE}" 2>/dev/null | grep -E '^[0-9]+\.' | sort -rV)
 
@@ -169,8 +172,17 @@ handle_engine_command() {
     case "$subcmd" in
         status)
             echo -e "  ${BOLD}Движок Telemt${NC}"
+            echo -e "  ${DIM}Носитель:${NC}   $(engine_backend_title)"
             echo -e "  ${DIM}Установлен:${NC}  v$(engine_current_version)"
-            echo -e "  ${DIM}Закреплён:${NC}   commit ${TELEMT_COMMIT}"
+            if engine_is_binary; then
+                echo -e "  ${DIM}Бинарник:${NC}    ${ENGINE_BIN_PATH}"
+                echo -e "  ${DIM}Служба:${NC}      ${ENGINE_SERVICE}.service"
+            else
+                echo -e "  ${DIM}Закреплён:${NC}   commit ${TELEMT_COMMIT}"
+            fi
+            ;;
+        backend)
+            engine_switch_backend "${1:-}"
             ;;
         list)
             echo ""
@@ -227,6 +239,12 @@ handle_engine_command() {
             ;;
         rebuild)
             check_root
+            if engine_is_binary; then
+                log_info "Бинарный движок не собирается — перекачиваем текущую версию"
+                binengine_fetch "$(binengine_version)" || return 1
+                is_proxy_running && { load_secrets; restart_proxy_container; }
+                return 0
+            fi
             build_telemt_image true
             if is_proxy_running; then
                 load_secrets
@@ -240,7 +258,8 @@ handle_engine_command() {
             echo -e "  ${DIM}list${NC}            Список доступных версий"
             echo -e "  ${DIM}update [tag]${NC}    Обновить до версии"
             echo -e "  ${DIM}rollback${NC}        Откатить к предыдущей"
-            echo -e "  ${DIM}rebuild${NC}         Пересобрать текущий образ"
+            echo -e "  ${DIM}rebuild${NC}         Пересобрать образ / перекачать бинарник"
+            echo -e "  ${DIM}backend <тип>${NC}   Сменить носитель движка: docker | binary"
             ;;
     esac
 }

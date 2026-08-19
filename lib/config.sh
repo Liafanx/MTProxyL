@@ -219,12 +219,12 @@ superexpert_enable() {
 
     if [ ! -f "$SUPEREXPERT_FILE" ]; then
         # Копию делаем с действующего конфига; если его ещё нет — генерируем
-        if [ ! -f "${CONFIG_DIR}/config.toml" ]; then
+        if [ ! -f "$(engine_config_path)" ]; then
             log_info "Рабочего конфига пока нет — генерируем его из текущих настроек"
             generate_telemt_config || { log_error "Не удалось сгенерировать конфиг"; return 1; }
         fi
         mkdir -p "$INSTALL_DIR"
-        cp "${CONFIG_DIR}/config.toml" "$SUPEREXPERT_FILE" || {
+        cp "$(engine_config_path)" "$SUPEREXPERT_FILE" || {
             log_error "Не удалось создать ${SUPEREXPERT_FILE}"; return 1; }
         chmod 600 "$SUPEREXPERT_FILE"
         log_success "Создан ваш конфиг: ${SUPEREXPERT_FILE}"
@@ -347,7 +347,7 @@ superexpert_recreate() {
     SUPEREXPERT_ENABLED="$_saved"
 
     [ -f "$SUPEREXPERT_FILE" ] && cp "$SUPEREXPERT_FILE" "${SUPEREXPERT_FILE}.bak" 2>/dev/null
-    cp "${CONFIG_DIR}/config.toml" "$SUPEREXPERT_FILE" || { log_error "Не удалось записать ${SUPEREXPERT_FILE}"; return 1; }
+    cp "$(engine_config_path)" "$SUPEREXPERT_FILE" || { log_error "Не удалось записать ${SUPEREXPERT_FILE}"; return 1; }
     chmod 600 "$SUPEREXPERT_FILE"
     log_success "Файл пересоздан: ${SUPEREXPERT_FILE}"
 
@@ -391,9 +391,9 @@ generate_telemt_config() {
     # файл на место config.toml. Ни настройки, ни секреты, ни override не
     # применяются — это и есть смысл режима.
     if _superexpert_active; then
-        cp "$SUPEREXPERT_FILE" "${CONFIG_DIR}/config.toml" || {
+        cp "$SUPEREXPERT_FILE" "$(engine_config_path)" || {
             log_error "Не удалось применить ${SUPEREXPERT_FILE}"; return 1; }
-        chmod 644 "${CONFIG_DIR}/config.toml"
+        chmod 644 "$(engine_config_path)"
         log_info "Режим супер эксперта: конфиг взят из ${SUPEREXPERT_FILE}"
         _superexpert_sync_port
         return 0
@@ -629,7 +629,7 @@ TOML_EOF
     _apply_expert_overrides "$tmp"
 
     chmod 644 "$tmp"
-    cp "$tmp" "${CONFIG_DIR}/config.toml" && rm -f "$tmp"
+    cp "$tmp" "$(engine_config_path)" && rm -f "$tmp"
 }
 
 # Override попадает в конфиг только при его генерации, поэтому предлагаем
@@ -726,7 +726,7 @@ handle_expert_command() {
             expert_apply_now ;;
         edit)
             check_root
-            local config="${CONFIG_DIR}/config.toml"
+            local config; config=$(engine_config_path)
             if [ -f "$config" ]; then
                 local editor="${EDITOR:-nano}"
                 log_warn "Изменения будут перезаписаны при генерации конфига!"
@@ -769,7 +769,7 @@ superexpert_show_file() {
         cat "$SUPEREXPERT_FILE"
         return 0
     fi
-    local _live="${CONFIG_DIR}/config.toml"
+    local _live; _live=$(engine_config_path)
     if [ -f "$_live" ]; then
         cat "$_live"
         return 0
