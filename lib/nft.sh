@@ -2324,12 +2324,16 @@ zapret2_autoconfigure_scope() {
         fi
     fi
 
+    # Исключаем ровно те туннели, что есть сейчас, а не шаблоны на всё сразу:
+    # маска awg* задевает и интерфейсы, которые появятся позже без ведома хозяина.
     if [ -z "${ZAPRET2_EXCLUDE_IFACES:-}" ]; then
         local _tun; _tun=$(zapret2_tunnel_ifaces_present)
+        _tun="${_tun% }"
         if [ -n "$_tun" ]; then
-            ZAPRET2_EXCLUDE_IFACES="$ZAPRET2_DEFAULT_EXCLUDE_IFACES"
-            log_warn "Найдены туннели: ${_tun%% }"
-            log_info "Их трафик пустим мимо очереди (${ZAPRET2_EXCLUDE_IFACES}) — иначе десинк сломает VPN"
+            ZAPRET2_EXCLUDE_IFACES="$_tun"
+            log_warn "Найдены туннели: ${_tun}"
+            log_info "Их трафик пустим мимо очереди — иначе десинк сломает VPN"
+            log_info "Список правится: меню NFT → Zapret2 → интерфейсы мимо очереди"
         fi
     fi
     save_nft_settings
@@ -2585,7 +2589,7 @@ zapret2_check_wscale() {
             echo ""
             echo -e "  ${BOLD}Необходимо изменить win ACK: ${_current_win_ack} → ${_win_ack_rec}${NC}"
             echo -en "  Применить? [Y/n]: "
-            local _yn; read_line _yn
+            local _yn; _fix_read _yn ""
             if [[ ! "$_yn" =~ ^[nN] ]]; then
                 ZAPRET2_WIN_ACK="$_win_ack_rec"
                 save_nft_settings
@@ -2594,11 +2598,11 @@ zapret2_check_wscale() {
             fi
         elif [ "$_win_ack_rec" != "$_current_win_ack" ] && [ "$_current_real" -lt 1400 ]; then
             echo ""
-            echo -e "  ${DIM}Текущее значение работает. Оптимизировать?${NC}"
+            echo -e "  ${DIM}Текущее значение работает, но окно можно приблизить к пределу.${NC}"
             echo -e "  ${DIM}win ACK ${_current_win_ack} (${_current_real} байт) → ${_win_ack_rec} (${_real_win} байт)${NC}"
-            echo -en "  Оптимизировать? [y/N]: "
-            local _yn; read_line _yn
-            if [[ "$_yn" =~ ^[yY] ]]; then
+            echo -en "  Оптимизировать? [Y/n]: "
+            local _yn; _fix_read _yn ""
+            if [[ ! "$_yn" =~ ^[nN] ]]; then
                 ZAPRET2_WIN_ACK="$_win_ack_rec"
                 save_nft_settings
                 log_success "win ACK установлен: ${_win_ack_rec}"

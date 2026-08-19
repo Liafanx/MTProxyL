@@ -4,7 +4,12 @@
 tui_backup_menu() {
     while true; do
         clear_screen
-        draw_header "ОБНОВЛЕНИЯ И БЭКАПЫ"
+        # В менеджере отсюда же уезжают на другой сервер — название об этом.
+        if [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
+            draw_header "ОБНОВЛЕНИЕ, БЭКАПЫ И МИГРАЦИЯ"
+        else
+            draw_header "ОБНОВЛЕНИЯ И БЭКАПЫ"
+        fi
         echo ""
         if [ -n "$_UPDATE_AVAILABLE" ]; then
             echo -e "  ${YELLOW}${BOLD}⬆ Доступно: v${VERSION} → v${_UPDATE_AVAILABLE}${NC}"
@@ -22,6 +27,8 @@ tui_backup_menu() {
             echo -e "  ${DIM}[7]${NC} Экспорт (миграция)"
             echo -e "  ${DIM}[8]${NC} Импорт (миграция)"
             echo -e "  ${DIM}[9]${NC} Автоочистка"
+            echo -e "  ${DIM}[10]${NC} Переезд на другой сервер ${DIM}(по SSH, копия целиком)${NC}"
+            echo -e "  ${DIM}[11]${NC} Перенос аргументами ${DIM}(готовая команда для новой машины)${NC}"
         else
             echo -e "  ${DIM}Бэкапы и миграция работают с собственным конфигом${NC}"
             echo -e "  ${DIM}и секретами менеджера — в режиме reanimator недоступны.${NC}"
@@ -73,7 +80,25 @@ tui_backup_menu() {
             9) _require_manager_mode || { press_any_key; continue; }
                echo -en "  ${BOLD}Удалить старше дней [${BACKUP_RETENTION_DAYS:-30}]:${NC} "; local d; read_line d
                backup_autoclean "${d:-${BACKUP_RETENTION_DAYS:-30}}" || true; press_any_key ;;
+            10) _require_manager_mode || { press_any_key; continue; }
+                _tui_migrate_ssh; press_any_key ;;
+            11) tui_args_export_menu ;;
             0|"") return ;;
         esac
     done
+}
+
+# Переезд спрашивает одно — куда. Остальное берётся из текущих настроек.
+_tui_migrate_ssh() {
+    echo ""
+    echo -e "  ${BOLD}Переезд на другой сервер${NC}"
+    echo -e "  ${DIM}Поднимаем там копию: порт, домен ссылок, секреты с лимитами,${NC}"
+    echo -e "  ${DIM}метка, маскировка, Zapret2, Selfmask, панель и бот.${NC}"
+    echo -e "  ${DIM}Вход только по ключу; A-запись домена переводите сами.${NC}"
+    echo ""
+    echo -e "  ${DIM}Например: root@203.0.113.10 или root@203.0.113.10:2222${NC}"
+    echo -en "  ${BOLD}Новый сервер:${NC} "
+    local _t; read_line _t
+    [ -n "$_t" ] || { log_info "Отменено"; return 0; }
+    handle_migrate_command "$_t"
 }

@@ -381,12 +381,30 @@ _tgbot_validate_token() {
 # Спрашиваем сам Telegram: опечатка в токене выяснится сейчас, а не через
 # минуту в журнале службы.
 _tgbot_check_token() {
-    local _token="$1" _resp
+    local _token="$1" _resp _code
     command -v curl &>/dev/null || return 0
-    _resp=$(curl -fsS --max-time 10 "https://api.telegram.org/bot${_token}/getMe" 2>/dev/null) || {
+    # Без -f: на неверный токен Telegram отвечает 401 с описанием, а curl -f
+    # просто возвращал ошибку — опечатка была неотличима от недоступной сети
+    # и бот ставился с токеном, по которому никогда не заработает.
+    _resp=$(curl -sS --max-time 10 -w $'\n%{http_code}' \
+        "https://api.telegram.org/bot${_token}/getMe" 2>/dev/null) || {
         log_warn "Telegram не ответил — проверить токен не вышло, продолжаем"
         return 0
     }
+    _code="${_resp##*$'\n'}"
+    _resp="${_resp%$'\n'*}"
+    case "$_code" in
+        200) ;;
+        4*)
+            local _desc="неизвестная ошибка"
+            command -v jq &>/dev/null && \
+                _desc=$(jq -r '.description // "неизвестная ошибка"' <<< "$_resp" 2>/dev/null)
+            log_error "Telegram не принял токен: ${_desc}"
+            return 1 ;;
+        *)
+            log_warn "Telegram ответил кодом ${_code} — проверить токен не вышло, продолжаем"
+            return 0 ;;
+    esac
     if command -v jq &>/dev/null; then
         local _ok _name
         _ok=$(jq -r '.ok' <<< "$_resp" 2>/dev/null)

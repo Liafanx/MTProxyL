@@ -252,7 +252,7 @@ show_main_menu() {
             echo -e "  ${BRIGHT_CYAN}[6]${NC}   Логи и трафик"
             echo -e "  ${BRIGHT_CYAN}[7]${NC}   NFT лимитер, Zapret2 и фиксы"
             echo -e "  ${BRIGHT_CYAN}[8]${NC}   Движок Telemt"
-            echo -e "  ${BRIGHT_CYAN}[9]${NC}   Обновление и бэкапы"
+            echo -e "  ${BRIGHT_CYAN}[9]${NC}   Обновление, бэкапы и миграция"
             echo -e "  ${BRIGHT_CYAN}[10]${NC}  Режим эксперта (override поверх config.toml)"
             echo -e "  ${BRIGHT_CYAN}[11]${NC}  Режим супер эксперта (свой config.toml)"
             echo -e "  ${BRIGHT_CYAN}[12]${NC}  Телеграм бот  ${DIM}$(tgbot_status_line)${NC}"

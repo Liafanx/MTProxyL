@@ -65,6 +65,9 @@ run_installer() {
     fi
     log_success "Зависимости в порядке"
 
+    # Подкачка до docker: без неё установка на маленькой машине упирается в OOM.
+    offer_swap_if_low_ram
+
     # Docker
     install_docker || exit 1
     wait_for_docker || exit 1
@@ -347,7 +350,7 @@ run_fix_arsenal_wizard() {
     echo -e "  ${DIM}При установке заменяет SYN limiter.${NC}"
     echo ""
     echo -en "  ${BOLD}Установить Zapret2 MTProto fix? [Y/n]:${NC} "
-    local _yn_zapret2; read_line _yn_zapret2
+    local _yn_zapret2; _fix_read _yn_zapret2 "${_FIX_ANS_ZAPRET2-}"
     local _zapret2_installed="false"
     if [[ ! "$_yn_zapret2" =~ ^[nN] ]]; then
         load_nft_settings 2>/dev/null || true
@@ -407,7 +410,7 @@ run_fix_arsenal_wizard() {
     echo -e "    ${DIM}[0]${NC} Не применять"
     echo ""
     echo -en "  ${BOLD}Применить NFT limiter? [1 по умолчанию]:${NC} "
-    local _nft_choice; read_line _nft_choice
+    local _nft_choice; _fix_read _nft_choice "${_FIX_ANS_LIMITER-}"
 
     # Отказ — это отказ: без флага ниже применялись правила режима по
     # умолчанию, и каскад через реаниматор ломался.
@@ -428,7 +431,8 @@ run_fix_arsenal_wizard() {
         echo -e "    ${CYAN}[2]${NC} reject (tcp reset)  ${DIM}(оригинал By-MEKO)${NC}"
         echo -e "    ${YELLOW}[3]${NC} drop  ${DIM}(не рекомендуется)${NC}"
         echo ""
-        local _action_choice; read -erp "  Выбор [1]: " _action_choice
+        echo -en "  Выбор [1]: "
+        local _action_choice; _fix_read _action_choice "${_FIX_ANS_OTHER_ACTION-}"
         case "${_action_choice:-1}" in
             2) NFT_OTHER_ACTION="reject" ;;
             3) NFT_OTHER_ACTION="drop" ;;
@@ -477,7 +481,7 @@ run_fix_arsenal_wizard() {
     echo -e "  ${DIM}Текущие значения ядра будут сохранены для отката.${NC}"
     echo ""
     echo -en "  ${BOLD}Применить оптимизацию By-MEKO? [Y/n]:${NC} "
-    local _meko_choice; read_line _meko_choice
+    local _meko_choice; _fix_read _meko_choice "${_FIX_ANS_MEKO-}"
     if [[ ! "$_meko_choice" =~ ^[nN] ]]; then
         load_nft_settings 2>/dev/null || true
         meko_opt_apply || log_warn "Не удалось применить оптимизацию By-MEKO"

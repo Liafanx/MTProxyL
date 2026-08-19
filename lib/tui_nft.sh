@@ -1264,10 +1264,10 @@ tui_zapret2_settings() {
                 echo -e "  ${DIM}Трафик этих интерфейсов проходит мимо очереди.${NC}"
                 echo -e "  ${DIM}Туннели (AmneziaWG, WireGuard, OpenVPN) несут чужой HTTPS,${NC}"
                 echo -e "  ${DIM}и десинк по тому же порту ломает его вместе с нашим.${NC}"
-                echo -e "  ${DIM}Список через пробел, можно с «*». «std» — ${ZAPRET2_DEFAULT_EXCLUDE_IFACES}.${NC}"
+                local _present; _present=$(zapret2_tunnel_ifaces_present); _present="${_present% }"
+                echo -e "  ${DIM}Список через пробел, можно с «*».${NC}"
+                echo -e "  ${DIM}«auto» — найденные сейчас${_present:+ (${_present})}, «std» — маски ${ZAPRET2_DEFAULT_EXCLUDE_IFACES}.${NC}"
                 echo -e "  ${DIM}«off» — не исключать ничего.${NC}"
-                local _present; _present=$(zapret2_tunnel_ifaces_present)
-                [ -n "$_present" ] && echo -e "  ${DIM}Сейчас на сервере: ${_present% }${NC}"
                 echo -en "  Интерфейсы [${ZAPRET2_EXCLUDE_IFACES:-нет}]: "
                 local _ifs; read_line _ifs
                 case "${_ifs,,}" in
@@ -1276,6 +1276,14 @@ tui_zapret2_settings() {
                         ZAPRET2_EXCLUDE_IFACES=""; save_nft_settings
                         log_success "Ничего не исключаем"
                         zapret2_update_config ;;
+                    auto|авто)
+                        if [ -z "$_present" ]; then
+                            log_warn "Туннелей на сервере не видно — список не меняем"
+                        else
+                            ZAPRET2_EXCLUDE_IFACES="$_present"; save_nft_settings
+                            log_success "Мимо очереди: ${ZAPRET2_EXCLUDE_IFACES}"
+                            zapret2_update_config
+                        fi ;;
                     std)
                         ZAPRET2_EXCLUDE_IFACES="$ZAPRET2_DEFAULT_EXCLUDE_IFACES"; save_nft_settings
                         log_success "Мимо очереди: ${ZAPRET2_EXCLUDE_IFACES}"

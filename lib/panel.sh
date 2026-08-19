@@ -108,6 +108,8 @@ panel_listen_addr() {
             local _ip; _ip=$(CUSTOM_IP="" get_public_ip 2>/dev/null)
             [ -n "$_ip" ] || _ip=$(hostname -I 2>/dev/null | awk '{print $1}')
             [ -n "$_ip" ] || _ip="<адрес-сервера>"
+            # IPv6 без скобок склеивается с портом в нерабочую ссылку.
+            case "$_ip" in *:*:*) _ip="[${_ip}]" ;; esac
             echo "${_ip}:${_port}"
             ;;
         *) echo "$_listen" ;;
@@ -260,6 +262,13 @@ _panel_offer_cert_after_install() {
     panel_installed || return 0
     local _cfg="${PANEL_CONFIG_DIR}/config.toml"
     [ -f "$_cfg" ] || return 0
+    # Отвечать некому — не начинаем выпуск сам собой: при переезде A-запись
+    # ещё смотрит на старый сервер, и certbot только зря сходит к Let's Encrypt.
+    if [ "${MTPROXYL_NONINTERACTIVE:-false}" = "true" ] || [ ! -t 0 ]; then
+        _panel_config_self_signed && \
+            log_info "Сертификат: панель на самоподписанном, выпустить — mtproxyl panel cert <домен>"
+        return 0
+    fi
 
     local _domain _reason=""
     if grep -qE '^[[:space:]]*acme_domain[[:space:]]*=' "$_cfg" 2>/dev/null; then

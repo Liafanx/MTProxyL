@@ -145,12 +145,166 @@ detect_tls_cert_len() {
     echo "$_len"
 }
 
+# Смыть то, что осталось в буфере терминала. После ssh-copy-id с несколькими
+# попытками пароля лишние Enter отвечали за пользователя на следующий вопрос,
+# и он проскакивал незаметно.
+drain_tty_input() {
+    [ -t 0 ] || return 0
+    local _junk
+    while read -r -t 0.05 -n 256 _junk 2>/dev/null; do :; done
+    return 0
+}
+
+# ── Swap на маленькой машине ──────────────────────────────────
+# Сборка панели, docker и telemt на 1 ГБ без подкачки заканчиваются OOM:
+# процесс убивает ядро, а установка выглядит зависшей.
+SWAPFILE_PATH="/swapfile"
+SWAPFILE_SIZE_MB=1024
+# Порог в МиБ: у «гигабайтной» машины free показывает чуть меньше 1024.
+LOW_RAM_THRESHOLD_MB=1024
+
+total_ram_mb() {
+    awk '/^MemTotal:/ {printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 0
+}
+
+# Проверять «-s /proc/swaps» нельзя: у файлов procfs размер всегда нулевой,
+# и подкачка выглядела выключенной, даже когда работала.
+swap_active() {
+    awk 'NR>1 {found=1} END {exit !found}' /proc/swaps 2>/dev/null
+}
+
+# Свободно на разделе, где будет лежать файл подкачки, в МиБ.
+_swap_target_free_mb() {
+    df -Pm "$(dirname "$SWAPFILE_PATH")" 2>/dev/null | awk 'NR==2 {print $4}'
+}
+
+create_swapfile() {
+    local _mb="${1:-$SWAPFILE_SIZE_MB}"
+    if [ -e "$SWAPFILE_PATH" ]; then
+        log_warn "${SWAPFILE_PATH} уже существует — не трогаем"
+        return 1
+    fi
+    local _free; _free=$(_swap_target_free_mb)
+    # Запас: файл ровно по размеру свободного места оставит систему без диска.
+    if [ -n "$_free" ] && [ "$_free" -lt $((_mb + 512)) ]; then
+        log_error "На диске свободно ${_free} МБ — для файла подкачки ${_mb} МБ мало"
+        return 1
+    fi
+
+    log_info "Создаём файл подкачки ${_mb} МБ в ${SWAPFILE_PATH}..."
+    if ! fallocate -l "${_mb}M" "$SWAPFILE_PATH" 2>/dev/null; then
+        # fallocate не работает на некоторых ФС — тогда медленно, но верно.
+        dd if=/dev/zero of="$SWAPFILE_PATH" bs=1M count="$_mb" status=none 2>/dev/null || {
+            log_error "Не удалось создать ${SWAPFILE_PATH}"
+            rm -f "$SWAPFILE_PATH"
+            return 1
+        }
+    fi
+    chmod 600 "$SWAPFILE_PATH"
+    if ! mkswap "$SWAPFILE_PATH" >/dev/null 2>&1 || ! swapon "$SWAPFILE_PATH" 2>/dev/null; then
+        log_error "Подкачку включить не вышло — в контейнерах (OpenVZ, LXC) это запрещено"
+        swapoff "$SWAPFILE_PATH" 2>/dev/null || true
+        rm -f "$SWAPFILE_PATH"
+        return 1
+    fi
+    grep -qF "$SWAPFILE_PATH" /etc/fstab 2>/dev/null || \
+        echo "${SWAPFILE_PATH} none swap sw 0 0" >> /etc/fstab
+    log_success "Подкачка включена: ${_mb} МБ, переживёт перезагрузку"
+    return 0
+}
+
+# Предлагаем подкачку там, где памяти мало и её нет. Ответ по умолчанию — да:
+# без неё установка на такой машине падает чаще, чем проходит.
+offer_swap_if_low_ram() {
+    local _ram; _ram=$(total_ram_mb)
+    [ "${_ram:-0}" -gt 0 ] || return 0
+    [ "$_ram" -le "$LOW_RAM_THRESHOLD_MB" ] || return 0
+    if swap_active; then
+        log_info "Памяти ${_ram} МБ, подкачка уже есть — хорошо"
+        return 0
+    fi
+
+    echo ""
+    log_warn "Памяти ${_ram} МБ и подкачки нет"
+    echo -e "  ${DIM}Docker, движок и сборка панели на такой машине упираются в${NC}"
+    echo -e "  ${DIM}нехватку памяти: ядро убивает процесс, а установка выглядит${NC}"
+    echo -e "  ${DIM}зависшей. Файл подкачки ${SWAPFILE_SIZE_MB} МБ это лечит.${NC}"
+    echo -en "  ${BOLD}Создать файл подкачки ${SWAPFILE_SIZE_MB} МБ? [Y/n]:${NC} "
+    local _yn; _fix_read _yn ""
+    [[ "$_yn" =~ ^[nN] ]] && { log_info "Пропускаем. Создать позже: mtproxyl swap on"; return 0; }
+    create_swapfile "$SWAPFILE_SIZE_MB" || \
+        log_warn "Продолжаем без подкачки — следите за памятью"
+    return 0
+}
+
+swap_status() {
+    local _ram; _ram=$(total_ram_mb)
+    echo -e "  ${BOLD}Память:${NC}   ${_ram} МБ"
+    if swap_active; then
+        local _sw; _sw=$(awk 'NR>1 {s+=$3} END {printf "%d", s/1024}' /proc/swaps 2>/dev/null)
+        echo -e "  ${BOLD}Подкачка:${NC} ${GREEN}есть${NC} ${DIM}(${_sw} МБ)${NC}"
+        awk 'NR>1 {printf "    %s  %d МБ\n", $1, $3/1024}' /proc/swaps 2>/dev/null
+    else
+        echo -e "  ${BOLD}Подкачка:${NC} ${DIM}нет${NC}"
+        [ "${_ram:-0}" -le "$LOW_RAM_THRESHOLD_MB" ] && \
+            log_warn "Памяти мало — на такой машине установка может упереться в OOM"
+    fi
+}
+
+swap_off_and_remove() {
+    check_root
+    swap_active || { log_info "Подкачка не включена"; return 0; }
+    [ -f "$SWAPFILE_PATH" ] || { log_error "Файл ${SWAPFILE_PATH} не наш — выключайте сами"; return 1; }
+    swapoff "$SWAPFILE_PATH" 2>/dev/null || { log_error "Выключить подкачку не вышло"; return 1; }
+    sed -i "\|^${SWAPFILE_PATH} |d" /etc/fstab 2>/dev/null || true
+    rm -f "$SWAPFILE_PATH"
+    log_success "Подкачка выключена, файл удалён"
+}
+
+handle_swap_command() {
+    case "${1:-status}" in
+        status|"") swap_status ;;
+        on|add)
+            check_root
+            swap_active && { log_info "Подкачка уже включена"; swap_status; return 0; }
+            create_swapfile "${2:-$SWAPFILE_SIZE_MB}" ;;
+        off|remove) swap_off_and_remove ;;
+        *)
+            echo -e "  ${BOLD}Файл подкачки:${NC}"
+            echo -e "    ${GREEN}swap status${NC}     Память и подкачка сейчас"
+            echo -e "    ${GREEN}swap on${NC} [МБ]    Создать и включить (по умолчанию ${SWAPFILE_SIZE_MB} МБ)"
+            echo -e "    ${GREEN}swap off${NC}        Выключить и удалить ${SWAPFILE_PATH}"
+            ;;
+    esac
+}
+
+# Длина leaf-сертификата из готового файла. При Selfmask сертификат уже лежит
+# на диске, а спрашивать его у домена по сети бесполезно: на 443 этого адреса
+# отвечает сам прокси, а не наш nginx, и замер всегда проваливался.
+tls_cert_len_from_file() {
+    local _file="$1"
+    [ -f "$_file" ] || return 1
+    command -v openssl &>/dev/null || return 1
+    local _len
+    _len=$(awk '/-----BEGIN CERTIFICATE-----/{p=1} p{print} /-----END CERTIFICATE-----/{exit}' "$_file" \
+        | openssl x509 -outform DER 2>/dev/null | wc -c | tr -d ' ')
+    [[ "$_len" =~ ^[0-9]+$ ]] || return 1
+    [ "$_len" -ge 512 ] && [ "$_len" -le 65535 ] || return 1
+    echo "$_len"
+}
+
+# Второй аргумент — путь к своему сертификату: если он есть, берём длину из
+# него, а сеть не трогаем вовсе.
 auto_set_fake_cert_len() {
-    local domain="$1"
+    local domain="$1" _file="${2:-}"
     [ -n "$domain" ] || return 1
     local _old="${FAKE_CERT_LEN:-2048}"
-    local _new
-    _new=$(detect_tls_cert_len "$domain" 2>/dev/null) || return 1
+    local _new=""
+    if [ -n "$_file" ]; then
+        _new=$(tls_cert_len_from_file "$_file" 2>/dev/null) || _new=""
+    fi
+    [ -n "$_new" ] || _new=$(detect_tls_cert_len "$domain" 2>/dev/null) || return 1
+    [ -n "$_new" ] || return 1
     if [ "$_new" != "$_old" ]; then
         FAKE_CERT_LEN="$_new"
         log_info "Auto-detected TLS cert length for '${domain}': ${FAKE_CERT_LEN} bytes (was ${_old})"
@@ -182,16 +336,28 @@ parse_human_bytes() {
     esac
 }
 
+# Адрес сервера для ссылок и правил. IPv4 в приоритете: tg://-ссылка с голым
+# IPv6 не открывается, а по цепочке через `||` сервис, ответивший пустотой с
+# кодом 0, обрывал перебор — и адрес оставался пустым или приходил IPv6.
 get_public_ip() {
     if [ -n "${CUSTOM_IP}" ]; then
         echo "${CUSTOM_IP}"; return 0
     fi
-    local ip=""
-    ip=$(curl -s --max-time 3 https://api.ipify.org 2>/dev/null) ||
-    ip=$(curl -s --max-time 3 https://ifconfig.me 2>/dev/null) ||
-    ip=$(curl -s --max-time 3 https://icanhazip.com 2>/dev/null) ||
-    ip=""
-    echo "$ip"
+    local _svc _ip=""
+    for _svc in https://api.ipify.org https://ifconfig.me https://icanhazip.com; do
+        _ip=$(curl -4 -s --max-time 3 "$_svc" 2>/dev/null | tr -d '[:space:]')
+        validate_ip_literal "$_ip" && { echo "$_ip"; return 0; }
+    done
+    # Наружу не достучались — берём свой глобальный IPv4, мимо docker-мостов.
+    _ip=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 \
+        | grep -vE '^(172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.)' | head -1)
+    validate_ip_literal "$_ip" && { echo "$_ip"; return 0; }
+    # IPv4 нет вовсе — отдаём IPv6: ссылка неудобна, но адрес верный.
+    for _svc in https://api64.ipify.org https://ifconfig.me; do
+        _ip=$(curl -s --max-time 3 "$_svc" 2>/dev/null | tr -d '[:space:]')
+        [ -n "$_ip" ] && { echo "$_ip"; return 0; }
+    done
+    echo ""
 }
 
 # ── Публичные host/port для tg://-ссылок ───────────────────────
@@ -405,6 +571,11 @@ draw_status() {
 }
 
 press_any_key() {
+    # Клавишу нажимать некому — при установке аргументами и из панели просто
+    # идём дальше, иначе процесс встаёт до таймаута.
+    if [ "${MTPROXYL_NONINTERACTIVE:-false}" = "true" ] || [ "${MTPROXYL_ASSUME_YES:-}" = "1" ] || [ ! -t 0 ]; then
+        return 0
+    fi
     echo ""
     echo -en "  ${DIM}Нажмите любую клавишу...${NC}"
     read -rsn1
@@ -414,6 +585,18 @@ press_any_key() {
 
 # Чтение строки после приглашения из отдельного echo: на пустом вводе
 # readline завершает строку одним \r, и следующий вывод затирает приглашение.
+# Ответ на вопрос мастера. При установке аргументами читать некому — берём
+# заранее заданный ответ и печатаем его, чтобы лог выглядел как диалог.
+_fix_read() {
+    local _var="$1" _preset="${2-}"
+    if [ "${MTPROXYL_NONINTERACTIVE:-false}" = "true" ] && [ -n "$_preset" ]; then
+        printf -v "$_var" '%s' "$_preset"
+        echo "$_preset"
+        return 0
+    fi
+    read_line "$_var"
+}
+
 read_line() {
     local __var="$1" __ans=""
     # Неинтерактивный режим (панель, скрипты): подтверждения не спрашиваем.
@@ -421,6 +604,13 @@ read_line() {
     # и строгие проверки [ "$_c" != "yes" ], и мягкие [[ =~ ^[yY] ]].
     if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ]; then
         printf -v "$__var" '%s' "yes"
+        return 0
+    fi
+    # Установка аргументами: отвечать некому, а ждать ввода — значит зависнуть.
+    # Пустой ответ равен нажатому Enter, то есть значению по умолчанию.
+    if [ "${MTPROXYL_NONINTERACTIVE:-false}" = "true" ]; then
+        printf -v "$__var" '%s' ""
+        echo "<по умолчанию>"
         return 0
     fi
     IFS= read -er __ans || true
@@ -433,7 +623,7 @@ read_choice() {
     local default="${2:-}"
     # В неинтерактивном режиме берём значение по умолчанию — оно везде
     # выставлено на рекомендуемый вариант.
-    if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ]; then
+    if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ] || [ "${MTPROXYL_NONINTERACTIVE:-false}" = "true" ]; then
         echo "$default"
         return 0
     fi
@@ -578,7 +768,7 @@ self_update() {
     if [ -z "$_lib_list" ]; then
         log_warn "Не удалось извлечь список библиотек из нового скрипта"
         log_info "Используем резервный список"
-        _lib_list="colors utils settings secrets config docker engine traffic availability dc warp tui_warp tgbot tui_tgbot geoblock geoip upstream backup nft selfmask panel detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode settings_cli install"
+        _lib_list="colors utils settings secrets config docker engine traffic availability dc warp tui_warp tgbot tui_tgbot geoblock geoip upstream backup nft selfmask panel detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen"
     fi
 
     local _total=0 _ok=0 _failed=0 _skipped=0
@@ -858,8 +1048,11 @@ show_cli_help() {
     echo -e "  ${BOLD}Доступность:${NC}    availability status|check|details|target|on|off|token"
     echo -e "  ${BOLD}Telegram/WARP:${NC}  warp status|on socks|on iface|off|scan|location|endpoint|proto"
     echo -e "  ${BOLD}Бэкапы:${NC}         backup [--encrypt] | restore <файл>"
+    echo -e "  ${BOLD}Переезд:${NC}        migrate <[user@]хост[:порт]> [--dry-run] ${DIM}(только менеджер)${NC}"
+    echo -e "  ${BOLD}Подкачка:${NC}       swap status|on [МБ]|off"
     echo -e "  ${BOLD}Reanimator:${NC}     mode [manager|reanimator] | detect | edit-config\n                  install-telemt | uninstall-telemt"
-    echo -e "  ${BOLD}Система:${NC}        install | menu | update [--no-restart] | update-check | uninstall\n                  version | help"
+    echo -e "  ${BOLD}Система:${NC}        install [аргументы] | menu | update [--no-restart] | update-check\n                  uninstall | version | help"
+    echo -e "  ${DIM}Установка без вопросов: mtproxyl install --help${NC}"
     echo ""
 }
 

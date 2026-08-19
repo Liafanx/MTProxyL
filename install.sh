@@ -12,6 +12,8 @@ REPO="Liafanx/MTProxyL"
 INSTALL_DIR="/opt/mtproxyl"
 # Ветка репозитория, из которой скачиваются скрипт и библиотеки
 BRANCH="${MTPROXYL_BRANCH:-main}"
+# Аргументы после «--» уходят установщику: переезд на новый сервер одной строкой.
+INSTALL_ARGS=()
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -20,8 +22,11 @@ while [ $# -gt 0 ]; do
             BRANCH="$2"; shift 2 ;;
         --branch=*) BRANCH="${1#*=}"; shift ;;
         -h|--help)
-            echo "Использование: install.sh [--branch <ветка>]"
+            echo "Использование: install.sh [--branch <ветка>] [-- <аргументы установки>]"
+            echo "  Всё после -- уходит в 'mtproxyl install' — установка без вопросов."
+            echo "  Список аргументов: mtproxyl install --help"
             exit 0 ;;
+        --) shift; INSTALL_ARGS=("$@"); break ;;
         *) echo "ОШИБКА: неизвестный аргумент: $1" >&2; exit 1 ;;
     esac
 done
@@ -116,10 +121,23 @@ fi
 chmod +x "${INSTALL_DIR}/mtproxyl.sh"
 
 # Библиотеки
-for lib in colors utils settings secrets config docker engine traffic availability dc warp geoblock geoip upstream backup nft selfmask panel tgbot detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_tgbot tui_warp tui_detect expert_catalog expert_mode settings_cli install; do
+for lib in colors utils settings secrets config docker engine traffic availability dc warp geoblock geoip upstream backup nft selfmask panel tgbot detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_tgbot tui_warp tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
     echo "  → lib/${lib}.sh"
     if ! download_file "${SCRIPT_URL}/lib/${lib}.sh" "${INSTALL_DIR}/lib/${lib}.sh" "lib/${lib}.sh"; then
-        echo "  Установка прервана. Повторите попытку через 10–30 секунд." >&2
+        # 404 у отдельного файла — это почти всегда несовпадение веток: список
+        # библиотек взят из этого install.sh, а качаем мы из другой ветки.
+        # Без -f: с ним curl печатает код и выходит с ошибкой, а запасное
+        # «|| echo 000» дописывало вторую строку и сравнение не совпадало.
+        _code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 \
+            "${SCRIPT_URL}/lib/${lib}.sh" 2>/dev/null | tail -1 | tr -cd '0-9')
+        if [ "$_code" = "404" ]; then
+            echo "" >&2
+            echo "  В ветке '${BRANCH}' файла lib/${lib}.sh нет." >&2
+            echo "  Похоже, install.sh взят из другой ветки. Укажите ту же ветку явно:" >&2
+            echo "    sudo bash $0 --branch <ветка> [-- <аргументы установки>]" >&2
+        else
+            echo "  Установка прервана. Повторите попытку через 10–30 секунд." >&2
+        fi
         echo "  Подробности: ${INSTALL_LOG}" >&2
         exit 1
     fi
@@ -189,6 +207,10 @@ echo ""
 # Автозапуск. Если скрипт запускали через пайп или подстановку процесса,
 # stdin у нас не терминал — интерактивное меню в таком случае сразу
 # «проваливается». Возвращаем ввод на терминал, пока он есть.
+if [ ${#INSTALL_ARGS[@]} -gt 0 ]; then
+    exec /usr/local/bin/mtproxyl install "${INSTALL_ARGS[@]}"
+fi
+
 if [ ! -t 0 ] && [ -e /dev/tty ]; then
     exec < /dev/tty || true
 fi
