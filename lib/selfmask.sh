@@ -948,10 +948,15 @@ EOF
         return 1
     }
 
+    # Почта необязательна: без неё certbot регистрируется анонимно, только
+    # писем об истечении не будет. Пустое -m он не принимает вовсе.
+    local -a _mail_args=(--register-unsafely-without-email)
+    [ -n "${SELFMASK_CERT_EMAIL:-}" ] && _mail_args=(-m "$SELFMASK_CERT_EMAIL")
+
     if certbot certonly --webroot -w "$SELFMASK_SITE_DIR" \
         -d "$SELFMASK_DOMAIN" \
         --non-interactive --agree-tos \
-        -m "${SELFMASK_CERT_EMAIL}" \
+        "${_mail_args[@]}" \
         --cert-name "$SELFMASK_DOMAIN" &>/dev/null; then
         log_success "Сертификат получен"
     else

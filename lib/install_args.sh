@@ -17,6 +17,7 @@ _IA_CPUS=""; _IA_MEMORY=""
 _IA_SECRETS=()
 _IA_SELFMASK_DOMAIN=""; _IA_SELFMASK_CERT=""; _IA_SELFMASK_EMAIL=""
 _IA_SELFMASK_TEMPLATE=""; _IA_SELFMASK_BACKEND_PORT=""
+_IA_GEOIP=""
 _IA_FORCE="false"
 
 install_args_help() {
@@ -49,9 +50,13 @@ install_args_help() {
   Selfmask
     --selfmask <домен>         включить Selfmask на этом домене
     --selfmask-cert letsencrypt|selfsigned
-    --selfmask-email <email>   почта для Let's Encrypt
+    --selfmask-email <email>   почта для Let's Encrypt (необязательна)
     --selfmask-template stub|filemanager|catrunner|mekorunner|<url>
     --selfmask-backend-port N  локальный порт nginx (по умолчанию 8444)
+
+  Дополнения
+    --geoip yes|no             база GeoIP: страна, город и ASN в истории IP
+                               (по умолчанию no)
 
   Прочее
     --force                    ставить поверх существующей установки
@@ -142,6 +147,12 @@ _install_args_parse() {
             --selfmask-email)        _IA_SELFMASK_EMAIL="$_v" ;;
             --selfmask-template)     _IA_SELFMASK_TEMPLATE="$_v" ;;
             --selfmask-backend-port) _IA_SELFMASK_BACKEND_PORT="$_v" ;;
+            --geoip)
+                case "${_v,,}" in
+                    yes|y|да|true|on)   _IA_GEOIP="yes" ;;
+                    no|n|нет|false|off) _IA_GEOIP="no" ;;
+                    *) log_error "--geoip: yes или no"; return 1 ;;
+                esac ;;
             --force|--yes|-y)        _IA_FORCE="true" ;;
             -h|--help)               install_args_help; return 2 ;;
             *) log_error "Неизвестный аргумент: ${_k}"; return 1 ;;
@@ -325,6 +336,11 @@ run_installer_args() {
         _install_args_selfmask || log_warn "Selfmask не настроен — остальное установлено"
     fi
 
+    if [ "$_IA_GEOIP" = "yes" ]; then
+        echo ""
+        geoip_install || log_warn "База GeoIP не установлена — поставьте позже: меню «Дополнения»"
+    fi
+
     load_settings; load_secrets
     show_install_summary
 }
@@ -412,7 +428,9 @@ _install_args_selfmask() {
     [ -n "$_IA_SELFMASK_TEMPLATE" ] && SELFMASK_SITE_SOURCE="$_IA_SELFMASK_TEMPLATE"
     [ -n "$_IA_SELFMASK_BACKEND_PORT" ] && SELFMASK_NGINX_BACKEND_PORT="$_IA_SELFMASK_BACKEND_PORT"
     if [ "$SELFMASK_CERT_MODE" = "letsencrypt" ]; then
-        SELFMASK_CERT_EMAIL="${_IA_SELFMASK_EMAIL:-admin@${SELFMASK_DOMAIN}}"
+        # Почта необязательна: без неё сертификат выпускается так же, просто
+        # Let's Encrypt не пришлёт напоминание об истечении.
+        SELFMASK_CERT_EMAIL="${_IA_SELFMASK_EMAIL}"
         # A-запись переезжает руками владельца домена, и до неё Let's Encrypt
         # не выпишет сертификат. Отказ здесь честнее сломанной установки.
         if ! _selfmask_check_dns "$SELFMASK_DOMAIN" >/dev/null 2>&1; then

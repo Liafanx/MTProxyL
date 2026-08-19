@@ -4,7 +4,12 @@
 tui_backup_menu() {
     while true; do
         clear_screen
-        draw_header "ОБНОВЛЕНИЯ И БЭКАПЫ"
+        # В менеджере отсюда же уезжают на другой сервер — название об этом.
+        if [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
+            draw_header "ОБНОВЛЕНИЕ, БЭКАПЫ И МИГРАЦИЯ"
+        else
+            draw_header "ОБНОВЛЕНИЯ И БЭКАПЫ"
+        fi
         echo ""
         if [ -n "$_UPDATE_AVAILABLE" ]; then
             echo -e "  ${YELLOW}${BOLD}⬆ Доступно: v${VERSION} → v${_UPDATE_AVAILABLE}${NC}"
@@ -23,6 +28,7 @@ tui_backup_menu() {
             echo -e "  ${DIM}[8]${NC} Импорт (миграция)"
             echo -e "  ${DIM}[9]${NC} Автоочистка"
             echo -e "  ${DIM}[10]${NC} Переезд на другой сервер ${DIM}(по SSH, копия целиком)${NC}"
+            echo -e "  ${DIM}[11]${NC} Перенос аргументами ${DIM}(готовая команда для новой машины)${NC}"
         else
             echo -e "  ${DIM}Бэкапы и миграция работают с собственным конфигом${NC}"
             echo -e "  ${DIM}и секретами менеджера — в режиме reanimator недоступны.${NC}"
@@ -76,6 +82,7 @@ tui_backup_menu() {
                backup_autoclean "${d:-${BACKUP_RETENTION_DAYS:-30}}" || true; press_any_key ;;
             10) _require_manager_mode || { press_any_key; continue; }
                 _tui_migrate_ssh; press_any_key ;;
+            11) tui_args_export_menu ;;
             0|"") return ;;
         esac
     done
