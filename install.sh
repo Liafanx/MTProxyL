@@ -126,8 +126,10 @@ for lib in colors utils settings secrets config docker engine traffic availabili
     if ! download_file "${SCRIPT_URL}/lib/${lib}.sh" "${INSTALL_DIR}/lib/${lib}.sh" "lib/${lib}.sh"; then
         # 404 у отдельного файла — это почти всегда несовпадение веток: список
         # библиотек взят из этого install.sh, а качаем мы из другой ветки.
-        _code=$(curl -fsS -o /dev/null -w '%{http_code}' --max-time 15 \
-            "${SCRIPT_URL}/lib/${lib}.sh" 2>/dev/null || echo 000)
+        # Без -f: с ним curl печатает код и выходит с ошибкой, а запасное
+        # «|| echo 000» дописывало вторую строку и сравнение не совпадало.
+        _code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 \
+            "${SCRIPT_URL}/lib/${lib}.sh" 2>/dev/null | tail -1 | tr -cd '0-9')
         if [ "$_code" = "404" ]; then
             echo "" >&2
             echo "  В ветке '${BRANCH}' файла lib/${lib}.sh нет." >&2
