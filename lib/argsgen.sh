@@ -10,6 +10,7 @@ declare -A _AG_VAL=()
 
 # Пункты в порядке показа: ключ|подпись|можно ли править значение.
 _AG_ITEMS=(
+    "engine|Движок|yes"
     "port|Порт прокси|yes"
     "ports|Порты метрик и API|no"
     "host|Домен в ссылках|yes"
@@ -30,6 +31,13 @@ _argsgen_defaults() {
 
     _AG_ON=(); _AG_VAL=()
 
+    _AG_ON[engine]="yes"
+    if [ "$(engine_backend)" = "binary" ]; then
+        local _ev; _ev=$(binengine_version)
+        [ -n "$_ev" ] && [ "$_ev" != "unknown" ] && _AG_VAL[engine]="binary:${_ev}" || _AG_VAL[engine]="binary"
+    else
+        _AG_VAL[engine]="docker"
+    fi
     _AG_ON[port]="yes";   _AG_VAL[port]="${PROXY_PORT:-443}"
     _AG_ON[ports]="no";   _AG_VAL[ports]="${PROXY_METRICS_PORT:-9090}/${PROXY_API_PORT:-9091}"
     _AG_ON[sni]="yes";    _AG_VAL[sni]="${PROXY_DOMAIN:-autoscout24.ru}"
@@ -78,6 +86,13 @@ _argsgen_defaults() {
 _argsgen_build() {
     local -a _a=(--mode manager)
     [ "${_AG_ON[force]}" = "yes" ] && _a+=(--force)
+    if [ "${_AG_ON[engine]}" = "yes" ]; then
+        case "${_AG_VAL[engine]}" in
+            binary:*) _a+=(--engine binary --engine-version "${_AG_VAL[engine]#binary:}") ;;
+            binary)   _a+=(--engine binary) ;;
+            *)        _a+=(--engine docker) ;;
+        esac
+    fi
     [ "${_AG_ON[port]}" = "yes" ] && _a+=(--port "${_AG_VAL[port]}")
     if [ "${_AG_ON[ports]}" = "yes" ]; then
         _a+=(--metrics-port "${PROXY_METRICS_PORT:-9090}" --api-port "${PROXY_API_PORT:-9091}")
@@ -138,6 +153,15 @@ _argsgen_build() {
     for _s in "${_a[@]}"; do printf '%q ' "$_s"; done
 }
 
+# В значениях храним то, что уйдёт в аргументы; человеку показываем словами.
+_ag_engine_label() {
+    case "$1" in
+        binary:*) echo "бинарник ${1#binary:}" ;;
+        binary)   echo "бинарник, последняя версия" ;;
+        *)        echo "Docker-образ" ;;
+    esac
+}
+
 # printf %-30s меряет байты, а кириллица двухбайтовая — колонки разъезжались.
 _ag_pad() {
     local _s="$1" _w="$2" _len
@@ -165,6 +189,24 @@ _argsgen_print_command() {
 _argsgen_edit() {
     local _key="$1" _v=""
     case "$_key" in
+        engine)
+            echo -e "  ${DIM}Чем новый сервер будет держать движок.${NC}"
+            echo -e "  ${DIM}[1]${NC} Docker-образ"
+            echo -e "  ${DIM}[2]${NC} бинарник MTProxyL-Telemt, та же версия, что здесь"
+            echo -e "  ${DIM}[3]${NC} бинарник MTProxyL-Telemt, последняя версия"
+            local _ec; _ec=$(read_choice "выбор" "1")
+            case "$_ec" in
+                2)
+                    local _ev; _ev=$(binengine_version)
+                    if [ -z "$_ev" ] || [ "$_ev" = "unknown" ]; then
+                        log_warn "Версия здешнего бинарника неизвестна — возьмём последнюю"
+                        _AG_VAL[engine]="binary"
+                    else
+                        _AG_VAL[engine]="binary:${_ev}"
+                    fi ;;
+                3) _AG_VAL[engine]="binary" ;;
+                *) _AG_VAL[engine]="docker" ;;
+            esac ;;
         port)
             echo -en "  ${BOLD}Порт прокси [${_AG_VAL[port]}]:${NC} "; read_line _v
             [ -n "$_v" ] || return 0
@@ -213,7 +255,9 @@ tui_args_export_menu() {
             else
                 _state="${DIM}выкл${NC}"
             fi
-            echo -e "  ${CYAN}[$(printf '%2d' "$_i")]${NC} ${_state}  $(_ag_pad "$_label" 28)${DIM}${_AG_VAL[$_key]}${NC}"
+            local _shown="${_AG_VAL[$_key]}"
+            [ "$_key" = "engine" ] && _shown=$(_ag_engine_label "$_shown")
+            echo -e "  ${CYAN}[$(printf '%2d' "$_i")]${NC} ${_state}  $(_ag_pad "$_label" 28)${DIM}${_shown}${NC}"
             _i=$((_i + 1))
         done
         echo ""
@@ -244,7 +288,7 @@ tui_args_export_menu() {
                 if [ "$_key" = "host" ] && [ "${_AG_ON[host]}" != "yes" ] && [ -z "${_AG_VAL[host]}" ]; then
                     echo ""
                     log_info "В ссылках сейчас адрес сервера, а не домен — переносить нечего"
-                    log_info "Задать домен для нового сервера: e3"
+                    log_info "Задать домен для нового сервера: e4"
                     press_any_key; continue
                 fi
                 [ "${_AG_ON[$_key]}" = "yes" ] && _AG_ON[$_key]="no" || _AG_ON[$_key]="yes" ;;

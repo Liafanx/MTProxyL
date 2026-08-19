@@ -597,6 +597,16 @@ _fix_read() {
     read_line "$_var"
 }
 
+# То же для меню с номерами: заготовленный ответ важнее значения по умолчанию.
+_fix_read_choice() {
+    local _prompt="$1" _default="${2:-}" _preset="${3-}"
+    if [ "${MTPROXYL_NONINTERACTIVE:-false}" = "true" ] && [ -n "$_preset" ]; then
+        echo "$_preset"
+        return 0
+    fi
+    read_choice "$_prompt" "$_default"
+}
+
 read_line() {
     local __var="$1" __ans=""
     # Неинтерактивный режим (панель, скрипты): подтверждения не спрашиваем.
@@ -768,7 +778,7 @@ self_update() {
     if [ -z "$_lib_list" ]; then
         log_warn "Не удалось извлечь список библиотек из нового скрипта"
         log_info "Используем резервный список"
-        _lib_list="colors utils settings secrets config docker engine traffic availability dc warp tui_warp tgbot tui_tgbot geoblock geoip upstream backup nft selfmask panel detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen"
+        _lib_list="colors utils settings secrets config docker binengine engine traffic availability dc warp tui_warp tgbot tui_tgbot geoblock geoip upstream backup nft selfmask panel detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen"
     fi
 
     local _total=0 _ok=0 _failed=0 _skipped=0
@@ -1034,7 +1044,7 @@ show_cli_help() {
     echo -e "  ${BOLD}Прокси:${NC}         start | stop | restart | status [--json]"
     echo -e "  ${BOLD}Секреты:${NC}        secret add|remove|list|rotate|enable|disable|limits|link|qr|clone|rename"
     echo -e "  ${BOLD}Настройки:${NC}      port | ip | domain | mask-backend | config | settings list|set"
-    echo -e "  ${BOLD}Движок:${NC}         engine status|list|update|rollback|rebuild"
+    echo -e "  ${BOLD}Движок:${NC}         engine status|list|update|rollback|rebuild|backend"
     echo -e "  ${BOLD}Эксперт:${NC}        expert list|set|clear|edit"
     echo -e "  ${BOLD}Супер эксперт:${NC}  superexpert status|on|off|edit|show|write"
     echo -e "  ${BOLD}NFT:${NC}            nft apply|remove|service|drop|preset|smart|zapret2|zapret2-stop|zapret2-rm|zapret2-wscale"

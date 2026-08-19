@@ -20,7 +20,7 @@ export LC_NUMERIC=C
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="1.5.3"
+VERSION="1.5.4"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -67,7 +67,7 @@ fi
 
 # Загрузка библиотек
 LIB_DIR="${INSTALL_DIR}/lib"
-for _lib in colors utils settings detect secrets config docker engine traffic availability dc warp geoblock geoip upstream backup nft selfmask panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_tgbot tui_warp tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
+for _lib in colors utils settings detect secrets config docker binengine engine traffic availability dc warp geoblock geoip upstream backup nft selfmask panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_selfmask tui_addons tui_tgbot tui_warp tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
     if [ -f "${LIB_DIR}/${_lib}.sh" ]; then
         # shellcheck source=/dev/null
         source "${LIB_DIR}/${_lib}.sh"
@@ -231,7 +231,7 @@ cli_main() {
                 --json)
                     # API движка живёт в конфиге активного режима. Панель настроена на
                     # один адрес и после смены режима опрашивала бы чужой движок.
-                    _mode_cfg="${CONFIG_DIR}/config.toml"
+                    _mode_cfg=$(engine_config_path)
                     [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && _mode_cfg="${DETECTED_CONFIG_PATH:-}"
                     _api_port=$(_get_telemt_api_port "$_mode_cfg" 2>/dev/null || echo "")
                     _api_on="false"
@@ -243,7 +243,11 @@ cli_main() {
 
                     # Откуда брать логи движка текущего режима: свой контейнер, контейнер
                     # цели или systemd-юнит. Панель зовёт то, что настроено при установке.
-                    _log_kind="docker"; _log_target="$CONTAINER_NAME"
+                    if engine_is_binary; then
+                        _log_kind="service"; _log_target="$ENGINE_SERVICE"
+                    else
+                        _log_kind="docker"; _log_target="$CONTAINER_NAME"
+                    fi
                     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
                         case "${DETECTED_MODE:-unknown}" in
                             docker|mtproxymax)
@@ -260,8 +264,9 @@ cli_main() {
                     # конфига цели, а не наш PROXY_DOMAIN.
                     _mode_sni=$(_current_sni_domain 2>/dev/null || echo "")
 
-                    printf '{"mode":"%s","tools_only":%s,"detected_mode":"%s","detected_config":"%s","port":%d,"sni":"%s","engine_config":"%s","api_port":%d,"api_enabled":%s,"own_container":"%s","running":%s,"log_kind":"%s","log_target":"%s"}\n' \
+                    printf '{"mode":"%s","engine":"%s","tools_only":%s,"detected_mode":"%s","detected_config":"%s","port":%d,"sni":"%s","engine_config":"%s","api_port":%d,"api_enabled":%s,"own_container":"%s","running":%s,"log_kind":"%s","log_target":"%s"}\n' \
                         "$(json_escape "${MTPROXYL_MODE:-manager}")" \
+                        "$(json_escape "$(engine_backend)")" \
                         "$([ "${TOOLS_ONLY:-false}" = "true" ] && echo true || echo false)" \
                         "$(json_escape "${DETECTED_MODE:-unknown}")" \
                         "$(json_escape "${DETECTED_CONFIG_PATH:-}")" \

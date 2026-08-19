@@ -12,7 +12,7 @@ tui_settings_menu() {
         echo -e "  ${DIM}Правка: главное меню → Режим супер эксперта → Редактировать конфиг${NC}"
         echo ""
         echo -e "  ${DIM}Настройки хоста (NFT, Zapret2, selfmask, гео-блокировка, бэкапы)${NC}"
-        echo -e "  ${DIM}работают как обычно — они не про config.toml.${NC}"
+        echo -e "  ${DIM}работают как обычно — они не про конфиг движка.${NC}"
         press_any_key
         return
     fi

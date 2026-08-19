@@ -24,6 +24,10 @@ func (m Mode) Valid() bool {
 // ModeStatus is the output of `mtproxyl mode --json`.
 type ModeStatus struct {
 	Mode Mode `json:"mode"`
+	// Engine says how manager mode holds telemt: "docker" for the container,
+	// "binary" for the MTProxyL-Telemt systemd service. Meaningless in
+	// reanimator mode, where the target is somebody else's.
+	Engine string `json:"engine"`
 	// ToolsOnly means the host runs somebody else's proxy (or none) and
 	// MTProxyL is kept only for host-level fixes: zapret2, the SYN limiter,
 	// By-MEKO tuning, geo blocking. There is no engine to ask about users,

@@ -35,6 +35,25 @@ const CONTAINER_STATE_LABELS: Record<string, string> = {
   dead: 'в состоянии dead',
 };
 
+/** То же для движка-бинарника: там снимается служба, а не контейнер. */
+const BINARY_ENGINE_CHOICES: { id: ContainerDisposition; title: string; hint: string }[] = [
+  {
+    id: 'remove',
+    title: 'Остановить и снять службу (рекомендуется)',
+    hint: 'Порт освобождается полностью. Бинарник, конфиг и настройки остаются — при возврате в Manager служба создаётся заново.',
+  },
+  {
+    id: 'stop',
+    title: 'Только остановить службу',
+    hint: 'Порт освобождается, юнит остаётся на месте.',
+  },
+  {
+    id: 'keep',
+    title: 'Не трогать',
+    hint: 'Движок продолжит работать и держать порт — цель реаниматора на этом порту не запустится.',
+  },
+];
+
 /**
  * Судьба своего контейнера при уходе в реаниматор.
  *
@@ -125,6 +144,9 @@ export function ModePage() {
   };
 
   const current = status?.mode;
+  // Носитель движка менеджера: контейнер или служба MTProxyL-Telemt.
+  const isBinaryEngine = status?.engine === 'binary';
+  const engineWord = isBinaryEngine ? 'движок' : 'контейнер';
   // Спрашивать про контейнер имеет смысл, только когда он есть.
   const hasOwnContainer =
     status?.own_container !== undefined &&
@@ -182,6 +204,30 @@ export function ModePage() {
             })}
           </div>
 
+          {status && current === 'manager' && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Движок</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <Row
+                  label="Носитель"
+                  value={isBinaryEngine ? 'Бинарник MTProxyL-Telemt (systemd)' : 'Docker-контейнер'}
+                />
+                <Row
+                  label="Состояние"
+                  value={
+                    CONTAINER_STATE_LABELS[status.own_container ?? ''] ??
+                    status.own_container ??
+                    'неизвестно'
+                  }
+                />
+                <Row label="Конфиг" value={status.engine_config || 'не найден'} mono />
+                <Row label="Порт" value={String(status.port)} />
+              </CardContent>
+            </Card>
+          )}
+
           {status && current === 'reanimator' && (
             <Card>
               <CardHeader>
@@ -211,19 +257,19 @@ export function ModePage() {
             <p className="text-sm text-text-secondary">
               {target === 'manager'
                 ? 'MTProxyL начнёт устанавливать и обслуживать собственный telemt. Если своей установки ещё нет, будет запущен установщик.'
-                : 'Управление собственным контейнером из меню прекратится. Конфиг цели MTProxyL не переписывает — применяет только хостовые фиксы.'}
+                : `Управление собственным ${engineWord === 'движок' ? 'движком' : 'контейнером'} из меню прекратится. Конфиг цели MTProxyL не переписывает — применяет только хостовые фиксы.`}
             </p>
 
             {target === 'reanimator' && hasOwnContainer && (
               <div className="space-y-2 border border-border rounded-lg p-3">
                 <div className="text-sm text-text-primary">
-                  Что сделать со своим контейнером?
+                  Что сделать со своим {engineWord === 'движок' ? 'движком' : 'контейнером'}?
                 </div>
                 <p className="text-xs text-text-secondary">
                   Сейчас он {CONTAINER_STATE_LABELS[status?.own_container ?? ''] ?? status?.own_container} и
                   занимает порт {status?.port}. Тот же порт возможно нужен цели реаниматора.
                 </p>
-                {CONTAINER_CHOICES.map(({ id, title, hint }) => (
+                {(isBinaryEngine ? BINARY_ENGINE_CHOICES : CONTAINER_CHOICES).map(({ id, title, hint }) => (
                   <label key={id} className="flex items-start gap-2 cursor-pointer">
                     <input
                       type="radio"

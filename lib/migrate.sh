@@ -168,7 +168,7 @@ _mig_check_local() {
     fi
     [ -f "$SETTINGS_FILE" ] || { log_error "Настройки не найдены — переносить нечего"; return 1; }
     if _superexpert_active 2>/dev/null; then
-        log_info "Включён режим супер эксперта — ваш config.toml поедет вместе с остальным"
+        log_info "Включён режим супер эксперта — ваш конфиг движка поедет вместе с остальным"
     fi
     return 0
 }
@@ -194,6 +194,16 @@ _mig_check_remote() {
     log_success "Новый сервер: ${_os} ${_arch}, root есть"
     if [ "$_has" = "yes" ]; then
         log_warn "Там уже стоит MTProxyL — установка пойдёт поверх"
+    fi
+    # Бинарник движка собирают не под всё: под чужую архитектуру ехать незачем.
+    if engine_is_binary; then
+        case "$_arch" in
+            x86_64|amd64|aarch64|arm64) ;;
+            *)
+                log_error "Движок-бинарник под ${_arch} не собирают — сборки telemt есть для x86_64 и aarch64"
+                log_info "Переезжайте на Docker-движок: сначала здесь mtproxyl engine backend docker"
+                return 1 ;;
+        esac
     fi
 
     # grep -c печатает 0 и выходит с кодом 1, так что «|| echo 0» дописывал
@@ -294,6 +304,15 @@ _mig_warn_dns() {
 # и должно заработать там.
 _mig_build_args() {
     local -a _a=(--mode manager --force)
+    # Движок переезжает тем же носителем: у кого бинарник — тому и версию,
+    # чтобы на новой машине встало ровно то же, что работало на старой.
+    if [ "$(engine_backend)" = "binary" ]; then
+        _a+=(--engine binary)
+        local _ev; _ev=$(binengine_version)
+        [ -n "$_ev" ] && [ "$_ev" != "unknown" ] && _a+=(--engine-version "$_ev")
+    else
+        _a+=(--engine docker)
+    fi
     _a+=(--port "${PROXY_PORT:-443}")
     _a+=(--metrics-port "${PROXY_METRICS_PORT:-9090}")
     _a+=(--api-port "${PROXY_API_PORT:-9091}")
@@ -302,7 +321,8 @@ _mig_build_args() {
     [ "${MASKING_ENABLED:-true}" = "false" ] && _a+=(--mask off) || _a+=(--mask on)
     [ -n "${AD_TAG:-}" ] && _a+=(--ad-tag "$AD_TAG")
     # Лимиты CPU и памяти не переносим: их подбирали под старую машину, а docker
-    # на новой откажется запускать контейнер, если ядер там меньше.
+    # на новой откажется запускать контейнер, если ядер там меньше. У бинарника
+    # таких лимитов нет вовсе.
 
     # Домен в ссылках переезжает как есть, литеральный IP — нет: он привязан
     # к старой машине, и на новой ссылки по нему вели бы в никуда.
@@ -536,6 +556,7 @@ migrate_run() {
     draw_header "ЧТО ПОЕДЕТ"
     echo ""
     echo -e "  ${BOLD}Куда:${NC}       ${_MIG_USER}@${_MIG_HOST}:${_MIG_PORT}${_MIG_NEW_IP:+ ${DIM}(${_MIG_NEW_IP})${NC}}"
+    echo -e "  ${BOLD}Движок:${NC}     $(engine_backend_title)$(engine_is_binary && echo ", v$(binengine_version)")"
     echo -e "  ${BOLD}Порт:${NC}       ${PROXY_PORT:-443}"
     echo -e "  ${BOLD}Домен SNI:${NC}  ${PROXY_DOMAIN:-?}"
     echo -e "  ${BOLD}В ссылках:${NC}  $(if [ -n "${CUSTOM_IP:-}" ] && ! validate_ip_literal "${CUSTOM_IP}"; then echo "${CUSTOM_IP}"; else echo "адрес нового сервера"; fi)"
@@ -543,12 +564,14 @@ migrate_run() {
     echo -e "  ${BOLD}Метка:${NC}      ${AD_TAG:-${DIM}нет${NC}}"
     echo -e "  ${BOLD}Selfmask:${NC}   $([ "${SELFMASK_ENABLED:-false}" = "true" ] && echo "${SELFMASK_DOMAIN} (${SELFMASK_CERT_MODE:-letsencrypt})" || echo "${DIM}выключен${NC}")"
     _superexpert_active 2>/dev/null && \
-        echo -e "  ${BOLD}Супер эксперт:${NC} свой config.toml едет вместе с остальным"
+        echo -e "  ${BOLD}Супер эксперт:${NC} свой конфиг движка едет вместе с остальным"
     echo -e "  ${BOLD}Панель:${NC}     $(if ! panel_installed 2>/dev/null; then echo "${DIM}не установлена${NC}"; elif [ "$_MIG_WITH_PANEL" = "no" ]; then echo "${DIM}пропускаем${NC}"; else echo "переносим"; fi)"
     echo -e "  ${BOLD}Бот:${NC}        $(if ! tgbot_installed 2>/dev/null; then echo "${DIM}не установлен${NC}"; elif [ "$_MIG_WITH_TGBOT" = "no" ]; then echo "${DIM}пропускаем${NC}"; else echo "переносим"; fi)"
     echo ""
-    echo -e "  ${DIM}Лимиты CPU и памяти контейнера не переносим: на новой машине${NC}"
-    echo -e "  ${DIM}ядер может быть меньше, и docker откажется его запускать.${NC}"
+    if ! engine_is_binary; then
+        echo -e "  ${DIM}Лимиты CPU и памяти контейнера не переносим: на новой машине${NC}"
+        echo -e "  ${DIM}ядер может быть меньше, и docker откажется его запускать.${NC}"
+    fi
     echo ""
 
     local _dns_ok="true"
@@ -576,7 +599,11 @@ migrate_run() {
     echo ""
     draw_header "УСТАНОВКА НА НОВОМ СЕРВЕРЕ"
     echo ""
-    log_info "Это займёт несколько минут: пакеты, docker, образ движка"
+    if engine_is_binary; then
+        log_info "Это займёт пару минут: пакеты и бинарник движка, Docker не нужен"
+    else
+        log_info "Это займёт несколько минут: пакеты, docker, образ движка"
+    fi
 
     local _branch="${GITHUB_BRANCH:-main}"
     local _url="https://raw.githubusercontent.com/${GITHUB_REPO:-Liafanx/MTProxyL}/${_branch}/install.sh"
@@ -595,9 +622,15 @@ migrate_run() {
 
     # Установщик может закончиться без ошибки, а контейнер не подняться —
     # молчать об этом нельзя: дальше поедут секреты в неработающий прокси.
-    if ! _mig_ssh "docker ps --filter name=mtproxyl --filter status=running -q | grep -q ." </dev/null >/dev/null 2>&1; then
+    local _alive_cmd="docker ps --filter name=mtproxyl --filter status=running -q | grep -q ."
+    local _why_cmd="docker logs mtproxyl"
+    if engine_is_binary; then
+        _alive_cmd="systemctl is-active --quiet ${ENGINE_SERVICE}"
+        _why_cmd="journalctl -u ${ENGINE_SERVICE} -n 50"
+    fi
+    if ! _mig_ssh "$_alive_cmd" </dev/null >/dev/null 2>&1; then
         log_error "Прокси на новом сервере не запустился"
-        log_info "Причину покажет: ssh ${_MIG_USER}@${_MIG_HOST} 'docker logs mtproxyl'"
+        log_info "Причину покажет: ssh ${_MIG_USER}@${_MIG_HOST} '${_why_cmd}'"
         log_info "Остальное всё равно перенесём — прокси поднимете там: mtproxyl start"
     fi
 
@@ -676,10 +709,11 @@ handle_migrate_command() {
     --no-tgbot       не переносить телеграм-бота
     --dry-run        показать, что поедет, и ничего не делать
 
-  Переносятся: порт, домен ссылок, FakeTLS SNI, секреты с лимитами,
-  рекламная метка, маскировка, SNI-политика, Zapret2 или SYN limiter,
-  оптимизация By-MEKO, Selfmask, панель и бот. Про панель и бота
-  спрашиваем, по умолчанию да.
+  Переносятся: носитель движка (Docker или бинарник MTProxyL-Telemt той же
+  версии), порт, домен ссылок, FakeTLS SNI, секреты с лимитами, рекламная
+  метка, маскировка, SNI-политика, Zapret2 или SYN limiter, оптимизация
+  By-MEKO, Selfmask, панель и бот. Про панель и бота спрашиваем,
+  по умолчанию да.
 
   Лимиты CPU и памяти контейнера не переносятся: их подбирали под старую
   машину, а docker на новой откажется запускать контейнер, если ядер меньше.

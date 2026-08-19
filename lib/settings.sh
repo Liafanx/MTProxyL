@@ -3,6 +3,10 @@
 
 # ── Значения по умолчанию ─────────────────────────────────────
 MTPROXYL_MODE="manager"
+# Чем менеджер держит движок: docker — образ в контейнере, binary — бинарник
+# MTProxyL-Telemt под systemd. ENGINE_VERSION пуст = последняя версия telemt.
+ENGINE_BACKEND="docker"
+ENGINE_VERSION=""
 PROXY_PORT=443
 PROXY_METRICS_PORT=9090
 # REST API движка. MTProxyL включает его явно и вешает на localhost:
@@ -120,6 +124,10 @@ save_settings() {
 
 # Режим работы: manager (владеет своим telemt) | reanimator (чинит чужой)
 MTPROXYL_MODE='${MTPROXYL_MODE}'
+
+# Движок менеджера: docker | binary
+ENGINE_BACKEND='${ENGINE_BACKEND}'
+ENGINE_VERSION='${ENGINE_VERSION}'
 
 # Конфигурация прокси
 PROXY_PORT='${PROXY_PORT}'
@@ -323,8 +331,9 @@ switch_port_profile() {
     case "$_new" in
         manager)
             _restore="${PORT_PROFILE_MANAGER}"
-            if [ -z "$_restore" ] && [ -f "${CONFIG_DIR}/config.toml" ]; then
-                _restore=$(awk '/^port[[:space:]]*=/{gsub(/[^0-9]/,"",$3); print $3; exit}' "${CONFIG_DIR}/config.toml" 2>/dev/null)
+            local _ecfg; _ecfg=$(engine_config_path 2>/dev/null || echo "${CONFIG_DIR}/config.toml")
+            if [ -z "$_restore" ] && [ -f "$_ecfg" ]; then
+                _restore=$(awk '/^port[[:space:]]*=/{gsub(/[^0-9]/,"",$3); print $3; exit}' "$_ecfg" 2>/dev/null)
             fi ;;
         reanimator) _restore="${PORT_PROFILE_REANIMATOR}" ;;
     esac
@@ -367,7 +376,7 @@ load_settings() {
             fi
 
             case "$key" in
-                MTPROXYL_MODE|\
+                MTPROXYL_MODE|ENGINE_BACKEND|ENGINE_VERSION|\
                 PROXY_PORT|PROXY_METRICS_PORT|PROXY_API_PORT|PROXY_DOMAIN|PROXY_CONCURRENCY|\
                 PROXY_CPUS|PROXY_MEMORY|CUSTOM_IP|FAKE_CERT_LEN|\
                 PROXY_PROTOCOL|PROXY_PROTOCOL_TRUSTED_CIDRS|\
@@ -396,6 +405,10 @@ load_settings() {
     case "$MTPROXYL_MODE" in
         manager|reanimator) ;;
         *) MTPROXYL_MODE="manager" ;;
+    esac
+    case "$ENGINE_BACKEND" in
+        docker|binary) ;;
+        *) ENGINE_BACKEND="docker" ;;
     esac
     [[ "$PROXY_PORT" =~ ^[0-9]+$ ]] && [ "$PROXY_PORT" -ge 1 ] && [ "$PROXY_PORT" -le 65535 ] || PROXY_PORT=443
     [[ "$PROXY_METRICS_PORT" =~ ^[0-9]+$ ]] && [ "$PROXY_METRICS_PORT" -ge 1 ] && [ "$PROXY_METRICS_PORT" -le 65535 ] || PROXY_METRICS_PORT=9090

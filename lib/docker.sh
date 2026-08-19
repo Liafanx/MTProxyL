@@ -133,6 +133,7 @@ DOCKERFILE_EOF
 }
 
 get_telemt_version() {
+    engine_is_binary && { binengine_version; return; }
     local ver
     ver=$(cat "${INSTALL_DIR}/.telemt_version" 2>/dev/null)
     [ -n "$ver" ] && { echo "$ver"; return; }
@@ -172,6 +173,7 @@ is_proxy_running() {
         esac
         return
     fi
+    engine_is_binary && { binengine_running; return; }
     # docker ps показывает и контейнер в состоянии Restarting, поэтому
     # падающий в цикле контейнер выглядел как «РАБОТАЕТ». Смотрим состояние.
     local _st
@@ -181,6 +183,7 @@ is_proxy_running() {
 
 # Состояние собственного контейнера: running|restarting|exited|created|absent
 own_container_state() {
+    engine_is_binary && { binengine_state; return; }
     command -v docker &>/dev/null || { echo "absent"; return; }
     local _running _restarting _status
     _status=$(docker inspect -f '{{.State.Status}}|{{.State.Running}}|{{.State.Restarting}}' "$CONTAINER_NAME" 2>/dev/null) || { echo "absent"; return; }
@@ -194,6 +197,7 @@ own_container_state() {
 # действительно проблема. Чистая остановка (exited с кодом 0) — обычное
 # состояние после «Остановить», её не показываем и логами не пугаем.
 own_container_problem() {
+    engine_is_binary && { binengine_problem; return; }
     local _st; _st=$(own_container_state)
     case "$_st" in
         running|absent|created) return 1 ;;
@@ -245,6 +249,7 @@ get_proxy_uptime() {
         esac
         return
     fi
+    engine_is_binary && { binengine_uptime; return; }
     local started_at
     started_at=$(docker inspect --format '{{.State.StartedAt}}' "$CONTAINER_NAME" 2>/dev/null)
     [ -z "$started_at" ] && { echo "0"; return; }
@@ -385,6 +390,7 @@ _show_target_logs_stream() {
         esac
         return
     fi
+    engine_is_binary && { journalctl -u "$ENGINE_SERVICE" -f -n "$_tail"; return; }
     docker logs -f --tail "$_tail" "$CONTAINER_NAME" 2>&1
 }
 
@@ -409,7 +415,11 @@ reload_target_config() {
 }
 
 run_proxy_container() {
-    build_telemt_image || { log_error "Не удалось собрать образ"; return 1; }
+    if engine_is_binary; then
+        binengine_ensure_installed || { log_error "Не удалось поставить бинарник движка"; return 1; }
+    else
+        build_telemt_image || { log_error "Не удалось собрать образ"; return 1; }
+    fi
 
     # Ensure we have at least one secret
     if [ ${#SECRETS_LABELS[@]} -eq 0 ]; then
@@ -434,27 +444,32 @@ run_proxy_container() {
 
     # Generate config (один вызов с обработкой ошибки)
     generate_telemt_config || { log_error "Ошибка генерации конфига"; return 1; }
-    docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
-    log_info "Запуск прокси на порту ${PROXY_PORT}..."
-    local _args=(
-        --name "$CONTAINER_NAME"
-        --restart unless-stopped
-        --network host
-        --log-opt max-size=10m --log-opt max-file=3
-    )
-    [ -n "${PROXY_CPUS}" ] && _args+=(--cpus "${PROXY_CPUS}")
-    [ -n "${PROXY_MEMORY}" ] && _args+=(--memory "${PROXY_MEMORY}" --memory-swap "${PROXY_MEMORY}")
+    if engine_is_binary; then
+        binengine_launch || return 1
+    else
+        docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
-local _run_err=""
-    _run_err=$(docker run -d "${_args[@]}" \
-        --ulimit nofile=65535:65535 \
-        -v "${CONFIG_DIR}/config.toml:/etc/telemt.toml:ro" \
-        "$(get_docker_image)" /etc/telemt.toml 2>&1) || {
-            log_error "Не удалось запустить контейнер"
-            echo "$_run_err" | sed 's/^/    /' >&2
-            return 1
-        }
+        log_info "Запуск прокси на порту ${PROXY_PORT}..."
+        local _args=(
+            --name "$CONTAINER_NAME"
+            --restart unless-stopped
+            --network host
+            --log-opt max-size=10m --log-opt max-file=3
+        )
+        [ -n "${PROXY_CPUS}" ] && _args+=(--cpus "${PROXY_CPUS}")
+        [ -n "${PROXY_MEMORY}" ] && _args+=(--memory "${PROXY_MEMORY}" --memory-swap "${PROXY_MEMORY}")
+
+        local _run_err=""
+        _run_err=$(docker run -d "${_args[@]}" \
+            --ulimit nofile=65535:65535 \
+            -v "${CONFIG_DIR}/config.toml:/etc/telemt.toml:ro" \
+            "$(get_docker_image)" /etc/telemt.toml 2>&1) || {
+                log_error "Не удалось запустить контейнер"
+                echo "$_run_err" | sed 's/^/    /' >&2
+                return 1
+            }
+    fi
 
     sleep 2
     if is_proxy_running; then
@@ -475,6 +490,10 @@ local _run_err=""
             echo ""
         }
         return 0
+    elif engine_is_binary; then
+        log_error "Движок не запустился — проверьте логи: journalctl -u ${ENGINE_SERVICE} -n 50"
+        journalctl -u "$ENGINE_SERVICE" -n 10 --no-pager 2>/dev/null | sed 's/^/    /'
+        return 1
     else
         log_error "Контейнер не запустился — проверьте логи: docker logs ${CONTAINER_NAME}"
         docker ps -a --filter "name=^/${CONTAINER_NAME}$" --format '    status={{.Status}}  image={{.Image}}' 2>/dev/null || true
@@ -486,7 +505,14 @@ local _run_err=""
 # Нужно при переходе в reanimator и когда контейнер менеджера больше
 # не используется, но продолжает держать порт.
 remove_own_container() {
-    local _st; _st=$(own_container_state)
+    engine_is_binary && { binengine_remove_service; return; }
+    _docker_remove_own_container
+}
+
+_docker_remove_own_container() {
+    command -v docker &>/dev/null || { log_info "Docker не установлен — контейнера нет"; return 0; }
+    local _st
+    _st=$(docker inspect -f '{{.State.Status}}' "$CONTAINER_NAME" 2>/dev/null) || _st="absent"
     if [ "$_st" = "absent" ]; then
         log_info "Контейнер ${CONTAINER_NAME} отсутствует"
         return 0
@@ -504,6 +530,7 @@ remove_own_container() {
 }
 
 stop_proxy_container() {
+    engine_is_binary && { binengine_stop; return; }
     if is_proxy_running; then
         flush_traffic_to_disk 2>/dev/null || true
         docker update --restart=no "$CONTAINER_NAME" &>/dev/null || true
@@ -514,6 +541,7 @@ stop_proxy_container() {
 }
 
 start_proxy_container() {
+    engine_is_binary && { binengine_start; return; }
     if is_proxy_running; then
         log_info "Прокси уже запущен"
         return 0
@@ -523,6 +551,7 @@ start_proxy_container() {
 }
 
 restart_proxy_container() {
+    engine_is_binary && { binengine_restart; return; }
     stop_proxy_container 2>/dev/null || true
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
     run_proxy_container
@@ -531,6 +560,10 @@ restart_proxy_container() {
 reload_proxy_config() {
     generate_telemt_config || { log_error "Ошибка генерации конфига"; return 1; }
     flush_traffic_to_disk 2>/dev/null || true
-    is_proxy_running && docker kill -s SIGHUP "$CONTAINER_NAME" 2>/dev/null || true
+    if engine_is_binary; then
+        binengine_reload
+    else
+        is_proxy_running && docker kill -s SIGHUP "$CONTAINER_NAME" 2>/dev/null || true
+    fi
     log_info "Конфиг обновлён (горячая перезагрузка)"
 }

@@ -1128,7 +1128,7 @@ show_status_json() {
 }
 
 show_config() {
-    local config="${CONFIG_DIR}/config.toml"
+    local config; config=$(engine_config_path)
     [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && config="${DETECTED_CONFIG_PATH:-$config}"
     if [ -f "$config" ]; then
         echo ""; draw_header "КОНФИГ ДВИЖКА"; echo ""
@@ -1165,10 +1165,15 @@ health_check() {
         return
     fi
 
-    command -v docker &>/dev/null && echo -e "  ${GREEN}${SYM_CHECK}${NC} Docker установлен" || echo -e "  ${RED}${SYM_CROSS}${NC} Docker не установлен"
-    is_proxy_running && echo -e "  ${GREEN}${SYM_CHECK}${NC} Контейнер запущен" || echo -e "  ${RED}${SYM_CROSS}${NC} Контейнер не запущен"
+    if engine_is_binary; then
+        binengine_installed && echo -e "  ${GREEN}${SYM_CHECK}${NC} Бинарник движка на месте (v$(binengine_version))" || echo -e "  ${RED}${SYM_CROSS}${NC} Бинарник движка не найден"
+        binengine_running && echo -e "  ${GREEN}${SYM_CHECK}${NC} Служба ${ENGINE_SERVICE} запущена" || echo -e "  ${RED}${SYM_CROSS}${NC} Служба ${ENGINE_SERVICE} не запущена"
+    else
+        command -v docker &>/dev/null && echo -e "  ${GREEN}${SYM_CHECK}${NC} Docker установлен" || echo -e "  ${RED}${SYM_CROSS}${NC} Docker не установлен"
+        is_proxy_running && echo -e "  ${GREEN}${SYM_CHECK}${NC} Контейнер запущен" || echo -e "  ${RED}${SYM_CROSS}${NC} Контейнер не запущен"
+    fi
     curl -s --max-time 2 "http://127.0.0.1:${PROXY_METRICS_PORT}/metrics" &>/dev/null && echo -e "  ${GREEN}${SYM_CHECK}${NC} Метрики доступны" || echo -e "  ${RED}${SYM_CROSS}${NC} Метрики недоступны"
-    [ -f "${CONFIG_DIR}/config.toml" ] && echo -e "  ${GREEN}${SYM_CHECK}${NC} Конфиг существует" || echo -e "  ${RED}${SYM_CROSS}${NC} Конфиг не найден"
+    [ -f "$(engine_config_path)" ] && echo -e "  ${GREEN}${SYM_CHECK}${NC} Конфиг существует" || echo -e "  ${RED}${SYM_CROSS}${NC} Конфиг не найден"
     local active=0 i; for i in "${!SECRETS_ENABLED[@]}"; do [ "${SECRETS_ENABLED[$i]}" = "true" ] && active=$((active+1)); done
     [ $active -gt 0 ] && echo -e "  ${GREEN}${SYM_CHECK}${NC} ${active} активных секретов" || echo -e "  ${RED}${SYM_CROSS}${NC} Нет активных секретов"
     echo ""

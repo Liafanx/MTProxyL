@@ -74,8 +74,12 @@ export type MtproxylMode = 'manager' | 'reanimator';
 
 export interface MtproxylModeStatus {
   mode: MtproxylMode;
+  /** Чем менеджер держит движок: docker (контейнер) или binary (служба). */
+  engine?: string;
   detected_mode: string;
   detected_config: string;
+  /** Конфиг движка текущего режима. */
+  engine_config?: string;
   port: number;
   /** Состояние своего контейнера MTProxyL: running, exited, absent и т.п. */
   own_container?: string;
