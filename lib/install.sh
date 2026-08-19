@@ -232,6 +232,9 @@ run_installer() {
     # Ресурсы
     echo ""
     echo -e "  ${BOLD}Ресурсы${NC}"
+    if [ "${ENGINE_BACKEND:-docker}" = "binary" ]; then
+        echo -e "  ${DIM}Задаются службе systemd: CPUQuota и MemoryMax.${NC}"
+    fi
     echo -en "  ${DIM}CPU (напр. 1 (1 ядро)) [Enter без ограничений]:${NC} "; local cpu; read_line cpu
     [ -n "$cpu" ] && PROXY_CPUS="$cpu"
     echo -en "  ${DIM}RAM (напр. 256m, 1g) [Enter без ограничений]:${NC} "; local mem; read_line mem
@@ -369,8 +372,12 @@ install_autostart_unit() {
         systemctl daemon-reload 2>/dev/null || true
         systemctl enable "$ENGINE_SERVICE" &>/dev/null || true
         log_success "Автозапуск: ${ENGINE_SERVICE}.service"
+        # Панель читает журнал движка по имени юнита, и права ей выписаны под
+        # прежний носитель — иначе логи в ней просто молчат.
+        panel_grant_engine_journal 2>/dev/null || true
         return 0
     fi
+    rm -f "/etc/sudoers.d/${PANEL_SERVICE}-engine"
 
     cat > /etc/systemd/system/mtproxyl.service << 'SVC_EOF'
 [Unit]

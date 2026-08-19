@@ -45,8 +45,8 @@ install_args_help() {
     --ad-tag <32 hex>          рекламная метка
     --mask on|off              маскировка трафика (по умолчанию on)
     --sni-policy <политика>    mask, drop, accept или reject_handshake
-    --cpus N                   лимит CPU контейнера (только --engine docker)
-    --memory 512m              лимит памяти контейнера (только --engine docker)
+    --cpus N                   лимит CPU: ядра контейнера либо CPUQuota службы
+    --memory 512m              лимит памяти: контейнера либо MemoryMax службы
 
   Обход блокировок
     --zapret2 yes|no           Zapret2 MTProto fix (по умолчанию yes)
@@ -214,11 +214,6 @@ _install_args_validate() {
         log_error "--engine-version имеет смысл только с --engine binary"
         _ok=false
     fi
-    if [ "$_IA_ENGINE" = "binary" ] && { [ -n "$_IA_CPUS" ] || [ -n "$_IA_MEMORY" ]; }; then
-        log_error "--cpus и --memory задают лимиты контейнера — с --engine binary их нет"
-        log_info "Ограничить бинарник можно через systemd: CPUQuota, MemoryMax"
-        _ok=false
-    fi
     if [ "$_IA_ENGINE" = "binary" ] && ! command -v systemctl &>/dev/null; then
         log_error "--engine binary: движок работает службой systemd, а systemd на этой машине нет"
         _ok=false
@@ -227,14 +222,18 @@ _install_args_validate() {
         log_error "--engine binary: под архитектуру $(uname -m) сборок telemt нет"
         _ok=false
     fi
-    # docker меряет лимит ядрами этой машины: 4 на одноядерной он не примет и
+    # Лимит меряется ядрами этой машины: 4 на одноядерной docker не примет и
     # уронит контейнер уже после установки. Ловим здесь, а не там.
     if [ -n "$_IA_CPUS" ]; then
         local _cores; _cores=$(nproc 2>/dev/null || echo 1)
         if ! awk -v v="$_IA_CPUS" -v c="$_cores" 'BEGIN{exit !(v+0>0 && v+0<=c+0)}' 2>/dev/null; then
-            log_error "--cpus ${_IA_CPUS}: на этой машине ядер ${_cores}, docker примет от 0.01 до ${_cores}"
+            log_error "--cpus ${_IA_CPUS}: на этой машине ядер ${_cores}, допустимо от 0.01 до ${_cores}"
             _ok=false
         fi
+    fi
+    if [ -n "$_IA_MEMORY" ] && ! [[ "${_IA_MEMORY//[[:space:]]/}" =~ ^[0-9]+[kKmMgG]?[bB]?$ ]]; then
+        log_error "--memory: число с суффиксом k, m или g — например 512m или 1g"
+        _ok=false
     fi
 
     local _s _label _key

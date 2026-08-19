@@ -376,7 +376,7 @@ load_settings() {
             fi
 
             case "$key" in
-                MTPROXYL_MODE|\
+                MTPROXYL_MODE|ENGINE_BACKEND|ENGINE_VERSION|\
                 PROXY_PORT|PROXY_METRICS_PORT|PROXY_API_PORT|PROXY_DOMAIN|PROXY_CONCURRENCY|\
                 PROXY_CPUS|PROXY_MEMORY|CUSTOM_IP|FAKE_CERT_LEN|\
                 PROXY_PROTOCOL|PROXY_PROTOCOL_TRUSTED_CIDRS|\
@@ -405,6 +405,10 @@ load_settings() {
     case "$MTPROXYL_MODE" in
         manager|reanimator) ;;
         *) MTPROXYL_MODE="manager" ;;
+    esac
+    case "$ENGINE_BACKEND" in
+        docker|binary) ;;
+        *) ENGINE_BACKEND="docker" ;;
     esac
     [[ "$PROXY_PORT" =~ ^[0-9]+$ ]] && [ "$PROXY_PORT" -ge 1 ] && [ "$PROXY_PORT" -le 65535 ] || PROXY_PORT=443
     [[ "$PROXY_METRICS_PORT" =~ ^[0-9]+$ ]] && [ "$PROXY_METRICS_PORT" -ge 1 ] && [ "$PROXY_METRICS_PORT" -le 65535 ] || PROXY_METRICS_PORT=9090

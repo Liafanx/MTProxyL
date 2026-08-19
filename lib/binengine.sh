@@ -208,11 +208,39 @@ binengine_ensure_installed() {
 
 # ── systemd ───────────────────────────────────────────────────
 
+# Лимиты у службы задаёт systemd, а не docker: ядра переводим в проценты
+# (одно ядро = 100%), суффикс памяти приводим к виду, который понимает systemd.
+_binengine_cpu_quota() {
+    local _c="${PROXY_CPUS:-}"
+    [ -n "$_c" ] || return 1
+    awk -v v="$_c" 'BEGIN{ q = v * 100; if (q <= 0) exit 1; printf "%d%%\n", (q < 1 ? 1 : q) }' 2>/dev/null
+}
+
+_binengine_memory_max() {
+    local _m="${PROXY_MEMORY:-}"
+    [ -n "$_m" ] || return 1
+    _m="${_m//[[:space:]]/}"
+    if [[ "$_m" =~ ^([0-9]+)([kKmMgG]?)[bB]?$ ]]; then
+        local _n="${BASH_REMATCH[1]}" _s="${BASH_REMATCH[2]}"
+        case "${_s,,}" in
+            k) echo "${_n}K" ;;
+            m) echo "${_n}M" ;;
+            g) echo "${_n}G" ;;
+            *) echo "$_n" ;;
+        esac
+        return 0
+    fi
+    return 1
+}
+
 binengine_write_unit() {
     command -v systemctl &>/dev/null || {
         log_error "Нет systemd — бинарным движком некому управлять"
         return 1
     }
+    local _limits="" _q _mm
+    _q=$(_binengine_cpu_quota) && _limits+="CPUQuota=${_q}"$'\n'
+    _mm=$(_binengine_memory_max) && _limits+="MemoryMax=${_mm}"$'\n'
     cat > "$ENGINE_UNIT_FILE" << UNIT_EOF
 [Unit]
 Description=MTProxyL-Telemt proxy engine
@@ -228,7 +256,7 @@ Restart=always
 RestartSec=5
 LimitNOFILE=65535
 KillSignal=SIGINT
-
+${_limits}
 [Install]
 WantedBy=multi-user.target
 UNIT_EOF
@@ -479,6 +507,7 @@ engine_switch_backend() {
             ENGINE_BACKEND="docker"
             return 1
         fi
+        ENGINE_VERSION=$(binengine_version)
         _docker_remove_own_container 2>/dev/null || true
         save_settings
         rm -f "${CONFIG_DIR}/config.toml"
@@ -507,16 +536,6 @@ engine_switch_backend() {
         run_proxy_container || return 1
     else
         log_info "Прокси был остановлен — запустите его из меню, когда понадобится"
-    fi
-    # Панель читает конфиг через CLI, а вот журнал движка — по имени юнита,
-    # и права sudo на него выданы под прежний носитель.
-    if panel_installed 2>/dev/null; then
-        if [ "$_to" = "binary" ]; then
-            panel_grant_engine_journal || \
-                log_warn "Логи движка в панели могут не открыться — переустановите панель"
-        else
-            rm -f "/etc/sudoers.d/${PANEL_SERVICE}-engine"
-        fi
     fi
     return 0
 }

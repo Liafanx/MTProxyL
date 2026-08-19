@@ -11,9 +11,9 @@ import { useMtproxyl, useMtproxylOperation } from '@/hooks/useMtproxyl';
  * Запуск, перезапуск и остановка движка.
  *
  * Что именно останавливается, зависит от режима, и решает это CLI: у менеджера
- * это свой контейнер, у реаниматора — обнаруженная цель. Унаследованная от
- * telemt_panel кнопка перезапуска дёргала systemctl restart telemt.service и в
- * режиме менеджера не работала вовсе — движок там живёт в Docker.
+ * это свой движок (контейнер или служба MTProxyL-Telemt), у реаниматора —
+ * обнаруженная цель. Унаследованная от telemt_panel кнопка перезапуска дёргала
+ * systemctl restart telemt.service и в режиме менеджера не работала вовсе.
  */
 export function ProxyControls() {
   const { enabled } = useMtproxyl();
@@ -66,7 +66,9 @@ export function ProxyControls() {
           {status && (
             <div className="text-xs text-text-secondary/70 mt-0.5">
               {isManager
-                ? 'Свой контейнер MTProxyL'
+                ? status.engine === 'binary'
+                  ? 'Свой движок MTProxyL-Telemt'
+                  : 'Свой контейнер MTProxyL'
                 : `Цель: ${status.detected_mode}`}{' '}
               · порт {status.port}
             </div>

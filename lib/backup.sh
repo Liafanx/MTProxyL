@@ -49,6 +49,12 @@ restore_backup() {
     local confirm; read_line confirm
     [[ "$confirm" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
+    # Работал ли прокси ДО восстановления — спрашиваем сейчас, пока настройки
+    # ещё старые: смена носителя движка ниже уберёт прежний, и после неё ответ
+    # был бы всегда «не запущен».
+    local _was_running="false"
+    is_proxy_running 2>/dev/null && _was_running="true"
+
     # Бэкап текущего состояния перед восстановлением
     log_info "Сохранение текущего состояния..."
     log_info "(создаётся бэкап текущих настроек на случай отката)"
@@ -66,6 +72,13 @@ restore_backup() {
     load_secrets
     load_nft_settings 2>/dev/null
 
+    # Бэкап мог приехать с другим носителем движка. Прежний остался бы держать
+    # порт, и восстановленный движок не поднялся бы.
+    if [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
+        engine_clear_other_carrier
+        install_autostart_unit >/dev/null 2>&1 || true
+    fi
+
     log_success "Восстановлено из: $(basename "$backup_file")"
     echo ""
     echo -e "  ${BOLD}Восстановленные параметры:${NC}"
@@ -76,7 +89,7 @@ restore_backup() {
     echo ""
 
     # Предложение перезапуска
-    if is_proxy_running; then
+    if [ "$_was_running" = "true" ] || is_proxy_running; then
         echo -en "  ${BOLD}Перезапустить прокси для применения? [Y/n]:${NC} "
         local yn; read_line yn
         if [[ ! "$yn" =~ ^[nN] ]]; then

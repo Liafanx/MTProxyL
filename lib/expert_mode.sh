@@ -378,7 +378,7 @@ tui_expert_menu() {
         clear_screen
         draw_header "РЕЖИМ ЭКСПЕРТА"
         echo ""
-        log_warn "Включён режим супер эксперта — override поверх config.toml не применяются"
+        log_warn "Включён режим супер эксперта — override поверх конфига движка не применяются"
         echo -e "  ${DIM}Конфиг целиком берётся из вашего файла:${NC}"
         echo -e "  ${BOLD}${SUPEREXPERT_FILE}${NC}"
         echo -e "  ${DIM}Правьте параметры прямо в нём.${NC}"

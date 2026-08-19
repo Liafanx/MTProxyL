@@ -189,11 +189,7 @@ panel_install() {
     if [ "$GITHUB_BRANCH" != "main" ]; then
         log_info "CLI установлен из ветки ${GITHUB_BRANCH} — собираем панель из тех же исходников"
         log_info "(релиз панели собран с main и может не содержать правок этой ветки)"
-        if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
-            log_info "Сборка пойдёт в Docker — тулчейн на сервере не останется"
-        else
-            log_warn "Docker недоступен: понадобятся Go 1.25+ и Node.js 20+ на сервере"
-        fi
+        _panel_report_build_toolchain
         log_info "Нужен git; сборка занимает несколько минут"
 
         sh "$_tmp" install "--from-source=${GITHUB_BRANCH}" \
@@ -214,11 +210,7 @@ panel_install() {
     log_warn "Установка из релиза не удалась (причина выше)"
     echo ""
     log_info "Панель можно собрать из исходников ветки ${GITHUB_BRANCH}"
-    if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
-        log_info "Сборка пойдёт в Docker — тулчейн на сервере не останется"
-    else
-        log_warn "Docker недоступен: понадобятся Go 1.25+ и Node.js 20+ на сервере"
-    fi
+    _panel_report_build_toolchain
     log_info "Нужен git; сборка занимает несколько минут"
     echo -en "  ${BOLD}Собрать из исходников? [y/N]:${NC} "
     local _yn; read_line _yn
@@ -227,6 +219,21 @@ panel_install() {
     sh "$_tmp" install "--from-source=${GITHUB_BRANCH}" \
         || { log_error "Сборка из исходников не удалась (причина выше)"; return 1; }
     _panel_install_report
+}
+
+# Чем будет собираться панель из исходников. С движком-бинарником Docker на
+# сервере может не быть вовсе — тогда нужен тулчейн, и сказать об этом надо
+# до запуска сборки, а не после её падения.
+_panel_report_build_toolchain() {
+    if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
+        log_info "Сборка пойдёт в Docker — тулчейн на сервере не останется"
+        return 0
+    fi
+    log_warn "Docker недоступен: понадобятся Go 1.25+ и Node.js 20+ на сервере"
+    if engine_is_binary; then
+        log_info "Движок работает бинарником, поэтому Docker здесь не ставился"
+        log_info "Либо поставьте Go и Node.js, либо Docker — только ради сборки панели"
+    fi
 }
 
 _panel_install_report() {
@@ -284,6 +291,9 @@ _panel_offer_cert_after_install() {
         return 0
     fi
     [ -n "$_domain" ] && validate_domain "$_domain" || return 0
+    # Let's Encrypt не выдаёт сертификаты на голый IP, а панель по IP —
+    # обычный и осознанный выбор: предлагать тут нечего.
+    validate_ip_literal "$_domain" && return 0
 
     echo ""
     log_warn "Сертификат для ${_domain} не выпущен: ${_reason}"
@@ -689,6 +699,11 @@ panel_issue_cert() {
     [ -n "$_domain" ] || { log_error "Домен не задан"; return 1; }
     if ! validate_domain "$_domain"; then
         log_error "Некорректный домен: ${_domain}"
+        return 1
+    fi
+    if validate_ip_literal "$_domain"; then
+        log_error "${_domain} — это IP-адрес, а Let's Encrypt на голый IP сертификаты не выдаёт"
+        log_info "Нужен домен с A-записью на этот сервер; по IP панель работает на самоподписанном"
         return 1
     fi
 

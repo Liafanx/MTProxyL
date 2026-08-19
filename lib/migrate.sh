@@ -168,7 +168,7 @@ _mig_check_local() {
     fi
     [ -f "$SETTINGS_FILE" ] || { log_error "Настройки не найдены — переносить нечего"; return 1; }
     if _superexpert_active 2>/dev/null; then
-        log_info "Включён режим супер эксперта — ваш config.toml поедет вместе с остальным"
+        log_info "Включён режим супер эксперта — ваш конфиг движка поедет вместе с остальным"
     fi
     return 0
 }
@@ -564,7 +564,7 @@ migrate_run() {
     echo -e "  ${BOLD}Метка:${NC}      ${AD_TAG:-${DIM}нет${NC}}"
     echo -e "  ${BOLD}Selfmask:${NC}   $([ "${SELFMASK_ENABLED:-false}" = "true" ] && echo "${SELFMASK_DOMAIN} (${SELFMASK_CERT_MODE:-letsencrypt})" || echo "${DIM}выключен${NC}")"
     _superexpert_active 2>/dev/null && \
-        echo -e "  ${BOLD}Супер эксперт:${NC} свой config.toml едет вместе с остальным"
+        echo -e "  ${BOLD}Супер эксперт:${NC} свой конфиг движка едет вместе с остальным"
     echo -e "  ${BOLD}Панель:${NC}     $(if ! panel_installed 2>/dev/null; then echo "${DIM}не установлена${NC}"; elif [ "$_MIG_WITH_PANEL" = "no" ]; then echo "${DIM}пропускаем${NC}"; else echo "переносим"; fi)"
     echo -e "  ${BOLD}Бот:${NC}        $(if ! tgbot_installed 2>/dev/null; then echo "${DIM}не установлен${NC}"; elif [ "$_MIG_WITH_TGBOT" = "no" ]; then echo "${DIM}пропускаем${NC}"; else echo "переносим"; fi)"
     echo ""

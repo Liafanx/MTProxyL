@@ -182,7 +182,7 @@ _superexpert_users() {
 superexpert_show_rules() {
     echo -e "  ${BOLD}Как это работает:${NC}"
     echo -e "  ${DIM}• Конфиг движка — ваш файл ${SUPEREXPERT_FILE}${NC}"
-    echo -e "  ${DIM}• Перед каждым запуском он копируется на место config.toml${NC}"
+    echo -e "  ${DIM}• Перед каждым запуском он копируется на место $(basename "$(engine_config_path)")${NC}"
     echo -e "  ${DIM}• MTProxyL ничего в него не дописывает: ни секреты, ни настройки,${NC}"
     echo -e "  ${DIM}  ни expert-override, ни tune${NC}"
     echo -e "  ${DIM}• Меню «Управление секретами», «Настройки», «Режим эксперта» и${NC}"
