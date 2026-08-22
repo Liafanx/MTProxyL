@@ -20,6 +20,7 @@ import { SelfmaskPage } from '@/pages/SelfmaskPage';
 import { BackupsPage } from '@/pages/BackupsPage';
 import { NftPage } from '@/pages/NftPage';
 import { GeoblockPage } from '@/pages/GeoblockPage';
+import { IpBlockPage } from '@/pages/IpBlockPage';
 import { RoutesPage } from '@/pages/RoutesPage';
 import { TrafficPage } from '@/pages/TrafficPage';
 import { ExpertPage } from '@/pages/ExpertPage';
@@ -68,6 +69,7 @@ function AuthenticatedApp() {
           <Route path="/backups" element={<BackupsPage />} />
           <Route path="/nft" element={<NftPage />} />
           <Route path="/geoblock" element={<GeoblockPage />} />
+          <Route path="/ipblock" element={<IpBlockPage />} />
           <Route path="/routes" element={<RoutesPage />} />
           <Route path="/traffic" element={<TrafficPage />} />
           <Route path="/expert" element={<ExpertPage />} />

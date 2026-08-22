@@ -166,8 +166,16 @@ ipblock_clear() {
 ipblock_export() { ipblock_ensure_file; cat "$IPBLOCK_FILE"; }
 
 # Импорт принимает тот же формат, что и экспорт: записи и комментарии.
+# Дефис вместо пути означает stdin — так список передаёт панель.
 ipblock_import() {
     local src="$1" mode="${2:-replace}"
+    if [ "$src" = "-" ]; then
+        local _stdin; _stdin=$(mktemp)
+        cat > "$_stdin"
+        ipblock_import "$_stdin" "$mode"; local _rc=$?
+        rm -f "$_stdin"
+        return $_rc
+    fi
     [ -r "$src" ] || { log_error "Файл не читается: ${src}"; return 1; }
     local bad=0 good=0 line clean
     while IFS= read -r line; do
@@ -325,6 +333,12 @@ ipblock_hits_show() {
     echo ""
 }
 
+ipblock_hits_tsv() {
+    ipblock_hits_sample
+    [ -s "$IPBLOCK_HITS" ] || return 0
+    sort -t$'\t' -k2,2nr "$IPBLOCK_HITS"
+}
+
 ipblock_hits_reset() { : > "$IPBLOCK_HITS"; : > "$IPBLOCK_SNAP"; log_success "Счётчики обнулены"; }
 
 ipblock_status_json() {
@@ -380,7 +394,8 @@ handle_block_command() {
         off)     ipblock_disable ;;
         action)  ipblock_set_action "${1:-}" ;;
         apply)   ipblock_apply ;;
-        hits)    ipblock_hits_show ;;
+        hits)
+            if [ "${1:-}" = "--tsv" ]; then ipblock_hits_tsv; else ipblock_hits_show; fi ;;
         hits-sample) ipblock_hits_sample ;;
         hits-reset)  ipblock_hits_reset ;;
         status)
