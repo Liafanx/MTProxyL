@@ -76,8 +76,14 @@ ipblock_bad_entries() {
       done
 }
 
+# Без конвейера: при set -o pipefail ранний выход grep -q роняет писателя
+# по SIGPIPE, и статус всей цепочки становится 141 вместо нуля.
 ipblock_has() {
-    ipblock_entries | grep -qxF "$1"
+    local e
+    while IFS= read -r e; do
+        [ "$e" = "$1" ] && return 0
+    done <<< "$(ipblock_entries)"
+    return 1
 }
 
 ipblock_count() { ipblock_entries | wc -l; }
@@ -188,7 +194,20 @@ ipblock_import() {
     if [ "$mode" = "replace" ]; then
         cp "$src" "$IPBLOCK_FILE"
     else
-        cat "$src" >> "$IPBLOCK_FILE"
+        # При добавлении не плодим дубликаты: уже известные записи пропускаем,
+        # комментарии оставляем как есть.
+        local _dup=0
+        while IFS= read -r line; do
+            clean="${line%%#*}"; clean="${clean//[[:space:]]/}"
+            if [ -z "$clean" ]; then
+                printf '%s\n' "$line" >> "$IPBLOCK_FILE"
+            elif ipblock_has "$clean"; then
+                _dup=$((_dup + 1))
+            else
+                printf '%s\n' "$line" >> "$IPBLOCK_FILE"
+            fi
+        done < "$src"
+        [ "$_dup" -gt 0 ] && log_info "Уже было в списке: ${_dup}"
     fi
     chmod 600 "$IPBLOCK_FILE"
     ipblock_apply || return 1
