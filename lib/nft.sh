@@ -2130,7 +2130,9 @@ zapret2_apply_nft() {
         nft "add rule ip $_table forward ${ZAPRET2_BYPASS_MATCH} ct mark ${_ct_mark} counter accept"
         nft "add rule ip $_table forward ${_daddr_match}meta mark and $_fwmark == 0x00000000 tcp dport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
         nft "add rule ip $_table forward ${_saddr_match}meta mark and $_fwmark == 0x00000000 tcp sport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
-        log_success "NFT таблица ${_table} применена для Docker bridge (forward: порты=${_port} qnum=${ZAPRET2_QNUM} strategy=${DETECT_BRIDGE_STRATEGY:-simple})"
+        local _why="цель в Docker bridge"
+        [ "${ZAPRET2_HOOK:-auto}" = "forward" ] && _why="цепочка задана вручную"
+        log_success "NFT таблица ${_table} применена в forward, ${_why} (порты=${_port} qnum=${ZAPRET2_QNUM} strategy=${DETECT_BRIDGE_STRATEGY:-simple})"
         return 0
     fi
 

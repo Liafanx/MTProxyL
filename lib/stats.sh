@@ -210,6 +210,8 @@ handle_stats_command() {
     case "$_cmd" in
         show|status|"")
             stats_overview "${2:-}" ;;
+        --json)
+            stats_overview --json ;;
         reset)
             check_root
             local _what="${2:-all}"

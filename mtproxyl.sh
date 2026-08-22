@@ -93,7 +93,9 @@ _cleanup() {
         [ -n "$f" ] || continue
         rm -f "${f}/.mtproxyl.$$."* 2>/dev/null
     done
-    # Файлы прошлых версий и оборванных запусков: сутки их точно никто не читает.
+    # Хвосты прошлых версий: имя без PID никто больше не создаёт, а часа
+    # хватает любому запуску. Оборванные наши — по общему правилу, за сутки.
+    find "${TMPDIR:-/tmp}" -maxdepth 1 -name '.mtproxyl.??????' -type f -mmin +60 -delete 2>/dev/null
     find "${TMPDIR:-/tmp}" -maxdepth 1 -name '.mtproxyl.*' -type f -mmin +1440 -delete 2>/dev/null
 }
 trap _cleanup EXIT

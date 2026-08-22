@@ -62,12 +62,14 @@ engine_versions_json() {
 
     printf '"local":['
     local _v _first=1
+    # Текущая и предыдущая совпадают, если обновлялись на ту же версию —
+    # в списке отката такой пункт был бы обманом.
     while IFS= read -r _v; do
         [ -n "$_v" ] || continue
         [ $_first -eq 1 ] || printf ','
         _first=0
         printf '"%s"' "$(json_escape "$_v")"
-    done <<< "$(engine_local_versions 2>/dev/null)"
+    done <<< "$(engine_local_versions 2>/dev/null | awk 'NF && !seen[$0]++')"
 
     printf '],"releases":['
     local _tag _name _date _f2=1
