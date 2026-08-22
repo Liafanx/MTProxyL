@@ -157,6 +157,23 @@ export interface MtproxylAvailability {
   operation: MtproxylOperation;
 }
 
+export interface IpBlockStatus {
+  enabled: boolean;
+  action: string;
+  rules_active: boolean;
+  count: number;
+  hits_total: number;
+  entries: string[];
+}
+
+export interface IpBlockHit {
+  entry: string;
+  packets: number;
+  bytes: number;
+  first: string;
+  last: string;
+}
+
 const MTPROXYL_BASE = `${BASE}/api/mtproxyl`;
 
 /** Ответ `mtproxyl update --check`: что стоит и что опубликовано. */
@@ -425,6 +442,29 @@ export const mtproxylNetApi = {
       method: 'POST',
       body: JSON.stringify({ preset }),
     }),
+
+  ipblock: () => request<IpBlockStatus>(MTPROXYL_BASE, '/ipblock'),
+  ipblockHits: () => request<{ hits: IpBlockHit[] }>(MTPROXYL_BASE, '/ipblock/hits'),
+  ipblockAdd: (entry: string, comment: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/ipblock', {
+      method: 'POST',
+      body: JSON.stringify({ entry, comment }),
+    }),
+  ipblockRemove: (entry: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/ipblock/${encodeURIComponent(entry)}`, {
+      method: 'DELETE',
+    }),
+  ipblockState: (body: { enabled?: boolean; action?: string }) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/ipblock/state', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  ipblockImport: (body: string, mode: 'replace' | 'append') =>
+    request<{ output: string }>(MTPROXYL_BASE, '/ipblock/import', {
+      method: 'POST',
+      body: JSON.stringify({ body, mode }),
+    }),
+  ipblockExportUrl: () => `${MTPROXYL_BASE}/ipblock/export`,
 
   geoblock: () => request<{ countries: string[] }>(MTPROXYL_BASE, '/geoblock'),
   geoblockAdd: (country: string) =>

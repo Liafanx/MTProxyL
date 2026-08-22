@@ -612,6 +612,154 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
 	}))
 
+	// ── Блокировка IP адресов ───────────────────────────────────────────────
+	// Правила живут в ядре, а список — в файле, поэтому работает в обоих
+	// режимах и не зависит от конфига движка.
+	mux.Handle("GET /api/mtproxyl/ipblock", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		st, err := client.IPBlockStatus(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: st})
+	}))
+
+	mux.Handle("GET /api/mtproxyl/ipblock/hits", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		hits, err := client.IPBlockHits(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{"hits": hits}})
+	}))
+
+	// Отдаём файл как есть — с комментариями, чтобы его можно было перенести
+	// на другой сервер и загрузить обратно без потерь.
+	mux.Handle("GET /api/mtproxyl/ipblock/export", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		body, err := client.IPBlockExport(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="mtproxyl-blocklist.txt"`)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(body))
+	}))
+
+	mux.Handle("POST /api/mtproxyl/ipblock", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			Entry   string `json:"entry"`
+			Comment string `json:"comment"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		if err := mtproxylctl.ValidateBlockEntry(req.Entry); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_entry", err.Error())
+			return
+		}
+		if err := mtproxylctl.ValidateBlockComment(req.Comment); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_comment", err.Error())
+			return
+		}
+		out, err := client.IPBlockAdd(r.Context(), req.Entry, req.Comment)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	mux.Handle("DELETE /api/mtproxyl/ipblock/{entry}", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		entry := r.PathValue("entry")
+		if err := mtproxylctl.ValidateBlockEntry(entry); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_entry", err.Error())
+			return
+		}
+		out, err := client.IPBlockRemove(r.Context(), entry)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/ipblock/state", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			Enabled *bool  `json:"enabled"`
+			Action  string `json:"action"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		var out string
+		var err error
+		if req.Action != "" {
+			out, err = client.IPBlockSetAction(r.Context(), req.Action)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_action", err.Error())
+				return
+			}
+		}
+		if req.Enabled != nil {
+			out, err = client.IPBlockSetEnabled(r.Context(), *req.Enabled)
+			if err != nil {
+				writeCLIError(w, "mtproxyl_error", err)
+				return
+			}
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/ipblock/import", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			Body string `json:"body"`
+			Mode string `json:"mode"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		if len(req.Body) > 256*1024 {
+			writeError(w, http.StatusBadRequest, "too_large", "Список больше 256 КБ")
+			return
+		}
+		if strings.TrimSpace(req.Body) == "" {
+			writeError(w, http.StatusBadRequest, "empty_body", "Пустой список")
+			return
+		}
+		out, err := client.IPBlockImport(r.Context(), req.Body, req.Mode)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
 	// ── Geoblock ────────────────────────────────────────────────────────────
 	mux.Handle("GET /api/mtproxyl/geoblock", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
