@@ -600,6 +600,19 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script pq-check [A-Za-z0-9]*
 # скрипт заканчивает работу exec в интерактивное меню.
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script update-check
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script update --no-restart
+# Версия движка: список, установка и откат. Откат без аргумента — на
+# предыдущую, с аргументом — на образ, который уже лежит на диске.
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script engine versions
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script engine update [A-Za-z0-9._-]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script engine rollback --yes
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script engine rollback [A-Za-z0-9._-]*
+# Сброс накопленной статистики. Настройки и пользователи не затрагиваются.
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script stats --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script stats reset all
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script stats reset traffic
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script stats reset ips
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script stats reset orphans
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script stats reset user *
 # Доступность из России. Проверку ведёт MTProxyL — тем же результатом
 # пользуются телеграм-бот и меню, а панель только показывает и просит проверить.
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability status --json
@@ -635,6 +648,10 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot uninstall --yes
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot admin-add [0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot admin-rm [0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot set [a-z]*.[a-z_]* *
+# proxy — единственная настройка без точки в имени, под шаблон выше она
+# не подходила, и панель не могла её задать.
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot set proxy *
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot set proxy
 EOF
 
   if [ -n "$_visudo" ]; then
@@ -1231,7 +1248,10 @@ session_ttl = \"24h\"${TLS_BLOCK}"
   generate_service | write_root "$SERVICE_FILE"
   $SUDO systemctl daemon-reload
   $SUDO systemctl enable "$SERVICE_NAME"
-  $SUDO systemctl start "$SERVICE_NAME"
+  # Именно restart: при повторной установке бинарник уже заменён, но старый
+  # процесс держит прежний inode, и `start` для него — пустая команда.
+  # Панель после этого продолжала показывать старую версию.
+  $SUDO systemctl restart "$SERVICE_NAME"
   say "Служба $SERVICE_NAME запущена и включена в автозагрузку"
 
   # Порт 80 занят — выпуск сертификата умеет только MTProxyL (см. выше).

@@ -773,6 +773,113 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: st})
 	}))
 
+	// ── Версия движка ───────────────────────────────────────────────────────
+	// Управляет версией сам скрипт; панель показывает, что стоит и что есть,
+	// и нажимает кнопку. Установка и откат идут через runner: скачивание и
+	// перезапуск движка в один HTTP-запрос не укладываются.
+	mux.Handle("GET /api/mtproxyl/engine/versions", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		v, err := client.EngineVersions(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: v})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/engine/update", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			Tag string `json:"tag"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		if err := mtproxylctl.ValidateEngineTag(req.Tag); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_tag", err.Error())
+			return
+		}
+		tag := req.Tag
+		started := runner.Start("engine:update", func(ctx context.Context) (string, error) {
+			return client.EngineUpdate(ctx, tag)
+		})
+		if !started {
+			writeError(w, http.StatusConflict, "operation_busy",
+				"Другая операция MTProxyL уже выполняется")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/engine/rollback", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		// Пустой tag — «на предыдущую»: у бинарного движка это единственная
+		// форма, у docker можно назвать конкретный образ с диска.
+		var req struct {
+			Tag string `json:"tag"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		if strings.TrimSpace(req.Tag) != "" {
+			if err := mtproxylctl.ValidateEngineTag(req.Tag); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_tag", err.Error())
+				return
+			}
+		}
+		tag := req.Tag
+		started := runner.Start("engine:rollback", func(ctx context.Context) (string, error) {
+			return client.EngineRollback(ctx, tag)
+		})
+		if !started {
+			writeError(w, http.StatusConflict, "operation_busy",
+				"Другая операция MTProxyL уже выполняется")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
+	}))
+
+	// ── Накопленная статистика ──────────────────────────────────────────────
+	mux.Handle("GET /api/mtproxyl/stats", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		st, err := client.Stats(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: st})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/stats/reset", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			Scope string `json:"scope"`
+			Label string `json:"label"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		out, err := client.StatsReset(r.Context(), req.Scope, req.Label)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
 	// Adding a country downloads its CIDR ranges, which is slow on first use.
 	mux.Handle("POST /api/mtproxyl/geoblock", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {

@@ -591,6 +591,15 @@ tgbot_set_param() {
     chown "$TGBOT_USER":"$TGBOT_USER" "$TGBOT_CONFIG" 2>/dev/null || true
     chmod 600 "$TGBOT_CONFIG"
     log_success "${_key} = ${_val}"
+
+    # Сессию к Telegram бот создаёт на старте: смена прокси без перезапуска
+    # остаётся только в файле. Раньше это делало меню, и та же настройка из
+    # панели молча не работала.
+    if [ "$_key" = "proxy" ] && tgbot_service_active; then
+        systemctl restart "$TGBOT_SERVICE" 2>/dev/null \
+            && log_success "Бот перезапущен" \
+            || log_warn "Перезапустите бота вручную, чтобы настройка применилась"
+    fi
 }
 
 # ── Установка ─────────────────────────────────────────────────

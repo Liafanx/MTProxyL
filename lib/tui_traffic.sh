@@ -196,6 +196,7 @@ tui_traffic_menu() {
         echo -e "  ${DIM}[3]${NC} Метрики движка (live)"
         echo -e "  ${DIM}[4]${NC} Активные соединения"
         echo -e "  ${DIM}[5]${NC} История IP: $(_tui_ip_history_line)"
+        echo -e "  ${DIM}[6]${NC} Сбросить накопленное"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
@@ -204,6 +205,7 @@ tui_traffic_menu() {
             3) tui_metrics_live ;;
             4) show_connections; press_any_key ;;
             5) tui_ip_history_menu ;;
+            6) tui_stats_reset_menu ;;
             0|"") return ;;
         esac
     done
@@ -265,11 +267,13 @@ _tui_traffic_menu_reanimator() {
         echo -e "  ${DIM}[3]${NC} Метрики движка цели"
         echo -e "  ${DIM}[4]${NC} Метрики движка цели (live)"
         echo -e "  ${DIM}[5]${NC} История IP: $(_tui_ip_history_line)"
+        echo -e "  ${DIM}[6]${NC} Сбросить накопленное"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
             1) echo -e "  ${DIM}Ctrl+C для остановки...${NC}"; show_target_logs 30 ;;
             2) ;;
+            6) tui_stats_reset_menu ;;
             3)
                 if _target_metrics_available; then
                     show_metrics 2>/dev/null || log_error "Не удалось разобрать метрики"
@@ -302,3 +306,48 @@ tui_metrics_live() {
     trap - INT
 }
 
+
+# Сброс накопленного. Настройки и пользователи не трогаются — уходят только
+# счётчики трафика и история адресов.
+tui_stats_reset_menu() {
+    while true; do
+        clear_screen
+        draw_header "СБРОС НАКОПЛЕННОГО"
+        stats_overview
+        echo -e "  ${DIM}[1]${NC} Всё: трафик и история IP"
+        echo -e "  ${DIM}[2]${NC} Только счётчики трафика"
+        echo -e "  ${DIM}[3]${NC} Только историю IP"
+        echo -e "  ${DIM}[4]${NC} Только данные удалённых пользователей"
+        echo -e "  ${DIM}[5]${NC} По одному пользователю"
+        echo -e "  ${DIM}[0]${NC} Назад"
+        local choice; choice=$(read_choice "выбор" "0")
+        case "$choice" in
+            1) _tui_stats_confirm "Сбросить трафик и историю IP?" || { press_any_key; continue; }
+               handle_stats_command reset all; press_any_key ;;
+            2) _tui_stats_confirm "Сбросить счётчики трафика?" || { press_any_key; continue; }
+               handle_stats_command reset traffic; press_any_key ;;
+            3) _tui_stats_confirm "Очистить историю IP?" || { press_any_key; continue; }
+               handle_stats_command reset ips; press_any_key ;;
+            4) _tui_stats_confirm "Убрать данные удалённых пользователей?" || { press_any_key; continue; }
+               handle_stats_command reset orphans; press_any_key ;;
+            5) echo ""
+               echo -en "  ${BOLD}Метка пользователя:${NC} "
+               local _l; read_line _l
+               if [ -n "$_l" ]; then
+                   _tui_stats_confirm "Сбросить статистику ${_l}?" \
+                       && handle_stats_command reset user "$_l"
+               fi
+               press_any_key ;;
+            0|"") return ;;
+        esac
+    done
+}
+
+_tui_stats_confirm() {
+    echo ""
+    echo -en "  ${YELLOW}${1}${NC} [y/N]: "
+    local _a; read_line _a
+    [[ "$_a" =~ ^[yYдД] ]] && return 0
+    log_info "Отменено"
+    return 1
+}

@@ -131,11 +131,8 @@ _tui_tgbot_proxy() {
     echo -en "  ${BOLD}Прокси:${NC} "
     local _v; read_line _v
     [ -n "$_v" ] || return 0
+    # Перезапуск делает сам tgbot_set_param — настройка живёт только в сессии.
     tgbot_set_param proxy "$_v" || return 1
-    # Сессию бот создаёт на старте — без перезапуска настройка не применится.
-    systemctl restart "$TGBOT_SERVICE" 2>/dev/null \
-        && log_success "Бот перезапущен" \
-        || log_warn "Перезапустите бота вручную, чтобы настройка применилась"
 }
 
 _tui_tgbot_notify_lines() {

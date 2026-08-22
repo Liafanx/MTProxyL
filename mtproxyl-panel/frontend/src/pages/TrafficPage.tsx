@@ -6,6 +6,7 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { Header } from '@/components/layout/Header';
 import { formatBytes } from '@/lib/utils';
 import { mtproxylNetApi, type TrafficReport, type TrafficUser } from '@/lib/api';
+import { StatsResetCard } from '@/components/StatsResetCard';
 
 type SortKey = 'total' | 'in' | 'out' | 'connections' | 'unique_ips' | 'user';
 
@@ -227,6 +228,8 @@ export function TrafficPage() {
                   )}
                 </CardContent>
               </Card>
+
+              <StatsResetCard />
             </>
           )
         )}

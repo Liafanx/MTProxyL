@@ -411,7 +411,9 @@ binengine_update_to() {
     fi
 }
 
+# Аргумент --yes снимает вопрос: панель уже спросила у пользователя.
 binengine_rollback() {
+    local _assume="${1:-}"
     if [ ! -x "$ENGINE_PREV_BIN" ]; then
         log_error "Предыдущей версии на диске нет — откатывать не к чему"
         log_info "Поставьте нужную версию: mtproxyl engine update <версия>"
@@ -422,12 +424,14 @@ binengine_rollback() {
     _prev=$(tr -d ' \t\r\n' < "$ENGINE_PREV_VERSION_FILE" 2>/dev/null)
     [ -n "$_prev" ] || _prev=$("$ENGINE_PREV_BIN" --version 2>/dev/null | awk '{print $NF}')
 
-    echo ""
-    echo -e "  ${BOLD}Текущая:${NC}    ${_cur}"
-    echo -e "  ${BOLD}Предыдущая:${NC} ${_prev:-неизвестна}"
-    echo -en "  ${BOLD}Откатиться? [y/N]:${NC} "
-    local _yn; read_line _yn
-    [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
+    if [ "$_assume" != "--yes" ]; then
+        echo ""
+        echo -e "  ${BOLD}Текущая:${NC}    ${_cur}"
+        echo -e "  ${BOLD}Предыдущая:${NC} ${_prev:-неизвестна}"
+        echo -en "  ${BOLD}Откатиться? [y/N]:${NC} "
+        local _yn; read_line _yn
+        [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
+    fi
 
     local _tmp="${ENGINE_BIN_DIR}/.swap.$$"
     cp -f "$ENGINE_BIN_PATH" "$_tmp" 2>/dev/null || true

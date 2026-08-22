@@ -5,6 +5,7 @@ import { MetricCard } from '@/components/MetricCard';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { panelApi } from '@/lib/api';
 import { MtproxylUpdateCard } from '@/components/MtproxylUpdateCard';
+import { MtproxylEngineCard } from '@/components/MtproxylEngineCard';
 import { cn } from '@/lib/utils';
 import { RefreshCw, Download, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 
@@ -588,6 +589,10 @@ export function UpdatePage() {
         {/* MTProxyL сам обновляет себя, поэтому раздел живёт отдельно от
             автообновления панели и движка. */}
         <MtproxylUpdateCard />
+
+        {/* Версия движка живёт отдельно от версии скрипта: их обновляют
+            независимо, и путать их — терять час на «почему не изменилось». */}
+        <MtproxylEngineCard />
 
         {/* Auto-update settings */}
         {autoStatus && (

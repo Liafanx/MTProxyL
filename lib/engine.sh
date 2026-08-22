@@ -35,6 +35,54 @@ engine_current_version() {
     echo "unknown"
 }
 
+# Версии, лежащие на диске: к ним откатываются без сети.
+engine_local_versions() {
+    if engine_is_binary; then
+        local _cur _prev
+        _cur=$(binengine_version)
+        [ -n "$_cur" ] && [ "$_cur" != "unknown" ] && echo "$_cur"
+        if [ -x "$ENGINE_PREV_BIN" ]; then
+            _prev=$(tr -d ' \t\r\n' < "$ENGINE_PREV_VERSION_FILE" 2>/dev/null)
+            [ -n "$_prev" ] || _prev=$("$ENGINE_PREV_BIN" --version 2>/dev/null | awk '{print $NF}')
+            [ -n "$_prev" ] && echo "$_prev"
+        fi
+    else
+        docker images --format '{{.Tag}}' "${DOCKER_IMAGE_BASE}" 2>/dev/null \
+            | grep -E '^[0-9]+\.' | sort -rV
+    fi
+}
+
+# Всё, что нужно панели одним документом: чем движок носится, что стоит,
+# что лежит на диске и что есть в релизах.
+engine_versions_json() {
+    local _cur; _cur=$(engine_current_version)
+    printf '{"backend":"%s","current":"%s","binary":%s,' \
+        "$(json_escape "$(engine_backend)")" "$(json_escape "$_cur")" \
+        "$(engine_is_binary && echo true || echo false)"
+
+    printf '"local":['
+    local _v _first=1
+    # Текущая и предыдущая совпадают, если обновлялись на ту же версию —
+    # в списке отката такой пункт был бы обманом.
+    while IFS= read -r _v; do
+        [ -n "$_v" ] || continue
+        [ $_first -eq 1 ] || printf ','
+        _first=0
+        printf '"%s"' "$(json_escape "$_v")"
+    done <<< "$(engine_local_versions 2>/dev/null | awk 'NF && !seen[$0]++')"
+
+    printf '],"releases":['
+    local _tag _name _date _f2=1
+    while IFS='|' read -r _tag _name _date; do
+        [ -n "$_tag" ] || continue
+        [ $_f2 -eq 1 ] || printf ','
+        _f2=0
+        printf '{"tag":"%s","name":"%s","date":"%s"}' \
+            "$(json_escape "$_tag")" "$(json_escape "$_name")" "$(json_escape "$_date")"
+    done <<< "$(engine_list_releases 2>/dev/null)"
+    printf ']}\n'
+}
+
 # Обновить до конкретной версии
 engine_update_to() {
     local target_tag="$1"
@@ -115,8 +163,11 @@ except: print('?')
 }
 
 # Откат к предыдущей версии
+# Аргумент — тег из локальных образов или --yes: панель спрашивает сама,
+# и второй раз спрашивать её нечем.
 engine_rollback() {
-    engine_is_binary && { binengine_rollback; return; }
+    local _want="${1:-}"
+    engine_is_binary && { binengine_rollback "$_want"; return; }
     local images
     images=$(docker images --format '{{.Tag}}' "${DOCKER_IMAGE_BASE}" 2>/dev/null | grep -E '^[0-9]+\.' | sort -rV)
 
@@ -127,6 +178,21 @@ engine_rollback() {
 
     local current
     current=$(engine_current_version)
+
+    if [ -n "$_want" ] && [ "$_want" != "--yes" ]; then
+        grep -qxF "$_want" <<< "$images" || {
+            log_error "Образа ${_want} на диске нет"
+            return 1
+        }
+        [ "$_want" = "$current" ] && { log_info "Это уже текущая версия"; return 0; }
+        echo "$_want" > "${INSTALL_DIR}/.telemt_version"
+        log_success "Версия переключена на ${_want}"
+        if is_proxy_running; then
+            load_secrets
+            restart_proxy_container
+        fi
+        return 0
+    fi
 
     echo ""
     draw_header "ДОСТУПНЫЕ ВЕРСИИ ДВИЖКА"
@@ -171,6 +237,10 @@ handle_engine_command() {
 
     case "$subcmd" in
         status)
+            if [ "${1:-}" = "--json" ]; then
+                engine_versions_json
+                return 0
+            fi
             echo -e "  ${BOLD}Движок Telemt${NC}"
             echo -e "  ${DIM}Носитель:${NC}   $(engine_backend_title)"
             echo -e "  ${DIM}Установлен:${NC}  v$(engine_current_version)"
@@ -235,7 +305,10 @@ handle_engine_command() {
             ;;
         rollback)
             check_root
-            engine_rollback
+            engine_rollback "${1:-}"
+            ;;
+        versions)
+            engine_versions_json
             ;;
         rebuild)
             check_root
@@ -257,7 +330,8 @@ handle_engine_command() {
             echo -e "  ${DIM}status${NC}          Текущая версия"
             echo -e "  ${DIM}list${NC}            Список доступных версий"
             echo -e "  ${DIM}update [tag]${NC}    Обновить до версии"
-            echo -e "  ${DIM}rollback${NC}        Откатить к предыдущей"
+            echo -e "  ${DIM}rollback [tag]${NC}  Откатить к предыдущей или к версии с диска"
+            echo -e "  ${DIM}versions${NC}        Версии и релизы одним JSON"
             echo -e "  ${DIM}rebuild${NC}         Пересобрать образ / перекачать бинарник"
             echo -e "  ${DIM}backend <тип>${NC}   Сменить носитель движка: docker | binary"
             ;;

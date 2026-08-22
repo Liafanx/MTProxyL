@@ -133,6 +133,11 @@ ZAPRET2_FILTER_IP=""
 # порту 443 ломает его вместе с нашим. Пусто — не исключаем ничего.
 ZAPRET2_EXCLUDE_IFACES=""
 ZAPRET2_DEFAULT_EXCLUDE_IFACES="awg* wg* tun*"
+# Куда вешать правила очереди: auto — решаем сами (Docker bridge → forward,
+# иначе pre/postrouting хоста), host и forward — выбор вручную. Ручной нужен
+# там, где цель живёт в контейнере, а мы этого не увидели: чужой клиент
+# прокси, свой compose, любая сборка мимо нашего определения.
+ZAPRET2_HOOK="auto"
 ZAPRET2_APPLIED="false"
 ZAPRET2_SERVICE_ENABLED="false"
 
@@ -210,6 +215,7 @@ ZAPRET2_ORIG_TW_REUSE='${ZAPRET2_ORIG_TW_REUSE}'
 ZAPRET2_UID='${ZAPRET2_UID}'
 ZAPRET2_GID='${ZAPRET2_GID}'
 ZAPRET2_DEBUG='${ZAPRET2_DEBUG}'
+ZAPRET2_HOOK='${ZAPRET2_HOOK}'
 EOF
     local _i
     for _i in $(seq 1 "$NFT_EXTRA_COUNT"); do
@@ -254,7 +260,7 @@ load_nft_settings() {
                 ZAPRET2_PORT|ZAPRET2_FILTER_IP_ENABLED|ZAPRET2_FILTER_IP|\
                 ZAPRET2_EXCLUDE_IFACES|\
                 ZAPRET2_QNUM|ZAPRET2_FWMARK|ZAPRET2_DEBUG|ZAPRET2_ORIG_TW_REUSE|\
-                ZAPRET2_UID|ZAPRET2_GID)
+                ZAPRET2_UID|ZAPRET2_GID|ZAPRET2_HOOK)
                     printf -v "$_key" '%s' "$_val"
                     [ "$_key" = "NFT_IOS_DETECT" ] && _have_ios_detect="true"
                     ;;
@@ -1373,7 +1379,8 @@ zapret2_status() {
         local _extra=""
         [ -n "${ZAPRET2_EXTRA_PORTS:-}" ] && _extra=" ports=$(zapret2_filter_ports)"
         local _br=""
-        zapret2_is_bridge_target && _br=" bridge/${DETECT_BRIDGE_STRATEGY:-simple}"
+        zapret2_is_bridge_target && _br=" forward/${DETECT_BRIDGE_STRATEGY:-simple}"
+        [ "${ZAPRET2_HOOK:-auto}" = "auto" ] || _br="${_br} hook=${ZAPRET2_HOOK}"
         echo -e "${GREEN}активен${NC} (out-range=${ZAPRET2_OUT_RANGE} len=${ZAPRET2_SPLIT_LEN} win=${ZAPRET2_WIN_SYNACK}/${ZAPRET2_WIN_ACK}${_extra}${_br})${_dbg}"
     else
         echo -e "${YELLOW}установлен, остановлен${NC}"
@@ -1866,6 +1873,10 @@ offer_disable_zapret2() {
 
 
 zapret2_is_bridge_target() {
+    case "${ZAPRET2_HOOK:-auto}" in
+        forward) return 0 ;;
+        host)    return 1 ;;
+    esac
     [ "${DETECTED_NETWORK_MODE:-host}" = "bridge" ] || [ "${NFT_HOOK:-input}" = "forward" ]
 }
 
@@ -2119,7 +2130,9 @@ zapret2_apply_nft() {
         nft "add rule ip $_table forward ${ZAPRET2_BYPASS_MATCH} ct mark ${_ct_mark} counter accept"
         nft "add rule ip $_table forward ${_daddr_match}meta mark and $_fwmark == 0x00000000 tcp dport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
         nft "add rule ip $_table forward ${_saddr_match}meta mark and $_fwmark == 0x00000000 tcp sport ${_port} counter queue num ${ZAPRET2_QNUM} bypass"
-        log_success "NFT таблица ${_table} применена для Docker bridge (forward: порты=${_port} qnum=${ZAPRET2_QNUM} strategy=${DETECT_BRIDGE_STRATEGY:-simple})"
+        local _why="цель в Docker bridge"
+        [ "${ZAPRET2_HOOK:-auto}" = "forward" ] && _why="цепочка задана вручную"
+        log_success "NFT таблица ${_table} применена в forward, ${_why} (порты=${_port} qnum=${ZAPRET2_QNUM} strategy=${DETECT_BRIDGE_STRATEGY:-simple})"
         return 0
     fi
 
@@ -2747,6 +2760,7 @@ _NFT_SETTABLE=(
     "ZAPRET2_FILTER_IP_ENABLED|bool|Сужать правила до адреса сервера"
     "ZAPRET2_FILTER_IP|custom:_validate_nft_optional_ipv4|IPv4 сервера для правил (пусто = определить самим)"
     "ZAPRET2_EXCLUDE_IFACES|custom:_validate_nft_ifaces|Интерфейсы мимо очереди, через пробел (wg* tun*)"
+    "ZAPRET2_HOOK|enum:auto,host,forward|Цепочка NFT: auto, host (pre/postrouting) или forward (цель в контейнере)"
     "ZAPRET2_UID|range:0:65535|UID, под который nfqws2 сбрасывает привилегии"
     "ZAPRET2_GID|range:0:65535|GID, под который nfqws2 сбрасывает привилегии"
     "ZAPRET2_DEBUG|bool|Подробный лог Zapret2"
@@ -2833,6 +2847,12 @@ nft_set_param() {
     printf -v "$_key" '%s' "$_val"
     save_nft_settings
     log_success "${_key} = ${_val}"
+    # Цепочка меняет саму раскладку правил, а не число внутри них — оставить
+    # её только в файле значило бы соврать про применённую настройку.
+    if [ "$_key" = "ZAPRET2_HOOK" ] && zapret2_is_running; then
+        zapret2_update_config
+        return 0
+    fi
     log_info "Примените правила заново, чтобы значение вступило в силу"
 }
 

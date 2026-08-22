@@ -752,23 +752,23 @@ detect_telemt() {
             [ "$_is_telemt" = "false" ] && continue
             DETECTED_MODE="docker"
             DETECTED_CONTAINER="$_cname"
-            local _mount _candidate _dest
-            local _dests="/etc/telemt.toml /etc/telemt /etc/telemt/telemt.toml /app/config.toml"
-            for _dest in $_dests; do
-                _mount=$(docker inspect -f "{{range .Mounts}}{{if eq .Destination \"${_dest}\"}}{{.Source}}{{end}}{{end}}" "$_cname" 2>/dev/null)
-                [ -z "$_mount" ] && continue
-                if [ -d "$_mount" ]; then
-                    for _candidate in "${_mount}/config.toml" "${_mount}/telemt.toml"; do
+            # Перебираем все точки монтирования, а не заранее известный список
+            # путей внутри контейнера: конфиг могли подключить куда угодно.
+            local _source _candidate
+            while IFS= read -r _source; do
+                [ -n "$_source" ] || continue
+                if [ -d "$_source" ]; then
+                    for _candidate in "${_source}/config.toml" "${_source}/telemt.toml"; do
                         if [ -f "$_candidate" ] && ! _is_excluded_path "$_candidate" && _looks_like_telemt_config "$_candidate"; then
                             DETECTED_CONFIG_PATH="$_candidate"
                             break 2
                         fi
                     done
-                elif [ -f "$_mount" ] && ! _is_excluded_path "$_mount" && _looks_like_telemt_config "$_mount"; then
-                    DETECTED_CONFIG_PATH="$_mount"
+                elif [ -f "$_source" ] && ! _is_excluded_path "$_source" && _looks_like_telemt_config "$_source"; then
+                    DETECTED_CONFIG_PATH="$_source"
                     break
                 fi
-            done
+            done < <(docker inspect -f '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' "$_cname" 2>/dev/null)
             local _nm
             _nm=$(docker inspect -f '{{.HostConfig.NetworkMode}}' "$_cname" 2>/dev/null)
             if [ "$_nm" = "host" ]; then
