@@ -22,6 +22,7 @@ _AG_ITEMS=(
     "meko|Оптимизация By-MEKO|no"
     "selfmask|Selfmask|yes"
     "geoip|База GeoIP|no"
+    "block|Список блокировок|no"
     "force|Ставить поверх существующей|no"
 )
 
@@ -78,6 +79,13 @@ _argsgen_defaults() {
 
     _AG_ON[geoip]="$(geoip_installed 2>/dev/null && echo yes || echo no)"
     _AG_VAL[geoip]="$(geoip_installed 2>/dev/null && echo "установлена" || echo "нет")"
+
+    local _bn; _bn=$(ipblock_count 2>/dev/null || echo 0)
+    if [ "${IPBLOCK_ENABLED:-false}" = "true" ] && [ "$_bn" -gt 0 ]; then
+        _AG_ON[block]="yes"; _AG_VAL[block]="${_bn} записей, ${IPBLOCK_ACTION}"
+    else
+        _AG_ON[block]="no"; _AG_VAL[block]="$([ "$_bn" -gt 0 ] && echo "${_bn} записей, выключен" || echo "пусто")"
+    fi
 
     _AG_ON[force]="no"; _AG_VAL[force]="--force"
 }
@@ -148,6 +156,14 @@ _argsgen_build() {
     fi
 
     [ "${_AG_ON[geoip]}" = "yes" ] && _a+=(--geoip yes)
+
+    if [ "${_AG_ON[block]}" = "yes" ]; then
+        local _bl; _bl=$(ipblock_entries 2>/dev/null | paste -sd, -)
+        if [ -n "$_bl" ]; then
+            _a+=(--block "$_bl")
+            [ "${IPBLOCK_ACTION:-drop}" = "reject" ] && _a+=(--block-action reject)
+        fi
+    fi
 
     local _s
     for _s in "${_a[@]}"; do printf '%q ' "$_s"; done

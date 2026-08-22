@@ -20,6 +20,9 @@ _IA_SECRETS=()
 _IA_SELFMASK_DOMAIN=""; _IA_SELFMASK_CERT=""; _IA_SELFMASK_EMAIL=""
 _IA_SELFMASK_TEMPLATE=""; _IA_SELFMASK_BACKEND_PORT=""
 _IA_GEOIP=""
+_IA_BLOCK_FILE=""
+_IA_BLOCK_LIST=""
+_IA_BLOCK_ACTION=""
 _IA_ENGINE=""; _IA_ENGINE_VERSION=""
 _IA_FORCE="false"
 
@@ -65,6 +68,9 @@ install_args_help() {
 
   Дополнения
     --geoip yes|no             база GeoIP: страна, город и ASN в истории IP
+    --block-file ПУТЬ          список заблокированных адресов из файла (# — комментарии)
+    --block СПИСОК             заблокированные адреса через запятую
+    --block-action drop|reject что делать с заблокированными, по умолчанию drop
                                (по умолчанию no)
 
   Прочее
@@ -163,6 +169,13 @@ _install_args_parse() {
             --selfmask-email)        _IA_SELFMASK_EMAIL="$_v" ;;
             --selfmask-template)     _IA_SELFMASK_TEMPLATE="$_v" ;;
             --selfmask-backend-port) _IA_SELFMASK_BACKEND_PORT="$_v" ;;
+            --block-file)   _IA_BLOCK_FILE="$_v" ;;
+            --block)        _IA_BLOCK_LIST="$_v" ;;
+            --block-action)
+                case "${_v,,}" in
+                    drop|reject) _IA_BLOCK_ACTION="${_v,,}" ;;
+                    *) log_error "--block-action: drop или reject"; return 1 ;;
+                esac ;;
             --geoip)
                 case "${_v,,}" in
                     yes|y|да|true|on)   _IA_GEOIP="yes" ;;
@@ -409,6 +422,32 @@ run_installer_args() {
         echo ""
         geoip_install || log_warn "База GeoIP не установлена — поставьте позже: меню «Дополнения»"
     fi
+
+    if [ -n "${_IA_BLOCK_ACTION}" ]; then
+        IPBLOCK_ACTION="${_IA_BLOCK_ACTION}"
+    fi
+    if [ -n "${_IA_BLOCK_FILE}" ] || [ -n "${_IA_BLOCK_LIST}" ]; then
+        local _bl_tmp; _bl_tmp=$(_mktemp "${INSTALL_DIR}" 2>/dev/null || mktemp)
+        if [ -n "${_IA_BLOCK_FILE}" ]; then
+            if [ -r "${_IA_BLOCK_FILE}" ]; then
+                cat "${_IA_BLOCK_FILE}" >> "$_bl_tmp"
+            else
+                log_warn "Файл со списком блокировок не читается: ${_IA_BLOCK_FILE}"
+            fi
+        fi
+        if [ -n "${_IA_BLOCK_LIST}" ]; then
+            printf '%s\n' "${_IA_BLOCK_LIST//,/$'\n'}" >> "$_bl_tmp"
+        fi
+        IPBLOCK_ENABLED="true"
+        if ipblock_import "$_bl_tmp" replace; then
+            ipblock_install_unit
+        else
+            IPBLOCK_ENABLED="false"
+        fi
+        save_settings
+        rm -f "$_bl_tmp"
+    fi
+
 
     load_settings; load_secrets
     show_install_summary
