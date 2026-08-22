@@ -564,6 +564,33 @@ _warp_need_packages() {
 
 # ── Middle proxy: почему он несовместим ─────────────────────────────────────
 
+# В вариантах A и C шифрует warpscout, а не ядро, и его цена видна только
+# по счётчику службы. Пустой вывод — служба не запускалась.
+_warp_tunnel_cpu() {
+    local _ns _ts _start _now _up _cpu
+    _ns=$(systemctl show -p CPUUsageNSec --value "$WARP_SOCKS_UNIT" 2>/dev/null)
+    [[ "$_ns" =~ ^[0-9]+$ ]] && [ "$_ns" -gt 0 ] || return 1
+    _ts=$(systemctl show -p ActiveEnterTimestamp --value "$WARP_SOCKS_UNIT" 2>/dev/null)
+    [ -n "$_ts" ] || return 1
+    _start=$(date -d "$_ts" +%s 2>/dev/null) || return 1
+    _now=$(date +%s); _up=$((_now - _start))
+    [ "$_up" -gt 0 ] || return 1
+    _cpu=$((_ns / 1000000000))
+    printf '%dс за %dч%02dм, в среднем %d%% ядра' \
+        "$_cpu" $((_up / 3600)) $(((_up % 3600) / 60)) $((_cpu * 100 / _up))
+}
+
+# `mtproxyl dc` показывает писателей middle proxy. Вариант C его выключает,
+# и советовать эту команду после включения — отправлять смотреть в пустоту.
+_warp_dc_hint() {
+    if _warp_me_enabled; then
+        echo -e "  ${DIM}Связь с дата-центрами Telegram: mtproxyl dc${NC}"
+    else
+        echo -e "  ${DIM}Middle proxy выключен — писателей к DC нет, mtproxyl dc покажет пусто.${NC}"
+        echo -e "  ${DIM}Выход наружу: mtproxyl warp status, доступность: mtproxyl availability${NC}"
+    fi
+}
+
 # ME с WARP несовместим: ключи рукопожатия зависят от адреса и порта, а выход
 # Cloudflare меняет и то, и другое. Замеры — в README и CHANGELOG.
 _warp_me_enabled() {
@@ -836,7 +863,7 @@ warp_enable() {
         log_info "Смотрите: mtproxyl warp status, journalctl -u ${WARP_SOCKS_UNIT}"
     fi
     echo ""
-    log_info "Проверьте связь с Telegram: mtproxyl dc"
+    _warp_dc_hint
 }
 
 warp_disable() {
@@ -991,6 +1018,8 @@ warp_status() {
     if [ "$_mode" = "upstream" ]; then
         echo -e "  ${BOLD}Туннель:${NC}      $(_warp_unit_active "$WARP_SOCKS_UNIT" && echo -e "${GREEN}работает${NC}" || echo -e "${RED}лежит${NC}") ${DIM}(socks5 на 127.0.0.1:$(_warp_socks_port))${NC}"
         echo -e "  ${BOLD}Upstream:${NC}     $(warp_route_ready >/dev/null 2>&1 && echo -e "${GREEN}прописан в конфиге движка${NC}" || echo -e "${RED}нет${NC}")"
+        local _cpu; _cpu=$(_warp_tunnel_cpu) && \
+            echo -e "  ${BOLD}Процессор:${NC}    ${_cpu} ${DIM}(шифрование в пользовательском пространстве)${NC}"
         if _warp_owns_engine_config; then
             local _rogue; _rogue=$(_warp_foreign_default_upstreams)
             [ -n "$_rogue" ] && log_warn "Маршруты без области мимо туннеля: ${_rogue}"
@@ -998,19 +1027,21 @@ warp_status() {
             echo -e "  ${DIM}Конфиг цели правится вручную: mtproxyl warp hint${NC}"
         fi
         echo ""
-        echo -e "  ${DIM}Связь с дата-центрами Telegram: mtproxyl dc${NC}"
+        _warp_dc_hint
         echo ""
         return 0
     elif [ "$_mode" = "socks" ]; then
         echo -e "  ${BOLD}Туннель:${NC}      $(_warp_unit_active "$WARP_SOCKS_UNIT" && echo -e "${GREEN}работает${NC}" || echo -e "${RED}лежит${NC}") ${DIM}(${WARP_SOCKS_UNIT})${NC}"
         echo -e "  ${BOLD}Редирект:${NC}     $(_warp_unit_active "$WARP_REDSOCKS_UNIT" && echo -e "${GREEN}работает${NC}" || echo -e "${RED}лежит${NC}") ${DIM}(порт $(_warp_redir_port))${NC}"
+        local _cpu; _cpu=$(_warp_tunnel_cpu) && \
+            echo -e "  ${BOLD}Процессор:${NC}    ${_cpu} ${DIM}(шифрование в пользовательском пространстве)${NC}"
     else
         echo -e "  ${BOLD}Интерфейс:${NC}    $(ip link show "$WARP_IFACE" >/dev/null 2>&1 && echo -e "${GREEN}поднят${NC}" || echo -e "${RED}нет${NC}") ${DIM}(${WARP_IFACE}, метка $(_warp_fwmark))${NC}"
     fi
     echo -e "  ${BOLD}Правила nft:${NC}  $(_warp_nft_applied && echo -e "${GREEN}на месте${NC}" || echo -e "${RED}нет${NC}") ${DIM}(подсетей: $(wc -l < "$(_warp_cidr)" 2>/dev/null || echo 0))${NC}"
     echo -e "  ${BOLD}Уведено:${NC}      $(warp_matched_packets) пакетов до Telegram"
     echo ""
-    echo -e "  ${DIM}Связь с дата-центрами Telegram: mtproxyl dc${NC}"
+    _warp_dc_hint
     echo ""
 }
 

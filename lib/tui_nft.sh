@@ -1046,10 +1046,17 @@ tui_zapret2_settings() {
             && _ipf="${ZAPRET2_FILTER_IP}"
         echo -e "  ${DIM}[14]${NC} Фильтр по IP  [${_ipf}]  ${DIM}— правила только для этого адреса${NC}"
         echo -e "  ${DIM}[15]${NC} Мимо очереди  [${ZAPRET2_EXCLUDE_IFACES:-нет}]  ${DIM}— интерфейсы VPN${NC}"
+        local _z_hook_note="авто"
+        case "${ZAPRET2_HOOK:-auto}" in
+            forward) _z_hook_note="forward (вручную)" ;;
+            host)    _z_hook_note="хост (вручную)" ;;
+            *) zapret2_is_bridge_target && _z_hook_note="авто → forward" || _z_hook_note="авто → хост" ;;
+        esac
+        echo -e "  ${DIM}[16]${NC} Цепочка NFT  [${_z_hook_note}]  ${DIM}— forward нужен, если цель в контейнере${NC}"
         local _z_bridge="false"
         if zapret2_is_bridge_target; then
             _z_bridge="true"
-            echo -e "  ${DIM}[11]${NC} Docker bridge: фильтр по IP контейнера [${DETECT_BRIDGE_STRATEGY:-simple}]"
+            echo -e "  ${DIM}[11]${NC} Фильтр по IP контейнера [${DETECT_BRIDGE_STRATEGY:-simple}]"
         fi
         echo ""
         echo -e "  ${DIM}[0]${NC} Назад"
@@ -1178,6 +1185,27 @@ tui_zapret2_settings() {
                        save_detect_settings 2>/dev/null || true
                        log_success "Docker bridge: precise (фильтр по IP контейнера)"
                        zapret2_update_config ;;
+                esac
+                press_any_key ;;
+            16)
+                echo ""
+                echo -e "  ${BOLD}Куда вешать правила очереди${NC}"
+                echo -e "  ${DIM}Прокси на самом хосте — правила идут в prerouting и postrouting.${NC}"
+                echo -e "  ${DIM}Прокси в контейнере — трафик до него проходит forward, и в${NC}"
+                echo -e "  ${DIM}цепочках хоста его нет. Свой контейнер мы определяем сами,${NC}"
+                echo -e "  ${DIM}чужой клиент прокси — нет, поэтому цепочку можно задать руками.${NC}"
+                echo ""
+                echo -e "  ${DIM}[1]${NC} Авто    — по результату определения ${DIM}(сейчас: $(zapret2_is_bridge_target && echo forward || echo хост))${NC}"
+                echo -e "  ${DIM}[2]${NC} Хост    — prerouting и postrouting"
+                echo -e "  ${DIM}[3]${NC} Forward — цель в контейнере"
+                local _zh; _zh=$(read_choice "выбор" "0")
+                case "$_zh" in
+                    1) ZAPRET2_HOOK="auto"; save_nft_settings
+                       log_success "Цепочка NFT: авто"; zapret2_update_config ;;
+                    2) ZAPRET2_HOOK="host"; save_nft_settings
+                       log_success "Цепочка NFT: хост (prerouting/postrouting)"; zapret2_update_config ;;
+                    3) ZAPRET2_HOOK="forward"; save_nft_settings
+                       log_success "Цепочка NFT: forward"; zapret2_update_config ;;
                 esac
                 press_any_key ;;
             12)

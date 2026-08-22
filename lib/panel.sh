@@ -132,12 +132,19 @@ panel_scheme() {
 panel_install() {
     check_root || return 1
 
+    # --update: то же самое, но без вопроса «ставить поверх?» — при обновлении
+    # ответ на него заранее известен.
+    local _mode="${1:-}"
     if panel_installed; then
         log_info "Панель уже установлена: $(panel_status_line)"
-        echo ""
-        echo -en "  ${BOLD}Запустить установщик повторно (обновление/перенастройка)? [y/N]:${NC} "
-        local _yn; read_line _yn
-        [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
+        if [ "$_mode" != "--update" ]; then
+            echo ""
+            echo -en "  ${BOLD}Запустить установщик повторно (обновление/перенастройка)? [y/N]:${NC} "
+            local _yn; read_line _yn
+            [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
+        fi
+    elif [ "$_mode" = "--update" ]; then
+        log_info "Панель ещё не установлена — ставим с нуля"
     fi
 
     if [ "${MTPROXYL_MODE:-manager}" = "manager" ] && ! _own_install_exists; then
@@ -824,6 +831,7 @@ _panel_finish_cert() {
 handle_panel_command() {
     case "${1:-status}" in
         install)   panel_install ;;
+        update)    panel_install --update ;;
         uninstall) panel_uninstall ;;
         restart)   panel_restart ;;
         disable|off) panel_disable ;;
@@ -835,6 +843,7 @@ handle_panel_command() {
             echo -e "  ${BOLD}MTProxyL-Panel (веб-панель):${NC}"
             echo -e "    ${GREEN}panel status${NC}     Состояние"
             echo -e "    ${GREEN}panel install${NC}    Установить / переустановить"
+            echo -e "    ${GREEN}panel update${NC}     Обновить до последней версии"
             echo -e "    ${GREEN}panel restart${NC}    Перезапустить"
             echo -e "    ${GREEN}panel disable${NC}    Выключить, не удаляя (снять с автозапуска)"
             echo -e "    ${GREEN}panel enable${NC}     Включить обратно"

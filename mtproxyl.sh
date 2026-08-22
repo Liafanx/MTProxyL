@@ -20,7 +20,7 @@ export LC_NUMERIC=C
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="1.5.5"
+VERSION="1.5.6"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -67,7 +67,7 @@ fi
 
 # Загрузка библиотек
 LIB_DIR="${INSTALL_DIR}/lib"
-for _lib in colors utils settings detect secrets config docker binengine engine traffic availability dc warp geoblock geoip upstream backup nft ipblock selfmask panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_addons tui_tgbot tui_warp tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
+for _lib in colors utils settings detect secrets config docker binengine engine traffic stats availability dc warp geoblock geoip upstream backup nft ipblock selfmask panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_addons tui_tgbot tui_warp tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
     if [ -f "${LIB_DIR}/${_lib}.sh" ]; then
         # shellcheck source=/dev/null
         source "${LIB_DIR}/${_lib}.sh"
@@ -80,17 +80,28 @@ done
 
 # Temp file tracking
 declare -a _TEMP_FILES=()
+# _mktemp всегда зовут через $( ), а это субшелл: его запись в _TEMP_FILES
+# до нас не доходит. Поэтому в имени файла лежит PID, и подчищаем по нему —
+# чужие процессы и параллельные запуски не затрагиваются.
 _cleanup() {
+    local f
     for f in "${_TEMP_FILES[@]}"; do
         rm -f "$f" 2>/dev/null
     done
+    [ "${BASHPID:-$$}" = "$$" ] || return 0
+    for f in "${TMPDIR:-/tmp}" "$INSTALL_DIR" "$CONFIG_DIR"; do
+        [ -n "$f" ] || continue
+        rm -f "${f}/.mtproxyl.$$."* 2>/dev/null
+    done
+    # Файлы прошлых версий и оборванных запусков: сутки их точно никто не читает.
+    find "${TMPDIR:-/tmp}" -maxdepth 1 -name '.mtproxyl.*' -type f -mmin +1440 -delete 2>/dev/null
 }
 trap _cleanup EXIT
 
 _mktemp() {
     local dir="${1:-${TMPDIR:-/tmp}}"
     local tmp
-    tmp=$(mktemp "${dir}/.mtproxyl.XXXXXX") || return 1
+    tmp=$(mktemp "${dir}/.mtproxyl.$$.XXXXXX") || return 1
     chmod 600 "$tmp"
     _TEMP_FILES+=("$tmp")
     echo "$tmp"
@@ -194,6 +205,11 @@ cli_main() {
         connections)
             load_settings; load_secrets; load_detect_settings
             show_connections
+            ;;
+
+        stats)
+            load_settings; load_secrets; load_detect_settings
+            handle_stats_command "$@"
             ;;
 
         config)
