@@ -165,10 +165,14 @@ geoblock_reapply_all() {
             GEOBLOCK_NOCACHE="${GEOBLOCK_NOCACHE}${GEOBLOCK_NOCACHE:+, }${code}"
             continue
         fi
-        if _apply_country_rules "$code" >/dev/null 2>&1; then
+        # Успех молчит: на два десятка стран это два десятка строк. Причину
+        # неудачи, наоборот, показываем — иначе счётчик ни о чём не говорит.
+        local _out
+        if _out=$(_apply_country_rules "$code" 2>&1); then
             GEOBLOCK_APPLIED=$((GEOBLOCK_APPLIED + 1))
         else
             GEOBLOCK_FAILED=$((GEOBLOCK_FAILED + 1))
+            [ -n "$_out" ] && printf '%s\n' "$_out"
         fi
     done
     _ensure_default_drop || true
@@ -259,7 +263,7 @@ handle_geoblock_command() {
             if [ "$GEOBLOCK_APPLIED" -gt 0 ]; then
                 log_success "Гео-блокировка применена: ${GEOBLOCK_APPLIED} из ${_total} (порт ${PROXY_PORT})"
                 [ "$GEOBLOCK_FAILED" -gt 0 ] && \
-                    log_warn "Не применились: ${GEOBLOCK_FAILED} — подробности в mtproxyl geoblock list"
+                    log_warn "Не применились: ${GEOBLOCK_FAILED} — причина выше"
             else
                 log_error "Правила применить не удалось"
                 [ -n "$GEOBLOCK_NOCACHE" ] && \
