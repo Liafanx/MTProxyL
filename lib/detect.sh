@@ -169,6 +169,14 @@ _telemt_api_enabled() {
     [ "$_en" != "false" ]
 }
 
+# [server.api] auth_header цели: ожидаемый движком Authorization заголовок
+# («Bearer TOKEN» или пусто). Пусто — авторизация на API выключена.
+_get_telemt_auth_header() {
+    local _cfg="${1:-$DETECTED_CONFIG_PATH}"
+    [ -n "$_cfg" ] && [ -f "$_cfg" ] || return 0
+    _toml_get_string_in_section "server.api" "auth_header" "$_cfg"
+}
+
 # Адрес, по которому API цели виден с хоста. У контейнера в bridge-сети своя
 # петля: 127.0.0.1 внутри него — это он сам, а не мы, и достучаться туда с
 # хоста нельзя ни при каких портах. Зато его адрес в сети docker доступен —
@@ -176,8 +184,15 @@ _telemt_api_enabled() {
 # ловится обычной проверкой 127.0.0.1, поэтому её пробуем первой.
 _telemt_api_host() {
     [ "${DETECTED_NETWORK_MODE:-host}" = "bridge" ] || { echo "127.0.0.1"; return 0; }
-    local _port; _port=$(_get_telemt_api_port "${1:-$DETECTED_CONFIG_PATH}")
-    if curl -s -o /dev/null --max-time 1 --connect-timeout 1 "http://127.0.0.1:${_port}/v1/health" 2>/dev/null; then
+    local _cfg="${1:-$DETECTED_CONFIG_PATH}"
+    local _port; _port=$(_get_telemt_api_port "$_cfg")
+    local _auth; _auth=$(_get_telemt_auth_header "$_cfg")
+    local -a _auth_h=()
+    [ -n "$_auth" ] && _auth_h=(-H "Authorization: ${_auth}")
+    # Ответ 401 тоже считается «достучались»: проба про доступность хоста,
+    # а не про права. Заголовок всё же шлём — не порождаем лишних отказов.
+    if curl -s -o /dev/null --max-time 1 --connect-timeout 1 "${_auth_h[@]}" \
+        "http://127.0.0.1:${_port}/v1/health" 2>/dev/null; then
         echo "127.0.0.1"
         return 0
     fi
@@ -189,16 +204,35 @@ _telemt_api_host() {
     echo "127.0.0.1"
 }
 
+# Последний HTTP-код ответа API цели. Заполняют _get_telemt_users_json и
+# _engine_api_get: без него 401 от цели выглядел бы как «API не отвечает».
+TELEMT_API_LAST_HTTP_CODE=""
+
 # JSON с /v1/users API цели.
-# Коды: 0 — успех, 2 — API выключен в конфиге, 3 — включён, но не отвечает.
+# Коды: 0 — успех, 2 — API выключен в конфиге, 3 — включён, но не отвечает,
+# 4 — отвечает, но отклонил авторизацию ([server.api] auth_header).
 _get_telemt_users_json() {
     local _cfg="${1:-$DETECTED_CONFIG_PATH}"
     _telemt_api_enabled "$_cfg" || return 2
     local _port; _port=$(_get_telemt_api_port "$_cfg")
     local _host; _host=$(_telemt_api_host "$_cfg")
-    local _json
-    _json=$(curl -s --max-time 3 --connect-timeout 2 "http://${_host}:${_port}/v1/users" 2>/dev/null) || return 3
-    [ -z "$_json" ] && return 3
+    local _auth; _auth=$(_get_telemt_auth_header "$_cfg")
+    local -a _auth_h=()
+    [ -n "$_auth" ] && _auth_h=(-H "Authorization: ${_auth}")
+    # Код ответа дописываем последней строкой через -w и отделяем его тут же:
+    # тело дальше парсится построчно, лишний хвост ему не нужен.
+    TELEMT_API_LAST_HTTP_CODE=""
+    local _resp _code _json
+    _resp=$(curl -s --max-time 3 --connect-timeout 2 "${_auth_h[@]}" \
+                -w $'\n%{http_code}' "http://${_host}:${_port}/v1/users" 2>/dev/null) || return 3
+    [ -z "$_resp" ] && return 3
+    _code="${_resp##*$'\n'}"
+    case "$_code" in
+        200) ;;
+        401|403) TELEMT_API_LAST_HTTP_CODE="$_code"; return 4 ;;
+        *)       TELEMT_API_LAST_HTTP_CODE="$_code"; return 3 ;;
+    esac
+    _json="${_resp%$'\n'*}"
     grep -qE '"ok"[[:space:]]*:[[:space:]]*false' <<< "$_json" && return 3
     grep -q '"data"' <<< "$_json" || return 3
     echo "$_json"
@@ -216,6 +250,11 @@ _telemt_api_unavailable_reason() {
         echo "[server.api] enabled = false в конфиге цели"
         return
     fi
+    case "${TELEMT_API_LAST_HTTP_CODE:-}" in
+        401|403)
+            echo "цель требует авторизацию (${TELEMT_API_LAST_HTTP_CODE}) — сверьте [server.api] auth_header в конфиге цели"
+            return ;;
+    esac
     local _port; _port=$(_get_telemt_api_port "$_cfg")
     if [ "${DETECTED_NETWORK_MODE:-host}" = "bridge" ]; then
         local _listen; _listen=$(_toml_get_string_in_section "server.api" "listen" "$_cfg")
