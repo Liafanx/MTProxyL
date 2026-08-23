@@ -182,6 +182,11 @@ _get_telemt_auth_header() {
 # хоста нельзя ни при каких портах. Зато его адрес в сети docker доступен —
 # если движок слушает не только петлю. Публикация порта (-p) тоже подходит и
 # ловится обычной проверкой 127.0.0.1, поэтому её пробуем первой.
+#
+# Сетей у контейнера может быть несколько, и не каждая доступна с хоста:
+# overlay/macvlan-сети (Dokploy и т.п.), пересечение подсети с LAN. Поэтому
+# адрес берём не «первый попавшийся» из inspect, а живой пробой /v1/health по
+# каждому кандидату; если не ответил никто — прежний контракт: 127.0.0.1.
 _telemt_api_host() {
     [ "${DETECTED_NETWORK_MODE:-host}" = "bridge" ] || { echo "127.0.0.1"; return 0; }
     local _cfg="${1:-$DETECTED_CONFIG_PATH}"
@@ -196,11 +201,15 @@ _telemt_api_host() {
         echo "127.0.0.1"
         return 0
     fi
-    local _cip; _cip=$(docker_container_ip 2>/dev/null)
-    if [ -n "$_cip" ]; then
-        echo "$_cip"
-        return 0
-    fi
+    local _ip
+    while IFS= read -r _ip; do
+        [ -n "$_ip" ] || continue
+        if curl -s -o /dev/null --max-time 1 --connect-timeout 1 "${_auth_h[@]}" \
+            "http://${_ip}:${_port}/v1/health" 2>/dev/null; then
+            echo "$_ip"
+            return 0
+        fi
+    done < <(_target_container_ips)
     echo "127.0.0.1"
 }
 
@@ -275,7 +284,15 @@ _telemt_api_unavailable_reason() {
                 echo "цель в Docker bridge, а API слушает петлю контейнера ${_listen} — снаружи она недоступна"
                 return ;;
         esac
-        echo "API не отвечает на $(_telemt_api_host "$_cfg"):${_port} (цель в Docker bridge)"
+        # Без вызова _telemt_api_host: его живые пробы уже провалились выше,
+        # повторять их ради текста ошибки не нужно — просто перечисляем
+        # кандидатов, которых мы пытали.
+        local _ips; _ips=$(_target_container_ips | paste -sd ' ' -)
+        if [ -n "$_ips" ]; then
+            echo "API не отвечает ни на петле, ни на адресах контейнера (${_ips}):${_port} (цель в Docker bridge)"
+        else
+            echo "API не отвечает на 127.0.0.1:${_port} (цель в Docker bridge, адрес контейнера не определён)"
+        fi
         return
     fi
     echo "API не отвечает на 127.0.0.1:${_port}"
@@ -287,7 +304,7 @@ _telemt_api_bridge_hint() {
     [ "${DETECTED_NETWORK_MODE:-host}" = "bridge" ] || return 0
     local _cfg="${1:-$DETECTED_CONFIG_PATH}"
     local _port; _port=$(_get_telemt_api_port "$_cfg")
-    local _cip; _cip=$(docker_container_ip 2>/dev/null)
+    local _cips; _cips=$(_target_container_ips | paste -sd ' ' -)
     echo ""
     echo -e "  ${BOLD}Цель работает в Docker bridge.${NC}"
     echo -e "  ${DIM}127.0.0.1 внутри контейнера — сам контейнер, а не хост,${NC}"
@@ -302,8 +319,9 @@ _telemt_api_bridge_hint() {
     echo -e "  ${DIM}сети docker, и со списком по умолчанию (только 127.0.0.0/8)${NC}"
     echo -e "  ${DIM}движок отклонит наши запросы уже после подключения.${NC}"
     echo ""
-    if [ -n "$_cip" ]; then
-        echo -e "  ${DIM}После перезапуска цели MTProxyL сам пойдёт на ${_cip}:${_port}.${NC}"
+    if [ -n "$_cips" ]; then
+        echo -e "  ${DIM}После перезапуска цели MTProxyL сам пойдёт на один из${NC}"
+        echo -e "  ${DIM}адресов контейнера (${_cips}):${_port} — какой ответит.${NC}"
     fi
     echo -e "  ${DIM}Наружу это не открывает: порт контейнера доступен только${NC}"
     echo -e "  ${DIM}хосту, пока он не опубликован через -p.${NC}"
@@ -894,6 +912,18 @@ docker_container_ip() {
     [ -z "$_container" ] && return 1
     docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{"\n"}}{{end}}' \
         "$_container" 2>/dev/null | awk 'NF {print; exit}'
+}
+
+# Все IPv4 контейнера цели: по строке на каждую подключённую сеть. Сетей может
+# быть несколько, и не каждая доступна с хоста (overlay/macvlan-сети вроде
+# dokploy-network, пересечение подсети с LAN), поэтому конкретный адрес
+# выбирает живой пробой _telemt_api_host, а не порядок в docker inspect.
+# IPv6-only сети отсеиваются сами: поле IPAddress у них пустое.
+_target_container_ips() {
+    local _container="${1:-$DETECTED_CONTAINER}"
+    [ -n "$_container" ] || return 1
+    docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{"\n"}}{{end}}' \
+        "$_container" 2>/dev/null | awk 'NF'
 }
 
 prompt_bridge_mode() {
