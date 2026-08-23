@@ -10,7 +10,7 @@ tui_superexpert_menu() {
         echo ""
         echo -e "  ${BOLD}Статус:${NC} $(superexpert_status_line)"
         if [ -f "$SUPEREXPERT_FILE" ]; then
-            local _users; _users=$(_superexpert_users 2>/dev/null | grep -c . || echo 0)
+            local _users; _users=$(_superexpert_users 2>/dev/null | count_lines)
             echo -e "  ${BOLD}Файл:${NC}   ${SUPEREXPERT_FILE}"
             echo -e "  ${BOLD}В нём:${NC}  пользователей: ${_users}, порт: $(_toml_get_string_in_section "server" "port" "$SUPEREXPERT_FILE" 2>/dev/null || echo '?')"
         else
