@@ -731,6 +731,33 @@ _availability_migrate_from_panel() {
 
 # ── CLI ───────────────────────────────────────────────────────
 
+# Период автопроверки: минуты пишутся в юнит таймера, поэтому после смены
+# его надо переписать — сам он новое значение не подхватит.
+_avail_valid_interval() {
+    [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 1440 ] && return 0
+    log_error "Период проверки — целое число минут от 1 до 1440"
+    return 1
+}
+
+_avail_set_interval() {
+    local _min="$1"
+    _avail_valid_interval "$_min" || return 1
+    AVAILABILITY_INTERVAL="$_min"
+    save_settings
+    install_availability_timer
+    log_success "Период проверки доступности: каждые ${_min} мин"
+    if ! availability_enabled; then
+        log_info "Автопроверка выключена — период применится после mtproxyl availability on"
+        return 0
+    fi
+    local _probes; _probes=$(availability_probe_limit)
+    if [ "$_min" -le 60 ]; then
+        log_info "Расход: ${_probes} кредитов за проверку, $(( 60 / _min * _probes )) в час при квоте $(_avail_budget) в час"
+    else
+        log_info "Расход: ${_probes} кредитов за проверку, $(( 1440 / _min * _probes )) в сутки при квоте $(_avail_budget) в час"
+    fi
+}
+
 handle_availability_command() {
     local _sub="${1:-status}"; shift 2>/dev/null || true
     case "$_sub" in
@@ -748,9 +775,26 @@ handle_availability_command() {
             check_root; availability_status_json --full ;;
         target)
             check_root; availability_target_json; echo "" ;;
+        interval|period)
+            check_root
+            if [ -z "${1:-}" ]; then
+                echo -e "  ${BOLD}Период проверки:${NC} $(availability_interval_minutes) мин"
+                if availability_enabled && availability_timer_active; then
+                    echo -e "  ${BOLD}Таймер:${NC} ${GREEN}включён${NC}, следующая проверка $(_avail_next_run)"
+                else
+                    echo -e "  ${BOLD}Таймер:${NC} ${DIM}выключен${NC} ${DIM}(mtproxyl availability on)${NC}"
+                fi
+                echo -e "  ${DIM}Изменить: mtproxyl availability interval <минуты>, 1..1440${NC}"
+                return 0
+            fi
+            _avail_set_interval "$1" || return 1 ;;
         on|enable)
             check_root
             AVAILABILITY_ENABLED="true"
+            if [ -n "${1:-}" ]; then
+                _avail_valid_interval "$1" || return 1
+                AVAILABILITY_INTERVAL="$1"
+            fi
             [ "$(availability_interval_minutes)" -gt 0 ] || AVAILABILITY_INTERVAL="15"
             save_settings
             install_availability_timer
@@ -780,10 +824,11 @@ handle_availability_command() {
             echo -e "    ${GREEN}availability details${NC}          Вердикт со списком зондов (JSON)"
             echo -e "    ${GREEN}availability check${NC} [--json]   Проверить сейчас"
             echo -e "    ${GREEN}availability target${NC}           Что именно проверяется (JSON)"
-            echo -e "    ${GREEN}availability on|off${NC}           Автопроверка по таймеру"
+            echo -e "    ${GREEN}availability on|off${NC} [мин]     Автопроверка по таймеру"
+            echo -e "    ${GREEN}availability interval${NC} [мин]   Период автопроверки, 1..1440"
             echo -e "    ${GREEN}availability token${NC} <токен>    Токен Globalping (--clear чтобы убрать)"
             echo ""
-            echo -e "  ${DIM}Интервал, число зондов и порог: mtproxyl settings set AVAILABILITY_*${NC}"
+            echo -e "  ${DIM}Число зондов и порог: mtproxyl settings set AVAILABILITY_PROBES|AVAILABILITY_THRESHOLD${NC}"
             ;;
     esac
 }

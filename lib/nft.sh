@@ -2112,12 +2112,14 @@ zapret2_apply_nft() {
         # сужаем правило до IP контейнера (его отслеживает watcher).
         local _daddr_match="" _saddr_match=""
         if [ "${DETECT_BRIDGE_STRATEGY:-simple}" = "precise" ]; then
-            local _cip
-            _cip=$(docker_container_ip "$DETECTED_CONTAINER" 2>/dev/null || true)
-            if [ -n "$_cip" ]; then
-                _daddr_match="ip daddr ${_cip} "
-                _saddr_match="ip saddr ${_cip} "
-                log_info "Zapret2 bridge/precise: IP контейнера ${_cip}"
+            # Адресов у контейнера столько, сколько сетей: берём все, иначе
+            # правило промахнётся мимо той, через которую он реально ходит.
+            local _cips
+            _cips=$(_target_container_ips "$DETECTED_CONTAINER" 2>/dev/null | paste -sd ',' -)
+            if [ -n "$_cips" ]; then
+                _daddr_match="ip daddr { ${_cips} } "
+                _saddr_match="ip saddr { ${_cips} } "
+                log_info "Zapret2 bridge/precise: адреса контейнера ${_cips}"
             else
                 log_warn "Zapret2 bridge/precise: IP контейнера не определён — правила без фильтра по IP"
             fi

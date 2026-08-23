@@ -733,6 +733,7 @@ mtproxyl engine backend docker         # Вернуть движок в конт
 ```bash
 mtproxyl expert set censorship mask_relay_max_bytes 5242880
 mtproxyl expert set server client_mss tspu
+mtproxyl expert set --raw <секция> <ключ> <значение>   # параметр вне каталога
 mtproxyl expert list
 mtproxyl expert clear all
 mtproxyl expert edit
@@ -956,6 +957,7 @@ mtproxyl availability status  # Последний вердикт, цель, к�
 mtproxyl availability check   # Проверить прямо сейчас
 mtproxyl availability details # Вердикт со списком зондов (JSON)
 mtproxyl availability on|off  # Проверка по расписанию
+mtproxyl availability interval 30  # Период проверки, 1..1440 минут
 mtproxyl availability token X # Токен Globalping (--clear чтобы убрать)
 ```
 
@@ -1446,14 +1448,24 @@ HTTPS-рукопожатие с портом прокси с российски�
 mtproxyl availability status        # Вердикт, цель, квота, порог
 mtproxyl availability check         # Проверить сейчас (не чаще раза в минуту)
 mtproxyl availability on            # Проверка по расписанию
+mtproxyl availability on 30         # Она же, сразу с периодом
 mtproxyl availability off           # Только вручную
+mtproxyl availability interval      # Текущий период и время следующей проверки
+mtproxyl availability interval 30   # Проверять раз в 30 минут
 mtproxyl availability token <токен> # Квота 250 → 500 кредитов в час
 ```
+
+**Период проверки.** `mtproxyl availability interval <минуты>`, от 1 до 1440.
+Значение зашито в юнит таймера, поэтому команда сразу переписывает его и
+показывает, во что новый период обойдётся по кредитам. Без аргумента — просто
+показывает текущий период и время следующей проверки. То же значение доступно
+как настройка `AVAILABILITY_INTERVAL` и пунктом меню **Дополнения →
+Доступность из России → Интервал проверки**.
 
 | Настройка | По умолчанию | Что делает |
 |---|---|---|
 | `AVAILABILITY_ENABLED` | `true` | Проверка по расписанию. Ручная работает всегда |
-| `AVAILABILITY_INTERVAL` | `15` | Период проверки, минут |
+| `AVAILABILITY_INTERVAL` | `15` | Период проверки, минут. Снаружи — `availability interval` |
 | `AVAILABILITY_PROBES` | `20` | Зондов на проверку, максимум 50 |
 | `AVAILABILITY_THRESHOLD` | `50` | Ниже этого процента бот пришлёт предупреждение |
 | `AVAILABILITY_HOST` | пусто | Адрес проверки; пусто — определяется сам |
@@ -1865,6 +1877,21 @@ TCP keepalive 45s, BBR, расширенные очереди. Меню: `[7] �
 Приоритет: `config.toml → tunings.conf → expert.conf`
 
 Поддерживаемые секции: `general`, `general.modes`, `general.links`, `general.telemetry`, `network`, `server`, `server.listeners`, `server.conntrack_control`, `server.api`, `timeouts`, `censorship`, `censorship.tls_fetch`, `access`, `logging`
+
+**Параметры вне каталога.** У telemt есть секции-таблицы, ключи которых заранее
+не перечислить — их задаёт сам пользователь. Такие пары каталог описать не
+может, поэтому для них есть `--raw`:
+
+```bash
+mtproxyl expert set --raw <секция> <ключ> <значение>
+```
+
+Значение при этом не проверяется — за него отвечаете вы, MTProxyL сверяет
+только форму записи. Всё остальное работает как обычно: пара живёт в
+`expert.conf`, видна в `expert list`, снимается через `expert clear <секция>
+<ключ>`. Ключ, который в TOML нельзя написать голым (например с точкой),
+записывается в кавычках — иначе TOML прочитал бы его как путь до вложенной
+таблицы, а не как ключ.
 
 ### Режим супер эксперта
 
