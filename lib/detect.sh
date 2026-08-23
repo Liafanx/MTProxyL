@@ -204,9 +204,21 @@ _telemt_api_host() {
     echo "127.0.0.1"
 }
 
-# Последний HTTP-код ответа API цели. Заполняют _get_telemt_users_json и
-# _engine_api_get: без него 401 от цели выглядел бы как «API не отвечает».
-TELEMT_API_LAST_HTTP_CODE=""
+# HTTP-код, которым цель отвечает на /v1/users. 000 — не ответила вовсе.
+# Спрашиваем отдельно, а не запоминаем в переменной при обычном запросе:
+# _get_telemt_users_json зовут из $( ), а это субшелл — присвоенное там
+# до вызывающего не доходит.
+_telemt_api_probe_code() {
+    local _cfg="${1:-$DETECTED_CONFIG_PATH}"
+    local _port _host _auth
+    _port=$(_get_telemt_api_port "$_cfg")
+    _host=$(_telemt_api_host "$_cfg")
+    _auth=$(_get_telemt_auth_header "$_cfg")
+    local -a _auth_h=()
+    [ -n "$_auth" ] && _auth_h=(-H "Authorization: ${_auth}")
+    curl -s -o /dev/null -w '%{http_code}' --max-time 3 --connect-timeout 2 \
+        "${_auth_h[@]}" "http://${_host}:${_port}/v1/users" 2>/dev/null || echo "000"
+}
 
 # JSON с /v1/users API цели.
 # Коды: 0 — успех, 2 — API выключен в конфиге, 3 — включён, но не отвечает,
@@ -221,7 +233,6 @@ _get_telemt_users_json() {
     [ -n "$_auth" ] && _auth_h=(-H "Authorization: ${_auth}")
     # Код ответа дописываем последней строкой через -w и отделяем его тут же:
     # тело дальше парсится построчно, лишний хвост ему не нужен.
-    TELEMT_API_LAST_HTTP_CODE=""
     local _resp _code _json
     _resp=$(curl -s --max-time 3 --connect-timeout 2 "${_auth_h[@]}" \
                 -w $'\n%{http_code}' "http://${_host}:${_port}/v1/users" 2>/dev/null) || return 3
@@ -229,8 +240,8 @@ _get_telemt_users_json() {
     _code="${_resp##*$'\n'}"
     case "$_code" in
         200) ;;
-        401|403) TELEMT_API_LAST_HTTP_CODE="$_code"; return 4 ;;
-        *)       TELEMT_API_LAST_HTTP_CODE="$_code"; return 3 ;;
+        401|403) return 4 ;;
+        *)       return 3 ;;
     esac
     _json="${_resp%$'\n'*}"
     grep -qE '"ok"[[:space:]]*:[[:space:]]*false' <<< "$_json" && return 3
@@ -250,9 +261,10 @@ _telemt_api_unavailable_reason() {
         echo "[server.api] enabled = false в конфиге цели"
         return
     fi
-    case "${TELEMT_API_LAST_HTTP_CODE:-}" in
+    local _code; _code=$(_telemt_api_probe_code "$_cfg")
+    case "$_code" in
         401|403)
-            echo "цель требует авторизацию (${TELEMT_API_LAST_HTTP_CODE}) — сверьте [server.api] auth_header в конфиге цели"
+            echo "цель требует авторизацию (${_code}) — сверьте [server.api] auth_header в конфиге цели"
             return ;;
     esac
     local _port; _port=$(_get_telemt_api_port "$_cfg")

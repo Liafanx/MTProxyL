@@ -20,7 +20,7 @@ export LC_NUMERIC=C
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="1.5.6"
+VERSION="1.5.7"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -532,7 +532,7 @@ cli_main() {
                     else
                         echo -e "  ${BOLD}Снимки:${NC} выключены ${DIM}(mtproxyl ip-history on)${NC}"
                     fi
-                    echo -e "  ${BOLD}Записей:${NC} $(grep -c '^USER|' "$_db" 2>/dev/null || echo 0)"
+                    echo -e "  ${BOLD}Записей:${NC} $(count_lines '^USER|' "$_db")"
                     echo -e "  ${BOLD}Хранить:${NC} $(_user_ip_history_cap) адресов на пользователя"
                     ;;
                 *)

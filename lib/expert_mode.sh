@@ -396,7 +396,7 @@ tui_expert_menu() {
         # Показать кол-во активных overrides
         local _count=0
         if [ -f "$EXPERT_OVERRIDES_FILE" ]; then
-            _count=$(grep -c '^[^#]' "$EXPERT_OVERRIDES_FILE" 2>/dev/null || echo 0)
+            _count=$(count_lines '^[^#]' "$EXPERT_OVERRIDES_FILE")
         fi
         echo -e "  ${BOLD}Активных override:${NC} ${_count}"
         echo ""
