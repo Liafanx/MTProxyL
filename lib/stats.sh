@@ -28,7 +28,7 @@ _stats_ips_db() {
 _stats_known_labels() {
     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
         [ -f "${DETECTED_CONFIG_PATH:-}" ] || return 0
-        _target_section_pairs "users" | cut -d'|' -f2
+        _target_section_pairs "access.users" | cut -d'|' -f2
     else
         local _i
         for _i in "${!SECRETS_LABELS[@]}"; do
@@ -119,7 +119,7 @@ stats_reset_ips() {
     [ -f "$_db" ] || { echo 0; return 0; }
 
     local _before _after
-    _before=$(grep -c '^USER|' "$_db" 2>/dev/null || echo 0)
+    _before=$(count_lines '^USER|' "$_db")
     case "$_scope" in
         all)
             : > "$_db"
@@ -128,7 +128,7 @@ stats_reset_ips() {
             local _tmp; _tmp=$(_mktemp "$(dirname "$_db")") || return 1
             grep -v "^USER|${_label}|" "$_db" > "$_tmp" 2>/dev/null || true
             mv "$_tmp" "$_db"
-            _after=$(grep -c '^USER|' "$_db" 2>/dev/null || echo 0) ;;
+            _after=$(count_lines '^USER|' "$_db") ;;
         orphans)
             local _tmp; _tmp=$(_mktemp "$(dirname "$_db")") || return 1
             local _line _lbl
@@ -138,7 +138,7 @@ stats_reset_ips() {
                 _stats_label_known "$_lbl" && printf '%s\n' "$_line"
             done < "$_db" > "$_tmp"
             mv "$_tmp" "$_db"
-            _after=$(grep -c '^USER|' "$_db" 2>/dev/null || echo 0) ;;
+            _after=$(count_lines '^USER|' "$_db") ;;
     esac
     chmod 600 "$_db" 2>/dev/null
     echo $(( _before > _after ? _before - _after : 0 ))

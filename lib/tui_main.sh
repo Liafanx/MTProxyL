@@ -50,7 +50,7 @@ show_main_menu() {
             disabled="${TARGET_STATS_DISABLED:-0}"
         elif _superexpert_active; then
             # Пользователи заданы в конфиге супер эксперта, а не в secrets.conf
-            active=$(_superexpert_users 2>/dev/null | grep -c . || echo 0)
+            active=$(_superexpert_users 2>/dev/null | count_lines)
         else
             for i in "${!SECRETS_ENABLED[@]}"; do
                 [ "${SECRETS_ENABLED[$i]}" = "true" ] && active=$((active+1)) || disabled=$((disabled+1))

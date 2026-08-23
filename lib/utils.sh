@@ -83,6 +83,19 @@ json_escape_fast() {
     _JSON_ESCAPE_OUT="$_s"
 }
 
+# grep -c при нуле совпадений печатает 0 и выходит с кодом 1, поэтому
+# «|| echo 0» дописывал второй ноль и получалось «0\n0».
+count_lines() {
+    local _n
+    if [ $# -ge 2 ]; then
+        _n=$(grep -c -- "$1" "$2" 2>/dev/null) || true
+    else
+        _n=$(grep -c -- "${1:-.}" 2>/dev/null) || true
+    fi
+    [[ "$_n" =~ ^[0-9]+$ ]] || _n=0
+    echo "$_n"
+}
+
 format_bytes() {
     local bytes=$1
     [[ "$bytes" =~ ^[0-9]+$ ]] || bytes=0

@@ -26,15 +26,28 @@ _dc_mark_threshold() {
 }
 
 # GET к API движка текущего режима. Коды: 0 — успех, 2 — API выключен,
-# 3 — не отвечает или ответил ошибкой.
+# 3 — не отвечает или ответил ошибкой, 4 — отклонил авторизацию
+# ([server.api] auth_header).
 _engine_api_get() {
     local _path="$1" _cfg; _cfg=$(_engine_config_path 2>/dev/null)
     _telemt_api_enabled "$_cfg" || return 2
-    local _port _host _json
+    local _port _host _auth _resp _code _json
     _port=$(_get_telemt_api_port "$_cfg")
     _host=$(_telemt_api_host "$_cfg")
-    _json=$(curl -s --max-time 4 --connect-timeout 2 "http://${_host}:${_port}${_path}" 2>/dev/null) || return 3
-    [ -n "$_json" ] || return 3
+    _auth=$(_get_telemt_auth_header "$_cfg")
+    local -a _auth_h=()
+    [ -n "$_auth" ] && _auth_h=(-H "Authorization: ${_auth}")
+    # Как в _get_telemt_users_json: код ответа — последней строкой через -w.
+    _resp=$(curl -s --max-time 4 --connect-timeout 2 "${_auth_h[@]}" \
+                -w $'\n%{http_code}' "http://${_host}:${_port}${_path}" 2>/dev/null) || return 3
+    [ -n "$_resp" ] || return 3
+    _code="${_resp##*$'\n'}"
+    case "$_code" in
+        200) ;;
+        401|403) return 4 ;;
+        *)       return 3 ;;
+    esac
+    _json="${_resp%$'\n'*}"
     grep -qE '"ok"[[:space:]]*:[[:space:]]*false' <<< "$_json" && return 3
     grep -q '"data"' <<< "$_json" || return 3
     printf '%s' "$_json"

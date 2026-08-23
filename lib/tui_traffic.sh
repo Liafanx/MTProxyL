@@ -47,7 +47,7 @@ tui_ip_history_menu() {
             echo -e "  ${DIM}Адреса записываются только при обращении к списку${NC}"
             echo -e "  ${DIM}пользователей — то есть пока открыта панель.${NC}"
         fi
-        echo -e "  ${BOLD}Записей:${NC}    $(grep -c '^USER|' "$_db" 2>/dev/null || echo 0)"
+        echo -e "  ${BOLD}Записей:${NC}    $(count_lines '^USER|' "$_db")"
         echo -e "  ${BOLD}Хранить:${NC}    $(_user_ip_history_cap) адресов на пользователя"
         echo ""
         echo -e "  ${DIM}[1]${NC} Снять адреса сейчас"
