@@ -8,7 +8,7 @@ load_expert_overrides() {
     [ -f "$EXPERT_OVERRIDES_FILE" ] || return 0
 }
 
-# Отбор строкой, а не регуляркой: в ключе бывают точки, и «m.beboo.ru»
+# Отбор строкой, а не регуляркой: в ключе бывают точки, и ключ с ними
 # как шаблон совпал бы и с чужой записью.
 _expert_drop_line() {
     awk -F'|' -v s="$1" -v k="$2" '!($1==s && $2==k)' "$EXPERT_OVERRIDES_FILE" 2>/dev/null
