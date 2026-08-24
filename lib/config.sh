@@ -643,29 +643,37 @@ TOML_EOF
 # Override попадает в конфиг только при его генерации, поэтому предлагаем
 # пересборку сразу — иначе «сохранено» вводит в заблуждение.
 # Панель сохраняет пачкой: там пересборка отдельным шагом.
-expert_apply_now() {
+# Общий хвост для expert_apply_now и _expert_apply_prompt: генерация конфига
+# и решение, хватит ли SIGHUP. tls_domains, exclusive_mask и вообще всё
+# помеченное в каталоге как hot=✘ (или заданное через --raw мимо каталога)
+# на лету не подхватывается — движок читает такие параметры только при
+# полном старте, поэтому здесь честно говорим о restart, а не рапортуем
+# успех, которого не было.
+_expert_generate_and_apply() {
     generate_telemt_config || { log_error "Ошибка генерации конфига"; return 1; }
     log_success "Конфиг обновлён"
-    if is_proxy_running; then
-        reload_target_config &>/dev/null || true
-        log_success "Hot-reload отправлен"
-    else
+    if ! is_proxy_running; then
         log_warn "Прокси не запущен — значения применятся при запуске"
+        return 0
     fi
+    reload_target_config &>/dev/null || true
+    if _expert_needs_restart; then
+        log_warn "Среди заданных параметров есть без hot-reload — на лету не применились"
+        log_info "Чтобы вступили в силу: mtproxyl restart"
+    else
+        log_success "Hot-reload отправлен"
+    fi
+}
+
+expert_apply_now() {
+    _expert_generate_and_apply
 }
 
 _expert_apply_prompt() {
     echo -en "  ${BOLD}Пересобрать конфиг и применить сейчас? [Y/n]:${NC} "
     local _yn; read_line _yn
     [[ "$_yn" =~ ^[nN] ]] && { log_info "Позже: mtproxyl config или меню → Режим эксперта → Пересобрать"; return 0; }
-    generate_telemt_config || { log_error "Ошибка генерации конфига"; return 1; }
-    log_success "Конфиг обновлён"
-    if is_proxy_running; then
-        reload_target_config &>/dev/null || true
-        log_success "Hot-reload отправлен"
-    else
-        log_warn "Прокси не запущен — значения применятся при запуске"
-    fi
+    _expert_generate_and_apply
 }
 
 handle_expert_command() {
