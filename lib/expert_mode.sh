@@ -8,6 +8,12 @@ load_expert_overrides() {
     [ -f "$EXPERT_OVERRIDES_FILE" ] || return 0
 }
 
+# Отбор строкой, а не регуляркой: в ключе бывают точки, и «m.beboo.ru»
+# как шаблон совпал бы и с чужой записью.
+_expert_drop_line() {
+    awk -F'|' -v s="$1" -v k="$2" '!($1==s && $2==k)' "$EXPERT_OVERRIDES_FILE" 2>/dev/null
+}
+
 save_expert_override() {
     local section="$1" key="$2" value="$3"
     mkdir -p "$INSTALL_DIR"
@@ -15,7 +21,7 @@ save_expert_override() {
     # Временный файл рядом с целевым, иначе mv через /tmp (tmpfs) — это
     # copy+truncate, а не подмена целиком.
     local tmp; tmp=$(_mktemp "$INSTALL_DIR") || return 1
-    grep -v "^${section}|${key}|" "$EXPERT_OVERRIDES_FILE" > "$tmp" 2>/dev/null || true
+    _expert_drop_line "$section" "$key" > "$tmp" || true
     echo "${section}|${key}|${value}" >> "$tmp"
     mv "$tmp" "$EXPERT_OVERRIDES_FILE"; chmod 600 "$EXPERT_OVERRIDES_FILE"
 }
@@ -24,7 +30,7 @@ delete_expert_override() {
     local section="$1" key="$2"
     [ -f "$EXPERT_OVERRIDES_FILE" ] || return 0
     local tmp; tmp=$(_mktemp "$INSTALL_DIR") || return 1
-    grep -v "^${section}|${key}|" "$EXPERT_OVERRIDES_FILE" > "$tmp" 2>/dev/null || true
+    _expert_drop_line "$section" "$key" > "$tmp" || true
     mv "$tmp" "$EXPERT_OVERRIDES_FILE"; chmod 600 "$EXPERT_OVERRIDES_FILE"
 }
 
@@ -126,6 +132,11 @@ _apply_expert_overrides() {
             fi
         fi
 
+        # Ключ с точкой TOML читает как путь до вложенной таблицы: без
+        # кавычек «a.b = x» превращается в [a] b = x, а не в ключ «a.b».
+        local fk="$key"
+        [[ "$key" =~ ^[A-Za-z0-9_-]+$ ]] || fk="\"$key\""
+
         local section_header
         if [ "$section" = "server.listeners" ]; then
             section_header="[[server.listeners]]"
@@ -134,7 +145,7 @@ _apply_expert_overrides() {
         fi
 
         # Заменить/добавить ключ строго внутри нужной секции
-        awk -v sec="$section_header" -v key="$key" -v val="$fv" '
+        awk -v sec="$section_header" -v key="$fk" -v val="$fv" '
             BEGIN {
                 insec = 0
                 done = 0

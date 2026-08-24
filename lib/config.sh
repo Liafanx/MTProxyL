@@ -681,27 +681,43 @@ handle_expert_command() {
             esac ;;
         set)
             check_root
-            local _sec="${1:-}" _key="${2:-}" _val="${3:-}"
+            local _raw="false" _apply="true"
+            local -a _pos=()
+            local _a
+            for _a in "$@"; do
+                case "$_a" in
+                    --raw)      _raw="true" ;;
+                    --no-apply) _apply="false" ;;
+                    *)          _pos+=("$_a") ;;
+                esac
+            done
+            local _sec="${_pos[0]:-}" _key="${_pos[1]:-}" _val="${_pos[2]:-}"
             if [ -z "$_sec" ] || [ -z "$_key" ] || [ -z "$_val" ]; then
-                log_error "Использование: mtproxyl expert set <секция> <ключ> <значение>"
+                log_error "Использование: mtproxyl expert set [--raw] <секция> <ключ> <значение>"
                 return 1
             fi
             local _entry; _entry=$(_expert_find "$_sec" "$_key")
             if [ -z "$_entry" ]; then
-                log_error "Параметр [${_sec}] ${_key} не найден в каталоге"
-                log_info "Список доступных: меню → Режим эксперта"
-                return 1
-            fi
-            _expert_parse "$_entry"
-            local _verr
-            _verr=$(_expert_validate "$EXPERT_P_VALIDATOR" "$_val" 2>&1)
-            if [ -n "$_verr" ]; then
-                log_error "Некорректное значение: ${_verr}"
-                return 1
+                if [ "$_raw" != "true" ]; then
+                    log_error "Параметр [${_sec}] ${_key} не найден в каталоге"
+                    log_info "Список доступных: меню → Режим эксперта"
+                    log_info "Записать всё равно: mtproxyl expert set --raw ${_sec} ${_key} <значение>"
+                    return 1
+                fi
+                _expert_validate_raw "$_sec" "$_key" "$_val" || return 1
+            else
+                _expert_parse "$_entry"
+                local _verr
+                _verr=$(_expert_validate "$EXPERT_P_VALIDATOR" "$_val" 2>&1)
+                if [ -n "$_verr" ]; then
+                    log_error "Некорректное значение: ${_verr}"
+                    return 1
+                fi
             fi
             save_expert_override "$_sec" "$_key" "$_val" || return 1
             log_success "Override сохранён: [${_sec}] ${_key} = ${_val}"
-            [ "${4:-}" = "--no-apply" ] && return 0
+            [ -z "$_entry" ] && log_warn "Параметра нет в каталоге — значение не проверялось"
+            [ "$_apply" = "true" ] || return 0
             _expert_apply_prompt ;;
         clear)
             check_root
@@ -747,6 +763,7 @@ handle_expert_command() {
             echo -e "    ${GREEN}expert list --json${NC}                     Заданные override (JSON)"
             echo -e "    ${GREEN}expert list --catalog${NC}                  Весь каталог с валидаторами (JSON)"
             echo -e "    ${GREEN}expert set${NC} <секция> <ключ> <значение>   Добавить"
+            echo -e "    ${GREEN}expert set --raw${NC} <секция> <ключ> <знач>  Параметр вне каталога, без проверки"
             echo -e "    ${GREEN}expert clear${NC} <секция> <ключ> | all      Удалить"
             echo -e "    ${GREEN}expert apply${NC}                           Пересобрать конфиг и применить"
             echo -e "    ${DIM}У set/clear есть --no-apply: отложить применение${NC}"
