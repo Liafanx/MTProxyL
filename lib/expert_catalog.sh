@@ -442,6 +442,27 @@ _expert_validate() {
     esac
 }
 
+# Хотя бы один активный override без hot-reload — SIGHUP его не подхватит:
+# конфиг на диске обновится, а в памяти работающего процесса останется старое
+# значение до полного mtproxyl restart. Параметр вне каталога (--raw) тоже
+# считаем таким: ручаться, что движок примет его на лету, нечем.
+_expert_needs_restart() {
+    [ -f "$EXPERT_OVERRIDES_FILE" ] || return 1
+    local _s _k _v _entry
+    while IFS='|' read -r _s _k _v; do
+        [[ "$_s" =~ ^[[:space:]]*# ]] && continue
+        [[ "$_s" =~ ^[[:space:]]*$ ]] && continue
+        [ -z "$_k" ] && continue
+        _entry=$(_expert_find "$_s" "$_k" 2>/dev/null)
+        if [ -z "$_entry" ]; then
+            return 0
+        fi
+        _expert_parse "$_entry"
+        [ "$EXPERT_P_HOT" != "✔" ] && return 0
+    done < "$EXPERT_OVERRIDES_FILE"
+    return 1
+}
+
 # Поиск записи в каталоге
 _expert_find() {
     local section="$1" key="$2"
