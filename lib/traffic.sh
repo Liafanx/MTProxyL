@@ -1056,7 +1056,7 @@ show_status() {
         echo -e "  ${BOLD}Цель:${NC}        ${DETECTED_MODE:-unknown}$([ -n "${DETECTED_CONTAINER:-}" ] && echo " (${DETECTED_CONTAINER})")"
         echo -e "  ${BOLD}Конфиг цели:${NC} ${DETECTED_CONFIG_PATH:-не найден}"
         echo -e "  ${BOLD}Порт:${NC}        ${PROXY_PORT}            ${BOLD}Время работы:${NC} ${_up}"
-        echo -e "  ${BOLD}Домен(SNI):${NC}  $(_current_sni_domain 2>/dev/null || echo '?')"
+        echo -e "  ${BOLD}Домен(SNI):${NC}  $(_current_sni_display)"
         if fetch_target_stats 2>/dev/null; then
             echo -e "  ${BOLD}Трафик:${NC}      $(format_bytes "${TARGET_STATS_OCTETS:-0}")"
             echo -e "  ${BOLD}Соединения:${NC}  ${TARGET_STATS_CONNS:-0}  ${BOLD}Уник. IP:${NC} ${TARGET_STATS_IPS:-0}"
@@ -1265,7 +1265,7 @@ show_server_info() {
         echo -e "    Скрипт:       v${VERSION} ${DIM}(режим: reanimator)${NC}"
         echo -e "    Цель:         ${DETECTED_MODE:-unknown}$([ -n "$DETECTED_CONTAINER" ] && echo " (${DETECTED_CONTAINER})")"
         echo -e "    Конфиг цели:  ${DETECTED_CONFIG_PATH:-не найден}"
-        echo -e "    Домен(SNI):   $(_current_sni_domain 2>/dev/null || echo '?')"
+        echo -e "    Домен(SNI):   $(_current_sni_display)"
         echo -e "    Порт:         ${PROXY_PORT}"
         local _mh _mp
         _mh=$(_toml_get_string_in_section "censorship" "mask_host" "${DETECTED_CONFIG_PATH:-}" 2>/dev/null)

@@ -701,12 +701,12 @@ fetch_target_stats() {
 # (проверка PQ/censorcheck), чтобы не проверять чужой дефолтный домен.
 _current_sni_domain() {
     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
-        local _d; _d=$(_target_tls_domain 2>/dev/null)
-        if [ -n "$_d" ]; then
-            echo "$_d"
-            return 0
-        fi
-    elif _superexpert_active 2>/dev/null; then
+        # Свой PROXY_DOMAIN здесь не подстановка: движок чужой, его SNI знает
+        # только его конфиг. Не прочитали — отдаём пусто, а не наш домен.
+        _target_tls_domain 2>/dev/null
+        return 0
+    fi
+    if _superexpert_active 2>/dev/null; then
         # Конфиг ведёт пользователь — домен берём из его файла, а не из
         # настроек менеджера, которые на движок больше не влияют.
         local _sd; _sd=$(_toml_get_string_in_section "censorship" "tls_domain" "$SUPEREXPERT_FILE" 2>/dev/null)
@@ -716,6 +716,20 @@ _current_sni_domain() {
         fi
     fi
     echo "${PROXY_DOMAIN:-}"
+}
+
+# То же для показа человеку: пустой домен — это «не смогли прочитать», и
+# писать вместо него прочерк честнее, чем чужое значение.
+_current_sni_display() {
+    local _d; _d=$(_current_sni_domain 2>/dev/null)
+    if [ -n "$_d" ]; then
+        echo "$_d"
+    elif [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && \
+         [ -n "${DETECTED_CONFIG_PATH:-}" ] && [ ! -r "${DETECTED_CONFIG_PATH}" ]; then
+        echo "— конфиг цели недоступен"
+    else
+        echo "—"
+    fi
 }
 
 # Юнит telemt.service существует, пусть и остановлен. Смотрим LoadState.
@@ -1995,7 +2009,7 @@ run_reanimator_installer() {
     echo -e "  ${BOLD}Цель:${NC}        ${DETECTED_MODE}$([ -n "$DETECTED_CONTAINER" ] && echo " (${DETECTED_CONTAINER})")"
     echo -e "  ${BOLD}Конфиг цели:${NC} ${DETECTED_CONFIG_PATH:-нет}"
     echo -e "  ${BOLD}Порт:${NC}        ${PROXY_PORT}"
-    echo -e "  ${BOLD}Домен(SNI):${NC}  $(_current_sni_domain 2>/dev/null || echo '?')"
+    echo -e "  ${BOLD}Домен(SNI):${NC}  $(_current_sni_display)"
     echo ""
     echo -e "  ${DIM}Тюнинг параметров: mtproxyl tune set <параметр> <значение>${NC}"
     echo -e "  ${DIM}Повторный детект:  mtproxyl detect${NC}"

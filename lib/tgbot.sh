@@ -344,9 +344,9 @@ TimeoutStopSec=20
 
 # CapabilityBoundingSet и NoNewPrivileges не задаём: они урезали бы sudo,
 # которым бот зовёт MTProxyL — тот падает без setuid/setgid.
-PrivateTmp=true
-ProtectHome=true
-ReadWritePaths=${TGBOT_DIR}
+# ProtectHome и PrivateTmp тоже не задаём: их песочницу наследует и sudo-вызов
+# MTProxyL, а конфиг чужого прокси в реаниматоре обычно лежит в /root или
+# /home — из юнита он выглядит несуществующим.
 
 [Install]
 WantedBy=multi-user.target
@@ -775,6 +775,11 @@ tgbot_update_sources() {
     # подкоманду, которой в старом списке нет, и упереться в отказ sudo.
     log_info "Обновляем права sudo бота"
     _tgbot_write_sudoers || log_warn "Права sudo обновить не удалось"
+
+    # И юнит: настройки службы тоже меняются между версиями, а ставился он
+    # один раз при установке.
+    log_info "Обновляем юнит службы бота"
+    _tgbot_write_service
 
     chown -R "$TGBOT_USER":"$TGBOT_USER" "$TGBOT_DIR" 2>/dev/null || true
     chmod 600 "$TGBOT_CONFIG" 2>/dev/null || true
