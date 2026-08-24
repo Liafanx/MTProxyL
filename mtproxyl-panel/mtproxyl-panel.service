@@ -27,10 +27,9 @@ LimitNOFILE=65536
 # добавляется поверх него, а не вместо.
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 
-# Hardening compatible with sudo-based updater operations
-ProtectHome=true
-PrivateTmp=true
-ReadWritePaths=/etc/mtproxyl-panel /var/lib/mtproxyl-panel
+# ProtectHome и PrivateTmp не задаём: их песочницу наследует и sudo-вызов CLI
+# MTProxyL, а конфиг чужого прокси в реаниматоре обычно лежит в /root или
+# /home — из юнита он выглядит несуществующим.
 
 [Install]
 WantedBy=multi-user.target

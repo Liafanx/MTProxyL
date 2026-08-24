@@ -683,10 +683,9 @@ LimitNOFILE=65536
 # вызывает CLI MTProxyL (тот падает без setuid/setgid и CAP_AUDIT_WRITE).
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 
-# Hardening compatible with sudo-based updater operations
-ProtectHome=true
-PrivateTmp=true
-ReadWritePaths=$CONFIG_DIR $DATA_DIR
+# ProtectHome и PrivateTmp не задаём: их песочницу наследует и sudo-вызов CLI
+# MTProxyL, а конфиг чужого прокси в реаниматоре обычно лежит в /root или
+# /home — из юнита он выглядит несуществующим.
 
 [Install]
 WantedBy=multi-user.target
