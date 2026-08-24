@@ -27,7 +27,9 @@ type TgbotConfig struct {
 		Time     string `json:"time"`
 		SendFile bool   `json:"send_file"`
 	} `json:"autobackup"`
-	HasToken bool `json:"has_token"`
+	// Proxy is the bot's SOCKS5 route to Telegram; empty means direct.
+	Proxy    string `json:"proxy"`
+	HasToken bool   `json:"has_token"`
 }
 
 // TgbotStatus is `mtproxyl tgbot status --json`.

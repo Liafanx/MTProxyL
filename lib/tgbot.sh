@@ -517,6 +517,7 @@ tgbot_status_json() {
                        notify: (.notify // {}),
                        intervals: (.intervals // {}),
                        autobackup: (.autobackup // {}),
+                       proxy: (.proxy // ""),
                        has_token: ((.token // "") != "")}' "$TGBOT_CONFIG" 2>/dev/null) || _cfg='{}'
     fi
 
