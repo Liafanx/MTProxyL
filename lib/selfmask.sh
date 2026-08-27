@@ -573,6 +573,14 @@ _selfmask_install_pq_nginx() {
 
     log_info "Скачивание PQ nginx (OpenSSL ${SELFMASK_PQ_OPENSSL_VERSION} + nginx ${SELFMASK_PQ_NGINX_VERSION})..."
 
+    # Свой конфиг откладываем до распаковки: она сносит префикс целиком и
+    # приносит стоковый. Копию держим вне префикса — внутри её съест rm -rf.
+    local _conf_backup=""
+    if [ -f "$(_selfmask_pq_conf)" ] && grep -q 'mtproxyl' "$(_selfmask_pq_conf)" 2>/dev/null; then
+        _conf_backup="/tmp/.mtproxyl-nginx-conf.$$"
+        cp -f "$(_selfmask_pq_conf)" "$_conf_backup" 2>/dev/null || _conf_backup=""
+    fi
+
     local _arch
     case "$(uname -m)" in
         x86_64|amd64) _arch="amd64" ;;
@@ -630,6 +638,13 @@ _selfmask_install_pq_nginx() {
     local _ver
     _ver=$("$(_selfmask_pq_openssl_bin)" version 2>/dev/null | awk '{print $2}')
     log_success "PQ nginx установлен (OpenSSL ${_ver:-?})"
+
+    # Архив разворачивается поверх префикса и приносит свой conf/nginx.conf.
+    # Настроенный при этом теряется, а с ним и публичный порт — возвращаем.
+    if [ -n "$_conf_backup" ] && [ -f "$_conf_backup" ]; then
+        mv -f "$_conf_backup" "$(_selfmask_pq_conf)" 2>/dev/null || true
+        log_info "Настроенный конфиг nginx возвращён на место"
+    fi
 }
 
 _selfmask_install_pq_service() {
@@ -1997,16 +2012,12 @@ selfmask_refresh_pq_nginx() {
         log_warn "В этой сборке нет stream — раскладка shared работать не будет"
     fi
 
-    # Архив разворачивается поверх префикса и приносит свой conf/nginx.conf,
-    # затирая наш. В обычной установке следом идёт настройка, а здесь её нет —
-    # поэтому пересобираем конфиг сами, иначе служба поднимется со стоковым.
+    # Конфиг переживает распаковку сам (его откладывает установка), остаётся
+    # перезапустить службу на новом бинарнике.
     if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
-        _selfmask_configure_nginx || {
-            log_error "Конфиг nginx пересобрать не удалось — примените заново: mtproxyl selfmask apply"
-            return 1; }
         systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null || {
             log_error "nginx не поднялся после обновления"; return 1; }
-        log_success "Конфиг пересобран, служба перезапущена"
+        log_success "Служба перезапущена на новой сборке"
     fi
 }
 
@@ -2191,24 +2202,42 @@ selfmask_apply() {
 
 # Поставить только инструменты PQ, без настройки заглушки: проверке домена
 # нужен openssl с X25519MLKEM768, а ради неё весь мастер — чересчур.
+# Установка из Release. Раньше выходила молча, если что-то уже стояло, —
+# и обновиться на свежий релиз можно было только снеся каталог руками.
+# Теперь показываем, что стоит и что предлагается, и переспрашиваем.
 selfmask_install_pq_tools() {
     check_root
 
-    if _system_openssl_has_pq; then
+    local _installed=""
+    [ -x "$(_selfmask_pq_openssl_bin)" ] && \
+        _installed=$("$(_selfmask_pq_openssl_bin)" version 2>/dev/null | awk '{print $2}')
+
+    if _system_openssl_has_pq && [ -z "$_installed" ]; then
         log_success "Уже есть: $(_pq_openssl_source)"
-        log_info "Ничего ставить не нужно — системный OpenSSL умеет PQ сам"
-        return 0
+        log_info "Системный OpenSSL умеет PQ сам, своя сборка не обязательна"
+        echo ""
+        echo -en "  ${BOLD}Всё равно поставить сборку из Release (${SELFMASK_PQ_OPENSSL_VERSION})? [y/N]:${NC} "
+        local _a; read_line _a
+        [[ "$_a" =~ ^[yY] ]] || { log_info "Оставляем системный"; return 0; }
+    elif [ -n "$_installed" ]; then
+        log_info "Установлено сейчас: OpenSSL ${_installed}"
+        log_info "В Release: OpenSSL ${SELFMASK_PQ_OPENSSL_VERSION} (${SELFMASK_PQ_RELEASE_TAG})"
+        if [ "$_installed" = "${SELFMASK_PQ_OPENSSL_VERSION}" ]; then
+            log_warn "Версия та же — переустановка заменит файлы теми же самыми"
+        fi
+        echo ""
+        echo -en "  ${BOLD}Скачать и переустановить из Release? [y/N]:${NC} "
+        local _a; read_line _a
+        [[ "$_a" =~ ^[yY] ]] || { log_info "Оставляем как есть"; return 0; }
     fi
-    if [ -x "$(_selfmask_pq_openssl_bin)" ]; then
-        log_success "PQ OpenSSL уже установлен"
-        return 0
-    fi
+
     if ! selfmask_supported_os; then
         log_error "Готовая сборка есть только для Debian/Ubuntu"
         log_info "На других системах поставьте OpenSSL ${SELFMASK_MIN_SYSTEM_OPENSSL}+ средствами дистрибутива"
         return 1
     fi
 
-    _selfmask_install_pq_nginx openssl || return 1
+    # force: без него установка увидела бы уже лежащие файлы и вышла молча.
+    _selfmask_install_pq_nginx openssl force || return 1
     log_success "Готово: $(_pq_openssl_source)"
 }
