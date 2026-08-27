@@ -21,6 +21,7 @@ _AG_ITEMS=(
     "fixes|Zapret2 или SYN-лимитер|no"
     "meko|Оптимизация By-MEKO|no"
     "selfmask|Selfmask|yes"
+    "web|WEB Proxy|yes"
     "geoip|База GeoIP|no"
     "block|Список блокировок|no"
     "force|Ставить поверх существующей|no"
@@ -75,6 +76,13 @@ _argsgen_defaults() {
         _AG_VAL[selfmask]="${SELFMASK_DOMAIN} (${SELFMASK_CERT_MODE:-letsencrypt})"
     else
         _AG_ON[selfmask]="no"; _AG_VAL[selfmask]="выключен"
+    fi
+
+    if web_is_enabled 2>/dev/null; then
+        _AG_ON[web]="yes"
+        _AG_VAL[web]="$(web_domain 2>/dev/null) (${WEB_LAYOUT:-shared}, ${WEB_CARRIER:-https-lanes})"
+    else
+        _AG_ON[web]="no"; _AG_VAL[web]="выключен"
     fi
 
     _AG_ON[geoip]="$(geoip_installed 2>/dev/null && echo yes || echo no)"
@@ -153,6 +161,14 @@ _argsgen_build() {
         [ -n "${SELFMASK_CERT_EMAIL:-}" ] && _a+=(--selfmask-email "$SELFMASK_CERT_EMAIL")
         [ -n "${SELFMASK_SITE_SOURCE:-}" ] && _a+=(--selfmask-template "$SELFMASK_SITE_SOURCE")
         [ -n "${SELFMASK_NGINX_BACKEND_PORT:-}" ] && _a+=(--selfmask-backend-port "$SELFMASK_NGINX_BACKEND_PORT")
+        # WEB стоит на плечах Selfmask, поэтому только внутри его ветки.
+        if [ "${_AG_ON[web]}" = "yes" ]; then
+            _a+=(--web yes --web-layout "${WEB_LAYOUT:-shared}")
+            _a+=(--web-carrier "${WEB_CARRIER:-https-lanes}")
+            _a+=(--web-secret-mode "${WEB_SECRET_MODE:-dd}")
+            [ -n "${WEB_DOMAIN:-}" ] && _a+=(--web-domain "$WEB_DOMAIN")
+            [ "${WEB_LAYOUT:-shared}" = "split" ] && _a+=(--web-port "${WEB_PUBLIC_PORT:-443}")
+        fi
     fi
 
     [ "${_AG_ON[geoip]}" = "yes" ] && _a+=(--geoip yes)
@@ -242,6 +258,9 @@ _argsgen_edit() {
         selfmask)
             echo -e "  ${DIM}Домен и тип сертификата берутся из текущих настроек Selfmask.${NC}"
             echo -e "  ${DIM}Изменить их: меню «Дополнения» → Selfmask.${NC}" ;;
+        web)
+            echo -e "  ${DIM}Домен, раскладка и carrier берутся из текущих настроек WEB.${NC}"
+            echo -e "  ${DIM}Изменить их: mtproxyl web set. Требует включённого Selfmask.${NC}" ;;
         *) log_info "У этого пункта нечего править — он только включается и выключается" ;;
     esac
     return 0

@@ -791,7 +791,7 @@ self_update() {
     if [ -z "$_lib_list" ]; then
         log_warn "Не удалось извлечь список библиотек из нового скрипта"
         log_info "Используем резервный список"
-        _lib_list="colors utils settings detect secrets config docker binengine engine traffic stats availability dc warp geoblock geoip upstream backup nft ipblock selfmask web panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_addons tui_tgbot tui_warp tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen"
+        _lib_list="colors utils settings detect secrets config docker binengine engine traffic stats availability dc warp geoblock geoip upstream backup nft ipblock selfmask web panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen"
     fi
 
     local _total=0 _ok=0 _failed=0 _skipped=0

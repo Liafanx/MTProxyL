@@ -121,7 +121,7 @@ fi
 chmod +x "${INSTALL_DIR}/mtproxyl.sh"
 
 # Библиотеки
-for lib in colors utils settings secrets config docker binengine engine traffic stats availability dc warp geoblock geoip upstream backup nft ipblock selfmask web panel tgbot detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_addons tui_tgbot tui_warp tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
+for lib in colors utils settings secrets config docker binengine engine traffic stats availability dc warp geoblock geoip upstream backup nft ipblock selfmask web panel tgbot detect tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
     echo "  → lib/${lib}.sh"
     if ! download_file "${SCRIPT_URL}/lib/${lib}.sh" "${INSTALL_DIR}/lib/${lib}.sh" "lib/${lib}.sh"; then
         # 404 у отдельного файла — это почти всегда несовпадение веток: список

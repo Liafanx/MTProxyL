@@ -19,6 +19,8 @@ _IA_CPUS=""; _IA_MEMORY=""
 _IA_SECRETS=()
 _IA_SELFMASK_DOMAIN=""; _IA_SELFMASK_CERT=""; _IA_SELFMASK_EMAIL=""
 _IA_SELFMASK_TEMPLATE=""; _IA_SELFMASK_BACKEND_PORT=""
+_IA_WEB=""; _IA_WEB_DOMAIN=""; _IA_WEB_CARRIER=""; _IA_WEB_LAYOUT=""
+_IA_WEB_PORT=""; _IA_WEB_SECRET_MODE=""
 _IA_GEOIP=""
 _IA_BLOCK_FILE=""
 _IA_BLOCK_LIST=""
@@ -65,6 +67,14 @@ install_args_help() {
     --selfmask-email <email>   почта для Let's Encrypt (необязательна)
     --selfmask-template stub|filemanager|catrunner|mekorunner|<url>
     --selfmask-backend-port N  локальный порт nginx (по умолчанию 8444)
+
+  WEB Proxy (требует --selfmask: оттуда сертификат и заглушка)
+    --web yes|no               включить WEB Proxy
+    --web-layout shared|split  один порт с FakeTLS по SNI либо свой порт
+    --web-domain <домен>       по умолчанию web.<домен selfmask>
+    --web-carrier https|https-lanes|websocket|websocket-lanes
+    --web-port N               публичный порт WEB, только при --web-layout split
+    --web-secret-mode plain|dd
 
   Дополнения
     --geoip yes|no             база GeoIP: страна, город и ASN в истории IP
@@ -164,6 +174,17 @@ _install_args_parse() {
                     no|n|нет|false|off) _FIX_ANS_MEKO="n" ;;
                     *) log_error "--meko: yes или no"; return 1 ;;
                 esac ;;
+            --web)
+                case "${_v,,}" in
+                    yes|y|да|true|on)   _IA_WEB="yes" ;;
+                    no|n|нет|false|off) _IA_WEB="no" ;;
+                    *) log_error "--web: yes или no"; return 1 ;;
+                esac ;;
+            --web-domain)      _IA_WEB_DOMAIN="${_v,,}" ;;
+            --web-carrier)     _IA_WEB_CARRIER="$_v" ;;
+            --web-layout)      _IA_WEB_LAYOUT="$_v" ;;
+            --web-port)        _IA_WEB_PORT="$_v" ;;
+            --web-secret-mode) _IA_WEB_SECRET_MODE="$_v" ;;
             --selfmask)              _IA_SELFMASK_DOMAIN="$_v" ;;
             --selfmask-cert)         _IA_SELFMASK_CERT="$_v" ;;
             --selfmask-email)        _IA_SELFMASK_EMAIL="$_v" ;;
@@ -270,6 +291,39 @@ _install_args_validate() {
             *) log_error "--selfmask-cert: letsencrypt или selfsigned"; _ok=false ;;
         esac
     fi
+    if [ -n "$_IA_WEB_DOMAIN" ] && ! validate_domain "$_IA_WEB_DOMAIN"; then
+        log_error "--web-domain: домен, получили '${_IA_WEB_DOMAIN}'"; _ok=false
+    fi
+    if [ -n "$_IA_WEB_CARRIER" ]; then
+        case "$_IA_WEB_CARRIER" in
+            https|https-lanes|websocket|websocket-lanes) ;;
+            *) log_error "--web-carrier: https, https-lanes, websocket или websocket-lanes"; _ok=false ;;
+        esac
+    fi
+    if [ -n "$_IA_WEB_LAYOUT" ]; then
+        case "$_IA_WEB_LAYOUT" in
+            shared|split) ;;
+            *) log_error "--web-layout: shared или split"; _ok=false ;;
+        esac
+    fi
+    if [ -n "$_IA_WEB_SECRET_MODE" ]; then
+        case "$_IA_WEB_SECRET_MODE" in
+            plain|dd) ;;
+            *) log_error "--web-secret-mode: plain или dd (ee движок в WEB не принимает)"; _ok=false ;;
+        esac
+    fi
+    if [ -n "$_IA_WEB_PORT" ] && ! validate_port "$_IA_WEB_PORT"; then
+        log_error "--web-port: 1..65535, получили '${_IA_WEB_PORT}'"; _ok=false
+    fi
+    # WEB стоит на плечах Selfmask: у него домен, сертификат и сайт-заглушка.
+    if [ "$_IA_WEB" = "yes" ] && [ -z "$_IA_SELFMASK_DOMAIN" ]; then
+        log_error "--web yes требует --selfmask <домен>: оттуда берутся сертификат и заглушка"; _ok=false
+    fi
+    if [ "$_IA_WEB" != "yes" ] && { [ -n "$_IA_WEB_DOMAIN" ] || [ -n "$_IA_WEB_CARRIER" ] || \
+       [ -n "$_IA_WEB_LAYOUT" ] || [ -n "$_IA_WEB_PORT" ] || [ -n "$_IA_WEB_SECRET_MODE" ]; }; then
+        log_error "Параметры WEB заданы без --web yes"; _ok=false
+    fi
+
     if [ -n "$_IA_SELFMASK_CERT" ] || [ -n "$_IA_SELFMASK_EMAIL" ] || \
        [ -n "$_IA_SELFMASK_TEMPLATE" ] || [ -n "$_IA_SELFMASK_BACKEND_PORT" ]; then
         [ -n "$_IA_SELFMASK_DOMAIN" ] || { log_error "Параметры Selfmask заданы без --selfmask <домен>"; _ok=false; }
@@ -418,6 +472,10 @@ run_installer_args() {
         _install_args_selfmask || log_warn "Selfmask не настроен — остальное установлено"
     fi
 
+    if [ "$_IA_WEB" = "yes" ]; then
+        _install_args_web || log_warn "WEB Proxy не включён — остальное установлено"
+    fi
+
     if [ "$_IA_GEOIP" = "yes" ]; then
         echo ""
         geoip_install || log_warn "База GeoIP не установлена — поставьте позже: меню «Дополнения»"
@@ -528,4 +586,25 @@ _install_args_selfmask() {
         fi
     fi
     selfmask_setup
+}
+
+# WEB ставится после Selfmask: домен, сертификат и сайт-заглушку он берёт у него.
+_install_args_web() {
+    echo ""
+    draw_header "WEB PROXY"
+    echo ""
+    WEB_LAYOUT="${_IA_WEB_LAYOUT:-shared}"
+    [ -n "$_IA_WEB_DOMAIN" ]      && WEB_DOMAIN="$_IA_WEB_DOMAIN"
+    [ -n "$_IA_WEB_CARRIER" ]     && WEB_CARRIER="$_IA_WEB_CARRIER"
+    [ -n "$_IA_WEB_SECRET_MODE" ] && WEB_SECRET_MODE="$_IA_WEB_SECRET_MODE"
+    if [ -n "$_IA_WEB_PORT" ]; then
+        # В shared порт задаёт сам прокси: WEB делит с ним публичный порт.
+        if [ "$WEB_LAYOUT" = "split" ]; then
+            WEB_PUBLIC_PORT="$_IA_WEB_PORT"
+        else
+            log_warn "--web-port осмыслен только при --web-layout split, значение не применено"
+        fi
+    fi
+    save_settings
+    web_enable
 }

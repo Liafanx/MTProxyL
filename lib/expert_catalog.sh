@@ -130,6 +130,55 @@ _catalog "server" "max_connections"              "u32"    "10000" "✘" "range:0
 _catalog "server" "accept_permit_timeout_ms"     "u64"    "250"   "✘" "range:0:60000"                         "0 = без ограничений"                "Таймаут ожидания разрешения на подключение"
 _catalog "server" "listen_backlog"               "u32"    "1024"  "✘" "range:0:65535"                         "0 = системный дефолт"               "Значение backlog для listen(2)"
 
+# ── web.limits ────────────────────────────────────────────────
+# Вся таблица process-owned: применяется только перезапуском движка.
+_catalog "web.limits" "max_header_bytes"          "usize" "16384"     "✘" "range:1024:1048576"     "1024..1048576"      "Макс. размер заголовка одного HTTP-запроса"
+_catalog "web.limits" "max_body_bytes"            "usize" "2097152"   "✘" "range:1024:67108864"    "не меньше client_max_body_size у nginx" "Макс. размер собранного carrier body"
+_catalog "web.limits" "max_frame_payload_bytes"   "usize" "1048576"   "✘" "range:1024:16777216"    "1024..16777216"     "Макс. payload одного WEB frame"
+_catalog "web.limits" "carrier_batch_bytes"       "usize" "2097152"   "✘" "range:1024:33554432"    "1024..33554432"     "Макс. закодированный downlink batch"
+_catalog "web.limits" "max_frames_per_body"       "usize" "4096"      "✘" "range:1:65536"          "1..65536"           "Макс. число frames в одном carrier body"
+_catalog "web.limits" "max_http_connections"      "usize" "1024"      "✘" "range:1:1048576"        "1..1048576"         "Принятые WEB HTTP-соединения на процесс"
+_catalog "web.limits" "max_http_handlers"         "usize" "512"       "✘" "range:2:262144"         "для https-lanes минимум 2" "Одновременно выполняемые HTTP handlers"
+_catalog "web.limits" "websocket_bytes_global"    "usize" "268435456" "✘" "range:65536:4294967296" "подбюджет внутри pending_bytes_global" "Байты WebSocket codec и staging на процесс"
+_catalog "web.limits" "websocket_http_connection_reserve" "usize" "64" "✘" "range:0:65536"         "0..65536"           "Соединения, недоступные WebSocket upgrade"
+_catalog "web.limits" "max_sessions_global"       "usize" "128"       "✘" "range:1:1048576"        "1..1048576"         "Активные WEB-сессии на процесс"
+_catalog "web.limits" "max_sessions_per_ip"       "usize" "16"        "✘" "range:1:65536"          "1..65536"           "Активные сессии одного адреса клиента"
+_catalog "web.limits" "max_streams_per_session"   "usize" "128"       "✘" "range:1:65536"          "1..65536"           "Logical streams на одну сессию"
+_catalog "web.limits" "max_streams_global"        "usize" "4096"      "✘" "range:1:1048576"        "1..1048576"         "Logical streams на процесс"
+_catalog "web.limits" "pending_bytes_per_session" "usize" "33554432"  "✘" "range:65536:4294967296" "не больше глобального" "Байты в очередях одной сессии"
+_catalog "web.limits" "pending_bytes_global"      "usize" "536870912" "✘" "range:65536:4294967296" "укладывается в memory_envelope_bytes" "Байты в очередях всего процесса"
+_catalog "web.limits" "max_bootstraps_global"     "usize" "512"       "✘" "range:1:1048576"        "1..1048576"         "Активные bootstrap-учётки на процесс"
+_catalog "web.limits" "max_bootstraps_per_ip"     "usize" "64"        "✘" "range:1:65536"          "1..65536"           "Активные bootstrap-учётки на адрес"
+_catalog "web.limits" "memory_envelope_bytes"     "usize" "805306368" "✘" "range:1048576:4294967296" "максимум 4 ГиБ"   "Заявленный envelope памяти WEB"
+_catalog "web.limits" "new_sessions_per_minute"   "u32"   "600"       "✘" "range:1:1000000"        "1..1000000"         "Устойчивая скорость создания сессий"
+_catalog "web.limits" "new_streams_per_minute"    "u32"   "6000"      "✘" "range:1:10000000"       "1..10000000"        "Устойчивая скорость создания streams"
+_catalog "web.limits" "debug_records_capacity"    "usize" "65536"     "✘" "range:1:1048576"        "1..1048576"         "Сколько debug-записей хранит /web-status"
+_catalog "web.limits" "debug_bytes_global"        "usize" "67108864"  "✘" "range:4096:4294967296"  "минимум 4096"       "Байтовая граница debug-данных WEB"
+
+# ── web.timeouts ──────────────────────────────────────────────
+# Всё в секундах, диапазон 1..3600. Самый долгий запрос должен быть меньше
+# http_idle_secs, иначе движок отвергнет конфиг.
+_catalog "web.timeouts" "header_secs"             "u64" "10"  "✔" "range:1:3600" "1..3600"          "Получение полного заголовка запроса"
+_catalog "web.timeouts" "body_secs"               "u64" "30"  "✔" "range:1:3600" "1..3600"          "Сбор одного carrier body"
+_catalog "web.timeouts" "stream_handshake_secs"   "u64" "10"  "✔" "range:1:3600" "1..3600"          "Внутреннее MTProxy-рукопожатие"
+_catalog "web.timeouts" "long_poll_secs"          "u64" "25"  "✔" "range:1:3600" "таймауты nginx должны быть выше" "Максимальная длительность пустого long poll"
+_catalog "web.timeouts" "websocket_write_secs"    "u64" "30"  "✔" "range:1:3600" "1..3600"          "Ожидание одной операции записи WebSocket"
+_catalog "web.timeouts" "websocket_backpressure_secs" "u64" "30" "✔" "range:1:3600" "1..3600"       "Ожидание прогресса при заполненных очередях"
+_catalog "web.timeouts" "bootstrap_lifetime_secs" "u64" "120" "✔" "range:1:3600" "1..3600"          "Срок жизни неиспользованного bootstrap"
+_catalog "web.timeouts" "reconnect_grace_secs"    "u64" "120" "✔" "range:1:3600" "1..3600"          "Неактивность carrier до закрытия сессии"
+_catalog "web.timeouts" "http_idle_secs"          "u64" "75"  "✔" "range:1:3600" "больше самого долгого запроса" "Idle keep-alive HTTP-соединения WEB"
+_catalog "web.timeouts" "shutdown_secs"           "u64" "15"  "✔" "range:1:3600" "1..3600"          "Дедлайн корректного завершения WEB"
+_catalog "web.timeouts" "decoy_header_secs"       "u64" "30"  "✔" "range:1:3600" "1..3600"          "Дедлайн ответа HTTP-заглушки"
+
+# ── web.debug ─────────────────────────────────────────────────
+_catalog "web.debug" "capture_headers"        "bool"  "true"     "✔" "bool"                              "true/false"        "Сохранять имена заголовков без учётных данных"
+_catalog "web.debug" "capture_timings"        "bool"  "true"     "✔" "bool"                              "true/false"        "Сохранять тайминги обработки"
+_catalog "web.debug" "capture_frames"         "bool"  "true"     "✔" "bool"                              "true/false"        "Разбирать carrier body на frames"
+_catalog "web.debug" "body_capture"           "enum"  "metadata" "✔" "enum:off,metadata,prefix,full"     "off/metadata/prefix/full" "Что сохранять от тел запросов и ответов"
+_catalog "web.debug" "body_prefix_bytes"      "usize" "4096"     "✔" "range:0:1048576"                   "0..1048576"        "Префикс тела, сохраняемый в режиме prefix"
+_catalog "web.debug" "default_window_secs"    "u64"   "180"      "✔" "range:1:86400"                     "1..86400"          "Окно наблюдения /web-status по умолчанию"
+_catalog "web.debug" "max_window_secs"        "u64"   "3600"     "✔" "range:1:86400"                     "1..86400"          "Максимальное окно наблюдения /web-status"
+
 # ── server.conntrack_control ──────────────────────────────────
 _catalog "server.conntrack_control" "inline_conntrack_control" "bool"  "true"      "✘" "bool"                          "true/false"                      "Главный переключатель conntrack-control"
 _catalog "server.conntrack_control" "mode"                     "enum"  "tracked"   "✘" "enum:tracked,notrack,hybrid"   "tracked/notrack/hybrid"          "Режим conntrack"

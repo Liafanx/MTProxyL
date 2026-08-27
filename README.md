@@ -1224,6 +1224,40 @@ tg://webproxy?server=web.example.com&secret=dd0123456789abcdef0123456789abcdef
 | `websocket` | Один WebSocket на все потоки |
 | `websocket-lanes` | Соединение на каждый поток; при включённом SYN-лимитере его придётся ослабить |
 
+### Установка аргументами
+
+WEB ставится вместе со всем остальным, отдельного прохода не нужно:
+
+```bash
+mtproxyl install --mode manager --port 443 \
+  --selfmask proxy.example.com --selfmask-cert letsencrypt \
+  --web yes --web-layout shared --web-carrier https-lanes
+```
+
+В раскладке `split` порт WEB задаётся отдельно:
+
+```bash
+  --web yes --web-layout split --web-port 443 --port 2053
+```
+
+`--web` требует `--selfmask`: оттуда берутся домен, сертификат и заглушка.
+Генератор команды переезда (`Обновление → Экспорт аргументов`) добавляет ключи
+WEB сам, так что на новом сервере он поднимется вместе с остальным.
+
+### Экспертные параметры
+
+В каталоге эксперта есть все три таблицы движка — `web.limits`, `web.timeouts`
+и `web.debug`:
+
+```bash
+mtproxyl expert set web.timeouts long_poll_secs 30
+mtproxyl expert set web.limits max_sessions_per_ip 32
+```
+
+Пометка hot-reload у них честная: `web.timeouts` и `web.debug` применяются на
+лету, а вся таблица `web.limits` принадлежит процессу и требует перезапуска
+движка.
+
 ### Диагностика
 
 `mtproxyl web set WEB_DEBUG true` включает страницу `/web-status` на

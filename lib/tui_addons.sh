@@ -43,6 +43,7 @@ tui_addons_menu() {
         echo -e "  ${CYAN}[7]${NC}  $([ "$_geoip_installed" = "true" ] && echo "Переустановить" || echo "Установить") базу GeoIP"
         echo -e "  ${CYAN}[8]${NC}  Доступность из России  ${DIM}$(availability_status_line)${NC}"
         echo -e "  ${CYAN}[9]${NC}  Дата-центры Telegram  ${DIM}(доходим ли мы до DC)${NC}"
+        echo -e "  ${CYAN}[10]${NC} WEB Proxy  ${DIM}$(web_is_enabled && echo "включён, $(web_domain 2>/dev/null)" || echo "выключен")${NC}"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -87,6 +88,9 @@ tui_addons_menu() {
                 ;;
             5)
                 tui_selfmask_menu
+                ;;
+            10)
+                tui_web_menu
                 ;;
             6)
                 tui_panel_menu
