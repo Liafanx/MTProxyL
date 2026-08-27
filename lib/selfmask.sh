@@ -860,8 +860,10 @@ _selfmask_open_public_ports() {
 
 # Годен ли лежащий сертификат: оба файла, наш домен, больше 30 дней до
 # истечения. Наличия fullchain.pem мало — просроченный файл никуда не девается.
+# Доменов может быть несколько: при включённом WEB его имя лежит в том же
+# сертификате отдельным SAN, и без него ветка WEB отдавала бы чужое имя.
 _selfmask_cert_is_valid() {
-    local _dir="$1" _domain="$2"
+    local _dir="$1"; shift
     [ -f "${_dir}/fullchain.pem" ] && [ -f "${_dir}/privkey.pem" ] || return 1
 
     # Проверить нечем — считаем годным: своей проверкой мы бы только выбросили
@@ -870,10 +872,15 @@ _selfmask_cert_is_valid() {
 
     openssl x509 -in "${_dir}/fullchain.pem" -noout -checkend 2592000 &>/dev/null || return 1
 
+    local _sans _d
+    _sans=$(openssl x509 -in "${_dir}/fullchain.pem" -noout -text 2>/dev/null \
+        | grep -oE 'DNS:[^,[:space:]]+' | cut -d: -f2)
     # Домен сверяем по SAN точным совпадением: grep по строке с доменом принял
     # бы и чужой сертификат, где наш домен — лишь часть другого имени.
-    openssl x509 -in "${_dir}/fullchain.pem" -noout -text 2>/dev/null \
-        | grep -oE 'DNS:[^,[:space:]]+' | cut -d: -f2 | grep -Fxq "$_domain" || return 1
+    for _d in "$@"; do
+        [ -n "$_d" ] || continue
+        printf '%s\n' "$_sans" | grep -Fxq "$_d" || return 1
+    done
     return 0
 }
 
@@ -881,7 +888,12 @@ _selfmask_obtain_cert() {
     log_info "Получение сертификата Let's Encrypt..."
 
     local _cert_dir; _cert_dir="$(_selfmask_cert_dir)"
-    if _selfmask_cert_is_valid "$_cert_dir" "$SELFMASK_DOMAIN"; then
+    local -a _need=("$SELFMASK_DOMAIN")
+    if web_is_enabled 2>/dev/null; then
+        local _wd; _wd=$(web_domain 2>/dev/null)
+        [ -n "$_wd" ] && [ "$_wd" != "$SELFMASK_DOMAIN" ] && _need+=("$_wd")
+    fi
+    if _selfmask_cert_is_valid "$_cert_dir" "${_need[@]}"; then
         local _until
         _until=$(openssl x509 -in "${_cert_dir}/fullchain.pem" -noout -enddate 2>/dev/null | cut -d= -f2)
         log_success "Сертификат для ${SELFMASK_DOMAIN} уже есть в системе — используем его"
@@ -955,9 +967,17 @@ EOF
 
     # Вывод certbot нужен целиком: без него причина отказа терялась, и любая
     # неудача выглядела как проблема с DNS или портом 80.
+    # WEB-домен идёт в тот же сертификат отдельным SAN: --cert-name не меняем,
+    # поэтому пути в конфиге nginx остаются прежними.
+    local -a _domain_args=(-d "$SELFMASK_DOMAIN")
+    if web_is_enabled 2>/dev/null; then
+        local _wd; _wd=$(web_domain 2>/dev/null)
+        [ -n "$_wd" ] && [ "$_wd" != "$SELFMASK_DOMAIN" ] && _domain_args+=(-d "$_wd")
+    fi
+
     local _cb_out
     if _cb_out=$(certbot certonly --webroot -w "$SELFMASK_SITE_DIR" \
-        -d "$SELFMASK_DOMAIN" \
+        "${_domain_args[@]}" \
         --non-interactive --agree-tos \
         "${_mail_args[@]}" \
         --cert-name "$SELFMASK_DOMAIN" 2>&1); then
@@ -1031,6 +1051,16 @@ EOF
 )
     fi
 
+    # WEB Proxy: публичный порт забирает nginx и разводит по SNI, движок
+    # уходит на loopback. Без WEB конфиг остаётся прежним.
+    local _web_stream="" _web_map="" _web_server=""
+    if web_is_enabled 2>/dev/null; then
+        _web_stream=$(web_nginx_stream_block) || {
+            log_error "Не удалось собрать stream-блок WEB"; return 1; }
+        _web_map=$(web_nginx_upgrade_map)
+        _web_server=$(web_nginx_http_server "$_cert_dir") || return 1
+    fi
+
     cat > "$(_selfmask_pq_conf)" << EOF
 worker_processes auto;
 
@@ -1038,7 +1068,9 @@ events {
     worker_connections 1024;
 }
 
+${_web_stream}
 http {
+${_web_map}
 ${_http80}
     server {
         listen 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT} ssl default_server;
@@ -1081,6 +1113,7 @@ ${_http80}
             try_files \$uri \$uri/ =404;
         }
     }
+${_web_server}
 }
 EOF
 

@@ -416,6 +416,14 @@ generate_telemt_config() {
     local metrics_port="${PROXY_METRICS_PORT:-9090}"
     local api_port="${PROXY_API_PORT:-9091}"
 
+    # При включённом WEB порт PROXY_PORT занимает nginx и разводит по SNI, а
+    # движок уходит на loopback. Явные listener'ы отменяют legacy-поля [server]
+    # целиком, поэтому MTProxy-listener приходится перечислять тоже.
+    local web_listeners=""
+    if web_is_enabled; then
+        web_listeners=$(web_listeners_toml)
+    fi
+
     local tmp; tmp=$(_mktemp "$CONFIG_DIR") || return 1
 
     cat > "$tmp" << TOML_EOF
@@ -445,7 +453,7 @@ listen_addr_ipv6 = "::"
 proxy_protocol = ${PROXY_PROTOCOL:-false}
 metrics_listen = "127.0.0.1:${metrics_port}"
 metrics_whitelist = ["127.0.0.1/32", "::1/128"]
-
+${web_listeners}
 [server.api]
 enabled = true
 listen = "127.0.0.1:${api_port}"
@@ -577,6 +585,9 @@ TOML_EOF
         [ -n "${UPSTREAM_IFACES[$i]}" ] && echo "interface = \"${UPSTREAM_IFACES[$i]}\"" >> "$tmp"
         [ -n "${UPSTREAM_SCOPES[$i]:-}" ] && echo "scopes = \"${UPSTREAM_SCOPES[$i]}\"" >> "$tmp"
     done
+
+    # WEB Proxy — после [access.*], иначе профили разорвали бы таблицу секретов
+    web_is_enabled && web_sections_toml >> "$tmp"
 
     # Engine tunings
     if [ -f "${_TUNE_FILE:-/dev/null}" ] && [ -s "${_TUNE_FILE}" ]; then

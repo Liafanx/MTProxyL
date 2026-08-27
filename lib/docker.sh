@@ -460,6 +460,13 @@ run_proxy_container() {
         [ -n "${PROXY_CPUS}" ] && _args+=(--cpus "${PROXY_CPUS}")
         [ -n "${PROXY_MEMORY}" ] && _args+=(--memory "${PROXY_MEMORY}" --memory-swap "${PROXY_MEMORY}")
 
+        # Сайт-заглушку WEB движок читает с диска, а у контейнера своя ФС —
+        # без проброса он не стартует вовсе.
+        if web_is_enabled 2>/dev/null && [ "${WEB_DECOY_MODE:-static_directory}" = "static_directory" ]; then
+            local _decoy; _decoy=$(web_decoy_dir 2>/dev/null)
+            [ -d "$_decoy" ] && _args+=(-v "${_decoy}:${_decoy}:ro")
+        fi
+
         local _run_err=""
         _run_err=$(docker run -d "${_args[@]}" \
             --ulimit nofile=65535:65535 \

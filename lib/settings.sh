@@ -86,6 +86,21 @@ SELFMASK_AUTO_RENEW="true"
 SELFMASK_TLS_PROTOCOLS="TLSv1.3"
 SELFMASK_CERT_MODE="letsencrypt"  # letsencrypt|selfsigned
 
+# WEB Proxy (движок 3.5.1+). Публичный порт остаётся PROXY_PORT: на нём стоит
+# nginx с ssl_preread и разводит по SNI. Домен, сертификат и сайт по умолчанию
+# берутся у Selfmask — пустое значение означает «взять оттуда».
+WEB_ENABLED="false"
+WEB_DOMAIN=""
+WEB_CARRIER="https-lanes"   # https|https-lanes|websocket|websocket-lanes
+WEB_SECRET_MODE="dd"        # plain|dd, ee движок в WEB не поддерживает
+WEB_LISTEN_PORT="15080"     # приватный listener telemt, transport = "web"
+WEB_TLS_PORT="15444"        # https-сервер nginx на loopback
+WEB_MTPROXY_PORT="15443"    # куда nginx отдаёт FakeTLS после разбора SNI
+WEB_DECOY_MODE="static_directory"   # static_directory|http_upstream
+WEB_DECOY_DIR=""
+WEB_DECOY_UPSTREAM=""
+WEB_DEBUG="false"           # [web.debug].enabled, страница /web-status
+
 # Снимок того, что было до включения Selfmask — иначе отключение не может
 # вернуть прежний fake SNI. Файл per-mode: один набор имён на оба режима.
 SELFMASK_PREV_SAVED="false"
@@ -202,6 +217,19 @@ SELFMASK_NGINX_SITE_NAME='${SELFMASK_NGINX_SITE_NAME}'
 SELFMASK_AUTO_RENEW='${SELFMASK_AUTO_RENEW}'
 SELFMASK_TLS_PROTOCOLS='${SELFMASK_TLS_PROTOCOLS}'
 SELFMASK_CERT_MODE='${SELFMASK_CERT_MODE}'
+
+# WEB Proxy
+WEB_ENABLED='${WEB_ENABLED}'
+WEB_DOMAIN='${WEB_DOMAIN}'
+WEB_CARRIER='${WEB_CARRIER}'
+WEB_SECRET_MODE='${WEB_SECRET_MODE}'
+WEB_LISTEN_PORT='${WEB_LISTEN_PORT}'
+WEB_TLS_PORT='${WEB_TLS_PORT}'
+WEB_MTPROXY_PORT='${WEB_MTPROXY_PORT}'
+WEB_DECOY_MODE='${WEB_DECOY_MODE}'
+WEB_DECOY_DIR='${WEB_DECOY_DIR}'
+WEB_DECOY_UPSTREAM='${WEB_DECOY_UPSTREAM}'
+WEB_DEBUG='${WEB_DEBUG}'
 
 # Режим супер эксперта
 SUPEREXPERT_ENABLED='${SUPEREXPERT_ENABLED}'
@@ -399,6 +427,9 @@ load_settings() {
                 SELFMASK_ENABLED|SELFMASK_DOMAIN|SELFMASK_SITE_SOURCE|SELFMASK_SITE_DIR|\
                 SELFMASK_NGINX_BACKEND_PORT|SELFMASK_CERT_EMAIL|SELFMASK_NGINX_SITE_NAME|\
                 SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS|SELFMASK_CERT_MODE|\
+                WEB_ENABLED|WEB_DOMAIN|WEB_CARRIER|WEB_SECRET_MODE|\
+                WEB_LISTEN_PORT|WEB_TLS_PORT|WEB_MTPROXY_PORT|\
+                WEB_DECOY_MODE|WEB_DECOY_DIR|WEB_DECOY_UPSTREAM|WEB_DEBUG|\
                 SUPEREXPERT_ENABLED|\
                 IPBLOCK_ENABLED|IPBLOCK_ACTION|IPBLOCK_LIST|IPBLOCK_LIST6|\
                 PORT_PROFILE_MANAGER|PORT_PROFILE_REANIMATOR)
@@ -444,6 +475,25 @@ load_settings() {
         letsencrypt|selfsigned) ;;
         *) SELFMASK_CERT_MODE="letsencrypt" ;;
     esac
+
+    [ "$WEB_ENABLED" = "true" ] || WEB_ENABLED="false"
+    [ "$WEB_DEBUG" = "true" ] || WEB_DEBUG="false"
+    case "$WEB_CARRIER" in
+        https|https-lanes|websocket|websocket-lanes) ;;
+        *) WEB_CARRIER="https-lanes" ;;
+    esac
+    # ee движок в WEB не принимает — только plain и dd.
+    case "$WEB_SECRET_MODE" in
+        plain|dd) ;;
+        *) WEB_SECRET_MODE="dd" ;;
+    esac
+    case "$WEB_DECOY_MODE" in
+        static_directory|http_upstream) ;;
+        *) WEB_DECOY_MODE="static_directory" ;;
+    esac
+    [[ "$WEB_LISTEN_PORT" =~ ^[0-9]+$ ]] && [ "$WEB_LISTEN_PORT" -ge 1 ] && [ "$WEB_LISTEN_PORT" -le 65535 ] || WEB_LISTEN_PORT="15080"
+    [[ "$WEB_TLS_PORT" =~ ^[0-9]+$ ]] && [ "$WEB_TLS_PORT" -ge 1 ] && [ "$WEB_TLS_PORT" -le 65535 ] || WEB_TLS_PORT="15444"
+    [[ "$WEB_MTPROXY_PORT" =~ ^[0-9]+$ ]] && [ "$WEB_MTPROXY_PORT" -ge 1 ] && [ "$WEB_MTPROXY_PORT" -le 65535 ] || WEB_MTPROXY_PORT="15443"
 
     [ "$SUPEREXPERT_ENABLED" = "true" ] || SUPEREXPERT_ENABLED="false"
     [[ "$IP_HISTORY_INTERVAL" =~ ^[0-9]+$ ]] || IP_HISTORY_INTERVAL="5"

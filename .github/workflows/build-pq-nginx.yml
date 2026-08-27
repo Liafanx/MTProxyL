@@ -11,6 +11,12 @@ on:
         description: 'Версия nginx'
         required: true
         default: '1.28.3'
+      # Пересборка тех же версий с другими ключами configure: без суффикса
+      # тег совпал бы с уже опубликованным.
+      build_rev:
+        description: 'Ревизия сборки, добавляется к тегу (например r2)'
+        required: false
+        default: ''
       push_release:
         description: 'Опубликовать как Release?'
         required: true
@@ -98,6 +104,10 @@ jobs:
                 --with-http_gzip_static_module \
                 --with-http_stub_status_module \
                 --with-http_sub_module \
+                --with-stream \
+                --with-stream_ssl_module \
+                --with-stream_ssl_preread_module \
+                --with-stream_realip_module \
                 --with-threads \
                 --with-pcre-jit \
                 --with-cc-opt="-I/tmp/openssl-static/include" \
@@ -180,7 +190,7 @@ jobs:
       - name: Создать Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: pq-nginx-${{ github.event.inputs.nginx_version }}-openssl${{ github.event.inputs.openssl_version }}
+          tag_name: pq-nginx-${{ github.event.inputs.nginx_version }}-openssl${{ github.event.inputs.openssl_version }}${{ github.event.inputs.build_rev && format('-{0}', github.event.inputs.build_rev) || '' }}
           name: "PQ Nginx ${{ github.event.inputs.nginx_version }} + OpenSSL ${{ github.event.inputs.openssl_version }}"
           body: |
             ## nginx ${{ github.event.inputs.nginx_version }} + OpenSSL ${{ github.event.inputs.openssl_version }}
@@ -192,6 +202,7 @@ jobs:
             - PCRE используется через **PCRE2**
             - Совместимо с **Debian 13+**
             - Поддерживает **X25519MLKEM768**
+            - Собран со **stream** и **ssl_preread** — нужен для WEB Proxy
 
             ### Совместимость
             - Debian 11+
