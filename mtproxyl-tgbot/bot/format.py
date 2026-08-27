@@ -80,6 +80,11 @@ def status_text(st: dict, md: dict) -> str:
     lines.append(traffic)
     if md.get("mode") == "reanimator":
         lines.append(f"Цель: <code>{esc(md.get('detected_mode') or 'неизвестна')}</code>")
+    # WEB — отдельный тип прокси на том же порту, но со своим именем.
+    web = st.get("web") or {}
+    if web.get("enabled"):
+        lines.append(f"WEB Proxy: <code>{esc(web.get('domain') or '—')}</code>"
+                     f" ({esc(web.get('carrier') or '')})")
     return "\n".join(lines)
 
 

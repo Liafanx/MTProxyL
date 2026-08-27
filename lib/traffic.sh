@@ -1122,9 +1122,19 @@ show_status_json() {
     # панель) читают одно поле в обоих режимах, а не гадают по mode.
     local _mips=0
     [ "$status" = "running" ] && _mips=$(_engine_unique_ips 2>/dev/null || echo 0)
-    printf '{"version":"%s","mode":"manager","status":"%s","port":%d,"domain":"%s","uptime":%d,"connections":%d,"unique_ips":%d,"traffic_in":%d,"traffic_out":%d,"traffic_total":%d}\n' \
+    # WEB — отдельный тип прокси на том же движке: боту и панели надо знать,
+    # включён ли он и по какому имени, а порт остаётся публичным PROXY_PORT.
+    local _web='null'
+    if web_is_enabled 2>/dev/null; then
+        _web=$(printf '{"enabled":true,"domain":"%s","layout":"%s","carrier":"%s"}' \
+            "$(json_escape "$(web_domain 2>/dev/null)")" \
+            "$(json_escape "${WEB_LAYOUT:-shared}")" \
+            "$(json_escape "${WEB_CARRIER:-https-lanes}")")
+    fi
+    printf '{"version":"%s","mode":"manager","status":"%s","port":%d,"domain":"%s","uptime":%d,"connections":%d,"unique_ips":%d,"traffic_in":%d,"traffic_out":%d,"traffic_total":%d,"web":%s}\n' \
         "$VERSION" "$status" "$PROXY_PORT" "$PROXY_DOMAIN" "$uptime_secs" "${connections:-0}" \
-        "${_mips:-0}" "${traffic_in:-0}" "${traffic_out:-0}" "$(( ${traffic_in:-0} + ${traffic_out:-0} ))"
+        "${_mips:-0}" "${traffic_in:-0}" "${traffic_out:-0}" "$(( ${traffic_in:-0} + ${traffic_out:-0} ))" \
+        "$_web"
 }
 
 show_config() {
