@@ -183,7 +183,13 @@ def link_text(label: str, tg_links: str | list[str]) -> str:
         f"<code>{esc(web_link(links[0]))}</code>",
     ]
     for extra in links[1:]:
-        parts += ["", f"<i>{esc(_link_kind(extra))}</i>", f"<code>{esc(web_link(extra))}</code>"]
+        # Кнопкой тоже: у WEB копия — это tg://webproxy, вручную её не набрать.
+        parts += [
+            "",
+            f"<i>{esc(_link_kind(extra))}</i>",
+            f'👉 <a href="{esc(extra)}">Подключиться</a>',
+            f"<code>{esc(web_link(extra))}</code>",
+        ]
     return "\n".join(parts)
 
 

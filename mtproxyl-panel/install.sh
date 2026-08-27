@@ -516,6 +516,12 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask settable
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask set SELFMASK_[A-Z_]* *
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask verify
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask disable
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script web json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script web settable
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script web links
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script web set WEB_[A-Z_]* *
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script web enable
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script web disable
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup
 # Пользователи и настройки MTProxyL: в режиме Manager конфиг движка
 # примонтирован только для чтения, менять их может лишь MTProxyL.

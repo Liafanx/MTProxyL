@@ -1,4 +1,4 @@
-import { buildProxyLinks, mergeUserStats } from './usersPage.helpers';
+import { buildProxyLinks, buildWebLink, extractSecret, mergeUserStats } from './usersPage.helpers';
 import type { MtproxylUser } from '@/lib/api';
 
 
@@ -116,3 +116,35 @@ assertDeepEqual(
   mergeUserStats([{ username: 'alice' }], null),
   [{ username: 'alice', total_bytes: undefined, ip_history: [] }],
 );
+
+// ── WEB-ссылки ──────────────────────────────────────────────────────────────
+// Движок их не отдаёт, поэтому собираем из секрета: у ee-ссылки он лежит между
+// префиксом и доменом в hex, у dd — сразу за префиксом.
+const SECRET = '0123456789abcdef0123456789abcdef';
+const web = { enabled: true, domain: 'web.example.com', secret_mode: 'dd' };
+
+assertDeepEqual(
+  extractSecret({ tls: [`tg://proxy?server=a.ru&port=443&secret=ee${SECRET}6578616d706c65`] }),
+  SECRET,
+);
+assertDeepEqual(extractSecret({ secure: [`tg://proxy?server=a.ru&port=443&secret=dd${SECRET}`] }), SECRET);
+assertDeepEqual(extractSecret({ classic: [`tg://proxy?server=a.ru&port=443&secret=${SECRET}`] }), SECRET);
+
+assertDeepEqual(
+  buildWebLink({ classic: [`tg://proxy?server=a.ru&port=443&secret=${SECRET}`] }, web),
+  `tg://webproxy?server=web.example.com&secret=dd${SECRET}`,
+);
+// plain — секрет голым, без префикса.
+assertDeepEqual(
+  buildWebLink({ classic: [`tg://proxy?server=a.ru&port=443&secret=${SECRET}`] }, { ...web, secret_mode: 'plain' }),
+  `tg://webproxy?server=web.example.com&secret=${SECRET}`,
+);
+// Выключенный WEB и отсутствие статуса ссылку не дают.
+assertDeepEqual(buildWebLink({ classic: [`tg://proxy?secret=${SECRET}`] }, { ...web, enabled: false }), undefined);
+assertDeepEqual(buildWebLink({ classic: [`tg://proxy?secret=${SECRET}`] }, undefined), undefined);
+
+// В группах ссылка появляется отдельной группой WEB.
+const groups = buildProxyLinks({ classic: [`tg://proxy?server=a.ru&port=443&secret=${SECRET}`] }, web);
+assertDeepEqual(groups.map((g) => g.label), ['Classic', 'WEB']);
+
+console.log('usersPage.helpers: WEB-ссылки — ок');

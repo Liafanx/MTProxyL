@@ -958,8 +958,12 @@ _target_user_limit() {
 # в Telegram Desktop отдельный.
 _target_web_link() {
     local _label="$1" _raw
+    # В реаниматоре WEB поднимает сам владелец конфига — читаем оттуда.
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        web_target_link "$_label" 2>/dev/null || true
+        return 0
+    fi
     web_is_enabled 2>/dev/null || return 0
-    # В менеджере секреты лежат у нас, в реаниматоре — в конфиге цели.
     web_link_for_label "$_label" 2>/dev/null && return 0
     _raw=$(_target_user_secret "$_label" 2>/dev/null) || return 0
     [ -n "$_raw" ] || return 0

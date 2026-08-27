@@ -69,6 +69,22 @@ web_carrier_is_socket_per_stream() {
     [ "${WEB_CARRIER:-https-lanes}" = "websocket-lanes" ]
 }
 
+# Zapret2 зажимает окно в SYN+ACK и на пустых ACK, то есть до того, как придёт
+# ClientHello и станет известен SNI. Исключить по домену это нельзя в принципе,
+# а WEB от такого зажима заметно теряет в скорости. В раскладке split фильтр
+# идёт по порту прокси, и WEB не задевается.
+web_zapret2_hurts() {
+    web_layout_is_split && return 1
+    zapret2_in_effect 2>/dev/null
+}
+
+web_warn_zapret2() {
+    web_zapret2_hurts || return 0
+    log_warn "Zapret2 активен и режет скорость WEB Proxy"
+    log_info "Зажим TCP-окна ставится в SYN+ACK, когда SNI ещё неизвестен — по домену его не обойти"
+    log_info "Варианты: раскладка split (mtproxyl web set WEB_LAYOUT split) либо SYN-лимитер вместо zapret2"
+}
+
 # ── Куски конфига движка ──────────────────────────────────────
 
 # Явные listener'ы отменяют legacy-поля [server] целиком, поэтому MTProxy
@@ -285,6 +301,11 @@ web_link_for_label() {
 # Порядок важен: пока движок держит публичный порт, nginx на него не сядет.
 # Поэтому сначала уводим движок на loopback и только потом поднимаем nginx.
 web_enable() {
+    if web_is_reanimator; then
+        log_error "В режиме реаниматора конфигом владеет цель — WEB включает её хозяин"
+        log_info "Мы покажем состояние и соберём ссылки: mtproxyl web status, mtproxyl web links"
+        return 1
+    fi
     local _problems
     _problems=$(web_preflight_problems)
     if [ -n "$_problems" ]; then
@@ -300,6 +321,8 @@ web_enable() {
 
     web_carrier_is_socket_per_stream && [ "${NFT_ENABLED:-false}" = "true" ] && \
         log_warn "Carrier websocket-lanes открывает соединение на каждый поток — SYN-лимитер будет их резать"
+
+    web_warn_zapret2
 
     WEB_ENABLED="true"
     save_settings || return 1
@@ -335,6 +358,7 @@ web_enable() {
 # Обратный порядок: сначала снимаем nginx с публичного порта, иначе движок
 # не сможет его занять обратно.
 web_disable() {
+    web_is_reanimator && { log_error "В режиме реаниматора WEB выключает хозяин конфига цели"; return 1; }
     web_is_enabled || { log_info "WEB Proxy и так выключен"; return 0; }
 
     WEB_ENABLED="false"
@@ -442,7 +466,36 @@ web_nginx_has_stream() {
 
 # ── Команда CLI ───────────────────────────────────────────────
 
+# В реаниматоре конфигом владеет цель: мы ничего не настраиваем, только
+# показываем, что там поднято, и отдаём ссылки.
+web_is_reanimator() { [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; }
+
+_web_status_print_target() {
+    echo ""
+    echo -e "  ${BOLD}🌐 WEB Proxy у цели${NC}"
+    echo -e "  ──────────────────────────────────────────────"
+    if web_target_enabled; then
+        echo -e "   🟢 Состояние        ${GREEN}включён в конфиге цели${NC}"
+        echo -e "   🔗 Домен            $(web_target_host 2>/dev/null || echo '—')"
+        local _u _m _n=0
+        while IFS='|' read -r _u _m; do
+            [ -n "$_u" ] || continue
+            [ "$_n" -eq 0 ] && echo -e "   👤 Профили:"
+            echo -e "      ${_u} ${DIM}(${_m})${NC}"
+            _n=$((_n + 1))
+        done <<< "$(web_target_profiles)"
+        [ "$_n" -gt 0 ] || echo -e "   ${YELLOW}профилей нет — ссылки не построить${NC}"
+    else
+        echo -e "   🔴 Состояние        ${DIM}в конфиге цели не включён${NC}"
+    fi
+    echo ""
+    echo -e "  ${DIM}Конфигом владеет цель: включает и настраивает WEB её хозяин.${NC}"
+    echo -e "  ${DIM}MTProxyL показывает состояние и собирает ссылки: mtproxyl web links${NC}"
+    echo ""
+}
+
 web_status_print() {
+    web_is_reanimator && { _web_status_print_target; return 0; }
     echo ""
     echo -e "  ${BOLD}🌐 WEB Proxy${NC}"
     echo -e "  ──────────────────────────────────────────────"
@@ -464,6 +517,9 @@ web_status_print() {
         echo -e "   🪟 Порты            nginx :${PROXY_PORT:-443} → движок :${WEB_MTPROXY_PORT:-15443}, WEB :${WEB_LISTEN_PORT:-15080}"
     fi
     echo -e "   🕸  Заглушка         $(web_decoy_dir)"
+    if web_zapret2_hurts 2>/dev/null; then
+        echo -e "   ⚠️  Zapret2          ${YELLOW}режет скорость WEB${NC} — split или SYN-лимитер"
+    fi
     local _dup; _dup=$(web_duplicate_secret_labels 2>/dev/null)
     [ -n "$_dup" ] && echo -e "   ⚠️  Общий секрет     ${YELLOW}${_dup}${NC} — без профиля WEB"
     local _p; _p=$(web_preflight_problems 2>/dev/null)
@@ -476,6 +532,20 @@ web_status_print() {
 }
 
 web_links_print() {
+    if web_is_reanimator; then
+        web_target_enabled || { log_warn "У цели WEB Proxy не включён"; return 1; }
+        local _u _m _l _k=0
+        echo ""
+        while IFS='|' read -r _u _m; do
+            [ -n "$_u" ] || continue
+            _l=$(web_target_link "$_u") || continue
+            echo -e "  ${BOLD}${_u}${NC}"
+            echo -e "  ${CYAN}${_l}${NC}\n"
+            _k=$((_k + 1))
+        done <<< "$(web_target_profiles)"
+        [ "$_k" -gt 0 ] || { log_warn "Не удалось собрать ни одной ссылки"; return 1; }
+        return 0
+    fi
     web_is_enabled || { log_warn "WEB Proxy выключен"; return 1; }
     local i _link _n=0 _seen=" "
     echo ""
@@ -600,4 +670,71 @@ web_set_param() {
     log_success "${_key} = ${_val}"
     web_is_enabled && log_info "Примените заново: mtproxyl web enable"
     return 0
+}
+
+# Короткая строка для шапки главного меню.
+web_status_line() {
+    if web_is_enabled; then
+        echo -e "${GREEN}включён${NC} ($(web_domain 2>/dev/null), ${WEB_LAYOUT:-shared})"
+    else
+        echo -e "${DIM}выключен${NC}"
+    fi
+}
+
+# ── Реаниматор: WEB в чужом конфиге ───────────────────────────
+# Конфигом владеет пользователь, поэтому мы ничего не настраиваем — только
+# читаем, что он поднял, и помогаем достать ссылку.
+
+web_target_enabled() {
+    local _f="${DETECTED_CONFIG_PATH:-}"
+    [ -f "$_f" ] || return 1
+    [ "$(_toml_get_string_in_section "web" "enabled" "$_f" 2>/dev/null)" = "true" ]
+}
+
+# Первый vhost: host лежит в [[web.vhosts]], до вложенных таблиц decoy/profiles.
+web_target_host() {
+    local _f="${DETECTED_CONFIG_PATH:-}"
+    [ -f "$_f" ] || return 1
+    awk '
+        /^[[:space:]]*\[\[web\.vhosts\]\][[:space:]]*$/ { inv=1; next }
+        /^[[:space:]]*\[/ { if (inv) inv=0 }
+        inv && /^[[:space:]]*host[[:space:]]*=/ {
+            line=$0; sub(/^[^=]*=[[:space:]]*/, "", line)
+            gsub(/^"|"[[:space:]]*$/, "", line); print line; exit
+        }' "$_f"
+}
+
+# Пары «пользователь|secret_mode» из [[web.vhosts.profiles]].
+web_target_profiles() {
+    local _f="${DETECTED_CONFIG_PATH:-}"
+    [ -f "$_f" ] || return 1
+    awk '
+        /^[[:space:]]*\[\[web\.vhosts\.profiles\]\][[:space:]]*$/ {
+            if (u != "") print u "|" (m == "" ? "dd" : m)
+            inp=1; u=""; m=""; next
+        }
+        /^[[:space:]]*\[/ { if (inp) { if (u != "") print u "|" (m == "" ? "dd" : m); inp=0; u=""; m="" } }
+        inp {
+            line=$0; sub(/^[[:space:]]+/, "", line)
+            if (line ~ /^user[[:space:]]*=/)        { sub(/^[^=]*=[[:space:]]*/, "", line); gsub(/"/, "", line); u=line }
+            if (line ~ /^secret_mode[[:space:]]*=/) { sub(/^[^=]*=[[:space:]]*/, "", line); gsub(/"/, "", line); m=line }
+        }
+        END { if (u != "") print u "|" (m == "" ? "dd" : m) }' "$_f"
+}
+
+# Ссылка для пользователя цели, если он заведён профилем WEB.
+web_target_link() {
+    local _label="$1" _host _u _m _raw
+    web_target_enabled || return 1
+    _host=$(web_target_host) || return 1
+    [ -n "$_host" ] || return 1
+    while IFS='|' read -r _u _m; do
+        [ "$_u" = "$_label" ] || continue
+        _raw=$(_target_user_secret "$_label" 2>/dev/null)
+        [ -n "$_raw" ] || return 1
+        printf 'tg://webproxy?server=%s&secret=%s%s\n' \
+            "$_host" "$([ "$_m" = "dd" ] && echo dd)" "$_raw"
+        return 0
+    done <<< "$(web_target_profiles)"
+    return 1
 }

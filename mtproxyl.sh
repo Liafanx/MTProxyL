@@ -550,7 +550,9 @@ cli_main() {
             ;;
 
         web)
-            load_settings; load_detect_settings
+            # load_nft_settings нужен для предупреждения про zapret2: его
+            # состояние лежит в nft-rules.conf, а не в settings.conf.
+            load_settings; load_detect_settings; load_nft_settings
             handle_web_command "$@"
             ;;
 

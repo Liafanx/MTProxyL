@@ -32,7 +32,7 @@ tui_links_menu() {
             echo -e "  ${BRIGHT_GREEN}${BOLD}${_u}${NC}"
             echo -e "  ${DIM}$(_repeat '─' 40)${NC}"
             _tui_print_links "$server_ip" "$server_port" \
-                "$(build_link_secrets "$_sec" "$_dom" "$SUPEREXPERT_FILE")" "false"
+                "$(build_link_secrets "$_sec" "$_dom" "$SUPEREXPERT_FILE")" "false" "$_sec"
         done <<< "$(_superexpert_users)"
         press_any_key
         return
@@ -44,7 +44,7 @@ tui_links_menu() {
         echo -e "  ${BRIGHT_GREEN}${BOLD}${SECRETS_LABELS[$i]}${NC}"
         echo -e "  ${DIM}$(_repeat '─' 40)${NC}"
         _tui_print_links "$server_ip" "$server_port" \
-            "$(build_link_secrets "${SECRETS_KEYS[$i]}")" "true"
+            "$(build_link_secrets "${SECRETS_KEYS[$i]}")" "true" "${SECRETS_KEYS[$i]}"
     done
     press_any_key
 }
@@ -54,7 +54,7 @@ tui_links_menu() {
 # только один из них, и вторая половина ссылок оставалась не у дел.
 # QR печатаем один, для первой ссылки: их и так по две на человека.
 _tui_print_links() {
-    local _ip="$1" _port="$2" _pairs="$3" _qr="${4:-false}"
+    local _ip="$1" _port="$2" _pairs="$3" _qr="${4:-false}" _raw="${5:-}"
     local _kind _sec _first=1 _label
     while IFS='|' read -r _kind _sec; do
         [ -z "$_sec" ] && continue
@@ -67,6 +67,12 @@ _tui_print_links() {
         fi
         _first=0
     done <<< "$_pairs"
+
+    # WEB — свой домен и без порта, поэтому строкой отдельно от остальных.
+    if [ -n "$_raw" ] && web_is_enabled 2>/dev/null; then
+        local _wl; _wl=$(web_link_for_secret "$_raw" 2>/dev/null)
+        [ -n "$_wl" ] && echo -e "  ${BOLD}WEB${NC} ${DIM}(Telegram Desktop)${NC} ${CYAN}${_wl}${NC}"
+    fi
 }
 
 # Ссылки для reanimator-цели живут в show_target_links_ipv4() (lib/detect.sh) —

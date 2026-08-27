@@ -56,7 +56,10 @@ function getServer(raw: string): string {
   }
 }
 
-export function buildProxyLinks(links: UserLinks | undefined): ProxyLinkGroup[] {
+export function buildProxyLinks(
+  links: UserLinks | undefined,
+  web?: WebLinkConfig,
+): ProxyLinkGroup[] {
   if (!links) return [];
 
   const result: ProxyLinkGroup[] = [];
@@ -82,7 +85,34 @@ export function buildProxyLinks(links: UserLinks | undefined): ProxyLinkGroup[] 
   addGroup('Secure', (links.secure ?? []).map((url) => makeLink(url, getServer(url), true)));
   addGroup('Classic', (links.classic ?? []).map((url) => makeLink(url, getServer(url), true)));
 
+  // WEB движок в links не отдаёт: у него нет ресурса /v1/web, а user links
+  // покрывают только classic, secure и tls. Собираем сами из секрета.
+  const webUrl = buildWebLink(links, web);
+  if (webUrl) addGroup('WEB', [makeLink(webUrl, getServer(webUrl), true)]);
+
   return result;
+}
+
+/** Что нужно от статуса WEB, чтобы собрать ссылку пользователя. */
+export interface WebLinkConfig {
+  enabled: boolean;
+  domain: string;
+  secret_mode: string;
+}
+
+/**
+ * tg://webproxy для пользователя. Порта в ней нет — Telegram Desktop ходит
+ * только на 443, а секрет идёт голым либо с префиксом dd: ee в WEB не бывает.
+ */
+export function buildWebLink(
+  links: UserLinks | undefined,
+  web: WebLinkConfig | undefined,
+): string | undefined {
+  if (!web?.enabled || !web.domain) return undefined;
+  const raw = extractSecret(links);
+  if (!raw) return undefined;
+  const prefix = web.secret_mode === 'dd' ? 'dd' : '';
+  return `tg://webproxy?server=${web.domain}&secret=${prefix}${raw}`;
 }
 
 /**
@@ -93,7 +123,7 @@ export function buildProxyLinks(links: UserLinks | undefined): ProxyLinkGroup[] 
  * или secure: там секрет лежит без обвеса.
  */
 export function extractSecret(links: UserLinks | undefined): string | undefined {
-  const raw = links?.classic?.[0] ?? links?.secure?.[0];
+  const raw = links?.classic?.[0] ?? links?.secure?.[0] ?? links?.tls?.[0];
   if (!raw) return undefined;
   const secret = (() => {
     try {
@@ -102,7 +132,9 @@ export function extractSecret(links: UserLinks | undefined): string | undefined 
       return raw.match(/[?&]secret=([^&]*)/)?.[1] ?? '';
     }
   })();
-  // secure-ссылки несут тот же секрет с префиксом dd — для показа он лишний.
-  const bare = secret.replace(/^dd/, '');
+  // secure несёт тот же секрет с префиксом dd, ee-ссылка — с префиксом ee и
+  // доменом в hex на хвосте. Для показа нужен только сам секрет.
+  let bare = secret.replace(/^dd/, '');
+  if (/^ee[0-9a-fA-F]{32}/.test(secret)) bare = secret.slice(2, 34);
   return /^[0-9a-fA-F]{32}$/.test(bare) ? bare : undefined;
 }

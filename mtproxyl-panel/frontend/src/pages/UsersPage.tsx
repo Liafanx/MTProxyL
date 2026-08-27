@@ -11,7 +11,7 @@ import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
 } from '@/components/ui/table';
 import { usePolling } from '@/hooks/usePolling';
-import { telemt, panelApi, ApiError, mtproxylUsersApi } from '@/lib/api';
+import { telemt, panelApi, ApiError, mtproxylUsersApi, mtproxylApi } from '@/lib/api';
 import { useMtproxyl } from '@/hooks/useMtproxyl';
 import { Link } from 'react-router-dom';
 import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, ArrowUpDown, Search, ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react';
@@ -84,6 +84,9 @@ export function UsersPage() {
   // трафик и историю IP MTProxyL хранит отдельно и отдаёт по тому же label —
   // мержим, а не показываем как ещё одну независимую таблицу.
   const { data: mtproxylUsers } = usePolling(() => mtproxylUsersApi.list(), 10000);
+  // Статус WEB нужен, чтобы дособрать tg://webproxy: движок такие ссылки не
+  // отдаёт. Опрашиваем редко — он меняется вручную.
+  const { data: webStatus } = usePolling(() => mtproxylApi.web(), 60000);
   const mergedUsers = useMemo(() => mergeUserStats(users ?? [], mtproxylUsers), [users, mtproxylUsers]);
   const { quotaByUser, supported: quotaSupported, refresh: refreshQuota } = useQuota(10000);
 
@@ -403,7 +406,7 @@ export function UsersPage() {
                           <Link to={`/users/${u.username}`} className="text-accent hover:underline">{u.username}</Link>
                         </TableCell>
                         <TableCell>
-                          <ProxyLinkButtons links={buildProxyLinks(u.links)} />
+                          <ProxyLinkButtons links={buildProxyLinks(u.links, webStatus ?? undefined)} />
                         </TableCell>
                         <TableCell>
                           <Badge variant={u.current_connections > 0 ? 'default' : 'outline'}>
@@ -488,7 +491,7 @@ export function UsersPage() {
                   totalTraffic={u.total_octets}
                   accumulatedTraffic={u.total_bytes}
                   online={u.current_connections > 0}
-                  links={buildProxyLinks(u.links)}
+                  links={buildProxyLinks(u.links, webStatus ?? undefined)}
                   onEdit={() => setEditUser(u)}
                   onDelete={() => setDeleteUser(u.username)}
                   quotaUsed={quotaByUser.get(u.username)?.used_bytes}
