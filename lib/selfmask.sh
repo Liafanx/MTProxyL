@@ -887,6 +887,58 @@ _selfmask_cert_is_valid() {
     return 0
 }
 
+# Под словом «лимит» у Let's Encrypt прячутся разные вещи с разными причинами и
+# разными способами обойти. Раньше мы называли один и тот же — «5 сертификатов на
+# набор доменов» — и уверяли, что с DNS всё хорошо; при упёршейся проверке домена
+# это было прямой ложью. Теперь разбираем, что именно ответил сервер, и в любом
+# случае показываем его собственный текст.
+_selfmask_explain_cert_error() {
+    local _out="$1" _retry _bucket
+
+    _retry=$(printf '%s\n' "$_out" | grep -oE 'retry after [0-9T:-]+( [0-9:]+)?( UTC)?' | head -1)
+
+    case "$_out" in
+        *"too many failed authorizations"*|*"too many failed validations"*)
+            log_error "Слишком много неудачных проверок домена подряд"
+            log_info "Это следствие, а не причина: Let's Encrypt не смог подтвердить домен"
+            log_info "и временно перестал принимать попытки. Проверьте A-запись и порт 80,"
+            log_info "иначе следующая попытка упрётся в то же самое"
+            ;;
+        *"exact set of domains"*|*"too many duplicate certificates"*)
+            log_error "Уже выдано 5 одинаковых сертификатов на этот же набор доменов за 168 часов"
+            log_info "С DNS и портом 80 всё в порядке — упёрлись именно в повторные выпуски"
+            ;;
+        *"too many certificates"*|*"too many new certificates"*)
+            # Лимит считается по регистрируемому домену, и сервер сам его называет.
+            _bucket=$(printf '%s\n' "$_out" | grep -oE 'already issued for(:| )+"?[A-Za-z0-9.*-]+' | head -1 | grep -oE '[A-Za-z0-9.*-]+$')
+            log_error "Достигнут лимит сертификатов${_bucket:+ по домену ${_bucket}}"
+            log_info "Лимит считается по регистрируемому домену, а не по вашему поддомену."
+            if [ -n "$_bucket" ] && [ "$_bucket" != "$SELFMASK_DOMAIN" ]; then
+                log_warn "Похоже, ${_bucket} — сервис чужих поддоменов: квоту расходуете не только вы"
+                log_info "Свой домен решает это насовсем, у него будет отдельная квота"
+            fi
+            ;;
+        *rateLimited*|*"rate limit"*)
+            log_error "Let's Encrypt ограничил выпуск — точную причину он назвал ниже"
+            ;;
+        *)
+            log_info "Проверьте DNS домена и доступность порта 80 извне"
+            ;;
+    esac
+
+    [ -n "$_retry" ] && log_info "Повторить можно после: ${_retry#retry after }"
+    log_info "Не дожидаясь: mtproxyl selfmask set SELFMASK_CERT_MODE selfsigned, затем selfmask apply"
+
+    # Текст сервера показываем всегда: наша расшифровка может не угадать, а он
+    # называет и лимит, и домен, по которому тот считается.
+    echo ""
+    log_info "Ответ Let's Encrypt:"
+    printf '%s\n' "$_out" | grep -iE 'error|limit|detail|problem|urn:ietf' | tail -6 | sed 's/^/    /'
+    [ -f /var/log/letsencrypt/letsencrypt.log ] && \
+        log_info "Полный лог: /var/log/letsencrypt/letsencrypt.log"
+    return 0
+}
+
 _selfmask_obtain_cert() {
     log_info "Получение сертификата Let's Encrypt..."
 
@@ -989,20 +1041,7 @@ EOF
     fi
 
     log_error "Не удалось получить сертификат"
-    case "$_cb_out" in
-        *rateLimited*|*"too many certificates"*)
-            log_error "Let's Encrypt упёрся в лимит по этому домену — с DNS и портом 80 всё в порядке"
-            local _retry
-            _retry=$(printf '%s\n' "$_cb_out" | grep -oE 'retry after [0-9-]+ [0-9:]+ UTC' | head -1)
-            [ -n "$_retry" ] && log_info "Повторить можно после: ${_retry#retry after }"
-            log_info "Лимит — 5 сертификатов на один и тот же набор доменов за 168 часов"
-            log_info "Пока он не истёк: mtproxyl selfmask setup с самоподписанным сертификатом"
-            ;;
-        *)
-            log_info "Проверьте DNS домена и доступность порта 80 извне"
-            printf '%s\n' "$_cb_out" | tail -5 | sed 's/^/    /'
-            ;;
-    esac
+    _selfmask_explain_cert_error "$_cb_out"
     return 1
 }
 

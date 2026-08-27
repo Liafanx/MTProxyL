@@ -34,15 +34,16 @@ web_decoy_dir()  { echo "${WEB_DECOY_DIR:-${SELFMASK_SITE_DIR:-/var/www/mtproxyl
 # Домен маскировки FakeTLS — с ним WEB совпасть не может.
 web_faketls_domain() { echo "${PROXY_DOMAIN:-${SELFMASK_DOMAIN:-}}"; }
 
-# public_addr движок принимает только IP-литералом, а CUSTOM_IP у нас бывает
-# доменом. Самый верный источник — A-запись самого WEB-домена: она и есть тот
-# публичный адрес, на который придёт клиент.
-web_public_ip() {
-    local _ip _domain
-    _domain=$(web_domain)
-    if [ -n "$_domain" ]; then
-        _ip=$(getent ahostsv4 "$_domain" 2>/dev/null | awk '{print $1; exit}')
-        validate_ip_literal "$_ip" 2>/dev/null && { echo "$_ip"; return 0; }
+# Адрес самого сервера, определяемый мимо WEB-домена. Нужен именно так: сверять
+# A-запись домена с ней же — тавтология, которая никогда не срабатывает.
+web_server_ip() {
+    local _ip
+    _ip="${CUSTOM_IP:-}"
+    validate_ip_literal "$_ip" 2>/dev/null && { echo "$_ip"; return 0; }
+    # CUSTOM_IP бывает доменом прокси — он указывает на этот же сервер.
+    if [ -n "$_ip" ]; then
+        local _r; _r=$(getent ahostsv4 "$_ip" 2>/dev/null | awk '{print $1; exit}')
+        validate_ip_literal "$_r" 2>/dev/null && { echo "$_r"; return 0; }
     fi
     _ip=$(get_public_ip 2>/dev/null)
     validate_ip_literal "$_ip" 2>/dev/null && { echo "$_ip"; return 0; }
@@ -50,6 +51,22 @@ web_public_ip() {
         | grep -vE '^(172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.)' | head -1)
     validate_ip_literal "$_ip" 2>/dev/null && { echo "$_ip"; return 0; }
     return 1
+}
+
+# A-запись WEB-домена. Пусто — записи нет вовсе.
+web_domain_ip() {
+    local _d; _d=$(web_domain) || return 1
+    [ -n "$_d" ] || return 1
+    getent ahostsv4 "$_d" 2>/dev/null | awk '{print $1; exit}'
+}
+
+# public_addr движок принимает только IP-литералом. Берём A-запись домена — она
+# и есть тот публичный адрес, на который придёт клиент; если её нет, отдаём
+# адрес сервера, чтобы конфиг хотя бы собрался.
+web_public_ip() {
+    local _ip; _ip=$(web_domain_ip 2>/dev/null)
+    validate_ip_literal "$_ip" 2>/dev/null && { echo "$_ip"; return 0; }
+    web_server_ip
 }
 
 web_public_addr() {
@@ -412,8 +429,17 @@ web_preflight_problems() {
     if ! web_layout_is_split && [ -n "$_d" ] && [ "$_d" = "$_ft" ]; then
         _p+="домен WEB совпадает с доменом маскировки ${_ft} — в раскладке shared нужны разные имена"$'\n'
     fi
-    if [ -n "$_d" ] && [ "$(getent ahostsv4 "$_d" 2>/dev/null | awk '{print $1; exit}')" != "$(web_public_ip 2>/dev/null)" ]; then
-        _p+="домен ${_d} не указывает на этот сервер"$'\n'
+    # Сверяем с адресом сервера, а не с самим доменом: без этого проверка
+    # проходила всегда, а Let's Encrypt потом упирался в неподтверждаемый домен.
+    if [ -n "$_d" ]; then
+        local _dip _sip
+        _dip=$(web_domain_ip 2>/dev/null)
+        _sip=$(web_server_ip 2>/dev/null)
+        if [ -z "$_dip" ]; then
+            _p+="у домена ${_d} нет A-записи — заведите её на ${_sip:-адрес сервера}"$'\n'
+        elif [ -n "$_sip" ] && [ "$_dip" != "$_sip" ]; then
+            _p+="домен ${_d} указывает на ${_dip}, а сервер — ${_sip}"$'\n'
+        fi
     fi
     if [ "${WEB_DECOY_MODE:-static_directory}" = "static_directory" ]; then
         [ -d "$(web_decoy_dir)" ] || _p+="каталог сайта-заглушки не найден: $(web_decoy_dir)"$'\n'
