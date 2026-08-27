@@ -418,7 +418,7 @@ web_preflight_problems() {
     web_public_addr >/dev/null 2>&1 || _p+="не определён публичный IP"$'\n'
     # ssl_preread нужен только там, где по SNI действительно разводят.
     web_layout_is_split || web_nginx_has_stream || \
-        _p+="nginx собран без stream — обновите его (mtproxyl selfmask pq-install) либо возьмите раскладку split"$'\n'
+        _p+="nginx собран без stream — обновите его (mtproxyl selfmask pq-nginx) либо возьмите раскладку split"$'\n'
     if web_layout_is_split && [ "${PROXY_PORT:-443}" = "$(web_public_port)" ]; then
         _p+="в раскладке split у прокси и WEB должны быть разные порты, сейчас оба ${PROXY_PORT}"$'\n'
     fi

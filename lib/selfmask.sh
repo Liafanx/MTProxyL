@@ -4,7 +4,7 @@
 
 SELFMASK_PQ_PREFIX="/opt/mtproxyl-nginx"
 SELFMASK_PQ_SERVICE="mtproxyl-pq-nginx.service"
-SELFMASK_PQ_RELEASE_TAG="pq-nginx-1.28.3-openssl3.5.7"
+SELFMASK_PQ_RELEASE_TAG="pq-nginx-1.28.3-openssl3.5.7-r2"
 SELFMASK_PQ_NGINX_VERSION="1.28.3"
 SELFMASK_PQ_OPENSSL_VERSION="3.5.7"
 
@@ -549,11 +549,14 @@ _selfmask_install_pq_nginx() {
     # Заглушке нужен nginx, проверке домена — openssl. Пакеты разные: системный
     # nginx бывает с OpenSSL 3.5+, когда CLI openssl ещё старый.
     local _need="${1:-nginx}"
+    # force — качать нашу сборку в любом случае. Нужен, когда системного nginx
+    # или уже стоящего не хватает по возможностям (например, нет stream).
+    local _force="${2:-}"
 
     # Системный nginx с OpenSSL 3.5.0+ умеет X25519MLKEM768 сам — качать свою
     # сборку незачем. Каталоги под конфиг и логи всё равно готовим: запускаем
     # его со своим конфигом, чтобы не трогать чужой /etc/nginx.
-    if [ "$_need" = "nginx" ] && _system_nginx_has_pq; then
+    if [ "$_need" = "nginx" ] && [ "$_force" != "force" ] && _system_nginx_has_pq; then
         log_success "Используем $(_selfmask_nginx_source)"
         log_info "Своя сборка nginx не нужна — обновления придут из дистрибутива"
         mkdir -p /var/log/mtproxyl-nginx /var/lib/mtproxyl-nginx/{body,proxy,fastcgi} /var/lock
@@ -561,7 +564,7 @@ _selfmask_install_pq_nginx() {
         return 0
     fi
 
-    if [ -x "$(_selfmask_pq_nginx_bin)" ] && [ -x "$(_selfmask_pq_openssl_bin)" ]; then
+    if [ "$_force" != "force" ] && [ -x "$(_selfmask_pq_nginx_bin)" ] && [ -x "$(_selfmask_pq_openssl_bin)" ]; then
         local _ver
         _ver=$("$(_selfmask_pq_openssl_bin)" version 2>/dev/null | awk '{print $2}')
         log_success "PQ nginx уже установлен (OpenSSL ${_ver:-?})"
@@ -1899,6 +1902,32 @@ _selfmask_cleanup_for_uninstall() {
     systemctl daemon-reload &>/dev/null || true
 }
 
+# Ставит нашу сборку поверх любой текущей: системный nginx без stream или
+# устаревшая своя — обе лечатся одинаково.
+selfmask_refresh_pq_nginx() {
+    check_root
+    log_info "Обновление nginx из состава MTProxyL (${SELFMASK_PQ_RELEASE_TAG})..."
+    _selfmask_install_pq_nginx nginx force || return 1
+    local _bin; _bin=$(_selfmask_pq_nginx_bin)
+    if "$_bin" -V 2>&1 | grep -q -- '--with-stream_ssl_preread_module'; then
+        log_success "nginx умеет stream и ssl_preread — WEB Proxy можно включать"
+    else
+        log_warn "В этой сборке нет stream — раскладка shared работать не будет"
+    fi
+
+    # Архив разворачивается поверх префикса и приносит свой conf/nginx.conf,
+    # затирая наш. В обычной установке следом идёт настройка, а здесь её нет —
+    # поэтому пересобираем конфиг сами, иначе служба поднимется со стоковым.
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+        _selfmask_configure_nginx || {
+            log_error "Конфиг nginx пересобрать не удалось — примените заново: mtproxyl selfmask apply"
+            return 1; }
+        systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null || {
+            log_error "nginx не поднялся после обновления"; return 1; }
+        log_success "Конфиг пересобран, служба перезапущена"
+    fi
+}
+
 handle_selfmask_command() {
     local subcmd="${1:-status}"
     shift 2>/dev/null || true
@@ -1914,6 +1943,7 @@ handle_selfmask_command() {
         setup)   selfmask_setup ;;
         apply)   selfmask_apply ;;
         pq-install) selfmask_install_pq_tools ;;
+        pq-nginx)   selfmask_refresh_pq_nginx ;;
         panel-cert) check_root; selfmask_sync_panel_cert ;;
         set)     selfmask_set_param "$1" "$2" ;;
         settable) selfmask_settable_json ;;
@@ -1927,6 +1957,7 @@ handle_selfmask_command() {
             echo -e "    ${GREEN}selfmask apply${NC}    Применить по сохранённым параметрам"
             echo -e "    ${GREEN}selfmask set${NC} K V   Изменить параметр"
             echo -e "    ${GREEN}selfmask settable${NC} Список параметров (JSON)"
+            echo -e "    ${GREEN}selfmask pq-nginx${NC}  Обновить nginx из состава MTProxyL (нужен stream для WEB)"
             echo -e "    ${GREEN}selfmask panel-cert${NC} Отдать сертификат веб-панели"
             echo -e "    ${GREEN}selfmask verify${NC}   Проверка"
             echo -e "    ${GREEN}selfmask disable${NC}  Отключить"
