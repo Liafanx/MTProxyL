@@ -222,7 +222,7 @@ _print_secret_links() {
     if web_is_enabled 2>/dev/null; then
         local _wl; _wl=$(web_link_for_secret "$_raw" 2>/dev/null)
         if [ -n "$_wl" ]; then
-            echo -e "  ${BOLD}Ссылка для Telegram Desktop${NC} ${DIM}(WEB)${NC}"
+            echo -e "  ${BOLD}Ссылка для Telegram${NC} ${DIM}(WEB)${NC}"
             echo -e "  ${CYAN}${_wl}${NC}"
             echo ""
         fi
@@ -955,7 +955,7 @@ _target_user_limit() {
 # маскировки у чужого движка свои. Может вернуть несколько строк — по одной
 # на каждый включённый вид ссылки.
 # WEB-ссылка идёт следом за обычными: движок её не отдаёт, а тип прокси
-# в Telegram Desktop отдельный.
+# в клиенте отдельный.
 _target_web_link() {
     local _label="$1" _raw
     # В реаниматоре WEB поднимает сам владелец конфига — читаем оттуда.

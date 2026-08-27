@@ -71,7 +71,7 @@ _tui_print_links() {
     # WEB — свой домен и без порта, поэтому строкой отдельно от остальных.
     if [ -n "$_raw" ] && web_is_enabled 2>/dev/null; then
         local _wl; _wl=$(web_link_for_secret "$_raw" 2>/dev/null)
-        [ -n "$_wl" ] && echo -e "  ${BOLD}WEB${NC} ${DIM}(Telegram Desktop)${NC} ${CYAN}${_wl}${NC}"
+        [ -n "$_wl" ] && echo -e "  ${BOLD}WEB${NC} ${DIM}(WEB)${NC} ${CYAN}${_wl}${NC}"
     fi
 }
 

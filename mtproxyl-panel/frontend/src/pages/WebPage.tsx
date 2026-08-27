@@ -118,7 +118,7 @@ export function WebPage() {
       <div>
         <h1 className="text-xl font-semibold text-text-primary">WEB Proxy</h1>
         <p className="text-sm text-text-secondary mt-1">
-          Тип прокси WEB из Telegram Desktop: MTProto внутри обычного HTTPS. TLS терминирует
+          Тип прокси WEB: MTProto внутри обычного HTTPS. TLS терминирует
           nginx, движок получает простой HTTP на приватном порту.
         </p>
       </div>

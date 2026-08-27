@@ -57,7 +57,7 @@ web_public_addr() {
     printf '%s:%s\n' "$_ip" "$(web_public_port)"
 }
 
-# Клиент Telegram Desktop ходит только на 443 и порт в ссылку не пишет.
+# Клиент ходит в WEB только на 443 и порт в ссылку не пишет.
 web_port_is_443() { [ "$(web_public_port)" = "443" ]; }
 
 web_carrier_needs_http2() {
@@ -420,7 +420,7 @@ web_preflight_problems() {
     else
         [ -n "${WEB_DECOY_UPSTREAM:-}" ] || _p+="не задан upstream для заглушки"$'\n'
     fi
-    web_port_is_443 || _p+="публичный порт WEB $(web_public_port), а Telegram Desktop ходит туда только на 443"$'\n'
+    web_port_is_443 || _p+="публичный порт WEB $(web_public_port), а клиент ходит туда только на 443"$'\n'
     web_public_addr >/dev/null 2>&1 || _p+="не определён публичный IP"$'\n'
     # ssl_preread нужен только там, где по SNI действительно разводят.
     web_layout_is_split || web_nginx_has_stream || \

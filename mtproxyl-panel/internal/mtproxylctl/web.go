@@ -9,7 +9,7 @@ import (
 )
 
 // WebStatus is the output of `mtproxyl web json`. WEB mode carries MTProto
-// inside ordinary HTTPS for the Telegram Desktop "WEB" proxy type: the engine
+// inside ordinary HTTPS for the "WEB" proxy type: the engine
 // never terminates TLS, nginx does, and forwards plain HTTP/1.1 to a private
 // listener.
 type WebStatus struct {

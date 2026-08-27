@@ -22,6 +22,7 @@
 - [Режимы работы: Manager / Reanimator](#modes)
 - [Блокировка IP адресов](#блокировка-ip-адресов)
 - [Выбор домена для FakeTLS](#pq-warning)
+- [WEB Proxy](#web-details)
 - [Что умеет](#features)
 - [Основные CLI команды](#cli)
   - [Прокси](#cli-proxy)
@@ -31,6 +32,7 @@
   - [Режим эксперта](#cli-expert)
   - [NFT SYN Limiter](#cli-nft)
   - [Zapret2 MTProto fix](#cli-zapret2)
+  - [WEB Proxy](#cli-web)
   - [Selfmask](#cli-selfmask)
   - [Веб-панель](#cli-panel)
   - [Телеграм-бот](#cli-tgbot)
@@ -43,6 +45,7 @@
   - [Система](#cli-system)
   - [Tune (быстрый тюнинг)](#cli-tune)
   - [Reanimator (режим/детект)](#cli-reanimator)
+- [WEB Proxy — подробнее](#web-details)
 - [Zapret2 MTProto fix — подробнее](#zapret2-details)
 - [NFT SYN Limiter — подробнее](#nft-details)
 - [NFT Smart By-MEKO — подробнее](#nft-smart)
@@ -593,7 +596,7 @@ mtproxyl block import list.txt append     # добавить к текущему
   **самоподписанный** (любой домен, в т.ч. несуществующий — A-запись и порт 80 не нужны)
 
 ### WEB Proxy *(новое в v1.6.0)*
-- Тип прокси **WEB** из Telegram Desktop: MTProto внутри обычного HTTPS
+- Тип прокси **WEB**: MTProto внутри обычного HTTPS
 - Живёт на том же порту 443, что и FakeTLS — nginx разводит их по SNI
 - Домен, сертификат и сайт-заглушку берёт у Selfmask, отдельный выпуск не нужен
 - Четыре транспорта: `https`, `https-lanes`, `websocket`, `websocket-lanes`
@@ -795,7 +798,7 @@ mtproxyl nft zapret2-rm       # Удалить
 mtproxyl nft zapret2-wscale   # Проверить wscale / win ACK
 ```
 
-<a id="cli-selfmask"></a>
+<a id="cli-web"></a>
 
 ### WEB Proxy
 
@@ -808,6 +811,8 @@ mtproxyl web set КЛЮЧ ЗНАЧ    # Изменить параметр
 mtproxyl web settable         # Список параметров (JSON)
 mtproxyl web json             # Статус в JSON
 ```
+
+<a id="cli-selfmask"></a>
 
 ### Selfmask
 
@@ -1140,11 +1145,11 @@ telemt, делает резервную копию и сохраняет вла�
 
 ---
 
-<a id="zapret2-details"></a>
+<a id="web-details"></a>
 
 ## WEB Proxy — подробнее
 
-Начиная с telemt 3.5.1 движок умеет тип прокси **WEB** из Telegram Desktop:
+Начиная с telemt 3.5.1 движок умеет тип прокси **WEB**:
 MTProto едет внутри обычного HTTPS или WebSocket. MTProxyL поднимает такой
 режим одной командой — `mtproxyl web enable`.
 
@@ -1194,8 +1199,8 @@ SYN-лимитер фильтруются по порту прокси и WEB н
 - **Движок 3.5.1 или новее.** Более старый молча проигнорирует ключи WEB.
 - **nginx со stream и ssl_preread** — только для `shared`. Обновить:
   `mtproxyl selfmask pq-nginx`.
-- **Порт 443 для WEB.** Telegram Desktop ходит туда только на него и порт в
-  ссылку не пишет.
+- **Порт 443 для WEB.** Клиент ходит туда только на него и порт в ссылку не
+  пишет.
 
 Всё это проверяется до включения, и `mtproxyl web status` показывает, чего не
 хватает. Если движок или nginx не поднимутся, включение само откатится и вернёт
@@ -1294,6 +1299,8 @@ SYN-лимитер ему тоже не мешает.
 API-листенере движка: запросы, заголовки, тайминги и события сессий.
 
 ---
+
+<a id="zapret2-details"></a>
 
 ## Zapret2 MTProto fix — подробнее
 
@@ -2110,6 +2117,7 @@ selfmask, гео-блокировка, бэкапы) работают как о�
 │   ├── backup.sh                # Бэкапы
 │   ├── nft.sh                   # NFT limiter + Zapret2 fix + iOS фиксы
 │   ├── selfmask.sh              # Selfmask (PQ nginx + LE / самоподписанный cert)
+│   ├── web.sh                   # WEB Proxy: listener, vhost, nginx, ссылки
 │   ├── panel.sh                 # Установка и управление веб-панелью
 │   ├── expert_catalog.sh        # Каталог параметров telemt
 │   ├── expert_mode.sh           # Режим эксперта
@@ -2126,6 +2134,7 @@ selfmask, гео-блокировка, бэкапы) работают как о�
 │   ├── tui_expert.sh            # Подменю: режим эксперта
 │   ├── tui_nft.sh               # Подменю: NFT + Zapret2
 │   ├── tui_selfmask.sh          # Подменю: selfmask
+│   ├── tui_web.sh               # Подменю: WEB Proxy
 │   ├── tui_addons.sh            # Подменю: дополнения
 │   ├── tui_warp.sh              # Подменю: Telegram через WARP
 │   ├── tui_detect.sh            # Подменю: цель / режим (Reanimator)

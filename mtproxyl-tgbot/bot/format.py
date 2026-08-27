@@ -197,7 +197,7 @@ def _link_kind(tg_link: str) -> str:
     """Вид ссылки виден по началу секрета: ee — TLS-маскировка, dd — secure.
     У WEB отдельная схема: там dd означает лишь представление секрета."""
     if _is_webproxy(tg_link):
-        return "ещё одна ссылка (WEB · Telegram Desktop)"
+        return "ещё одна ссылка (WEB)"
     secret = parse_qs(urlsplit(tg_link).query).get("secret", [""])[0]
     if secret.startswith("ee"):
         return "ещё одна ссылка (ee · TLS)"

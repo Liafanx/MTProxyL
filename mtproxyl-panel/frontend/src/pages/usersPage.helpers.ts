@@ -101,7 +101,7 @@ export interface WebLinkConfig {
 }
 
 /**
- * tg://webproxy для пользователя. Порта в ней нет — Telegram Desktop ходит
+ * tg://webproxy для пользователя. Порта в ней нет — клиент ходит
  * только на 443, а секрет идёт голым либо с префиксом dd: ee в WEB не бывает.
  */
 export function buildWebLink(
