@@ -38,7 +38,7 @@ install_args_help() {
     --engine docker|binary     чем держать telemt: контейнер (по умолчанию)
                                или бинарник MTProxyL-Telemt под systemd
     --engine-version <тег>     версия telemt для бинарника (по умолчанию
-                               последняя), например 3.4.25
+                               последняя), например 3.5.4
 
   Прокси
     --port N                   порт прокси (по умолчанию 443)
