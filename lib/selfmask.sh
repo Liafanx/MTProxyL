@@ -939,12 +939,45 @@ _selfmask_explain_cert_error() {
     return 0
 }
 
+# Отдельный сертификат только на WEB-домен, своим cert-name. Нужен, когда общий
+# набор отвергнут из-за домена маскировки: у другого домена своя квота, и WEB
+# поднимется, даже пока Selfmask ждёт.
+_selfmask_obtain_web_cert() {
+    local _wd _dir
+    web_is_enabled 2>/dev/null || return 1
+    _wd=$(web_domain 2>/dev/null) || return 1
+    [ -n "$_wd" ] && [ "$_wd" != "$SELFMASK_DOMAIN" ] || return 1
+
+    _dir=$(web_own_cert_dir) || return 1
+    if _selfmask_cert_is_valid "$_dir" "$_wd"; then
+        log_success "У WEB уже есть свой сертификат на ${_wd}"
+        return 0
+    fi
+
+    log_info "Пробуем отдельный сертификат только на ${_wd}..."
+    local -a _mail2=(--register-unsafely-without-email)
+    [ -n "${SELFMASK_CERT_EMAIL:-}" ] && _mail2=(-m "$SELFMASK_CERT_EMAIL")
+
+    local _out
+    if _out=$(certbot certonly --webroot -w "$SELFMASK_SITE_DIR" \
+        -d "$_wd" --non-interactive --agree-tos \
+        "${_mail2[@]}" --cert-name "$_wd" 2>&1); then
+        log_success "Сертификат для ${_wd} получен"
+        return 0
+    fi
+    log_warn "Отдельный сертификат для ${_wd} тоже не вышел"
+    _selfmask_explain_cert_error "$_out"
+    return 1
+}
+
 _selfmask_obtain_cert() {
     log_info "Получение сертификата Let's Encrypt..."
 
     local _cert_dir; _cert_dir="$(_selfmask_cert_dir)"
     local -a _need=("$SELFMASK_DOMAIN")
-    if web_is_enabled 2>/dev/null; then
+    # Если WEB уже обзавёлся своим сертификатом, требовать его имя от общего
+    # незачем — иначе мы бы выпускали общий заново на каждом применении.
+    if web_is_enabled 2>/dev/null && ! web_has_own_cert 2>/dev/null; then
         local _wd; _wd=$(web_domain 2>/dev/null)
         [ -n "$_wd" ] && [ "$_wd" != "$SELFMASK_DOMAIN" ] && _need+=("$_wd")
     fi
@@ -1037,6 +1070,16 @@ EOF
         "${_mail_args[@]}" \
         --cert-name "$SELFMASK_DOMAIN" 2>&1); then
         log_success "Сертификат получен"
+        return 0
+    fi
+
+    # Общий сертификат не вышел. Если в наборе был ещё и WEB-домен, пробуем
+    # выпустить ему отдельный: чаще всего упирается именно домен маскировки —
+    # он идёт в каждом запросе, — и тогда развязка спасает WEB целиком.
+    if [ "${#_domain_args[@]}" -gt 2 ] && _selfmask_obtain_web_cert; then
+        log_warn "Общий сертификат выпустить не удалось, но у WEB теперь свой"
+        log_info "Причина отказа по общему набору:"
+        _selfmask_explain_cert_error "$_cb_out"
         return 0
     fi
 

@@ -34,6 +34,25 @@ web_decoy_dir()  { echo "${WEB_DECOY_DIR:-${SELFMASK_SITE_DIR:-/var/www/mtproxyl
 # Домен маскировки FakeTLS — с ним WEB совпасть не может.
 web_faketls_domain() { echo "${PROXY_DOMAIN:-${SELFMASK_DOMAIN:-}}"; }
 
+# Каталог отдельного сертификата WEB. Он появляется, только если общий с
+# Selfmask выпустить не удалось: тогда имена развязываются, и проблема с одним
+# доменом перестаёт блокировать второй.
+web_own_cert_dir() {
+    local _d; _d=$(web_domain 2>/dev/null) || return 1
+    [ -n "$_d" ] || return 1
+    echo "/etc/letsencrypt/live/${_d}"
+}
+
+web_has_own_cert() {
+    local _dir; _dir=$(web_own_cert_dir) || return 1
+    [ -f "${_dir}/fullchain.pem" ] && [ -f "${_dir}/privkey.pem" ]
+}
+
+# Какой сертификат подставлять в nginx для WEB-ветки.
+web_cert_dir() {
+    if web_has_own_cert; then web_own_cert_dir; else _selfmask_cert_dir; fi
+}
+
 # Адрес самого сервера, определяемый мимо WEB-домена. Нужен именно так: сверять
 # A-запись домена с ней же — тавтология, которая никогда не срабатывает.
 web_server_ip() {
@@ -245,7 +264,9 @@ NGX
 web_nginx_http_server() {
     local _domain _cert_dir _listen _realip=""
     _domain=$(web_domain) || return 1
-    _cert_dir="$1"
+    # Общий каталог приходит аргументом, но у WEB может быть свой сертификат.
+    _cert_dir=$(web_cert_dir 2>/dev/null)
+    [ -n "$_cert_dir" ] || _cert_dir="$1"
     if web_layout_is_split; then
         # Клиент приходит прямо в nginx, адрес виден и без PROXY-заголовка.
         _listen="listen ${WEB_PUBLIC_PORT:-443} ssl;
