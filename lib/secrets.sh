@@ -217,6 +217,16 @@ _print_secret_links() {
         _first=0
         echo ""
     done <<< "$(build_link_secrets "$_raw")"
+
+    # WEB — отдельный тип прокси со своим доменом и без порта в ссылке.
+    if web_is_enabled 2>/dev/null; then
+        local _wl; _wl=$(web_link_for_secret "$_raw" 2>/dev/null)
+        if [ -n "$_wl" ]; then
+            echo -e "  ${BOLD}Ссылка для Telegram Desktop${NC} ${DIM}(WEB)${NC}"
+            echo -e "  ${CYAN}${_wl}${NC}"
+            echo ""
+        fi
+    fi
 }
 
 # Удалить секрет
@@ -663,6 +673,10 @@ get_proxy_links() {
         [ -n "$_sec" ] || continue
         echo "tg://proxy?server=${server_ip}&port=${server_port}&secret=${_sec}"
     done <<< "$(build_link_secrets "${SECRETS_KEYS[$idx]}")"
+
+    # WEB — отдельный тип прокси: свой домен, свой префикс секрета, без порта.
+    web_is_enabled 2>/dev/null && web_link_for_secret "${SECRETS_KEYS[$idx]}" 2>/dev/null
+    return 0
 }
 
 # Одна ссылка — первая из списка. Её ждут те, кто читает вывод строкой:
@@ -940,6 +954,18 @@ _target_user_limit() {
 # Ссылки строятся по конфигу цели, а не по нашим настройкам: домен и режим
 # маскировки у чужого движка свои. Может вернуть несколько строк — по одной
 # на каждый включённый вид ссылки.
+# WEB-ссылка идёт следом за обычными: движок её не отдаёт, а тип прокси
+# в Telegram Desktop отдельный.
+_target_web_link() {
+    local _label="$1" _raw
+    web_is_enabled 2>/dev/null || return 0
+    # В менеджере секреты лежат у нас, в реаниматоре — в конфиге цели.
+    web_link_for_label "$_label" 2>/dev/null && return 0
+    _raw=$(_target_user_secret "$_label" 2>/dev/null) || return 0
+    [ -n "$_raw" ] || return 0
+    web_link_for_secret "$_raw" 2>/dev/null || true
+}
+
 target_user_link() {
     local _label="$1" _raw _domain _mask _full _ip _port
 
@@ -953,6 +979,7 @@ target_user_link() {
     fi
     if [ -n "$_from_api" ]; then
         printf '%s' "$_from_api"
+        _target_web_link "$_label"
         return 0
     fi
 
@@ -972,7 +999,8 @@ target_user_link() {
     [ -n "$_ip" ] || _ip=$(get_public_ip)
     _port=$(_toml_get_string_in_section "general.links" "public_port" "$DETECTED_CONFIG_PATH")
     [ -n "$_port" ] || _port="${DETECTED_PORT:-443}"
-    printf 'tg://proxy?server=%s&port=%s&secret=%s' "$_ip" "$_port" "$_full"
+    printf 'tg://proxy?server=%s&port=%s&secret=%s\n' "$_ip" "$_port" "$_full"
+    _target_web_link "$_label"
 }
 
 # Успела ли цель подхватить правку сама. telemt следит за файлом конфига и

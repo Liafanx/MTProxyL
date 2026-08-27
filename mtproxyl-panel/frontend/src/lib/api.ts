@@ -115,6 +115,32 @@ export interface SelfmaskStatus {
   prev_domain?: string;
 }
 
+export interface WebStatus {
+  enabled: boolean;
+  /** shared — один публичный порт на двоих, split — у WEB свой. */
+  layout: string;
+  public_port: number;
+  domain: string;
+  carrier: string;
+  secret_mode: string;
+  public_addr: string;
+  listen_port: number;
+  tls_port: number;
+  mtproxy_port: number;
+  decoy_mode: string;
+  decoy_dir: string;
+  debug: boolean;
+  /** Что мешает включению, через точку с запятой. Пусто — можно включать. */
+  problems: string;
+}
+
+export interface WebParam {
+  key: string;
+  validator: string;
+  desc: string;
+  value: string;
+}
+
 export interface SelfmaskParam {
   key: string;
   validator: string;
@@ -277,6 +303,19 @@ export const mtproxylApi = {
     request<{ output: string }>(MTPROXYL_BASE, '/selfmask/verify', { method: 'POST' }),
   selfmaskDisable: () =>
     request<{ output: string }>(MTPROXYL_BASE, '/selfmask/disable', { method: 'POST' }),
+
+  web: () => request<WebStatus>(MTPROXYL_BASE, '/web'),
+  webParams: () => request<WebParam[]>(MTPROXYL_BASE, '/web/params'),
+  setWebParam: (key: string, value: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/web/params', {
+      method: 'POST',
+      body: JSON.stringify({ key, value }),
+    }),
+  webEnable: () =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/web/enable', { method: 'POST' }),
+  webDisable: () =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/web/disable', { method: 'POST' }),
+  webLinks: () => request<{ output: string }>(MTPROXYL_BASE, '/web/links'),
 
   backups: () => request<MtproxylBackup[]>(MTPROXYL_BASE, '/backups'),
   createBackup: () =>

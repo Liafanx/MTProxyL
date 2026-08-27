@@ -183,7 +183,10 @@ def link_text(label: str, tg_links: str | list[str]) -> str:
 
 
 def _link_kind(tg_link: str) -> str:
-    """Вид ссылки виден по началу секрета: ee — TLS-маскировка, dd — secure."""
+    """Вид ссылки виден по началу секрета: ee — TLS-маскировка, dd — secure.
+    У WEB отдельная схема: там dd означает лишь представление секрета."""
+    if _is_webproxy(tg_link):
+        return "ещё одна ссылка (WEB · Telegram Desktop)"
     secret = parse_qs(urlsplit(tg_link).query).get("secret", [""])[0]
     if secret.startswith("ee"):
         return "ещё одна ссылка (ee · TLS)"
@@ -192,8 +195,16 @@ def _link_kind(tg_link: str) -> str:
     return "ещё одна ссылка"
 
 
+def _is_webproxy(tg_link: str) -> bool:
+    return urlsplit(tg_link).netloc == "webproxy"
+
+
 def web_link(tg_link: str) -> str:
-    """tg://proxy?… → https://t.me/proxy?… — то же самое, но открывается везде."""
+    """tg://proxy?… → https://t.me/proxy?… — то же самое, но открывается везде.
+    У tg://webproxy аналога на t.me нет, поэтому её отдаём как есть: подменённая
+    ссылка вела бы в никуда."""
+    if _is_webproxy(tg_link):
+        return tg_link
     parts = urlsplit(tg_link)
     return f"https://t.me/proxy?{parts.query}" if parts.query else tg_link
 
