@@ -80,7 +80,7 @@ _argsgen_defaults() {
 
     if web_is_enabled 2>/dev/null; then
         _AG_ON[web]="yes"
-        _AG_VAL[web]="$(web_domain 2>/dev/null) (${WEB_LAYOUT:-shared}, ${WEB_CARRIER:-https-lanes})"
+        _AG_VAL[web]="$(web_domain 2>/dev/null) (${WEB_LAYOUT:-shared}, ${WEB_CARRIER:-websocket-lanes})"
     else
         _AG_ON[web]="no"; _AG_VAL[web]="выключен"
     fi
@@ -164,7 +164,7 @@ _argsgen_build() {
         # WEB стоит на плечах Selfmask, поэтому только внутри его ветки.
         if [ "${_AG_ON[web]}" = "yes" ]; then
             _a+=(--web yes --web-layout "${WEB_LAYOUT:-shared}")
-            _a+=(--web-carrier "${WEB_CARRIER:-https-lanes}")
+            _a+=(--web-carrier "${WEB_CARRIER:-websocket-lanes}")
             _a+=(--web-secret-mode "${WEB_SECRET_MODE:-dd}")
             [ -n "${WEB_DOMAIN:-}" ] && _a+=(--web-domain "$WEB_DOMAIN")
             [ "${WEB_LAYOUT:-shared}" = "split" ] && _a+=(--web-port "${WEB_PUBLIC_PORT:-443}")

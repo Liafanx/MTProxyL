@@ -40,25 +40,20 @@ _tui_web_carrier_menu() {
     echo ""
     echo -e "  ${BOLD}Транспорт carrier${NC}"
     echo ""
-    echo -e "  ${CYAN}[1]${NC}  https-lanes  ${DIM}по умолчанию, потоки не блокируют друг друга${NC}"
-    echo -e "  ${CYAN}[2]${NC}  https        ${DIM}максимальная совместимость${NC}"
-    echo -e "  ${CYAN}[3]${NC}  websocket    ${DIM}один сокет на все потоки${NC}"
-    echo -e "  ${CYAN}[4]${NC}  websocket-lanes ${DIM}сокет на каждый поток${NC}"
+    echo -e "  ${CYAN}[1]${NC}  websocket-lanes ${DIM}по умолчанию, сокет на каждый поток${NC}"
+    echo -e "  ${CYAN}[2]${NC}  https-lanes  ${DIM}потоки не блокируют друг друга, нужен HTTP/2${NC}"
+    echo -e "  ${CYAN}[3]${NC}  https        ${DIM}максимальная совместимость${NC}"
+    echo -e "  ${CYAN}[4]${NC}  websocket    ${DIM}один сокет на все потоки${NC}"
     echo ""
     echo -e "  ${DIM}[0]${NC}  Отмена"
     echo ""
     echo -en "  ${BOLD}Выбор:${NC} "
     local _c; read_line _c
     case "$_c" in
-        1) web_set_param WEB_CARRIER https-lanes ;;
-        2) web_set_param WEB_CARRIER https ;;
-        3) web_set_param WEB_CARRIER websocket ;;
-        4)
-            web_set_param WEB_CARRIER websocket-lanes || return 0
-            # Соединение на каждый поток — лимитер режет такое по ставке.
-            [ "${NFT_ENABLED:-false}" = "true" ] && \
-                log_warn "Включён SYN-лимитер: он режет частые соединения, а этот carrier открывает по одному на поток"
-            ;;
+        1) web_set_param WEB_CARRIER websocket-lanes ;;
+        2) web_set_param WEB_CARRIER https-lanes ;;
+        3) web_set_param WEB_CARRIER https ;;
+        4) web_set_param WEB_CARRIER websocket ;;
         *) return 0 ;;
     esac
 }
@@ -72,7 +67,7 @@ tui_web_menu() {
 
         echo -e "  ${CYAN}[1]${NC}  $(web_is_enabled && echo "Выключить" || echo "Включить")"
         echo -e "  ${CYAN}[2]${NC}  Раскладка портов  ${DIM}${WEB_LAYOUT:-shared}${NC}"
-        echo -e "  ${CYAN}[3]${NC}  Транспорт carrier  ${DIM}${WEB_CARRIER:-https-lanes}${NC}"
+        echo -e "  ${CYAN}[3]${NC}  Транспорт carrier  ${DIM}${WEB_CARRIER:-websocket-lanes}${NC}"
         echo -e "  ${CYAN}[4]${NC}  Домен  ${DIM}$(web_domain 2>/dev/null || echo '—')${NC}"
         echo -e "  ${CYAN}[5]${NC}  Ссылки tg://webproxy"
         echo -e "  ${CYAN}[6]${NC}  Диагностика /web-status  ${DIM}$([ "${WEB_DEBUG:-false}" = "true" ] && echo "включена" || echo "выключена")${NC}"
