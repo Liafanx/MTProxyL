@@ -894,6 +894,32 @@ handle_port_command() {
             geoblock_rules_active && log_success "Гео-блокировка переприменена" \
                 || log_warn "Гео-блокировку переприменить не удалось: mtproxyl geoblock reapply"
         fi
+        # Zapret2 и SYN-лимитер тоже прибиты к порту: без переприменения они
+        # защищали бы старый, а новый оставался бы открытым.
+        if [ "$_port_before" != "$PROXY_PORT" ]; then
+            # NFT_ENABLED и ZAPRET2_APPLIED живут в nft-rules.conf, а не в settings.conf.
+            load_nft_settings 2>/dev/null || true
+            if zapret2_in_effect 2>/dev/null; then
+                log_info "Перенос правил zapret2 на порт ${PROXY_PORT}..."
+                # Стартовый скрипт службы держит порт у себя и перетирает
+                # правила при перезапуске — переписываем и его.
+                zapret2_write_conf >/dev/null 2>&1 || true
+                zapret2_write_service >/dev/null 2>&1 || true
+                systemctl daemon-reload >/dev/null 2>&1 || true
+                if systemctl restart "${ZAPRET2_SERVICE:-mtproxyl-zapret2.service}" >/dev/null 2>&1 \
+                   && zapret2_apply_nft >/dev/null 2>&1; then
+                    log_success "Zapret2 переприменён"
+                else
+                    log_warn "Zapret2 переприменить не удалось: mtproxyl zapret2 apply"
+                fi
+            fi
+            if [ "${NFT_ENABLED:-false}" = "true" ]; then
+                log_info "Перенос правил SYN-лимитера на порт ${PROXY_PORT}..."
+                apply_nft_rules >/dev/null 2>&1 \
+                    && log_success "SYN-лимитер переприменён" \
+                    || log_warn "SYN-лимитер переприменить не удалось: mtproxyl nft apply"
+            fi
+        fi
         if is_proxy_running; then
             load_secrets
             restart_proxy_container || true

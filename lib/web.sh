@@ -8,9 +8,20 @@ WEB_MIN_ENGINE_VERSION="3.5.1"
 
 web_is_enabled() { [ "${WEB_ENABLED:-false}" = "true" ]; }
 
-# Имя WEB обязано отличаться от домена маскировки: FakeTLS-клиент шлёт в SNI
-# именно tls_domain, и ssl_preread отправил бы его в nginx вместо движка.
-# Поэтому по умолчанию берём поддомен — сертификат и сайт остаются общими.
+# shared — один публичный порт на двоих, nginx разводит по SNI.
+# split — у WEB свой порт, движок остаётся на PROXY_PORT напрямую.
+web_layout_is_split() { [ "${WEB_LAYOUT:-shared}" = "split" ]; }
+
+# Порт, на который приходит клиент WEB. В ссылку он не пишется, но именно
+# он идёт в public_addr.
+web_public_port() {
+    if web_layout_is_split; then echo "${WEB_PUBLIC_PORT:-443}"; else echo "${PROXY_PORT:-443}"; fi
+}
+
+# В shared имя WEB обязано отличаться от домена маскировки: FakeTLS-клиент шлёт
+# в SNI именно tls_domain, и ssl_preread отправил бы его в nginx вместо движка.
+# В split порты разные, и совпадение безобидно. Поддомен берём по умолчанию в
+# обоих режимах — так переключение раскладки не меняет ссылки.
 web_domain() {
     if [ -n "${WEB_DOMAIN:-}" ]; then echo "${WEB_DOMAIN}"; return 0; fi
     local _base="${SELFMASK_DOMAIN:-}"
@@ -41,14 +52,13 @@ web_public_ip() {
     return 1
 }
 
-# Публичный порт остаётся за PROXY_PORT — на нём стоит nginx, а не движок.
 web_public_addr() {
     local _ip; _ip=$(web_public_ip) || return 1
-    printf '%s:%s\n' "$_ip" "${PROXY_PORT:-443}"
+    printf '%s:%s\n' "$_ip" "$(web_public_port)"
 }
 
 # Клиент Telegram Desktop ходит только на 443 и порт в ссылку не пишет.
-web_port_is_443() { [ "${PROXY_PORT:-443}" = "443" ]; }
+web_port_is_443() { [ "$(web_public_port)" = "443" ]; }
 
 web_carrier_needs_http2() {
     [ "${WEB_CARRIER:-https-lanes}" = "https-lanes" ]
@@ -64,13 +74,28 @@ web_carrier_is_socket_per_stream() {
 # Явные listener'ы отменяют legacy-поля [server] целиком, поэтому MTProxy
 # перечисляем вместе с WEB — иначе FakeTLS просто не поднимется.
 web_listeners_toml() {
-    cat << TOML
+    if web_layout_is_split; then
+        # Порт у прокси свой, движок остаётся публичным: ни PROXY-заголовка,
+        # ни переезда на loopback не нужно.
+        cat << TOML
+
+[[server.listeners]]
+ip = "0.0.0.0"
+port = ${PROXY_PORT:-443}
+transport = "mtproxy"
+proxy_protocol = ${PROXY_PROTOCOL:-false}
+TOML
+    else
+        cat << TOML
 
 [[server.listeners]]
 ip = "127.0.0.1"
 port = ${WEB_MTPROXY_PORT:-15443}
 transport = "mtproxy"
 proxy_protocol = true
+TOML
+    fi
+    cat << TOML
 
 [[server.listeners]]
 ip = "127.0.0.1"
@@ -145,6 +170,8 @@ web_sections_toml() {
 # WEB, а всё остальное — движку. proxy_protocol нужен обеим веткам, иначе
 # бэкенды увидят вместо клиента loopback.
 web_nginx_stream_block() {
+    # В split разводить нечего: у WEB свой порт, nginx слушает его напрямую.
+    web_layout_is_split && return 0
     local _domain _port
     _domain=$(web_domain) || return 1
     _port="${PROXY_PORT:-443}"
@@ -174,20 +201,28 @@ NGX
 # Таймауты выше long_poll_secs (25 с) и удвоенного liveness WebSocket —
 # иначе фронт рвал бы carrier сам.
 web_nginx_http_server() {
-    local _domain _cert_dir
+    local _domain _cert_dir _listen _realip=""
     _domain=$(web_domain) || return 1
     _cert_dir="$1"
+    if web_layout_is_split; then
+        # Клиент приходит прямо в nginx, адрес виден и без PROXY-заголовка.
+        _listen="listen ${WEB_PUBLIC_PORT:-443} ssl;
+        listen [::]:${WEB_PUBLIC_PORT:-443} ssl;"
+    else
+        _listen="listen 127.0.0.1:${WEB_TLS_PORT:-15444} ssl proxy_protocol;"
+        _realip="set_real_ip_from 127.0.0.1;
+        real_ip_header proxy_protocol;
+"
+    fi
     cat << NGX
 
     server {
-        listen 127.0.0.1:${WEB_TLS_PORT:-15444} ssl proxy_protocol;
+        ${_listen}
         http2 on;
         server_name ${_domain};
         server_tokens off;
 
-        set_real_ip_from 127.0.0.1;
-        real_ip_header proxy_protocol;
-
+        ${_realip}
         ssl_certificate     ${_cert_dir}/fullchain.pem;
         ssl_certificate_key ${_cert_dir}/privkey.pem;
 
@@ -272,7 +307,11 @@ web_enable() {
     log_info "Выпуск сертификата с WEB-доменом $(web_domain)..."
     _selfmask_obtain_cert || { WEB_ENABLED="false"; save_settings; return 1; }
 
-    log_info "Движок уходит с порта ${PROXY_PORT:-443} на loopback..."
+    if web_layout_is_split; then
+        log_info "Прокси остаётся на порту ${PROXY_PORT:-443}, WEB займёт $(web_public_port)..."
+    else
+        log_info "Движок уходит с порта ${PROXY_PORT:-443} на loopback..."
+    fi
     generate_telemt_config || { WEB_ENABLED="false"; save_settings; return 1; }
     load_secrets
     restart_proxy_container || true
@@ -301,11 +340,11 @@ web_disable() {
     WEB_ENABLED="false"
     save_settings || return 1
 
-    log_info "Снятие nginx с публичного порта..."
+    log_info "Снятие nginx с порта $(web_public_port)..."
     _selfmask_configure_nginx || return 1
     systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
 
-    log_info "Возврат движка на порт ${PROXY_PORT:-443}..."
+    log_info "Перестройка конфига движка..."
     generate_telemt_config || return 1
     # Безусловно: движок мог упасть в цикл рестарта и is_proxy_running врёт.
     load_secrets
@@ -319,8 +358,9 @@ web_status_json() {
     _d=$(web_domain 2>/dev/null)
     _addr=$(web_public_addr 2>/dev/null)
     _problems=$(web_preflight_problems 2>/dev/null | tr '\n' ';')
-    printf '{"enabled":%s,"domain":"%s","carrier":"%s","secret_mode":"%s","public_addr":"%s","listen_port":%s,"tls_port":%s,"mtproxy_port":%s,"decoy_mode":"%s","decoy_dir":"%s","debug":%s,"problems":"%s"}\n' \
+    printf '{"enabled":%s,"layout":"%s","public_port":%s,"domain":"%s","carrier":"%s","secret_mode":"%s","public_addr":"%s","listen_port":%s,"tls_port":%s,"mtproxy_port":%s,"decoy_mode":"%s","decoy_dir":"%s","debug":%s,"problems":"%s"}\n' \
         "$(web_is_enabled && echo true || echo false)" \
+        "$(json_escape "${WEB_LAYOUT:-shared}")" "$(web_public_port)" \
         "$(json_escape "$_d")" "$(json_escape "${WEB_CARRIER:-}")" \
         "$(json_escape "${WEB_SECRET_MODE:-}")" "$(json_escape "$_addr")" \
         "${WEB_LISTEN_PORT:-15080}" "${WEB_TLS_PORT:-15444}" "${WEB_MTPROXY_PORT:-15443}" \
@@ -337,9 +377,10 @@ web_preflight_problems() {
     _d=$(web_domain 2>/dev/null)
     _ft=$(web_faketls_domain 2>/dev/null)
     [ -n "$_d" ] || _p+="не задан домен: нужен свой FQDN с сертификатом"$'\n'
-    # Совпадение имён увело бы FakeTLS-клиентов в nginx: по SNI они неотличимы.
-    if [ -n "$_d" ] && [ "$_d" = "$_ft" ]; then
-        _p+="домен WEB совпадает с доменом маскировки ${_ft} — нужны разные имена"$'\n'
+    # В shared совпадение имён увело бы FakeTLS-клиентов в nginx: по SNI они
+    # неотличимы. В split порты разные, и совпадение никому не мешает.
+    if ! web_layout_is_split && [ -n "$_d" ] && [ "$_d" = "$_ft" ]; then
+        _p+="домен WEB совпадает с доменом маскировки ${_ft} — в раскладке shared нужны разные имена"$'\n'
     fi
     if [ -n "$_d" ] && [ "$(getent ahostsv4 "$_d" 2>/dev/null | awk '{print $1; exit}')" != "$(web_public_ip 2>/dev/null)" ]; then
         _p+="домен ${_d} не указывает на этот сервер"$'\n'
@@ -349,12 +390,20 @@ web_preflight_problems() {
     else
         [ -n "${WEB_DECOY_UPSTREAM:-}" ] || _p+="не задан upstream для заглушки"$'\n'
     fi
-    web_port_is_443 || _p+="публичный порт ${PROXY_PORT}, а Telegram Desktop ходит в WEB только на 443"$'\n'
+    web_port_is_443 || _p+="публичный порт WEB $(web_public_port), а Telegram Desktop ходит туда только на 443"$'\n'
     web_public_addr >/dev/null 2>&1 || _p+="не определён публичный IP"$'\n'
-    web_nginx_has_stream || _p+="nginx собран без stream — обновите его: mtproxyl selfmask pq-install"$'\n'
+    # ssl_preread нужен только там, где по SNI действительно разводят.
+    web_layout_is_split || web_nginx_has_stream || \
+        _p+="nginx собран без stream — обновите его (mtproxyl selfmask pq-install) либо возьмите раскладку split"$'\n'
+    if web_layout_is_split && [ "${PROXY_PORT:-443}" = "$(web_public_port)" ]; then
+        _p+="в раскладке split у прокси и WEB должны быть разные порты, сейчас оба ${PROXY_PORT}"$'\n'
+    fi
     web_engine_supports || _p+="движок $(engine_current_version 2>/dev/null) не умеет WEB, нужен ${WEB_MIN_ENGINE_VERSION} или новее"$'\n'
-    local _busy; _busy=$(web_busy_ports)
-    [ -z "$_busy" ] || _p+="порты уже заняты: ${_busy} — смените их через mtproxyl web set"$'\n'
+    # При повторном применении наши же порты заняты нами — это не помеха.
+    if ! web_is_enabled; then
+        local _busy; _busy=$(web_busy_ports)
+        [ -z "$_busy" ] || _p+="порты уже заняты: ${_busy} — смените их через mtproxyl web set"$'\n'
+    fi
     printf '%s' "$_p"
 }
 
@@ -370,8 +419,13 @@ web_engine_supports() {
 # Порты движка и nginx должны быть свободны до того, как мы уведём движок
 # с публичного порта: иначе он не поднимется, а 443 останется без хозяина.
 web_busy_ports() {
-    local _p _busy=""
-    for _p in "${WEB_MTPROXY_PORT:-15443}" "${WEB_LISTEN_PORT:-15080}" "${WEB_TLS_PORT:-15444}"; do
+    local _p _busy="" _ports
+    if web_layout_is_split; then
+        _ports="${WEB_LISTEN_PORT:-15080} $(web_public_port)"
+    else
+        _ports="${WEB_MTPROXY_PORT:-15443} ${WEB_LISTEN_PORT:-15080} ${WEB_TLS_PORT:-15444}"
+    fi
+    for _p in $_ports; do
         ss -lnt "sport = :${_p}" 2>/dev/null | grep -q LISTEN && _busy+="${_p} "
     done
     printf '%s' "${_busy% }"
@@ -402,7 +456,13 @@ web_status_print() {
     echo -e "   🚚 Carrier          ${WEB_CARRIER:-—}"
     echo -e "   🔑 Режим секрета    ${WEB_SECRET_MODE:-—}"
     echo -e "   📍 public_addr      $(web_public_addr 2>/dev/null || echo '—')"
-    echo -e "   🪟 Порты            nginx :${PROXY_PORT:-443} → движок :${WEB_MTPROXY_PORT:-15443}, WEB :${WEB_LISTEN_PORT:-15080}"
+    if web_layout_is_split; then
+        echo -e "   🧭 Раскладка        ${BOLD}split${NC} — свой порт у WEB"
+        echo -e "   🪟 Порты            nginx :$(web_public_port) → WEB :${WEB_LISTEN_PORT:-15080}, прокси :${PROXY_PORT:-443} напрямую"
+    else
+        echo -e "   🧭 Раскладка        ${BOLD}shared${NC} — один порт, разбор по SNI"
+        echo -e "   🪟 Порты            nginx :${PROXY_PORT:-443} → движок :${WEB_MTPROXY_PORT:-15443}, WEB :${WEB_LISTEN_PORT:-15080}"
+    fi
     echo -e "   🕸  Заглушка         $(web_decoy_dir)"
     local _dup; _dup=$(web_duplicate_secret_labels 2>/dev/null)
     [ -n "$_dup" ] && echo -e "   ⚠️  Общий секрет     ${YELLOW}${_dup}${NC} — без профиля WEB"
@@ -457,6 +517,8 @@ handle_web_command() {
 
 # Формат как в каталогах NFT и Selfmask: КЛЮЧ|валидатор|описание.
 _WEB_SETTABLE=(
+    "WEB_LAYOUT|enum:shared,split|shared — один порт с FakeTLS по SNI, split — свой порт"
+    "WEB_PUBLIC_PORT|range:1:65535|Публичный порт WEB в раскладке split"
     "WEB_DOMAIN|custom:_validate_web_domain|Домен WEB Proxy, отличный от домена маскировки"
     "WEB_CARRIER|enum:https,https-lanes,websocket,websocket-lanes|Транспорт carrier"
     "WEB_SECRET_MODE|enum:plain,dd|Представление секрета в ссылке"
@@ -474,8 +536,8 @@ _validate_web_domain() {
     [ -n "$_v" ] || return 0
     [[ "$_v" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$ ]] || {
         echo "не похоже на доменное имя" >&2; return 1; }
-    [ "$_v" != "$(web_faketls_domain)" ] || {
-        echo "совпадает с доменом маскировки" >&2; return 1; }
+    web_layout_is_split || [ "$_v" != "$(web_faketls_domain)" ] || {
+        echo "совпадает с доменом маскировки, а в раскладке shared их различают по SNI" >&2; return 1; }
 }
 
 _validate_web_decoy_dir() {

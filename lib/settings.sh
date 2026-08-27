@@ -90,6 +90,11 @@ SELFMASK_CERT_MODE="letsencrypt"  # letsencrypt|selfsigned
 # nginx с ssl_preread и разводит по SNI. Домен, сертификат и сайт по умолчанию
 # берутся у Selfmask — пустое значение означает «взять оттуда».
 WEB_ENABLED="false"
+# shared — WEB и FakeTLS на одном публичном порту, nginx разводит их по SNI.
+# split — у WEB свой порт, движок остаётся на PROXY_PORT напрямую; тогда
+# ssl_preread не нужен, а zapret2 и лимитер фильтруются по порту прокси.
+WEB_LAYOUT="shared"
+WEB_PUBLIC_PORT="443"       # порт, на который приходит клиент WEB
 WEB_DOMAIN=""
 WEB_CARRIER="https-lanes"   # https|https-lanes|websocket|websocket-lanes
 WEB_SECRET_MODE="dd"        # plain|dd, ee движок в WEB не поддерживает
@@ -220,6 +225,8 @@ SELFMASK_CERT_MODE='${SELFMASK_CERT_MODE}'
 
 # WEB Proxy
 WEB_ENABLED='${WEB_ENABLED}'
+WEB_LAYOUT='${WEB_LAYOUT}'
+WEB_PUBLIC_PORT='${WEB_PUBLIC_PORT}'
 WEB_DOMAIN='${WEB_DOMAIN}'
 WEB_CARRIER='${WEB_CARRIER}'
 WEB_SECRET_MODE='${WEB_SECRET_MODE}'
@@ -427,7 +434,7 @@ load_settings() {
                 SELFMASK_ENABLED|SELFMASK_DOMAIN|SELFMASK_SITE_SOURCE|SELFMASK_SITE_DIR|\
                 SELFMASK_NGINX_BACKEND_PORT|SELFMASK_CERT_EMAIL|SELFMASK_NGINX_SITE_NAME|\
                 SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS|SELFMASK_CERT_MODE|\
-                WEB_ENABLED|WEB_DOMAIN|WEB_CARRIER|WEB_SECRET_MODE|\
+                WEB_ENABLED|WEB_LAYOUT|WEB_PUBLIC_PORT|WEB_DOMAIN|WEB_CARRIER|WEB_SECRET_MODE|\
                 WEB_LISTEN_PORT|WEB_TLS_PORT|WEB_MTPROXY_PORT|\
                 WEB_DECOY_MODE|WEB_DECOY_DIR|WEB_DECOY_UPSTREAM|WEB_DEBUG|\
                 SUPEREXPERT_ENABLED|\
@@ -477,6 +484,11 @@ load_settings() {
     esac
 
     [ "$WEB_ENABLED" = "true" ] || WEB_ENABLED="false"
+    case "$WEB_LAYOUT" in
+        shared|split) ;;
+        *) WEB_LAYOUT="shared" ;;
+    esac
+    [[ "$WEB_PUBLIC_PORT" =~ ^[0-9]+$ ]] && [ "$WEB_PUBLIC_PORT" -ge 1 ] && [ "$WEB_PUBLIC_PORT" -le 65535 ] || WEB_PUBLIC_PORT="443"
     [ "$WEB_DEBUG" = "true" ] || WEB_DEBUG="false"
     case "$WEB_CARRIER" in
         https|https-lanes|websocket|websocket-lanes) ;;
