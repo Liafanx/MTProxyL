@@ -2197,8 +2197,8 @@ Docker, сертификаты Let's Encrypt и Zapret2 NFT-таблица оч�
 
 - [Cloudtips](https://pay.cloudtips.ru/p/ad2f7e4d)
 - GRAM (TON) ```UQD1ExjBKk9o1w0IoZtTW6435Nn7XKSqKEz0PFR8jJ-Obv2k```
-- USDT (TRC20) ```TJKiqjDX7nLihV3ACJdJ9cgPwM169L2xmB```
-- USDT (BER20) ```0xBf96ADb7c81eab25E56d7c40Bd414582E5B714A1```
+- USDT (TRC20) ```TV4dKp3wDd4CiiZ6xd16oGyTaHvBSaZo5j```
+- USDT (BER20) ```0x72409601122fa16C37Bac0d7d712afE60907C41D```
 
 ---
 
