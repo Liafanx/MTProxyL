@@ -53,30 +53,52 @@ web_cert_dir() {
     if web_has_own_cert; then web_own_cert_dir; else _selfmask_cert_dir; fi
 }
 
+# Клиент приходит снаружи, поэтому адресом сервера может быть только
+# маршрутизируемый IP. Loopback и частные сети сюда попадали через /etc/hosts:
+# домен прокси разрешался в 127.0.0.1, и проверка домена сравнивала A-запись
+# с локальной заглушкой.
+_web_ip_is_routable() {
+    local _ip="$1"
+    validate_ip_literal "$_ip" 2>/dev/null || return 1
+    case "$_ip" in
+        127.*|0.*|10.*|192.168.*|169.254.*|100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) return 1 ;;
+        172.1[6-9].*|172.2[0-9].*|172.3[01].*) return 1 ;;
+    esac
+    return 0
+}
+
 # Адрес самого сервера, определяемый мимо WEB-домена. Нужен именно так: сверять
 # A-запись домена с ней же — тавтология, которая никогда не срабатывает.
 web_server_ip() {
     local _ip
     _ip="${CUSTOM_IP:-}"
-    validate_ip_literal "$_ip" 2>/dev/null && { echo "$_ip"; return 0; }
+    _web_ip_is_routable "$_ip" && { echo "$_ip"; return 0; }
     # CUSTOM_IP бывает доменом прокси — он указывает на этот же сервер.
     if [ -n "$_ip" ]; then
         local _r; _r=$(getent ahostsv4 "$_ip" 2>/dev/null | awk '{print $1; exit}')
-        validate_ip_literal "$_r" 2>/dev/null && { echo "$_r"; return 0; }
+        _web_ip_is_routable "$_r" && { echo "$_r"; return 0; }
     fi
     _ip=$(get_public_ip 2>/dev/null)
-    validate_ip_literal "$_ip" 2>/dev/null && { echo "$_ip"; return 0; }
+    _web_ip_is_routable "$_ip" && { echo "$_ip"; return 0; }
     _ip=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 \
-        | grep -vE '^(172\.(1[6-9]|2[0-9]|3[01])\.|169\.254\.)' | head -1)
+        | while read -r _a; do _web_ip_is_routable "$_a" && { echo "$_a"; break; }; done)
     validate_ip_literal "$_ip" 2>/dev/null && { echo "$_ip"; return 0; }
     return 1
 }
 
 # A-запись WEB-домена. Пусто — записи нет вовсе.
+# Спрашиваем DNS, а не getent: клиенты и Let's Encrypt ходят в публичный DNS,
+# а строка в /etc/hosts видна только этой машине и врала бы про домен.
 web_domain_ip() {
-    local _d; _d=$(web_domain) || return 1
+    local _d _ip; _d=$(web_domain) || return 1
     [ -n "$_d" ] || return 1
-    getent ahostsv4 "$_d" 2>/dev/null | awk '{print $1; exit}'
+    if command -v dig >/dev/null 2>&1; then
+        _ip=$(dig +short +time=3 +tries=1 A "$_d" 2>/dev/null | grep -E '^[0-9.]+$' | head -1)
+    elif command -v host >/dev/null 2>&1; then
+        _ip=$(host -t A "$_d" 2>/dev/null | awk '/has address/{print $NF; exit}')
+    fi
+    [ -n "$_ip" ] || _ip=$(getent ahostsv4 "$_d" 2>/dev/null | awk '{print $1; exit}')
+    printf '%s' "$_ip"
 }
 
 # public_addr движок принимает только IP-литералом. Берём A-запись домена — она
@@ -95,6 +117,15 @@ web_public_addr() {
 
 # Клиент ходит в WEB только на 443 и порт в ссылку не пишет.
 web_port_is_443() { [ "$(web_public_port)" = "443" ]; }
+
+# В shared движок слушает MTProxy на loopback и в свои tg://-ссылки пишет
+# именно этот приватный порт. Публичный держит nginx — его и подставляем через
+# [general.links] public_port. В split движок и так стоит на публичном порту.
+web_link_public_port() {
+    web_is_enabled || return 1
+    web_layout_is_split && return 1
+    echo "${PROXY_PORT:-443}"
+}
 
 web_carrier_needs_http2() {
     [ "${WEB_CARRIER:-websocket-lanes}" = "https-lanes" ]
@@ -169,6 +200,23 @@ web_trusted_proxy_cidrs = ["127.0.0.1/32"]
 TOML
 }
 
+# Снимок сайта-заглушки движок собирает при старте: файлы, добавленные потом,
+# отдаются как 404, и страница открывается без стилей. Горячая перезагрузка
+# снимок не пересобирает — нужен перезапуск.
+web_decoy_needs_restart() {
+    # В реаниматоре движок чужой, и перезапускать его из-за нашей заглушки
+    # мы не вправе: WEB там поднимает хозяин цели.
+    web_is_reanimator && return 1
+    web_is_enabled || return 1
+    [ "${WEB_DECOY_MODE:-static_directory}" = "static_directory" ] || return 1
+    is_proxy_running 2>/dev/null
+}
+
+web_restart_for_decoy() {
+    log_info "Сайт-заглушка изменился — перезапуск движка, чтобы WEB отдал новые файлы"
+    restart_proxy_container || true
+}
+
 _web_decoy_toml() {
     if [ "${WEB_DECOY_MODE:-static_directory}" = "http_upstream" ]; then
         printf 'mode = "http_upstream"\nupstream = "%s"\n' "${WEB_DECOY_UPSTREAM}"
@@ -198,6 +246,42 @@ _web_profiles_toml() {
     [ "$_n" -gt 0 ]
 }
 
+# Сколько профилей уйдёт в конфиг: столько же, сколько пользователей с
+# уникальным секретом.
+web_profile_count() {
+    local i _n=0 _seen=" "
+    for i in "${!SECRETS_LABELS[@]}"; do
+        [ "${SECRETS_ENABLED[$i]}" = "true" ] || continue
+        case "$_seen" in *" ${SECRETS_KEYS[$i]} "*) continue ;; esac
+        _seen+="${SECRETS_KEYS[$i]} "
+        _n=$((_n + 1))
+    done
+    echo "$_n"
+}
+
+# Движок отказывается стартовать, если профилей больше max_profiles, а по
+# умолчанию их разрешено 32. Округляем вверх до кратного 32: следующий
+# пользователь тогда не потребует ещё одного перезапуска.
+WEB_PROFILES_STEP=32
+
+web_profiles_limit() {
+    local _n; _n=$(web_profile_count)
+    [ "${_n:-0}" -le "$WEB_PROFILES_STEP" ] && { echo "$WEB_PROFILES_STEP"; return 0; }
+    echo $(( ( (_n + WEB_PROFILES_STEP - 1) / WEB_PROFILES_STEP ) * WEB_PROFILES_STEP ))
+}
+
+# Слепок таблицы [web.limits] из конфига движка. Она process-owned: если
+# слепок изменился, SIGHUP её не применит и нужен полный перезапуск.
+web_limits_fingerprint() {
+    local _f; _f=$(engine_config_path 2>/dev/null) || return 0
+    [ -f "$_f" ] || return 0
+    awk '
+        /^[[:space:]]*\[web\.limits\][[:space:]]*$/ { inl=1; next }
+        /^[[:space:]]*\[/ { inl=0 }
+        inl && NF { gsub(/[[:space:]]/, ""); print }
+    ' "$_f" | sort | tr '\n' ';'
+}
+
 # Пользователи, чей профиль не попадёт в vhost из-за общего секрета.
 web_duplicate_secret_labels() {
     local i _seen=" " _dup=""
@@ -223,6 +307,11 @@ web_sections_toml() {
     printf '\n[web.vhosts.decoy]\n'
     _web_decoy_toml
     _web_profiles_toml
+    # Профилей больше, чем движок разрешает по умолчанию, — поднимаем лимит
+    # сами, иначе он откажется стартовать с «WEB profiles exceed».
+    local _lim; _lim=$(web_profiles_limit)
+    [ "${_lim:-32}" -gt "$WEB_PROFILES_STEP" ] && printf '\n[web.limits]\nmax_profiles = %s\n' "$_lim"
+    return 0
 }
 
 # ── Куски конфига nginx ───────────────────────────────────────
@@ -363,6 +452,9 @@ web_enable() {
 
     if [ "${SELFMASK_ENABLED:-false}" != "true" ]; then
         log_error "Сначала нужен Selfmask: у WEB от него домен, сертификат и сайт-заглушка"
+        log_info "Чужой SNI здесь не подойдёт: клиент WEB ходит обычным HTTPS и проверяет"
+        log_info "сертификат, а он бывает только у домена, которым владеете вы."
+        log_info "Включить: mtproxyl selfmask setup"
         return 1
     fi
 
@@ -456,10 +548,12 @@ web_preflight_problems() {
         local _dip _sip
         _dip=$(web_domain_ip 2>/dev/null)
         _sip=$(web_server_ip 2>/dev/null)
-        if [ -z "$_dip" ]; then
-            _p+="у домена ${_d} нет A-записи — заведите её на ${_sip:-адрес сервера}"$'\n'
-        elif [ -n "$_sip" ] && [ "$_dip" != "$_sip" ]; then
-            _p+="домен ${_d} указывает на ${_dip}, а сервер — ${_sip}"$'\n'
+        if [ -z "$_sip" ]; then
+            _p+="не удалось определить публичный адрес сервера — задайте его: mtproxyl ip set <IP>"$'\n'
+        elif [ -z "$_dip" ]; then
+            _p+="у домена ${_d} нет A-записи — заведите её у регистратора на ${_sip}"$'\n'
+        elif [ "$_dip" != "$_sip" ]; then
+            _p+="A-запись ${_d} ведёт на ${_dip}, а сервер — ${_sip}: исправьте её у регистратора на ${_sip} (если домен за прокси CDN, отключите проксирование)"$'\n'
         fi
     fi
     if [ "${WEB_DECOY_MODE:-static_directory}" = "static_directory" ]; then
@@ -476,6 +570,19 @@ web_preflight_problems() {
         _p+="в раскладке split у прокси и WEB должны быть разные порты, сейчас оба ${PROXY_PORT}"$'\n'
     fi
     web_engine_supports || _p+="движок $(engine_current_version 2>/dev/null) не умеет WEB, нужен ${WEB_MIN_ENGINE_VERSION} или новее"$'\n'
+    # У каждого vhost должен быть хотя бы один профиль, а профиль — это
+    # включённый пользователь с уникальным секретом.
+    local _pn; _pn=$(web_profile_count 2>/dev/null)
+    if [ "${_pn:-0}" -eq 0 ]; then
+        _p+="нет включённых пользователей — vhost без профилей движок не примет"$'\n'
+    else
+        # Свой лимит мы поднимаем сами, но экспертный оверрайд главнее, и
+        # заниженное значение роняет движок на старте.
+        local _pl; _pl=$(get_expert_override_value web.limits max_profiles 2>/dev/null)
+        if [ -n "$_pl" ] && [ "$_pn" -gt "$_pl" ]; then
+            _p+="пользователей ${_pn}, а web.limits.max_profiles = ${_pl} — движок откажется стартовать"$'\n'
+        fi
+    fi
     # При повторном применении наши же порты заняты нами — это не помеха.
     if ! web_is_enabled; then
         local _busy; _busy=$(web_busy_ports)
@@ -503,7 +610,15 @@ web_busy_ports() {
         _ports="${WEB_MTPROXY_PORT:-15443} ${WEB_LISTEN_PORT:-15080} ${WEB_TLS_PORT:-15444}"
     fi
     for _p in $_ports; do
-        ss -lnt "sport = :${_p}" 2>/dev/null | grep -q LISTEN && _busy+="${_p} "
+        local _who; _who=$(ss -lntp "sport = :${_p}" 2>/dev/null | grep LISTEN)
+        [ -n "$_who" ] || continue
+        # Свои же процессы помехой не считаем: после неудачного включения
+        # nginx или движок могли остаться на приватном порту, и порт числился
+        # занятым навсегда — кнопка «Включить» больше не срабатывала.
+        case "$_who" in
+            *nginx*|*telemt*|*mtproxyl*|*docker-proxy*) continue ;;
+        esac
+        _busy+="${_p} "
     done
     printf '%s' "${_busy% }"
 }

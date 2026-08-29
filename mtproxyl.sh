@@ -20,7 +20,7 @@ export LC_NUMERIC=C
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="1.6.1"
+VERSION="1.6.2"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -44,8 +44,8 @@ fi
 GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
 REGISTRY_IMAGE="ghcr.io/liafanx/mtproxyl-telemt"
 TELEMT_GITHUB="telemt/telemt"
-TELEMT_MIN_VERSION="3.5.4"
-TELEMT_COMMIT="80a2737"
+TELEMT_MIN_VERSION="3.5.5"
+TELEMT_COMMIT="ac71d92"
 
 # Bash version check
 if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
@@ -390,7 +390,9 @@ cli_main() {
         metrics)
             # В реаниматоре порт метрик читается из конфига цели —
             # без load_detect_settings путь пуст и метрики «недоступны».
-            load_settings; load_detect_settings
+            # Без load_secrets список меток пуст, и весь трафик уходит
+            # в строку «удалённые пользователи».
+            load_settings; load_secrets; load_detect_settings
             handle_metrics_command "$@"
             ;;
 

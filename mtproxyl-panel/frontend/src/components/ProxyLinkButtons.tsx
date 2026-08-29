@@ -16,12 +16,17 @@ function ProxyLinkGroupButtons({ group }: { group: ProxyLinkGroup }) {
   const [idx, setIdx] = useState(0);
   const selected = group.links[Math.min(idx, group.links.length - 1)];
   const showDomainSelect = group.label === 'TLS' && group.links.length > 1;
+  // Веб-вариант есть только у tg://proxy. У WEB-ссылки схема tg://webproxy,
+  // и replace её не трогал — вторая кнопка копировала то же самое.
+  const webUrl = selected.url.startsWith('tg://proxy')
+    ? selected.url.replace('tg://proxy', 'https://t.me/proxy')
+    : undefined;
 
   return (
     <div className="flex flex-col items-start gap-1.5">
       <div className="flex items-center gap-1">
         <CopyButton text={selected.url} label={group.label} />
-        <CopyButton text={selected.url.replace('tg://proxy', 'https://t.me/proxy')} label="t.me" />
+        {webUrl && <CopyButton text={webUrl} label="t.me" />}
       </div>
       {showDomainSelect && (
         <select

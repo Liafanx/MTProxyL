@@ -194,15 +194,15 @@ secret_add() {
 
     log_success "Секрет '${label}' создан"
     echo ""
-    _print_secret_links "$server_ip" "$server_port" "$raw_secret" "true"
+    _print_secret_links "$server_ip" "$server_port" "$raw_secret"
     echo ""
 }
 
-# Ссылки одного секрета всех включённых видов. QR — только на первую: с
-# выключенной маскировкой видов два, и два QR-кода в терминале не помещаются.
+# Ссылки одного секрета всех включённых видов. QR в терминале не рисуем:
+# в узком окне он рассыпается, а ссылку всё равно копируют текстом.
 _print_secret_links() {
-    local _ip="$1" _port="$2" _raw="$3" _qr="${4:-false}"
-    local _kind _sec _first=1 _title
+    local _ip="$1" _port="$2" _raw="$3"
+    local _kind _sec _title
     while IFS='|' read -r _kind _sec; do
         [ -n "$_sec" ] || continue
         _title="$(link_kind_title "$_kind")"
@@ -210,11 +210,6 @@ _print_secret_links() {
         echo -e "  ${CYAN}tg://proxy?server=${_ip}&port=${_port}&secret=${_sec}${NC}"
         echo -e "  ${BOLD}Веб-ссылка${NC} ${DIM}(${_title})${NC}"
         echo -e "  ${CYAN}https://t.me/proxy?server=${_ip}&port=${_port}&secret=${_sec}${NC}"
-        if [ "$_qr" = "true" ] && [ $_first -eq 1 ] && command -v qrencode &>/dev/null; then
-            echo ""
-            qrencode -t ANSIUTF8 "tg://proxy?server=${_ip}&port=${_port}&secret=${_sec}" 2>/dev/null | sed 's/^/  /'
-        fi
-        _first=0
         echo ""
     done <<< "$(build_link_secrets "$_raw")"
 
@@ -1465,15 +1460,9 @@ handle_target_user_command() {
             _echo_links "$_links"
             echo "" ;;
         qr)
+            # QR из терминала убран: остаются те же ссылки текстом.
             local _links; _links=$(target_user_link "${1:-}") || {
                 log_error "Пользователь '${1:-}' не найден у цели"; return 1; }
-            # QR — на первую ссылку: их у пользователя может быть несколько.
-            local _link; _link=$(printf '%s\n' "$_links" | head -1)
-            if command -v qrencode &>/dev/null; then
-                echo ""; qrencode -t ANSIUTF8 "$_link" | sed 's/^/  /'
-            else
-                echo -e "  ${DIM}qrencode не установлен: apt install qrencode${NC}"
-            fi
             _echo_links "$_links"
             echo "" ;;
         clone)
@@ -1496,7 +1485,7 @@ handle_target_user_command() {
             echo -e "    ${GREEN}secret adtag${NC} <метка> <32hex|remove>"
             echo -e "                              Рекламная метка пользователя"
             echo -e "    ${GREEN}secret link${NC} <метка>        Ссылка"
-            echo -e "    ${GREEN}secret qr${NC} <метка>          QR-код"
+            echo -e "    ${GREEN}secret qr${NC} <метка>          Ссылки (устар., = link)"
             ;;
     esac
 }
@@ -1557,14 +1546,8 @@ handle_secret_command() {
         clone)    check_root; secret_clone "$1" "$2" ;;
         rename)   check_root; secret_rename "$1" "$2" ;;
         qr)
+            # QR из терминала убран: остаются те же ссылки текстом.
             local links; links=$(get_proxy_links "${1:-}") || return 1
-            local link; link=$(printf '%s\n' "$links" | head -1)
-            if command -v qrencode &>/dev/null; then
-                echo ""; qrencode -t ANSIUTF8 "$link" | sed 's/^/  /'
-            else
-                echo -e "  ${DIM}qrencode не установлен: apt install qrencode${NC}"
-            fi
-            # QR один — на первую ссылку, но остальные виды тоже рабочие.
             _echo_links "$links"
             echo "" ;;
         *)
@@ -1578,7 +1561,7 @@ handle_secret_command() {
             echo -e "    ${GREEN}secret limits${NC} [метка]     Лимиты"
             echo -e "    ${GREEN}secret setlimits${NC} <метка> <соед> <ip> <квота> [срок]"
             echo -e "    ${GREEN}secret link${NC} [метка]       Ссылка"
-            echo -e "    ${GREEN}secret qr${NC} [метка]         QR-код"
+            echo -e "    ${GREEN}secret qr${NC} [метка]         Ссылки (устар., = link)"
             echo -e "    ${GREEN}secret clone${NC} <из> <в>     Клонировать"
             echo -e "    ${GREEN}secret rename${NC} <из> <в>    Переименовать"
             ;;

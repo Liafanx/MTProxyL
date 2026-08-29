@@ -27,6 +27,32 @@ func SetStagingDir(dir string) {
 	stagingDir = dir
 }
 
+// mtproxylScript is the mtproxyl.sh entry point used to refresh the sudoers
+// allowlist after an update. Empty when the MTProxyL bridge is disabled.
+var mtproxylScript string
+
+// SetMtproxylScript configures the mtproxyl.sh path used by RefreshSudoers.
+func SetMtproxylScript(path string) {
+	mtproxylScript = path
+}
+
+// RefreshSudoers re-issues the panel's sudoers allowlist. A new panel version
+// calls subcommands the old allowlist does not list, so without this the user
+// has to run `mtproxyl panel install` by hand after every update.
+func RefreshSudoers() error {
+	if mtproxylScript == "" {
+		return nil
+	}
+	if _, err := os.Stat(mtproxylScript); err != nil {
+		return nil
+	}
+	out, err := exec.Command("sudo", "-n", mtproxylScript, "panel", "grant").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func downloadDir() string {
 	if stagingDir != "" {
 		return stagingDir

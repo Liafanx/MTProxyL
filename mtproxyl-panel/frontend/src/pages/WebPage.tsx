@@ -200,11 +200,14 @@ export function WebPage() {
             </Card>
 
             <div className="flex flex-wrap gap-2">
-              <Button
-                onClick={enable}
-                disabled={saving || running || (!status.enabled && problems.length > 0)}
-              >
+              {/* Кнопку не блокируем списком причин: он собран при загрузке
+                  страницы и после неудачного включения оставался бы вечным.
+                  Предполёт всё равно повторяет CLI и назовёт свежую причину. */}
+              <Button onClick={enable} disabled={saving || running}>
                 {status.enabled ? 'Применить заново' : 'Включить'}
+              </Button>
+              <Button variant="outline" onClick={() => void load()} disabled={loading || running}>
+                Проверить снова
               </Button>
               {status.enabled && (
                 <>

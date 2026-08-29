@@ -863,6 +863,16 @@ self_update() {
     fi
 
     log_success "MTProxyL обновлён: v${VERSION} → v${_new_ver}"
+
+    # Панель ходит к нам через список разрешённых подкоманд. Новая версия
+    # приносит новые — без перевыпуска они у панели отказывают с sudo.
+    if panel_installed 2>/dev/null; then
+        log_info "Обновляем права sudo у панели под новые команды..."
+        panel_grant >/dev/null 2>&1 \
+            && log_success "Панель получила права на команды v${_new_ver}" \
+            || log_warn "Права не обновились — выполните: mtproxyl panel install"
+    fi
+
     if [ "$_restart" = "false" ]; then
         return 0
     fi

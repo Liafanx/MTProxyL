@@ -352,6 +352,15 @@ func (u *Updater) applyAsync(version string) {
 
 	u.appendLog(fmt.Sprintf("updated to %s", release.Version))
 
+	// Права sudo — список разрешённых подкоманд, и новая версия панели зовёт
+	// те, которых в старом списке нет. Обновляем его до перезапуска, чтобы
+	// не отправлять пользователя в терминал за `mtproxyl panel install`.
+	if err := RefreshSudoers(); err != nil {
+		u.appendLog(fmt.Sprintf("sudoers refresh failed: %s (run `sudo mtproxyl panel install`)", err))
+	} else {
+		u.appendLog("sudoers refreshed")
+	}
+
 	// Save final status to file BEFORE restart (so it survives the restart)
 	u.mu.Lock()
 	finalStatus := Status{

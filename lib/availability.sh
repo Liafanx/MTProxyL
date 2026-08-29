@@ -179,6 +179,34 @@ _availability_public_ip() {
     return 1
 }
 
+# public_host из конфига движка. Именно это имя видит клиент, и оно бывает
+# задано там, где ни Selfmask, ни CUSTOM_IP ничего не подсказывают.
+_availability_config_public_host() {
+    local _v=""
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        [ -n "${DETECTED_CONFIG_PATH:-}" ] && [ -f "${DETECTED_CONFIG_PATH}" ] || return 1
+        _v=$(_toml_get_string_in_section "general.links" "public_host" "$DETECTED_CONFIG_PATH" 2>/dev/null)
+    elif _superexpert_active 2>/dev/null; then
+        _v=$(_toml_get_string_in_section "general.links" "public_host" "$SUPEREXPERT_FILE" 2>/dev/null)
+    else
+        _v=$(proxy_public_host 2>/dev/null)
+    fi
+    [ -n "$_v" ] || return 1
+    case "$_v" in *:*) return 1 ;; esac   # IPv6 в SNI и Host не годится
+    printf '%s' "$_v"
+}
+
+# Домен WEB: у менеджера свой, у цели — host первого vhost из её конфига.
+_availability_web_host() {
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        web_target_enabled 2>/dev/null || return 1
+        web_target_host 2>/dev/null
+        return $?
+    fi
+    web_is_enabled 2>/dev/null || return 1
+    web_domain 2>/dev/null
+}
+
 # Что проверяем: "host|port|sni". Заданное руками важнее всего — оператор уже
 # видел автоопределение и от него отступил.
 availability_target() {
@@ -197,13 +225,19 @@ availability_target() {
     if [ -z "$_s" ]; then
         _s=$(_current_sni_domain 2>/dev/null) || _s=""
         [ -n "$_s" ] || _s="${PROXY_DOMAIN:-}"
+        # В WEB-режиме маскировки может не быть вовсе, и тогда FakeTLS-домена
+        # тоже нет. Публичное имя там — домен WEB, по нему и здороваемся.
+        [ -n "$_s" ] || _s=$(_availability_web_host 2>/dev/null)
     fi
 
-    # Адрес: домен заглушки, потом прикреплённый к ссылкам, потом внешний IP.
+    # Адрес: домен заглушки, потом public_host из конфига, прикреплённый к
+    # ссылкам адрес и только в конце внешний IP.
     if [ -z "$_h" ] && [ "${SELFMASK_ENABLED:-false}" = "true" ] && [ -n "${SELFMASK_DOMAIN:-}" ]; then
         _h="$SELFMASK_DOMAIN"
     fi
+    [ -z "$_h" ] && _h=$(_availability_config_public_host 2>/dev/null)
     [ -z "$_h" ] && _h="${CUSTOM_IP:-}"
+    [ -z "$_h" ] && _h=$(_availability_web_host 2>/dev/null)
     [ -z "$_h" ] && _h=$(_availability_public_ip)
 
     printf '%s|%s|%s' "$_h" "$_p" "$_s"

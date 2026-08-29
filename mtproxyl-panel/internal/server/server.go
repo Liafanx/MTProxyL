@@ -296,6 +296,10 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 		s.cfg.Panel.MaxOlderReleases,
 		s.cfg.Panel.GithubToken,
 	)
+	// Через него апдейтер перевыпустит права sudo сразу после обновления.
+	if s.cfg.Mtproxyl.Enabled {
+		panel_updater.SetMtproxylScript(s.cfg.Mtproxyl.ScriptPath)
+	}
 
 	mux.Handle("GET /api/panel/update/check", auth.RequireAuth(jwtSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		result, err := panelUpd.Check()

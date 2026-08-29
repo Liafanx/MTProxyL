@@ -154,6 +154,30 @@ _catalog "web.limits" "new_sessions_per_minute"   "u32"   "600"       "✘" "ran
 _catalog "web.limits" "new_streams_per_minute"    "u32"   "6000"      "✘" "range:1:10000000"       "1..10000000"        "Устойчивая скорость создания streams"
 _catalog "web.limits" "debug_records_capacity"    "usize" "65536"     "✘" "range:1:1048576"        "1..1048576"         "Сколько debug-записей хранит /web-status"
 _catalog "web.limits" "debug_bytes_global"        "usize" "67108864"  "✘" "range:4096:4294967296"  "минимум 4096"       "Байтовая граница debug-данных WEB"
+_catalog "web.limits" "max_profiles"              "usize" "32"        "✘" "range:1:65536"          "профиль на каждого пользователя" "Профили WEB всех vhosts — их столько же, сколько пользователей"
+_catalog "web.limits" "max_vhosts"                "usize" "8"         "✘" "range:1:1024"           "1..1024"            "Сколько виртуальных хостов WEB разрешено"
+_catalog "web.limits" "max_lane_open_waits_per_session" "usize" "16"  "✘" "range:1:65536"          "1..65536"           "Downlink-poll'ов, ждущих OPEN своей lane"
+_catalog "web.limits" "pending_bytes_per_lane"    "usize" "8388608"   "✘" "range:65536:4294967296" "не больше сессионного" "Байты очереди одной независимой lane"
+_catalog "web.limits" "pending_items_per_lane"    "usize" "1024"      "✘" "range:1:1048576"        "1..1048576"         "Элементы очереди одной независимой lane"
+_catalog "web.limits" "websocket_admission_watermark_pct" "u8" "75"   "✘" "range:1:100"            "1..100"             "Порог бюджета WebSocket для новых сессий (%)"
+_catalog "web.limits" "websocket_eviction_watermark_pct"  "u8" "90"   "✘" "range:1:100"            "выше admission"     "Порог, после которого WebSocket вытесняются (%)"
+_catalog "web.limits" "max_websocket_evictions_in_flight" "usize" "8" "✘" "range:1:65536"          "1..65536"           "Одновременных вытеснений WebSocket"
+_catalog "web.limits" "max_carrier_learning_entries" "usize" "4096"   "✘" "range:1:1048576"        "1..1048576"         "Записей обучения carrier на процесс"
+_catalog "web.limits" "max_body_readers"          "usize" "32"        "✘" "range:1:65536"          "1..65536"           "Одновременно собираемых тел запросов"
+_catalog "web.limits" "max_body_bytes_global"     "usize" "67108864"  "✘" "range:65536:4294967296" "укладывается в envelope" "Общий байтовый резерв собранных тел"
+_catalog "web.limits" "max_stream_handshakes"     "usize" "256"       "✘" "range:1:1048576"        "1..1048576"         "Одновременных внутренних MTProxy-рукопожатий"
+_catalog "web.limits" "max_tombstones_per_session" "usize" "4096"     "✘" "range:1:1048576"        "1..1048576"         "Закрытых stream ID, помнимых сессией"
+_catalog "web.limits" "pending_items_per_session" "usize" "16384"     "✘" "range:1:1048576"        "не больше глобального" "Элементы в очередях одной сессии"
+_catalog "web.limits" "pending_items_global"      "usize" "262144"    "✘" "range:1:16777216"       "1..16777216"        "Элементы в очередях всего процесса"
+_catalog "web.limits" "control_bytes_per_session" "usize" "262144"    "✘" "range:4096:1073741824"  "не больше глобального" "Резерв сессии только под control frames"
+_catalog "web.limits" "control_bytes_global"      "usize" "16777216"  "✘" "range:4096:4294967296"  "4096..4 ГиБ"        "Резерв процесса только под control frames"
+_catalog "web.limits" "max_static_files"          "usize" "4096"      "✘" "range:1:1048576"        "1..1048576"         "Файлов в снимке сайта-заглушки"
+_catalog "web.limits" "max_static_file_bytes"     "usize" "8388608"   "✘" "range:1024:1073741824"  "1 КиБ..1 ГиБ"       "Максимальный размер одного файла заглушки"
+_catalog "web.limits" "max_static_bytes"          "usize" "67108864"  "✘" "range:1024:4294967296"  "укладывается в envelope" "Размер снимков заглушки всех vhosts"
+_catalog "web.limits" "new_bootstraps_per_minute" "u32"   "1200"      "✘" "range:1:10000000"       "1..10000000"        "Устойчивая скорость выдачи bootstrap"
+_catalog "web.limits" "new_bootstraps_burst"      "u32"   "256"       "✘" "range:1:1000000"        "1..1000000"         "Всплеск выдачи bootstrap"
+_catalog "web.limits" "new_sessions_burst"        "u32"   "128"       "✘" "range:1:1000000"        "1..1000000"         "Всплеск создания сессий"
+_catalog "web.limits" "new_streams_burst"         "u32"   "512"       "✘" "range:1:1000000"        "1..1000000"         "Всплеск создания logical streams"
 
 # ── web.timeouts ──────────────────────────────────────────────
 # Всё в секундах, диапазон 1..3600. Самый долгий запрос должен быть меньше
@@ -161,8 +185,18 @@ _catalog "web.limits" "debug_bytes_global"        "usize" "67108864"  "✘" "ran
 _catalog "web.timeouts" "header_secs"             "u64" "10"  "✔" "range:1:3600" "1..3600"          "Получение полного заголовка запроса"
 _catalog "web.timeouts" "body_secs"               "u64" "30"  "✔" "range:1:3600" "1..3600"          "Сбор одного carrier body"
 _catalog "web.timeouts" "stream_handshake_secs"   "u64" "10"  "✔" "range:1:3600" "1..3600"          "Внутреннее MTProxy-рукопожатие"
+_catalog "web.timeouts" "stream_first_byte_secs"  "u64" "30"  "✔" "range:1:300"  "1..300"           "Первый внутренний байт после OPEN"
 _catalog "web.timeouts" "long_poll_secs"          "u64" "25"  "✔" "range:1:3600" "таймауты nginx должны быть выше" "Максимальная длительность пустого long poll"
+_catalog "web.timeouts" "bridge_request_secs"     "u64" "10"  "✔" "range:1:60"   "1..60"            "Дедлайн одной HTTP-попытки bridge"
+_catalog "web.timeouts" "bridge_retry_secs"       "u64" "90"  "✔" "range:1:300"  "не меньше bridge_request_secs" "Окно повторов bridge целиком"
+_catalog "web.timeouts" "carrier_probe_coalesce_ms" "u64" "0" "✔" "range:0:10"   "миллисекунды, 0..10" "Ожидание DATA после OPEN перед пробой"
+_catalog "web.timeouts" "lane_open_wait_secs"     "u64" "2"   "✔" "range:1:3600" "не больше long_poll_secs" "Ожидание downlink, обогнавшего свой OPEN"
+_catalog "web.timeouts" "carrier_health_secs"     "u64" "30"  "✔" "range:1:3600" "1..3600"          "Наблюдение после commit до записи в обучение"
+_catalog "web.timeouts" "websocket_upgrade_secs"  "u64" "5"   "✔" "range:1:60"   "1..60"            "Ожидание превращения Upgrade в WebSocket"
+_catalog "web.timeouts" "websocket_open_secs"     "u64" "15"  "✔" "range:1:300"  "1..300"           "Первое carrier-сообщение после Upgrade"
 _catalog "web.timeouts" "websocket_write_secs"    "u64" "30"  "✔" "range:1:3600" "1..3600"          "Ожидание одной операции записи WebSocket"
+_catalog "web.timeouts" "websocket_eviction_secs" "u64" "1"   "✔" "range:1:3600" "1..3600"          "Отсрочка вытесняемому WebSocket на освобождение"
+_catalog "web.timeouts" "carrier_learning_secs"   "u64" "600" "✔" "range:2:86400" "2..86400"        "Срок двух окон обучения carrier"
 _catalog "web.timeouts" "websocket_backpressure_secs" "u64" "30" "✔" "range:1:3600" "1..3600"       "Ожидание прогресса при заполненных очередях"
 _catalog "web.timeouts" "bootstrap_lifetime_secs" "u64" "120" "✔" "range:1:3600" "1..3600"          "Срок жизни неиспользованного bootstrap"
 _catalog "web.timeouts" "reconnect_grace_secs"    "u64" "120" "✔" "range:1:3600" "1..3600"          "Неактивность carrier до закрытия сессии"
@@ -170,7 +204,15 @@ _catalog "web.timeouts" "http_idle_secs"          "u64" "75"  "✔" "range:1:360
 _catalog "web.timeouts" "shutdown_secs"           "u64" "15"  "✔" "range:1:3600" "1..3600"          "Дедлайн корректного завершения WEB"
 _catalog "web.timeouts" "decoy_header_secs"       "u64" "30"  "✔" "range:1:3600" "1..3600"          "Дедлайн ответа HTTP-заглушки"
 
+# ── web ───────────────────────────────────────────────────────
+# enabled и carrier сюда не входят: ими владеет mtproxyl web.
+_catalog "web" "carrier_learning"             "bool"  "true"     "✔" "bool"                              "true/false"        "Обучение carrier по успешным сессиям (нужен carriers)"
+_catalog "web" "carrier_negotiation_aggressiveness" "enum" "conservative" "✔" "enum:conservative,balanced,aggressive" "conservative/balanced/aggressive" "Насколько рано обучение доверяет выборке"
+_catalog "web" "carriers"                     "carrier_list" "false" "✔" "custom:_validate_web_carriers" "false или список через запятую" "Порядок перебора carrier при автосогласовании"
+
 # ── web.debug ─────────────────────────────────────────────────
+_catalog "web.debug" "capture_lifecycle"      "bool"  "true"     "✔" "bool"                              "true/false"        "Записывать события bridge, сессий и потоков"
+_catalog "web.debug" "decoy_body_prefix_bytes" "usize" "4096"    "✔" "range:0:1048576"                   "0..1048576"        "Префикс тела заглушки, сохраняемый в prefix и full"
 _catalog "web.debug" "capture_headers"        "bool"  "true"     "✔" "bool"                              "true/false"        "Сохранять имена заголовков без учётных данных"
 _catalog "web.debug" "capture_timings"        "bool"  "true"     "✔" "bool"                              "true/false"        "Сохранять тайминги обработки"
 _catalog "web.debug" "capture_frames"         "bool"  "true"     "✔" "bool"                              "true/false"        "Разбирать carrier body на frames"
@@ -311,6 +353,10 @@ _EXPERT_SECTIONS=(
     "censorship.tls_fetch"
     "access"
     "logging"
+    "web"
+    "web.limits"
+    "web.timeouts"
+    "web.debug"
 )
 
 # ── Валидаторы ────────────────────────────────────────────────
@@ -394,6 +440,22 @@ _validate_client_mss() {
         *) [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 88 ] && [ "$1" -le 4096 ] && return 0 ;;
     esac
     echo "Допустимо: extreme-low, tspu, 2in8 или число 88..4096"; return 1
+}
+
+# false — автосогласование выключено. Иначе непустой список без повторов.
+_validate_web_carriers() {
+    local _v="$1"
+    [ "$_v" = "false" ] && return 0
+    [ -n "$_v" ] || { echo "Допустимо: false или список carrier через запятую"; return 1; }
+    local _c _seen=" "
+    for _c in ${_v//,/ }; do
+        case "$_c" in
+            https|https-lanes|websocket|websocket-lanes) ;;
+            *) echo "Неизвестный carrier: ${_c}"; return 1 ;;
+        esac
+        case "$_seen" in *" $_c "*) echo "Повтор carrier: ${_c}"; return 1 ;; esac
+        _seen+="$_c "
+    done
 }
 
 _validate_tls_domain() {

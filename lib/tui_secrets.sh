@@ -15,7 +15,7 @@ tui_target_users_menu() {
         echo -e "  ${DIM}[5]${NC} Выключить"
         echo -e "  ${DIM}[6]${NC} Лимиты"
         echo -e "  ${DIM}[7]${NC} Переименовать"
-        echo -e "  ${DIM}[8]${NC} Ссылка и QR-код"
+        echo -e "  ${DIM}[8]${NC} Ссылка для подключения"
         echo -e "  ${DIM}[9]${NC} Рекламная метка"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
@@ -60,11 +60,6 @@ tui_target_users_menu() {
                     local _link; _link=$(target_user_link "$l")
                     if [ -n "$_link" ]; then
                         echo ""
-                        if command -v qrencode &>/dev/null; then
-                            qrencode -t ANSIUTF8 "$_link" 2>/dev/null | sed 's/^/  /'
-                        else
-                            echo -e "  ${DIM}qrencode не установлен: apt install qrencode${NC}"
-                        fi
                         echo -e "  ${CYAN}${_link}${NC}"
                         echo ""
                     else
@@ -175,11 +170,6 @@ tui_secrets_menu() {
                     if [ -n "$link" ]; then
                         echo -e "  ${CYAN}${link}${NC}"
                         echo ""
-                        if command -v qrencode &>/dev/null; then
-                            qrencode -t ANSIUTF8 "$link" | sed 's/^/  /'
-                        else
-                            echo -e "  ${DIM}qrencode не установлен: apt install qrencode${NC}"
-                        fi
                     fi
                 fi; press_any_key ;;
             10)

@@ -319,6 +319,33 @@ selfmask_show_requirements() {
     echo ""
 }
 
+# При включённом WEB публичный порт держит уже не движок, а nginx: он разбирает
+# SNI и разводит FakeTLS и WEB по разным бэкендам. Старая строка про
+# «telemt :443 → mask» в этом случае описывала несуществующий путь.
+_selfmask_scheme_line() {
+    local _back="127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}"
+    # В реаниматоре WEB поднимает хозяин цели, и наши WEB_* к нему отношения
+    # не имеют: раскладку портов оттуда взять неоткуда.
+    if web_is_reanimator 2>/dev/null; then
+        local _p="${DETECTED_PORT:-${PROXY_PORT:-443}}"
+        if web_target_enabled 2>/dev/null; then
+            echo "telemt :${_p} → mask → nginx ${_back}; WEB у цели: $(web_target_host 2>/dev/null || echo '—')"
+        else
+            echo "telemt :${_p} → mask → nginx ${_back}"
+        fi
+        return 0
+    fi
+    if ! web_is_enabled 2>/dev/null; then
+        echo "telemt :${PROXY_PORT:-443} → mask → nginx ${_back}"
+        return 0
+    fi
+    if web_layout_is_split; then
+        echo "telemt :${PROXY_PORT:-443} → mask → nginx ${_back}; WEB: nginx :$(web_public_port) → telemt :${WEB_LISTEN_PORT:-15080}"
+    else
+        echo "nginx :${PROXY_PORT:-443} → по SNI: telemt :${WEB_MTPROXY_PORT:-15443} → mask → nginx ${_back}; $(web_domain 2>/dev/null) → nginx :${WEB_TLS_PORT:-15444} → telemt :${WEB_LISTEN_PORT:-15080}"
+    fi
+}
+
 selfmask_show_status() {
     echo ""
     draw_header "SELFMASK"
@@ -328,6 +355,7 @@ selfmask_show_status() {
     echo -e "  ${BOLD}Источник сайта:${NC} $(_selfmask_template_label "${SELFMASK_SITE_SOURCE:-stub}")"
     echo -e "  ${BOLD}Каталог сайта:${NC}  ${SELFMASK_SITE_DIR:-/var/www/mtproxyl-selfmask}"
     echo -e "  ${BOLD}Backend:${NC}        127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}"
+    echo -e "  ${BOLD}Схема:${NC}          $(_selfmask_scheme_line)"
     echo -e "  ${BOLD}TLS backend:${NC}    $(_selfmask_get_tls_info)"
     echo -e "  ${BOLD}Тип сертификата:${NC} ${SELFMASK_CERT_MODE:-letsencrypt}"
     [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "letsencrypt" ] && echo -e "  ${BOLD}Продление cert:${NC} ${SELFMASK_AUTO_RENEW:-true}"
@@ -819,6 +847,8 @@ _selfmask_deploy_site() {
 
     chown -R www-data:www-data "$SELFMASK_SITE_DIR" 2>/dev/null || true
     chmod -R 755 "$SELFMASK_SITE_DIR" 2>/dev/null || true
+
+    web_decoy_needs_restart && web_restart_for_decoy
 }
 
 _selfmask_download_template() {
@@ -1834,7 +1864,7 @@ selfmask_setup() {
         echo -e "  ${BOLD}Домен:${NC}   https://${SELFMASK_DOMAIN}"
     fi
     echo -e "  ${BOLD}Сайт:${NC}    ${SELFMASK_SITE_DIR}"
-    echo -e "  ${BOLD}Схема:${NC}   telemt :${PROXY_PORT:-443} → mask → nginx 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT}"
+    echo -e "  ${BOLD}Схема:${NC}   $(_selfmask_scheme_line)"
     echo ""
 
     _selfmask_show_links_tail

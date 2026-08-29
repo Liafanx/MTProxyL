@@ -228,6 +228,22 @@ panel_install() {
     _panel_install_report
 }
 
+# Права sudo у панели — список разрешённых подкоманд. Новая версия панели
+# зовёт команды, которых в старом списке нет, поэтому список надо перевыпускать
+# при каждом обновлении — и MTProxyL, и самой панели.
+panel_grant() {
+    check_root || return 1
+    panel_installed || { log_error "Панель не установлена"; return 1; }
+
+    local _tmp; _tmp=$(_mktemp) || return 1
+    if ! curl -fsSL "$PANEL_INSTALLER_URL" -o "$_tmp"; then
+        log_error "Не удалось скачать установщик панели"
+        return 1
+    fi
+    sh "$_tmp" grant || { log_error "Права выдать не удалось (причина выше)"; return 1; }
+    panel_grant_engine_journal
+}
+
 # Чем будет собираться панель из исходников. С движком-бинарником Docker на
 # сервере может не быть вовсе — тогда нужен тулчейн, и сказать об этом надо
 # до запуска сборки, а не после её падения.
@@ -832,6 +848,7 @@ handle_panel_command() {
     case "${1:-status}" in
         install)   panel_install ;;
         update)    panel_install --update ;;
+        grant)     panel_grant ;;
         uninstall) panel_uninstall ;;
         restart)   panel_restart ;;
         disable|off) panel_disable ;;
@@ -844,6 +861,7 @@ handle_panel_command() {
             echo -e "    ${GREEN}panel status${NC}     Состояние"
             echo -e "    ${GREEN}panel install${NC}    Установить / переустановить"
             echo -e "    ${GREEN}panel update${NC}     Обновить до последней версии"
+            echo -e "    ${GREEN}panel grant${NC}      Перевыпустить права sudo под текущие команды"
             echo -e "    ${GREEN}panel restart${NC}    Перезапустить"
             echo -e "    ${GREEN}panel disable${NC}    Выключить, не удаляя (снять с автозапуска)"
             echo -e "    ${GREEN}panel enable${NC}     Включить обратно"

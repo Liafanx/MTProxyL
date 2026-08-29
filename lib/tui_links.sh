@@ -52,20 +52,16 @@ tui_links_menu() {
 # Все рабочие ссылки одного пользователя. Видов может быть несколько: с
 # выключенной маскировкой движок принимает и dd, и ee — раньше меню показывало
 # только один из них, и вторая половина ссылок оставалась не у дел.
-# QR печатаем один, для первой ссылки: их и так по две на человека.
+# QR в терминале не рисуем: в узком окне он рассыпается, а ссылку копируют
+# текстом. Четвёртый аргумент остался ради совместимости вызовов.
 _tui_print_links() {
-    local _ip="$1" _port="$2" _pairs="$3" _qr="${4:-false}" _raw="${5:-}"
-    local _kind _sec _first=1 _label
+    local _ip="$1" _port="$2" _pairs="$3" _raw="${5:-}"
+    local _kind _sec _label
     while IFS='|' read -r _kind _sec; do
         [ -z "$_sec" ] && continue
         _label="$(link_kind_title "$_kind")"
         echo -e "  ${BOLD}TG${NC} ${DIM}(${_label})${NC}  ${CYAN}tg://proxy?server=${_ip}&port=${_port}&secret=${_sec}${NC}"
         echo -e "  ${BOLD}Веб${NC} ${DIM}(${_label})${NC} ${CYAN}https://t.me/proxy?server=${_ip}&port=${_port}&secret=${_sec}${NC}"
-        if [ "$_qr" = "true" ] && [ $_first -eq 1 ] && command -v qrencode &>/dev/null; then
-            echo ""
-            qrencode -t ANSIUTF8 "https://t.me/proxy?server=${_ip}&port=${_port}&secret=${_sec}" 2>/dev/null | sed 's/^/  /'
-        fi
-        _first=0
     done <<< "$_pairs"
 
     # WEB — свой домен и без порта, поэтому строкой отдельно от остальных.

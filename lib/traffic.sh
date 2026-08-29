@@ -4,6 +4,19 @@
 _METRICS_CACHE=""
 _METRICS_CACHE_AGE=0
 
+# telemt 3.5.x переименовал счётчики октетов, добавив суффикс _total, и убрал
+# telemt_connections_current. Приводим выдачу к одному виду на входе, чтобы
+# разбор ниже одинаково работал со старым и новым движком.
+_normalize_metrics() {
+    awk '
+        /^telemt_user_octets_(from|to)_client_total\{/ { sub(/_total\{/, "{") }
+        /^telemt_connections_current[{ ]/              { seen_cur = 1 }
+        /^telemt_user_connections_current\{/           { ucur += $NF }
+        { print }
+        END { if (NR > 0 && !seen_cur) printf "telemt_connections_current %d\n", ucur+0 }
+    '
+}
+
 _fetch_metrics() {
     local now; now=$(date +%s)
     if [ -n "$_METRICS_CACHE" ] && [ $((now - _METRICS_CACHE_AGE)) -lt 2 ]; then
@@ -11,7 +24,7 @@ _fetch_metrics() {
     fi
     local _mport="${PROXY_METRICS_PORT:-9090}"
     [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && _mport=$(_get_telemt_metrics_port)
-    _METRICS_CACHE=$(curl -s --max-time 2 "http://127.0.0.1:${_mport}/metrics" 2>/dev/null)
+    _METRICS_CACHE=$(curl -s --max-time 2 "http://127.0.0.1:${_mport}/metrics" 2>/dev/null | _normalize_metrics)
     _METRICS_CACHE_AGE=$now
     [ -n "$_METRICS_CACHE" ] && echo "$_METRICS_CACHE" && return 0
     return 1
@@ -86,7 +99,7 @@ flush_traffic_to_disk() {
     mkdir -p "$_stats_dir" 2>/dev/null
 
     local m
-    m=$(curl -s --max-time 2 "http://127.0.0.1:${PROXY_METRICS_PORT:-9090}/metrics" 2>/dev/null) || return 0
+    m=$(_fetch_metrics) || return 0
 
     # Текущие значения из Prometheus (сессионные — сбрасываются при рестарте)
     local _cur_in _cur_out
@@ -1390,7 +1403,10 @@ show_metrics() {
     # Соединения
     echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}  ${BOLD}Соединения${NC}$(printf '%*s' $((W - 12)))${BRIGHT_CYAN}${BOX_V}${NC}"
     echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}    ${DIM}Всего:${NC} ${c_tot:-0}   ${DIM}Авториз.:${NC} ${BRIGHT_GREEN}${c_good}${NC}   ${DIM}Отклонено:${NC} ${BRIGHT_RED}${c_bad:-0}${NC}$(printf '%*s' 1)${BRIGHT_CYAN}${BOX_V}${NC}"
-    echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}    ${DIM}Активных:${NC} ${c_cur:-0}  (ME: ${c_me:-0}  Direct: ${c_dir:-0})$(printf '%*s' 1)${BRIGHT_CYAN}${BOX_V}${NC}"
+    # Разбивку ME/Direct движок отдаёт не всегда — с 3.5.x этих счётчиков нет.
+    local c_split=""
+    [ $(( ${c_me:-0} + ${c_dir:-0} )) -gt 0 ] && c_split="  (ME: ${c_me:-0}  Direct: ${c_dir:-0})"
+    echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}    ${DIM}Активных:${NC} ${c_cur:-0}${c_split}$(printf '%*s' 1)${BRIGHT_CYAN}${BOX_V}${NC}"
     echo -e "  ${BRIGHT_CYAN}${BOX_LT}$(_repeat "$BOX_H" $W)${BOX_RT}${NC}"
 
     # Upstream

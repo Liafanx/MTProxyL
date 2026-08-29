@@ -658,6 +658,10 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot set [a-z]*.[a-z_]* *
 # не подходила, и панель не могла её задать.
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot set proxy *
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot set proxy
+# Список разрешений устаревает, как только панель обновилась и стала звать
+# новые команды. Разрешаем ей перевыпустить его самой — иначе после каждого
+# обновления пришлось бы идти в терминал за `mtproxyl panel install`.
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script panel grant
 EOF
 
   if [ -n "$_visudo" ]; then
@@ -812,6 +816,7 @@ usage() {
   install [версия]        Установить или обновить (по умолчанию — последний релиз)
   install --from-source[=ветка]
                           Собрать из исходников (Docker либо Go+Node)
+  grant                   Перевыпустить права sudo по текущему конфигу
   uninstall               Удалить бинарник, службу и права sudo
   purge                   Удалить всё, включая конфиг, данные и пользователя
   --help                  Показать эту справку
@@ -1486,6 +1491,34 @@ build_natively() {
   say "Установлено: $PANEL_BINARY_PATH (собрано из ветки $_branch)"
 }
 
+
+# Только права: перевыпустить sudoers по уже установленному конфигу, не
+# трогая бинарник и службу. Нужен после обновления — новая версия панели
+# зовёт команды, которых в старом списке разрешений нет.
+do_grant() {
+  [ -f "$CONFIG_FILE" ] || die "Конфиг $CONFIG_FILE не найден — панель ещё не установлена"
+
+  TELEMT_PATH=$(toml_value "$CONFIG_FILE" telemt binary_path || true)
+  TELEMT_SERVICE=$(toml_value "$CONFIG_FILE" telemt service_name || true)
+  [ -n "${TELEMT_PATH:-}" ] || TELEMT_PATH=$(detect_telemt)
+  [ -n "${TELEMT_SERVICE:-}" ] || TELEMT_SERVICE="telemt"
+
+  MTPROXYL_ENABLED=$(toml_value "$CONFIG_FILE" mtproxyl enabled || true)
+  [ -n "${MTPROXYL_ENABLED:-}" ] || MTPROXYL_ENABLED="false"
+  _cfg_script=$(toml_value "$CONFIG_FILE" mtproxyl script_path || true)
+  [ -n "${_cfg_script:-}" ] && MTPROXYL_SCRIPT="$_cfg_script"
+  _cfg_dir=$(toml_value "$CONFIG_FILE" mtproxyl install_dir || true)
+  [ -n "${_cfg_dir:-}" ] && MTPROXYL_INSTALL_DIR="$_cfg_dir"
+
+  install_sudoers_dropin "$TELEMT_PATH" "$TELEMT_SERVICE" "/etc/telemt/telemt.toml"
+  if [ "${MTPROXYL_ENABLED:-false}" = "true" ]; then
+    install_mtproxyl_sudoers "$MTPROXYL_SCRIPT" "$MTPROXYL_INSTALL_DIR"
+  else
+    $SUDO rm -f "$MTPROXYL_SUDOERS_FILE"
+  fi
+  say "Права sudo обновлены"
+}
+
 # ═════════════════════════════════════════════════════════════════════════════
 #  MAIN
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1494,6 +1527,7 @@ shift 2>/dev/null || true
 
 case "$_cmd" in
   install)    do_install "${1:-}" ;;
+  grant)      do_grant ;;
   uninstall)  do_uninstall ;;
   purge)      do_purge ;;
   --help|-h)  usage ;;

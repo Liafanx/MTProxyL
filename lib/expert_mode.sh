@@ -95,7 +95,12 @@ _apply_expert_overrides() {
                 string)
                     fv="\"$value\""
                     ;;
-                "string[]")
+                "string[]"|"carrier_list")
+                    # web.carriers = false выключает автосогласование, и это
+                    # не список из одного слова «false», а именно булево.
+                    if [ "$EXPERT_P_TYPE" = "carrier_list" ] && [ "$value" = "false" ]; then
+                        fv="false"
+                    else
                     local oldIFS="$IFS"
                     IFS=','
                     read -ra _vals <<< "$value"
@@ -110,6 +115,7 @@ _apply_expert_overrides() {
                         _out+="\"$_v\""
                     done
                     fv="[${_out}]"
+                    fi
                     ;;
                 *)
                     if [[ "$value" =~ ^(true|false)$ ]]; then
