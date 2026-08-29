@@ -513,7 +513,35 @@ web_disable() {
     log_success "WEB Proxy выключен"
 }
 
+# В реаниматоре WEB живёт в конфиге цели, и наши WEB_* к нему не относятся:
+# панель и бот, читая их, показывали WEB выключенным при работающем WEB у цели
+# и наоборот. Отдаём то, что в конфиге цели, а раскладка портов там не наша.
+_web_status_json_target() {
+    local _en="false" _host="" _mode=""
+    if web_target_enabled 2>/dev/null; then
+        _en="true"
+        _host=$(web_target_host 2>/dev/null)
+        _mode=$(_web_target_secret_mode 2>/dev/null)
+    fi
+    printf '{"enabled":%s,"layout":"target","public_port":%s,"domain":"%s","carrier":"","secret_mode":"%s","public_addr":"","listen_port":0,"tls_port":0,"mtproxy_port":0,"decoy_mode":"","decoy_dir":"","debug":false,"problems":"","owner":"target"}\n' \
+        "$_en" "${DETECTED_PORT:-443}" "$(json_escape "$_host")" "$(json_escape "$_mode")"
+}
+
+# В менеджере профили пересобираются вместе со всем конфигом, у цели правим
+# только их: остальное в чужом файле не наше.
+web_sync_profiles() {
+    if web_is_reanimator; then
+        web_target_sync_profiles || return 1
+        _target_users_apply 2>/dev/null || true
+        return 0
+    fi
+    web_is_enabled || { log_info "WEB Proxy выключен — синхронизировать нечего"; return 0; }
+    reload_proxy_config || return 1
+    log_success "Профили WEB пересобраны: $(web_profile_count) шт."
+}
+
 web_status_json() {
+    web_is_reanimator && { _web_status_json_target; return 0; }
     local _d _addr _problems
     _d=$(web_domain 2>/dev/null)
     _addr=$(web_public_addr 2>/dev/null)
@@ -739,6 +767,7 @@ handle_web_command() {
         enable)  check_root; load_secrets; web_enable ;;
         disable) check_root; load_secrets; web_disable ;;
         links)   load_secrets; web_links_print ;;
+        sync)    check_root; load_secrets; web_sync_profiles ;;
         set)     check_root; web_set_param "${1:-}" "${2:-}" ;;
         settable) web_settable_json ;;
         *)
@@ -747,6 +776,7 @@ handle_web_command() {
             echo -e "    ${GREEN}web enable${NC}    Включить"
             echo -e "    ${GREEN}web disable${NC}   Выключить"
             echo -e "    ${GREEN}web links${NC}     Ссылки tg://webproxy"
+            echo -e "    ${GREEN}web sync${NC}      Свести профили WEB со списком пользователей"
             echo -e "    ${GREEN}web set${NC} K V    Изменить параметр"
             echo -e "    ${GREEN}web json${NC}      Статус в JSON"
             ;;
@@ -888,6 +918,118 @@ web_target_profiles() {
             if (line ~ /^secret_mode[[:space:]]*=/) { sub(/^[^=]*=[[:space:]]*/, "", line); gsub(/"/, "", line); m=line }
         }
         END { if (u != "") print u "|" (m == "" ? "dd" : m) }' "$_f"
+}
+
+# Движок не заводит профиль WEB вместе с пользователем — ни через конфиг, ни
+# через /v1/users. Без профиля у нового пользователя не будет WEB-ссылки, а
+# профиль без пользователя делает конфиг невалидным: держим их в паре.
+
+# secret_mode берём у уже заведённых профилей, чтобы не смешивать представления.
+_web_target_secret_mode() {
+    local _u _m
+    while IFS='|' read -r _u _m; do
+        [ -n "$_m" ] && { printf '%s' "$_m"; return 0; }
+    done <<< "$(web_target_profiles 2>/dev/null)"
+    printf 'dd'
+}
+
+web_target_has_profile() {
+    local _label="$1" _u _m
+    while IFS='|' read -r _u _m; do
+        [ "$_u" = "$_label" ] && return 0
+    done <<< "$(web_target_profiles 2>/dev/null)"
+    return 1
+}
+
+# Блок дописывается в конец файла: массив таблиц привязывается к последнему
+# объявленному [[web.vhosts]], где бы он ни стоял выше.
+web_target_add_profile() {
+    local _label="$1" _f="${DETECTED_CONFIG_PATH:-}"
+    web_target_enabled || return 0
+    [ -n "$_label" ] && [ -f "$_f" ] || return 0
+    web_target_has_profile "$_label" && return 0
+
+    printf '\n[[web.vhosts.profiles]]\nuser = "%s"\nsecret_mode = "%s"\n' \
+        "$_label" "$(_web_target_secret_mode)" >> "$_f" || {
+        log_warn "Не удалось добавить WEB-профиль для '${_label}' — ссылки WEB у него не будет"
+        return 1
+    }
+    log_success "WEB-профиль для '${_label}' добавлен в конфиг цели"
+
+    # max_profiles применяется только перезапуском, и заниженный лимит роняет
+    # движок на старте — сказать об этом надо здесь, а не в логах падения.
+    local _n _lim
+    _n=$(web_target_profiles 2>/dev/null | grep -c .)
+    _lim=$(_toml_get_string_in_section "web.limits" "max_profiles" "$_f" 2>/dev/null)
+    [ -n "$_lim" ] || _lim=32
+    if [ "${_n:-0}" -gt "${_lim:-32}" ]; then
+        log_warn "Профилей WEB ${_n}, а web.limits.max_profiles = ${_lim} — цель не стартует"
+        log_info "Поднимите лимит в её конфиге: [web.limits] max_profiles = $(( ((_n + 31) / 32) * 32 ))"
+    fi
+}
+
+# Профиль, ссылающийся на удалённого пользователя, движок конфигом не примет.
+web_target_remove_profile() {
+    local _label="$1" _f="${DETECTED_CONFIG_PATH:-}"
+    [ -n "$_label" ] && [ -f "$_f" ] || return 0
+    web_target_has_profile "$_label" || return 0
+
+    local _tmp; _tmp=$(_mktemp "$(dirname "$_f")") || return 1
+    awk -v u="$_label" '
+        /^[[:space:]]*\[\[web\.vhosts\.profiles\]\][[:space:]]*$/ {
+            if (n > 0 && !drop) for (i = 1; i <= n; i++) print buf[i]
+            n = 1; buf[1] = $0; inp = 1; drop = 0; next
+        }
+        /^[[:space:]]*\[/ {
+            if (inp) { if (!drop) for (i = 1; i <= n; i++) print buf[i]; inp = 0; n = 0 }
+            print; next
+        }
+        inp {
+            n++; buf[n] = $0
+            line = $0; sub(/^[[:space:]]+/, "", line)
+            if (line ~ /^user[[:space:]]*=/) {
+                sub(/^[^=]*=[[:space:]]*/, "", line); gsub(/"/, "", line)
+                if (line == u) drop = 1
+            }
+            next
+        }
+        { print }
+        END { if (inp && !drop) for (i = 1; i <= n; i++) print buf[i] }
+    ' "$_f" > "$_tmp" || { rm -f "$_tmp"; return 1; }
+
+    cat "$_tmp" > "$_f" && rm -f "$_tmp" \
+        && log_success "WEB-профиль '${_label}' убран из конфига цели"
+}
+
+# Приводит профили в соответствие со списком пользователей цели. Нужно, когда
+# пользователя завели мимо нас — например панель в реаниматоре создаёт его
+# через /v1/users движка, а тот профиль WEB не заводит.
+web_target_sync_profiles() {
+    web_target_enabled 2>/dev/null || { log_info "У цели WEB Proxy не включён — синхронизировать нечего"; return 0; }
+    local _f="${DETECTED_CONFIG_PATH:-}"
+    [ -f "$_f" ] || { log_error "Конфиг цели не найден"; return 1; }
+
+    local _added=0 _removed=0 _st _lb _u _m
+    local _users=" "
+    while IFS='|' read -r _st _lb _; do
+        [ -n "$_lb" ] || continue
+        _users+="${_lb} "
+    done < <(_target_section_pairs "access.users" 2>/dev/null)
+
+    while IFS='|' read -r _u _m; do
+        [ -n "$_u" ] || continue
+        case "$_users" in
+            *" ${_u} "*) ;;
+            *) web_target_remove_profile "$_u" >/dev/null 2>&1 && _removed=$((_removed + 1)) ;;
+        esac
+    done <<< "$(web_target_profiles 2>/dev/null)"
+
+    for _lb in $_users; do
+        web_target_has_profile "$_lb" && continue
+        web_target_add_profile "$_lb" >/dev/null 2>&1 && _added=$((_added + 1))
+    done
+
+    log_success "Профили WEB у цели: добавлено ${_added}, снято ${_removed}"
 }
 
 # Ссылка для пользователя цели, если он заведён профилем WEB.

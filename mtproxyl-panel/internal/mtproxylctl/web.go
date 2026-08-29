@@ -59,6 +59,14 @@ func (c *Client) WebDisable(ctx context.Context) (string, error) {
 	return stripANSI(out), err
 }
 
+// WebSync reconciles the [[web.vhosts.profiles]] entries with the user list.
+// The engine creates neither: a user added through /v1/users lands in
+// [access.users] only, and without a profile it gets no WEB link at all.
+func (c *Client) WebSync(ctx context.Context) (string, error) {
+	out, err := c.run(ctx, "web", "sync")
+	return stripANSI(out), err
+}
+
 // WebLinks returns the tg://webproxy links. The engine API does not expose
 // them — its user links cover only classic, secure and TLS — so MTProxyL
 // builds them itself.

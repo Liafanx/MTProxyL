@@ -1140,6 +1140,10 @@ target_user_add() {
     log_success "Пользователь '${_label}' добавлен цели (${DETECTED_CONFIG_PATH})"
     [ -n "${TARGET_CONFIG_BACKUP:-}" ] && log_info "Резервная копия: ${TARGET_CONFIG_BACKUP}"
 
+    # Профиль WEB движок сам не заводит, а без него у пользователя нет
+    # WEB-ссылки — добавляем в паре с самим пользователем.
+    web_target_add_profile "$_label" || true
+
     local _link; _link=$(target_user_link "$_label")
     if [ -n "$_link" ]; then
         echo ""
@@ -1170,6 +1174,8 @@ target_user_remove() {
         _toml_safe_unset "$_label" "$_sect" "$DETECTED_CONFIG_PATH" 2>/dev/null || true
         _target_drop_empty_limit_section "$_sect" 2>/dev/null || true
     done
+    # Профиль на несуществующего пользователя движок конфигом не примет.
+    web_target_remove_profile "$_label" || true
     log_success "Пользователь '${_label}' удалён у цели"
     [ -n "${TARGET_CONFIG_BACKUP:-}" ] && log_info "Резервная копия: ${TARGET_CONFIG_BACKUP}"
     _target_users_apply

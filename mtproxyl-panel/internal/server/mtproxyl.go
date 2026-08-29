@@ -357,6 +357,18 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
 	}))
 
+	mux.Handle("POST /api/mtproxyl/web/sync", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		out, err := client.WebSync(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
 	mux.Handle("GET /api/mtproxyl/web/links", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
 			return

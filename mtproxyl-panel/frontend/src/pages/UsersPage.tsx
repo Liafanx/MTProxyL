@@ -192,15 +192,28 @@ export function UsersPage() {
       .catch((e) => console.warn('Failed to load user defaults:', e));
   }, []);
 
+  // Движок профиль WEB не заводит и не снимает: пользователь, созданный через
+  // его /v1/users, остаётся без WEB-ссылки, а профиль удалённого делает конфиг
+  // невалидным. Сводит их MTProxyL — там, где пользователей ведём не мы.
+  const syncWebProfiles = useCallback(async () => {
+    if (!mtproxylEnabled || !webStatus?.enabled) return;
+    try {
+      await mtproxylApi.webSync();
+    } catch {
+      // Не критично: ссылка появится после `mtproxyl web sync` вручную.
+    }
+  }, [mtproxylEnabled, webStatus?.enabled]);
+
   const handleCreate = useCallback(async (data: Record<string, unknown>) => {
     if (usersOwnedByMtproxyl) {
       await mtproxylUsersApi.create(String(data.username), data.secret ? String(data.secret) : undefined);
       await applyMtproxylLimits(String(data.username), data);
     } else {
       await telemt.post('/v1/users', data);
+      await syncWebProfiles();
     }
     refresh();
-  }, [refresh, usersOwnedByMtproxyl]);
+  }, [refresh, usersOwnedByMtproxyl, syncWebProfiles]);
 
   const handleEdit = useCallback(async (data: Record<string, unknown>) => {
     if (!editUser) return;
@@ -226,6 +239,7 @@ export function UsersPage() {
         await mtproxylUsersApi.remove(deleteUser);
       } else {
         await telemt.delete(`/v1/users/${deleteUser}`);
+        await syncWebProfiles();
       }
       setDeleteUser(null);
       refresh();
@@ -234,7 +248,7 @@ export function UsersPage() {
     } finally {
       setDeleting(false);
     }
-  }, [deleteUser, refresh, usersOwnedByMtproxyl]);
+  }, [deleteUser, refresh, usersOwnedByMtproxyl, syncWebProfiles]);
 
   const handleResetQuota = useCallback(async () => {
     if (!resetUser) return;

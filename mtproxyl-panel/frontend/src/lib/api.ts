@@ -316,6 +316,10 @@ export const mtproxylApi = {
   webDisable: () =>
     request<MtproxylOperation>(MTPROXYL_BASE, '/web/disable', { method: 'POST' }),
   webLinks: () => request<{ output: string }>(MTPROXYL_BASE, '/web/links'),
+  // Профиль WEB движок сам не заводит: пользователь, созданный через его
+  // /v1/users, попадает только в [access.users] и остаётся без WEB-ссылки.
+  webSync: () =>
+    request<{ output: string }>(MTPROXYL_BASE, '/web/sync', { method: 'POST' }),
 
   backups: () => request<MtproxylBackup[]>(MTPROXYL_BASE, '/backups'),
   createBackup: () =>
