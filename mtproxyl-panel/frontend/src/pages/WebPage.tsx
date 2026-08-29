@@ -7,7 +7,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { OperationProgress } from '@/components/OperationProgress';
 import { ParamField } from '@/components/ParamField';
 import { mtproxylApi, type WebParam, type WebStatus } from '@/lib/api';
-import { useMtproxylOperation } from '@/hooks/useMtproxyl';
+import { useManagerOnly, useMtproxylOperation } from '@/hooks/useMtproxyl';
 
 const LAYOUT_LABELS: Record<string, string> = {
   shared: 'shared — один порт с обычным прокси, разбор по SNI',
@@ -48,6 +48,9 @@ export function WebPage() {
   }, []);
 
   const { operation, start, dismiss, running } = useMtproxylOperation(load, ['web:']);
+  // В реаниматоре WEB поднимает хозяин цели: включать и настраивать нам нечего,
+  // MTProxyL там только читает её конфиг и собирает ссылки.
+  const { allowed: isManager, loading: modeLoading } = useManagerOnly();
 
   useEffect(() => {
     void load();
@@ -145,20 +148,32 @@ export function WebPage() {
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
                 <Row label="Домен" value={status.domain || 'не задан'} mono />
-                <Row label="Раскладка" value={LAYOUT_LABELS[status.layout] ?? status.layout} />
-                <Row label="Транспорт" value={CARRIER_LABELS[status.carrier] ?? status.carrier} />
-                <Row label="Секрет в ссылке" value={status.secret_mode} />
-                <Row label="public_addr" value={status.public_addr || 'не определён'} mono />
-                <Row
-                  label="Порты"
-                  value={
-                    status.layout === 'split'
-                      ? `nginx :${status.public_port} → WEB :${status.listen_port}`
-                      : `nginx :${status.public_port} → движок :${status.mtproxy_port}, WEB :${status.listen_port}`
-                  }
-                  mono
-                />
-                <Row label="Сайт-заглушка" value={status.decoy_dir} mono />
+                {/* У цели раскладку и порты задаёт её хозяин, и MTProxyL их не знает:
+                    показывать нули и пустые поля честнее не показывать вовсе. */}
+                {status.layout !== 'target' && (
+                  <>
+                    <Row label="Раскладка" value={LAYOUT_LABELS[status.layout] ?? status.layout} />
+                    <Row label="Транспорт" value={CARRIER_LABELS[status.carrier] ?? status.carrier} />
+                    <Row label="Секрет в ссылке" value={status.secret_mode} />
+                    <Row label="public_addr" value={status.public_addr || 'не определён'} mono />
+                    <Row
+                      label="Порты"
+                      value={
+                        status.layout === 'split'
+                          ? `nginx :${status.public_port} → WEB :${status.listen_port}`
+                          : `nginx :${status.public_port} → движок :${status.mtproxy_port}, WEB :${status.listen_port}`
+                      }
+                      mono
+                    />
+                    <Row label="Сайт-заглушка" value={status.decoy_dir} mono />
+                  </>
+                )}
+                {status.layout === 'target' && (
+                  <>
+                    <Row label="Секрет в ссылке" value={status.secret_mode || '—'} />
+                    <Row label="Порт цели" value={String(status.public_port)} mono />
+                  </>
+                )}
               </CardContent>
             </Card>
 
@@ -177,6 +192,21 @@ export function WebPage() {
               </Card>
             )}
 
+            {!modeLoading && !isManager && (
+              <Card>
+                <CardContent className="pt-4 space-y-2 text-sm text-text-secondary">
+                  <p>
+                    Конфигом владеет цель, поэтому WEB Proxy включает и настраивает её
+                    хозяин. MTProxyL показывает состояние и собирает ссылки.
+                  </p>
+                  <Button variant="outline" onClick={showLinks} disabled={running}>
+                    Ссылки
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+
+            {isManager && (
             <Card>
               <CardHeader>
                 <CardTitle>Параметры</CardTitle>
@@ -198,7 +228,9 @@ export function WebPage() {
                 ))}
               </CardContent>
             </Card>
+            )}
 
+            {isManager && (
             <div className="flex flex-wrap gap-2">
               {/* Кнопку не блокируем списком причин: он собран при загрузке
                   страницы и после неудачного включения оставался бы вечным.
@@ -224,6 +256,7 @@ export function WebPage() {
                 </>
               )}
             </div>
+            )}
 
             {links && (
               <Card>

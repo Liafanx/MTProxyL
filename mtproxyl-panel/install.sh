@@ -661,7 +661,7 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot set proxy *
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot set proxy
 # Список разрешений устаревает, как только панель обновилась и стала звать
 # новые команды. Разрешаем ей перевыпустить его самой — иначе после каждого
-# обновления пришлось бы идти в терминал за `mtproxyl panel install`.
+# обновления пришлось бы идти за правами в терминал руками.
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script panel grant
 EOF
 

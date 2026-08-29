@@ -200,23 +200,6 @@ web_trusted_proxy_cidrs = ["127.0.0.1/32"]
 TOML
 }
 
-# Снимок сайта-заглушки движок собирает при старте: файлы, добавленные потом,
-# отдаются как 404, и страница открывается без стилей. Горячая перезагрузка
-# снимок не пересобирает — нужен перезапуск.
-web_decoy_needs_restart() {
-    # В реаниматоре движок чужой, и перезапускать его из-за нашей заглушки
-    # мы не вправе: WEB там поднимает хозяин цели.
-    web_is_reanimator && return 1
-    web_is_enabled || return 1
-    [ "${WEB_DECOY_MODE:-static_directory}" = "static_directory" ] || return 1
-    is_proxy_running 2>/dev/null
-}
-
-web_restart_for_decoy() {
-    log_info "Сайт-заглушка изменился — перезапуск движка, чтобы WEB отдал новые файлы"
-    restart_proxy_container || true
-}
-
 _web_decoy_toml() {
     if [ "${WEB_DECOY_MODE:-static_directory}" = "http_upstream" ]; then
         printf 'mode = "http_upstream"\nupstream = "%s"\n' "${WEB_DECOY_UPSTREAM}"
@@ -306,7 +289,9 @@ web_sections_toml() {
     printf '\n[[web.vhosts]]\nhost = "%s"\npublic_addr = "%s"\n' "$_domain" "$_addr"
     printf '\n[web.vhosts.decoy]\n'
     _web_decoy_toml
-    _web_profiles_toml
+    # vhost без профилей движок не примет, и он не стартует вовсе — сказать
+    # об этом надо здесь, а не в логах падения.
+    _web_profiles_toml || log_warn "WEB: нет включённых пользователей — движок не примет vhost без профилей" >&2
     # Профилей больше, чем движок разрешает по умолчанию, — поднимаем лимит
     # сами, иначе он откажется стартовать с «WEB profiles exceed».
     local _lim; _lim=$(web_profiles_limit)
@@ -473,7 +458,8 @@ web_enable() {
     fi
     generate_telemt_config || { WEB_ENABLED="false"; save_settings; return 1; }
     load_secrets
-    restart_proxy_container || true
+    # До настройки nginx движок сидит на loopback, и его ссылки сейчас нерабочие.
+    MTPROXYL_QUIET_LINKS="true" restart_proxy_container || true
     # Молча продолжать нельзя: nginx сел бы на 443 перед мёртвым движком.
     if ! is_proxy_running; then
         log_error "Движок не поднялся с WEB-конфигом — откатываем"
@@ -489,6 +475,23 @@ web_enable() {
     fi
 
     log_success "WEB Proxy включён: $(web_domain), carrier ${WEB_CARRIER}"
+    _web_enable_links_tail
+}
+
+# Итог включения — именно WEB-ссылки: обычные не менялись, а показывать их
+# вместо новых значит не показать результат операции вовсе.
+_web_enable_links_tail() {
+    echo ""
+    draw_header "ССЫЛКИ WEB PROXY (${WEB_SECRET_MODE:-dd})"
+    web_links_print || return 0
+    echo -e "  ${DIM}Порта в ссылке нет: клиент WEB ходит только на 443.${NC}"
+    if web_layout_is_split; then
+        echo -e "  ${DIM}Обычные ссылки не изменились, прокси остался на порту ${PROXY_PORT:-443}:${NC}"
+    else
+        echo -e "  ${DIM}Обычные ссылки не изменились, порт ${PROXY_PORT:-443} у них общий с WEB:${NC}"
+    fi
+    echo -e "  ${DIM}mtproxyl secret link${NC}"
+    echo ""
 }
 
 # Обратный порядок: сначала снимаем nginx с публичного порта, иначе движок
@@ -532,7 +535,13 @@ _web_status_json_target() {
 web_sync_profiles() {
     if web_is_reanimator; then
         web_target_sync_profiles || return 1
-        _target_users_apply 2>/dev/null || true
+        # Цель чужая, и перезапускать её из-за профилей мы не спрашиваем и не
+        # делаем: панель зовёт эту команду на создание пользователя, а рвать
+        # всем соединения по такому поводу нельзя. Если движок не подхватит
+        # сам — скажем, что нужен перезапуск, и решать будет хозяин.
+        if is_proxy_running 2>/dev/null && ! _target_users_hot_applied 2>/dev/null; then
+            log_info "Цель не применила профили на ходу — нужен её перезапуск: mtproxyl restart"
+        fi
         return 0
     fi
     web_is_enabled || { log_info "WEB Proxy выключен — синхронизировать нечего"; return 0; }
@@ -1008,6 +1017,7 @@ web_target_sync_profiles() {
     web_target_enabled 2>/dev/null || { log_info "У цели WEB Proxy не включён — синхронизировать нечего"; return 0; }
     local _f="${DETECTED_CONFIG_PATH:-}"
     [ -f "$_f" ] || { log_error "Конфиг цели не найден"; return 1; }
+    backup_target_config "web-profiles" "true" || true
 
     local _added=0 _removed=0 _st _lb _u _m
     local _users=" "

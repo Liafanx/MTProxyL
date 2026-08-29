@@ -395,6 +395,13 @@ generate_telemt_config() {
         load_upstreams 2>/dev/null || true
     fi
 
+    # Пользователи — тем же порядком и по той же причине: команда без
+    # load_secrets (selfmask, nft, гео-блокировка) вычистила бы [access.users]
+    # целиком, а дальше по цепочке ещё и завела бы взамен одного 'default'.
+    if [ "${#SECRETS_LABELS[@]}" -eq 0 ]; then
+        load_secrets 2>/dev/null || true
+    fi
+
     # Режим супер эксперта: конфиг ведёт пользователь, мы только кладём его
     # файл на место config.toml. Ни настройки, ни секреты, ни override не
     # применяются — это и есть смысл режима.

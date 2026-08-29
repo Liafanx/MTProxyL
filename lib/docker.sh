@@ -161,7 +161,8 @@ build_telemt_image() {
     # Стратегия 3: собрать образ вокруг официального бинарника релиза.
     # Компиляция из исходников на слабой VPS занимает минуты и требует 2 ГБ
     # памяти; готовый musl-бинарник статический, и образу хватает scratch.
-    if _build_telemt_image_from_release "$version"; then
+    # force=source — явная просьба собрать из исходников, её не подменяем.
+    if [ "$force" != "source" ] && _build_telemt_image_from_release "$version"; then
         docker tag "${DOCKER_IMAGE_BASE}:${version}" "${DOCKER_IMAGE_BASE}:latest" 2>/dev/null || true
         log_success "Собран telemt v${version} из релизного бинарника"
         echo "$version" > "${INSTALL_DIR}/.telemt_version"
@@ -503,7 +504,10 @@ run_proxy_container() {
         build_telemt_image || { log_error "Не удалось собрать образ"; return 1; }
     fi
 
-    # Ensure we have at least one secret
+    # Пустой массив ещё не значит пустую базу: команда могла не звать
+    # load_secrets, а созданный здесь 'default' затрёт файл всеми своими
+    # пользователями. Перечитываем с диска, прежде чем что-то создавать.
+    [ ${#SECRETS_LABELS[@]} -eq 0 ] && { load_secrets 2>/dev/null || true; }
     if [ ${#SECRETS_LABELS[@]} -eq 0 ]; then
         log_info "Нет секретов, создаём default..."
         secret_add "default" "" "true"
@@ -563,6 +567,11 @@ run_proxy_container() {
     sleep 2
     if is_proxy_running; then
         log_success "Прокси запущен на порту ${PROXY_PORT}"
+
+        # Внутри многошаговой операции ссылки здесь преждевременны: публичный
+        # порт ещё не настроен, и печатать нерабочие сейчас незачем — итог
+        # покажет сама операция, когда закончит.
+        [ "${MTPROXYL_QUIET_LINKS:-false}" = "true" ] && return 0
 
         local server_ip; server_ip=$(get_public_ip)
         [ -n "$server_ip" ] && {

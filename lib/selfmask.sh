@@ -96,6 +96,16 @@ _selfmask_pq_conf() {
     echo "${SELFMASK_PQ_PREFIX}/conf/nginx.conf"
 }
 
+# Без mime.types nginx отдаёт всё как text/plain, и браузер такой CSS не
+# применяет — многофайловая заглушка открывалась без стилей. Файла может не
+# оказаться в чужой сборке: тогда лучше без include, чем nginx, который не
+# стартует.
+_selfmask_nginx_mime_block() {
+    local _f="${SELFMASK_PQ_PREFIX}/conf/mime.types"
+    [ -f "$_f" ] || return 0
+    printf '    include       %s;\n    default_type  application/octet-stream;\n\n' "$_f"
+}
+
 _selfmask_template_label() {
     case "${1:-stub}" in
         stub)        echo "Простая заглушка" ;;
@@ -847,8 +857,6 @@ _selfmask_deploy_site() {
 
     chown -R www-data:www-data "$SELFMASK_SITE_DIR" 2>/dev/null || true
     chmod -R 755 "$SELFMASK_SITE_DIR" 2>/dev/null || true
-
-    web_decoy_needs_restart && web_restart_for_decoy
 }
 
 _selfmask_download_template() {
@@ -1044,6 +1052,8 @@ _selfmask_obtain_cert() {
     mkdir -p "${SELFMASK_SITE_DIR}/.well-known/acme-challenge"
     mkdir -p "${SELFMASK_PQ_PREFIX}/conf"
 
+    local _mime; _mime=$(_selfmask_nginx_mime_block)
+
     cat > "$(_selfmask_pq_conf)" << EOF
 worker_processes auto;
 
@@ -1052,6 +1062,7 @@ events {
 }
 
 http {
+${_mime}
     server {
         listen 80;
         server_name ${SELFMASK_DOMAIN};
@@ -1183,6 +1194,8 @@ EOF
 
     # WEB Proxy: публичный порт забирает nginx и разводит по SNI, движок
     # уходит на loopback. Без WEB конфиг остаётся прежним.
+    local _mime; _mime=$(_selfmask_nginx_mime_block)
+
     local _web_stream="" _web_map="" _web_server=""
     if web_is_enabled 2>/dev/null; then
         _web_stream=$(web_nginx_stream_block) || {
@@ -1200,6 +1213,7 @@ events {
 
 ${_web_stream}
 http {
+${_mime}
 ${_web_map}
 ${_http80}
     server {
