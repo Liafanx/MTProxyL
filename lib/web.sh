@@ -128,20 +128,18 @@ web_link_public_port() {
 }
 
 web_carrier_needs_http2() {
-    [ "${WEB_CARRIER:-websocket-lanes}" = "https-lanes" ]
+    [ "${WEB_CARRIER:-websocket}" = "https-lanes" ]
 }
 
 # Zapret2 зажимает окно в SYN+ACK и на пустых ACK, то есть до того, как придёт
 # ClientHello и станет известен SNI. Исключить по домену это нельзя в принципе,
 # и https-carrier'ы от такого зажима заметно теряют в скорости.
 #
-# websocket-lanes переживает его нормально — проверено на живой машине: у него
-# после Upgrade идёт один долгий сокет на поток, а не поток коротких запросов,
-# и зажим окна на рукопожатии окупается за первые же секунды. Лимитер ему тоже
-# не мешает по той же причине. В раскладке split фильтр идёт по порту прокси,
-# и WEB не задевается вовсе.
+# WebSocket-carrier'ы переживают его нормально: после Upgrade остаются долгие
+# сокеты, и зажим окна на рукопожатии окупается за первые же секунды. В split
+# фильтр идёт по порту прокси, и WEB не задевается вовсе.
 web_carrier_survives_zapret2() {
-    case "${WEB_CARRIER:-websocket-lanes}" in
+    case "${WEB_CARRIER:-websocket}" in
         websocket-lanes|websocket) return 0 ;;
         *) return 1 ;;
     esac
@@ -157,7 +155,7 @@ web_warn_zapret2() {
     web_zapret2_hurts || return 0
     log_warn "Zapret2 активен и режет скорость WEB Proxy на carrier ${WEB_CARRIER}"
     log_info "Зажим TCP-окна ставится в SYN+ACK, когда SNI ещё неизвестен — по домену его не обойти"
-    log_info "Варианты: carrier websocket-lanes (он с zapret2 работает нормально),"
+    log_info "Варианты: carrier websocket (он с zapret2 работает нормально),"
     log_info "раскладка split либо SYN-лимитер вместо zapret2"
 }
 
@@ -284,7 +282,7 @@ web_sections_toml() {
     _addr=$(web_public_addr) || return 1
     [ -n "$_domain" ] || return 1
 
-    printf '\n[web]\nenabled = true\ncarrier = "%s"\n' "${WEB_CARRIER:-websocket-lanes}"
+    printf '\n[web]\nenabled = true\ncarrier = "%s"\n' "${WEB_CARRIER:-websocket}"
     printf '\n[web.debug]\nenabled = %s\n' "$([ "${WEB_DEBUG:-false}" = "true" ] && echo true || echo false)"
     printf '\n[[web.vhosts]]\nhost = "%s"\npublic_addr = "%s"\n' "$_domain" "$_addr"
     printf '\n[web.vhosts.decoy]\n'
@@ -743,7 +741,7 @@ web_status_print() {
     fi
     echo -e "   🕸  Заглушка         $(web_decoy_dir)"
     if web_zapret2_hurts 2>/dev/null; then
-        echo -e "   ⚠️  Zapret2          ${YELLOW}режет скорость на ${WEB_CARRIER}${NC} — возьмите websocket-lanes"
+        echo -e "   ⚠️  Zapret2          ${YELLOW}режет скорость на ${WEB_CARRIER}${NC} — возьмите websocket"
     fi
     local _dup; _dup=$(web_duplicate_secret_labels 2>/dev/null)
     [ -n "$_dup" ] && echo -e "   ⚠️  Общий секрет     ${YELLOW}${_dup}${NC} — без профиля WEB"

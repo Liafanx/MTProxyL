@@ -15,10 +15,10 @@ const LAYOUT_LABELS: Record<string, string> = {
 };
 
 const CARRIER_LABELS: Record<string, string> = {
-  'websocket-lanes': 'websocket-lanes — по умолчанию, сокет на каждый поток',
+  websocket: 'websocket — по умолчанию, стабильный один сокет',
+  'websocket-lanes': 'websocket-lanes — сокет на каждый поток',
   'https-lanes': 'https-lanes — потоки не блокируют друг друга, нужен HTTP/2',
   https: 'https — максимальная совместимость',
-  websocket: 'websocket — один сокет на все потоки',
 };
 
 export function WebPage() {

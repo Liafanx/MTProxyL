@@ -865,57 +865,125 @@ _selfmask_download_builtin_template() {
     _selfmask_externalize_inline_assets
 }
 
+_selfmask_externalize_tag() {
+    local _html="$1" _tag="$2" _asset="$3" _replacement="$4" _counts _tmp _asset_tmp
+
+    _counts=$(awk -v tag="$_tag" '
+        BEGIN { open_re = "<" tag "[[:space:]]*>"; close_re = "</" tag "[[:space:]]*>" }
+        {
+            line = tolower($0)
+            while (match(line, open_re)) { opens++; line = substr(line, RSTART + RLENGTH) }
+            line = tolower($0)
+            while (match(line, close_re)) { closes++; line = substr(line, RSTART + RLENGTH) }
+        }
+        END { print opens + 0 ":" closes + 0 }
+    ' "$_html") || return 1
+    [ "$_counts" = "1:1" ] || return 0
+
+    _tmp=$(_mktemp "$SELFMASK_SITE_DIR") || return 1
+    _asset_tmp=$(_mktemp "$SELFMASK_SITE_DIR") || { rm -f "$_tmp"; return 1; }
+    if ! awk -v tag="$_tag" -v asset="$_asset_tmp" -v replacement="$_replacement" '
+        BEGIN { open_re = "<" tag "[[:space:]]*>"; close_re = "</" tag "[[:space:]]*>" }
+        {
+            line = $0
+            out = ""
+            while (1) {
+                if (!inside) {
+                    if (match(tolower(line), open_re)) {
+                        out = out substr(line, 1, RSTART - 1) replacement
+                        line = substr(line, RSTART + RLENGTH)
+                        inside = 1
+                        continue
+                    }
+                    out = out line
+                    break
+                }
+                if (match(tolower(line), close_re)) {
+                    print substr(line, 1, RSTART - 1) >> asset
+                    line = substr(line, RSTART + RLENGTH)
+                    inside = 0
+                    continue
+                }
+                print line >> asset
+                break
+            }
+            print out
+        }
+        END { if (inside) exit 1 }
+    ' "$_html" > "$_tmp"; then
+        rm -f "$_tmp" "$_asset_tmp"
+        return 1
+    fi
+
+    mv "$_asset_tmp" "$_asset" || { rm -f "$_tmp" "$_asset_tmp"; return 1; }
+    mv "$_tmp" "$_html" || return 1
+}
+
+_selfmask_has_inline_assets() {
+    awk '
+        {
+            line = tolower($0)
+            if (line ~ /<style([[:space:]>])/) found = 1
+            while (match(line, /<script[^>]*>/)) {
+                tag = substr(line, RSTART, RLENGTH)
+                if (tag !~ /[[:space:]]src[[:space:]]*=/) found = 1
+                line = substr(line, RSTART + RLENGTH)
+            }
+        }
+        END { exit found ? 0 : 1 }
+    ' "$1"
+}
+
 _selfmask_externalize_inline_assets() {
-    local _html="${SELFMASK_SITE_DIR}/index.html" _tmp _asset _legacy_login="false"
+    local _prefix="${1:-mtproxyl-decoy}"
+    local _html="${SELFMASK_SITE_DIR}/index.html" _tmp _legacy_login="false" _script_tag
     [ -f "$_html" ] || return 1
 
-    if grep -q 'onsubmit="return tryLogin()"' "$_html"; then
+    if [ "$_prefix" = "mtproxyl-decoy" ] && grep -q 'onsubmit="return tryLogin()"' "$_html"; then
         _legacy_login="true"
         _tmp=$(_mktemp "$SELFMASK_SITE_DIR") || return 1
         awk '{gsub(/ onsubmit="return tryLogin\(\)"/, ""); print}' "$_html" > "$_tmp"
         mv "$_tmp" "$_html"
     fi
 
-    if grep -qE '^[[:space:]]*<style>[[:space:]]*$' "$_html"; then
-        _asset=$(_mktemp "$SELFMASK_SITE_DIR") || return 1
-        awk '/^[[:space:]]*<style>[[:space:]]*$/{p=1; next} /^[[:space:]]*<\/style>[[:space:]]*$/{p=0; next} p' "$_html" > "$_asset"
-        [ -s "$_asset" ] || return 1
-        mv "$_asset" "${SELFMASK_SITE_DIR}/mtproxyl-decoy.css"
-        _tmp=$(_mktemp "$SELFMASK_SITE_DIR") || return 1
-        awk '/^[[:space:]]*<style>[[:space:]]*$/{print "<link rel=\"stylesheet\" href=\"/mtproxyl-decoy.css\">"; p=1; next} /^[[:space:]]*<\/style>[[:space:]]*$/{p=0; next} !p' "$_html" > "$_tmp"
-        mv "$_tmp" "$_html"
-    fi
+    _selfmask_externalize_tag \
+        "$_html" style "${SELFMASK_SITE_DIR}/${_prefix}.css" \
+        "<link rel=\"stylesheet\" href=\"/${_prefix}.css\">" || return 1
 
-    if grep -qE '^[[:space:]]*<script>[[:space:]]*$' "$_html"; then
-        _asset=$(_mktemp "$SELFMASK_SITE_DIR") || return 1
-        awk '/^[[:space:]]*<script>[[:space:]]*$/{p=1; next} /^[[:space:]]*<\/script>[[:space:]]*$/{p=0; next} p' "$_html" > "$_asset"
-        [ -s "$_asset" ] || return 1
-        if [ "$_legacy_login" = "true" ]; then
-            cat >> "$_asset" <<'JS_EOF'
+    _script_tag="<script src=\"/${_prefix}.js\"></script>"
+    [ "$_prefix" != "mtproxyl-decoy" ] || \
+        _script_tag="<script src=\"/${_prefix}.js\" defer></script>"
+    _selfmask_externalize_tag \
+        "$_html" script "${SELFMASK_SITE_DIR}/${_prefix}.js" "$_script_tag" || return 1
+
+    if [ "$_legacy_login" = "true" ] && [ -f "${SELFMASK_SITE_DIR}/${_prefix}.js" ]; then
+        cat >> "${SELFMASK_SITE_DIR}/${_prefix}.js" <<'JS_EOF'
 document.getElementById('lf').addEventListener('submit',function(e){
   e.preventDefault();
   tryLogin();
 });
 JS_EOF
-        fi
-        mv "$_asset" "${SELFMASK_SITE_DIR}/mtproxyl-decoy.js"
-        _tmp=$(_mktemp "$SELFMASK_SITE_DIR") || return 1
-        awk '/^[[:space:]]*<script>[[:space:]]*$/{print "<script src=\"/mtproxyl-decoy.js\" defer></script>"; p=1; next} /^[[:space:]]*<\/script>[[:space:]]*$/{p=0; next} !p' "$_html" > "$_tmp"
-        mv "$_tmp" "$_html"
     fi
 
     chmod 644 "$_html" 2>/dev/null || return 1
-    [ ! -f "${SELFMASK_SITE_DIR}/mtproxyl-decoy.css" ] || \
-        chmod 644 "${SELFMASK_SITE_DIR}/mtproxyl-decoy.css" 2>/dev/null || return 1
-    [ ! -f "${SELFMASK_SITE_DIR}/mtproxyl-decoy.js" ] || \
-        chmod 644 "${SELFMASK_SITE_DIR}/mtproxyl-decoy.js" 2>/dev/null || return 1
+    [ ! -f "${SELFMASK_SITE_DIR}/${_prefix}.css" ] || \
+        chmod 644 "${SELFMASK_SITE_DIR}/${_prefix}.css" 2>/dev/null || return 1
+    [ ! -f "${SELFMASK_SITE_DIR}/${_prefix}.js" ] || \
+        chmod 644 "${SELFMASK_SITE_DIR}/${_prefix}.js" 2>/dev/null || return 1
 }
 
 selfmask_prepare_web_decoy() {
     [ "${WEB_DECOY_MODE:-static_directory}" = "static_directory" ] || return 0
+    local _prefix="mtproxyl-web-inline"
     case "${SELFMASK_SITE_SOURCE:-stub}" in
-        stub|filemanager|catrunner|mekorunner) _selfmask_externalize_inline_assets ;;
+        stub|filemanager|catrunner|mekorunner) _prefix="mtproxyl-decoy" ;;
     esac
+    _selfmask_externalize_inline_assets "$_prefix" || return 1
+    if [ "$_prefix" = "mtproxyl-web-inline" ] && \
+        _selfmask_has_inline_assets "${SELFMASK_SITE_DIR}/index.html"; then
+        log_warn "WEB: в пользовательской заглушке остался inline CSS или JavaScript"
+        log_info "Вынесите сложные inline-блоки в отдельные локальные .css/.js файлы"
+    fi
 }
 
 _selfmask_download_template() {

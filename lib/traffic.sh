@@ -1142,7 +1142,7 @@ show_status_json() {
         _web=$(printf '{"enabled":true,"domain":"%s","layout":"%s","carrier":"%s"}' \
             "$(json_escape "$(web_domain 2>/dev/null)")" \
             "$(json_escape "${WEB_LAYOUT:-shared}")" \
-            "$(json_escape "${WEB_CARRIER:-websocket-lanes}")")
+            "$(json_escape "${WEB_CARRIER:-websocket}")")
     fi
     printf '{"version":"%s","mode":"manager","status":"%s","port":%d,"domain":"%s","uptime":%d,"connections":%d,"unique_ips":%d,"traffic_in":%d,"traffic_out":%d,"traffic_total":%d,"web":%s}\n' \
         "$VERSION" "$status" "$PROXY_PORT" "$PROXY_DOMAIN" "$uptime_secs" "${connections:-0}" \
