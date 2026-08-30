@@ -836,16 +836,16 @@ _selfmask_deploy_site() {
 
     case "$_src" in
         stub)
-            _selfmask_download_template "${_templates_base}/stub.html" || _selfmask_fallback_stub
+            _selfmask_download_builtin_template "${_templates_base}/stub.html" || _selfmask_fallback_stub
             ;;
         filemanager)
-            _selfmask_download_template "${_templates_base}/filemanager.html" || _selfmask_fallback_stub
+            _selfmask_download_builtin_template "${_templates_base}/filemanager.html" || _selfmask_fallback_stub
             ;;
         catrunner)
-            _selfmask_download_template "${_templates_base}/catrunner.html" || _selfmask_fallback_stub
+            _selfmask_download_builtin_template "${_templates_base}/catrunner.html" || _selfmask_fallback_stub
             ;;
         mekorunner)
-            _selfmask_download_template "${_templates_base}/mekorunner.html" || _selfmask_fallback_stub
+            _selfmask_download_builtin_template "${_templates_base}/mekorunner.html" || _selfmask_fallback_stub
             ;;
         http*)
             _selfmask_download_template "$_src" || _selfmask_fallback_stub
@@ -857,6 +857,59 @@ _selfmask_deploy_site() {
 
     chown -R www-data:www-data "$SELFMASK_SITE_DIR" 2>/dev/null || true
     chmod -R 755 "$SELFMASK_SITE_DIR" 2>/dev/null || true
+}
+
+_selfmask_download_builtin_template() {
+    _selfmask_download_template "$1" || return 1
+    rm -f "${SELFMASK_SITE_DIR}/mtproxyl-decoy.css" "${SELFMASK_SITE_DIR}/mtproxyl-decoy.js"
+    _selfmask_externalize_inline_assets
+}
+
+_selfmask_externalize_inline_assets() {
+    local _html="${SELFMASK_SITE_DIR}/index.html" _tmp _asset _legacy_login="false"
+    [ -f "$_html" ] || return 1
+
+    if grep -q 'onsubmit="return tryLogin()"' "$_html"; then
+        _legacy_login="true"
+        _tmp=$(_mktemp "$SELFMASK_SITE_DIR") || return 1
+        awk '{gsub(/ onsubmit="return tryLogin\(\)"/, ""); print}' "$_html" > "$_tmp"
+        mv "$_tmp" "$_html"
+    fi
+
+    if grep -qE '^[[:space:]]*<style>[[:space:]]*$' "$_html"; then
+        _asset=$(_mktemp "$SELFMASK_SITE_DIR") || return 1
+        awk '/^[[:space:]]*<style>[[:space:]]*$/{p=1; next} /^[[:space:]]*<\/style>[[:space:]]*$/{p=0; next} p' "$_html" > "$_asset"
+        [ -s "$_asset" ] || return 1
+        mv "$_asset" "${SELFMASK_SITE_DIR}/mtproxyl-decoy.css"
+        _tmp=$(_mktemp "$SELFMASK_SITE_DIR") || return 1
+        awk '/^[[:space:]]*<style>[[:space:]]*$/{print "<link rel=\"stylesheet\" href=\"/mtproxyl-decoy.css\">"; p=1; next} /^[[:space:]]*<\/style>[[:space:]]*$/{p=0; next} !p' "$_html" > "$_tmp"
+        mv "$_tmp" "$_html"
+    fi
+
+    if grep -qE '^[[:space:]]*<script>[[:space:]]*$' "$_html"; then
+        _asset=$(_mktemp "$SELFMASK_SITE_DIR") || return 1
+        awk '/^[[:space:]]*<script>[[:space:]]*$/{p=1; next} /^[[:space:]]*<\/script>[[:space:]]*$/{p=0; next} p' "$_html" > "$_asset"
+        [ -s "$_asset" ] || return 1
+        if [ "$_legacy_login" = "true" ]; then
+            cat >> "$_asset" <<'JS_EOF'
+document.getElementById('lf').addEventListener('submit',function(e){
+  e.preventDefault();
+  tryLogin();
+});
+JS_EOF
+        fi
+        mv "$_asset" "${SELFMASK_SITE_DIR}/mtproxyl-decoy.js"
+        _tmp=$(_mktemp "$SELFMASK_SITE_DIR") || return 1
+        awk '/^[[:space:]]*<script>[[:space:]]*$/{print "<script src=\"/mtproxyl-decoy.js\" defer></script>"; p=1; next} /^[[:space:]]*<\/script>[[:space:]]*$/{p=0; next} !p' "$_html" > "$_tmp"
+        mv "$_tmp" "$_html"
+    fi
+}
+
+selfmask_prepare_web_decoy() {
+    [ "${WEB_DECOY_MODE:-static_directory}" = "static_directory" ] || return 0
+    case "${SELFMASK_SITE_SOURCE:-stub}" in
+        stub|filemanager|catrunner|mekorunner) _selfmask_externalize_inline_assets ;;
+    esac
 }
 
 _selfmask_download_template() {
@@ -873,6 +926,7 @@ _selfmask_download_template() {
 
 _selfmask_fallback_stub() {
     log_info "Создаём встроенную заглушку..."
+    rm -f "${SELFMASK_SITE_DIR}/mtproxyl-decoy.css" "${SELFMASK_SITE_DIR}/mtproxyl-decoy.js"
     cat > "${SELFMASK_SITE_DIR}/index.html" << 'HTML_EOF'
 <!doctype html>
 <html lang="ru">
@@ -894,6 +948,7 @@ _selfmask_fallback_stub() {
 </body>
 </html>
 HTML_EOF
+    _selfmask_externalize_inline_assets || return 1
     log_success "Встроенная заглушка создана"
 }
 

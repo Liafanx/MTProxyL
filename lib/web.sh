@@ -304,12 +304,17 @@ web_sections_toml() {
 # Демультиплексор на публичном порту: по SNI отправляет наше имя в TLS-сервер
 # WEB, а всё остальное — движку. proxy_protocol нужен обеим веткам, иначе
 # бэкенды увидят вместо клиента loopback.
+web_nginx_ipv6_available() {
+    [ -s /proc/net/if_inet6 ]
+}
+
 web_nginx_stream_block() {
     # В split разводить нечего: у WEB свой порт, nginx слушает его напрямую.
     web_layout_is_split && return 0
-    local _domain _port
+    local _domain _port _listen6=""
     _domain=$(web_domain) || return 1
     _port="${PROXY_PORT:-443}"
+    web_nginx_ipv6_available && _listen6="        listen [::]:${_port};"
     cat << NGX
 stream {
     map \$ssl_preread_server_name \$mtproxyl_upstream {
@@ -322,7 +327,7 @@ stream {
 
     server {
         listen ${_port};
-        listen [::]:${_port};
+${_listen6}
         ssl_preread on;
         proxy_pass \$mtproxyl_upstream;
         proxy_protocol on;
@@ -343,8 +348,11 @@ web_nginx_http_server() {
     [ -n "$_cert_dir" ] || _cert_dir="$1"
     if web_layout_is_split; then
         # Клиент приходит прямо в nginx, адрес виден и без PROXY-заголовка.
-        _listen="listen ${WEB_PUBLIC_PORT:-443} ssl;
+        _listen="listen ${WEB_PUBLIC_PORT:-443} ssl;"
+        if web_nginx_ipv6_available; then
+            _listen="${_listen}
         listen [::]:${WEB_PUBLIC_PORT:-443} ssl;"
+        fi
     else
         _listen="listen 127.0.0.1:${WEB_TLS_PORT:-15444} ssl proxy_protocol;"
         _realip="set_real_ip_from 127.0.0.1;
