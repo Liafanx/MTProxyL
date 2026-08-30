@@ -78,7 +78,7 @@ web_server_ip() {
         local _r; _r=$(getent ahostsv4 "$_ip" 2>/dev/null | awk '{print $1; exit}')
         _web_ip_is_routable "$_r" && { echo "$_r"; return 0; }
     fi
-    _ip=$(get_public_ip 2>/dev/null)
+    _ip=$(CUSTOM_IP="" get_public_ip 2>/dev/null)
     _web_ip_is_routable "$_ip" && { echo "$_ip"; return 0; }
     _ip=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 \
         | while read -r _a; do _web_ip_is_routable "$_a" && { echo "$_a"; break; }; done)
