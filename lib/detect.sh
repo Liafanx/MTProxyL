@@ -1318,7 +1318,7 @@ offer_reapply_fixes() {
     if [ -n "${BLOCKLIST_COUNTRIES:-}" ]; then
         geoblock_remove_all >/dev/null 2>&1 || true
         geoblock_reapply_all >/dev/null 2>&1 || true
-        geoblock_rules_active && log_success "Гео-блокировка переприменена на порт ${PROXY_PORT}" \
+        geoblock_rules_active && log_success "Гео-блокировка переприменена на порты $(geoblock_ports_label)" \
             || log_warn "Гео-блокировку переприменить не удалось: mtproxyl geoblock reapply"
     fi
 }

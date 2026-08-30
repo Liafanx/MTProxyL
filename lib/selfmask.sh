@@ -903,6 +903,12 @@ JS_EOF
         awk '/^[[:space:]]*<script>[[:space:]]*$/{print "<script src=\"/mtproxyl-decoy.js\" defer></script>"; p=1; next} /^[[:space:]]*<\/script>[[:space:]]*$/{p=0; next} !p' "$_html" > "$_tmp"
         mv "$_tmp" "$_html"
     fi
+
+    chmod 644 "$_html" 2>/dev/null || return 1
+    [ ! -f "${SELFMASK_SITE_DIR}/mtproxyl-decoy.css" ] || \
+        chmod 644 "${SELFMASK_SITE_DIR}/mtproxyl-decoy.css" 2>/dev/null || return 1
+    [ ! -f "${SELFMASK_SITE_DIR}/mtproxyl-decoy.js" ] || \
+        chmod 644 "${SELFMASK_SITE_DIR}/mtproxyl-decoy.js" 2>/dev/null || return 1
 }
 
 selfmask_prepare_web_decoy() {

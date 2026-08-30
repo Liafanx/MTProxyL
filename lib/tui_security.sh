@@ -84,9 +84,9 @@ tui_geoblock_menu() {
             # Правила iptables/ipset не переживают перезагрузку — показываем
             # реальное состояние, а не только список стран в настройках.
             if geoblock_rules_active; then
-                local _gp; _gp=$(geoblock_rules_port)
-                if [ -n "$_gp" ] && [ "$_gp" != "${PROXY_PORT}" ]; then
-                    echo -e "  ${BOLD}Правила:${NC} ${YELLOW}на порту ${_gp}, прокси на ${PROXY_PORT} — переприменить${NC}"
+                local _gp; _gp=$(geoblock_rules_ports | paste -sd, -)
+                if ! geoblock_rules_match_ports; then
+                    echo -e "  ${BOLD}Правила:${NC} ${YELLOW}на портах ${_gp:-—}, нужны $(geoblock_ports_label) — переприменить${NC}"
                 else
                     echo -e "  ${BOLD}Правила:${NC} ${GREEN}активны${NC}"
                 fi

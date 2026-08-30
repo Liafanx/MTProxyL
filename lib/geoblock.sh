@@ -24,6 +24,20 @@ _ipt_dump() {
     iptables-save 2>/dev/null || true
 }
 
+geoblock_ports() {
+    local _proxy="${PROXY_PORT:-443}" _web=""
+    printf '%s\n' "$_proxy"
+    if declare -F web_is_enabled >/dev/null && web_is_enabled \
+        && web_layout_is_split; then
+        _web=$(web_public_port 2>/dev/null)
+        [ -z "$_web" ] || [ "$_web" = "$_proxy" ] || printf '%s\n' "$_web"
+    fi
+}
+
+geoblock_ports_label() {
+    geoblock_ports | sort -nu | paste -sd, -
+}
+
 _ensure_ipset() {
     command -v ipset &>/dev/null && return 0
     log_info "Установка ipset..."
@@ -79,14 +93,19 @@ _apply_country_rules() {
     local _target="DROP"
     [ "$GEOBLOCK_MODE" = "whitelist" ] && _target="ACCEPT"
 
-    if ! _geoblock_rule_present "$setname" "$_target" "$PROXY_PORT"; then
-        _ipt -I INPUT -m set --match-set "$setname" src \
-            -p tcp --dport "$PROXY_PORT" \
-            -m comment --comment "$GEOBLOCK_COMMENT" -j "$_target" || {
-            log_error "iptables: правило для ${code^^} добавить не удалось"; return 1; }
-    fi
+    local _port
+    while IFS= read -r _port; do
+        if ! _geoblock_rule_present "$setname" "$_target" "$_port"; then
+            _ipt -I INPUT -m set --match-set "$setname" src \
+                -p tcp --dport "$_port" \
+                -m comment --comment "$GEOBLOCK_COMMENT" -j "$_target" || {
+                log_error "iptables: правило для ${code^^} на порту ${_port} добавить не удалось"
+                return 1
+            }
+        fi
+    done < <(geoblock_ports)
 
-    log_success "Гео-${GEOBLOCK_MODE} для ${code^^} (порт ${PROXY_PORT})"
+    log_success "Гео-${GEOBLOCK_MODE} для ${code^^} (порты $(geoblock_ports_label))"
 }
 
 # Точная проверка одного правила: -C сверяет спецификацию целиком, поэтому
@@ -101,30 +120,40 @@ _geoblock_rule_present() {
 _remove_country_rules() {
     local code="$1"
     local setname="${GEOBLOCK_IPSET_PREFIX}${code}"
-
-    _ipt -D INPUT -m set --match-set "$setname" src \
-        -p tcp --dport "$PROXY_PORT" \
-        -m comment --comment "$GEOBLOCK_COMMENT" -j DROP 2>/dev/null || true
-    _ipt -D INPUT -m set --match-set "$setname" src \
-        -p tcp --dport "$PROXY_PORT" \
-        -m comment --comment "$GEOBLOCK_COMMENT" -j ACCEPT 2>/dev/null || true
+    local _port
+    while IFS= read -r _port; do
+        _ipt -D INPUT -m set --match-set "$setname" src \
+            -p tcp --dport "$_port" \
+            -m comment --comment "$GEOBLOCK_COMMENT" -j DROP 2>/dev/null || true
+        _ipt -D INPUT -m set --match-set "$setname" src \
+            -p tcp --dport "$_port" \
+            -m comment --comment "$GEOBLOCK_COMMENT" -j ACCEPT 2>/dev/null || true
+    done < <({ geoblock_ports; geoblock_rules_ports; } | sort -nu)
     ipset destroy "$setname" 2>/dev/null || true
 }
 
 _remove_default_drop() {
-    _ipt -D INPUT -p tcp --dport "$PROXY_PORT" \
-        -m comment --comment "${GEOBLOCK_COMMENT}-default" -j DROP 2>/dev/null || true
+    local _port
+    while IFS= read -r _port; do
+        _ipt -D INPUT -p tcp --dport "$_port" \
+            -m comment --comment "${GEOBLOCK_COMMENT}-default" -j DROP 2>/dev/null || true
+    done < <({ geoblock_ports; geoblock_rules_ports; } | sort -nu)
 }
 
 _ensure_default_drop() {
     [ "$GEOBLOCK_MODE" = "whitelist" ] || return 0
     [ -n "$BLOCKLIST_COUNTRIES" ] || return 0
-    if ! _ipt -C INPUT -p tcp --dport "$PROXY_PORT" \
-        -m comment --comment "${GEOBLOCK_COMMENT}-default" -j DROP 2>/dev/null; then
-        _ipt -A INPUT -p tcp --dport "$PROXY_PORT" \
-            -m comment --comment "${GEOBLOCK_COMMENT}-default" -j DROP || {
-            log_error "iptables: запрещающее правило по умолчанию добавить не удалось"; return 1; }
-    fi
+    local _port
+    while IFS= read -r _port; do
+        if ! _ipt -C INPUT -p tcp --dport "$_port" \
+            -m comment --comment "${GEOBLOCK_COMMENT}-default" -j DROP 2>/dev/null; then
+            _ipt -A INPUT -p tcp --dport "$_port" \
+                -m comment --comment "${GEOBLOCK_COMMENT}-default" -j DROP || {
+                log_error "iptables: запрещающее правило на порту ${_port} добавить не удалось"
+                return 1
+            }
+        fi
+    done < <(geoblock_ports)
 }
 
 # Правила гео-блокировки живут в iptables/ipset и не переживают
@@ -134,16 +163,24 @@ geoblock_rules_active() {
     [ -n "$BLOCKLIST_COUNTRIES" ] || return 1
     command -v iptables &>/dev/null || return 1
     local _dump; _dump=$(_ipt_dump) || return 1
-    grep -q -- "--comment ${GEOBLOCK_COMMENT}" <<< "$_dump"
+    grep -Eq -- "--comment \"?${GEOBLOCK_COMMENT}\"?([[:space:]]|$)" <<< "$_dump"
 }
 
 # Порт, на который реально навешаны правила (может отличаться от текущего
 # PROXY_PORT, если порт меняли уже после применения).
 geoblock_rules_port() {
+    geoblock_rules_ports | sed -n '1p'
+}
+
+geoblock_rules_ports() {
     command -v iptables &>/dev/null || return 1
     local _dump; _dump=$(_ipt_dump) || return 1
-    grep -- "--comment ${GEOBLOCK_COMMENT}" <<< "$_dump" \
-        | grep -oE '\--dport [0-9]+' | awk '{print $2}' | sort -u | sed -n '1p'
+    grep -E -- "--comment \"?${GEOBLOCK_COMMENT}(-default)?\"?" <<< "$_dump" \
+        | grep -oE '\--dport [0-9]+' | awk '{print $2}' | sort -nu
+}
+
+geoblock_rules_match_ports() {
+    [ "$(geoblock_rules_ports)" = "$(geoblock_ports | sort -nu)" ]
 }
 
 # Счётчики заполняются для вызывающего: он один знает, ругаться ли на
@@ -248,7 +285,7 @@ handle_geoblock_command() {
             check_root
             [ -z "$BLOCKLIST_COUNTRIES" ] && { log_info "Список стран пуст — нечего применять"; return 0; }
             _ensure_ipset || return 1
-            log_info "Переприменение гео-блокировки на порт ${PROXY_PORT}..."
+            log_info "Переприменение гео-блокировки на порты $(geoblock_ports_label)..."
             geoblock_remove_all >/dev/null 2>&1 || true
             local _code
             IFS=',' read -ra codes <<< "$BLOCKLIST_COUNTRIES"
@@ -261,7 +298,7 @@ handle_geoblock_command() {
             [ -n "$GEOBLOCK_NOCACHE" ] && \
                 log_warn "Без списка IP, пропущены: ${GEOBLOCK_NOCACHE}"
             if [ "$GEOBLOCK_APPLIED" -gt 0 ]; then
-                log_success "Гео-блокировка применена: ${GEOBLOCK_APPLIED} из ${_total} (порт ${PROXY_PORT})"
+                log_success "Гео-блокировка применена: ${GEOBLOCK_APPLIED} из ${_total} (порты $(geoblock_ports_label))"
                 [ "$GEOBLOCK_FAILED" -gt 0 ] && \
                     log_warn "Не применились: ${GEOBLOCK_FAILED} — причина выше"
             else
@@ -279,9 +316,9 @@ handle_geoblock_command() {
             echo -e "  ${BOLD}Режим:${NC} ${GEOBLOCK_MODE}"
             if [ -n "$BLOCKLIST_COUNTRIES" ]; then
                 if geoblock_rules_active; then
-                    local _rp; _rp=$(geoblock_rules_port)
-                    if [ -n "$_rp" ] && [ "$_rp" != "${PROXY_PORT}" ]; then
-                        echo -e "  ${BOLD}Правила:${NC} ${YELLOW}висят на порту ${_rp}, а прокси на ${PROXY_PORT}${NC}"
+                    local _rp; _rp=$(geoblock_rules_ports | paste -sd, -)
+                    if ! geoblock_rules_match_ports; then
+                        echo -e "  ${BOLD}Правила:${NC} ${YELLOW}на портах ${_rp:-—}, нужны $(geoblock_ports_label)${NC}"
                         echo -e "  ${DIM}Переприменить: mtproxyl geoblock reapply${NC}"
                     else
                         echo -e "  ${BOLD}Правила:${NC} ${GREEN}активны${NC}"

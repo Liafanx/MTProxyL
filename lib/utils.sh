@@ -900,7 +900,7 @@ handle_port_command() {
         # Правила гео-блокировки прибиты к порту: после смены они остались
         # бы висеть на старом и не защищали новый.
         if [ -n "${BLOCKLIST_COUNTRIES:-}" ] && [ "$_port_before" != "$PROXY_PORT" ]; then
-            log_info "Перенос правил гео-блокировки на порт ${PROXY_PORT}..."
+            log_info "Перенос правил гео-блокировки на порты $(geoblock_ports_label)..."
             geoblock_remove_all >/dev/null 2>&1 || true
             geoblock_reapply_all >/dev/null 2>&1 || true
             geoblock_rules_active && log_success "Гео-блокировка переприменена" \

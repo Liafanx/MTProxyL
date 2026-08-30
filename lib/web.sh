@@ -482,6 +482,7 @@ web_enable() {
         return 1
     fi
 
+    _web_reapply_geoblock
     log_success "WEB Proxy включён: $(web_domain), carrier ${WEB_CARRIER}"
     _web_enable_links_tail
 }
@@ -521,7 +522,18 @@ web_disable() {
     load_secrets
     restart_proxy_container || true
 
+    _web_reapply_geoblock
     log_success "WEB Proxy выключен"
+}
+
+_web_reapply_geoblock() {
+    [ -n "${BLOCKLIST_COUNTRIES:-}" ] || return 0
+    geoblock_remove_all >/dev/null 2>&1 || true
+    if geoblock_reapply_all >/dev/null 2>&1; then
+        log_success "Гео-блокировка переприменена на порты: $(geoblock_ports_label)"
+    else
+        log_warn "Гео-блокировку переприменить не удалось: mtproxyl geoblock reapply"
+    fi
 }
 
 # В реаниматоре WEB живёт в конфиге цели, и наши WEB_* к нему не относятся:
@@ -780,7 +792,7 @@ handle_web_command() {
     shift 2>/dev/null || true
     case "$subcmd" in
         status)  load_secrets 2>/dev/null; web_status_print ;;
-        json)    web_status_json ;;
+        json)    load_secrets 2>/dev/null; web_status_json ;;
         enable)  check_root; load_secrets; web_enable ;;
         disable) check_root; load_secrets; web_disable ;;
         links)   load_secrets; web_links_print ;;
