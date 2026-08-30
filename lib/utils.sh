@@ -387,11 +387,13 @@ proxy_link_host() {
     echo "$_host"
 }
 
-# Хост для [general.links] public_host из настройки «IP/домен сервера».
-# Пусто — движок определяет сам. IPv6-литерал тоже оставляем ему: в ссылку
-# он идёт в скобках.
+# Хост для [general.links] public_host. В shared WEB движок видит loopback,
+# поэтому при пустой настройке определяем публичный адрес сами.
 proxy_public_host() {
     local _v="${CUSTOM_IP:-}"
+    if [ -z "$_v" ] && web_is_enabled 2>/dev/null && ! web_layout_is_split 2>/dev/null; then
+        _v=$(get_public_ip)
+    fi
     [ -n "$_v" ] || return 1
     case "$_v" in *:*) return 1 ;; esac   # IPv6
     printf '%s' "$_v"
@@ -898,7 +900,7 @@ handle_port_command() {
         # Правила гео-блокировки прибиты к порту: после смены они остались
         # бы висеть на старом и не защищали новый.
         if [ -n "${BLOCKLIST_COUNTRIES:-}" ] && [ "$_port_before" != "$PROXY_PORT" ]; then
-            log_info "Перенос правил гео-блокировки на порт ${PROXY_PORT}..."
+            log_info "Перенос правил гео-блокировки на порты $(geoblock_ports_label)..."
             geoblock_remove_all >/dev/null 2>&1 || true
             geoblock_reapply_all >/dev/null 2>&1 || true
             geoblock_rules_active && log_success "Гео-блокировка переприменена" \

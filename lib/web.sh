@@ -78,7 +78,7 @@ web_server_ip() {
         local _r; _r=$(getent ahostsv4 "$_ip" 2>/dev/null | awk '{print $1; exit}')
         _web_ip_is_routable "$_r" && { echo "$_r"; return 0; }
     fi
-    _ip=$(get_public_ip 2>/dev/null)
+    _ip=$(CUSTOM_IP="" get_public_ip 2>/dev/null)
     _web_ip_is_routable "$_ip" && { echo "$_ip"; return 0; }
     _ip=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 \
         | while read -r _a; do _web_ip_is_routable "$_a" && { echo "$_a"; break; }; done)
@@ -128,20 +128,18 @@ web_link_public_port() {
 }
 
 web_carrier_needs_http2() {
-    [ "${WEB_CARRIER:-websocket-lanes}" = "https-lanes" ]
+    [ "${WEB_CARRIER:-websocket}" = "https-lanes" ]
 }
 
 # Zapret2 зажимает окно в SYN+ACK и на пустых ACK, то есть до того, как придёт
 # ClientHello и станет известен SNI. Исключить по домену это нельзя в принципе,
 # и https-carrier'ы от такого зажима заметно теряют в скорости.
 #
-# websocket-lanes переживает его нормально — проверено на живой машине: у него
-# после Upgrade идёт один долгий сокет на поток, а не поток коротких запросов,
-# и зажим окна на рукопожатии окупается за первые же секунды. Лимитер ему тоже
-# не мешает по той же причине. В раскладке split фильтр идёт по порту прокси,
-# и WEB не задевается вовсе.
+# WebSocket-carrier'ы переживают его нормально: после Upgrade остаются долгие
+# сокеты, и зажим окна на рукопожатии окупается за первые же секунды. В split
+# фильтр идёт по порту прокси, и WEB не задевается вовсе.
 web_carrier_survives_zapret2() {
-    case "${WEB_CARRIER:-websocket-lanes}" in
+    case "${WEB_CARRIER:-websocket}" in
         websocket-lanes|websocket) return 0 ;;
         *) return 1 ;;
     esac
@@ -157,7 +155,7 @@ web_warn_zapret2() {
     web_zapret2_hurts || return 0
     log_warn "Zapret2 активен и режет скорость WEB Proxy на carrier ${WEB_CARRIER}"
     log_info "Зажим TCP-окна ставится в SYN+ACK, когда SNI ещё неизвестен — по домену его не обойти"
-    log_info "Варианты: carrier websocket-lanes (он с zapret2 работает нормально),"
+    log_info "Варианты: carrier websocket (он с zapret2 работает нормально),"
     log_info "раскладка split либо SYN-лимитер вместо zapret2"
 }
 
@@ -284,7 +282,7 @@ web_sections_toml() {
     _addr=$(web_public_addr) || return 1
     [ -n "$_domain" ] || return 1
 
-    printf '\n[web]\nenabled = true\ncarrier = "%s"\n' "${WEB_CARRIER:-websocket-lanes}"
+    printf '\n[web]\nenabled = true\ncarrier = "%s"\n' "${WEB_CARRIER:-websocket}"
     printf '\n[web.debug]\nenabled = %s\n' "$([ "${WEB_DEBUG:-false}" = "true" ] && echo true || echo false)"
     printf '\n[[web.vhosts]]\nhost = "%s"\npublic_addr = "%s"\n' "$_domain" "$_addr"
     printf '\n[web.vhosts.decoy]\n'
@@ -304,12 +302,17 @@ web_sections_toml() {
 # Демультиплексор на публичном порту: по SNI отправляет наше имя в TLS-сервер
 # WEB, а всё остальное — движку. proxy_protocol нужен обеим веткам, иначе
 # бэкенды увидят вместо клиента loopback.
+web_nginx_ipv6_available() {
+    [ -s /proc/net/if_inet6 ]
+}
+
 web_nginx_stream_block() {
     # В split разводить нечего: у WEB свой порт, nginx слушает его напрямую.
     web_layout_is_split && return 0
-    local _domain _port
+    local _domain _port _listen6=""
     _domain=$(web_domain) || return 1
     _port="${PROXY_PORT:-443}"
+    web_nginx_ipv6_available && _listen6="        listen [::]:${_port};"
     cat << NGX
 stream {
     map \$ssl_preread_server_name \$mtproxyl_upstream {
@@ -322,7 +325,7 @@ stream {
 
     server {
         listen ${_port};
-        listen [::]:${_port};
+${_listen6}
         ssl_preread on;
         proxy_pass \$mtproxyl_upstream;
         proxy_protocol on;
@@ -343,8 +346,11 @@ web_nginx_http_server() {
     [ -n "$_cert_dir" ] || _cert_dir="$1"
     if web_layout_is_split; then
         # Клиент приходит прямо в nginx, адрес виден и без PROXY-заголовка.
-        _listen="listen ${WEB_PUBLIC_PORT:-443} ssl;
+        _listen="listen ${WEB_PUBLIC_PORT:-443} ssl;"
+        if web_nginx_ipv6_available; then
+            _listen="${_listen}
         listen [::]:${WEB_PUBLIC_PORT:-443} ssl;"
+        fi
     else
         _listen="listen 127.0.0.1:${WEB_TLS_PORT:-15444} ssl proxy_protocol;"
         _realip="set_real_ip_from 127.0.0.1;
@@ -474,6 +480,7 @@ web_enable() {
         return 1
     fi
 
+    _web_reapply_geoblock
     log_success "WEB Proxy включён: $(web_domain), carrier ${WEB_CARRIER}"
     _web_enable_links_tail
 }
@@ -513,7 +520,18 @@ web_disable() {
     load_secrets
     restart_proxy_container || true
 
+    _web_reapply_geoblock
     log_success "WEB Proxy выключен"
+}
+
+_web_reapply_geoblock() {
+    [ -n "${BLOCKLIST_COUNTRIES:-}" ] || return 0
+    geoblock_remove_all >/dev/null 2>&1 || true
+    if geoblock_reapply_all >/dev/null 2>&1; then
+        log_success "Гео-блокировка переприменена на порты: $(geoblock_ports_label)"
+    else
+        log_warn "Гео-блокировку переприменить не удалось: mtproxyl geoblock reapply"
+    fi
 }
 
 # В реаниматоре WEB живёт в конфиге цели, и наши WEB_* к нему не относятся:
@@ -723,7 +741,7 @@ web_status_print() {
     fi
     echo -e "   🕸  Заглушка         $(web_decoy_dir)"
     if web_zapret2_hurts 2>/dev/null; then
-        echo -e "   ⚠️  Zapret2          ${YELLOW}режет скорость на ${WEB_CARRIER}${NC} — возьмите websocket-lanes"
+        echo -e "   ⚠️  Zapret2          ${YELLOW}режет скорость на ${WEB_CARRIER}${NC} — возьмите websocket"
     fi
     local _dup; _dup=$(web_duplicate_secret_labels 2>/dev/null)
     [ -n "$_dup" ] && echo -e "   ⚠️  Общий секрет     ${YELLOW}${_dup}${NC} — без профиля WEB"
@@ -772,7 +790,7 @@ handle_web_command() {
     shift 2>/dev/null || true
     case "$subcmd" in
         status)  load_secrets 2>/dev/null; web_status_print ;;
-        json)    web_status_json ;;
+        json)    load_secrets 2>/dev/null; web_status_json ;;
         enable)  check_root; load_secrets; web_enable ;;
         disable) check_root; load_secrets; web_disable ;;
         links)   load_secrets; web_links_print ;;

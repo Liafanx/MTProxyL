@@ -414,6 +414,10 @@ generate_telemt_config() {
         return 0
     fi
 
+    if web_is_enabled; then
+        selfmask_prepare_web_decoy || log_warn "WEB: не удалось подготовить файлы заглушки"
+    fi
+
     local domain="${PROXY_DOMAIN:-cloudflare.com}"
     local mask_enabled="${MASKING_ENABLED:-true}"
     local mask_host="${MASKING_HOST:-$domain}"

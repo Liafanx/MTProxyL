@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { X } from 'lucide-react';
+import { Flag, X } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,14 +8,20 @@ import { OperationProgress } from '@/components/OperationProgress';
 import { mtproxylNetApi } from '@/lib/api';
 import { useMtproxylOperation } from '@/hooks/useMtproxyl';
 
-/** Turns a country code into its flag emoji via regional indicator symbols. */
-function flag(code: string): string {
-  if (!/^[a-zA-Z]{2}$/.test(code)) return '';
-  return String.fromCodePoint(
-    ...code
-      .toUpperCase()
-      .split('')
-      .map((c) => 0x1f1e6 + c.charCodeAt(0) - 65),
+function CountryFlag({ code }: { code: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <Flag size={16} aria-label={`Флаг ${code.toUpperCase()}`} />;
+  return (
+    <img
+      src={`https://flagcdn.com/24x18/${code.toLowerCase()}.png`}
+      width={24}
+      height={18}
+      alt={`Флаг ${code.toUpperCase()}`}
+      referrerPolicy="no-referrer"
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="rounded-sm"
+    />
   );
 }
 
@@ -86,8 +92,8 @@ export function GeoblockPage() {
       <div>
         <h1 className="text-xl font-semibold text-text-primary">Блокировка по странам</h1>
         <p className="text-sm text-text-secondary mt-1">
-          Диапазоны адресов выбранных стран блокируются на порту прокси. Списки берутся с
-          ipdeny.com, поэтому первое добавление страны занимает время.
+          Диапазоны адресов выбранных стран блокируются на публичных портах прокси и WEB.
+          Списки берутся с ipdeny.com, поэтому первое добавление страны занимает время.
         </p>
       </div>
 
@@ -139,7 +145,7 @@ export function GeoblockPage() {
                   key={c}
                   className="inline-flex items-center gap-2 bg-surface-hover border border-border rounded-full pl-3 pr-1 py-1 text-sm"
                 >
-                  <span>{flag(c)}</span>
+                  <CountryFlag code={c} />
                   <span className="text-text-primary uppercase">{c}</span>
                   {COUNTRY_NAMES[c] && (
                     <span className="text-text-secondary text-xs">{COUNTRY_NAMES[c]}</span>

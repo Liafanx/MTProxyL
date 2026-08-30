@@ -96,7 +96,7 @@ WEB_ENABLED="false"
 WEB_LAYOUT="shared"
 WEB_PUBLIC_PORT="443"       # порт, на который приходит клиент WEB
 WEB_DOMAIN=""
-WEB_CARRIER="websocket-lanes"  # https|https-lanes|websocket|websocket-lanes
+WEB_CARRIER="websocket"        # https|https-lanes|websocket|websocket-lanes
 WEB_SECRET_MODE="dd"        # plain|dd, ee движок в WEB не поддерживает
 WEB_LISTEN_PORT="15080"     # приватный listener telemt, transport = "web"
 WEB_TLS_PORT="15444"        # https-сервер nginx на loopback
@@ -492,7 +492,7 @@ load_settings() {
     [ "$WEB_DEBUG" = "true" ] || WEB_DEBUG="false"
     case "$WEB_CARRIER" in
         https|https-lanes|websocket|websocket-lanes) ;;
-        *) WEB_CARRIER="websocket-lanes" ;;
+        *) WEB_CARRIER="websocket" ;;
     esac
     # ee движок в WEB не принимает — только plain и dd.
     case "$WEB_SECRET_MODE" in
