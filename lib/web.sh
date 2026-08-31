@@ -958,6 +958,7 @@ handle_web_command() {
         mode)    check_root; load_secrets; web_set_proxy_mode "${1:-}" ;;
         links)   load_secrets; web_links_print ;;
         sync)    check_root; load_secrets; web_sync_profiles ;;
+        nginx-config) handle_nginx_custom_command "$@" ;;
         set)     check_root; web_set_param "${1:-}" "${2:-}" ;;
         settable) web_settable_json ;;
         *)
@@ -968,6 +969,7 @@ handle_web_command() {
             echo -e "    ${GREEN}web mode${NC} web|combined  Переключить транспорт"
             echo -e "    ${GREEN}web links${NC}     Ссылки tg://webproxy"
             echo -e "    ${GREEN}web sync${NC}      Свести профили WEB со списком пользователей"
+            echo -e "    ${GREEN}web nginx-config${NC} Управление пользовательским nginx.conf"
             echo -e "    ${GREEN}web set${NC} K V    Изменить параметр"
             echo -e "    ${GREEN}web json${NC}      Статус в JSON"
             ;;

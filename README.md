@@ -837,6 +837,8 @@ mtproxyl web mode web         # Только WEB, без обычного MTProt
 mtproxyl web mode combined    # MTProto + WEB
 mtproxyl web links            # Ссылки tg://webproxy
 mtproxyl web sync             # Свести профили WEB со списком пользователей
+mtproxyl web nginx-config on|off|edit|show|test
+mtproxyl web nginx-config write < nginx.conf
 mtproxyl web set КЛЮЧ ЗНАЧ    # Изменить параметр
 mtproxyl web settable         # Список параметров (JSON)
 mtproxyl web json             # Статус в JSON
@@ -1691,10 +1693,10 @@ mask-backend, поэтому «снаружи» домен не открывае
 ### Пользовательский nginx.conf
 
 Если на том же nginx нужны дополнительные сайты, Xray, AdGuard Home или свои
-TCP-маршруты, включите пользовательский конфиг в меню Selfmask либо командой
-`mtproxyl selfmask nginx-config on`. При первом включении файл создаётся копией
-текущего рабочего конфига. После этого MTProxyL больше не меняет его при
-переключении и применении настроек Selfmask/WEB Proxy.
+TCP-маршруты, включите пользовательский конфиг в меню WEB Proxy или Selfmask
+либо командой `mtproxyl selfmask nginx-config on`. При первом включении файл
+создаётся копией текущего рабочего конфига. После этого MTProxyL больше не
+меняет его при переключении и применении настроек Selfmask/WEB Proxy.
 
 Сохранение из TUI и панели проходит только после успешного `nginx -t`; если
 служба не запустилась, прежняя версия файла возвращается. При изменении домена,

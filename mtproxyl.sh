@@ -61,6 +61,7 @@ _stdin_is_payload="false"
 [ "${MTPROXYL_ASSUME_YES:-}" = "1" ] && _stdin_is_payload="true"
 [ "${1:-}" = "superexpert" ] && [ "${2:-}" = "write" ] && _stdin_is_payload="true"
 [ "${1:-}" = "selfmask" ] && [ "${2:-}" = "nginx-config" ] && [ "${3:-}" = "write" ] && _stdin_is_payload="true"
+[ "${1:-}" = "web" ] && [ "${2:-}" = "nginx-config" ] && [ "${3:-}" = "write" ] && _stdin_is_payload="true"
 
 if [ "$_stdin_is_payload" != "true" ] \
    && [[ ! -t 0 ]] && [[ -e /dev/tty ]] && ps -p $$ -o stat= | grep -q "+"; then

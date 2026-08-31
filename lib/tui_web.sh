@@ -74,6 +74,7 @@ tui_web_menu() {
         echo -e "  ${CYAN}[5]${NC}  Домен  ${DIM}$(web_domain 2>/dev/null || echo '—')${NC}"
         echo -e "  ${CYAN}[6]${NC}  Ссылки tg://webproxy"
         echo -e "  ${CYAN}[7]${NC}  Диагностика /web-status  ${DIM}$([ "${WEB_DEBUG:-false}" = "true" ] && echo "включена" || echo "выключена")${NC}"
+        echo -e "  ${CYAN}[8]${NC}  Пользовательский конфиг nginx  ${DIM}$(nginx_custom_status_line)${NC}"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -117,6 +118,7 @@ tui_web_menu() {
                     log_info "Нужен заголовок Authorization из [server.api] конфига движка"
                 fi
                 press_any_key ;;
+            8) tui_nginx_custom_menu ;;
             0|"") return 0 ;;
         esac
     done

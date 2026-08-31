@@ -6,7 +6,8 @@ import { ErrorAlert } from '@/components/ErrorAlert';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { OperationProgress } from '@/components/OperationProgress';
 import { ParamField } from '@/components/ParamField';
-import { mtproxylApi, type WebParam, type WebStatus } from '@/lib/api';
+import { NginxCustomConfigCard } from '@/components/NginxCustomConfigCard';
+import { mtproxylApi, type SelfmaskStatus, type WebParam, type WebStatus } from '@/lib/api';
 import { useManagerOnly, useMtproxylOperation } from '@/hooks/useMtproxyl';
 
 const LAYOUT_LABELS: Record<string, string> = {
@@ -24,6 +25,7 @@ const CARRIER_LABELS: Record<string, string> = {
 
 export function WebPage() {
   const [status, setStatus] = useState<WebStatus | null>(null);
+  const [nginxStatus, setNginxStatus] = useState<SelfmaskStatus | null>(null);
   const [params, setParams] = useState<WebParam[]>([]);
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -36,8 +38,13 @@ export function WebPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [st, ps] = await Promise.all([mtproxylApi.web(), mtproxylApi.webParams()]);
+      const [st, ps, nginx] = await Promise.all([
+        mtproxylApi.web(),
+        mtproxylApi.webParams(),
+        mtproxylApi.selfmask(),
+      ]);
       setStatus(st);
+      setNginxStatus(nginx);
       setParams(ps);
       setEdits({});
       setError(null);
@@ -48,7 +55,10 @@ export function WebPage() {
     }
   }, []);
 
-  const { operation, start, dismiss, running } = useMtproxylOperation(load, ['web:']);
+  const { operation, start, dismiss, running } = useMtproxylOperation(load, [
+    'web:',
+    'selfmask:nginx-custom-',
+  ]);
   // В реаниматоре WEB поднимает хозяин цели: включать и настраивать нам нечего,
   // MTProxyL там только читает её конфиг и собирает ссылки.
   const { allowed: isManager, loading: modeLoading } = useManagerOnly();
@@ -299,6 +309,15 @@ export function WebPage() {
                   </>
                 )}
               </div>
+            )}
+
+            {isManager && nginxStatus && (
+              <NginxCustomConfigCard
+                status={nginxStatus}
+                running={running}
+                onStart={start}
+                onError={setError}
+              />
             )}
 
             {links && (
