@@ -32,6 +32,7 @@ while [ $# -gt 0 ]; do
 done
 
 SCRIPT_URL="https://raw.githubusercontent.com/${REPO}/${BRANCH}"
+SCRIPT_URL_REFS="https://raw.githubusercontent.com/${REPO}/refs/heads/${BRANCH}"
 INSTALL_LOG="/tmp/mtproxyl-install.log"
 
 download_file() {
@@ -39,31 +40,46 @@ download_file() {
     local dest="$2"
     local label="$3"
 
-    local tmp
+    local tmp fallback_url rel_path
     tmp=$(mktemp "/tmp/.mtproxyl-download.XXXXXX") || {
         echo "  ОШИБКА: Не удалось создать временный файл для ${label}" >&2
         return 1
     }
 
-    # Несколько попыток скачать файл
-    if curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --max-time 45 "$url" -o "$tmp" 2>>"$INSTALL_LOG"; then
-        # Для shell-файлов дополнительно проверяем синтаксис
-        if [[ "$dest" == *.sh ]]; then
-            if ! bash -n "$tmp" 2>/dev/null; then
-                echo "  ОШИБКА: Скачанный файл ${label} содержит синтаксическую ошибку" >&2
-                rm -f "$tmp"
-                return 1
-            fi
-        fi
+    # Сначала используем привычный GitHub Raw URL:
+    #   /<repo>/<branch>/<path>
+    # Если GitHub/CDN отвечает ошибкой даже после retry, пробуем канонический:
+    #   /<repo>/refs/heads/<branch>/<path>
+    if ! curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+        --max-time 45 "$url" -o "$tmp" 2>>"$INSTALL_LOG"; then
 
-        mkdir -p "$(dirname "$dest")"
-        mv "$tmp" "$dest"
-        return 0
-    else
-        rm -f "$tmp"
-        echo "  ОШИБКА: Не удалось скачать ${label}" >&2
-        echo "  Подробности: ${INSTALL_LOG}" >&2
-        return 1
+        rel_path="${url#"$SCRIPT_URL"/}"
+        fallback_url="${SCRIPT_URL_REFS}/${rel_path}"
+        : > "$tmp"
+
+        echo "  ↳ основной GitHub Raw недоступен, пробуем refs/heads..." >&2
+
+        if ! curl -fsSL --retry 3 --retry-delay 2 --retry-all-errors \
+            --max-time 45 "$fallback_url" -o "$tmp" 2>>"$INSTALL_LOG"; then
+            rm -f "$tmp"
+            echo "  ОШИБКА: Не удалось скачать ${label}" >&2
+            echo "  Подробности: ${INSTALL_LOG}" >&2
+            return 1
+        fi
+     fi
+
+    # Для shell-файлов дополнительно проверяем синтаксис.
+    if [[ "$dest" == *.sh ]]; then
+        if ! bash -n "$tmp" 2>/dev/null; then
+            echo "  ОШИБКА: Скачанный файл ${label} содержит синтаксическую ошибку" >&2
+            rm -f "$tmp"
+            return 1
+        fi
+    fi
+
+    mkdir -p "$(dirname "$dest")"
+    mv "$tmp" "$dest"
+    return 0
     fi
 }
 
