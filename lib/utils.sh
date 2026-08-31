@@ -688,9 +688,41 @@ fix_tty_input() {
 # ── Проверка обновлений ───────────────────────────────────────
 _UPDATE_AVAILABLE=""
 
+# Получить небольшой файл из GitHub Raw.
+# Основной URL сохраняем прежним; refs/heads используется только как fallback.
+_github_raw_fetch() {
+    local _path="$1"
+    local _timeout="${2:-15}"
+
+    curl -fsS --max-time "$_timeout" \
+        "${GITHUB_RAW}/${_path}" 2>/dev/null && return 0
+
+    curl -fsS --max-time "$_timeout" \
+        "${GITHUB_RAW_REFS}/${_path}" 2>/dev/null
+}
+
+# Скачать файл из GitHub Raw в указанный путь.
+# Сначала исчерпываются retry обычного URL, только затем пробуем refs/heads.
+_github_raw_download() {
+    local _path="$1"
+    local _dest="$2"
+    local _timeout="${3:-30}"
+
+    if curl -fsS --retry 3 --retry-delay 2 --max-time "$_timeout" \
+        "${GITHUB_RAW}/${_path}" -o "$_dest" 2>/dev/null; then
+        return 0
+    fi
+
+    : > "$_dest"
+    log_warn "Основной GitHub Raw недоступен для ${_path}, пробуем refs/heads..."
+
+    curl -fsS --retry 3 --retry-delay 2 --max-time "$_timeout" \
+        "${GITHUB_RAW_REFS}/${_path}" -o "$_dest" 2>/dev/null
+}
+
 check_for_update() {
     local _remote_ver
-    _remote_ver=$(curl -fsS --max-time 5 "${GITHUB_RAW}/version" 2>/dev/null | tr -d '[:space:]')
+    _remote_ver=$(_github_raw_fetch "version" 5 | tr -d '[:space:]')
     [ -z "$_remote_ver" ] && return 0
     # Только строго новее: на dev-сборке локальная версия обгоняет ветку, и
     # «доступно обновление 1.4.9 → 1.4.8» звалось бы откатом назад.
@@ -712,7 +744,7 @@ _version_gt() {
 # github. Сетевой сбой — не ошибка команды, о нём говорит поле error.
 update_check_json() {
     local _latest _err="" _avail="false"
-    _latest=$(curl -fsS --max-time 8 "${GITHUB_RAW}/version" 2>/dev/null | tr -d '[:space:]')
+    _latest=$(_github_raw_fetch "version" 8 | tr -d '[:space:]')
     if [ -z "$_latest" ]; then
         _err="не удалось получить номер версии с github.com"
     elif ! [[ "$_latest" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
@@ -744,7 +776,7 @@ self_update() {
     # бы файл на месте, а его в этот момент читает работающий bash.
     local _tmp="${INSTALL_DIR}/.mtproxyl-update-$$.sh"
 
-    if ! curl -fsS --retry 3 --retry-delay 2 --max-time 30 "${GITHUB_RAW}/mtproxyl.sh" -o "$_tmp" 2>/dev/null; then
+    if ! _github_raw_download "mtproxyl.sh" "$_tmp" 30; then
         log_error "Не удалось скачать mtproxyl.sh"
         log_info "Проверьте интернет и доступность github.com"
         rm -f "$_tmp"
@@ -814,7 +846,7 @@ self_update() {
             continue
         }
 
-        if curl -fsS --retry 3 --retry-delay 2 --max-time 20 "${GITHUB_RAW}/lib/${lib}.sh" -o "$_lib_tmp" 2>/dev/null; then
+        if _github_raw_download "lib/${lib}.sh" "$_lib_tmp" 20; then
             if bash -n "$_lib_tmp" 2>/dev/null; then
                 mv "$_lib_tmp" "${LIB_DIR}/${lib}.sh"
                 chmod 644 "${LIB_DIR}/${lib}.sh" 2>/dev/null || true
