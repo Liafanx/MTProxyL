@@ -42,6 +42,7 @@ if [ -z "$GITHUB_BRANCH" ] && [ -r "${INSTALL_DIR}/.branch" ]; then
 fi
 [ -n "$GITHUB_BRANCH" ] || GITHUB_BRANCH="main"
 GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
+GITHUB_RAW_REFS="https://raw.githubusercontent.com/${GITHUB_REPO}/refs/heads/${GITHUB_BRANCH}"
 REGISTRY_IMAGE="ghcr.io/liafanx/mtproxyl-telemt"
 TELEMT_GITHUB="telemt/telemt"
 TELEMT_MIN_VERSION="3.5.5"
