@@ -1,5 +1,5 @@
 #!/bin/bash
-# MTProxyL — подменю: selfmask
+# MTProxyL — подменю: selfmask 
 
 tui_selfmask_menu() {
     while true; do
