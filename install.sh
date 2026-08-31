@@ -80,7 +80,6 @@ download_file() {
     mkdir -p "$(dirname "$dest")"
     mv "$tmp" "$dest"
     return 0
-    fi
 }
 
 if [ "$(id -u)" -ne 0 ]; then
