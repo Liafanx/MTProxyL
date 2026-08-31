@@ -75,15 +75,17 @@ export function buildProxyLinks(
     if (groupLinks.length > 0) result.push({ label, links: groupLinks });
   };
 
-  if (links.tls?.length) {
+  if (web?.mtproto_enabled !== false && links.tls?.length) {
     const maskByLink = new Map((links.tls_domains ?? []).map((d) => [d.link, d.domain]));
     const tls = links.tls
       .map((url) => makeLink(url, maskByLink.get(url) ?? getServer(url), !maskByLink.has(url)))
       .sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
     addGroup('TLS', tls);
   }
-  addGroup('Secure', (links.secure ?? []).map((url) => makeLink(url, getServer(url), true)));
-  addGroup('Classic', (links.classic ?? []).map((url) => makeLink(url, getServer(url), true)));
+  if (web?.mtproto_enabled !== false) {
+    addGroup('Secure', (links.secure ?? []).map((url) => makeLink(url, getServer(url), true)));
+    addGroup('Classic', (links.classic ?? []).map((url) => makeLink(url, getServer(url), true)));
+  }
 
   // WEB движок в links не отдаёт: у него нет ресурса /v1/web, а user links
   // покрывают только classic, secure и tls. Собираем сами из секрета.
@@ -98,6 +100,7 @@ export interface WebLinkConfig {
   enabled: boolean;
   domain: string;
   secret_mode: string;
+  mtproto_enabled?: boolean;
 }
 
 /**

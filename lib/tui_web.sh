@@ -63,12 +63,17 @@ tui_web_menu() {
         load_secrets 2>/dev/null || true
         web_status_print
 
-        echo -e "  ${CYAN}[1]${NC}  $(web_is_enabled && echo "Выключить" || echo "Включить")"
-        echo -e "  ${CYAN}[2]${NC}  Раскладка портов  ${DIM}${WEB_LAYOUT:-shared}${NC}"
-        echo -e "  ${CYAN}[3]${NC}  Транспорт carrier  ${DIM}${WEB_CARRIER:-websocket}${NC}"
-        echo -e "  ${CYAN}[4]${NC}  Домен  ${DIM}$(web_domain 2>/dev/null || echo '—')${NC}"
-        echo -e "  ${CYAN}[5]${NC}  Ссылки tg://webproxy"
-        echo -e "  ${CYAN}[6]${NC}  Диагностика /web-status  ${DIM}$([ "${WEB_DEBUG:-false}" = "true" ] && echo "включена" || echo "выключена")${NC}"
+        echo -e "  ${CYAN}[1]${NC}  $(web_is_only_mode && echo "Применить заново" || { web_is_enabled && echo "Выключить" || echo "Включить"; })"
+        echo -e "  ${CYAN}[2]${NC}  Режим  ${DIM}$(proxy_transport_mode_title)${NC}"
+        if mtproto_is_enabled; then
+            echo -e "  ${CYAN}[3]${NC}  Раскладка портов  ${DIM}${WEB_LAYOUT:-shared}${NC}"
+        else
+            echo -e "  ${DIM}[3]  Раскладка не нужна без обычного MTProto${NC}"
+        fi
+        echo -e "  ${CYAN}[4]${NC}  Транспорт carrier  ${DIM}${WEB_CARRIER:-websocket}${NC}"
+        echo -e "  ${CYAN}[5]${NC}  Домен  ${DIM}$(web_domain 2>/dev/null || echo '—')${NC}"
+        echo -e "  ${CYAN}[6]${NC}  Ссылки tg://webproxy"
+        echo -e "  ${CYAN}[7]${NC}  Диагностика /web-status  ${DIM}$([ "${WEB_DEBUG:-false}" = "true" ] && echo "включена" || echo "выключена")${NC}"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -76,19 +81,33 @@ tui_web_menu() {
 
         case "$_c" in
             1)
-                if web_is_enabled; then web_disable; else web_enable; fi
+                if web_is_only_mode; then web_enable
+                elif web_is_enabled; then web_disable
+                else web_enable
+                fi
                 press_any_key ;;
-            2) _tui_web_layout_menu; press_any_key ;;
-            3) _tui_web_carrier_menu; press_any_key ;;
-            4)
+            2)
                 echo ""
-                echo -e "  ${DIM}Пусто — взять поддомен web.<домен Selfmask>${NC}"
+                echo -e "  ${CYAN}[1]${NC} Только WEB"
+                echo -e "  ${CYAN}[2]${NC} MTProto + WEB"
+                local _m; _m=$(read_choice "выбор" "$([ "${PROXY_MODE:-mtproto}" = web ] && echo 1 || echo 2)")
+                case "$_m" in 1) web_set_proxy_mode web ;; 2) web_set_proxy_mode combined ;; esac
+                press_any_key ;;
+            3) mtproto_is_enabled && _tui_web_layout_menu; press_any_key ;;
+            4) _tui_web_carrier_menu; press_any_key ;;
+            5)
+                echo ""
+                if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+                    echo -e "  ${DIM}Пусто — взять поддомен web.<домен Selfmask>${NC}"
+                else
+                    echo -e "  ${DIM}Без Selfmask нужен собственный домен с A-записью на сервер.${NC}"
+                fi
                 echo -en "  ${BOLD}Домен WEB [$(web_domain 2>/dev/null)]:${NC} "
                 local _d; read_line _d
                 web_set_param WEB_DOMAIN "$_d"
                 press_any_key ;;
-            5) web_links_print; press_any_key ;;
-            6)
+            6) web_links_print; press_any_key ;;
+            7)
                 if [ "${WEB_DEBUG:-false}" = "true" ]; then
                     web_set_param WEB_DEBUG false
                 else

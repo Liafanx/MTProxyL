@@ -25,12 +25,16 @@ _ipt_dump() {
 }
 
 geoblock_ports() {
-    local _proxy="${PROXY_PORT:-443}" _web=""
-    printf '%s\n' "$_proxy"
+    local _proxy="${PROXY_PORT:-443}" _web="" _proxy_printed="false"
+    if ! declare -F mtproto_is_enabled >/dev/null || mtproto_is_enabled; then
+        printf '%s\n' "$_proxy"
+        _proxy_printed="true"
+    fi
     if declare -F web_is_enabled >/dev/null && web_is_enabled \
-        && web_layout_is_split; then
+        && { web_frontend_is_direct || ! mtproto_is_enabled; }; then
         _web=$(web_public_port 2>/dev/null)
-        [ -z "$_web" ] || [ "$_web" = "$_proxy" ] || printf '%s\n' "$_web"
+        [ -z "$_web" ] || { [ "$_proxy_printed" = "true" ] && [ "$_web" = "$_proxy" ]; } \
+            || printf '%s\n' "$_web"
     fi
 }
 

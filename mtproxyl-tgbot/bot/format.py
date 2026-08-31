@@ -58,13 +58,19 @@ def status_text(st: dict, md: dict) -> str:
     running = st.get("status") == "running"
     icon = "🟢" if running else "🔴"
     mode_name = "Reanimator" if md.get("mode") == "reanimator" else "Manager"
+    web = st.get("web") or {}
+    web_only = web.get("proxy_mode") == "web"
     lines = [
         f"<b>MTProxyL v{esc(st.get('version', '?'))}</b> · {esc(mode_name)}",
         "",
         f"{icon} Прокси: <b>{'работает' if running else 'остановлен'}</b>",
-        f"Порт: <code>{esc(st.get('port', '?'))}</code>",
-        f"Домен (SNI): <code>{esc(st.get('domain') or '—')}</code>",
+        f"Режим: <code>{'Только WEB' if web_only else 'MTProto + WEB' if web.get('enabled') else 'MTProto'}</code>",
     ]
+    if web_only:
+        lines.append(f"WEB: <code>{esc(web.get('domain') or '—')}:443</code>")
+    else:
+        lines.append(f"Порт: <code>{esc(st.get('port', '?'))}</code>")
+        lines.append(f"Домен (SNI): <code>{esc(st.get('domain') or '—')}</code>")
     if running:
         lines.append(f"Аптайм: {human_duration(st.get('uptime'))}")
     lines.append(f"Соединений: {esc(st.get('connections', 0))}")
@@ -81,8 +87,7 @@ def status_text(st: dict, md: dict) -> str:
     if md.get("mode") == "reanimator":
         lines.append(f"Цель: <code>{esc(md.get('detected_mode') or 'неизвестна')}</code>")
     # WEB — отдельный тип прокси на том же порту, но со своим именем.
-    web = st.get("web") or {}
-    if web.get("enabled"):
+    if web.get("enabled") and not web_only:
         lines.append(f"WEB Proxy: <code>{esc(web.get('domain') or '—')}</code>"
                      f" ({esc(web.get('carrier') or '')})")
     return "\n".join(lines)

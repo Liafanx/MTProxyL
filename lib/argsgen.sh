@@ -11,6 +11,7 @@ declare -A _AG_VAL=()
 # Пункты в порядке показа: ключ|подпись|можно ли править значение.
 _AG_ITEMS=(
     "engine|Движок|yes"
+    "proxy_mode|Транспорт|no"
     "port|Порт прокси|yes"
     "ports|Порты метрик и API|no"
     "host|Домен в ссылках|yes"
@@ -40,6 +41,7 @@ _argsgen_defaults() {
     else
         _AG_VAL[engine]="docker"
     fi
+    _AG_ON[proxy_mode]="yes"; _AG_VAL[proxy_mode]="${PROXY_MODE:-mtproto}"
     _AG_ON[port]="yes";   _AG_VAL[port]="${PROXY_PORT:-443}"
     _AG_ON[ports]="no";   _AG_VAL[ports]="${PROXY_METRICS_PORT:-9090}/${PROXY_API_PORT:-9091}"
     _AG_ON[sni]="yes";    _AG_VAL[sni]="${PROXY_DOMAIN:-autoscout24.ru}"
@@ -109,6 +111,7 @@ _argsgen_build() {
             *)        _a+=(--engine docker) ;;
         esac
     fi
+    [ "${_AG_ON[proxy_mode]}" = "yes" ] && _a+=(--proxy-mode "${_AG_VAL[proxy_mode]}")
     [ "${_AG_ON[port]}" = "yes" ] && _a+=(--port "${_AG_VAL[port]}")
     if [ "${_AG_ON[ports]}" = "yes" ]; then
         _a+=(--metrics-port "${PROXY_METRICS_PORT:-9090}" --api-port "${PROXY_API_PORT:-9091}")
@@ -161,13 +164,18 @@ _argsgen_build() {
         [ -n "${SELFMASK_CERT_EMAIL:-}" ] && _a+=(--selfmask-email "$SELFMASK_CERT_EMAIL")
         [ -n "${SELFMASK_SITE_SOURCE:-}" ] && _a+=(--selfmask-template "$SELFMASK_SITE_SOURCE")
         [ -n "${SELFMASK_NGINX_BACKEND_PORT:-}" ] && _a+=(--selfmask-backend-port "$SELFMASK_NGINX_BACKEND_PORT")
-        # WEB стоит на плечах Selfmask, поэтому только внутри его ветки.
-        if [ "${_AG_ON[web]}" = "yes" ]; then
-            _a+=(--web yes --web-layout "${WEB_LAYOUT:-shared}")
-            _a+=(--web-carrier "${WEB_CARRIER:-websocket}")
-            _a+=(--web-secret-mode "${WEB_SECRET_MODE:-dd}")
-            [ -n "${WEB_DOMAIN:-}" ] && _a+=(--web-domain "$WEB_DOMAIN")
-            [ "${WEB_LAYOUT:-shared}" = "split" ] && _a+=(--web-port "${WEB_PUBLIC_PORT:-443}")
+    fi
+
+    if [ "${_AG_ON[web]}" = "yes" ]; then
+        _a+=(--web yes --web-layout "${WEB_LAYOUT:-shared}")
+        _a+=(--web-carrier "${WEB_CARRIER:-websocket}")
+        _a+=(--web-secret-mode "${WEB_SECRET_MODE:-dd}")
+        [ -n "${WEB_DOMAIN:-}" ] && _a+=(--web-domain "$WEB_DOMAIN")
+        { web_is_only_mode || [ "${WEB_LAYOUT:-shared}" = "split" ]; } \
+            && _a+=(--web-port "${WEB_PUBLIC_PORT:-443}")
+        if [ "${_AG_ON[selfmask]}" != "yes" ]; then
+            [ -n "${SELFMASK_CERT_EMAIL:-}" ] && _a+=(--selfmask-email "$SELFMASK_CERT_EMAIL")
+            [ -n "${SELFMASK_SITE_SOURCE:-}" ] && _a+=(--selfmask-template "$SELFMASK_SITE_SOURCE")
         fi
     fi
 
@@ -260,7 +268,7 @@ _argsgen_edit() {
             echo -e "  ${DIM}Изменить их: меню «Дополнения» → Selfmask.${NC}" ;;
         web)
             echo -e "  ${DIM}Домен, раскладка и carrier берутся из текущих настроек WEB.${NC}"
-            echo -e "  ${DIM}Изменить их: mtproxyl web set. Требует включённого Selfmask.${NC}" ;;
+            echo -e "  ${DIM}Изменить их: mtproxyl web set. Selfmask не обязателен.${NC}" ;;
         *) log_info "У этого пункта нечего править — он только включается и выключается" ;;
     esac
     return 0

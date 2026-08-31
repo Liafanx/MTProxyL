@@ -203,7 +203,7 @@ secret_add() {
 _print_secret_links() {
     local _ip="$1" _port="$2" _raw="$3"
     local _kind _sec _title
-    while IFS='|' read -r _kind _sec; do
+    while mtproto_is_enabled 2>/dev/null && IFS='|' read -r _kind _sec; do
         [ -n "$_sec" ] || continue
         _title="$(link_kind_title "$_kind")"
         echo -e "  ${BOLD}Ссылка для Telegram${NC} ${DIM}(${_title})${NC}"
@@ -664,7 +664,7 @@ get_proxy_links() {
     [ $idx -eq -1 ] && { log_error "Секрет '${label}' не найден"; return 1; }
 
     local _kind _sec
-    while IFS='|' read -r _kind _sec; do
+    while mtproto_is_enabled 2>/dev/null && IFS='|' read -r _kind _sec; do
         [ -n "$_sec" ] || continue
         echo "tg://proxy?server=${server_ip}&port=${server_port}&secret=${_sec}"
     done <<< "$(build_link_secrets "${SECRETS_KEYS[$idx]}")"

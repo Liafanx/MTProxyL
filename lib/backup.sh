@@ -14,7 +14,8 @@ create_backup() {
     rm -f "$meta_tmp"
 
     local files=()
-    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf expert.conf tunings.conf superexpert.toml backup_meta.txt; do
+    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf expert.conf tunings.conf \
+             superexpert.toml selfmask-manager.conf selfmask-reanimator.conf backup_meta.txt; do
         [ -f "${INSTALL_DIR}/$f" ] && files+=("$f")
     done
     [ -d "$STATS_DIR" ] && files+=("relay_stats")
@@ -83,23 +84,52 @@ restore_backup() {
     echo ""
     echo -e "  ${BOLD}Восстановленные параметры:${NC}"
     [ "${MTPROXYL_MODE:-manager}" = "manager" ] && echo -e "    Движок: $(engine_backend_title)"
+    echo -e "    Транспорт: $(proxy_transport_mode_title)"
     echo -e "    Порт:   ${PROXY_PORT}"
     echo -e "    Домен:  ${PROXY_DOMAIN}"
     echo -e "    Секретов: ${#SECRETS_LABELS[@]}"
     echo ""
 
-    # Предложение перезапуска
-    if [ "$_was_running" = "true" ] || is_proxy_running; then
-        echo -en "  ${BOLD}Перезапустить прокси для применения? [Y/n]:${NC} "
+    # WEB после восстановления может потребовать заново собрать nginx и
+    # сертификат даже тогда, когда движок до этого был остановлен.
+    if [ "$_was_running" = "true" ] || is_proxy_running || web_is_enabled 2>/dev/null; then
+        if web_is_enabled 2>/dev/null; then
+            echo -en "  ${BOLD}Применить WEB-конфиг и запустить прокси? [Y/n]:${NC} "
+        else
+            echo -en "  ${BOLD}Перезапустить прокси для применения? [Y/n]:${NC} "
+        fi
         local yn; read_line yn
         if [[ ! "$yn" =~ ^[nN] ]]; then
-            restart_proxy_container || true
+            _backup_apply_restored_runtime || true
         else
-            log_info "Выполните 'mtproxyl restart' для применения"
+            if web_is_enabled 2>/dev/null; then
+                log_info "Выполните 'mtproxyl web enable' для применения"
+            else
+                log_info "Выполните 'mtproxyl restart' для применения"
+            fi
         fi
     else
         log_info "Прокси не запущен. Выполните 'mtproxyl start' для запуска с новыми настройками"
     fi
+}
+
+_backup_apply_restored_runtime() {
+    if web_is_enabled 2>/dev/null; then
+        web_enable || return 1
+        if web_is_only_mode; then
+            _web_suspend_mtproto_fixes
+        else
+            _web_resume_mtproto_fixes
+        fi
+        return 0
+    fi
+
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+        _selfmask_configure_nginx || return 1
+    else
+        systemctl stop "${SELFMASK_PQ_SERVICE}" >/dev/null 2>&1 || true
+    fi
+    restart_proxy_container
 }
 
 list_backups() {
@@ -208,7 +238,8 @@ migrate_export() {
     local out="${1:-/tmp/mtproxyl-migrate-$(date +%Y%m%d-%H%M%S).tar.gz}"
     local tmp; tmp=$(mktemp -d) || { log_error "Не удалось создать временную директорию"; return 1; }
     local count=0
-    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf expert.conf tunings.conf superexpert.toml; do
+    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf expert.conf tunings.conf \
+             superexpert.toml selfmask-manager.conf selfmask-reanimator.conf; do
         [ -f "${INSTALL_DIR}/$f" ] && { cp "${INSTALL_DIR}/$f" "$tmp/" && count=$((count + 1)); }
     done
     echo "v${VERSION}" > "$tmp/MIGRATE_VERSION"
@@ -231,7 +262,8 @@ migrate_import() {
     tar -xzf "$file" -C "$tmp" 2>/dev/null || { log_error "Некорректный архив"; rm -rf "$tmp"; return 1; }
 
     local restored=0 base
-    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf expert.conf tunings.conf superexpert.toml; do
+    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf expert.conf tunings.conf \
+             superexpert.toml selfmask-manager.conf selfmask-reanimator.conf; do
         [ -f "${tmp}/${f}" ] && { cp "${tmp}/${f}" "${INSTALL_DIR}/$f" && chmod 600 "${INSTALL_DIR}/$f" && restored=$((restored + 1)); }
     done
 

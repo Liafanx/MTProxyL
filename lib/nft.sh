@@ -498,6 +498,10 @@ ensure_nftables_installed() {
 }
 
 apply_nft_rules() {
+    if web_is_only_mode 2>/dev/null; then
+        log_error "SYN-лимитер предназначен для обычного MTProto и отключён в режиме «Только WEB»"
+        return 1
+    fi
     ensure_nftables_installed || return 1
 
     generate_nft_script
@@ -2168,6 +2172,10 @@ zapret2_remove_nft() {
 }
 
 zapret2_start() {
+    if web_is_only_mode 2>/dev/null; then
+        log_error "Zapret2 предназначен для обычного MTProto и отключён в режиме «Только WEB»"
+        return 1
+    fi
     if [ ! -x "$ZAPRET2_BIN" ]; then
         log_error "Бинарник nfqws2 не найден: ${ZAPRET2_BIN}"
         return 1
@@ -2218,6 +2226,10 @@ zapret2_cleanup_failed_install() {
 }
 
 zapret2_start_existing() {
+    if web_is_only_mode 2>/dev/null; then
+        log_error "Zapret2 недоступен в режиме «Только WEB»"
+        return 1
+    fi
     if [ "${ZAPRET2_APPLIED:-false}" != "true" ] || [ ! -x "$ZAPRET2_BIN" ]; then
         log_error "Zapret2 не установлен — используйте [1] Установить"
         return 1

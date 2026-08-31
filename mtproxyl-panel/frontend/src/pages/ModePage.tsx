@@ -223,7 +223,11 @@ export function ModePage() {
                   }
                 />
                 <Row label="Конфиг" value={status.engine_config || 'не найден'} mono />
-                <Row label="Порт" value={String(status.port)} />
+                <Row
+                  label="Транспорт"
+                  value={status.proxy_mode === 'web' ? 'Только WEB' : status.proxy_mode === 'combined' ? 'MTProto + WEB' : 'Только MTProto'}
+                />
+                <Row label="Порт" value={status.proxy_mode === 'web' ? '443 (WEB)' : String(status.port)} />
               </CardContent>
             </Card>
           )}

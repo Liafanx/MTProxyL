@@ -87,6 +87,7 @@ show_main_menu() {
             fi
         else
             echo -e "  ${BOLD}Движок:${NC}      telemt v$(get_telemt_version)$(engine_is_binary && echo " ${DIM}(бинарник)${NC}")  ${BOLD}Статус:${NC} ${status_str}"
+            echo -e "  ${BOLD}Транспорт:${NC}   $(proxy_transport_mode_title)"
             # Показываем только когда режим включён — выключенный не упоминаем
             if _superexpert_active; then
                 echo -e "  ${YELLOW}${BOLD}Режим супер эксперта включён${NC} ${DIM}(конфиг: ${SUPEREXPERT_FILE})${NC}"
@@ -106,13 +107,21 @@ show_main_menu() {
             # обманывать. Дальше сразу состояние фиксов.
             :
         else
-        echo -e "  ${BOLD}Порт:${NC}        ${PROXY_PORT}            ${BOLD}Работает:${NC} ${uptime_str}"
+        if web_is_only_mode 2>/dev/null; then
+            echo -e "  ${BOLD}WEB порт:${NC}    $(web_public_port)            ${BOLD}Работает:${NC} ${uptime_str}"
+        else
+            echo -e "  ${BOLD}Порт:${NC}        ${PROXY_PORT}            ${BOLD}Работает:${NC} ${uptime_str}"
+        fi
         # Порт цели разошёлся с нашим — фиксы висят не на том порту
         if [ "$_reanimator" = "true" ] && [ -n "${DETECTED_PORT:-}" ] && [ "${DETECTED_PORT}" != "${PROXY_PORT}" ]; then
             echo -e "  ${YELLOW}⚠ Порт цели ${DETECTED_PORT}, а фиксы применяются к ${PROXY_PORT}${NC}"
             echo -e "  ${DIM}  Синхронизировать: Цель/режим → Повторить обнаружение${NC}"
         fi
-        echo -e "  ${BOLD}Домен(SNI):${NC}  $(_current_sni_display)"
+        if web_is_only_mode 2>/dev/null; then
+            echo -e "  ${BOLD}WEB домен:${NC}   $(web_domain 2>/dev/null || echo —)"
+        else
+            echo -e "  ${BOLD}Домен(SNI):${NC}  $(_current_sni_display)"
+        fi
         if [ "$_reanimator" = "true" ]; then
             if [ "$_target_stats_ok" = "true" ]; then
                 echo -e "  ${BOLD}Трафик:${NC}      $(format_bytes "${TARGET_STATS_OCTETS:-0}")  ${BOLD}Соед.:${NC} ${conns}  ${BOLD}Уник. IP:${NC} ${TARGET_STATS_IPS:-0}"
@@ -155,7 +164,9 @@ show_main_menu() {
 
         echo -e "  ${BOLD}MEKO оптим.:${NC} $(meko_opt_status 2>/dev/null || echo "${DIM}—${NC}")"
         echo -e "  ${BOLD}Selfmask:${NC}    $(selfmask_status_line 2>/dev/null || echo "${DIM}—${NC}")"
-        echo -e "  ${BOLD}WEB Proxy:${NC}   $(web_status_line 2>/dev/null || echo "${DIM}—${NC}")"
+        if [ "$_reanimator" != "true" ]; then
+            echo -e "  ${BOLD}WEB Proxy:${NC}   $(web_status_line 2>/dev/null || echo "${DIM}—${NC}")"
+        fi
         # Только когда включён: на обычной установке строка была бы шумом.
         warp_menu_line 2>/dev/null || true
 

@@ -23,7 +23,8 @@ func (m Mode) Valid() bool {
 
 // ModeStatus is the output of `mtproxyl mode --json`.
 type ModeStatus struct {
-	Mode Mode `json:"mode"`
+	Mode      Mode   `json:"mode"`
+	ProxyMode string `json:"proxy_mode"`
 	// Engine says how manager mode holds telemt: "docker" for the container,
 	// "binary" for the MTProxyL-Telemt systemd service. Meaningless in
 	// reanimator mode, where the target is somebody else's.

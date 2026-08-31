@@ -147,4 +147,10 @@ assertDeepEqual(buildWebLink({ classic: [`tg://proxy?secret=${SECRET}`] }, undef
 const groups = buildProxyLinks({ classic: [`tg://proxy?server=a.ru&port=443&secret=${SECRET}`] }, web);
 assertDeepEqual(groups.map((g) => g.label), ['Classic', 'WEB']);
 
+const webOnlyGroups = buildProxyLinks(
+  { classic: [`tg://proxy?server=a.ru&port=443&secret=${SECRET}`] },
+  { ...web, mtproto_enabled: false },
+);
+assertDeepEqual(webOnlyGroups.map((g) => g.label), ['WEB']);
+
 console.log('usersPage.helpers: WEB-ссылки — ок');

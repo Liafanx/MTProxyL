@@ -536,7 +536,7 @@ run_proxy_container() {
     else
         docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
-        log_info "Запуск прокси на порту ${PROXY_PORT}..."
+        log_info "Запуск движка: $(proxy_transport_mode_title 2>/dev/null || echo MTProto)..."
         local _args=(
             --name "$CONTAINER_NAME"
             --restart unless-stopped
@@ -566,7 +566,7 @@ run_proxy_container() {
 
     sleep 2
     if is_proxy_running; then
-        log_success "Прокси запущен на порту ${PROXY_PORT}"
+        log_success "Прокси запущен: $(proxy_transport_mode_title 2>/dev/null || echo MTProto)"
 
         # Внутри многошаговой операции ссылки здесь преждевременны: публичный
         # порт ещё не настроен, и печатать нерабочие сейчас незачем — итог
@@ -580,10 +580,14 @@ run_proxy_container() {
             for i in "${!SECRETS_LABELS[@]}"; do
                 [ "${SECRETS_ENABLED[$i]}" = "true" ] || continue
                 local _kind _fs
-                while IFS='|' read -r _kind _fs; do
+                while mtproto_is_enabled 2>/dev/null && IFS='|' read -r _kind _fs; do
                     [ -n "$_fs" ] || continue
                     echo -e "  ${BOLD}${SECRETS_LABELS[$i]}${NC} ${DIM}($(link_kind_title "$_kind")):${NC} ${CYAN}tg://proxy?server=${server_ip}&port=${PROXY_PORT}&secret=${_fs}${NC}"
                 done <<< "$(build_link_secrets "${SECRETS_KEYS[$i]}")"
+                if web_is_enabled 2>/dev/null; then
+                    local _wl; _wl=$(web_link_for_secret "${SECRETS_KEYS[$i]}" 2>/dev/null)
+                    [ -n "$_wl" ] && echo -e "  ${BOLD}${SECRETS_LABELS[$i]}${NC} ${DIM}(WEB):${NC} ${CYAN}${_wl}${NC}"
+                fi
             done
             echo ""
         }

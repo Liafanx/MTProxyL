@@ -215,7 +215,11 @@ availability_target() {
     [[ "$_p" =~ ^[0-9]+$ ]] && [ "$_p" -ge 1 ] && [ "$_p" -le 65535 ] || _p=""
 
     if [ -z "$_p" ]; then
-        _p="${PROXY_PORT:-}"
+        if web_is_only_mode 2>/dev/null; then
+            _p=$(web_public_port 2>/dev/null)
+        else
+            _p="${PROXY_PORT:-}"
+        fi
         # В реаниматоре порт может ещё не переехать в профиль режима, а у цели
         # он свой — обнаружение знает точнее.
         [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && [ -n "${DETECTED_PORT:-}" ] && _p="$DETECTED_PORT"
@@ -223,7 +227,11 @@ availability_target() {
     [[ "$_p" =~ ^[0-9]+$ ]] || _p=443
 
     if [ -z "$_s" ]; then
-        _s=$(_current_sni_domain 2>/dev/null) || _s=""
+        if web_is_only_mode 2>/dev/null; then
+            _s=$(_availability_web_host 2>/dev/null) || _s=""
+        else
+            _s=$(_current_sni_domain 2>/dev/null) || _s=""
+        fi
         [ -n "$_s" ] || _s="${PROXY_DOMAIN:-}"
         # В WEB-режиме маскировки может не быть вовсе, и тогда FakeTLS-домена
         # тоже нет. Публичное имя там — домен WEB, по нему и здороваемся.
@@ -232,6 +240,9 @@ availability_target() {
 
     # Адрес: домен заглушки, потом public_host из конфига, прикреплённый к
     # ссылкам адрес и только в конце внешний IP.
+    if [ -z "$_h" ] && web_is_only_mode 2>/dev/null; then
+        _h=$(_availability_web_host 2>/dev/null)
+    fi
     if [ -z "$_h" ] && [ "${SELFMASK_ENABLED:-false}" = "true" ] && [ -n "${SELFMASK_DOMAIN:-}" ]; then
         _h="$SELFMASK_DOMAIN"
     fi

@@ -275,7 +275,7 @@ selfmask_supported_os() {
 }
 
 selfmask_status_line() {
-    if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ] || [ "${SELFMASK_CONFIGURE_ACTIVE:-false}" = "true" ]; then
         echo -e "${GREEN}включён${NC} (${SELFMASK_DOMAIN:-?} → 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444})"
     else
         echo -e "${DIM}выключен${NC}"
@@ -1276,7 +1276,12 @@ EOF
 _selfmask_configure_nginx() {
     log_info "Настройка PQ nginx..."
 
-    local _cert_dir; _cert_dir="$(_selfmask_cert_dir)"
+    local _cert_dir
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ] || [ "${SELFMASK_CONFIGURE_ACTIVE:-false}" = "true" ]; then
+        _cert_dir="$(_selfmask_cert_dir)"
+    else
+        _cert_dir="$(web_cert_dir 2>/dev/null)"
+    fi
     [ -f "${_cert_dir}/fullchain.pem" ] || { log_error "Сертификат не найден"; return 1; }
 
     mkdir -p "${SELFMASK_PQ_PREFIX}/conf"
@@ -1284,7 +1289,10 @@ _selfmask_configure_nginx() {
     # Блоки на порту 80 (ACME-challenge + http→https redirect) нужны только
     # для Let's Encrypt. При самоподписанном сертификате домена в DNS нет,
     # ACME не используется, и занимать общий порт 80 незачем.
-    local _http80=""
+    local _http80="" _frontend_domain="${SELFMASK_DOMAIN}"
+    if [ "${SELFMASK_ENABLED:-false}" != "true" ] && [ "${SELFMASK_CONFIGURE_ACTIVE:-false}" != "true" ]; then
+        _frontend_domain=$(web_domain 2>/dev/null)
+    fi
     if [ "${SELFMASK_CERT_MODE:-letsencrypt}" != "selfsigned" ]; then
         _http80=$(cat << EOF
     server {
@@ -1305,7 +1313,7 @@ _selfmask_configure_nginx() {
 
     server {
         listen 80;
-        server_name ${SELFMASK_DOMAIN};
+        server_name ${_frontend_domain};
         root ${SELFMASK_SITE_DIR};
 
         location /.well-known/acme-challenge/ {
@@ -1314,7 +1322,7 @@ _selfmask_configure_nginx() {
         }
 
         location / {
-            return 301 https://${SELFMASK_DOMAIN}\$request_uri;
+            return 301 https://${_frontend_domain}\$request_uri;
         }
     }
 EOF
@@ -1333,18 +1341,9 @@ EOF
         _web_server=$(web_nginx_http_server "$_cert_dir") || return 1
     fi
 
-    cat > "$(_selfmask_pq_conf)" << EOF
-worker_processes auto;
-
-events {
-    worker_connections 1024;
-}
-
-${_web_stream}
-http {
-${_mime}
-${_web_map}
-${_http80}
+    local _selfmask_servers=""
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ] || [ "${SELFMASK_CONFIGURE_ACTIVE:-false}" = "true" ]; then
+        _selfmask_servers=$(cat << EOF
     server {
         listen 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT} ssl default_server;
         server_name _;
@@ -1386,6 +1385,23 @@ ${_http80}
             try_files \$uri \$uri/ =404;
         }
     }
+EOF
+)
+    fi
+
+    cat > "$(_selfmask_pq_conf)" << EOF
+worker_processes auto;
+
+events {
+    worker_connections 1024;
+}
+
+${_web_stream}
+http {
+${_mime}
+${_web_map}
+${_http80}
+${_selfmask_servers}
 ${_web_server}
 }
 EOF
@@ -1983,7 +1999,7 @@ selfmask_setup() {
     else
         _selfmask_obtain_cert          || { _selfmask_restore_port80_holders; return 1; }
     fi
-    _selfmask_configure_nginx      || { _selfmask_restore_port80_holders; return 1; }
+    SELFMASK_CONFIGURE_ACTIVE="true" _selfmask_configure_nginx || { _selfmask_restore_port80_holders; return 1; }
     _selfmask_apply_mtproxyl_settings || { _selfmask_restore_port80_holders; return 1; }
     if [ "$SELFMASK_CERT_MODE" = "letsencrypt" ]; then
         _selfmask_setup_renewal || true
@@ -2033,10 +2049,12 @@ selfmask_disable() {
     read_line _yn
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
-    systemctl disable --now "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
-    rm -f "/etc/systemd/system/${SELFMASK_PQ_SERVICE}" 2>/dev/null || true
-    systemctl daemon-reload &>/dev/null || true
-    rm -f "$(_selfmask_pq_conf)" 2>/dev/null || true
+    if ! web_is_enabled 2>/dev/null; then
+        systemctl disable --now "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
+        rm -f "/etc/systemd/system/${SELFMASK_PQ_SERVICE}" 2>/dev/null || true
+        systemctl daemon-reload &>/dev/null || true
+        rm -f "$(_selfmask_pq_conf)" 2>/dev/null || true
+    fi
 
     SELFMASK_ENABLED="false"
 
@@ -2068,6 +2086,11 @@ selfmask_disable() {
     fi
 
     save_settings
+
+    if web_is_enabled 2>/dev/null; then
+        _selfmask_configure_nginx || return 1
+        log_info "PQ nginx оставлен для WEB Proxy"
+    fi
 
     if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
         is_proxy_running && restart_target

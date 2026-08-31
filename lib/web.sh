@@ -7,15 +7,26 @@
 WEB_MIN_ENGINE_VERSION="3.5.1"
 
 web_is_enabled() { [ "${WEB_ENABLED:-false}" = "true" ]; }
+mtproto_is_enabled() { [ "${PROXY_MODE:-mtproto}" != "web" ]; }
+web_is_only_mode() { [ "${PROXY_MODE:-mtproto}" = "web" ]; }
+
+proxy_transport_mode_title() {
+    case "${PROXY_MODE:-mtproto}" in
+        web) echo "Только WEB" ;;
+        combined) echo "MTProto + WEB" ;;
+        *) echo "Только MTProto" ;;
+    esac
+}
 
 # shared — один публичный порт на двоих, nginx разводит по SNI.
 # split — у WEB свой порт, движок остаётся на PROXY_PORT напрямую.
 web_layout_is_split() { [ "${WEB_LAYOUT:-shared}" = "split" ]; }
+web_frontend_is_direct() { web_is_only_mode || web_layout_is_split; }
 
 # Порт, на который приходит клиент WEB. В ссылку он не пишется, но именно
 # он идёт в public_addr.
 web_public_port() {
-    if web_layout_is_split; then echo "${WEB_PUBLIC_PORT:-443}"; else echo "${PROXY_PORT:-443}"; fi
+    if web_frontend_is_direct; then echo "${WEB_PUBLIC_PORT:-443}"; else echo "${PROXY_PORT:-443}"; fi
 }
 
 # В shared имя WEB обязано отличаться от домена маскировки: FakeTLS-клиент шлёт
@@ -122,7 +133,7 @@ web_port_is_443() { [ "$(web_public_port)" = "443" ]; }
 # именно этот приватный порт. Публичный держит nginx — его и подставляем через
 # [general.links] public_port. В split движок и так стоит на публичном порту.
 web_link_public_port() {
-    web_is_enabled || return 1
+    web_is_enabled && mtproto_is_enabled || return 1
     web_layout_is_split && return 1
     echo "${PROXY_PORT:-443}"
 }
@@ -146,6 +157,7 @@ web_carrier_survives_zapret2() {
 }
 
 web_zapret2_hurts() {
+    web_is_only_mode && return 1
     web_layout_is_split && return 1
     web_carrier_survives_zapret2 && return 1
     zapret2_in_effect 2>/dev/null
@@ -164,7 +176,9 @@ web_warn_zapret2() {
 # Явные listener'ы отменяют legacy-поля [server] целиком, поэтому MTProxy
 # перечисляем вместе с WEB — иначе FakeTLS просто не поднимется.
 web_listeners_toml() {
-    if web_layout_is_split; then
+    if ! mtproto_is_enabled; then
+        :
+    elif web_layout_is_split; then
         # Порт у прокси свой, движок остаётся публичным: ни PROXY-заголовка,
         # ни переезда на loopback не нужно.
         cat << TOML
@@ -308,7 +322,7 @@ web_nginx_ipv6_available() {
 
 web_nginx_stream_block() {
     # В split разводить нечего: у WEB свой порт, nginx слушает его напрямую.
-    web_layout_is_split && return 0
+    web_frontend_is_direct && return 0
     local _domain _port _listen6=""
     _domain=$(web_domain) || return 1
     _port="${PROXY_PORT:-443}"
@@ -344,7 +358,7 @@ web_nginx_http_server() {
     # Общий каталог приходит аргументом, но у WEB может быть свой сертификат.
     _cert_dir=$(web_cert_dir 2>/dev/null)
     [ -n "$_cert_dir" ] || _cert_dir="$1"
-    if web_layout_is_split; then
+    if web_frontend_is_direct; then
         # Клиент приходит прямо в nginx, адрес виден и без PROXY-заголовка.
         _listen="listen ${WEB_PUBLIC_PORT:-443} ssl;"
         if web_nginx_ipv6_available; then
@@ -425,6 +439,78 @@ web_link_for_label() {
 
 # ── Включение и выключение ────────────────────────────────────
 
+_web_prepare_frontend() {
+    local _domain
+    _domain=$(web_domain 2>/dev/null) || return 1
+    [ -n "$_domain" ] || { log_error "WEB: домен не задан"; return 1; }
+
+    if [ "${SELFMASK_ENABLED:-false}" != "true" ]; then
+        SELFMASK_DOMAIN="$_domain"
+        SELFMASK_CERT_MODE="letsencrypt"
+    fi
+    WEB_DECOY_DIR="${WEB_DECOY_DIR:-${SELFMASK_SITE_DIR}}"
+
+    if engine_is_binary; then
+        binengine_ensure_installed || return 1
+    else
+        build_telemt_image || return 1
+    fi
+
+    _selfmask_install_deps || return 1
+    _selfmask_install_pq_nginx || return 1
+    if [ "${WEB_DECOY_MODE:-static_directory}" = "static_directory" ] \
+       && [ ! -f "$(web_decoy_dir)/index.html" ]; then
+        _selfmask_deploy_site || return 1
+    fi
+    return 0
+}
+
+_web_restore_runtime() {
+    local _mode="$1" _enabled="$2" _was_running="${3:-true}"
+    PROXY_MODE="$_mode"
+    WEB_ENABLED="$_enabled"
+    save_settings || true
+    generate_telemt_config >/dev/null 2>&1 || true
+    if [ "$_was_running" = "true" ]; then
+        MTPROXYL_QUIET_LINKS="true" restart_proxy_container >/dev/null 2>&1 || true
+    else
+        stop_proxy_container >/dev/null 2>&1 || true
+    fi
+    if web_is_enabled || [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+        _selfmask_configure_nginx >/dev/null 2>&1 || true
+    else
+        systemctl stop "${SELFMASK_PQ_SERVICE}" >/dev/null 2>&1 || true
+    fi
+}
+
+_web_suspend_mtproto_fixes() {
+    load_nft_settings 2>/dev/null || true
+    if nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null; then
+        WEB_ONLY_PREV_NFT="true"
+        systemctl disable --now "${NFT_SYSTEMD_UNIT}" >/dev/null 2>&1 || true
+        remove_nft_rules >/dev/null 2>&1 || true
+    fi
+    if zapret2_in_effect 2>/dev/null; then
+        WEB_ONLY_PREV_ZAPRET2="true"
+        zapret2_stop >/dev/null 2>&1 || true
+    fi
+    save_settings || true
+}
+
+_web_resume_mtproto_fixes() {
+    load_nft_settings 2>/dev/null || true
+    if [ "${WEB_ONLY_PREV_NFT:-false}" = "true" ]; then
+        apply_nft_rules >/dev/null 2>&1 && install_nft_service >/dev/null 2>&1 || \
+            log_warn "SYN-лимитер не удалось вернуть автоматически"
+    fi
+    if [ "${WEB_ONLY_PREV_ZAPRET2:-false}" = "true" ]; then
+        zapret2_start_existing >/dev/null 2>&1 || log_warn "Zapret2 не удалось вернуть автоматически"
+    fi
+    WEB_ONLY_PREV_NFT="false"
+    WEB_ONLY_PREV_ZAPRET2="false"
+    save_settings || true
+}
+
 # Порядок важен: пока движок держит публичный порт, nginx на него не сядет.
 # Поэтому сначала уводим движок на loopback и только потом поднимаем nginx.
 web_enable() {
@@ -433,50 +519,69 @@ web_enable() {
         log_info "Мы покажем состояние и соберём ссылки: mtproxyl web status, mtproxyl web links"
         return 1
     fi
+    if _superexpert_active; then
+        log_error "В режиме супер эксперта transport задаётся в пользовательском конфиге"
+        return 1
+    fi
+    local _old_mode="${1:-${PROXY_MODE:-mtproto}}" _old_enabled="${2:-${WEB_ENABLED:-false}}"
+    local _old_running="${3:-}"
+    [ -n "$_old_running" ] || { is_proxy_running && _old_running="true" || _old_running="false"; }
+    if [ "$_old_enabled" != "true" ] && [ "$_old_mode" != "mtproto" ]; then
+        _old_mode="mtproto"
+    fi
+    [ "${PROXY_MODE:-mtproto}" = "mtproto" ] && PROXY_MODE="combined"
+    WEB_ENABLED="true"
+
+    _web_prepare_frontend || {
+        _web_restore_runtime "$_old_mode" "$_old_enabled" "$_old_running"
+        return 1
+    }
+
     local _problems
-    _problems=$(web_preflight_problems)
+    _problems=$(web_preflight_problems "$_old_enabled")
     if [ -n "$_problems" ]; then
         log_error "WEB Proxy включить нельзя:"
         printf '%s' "$_problems" | sed 's/^/    • /'
-        return 1
-    fi
-
-    if [ "${SELFMASK_ENABLED:-false}" != "true" ]; then
-        log_error "Сначала нужен Selfmask: у WEB от него домен, сертификат и сайт-заглушка"
-        log_info "Чужой SNI здесь не подойдёт: клиент WEB ходит обычным HTTPS и проверяет"
-        log_info "сертификат, а он бывает только у домена, которым владеете вы."
-        log_info "Включить: mtproxyl selfmask setup"
+        _web_restore_runtime "$_old_mode" "$_old_enabled" "$_old_running"
         return 1
     fi
 
     web_warn_zapret2
 
-    WEB_ENABLED="true"
     save_settings || return 1
 
     log_info "Выпуск сертификата с WEB-доменом $(web_domain)..."
-    _selfmask_obtain_cert || { WEB_ENABLED="false"; save_settings; return 1; }
+    _selfmask_obtain_cert || {
+        _web_restore_runtime "$_old_mode" "$_old_enabled" "$_old_running"
+        return 1
+    }
+    [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "letsencrypt" ] && _selfmask_setup_renewal || true
 
-    if web_layout_is_split; then
+    if web_is_only_mode; then
+        log_info "WEB listener запускается на loopback, nginx займёт порт $(web_public_port)..."
+    elif web_layout_is_split; then
         log_info "Прокси остаётся на порту ${PROXY_PORT:-443}, WEB займёт $(web_public_port)..."
     else
         log_info "Движок уходит с порта ${PROXY_PORT:-443} на loopback..."
     fi
-    generate_telemt_config || { WEB_ENABLED="false"; save_settings; return 1; }
+    generate_telemt_config || {
+        _web_restore_runtime "$_old_mode" "$_old_enabled" "$_old_running"
+        return 1
+    }
     load_secrets
     # До настройки nginx движок сидит на loopback, и его ссылки сейчас нерабочие.
     MTPROXYL_QUIET_LINKS="true" restart_proxy_container || true
     # Молча продолжать нельзя: nginx сел бы на 443 перед мёртвым движком.
     if ! is_proxy_running; then
         log_error "Движок не поднялся с WEB-конфигом — откатываем"
-        web_disable
+        _web_restore_runtime "$_old_mode" "$_old_enabled" "$_old_running"
         return 1
     fi
 
     log_info "Настройка nginx на публичном порту..."
     if ! _selfmask_configure_nginx || ! systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null; then
-        log_error "nginx не поднялся — возвращаем движок на порт ${PROXY_PORT:-443}"
-        web_disable
+        log_error "nginx не поднялся — возвращаем прежний режим"
+        _web_restore_runtime "$_old_mode" "$_old_enabled" "$_old_running"
         return 1
     fi
 
@@ -492,7 +597,9 @@ _web_enable_links_tail() {
     draw_header "ССЫЛКИ WEB PROXY (${WEB_SECRET_MODE:-dd})"
     web_links_print || return 0
     echo -e "  ${DIM}Порта в ссылке нет: клиент WEB ходит только на 443.${NC}"
-    if web_layout_is_split; then
+    if web_is_only_mode; then
+        echo -e "  ${DIM}Обычный MTProto отключён; работают только ссылки WEB.${NC}"
+    elif web_layout_is_split; then
         echo -e "  ${DIM}Обычные ссылки не изменились, прокси остался на порту ${PROXY_PORT:-443}:${NC}"
     else
         echo -e "  ${DIM}Обычные ссылки не изменились, порт ${PROXY_PORT:-443} у них общий с WEB:${NC}"
@@ -506,13 +613,22 @@ _web_enable_links_tail() {
 web_disable() {
     web_is_reanimator && { log_error "В режиме реаниматора WEB выключает хозяин конфига цели"; return 1; }
     web_is_enabled || { log_info "WEB Proxy и так выключен"; return 0; }
+    if web_is_only_mode; then
+        log_error "WEB нельзя выключить в режиме «Только WEB»: движок останется без транспорта"
+        log_info "Сначала переключите режим: mtproxyl web mode combined"
+        return 1
+    fi
 
+    PROXY_MODE="mtproto"
     WEB_ENABLED="false"
     save_settings || return 1
 
     log_info "Снятие nginx с порта $(web_public_port)..."
-    _selfmask_configure_nginx || return 1
-    systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+        _selfmask_configure_nginx || return 1
+    else
+        systemctl stop "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
+    fi
 
     log_info "Перестройка конфига движка..."
     generate_telemt_config || return 1
@@ -522,6 +638,36 @@ web_disable() {
 
     _web_reapply_geoblock
     log_success "WEB Proxy выключен"
+}
+
+web_set_proxy_mode() {
+    web_is_reanimator && { log_error "Режим транспорта настраивает хозяин цели"; return 1; }
+    _superexpert_active && {
+        log_error "В режиме супер эксперта transport задаётся в пользовательском конфиге"
+        return 1
+    }
+    local _new="$1"
+    case "$_new" in
+        web|combined) ;;
+        *) log_error "Режим: web или combined"; return 1 ;;
+    esac
+    [ "${PROXY_MODE:-mtproto}" = "$_new" ] && web_is_enabled && {
+        log_info "Уже выбран режим: $(proxy_transport_mode_title)"; return 0; }
+
+    local _old_mode="${PROXY_MODE:-mtproto}" _old_enabled="${WEB_ENABLED:-false}" _old_running="false"
+    is_proxy_running && _old_running="true"
+    PROXY_MODE="$_new"
+    WEB_ENABLED="true"
+    if web_enable "$_old_mode" "$_old_enabled" "$_old_running"; then
+        if [ "$_new" = "web" ]; then
+            _web_suspend_mtproto_fixes
+        else
+            _web_resume_mtproto_fixes
+        fi
+        log_success "Режим переключён: $(proxy_transport_mode_title)"
+        return 0
+    fi
+    return 1
 }
 
 _web_reapply_geoblock() {
@@ -544,7 +690,7 @@ _web_status_json_target() {
         _host=$(web_target_host 2>/dev/null)
         _mode=$(_web_target_secret_mode 2>/dev/null)
     fi
-    printf '{"enabled":%s,"layout":"target","public_port":%s,"domain":"%s","carrier":"","secret_mode":"%s","public_addr":"","listen_port":0,"tls_port":0,"mtproxy_port":0,"decoy_mode":"","decoy_dir":"","debug":false,"problems":"","owner":"target"}\n' \
+    printf '{"enabled":%s,"proxy_mode":"target","mtproto_enabled":true,"layout":"target","public_port":%s,"domain":"%s","carrier":"","secret_mode":"%s","public_addr":"","listen_port":0,"tls_port":0,"mtproxy_port":0,"decoy_mode":"","decoy_dir":"","debug":false,"problems":"","owner":"target"}\n' \
         "$_en" "${DETECTED_PORT:-443}" "$(json_escape "$_host")" "$(json_escape "$_mode")"
 }
 
@@ -573,9 +719,10 @@ web_status_json() {
     _d=$(web_domain 2>/dev/null)
     _addr=$(web_public_addr 2>/dev/null)
     _problems=$(web_preflight_problems 2>/dev/null | tr '\n' ';')
-    printf '{"enabled":%s,"layout":"%s","public_port":%s,"domain":"%s","carrier":"%s","secret_mode":"%s","public_addr":"%s","listen_port":%s,"tls_port":%s,"mtproxy_port":%s,"decoy_mode":"%s","decoy_dir":"%s","debug":%s,"problems":"%s"}\n' \
+    printf '{"enabled":%s,"proxy_mode":"%s","mtproto_enabled":%s,"layout":"%s","public_port":%s,"domain":"%s","carrier":"%s","secret_mode":"%s","public_addr":"%s","listen_port":%s,"tls_port":%s,"mtproxy_port":%s,"decoy_mode":"%s","decoy_dir":"%s","debug":%s,"problems":"%s"}\n' \
         "$(web_is_enabled && echo true || echo false)" \
-        "$(json_escape "${WEB_LAYOUT:-shared}")" "$(web_public_port)" \
+        "$(json_escape "${PROXY_MODE:-mtproto}")" "$(mtproto_is_enabled && echo true || echo false)" \
+        "$(json_escape "$([ "${PROXY_MODE:-mtproto}" = web ] && echo web || echo "${WEB_LAYOUT:-shared}")")" "$(web_public_port)" \
         "$(json_escape "$_d")" "$(json_escape "${WEB_CARRIER:-}")" \
         "$(json_escape "${WEB_SECRET_MODE:-}")" "$(json_escape "$_addr")" \
         "${WEB_LISTEN_PORT:-15080}" "${WEB_TLS_PORT:-15444}" "${WEB_MTPROXY_PORT:-15443}" \
@@ -588,13 +735,17 @@ web_status_json() {
 
 # Возвращает список причин, по которым WEB включать нельзя. Пусто — можно.
 web_preflight_problems() {
-    local _p="" _d _ft
+    local _p="" _d _ft _already="${1:-${WEB_ENABLED:-false}}"
     _d=$(web_domain 2>/dev/null)
     _ft=$(web_faketls_domain 2>/dev/null)
     [ -n "$_d" ] || _p+="не задан домен: нужен свой FQDN с сертификатом"$'\n'
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ] \
+       && [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "selfsigned" ]; then
+        _p+="WEB требует доверенный сертификат — переключите Selfmask на Let's Encrypt либо отключите его"$'\n'
+    fi
     # В shared совпадение имён увело бы FakeTLS-клиентов в nginx: по SNI они
     # неотличимы. В split порты разные, и совпадение никому не мешает.
-    if ! web_layout_is_split && [ -n "$_d" ] && [ "$_d" = "$_ft" ]; then
+    if mtproto_is_enabled && ! web_layout_is_split && [ -n "$_d" ] && [ "$_d" = "$_ft" ]; then
         _p+="домен WEB совпадает с доменом маскировки ${_ft} — в раскладке shared нужны разные имена"$'\n'
     fi
     # Сверяем с адресом сервера, а не с самим доменом: без этого проверка
@@ -619,9 +770,9 @@ web_preflight_problems() {
     web_port_is_443 || _p+="публичный порт WEB $(web_public_port), а клиент ходит туда только на 443"$'\n'
     web_public_addr >/dev/null 2>&1 || _p+="не определён публичный IP"$'\n'
     # ssl_preread нужен только там, где по SNI действительно разводят.
-    web_layout_is_split || web_nginx_has_stream || \
+    web_frontend_is_direct || web_nginx_has_stream || \
         _p+="nginx собран без stream — обновите его (mtproxyl selfmask pq-nginx) либо возьмите раскладку split"$'\n'
-    if web_layout_is_split && [ "${PROXY_PORT:-443}" = "$(web_public_port)" ]; then
+    if mtproto_is_enabled && web_layout_is_split && [ "${PROXY_PORT:-443}" = "$(web_public_port)" ]; then
         _p+="в раскладке split у прокси и WEB должны быть разные порты, сейчас оба ${PROXY_PORT}"$'\n'
     fi
     web_engine_supports || _p+="движок $(engine_current_version 2>/dev/null) не умеет WEB, нужен ${WEB_MIN_ENGINE_VERSION} или новее"$'\n'
@@ -639,7 +790,7 @@ web_preflight_problems() {
         fi
     fi
     # При повторном применении наши же порты заняты нами — это не помеха.
-    if ! web_is_enabled; then
+    if [ "$_already" != "true" ]; then
         local _busy; _busy=$(web_busy_ports)
         [ -z "$_busy" ] || _p+="порты уже заняты: ${_busy} — смените их через mtproxyl web set"$'\n'
     fi
@@ -659,7 +810,7 @@ web_engine_supports() {
 # с публичного порта: иначе он не поднимется, а 443 останется без хозяина.
 web_busy_ports() {
     local _p _busy="" _ports
-    if web_layout_is_split; then
+    if web_frontend_is_direct; then
         _ports="${WEB_LISTEN_PORT:-15080} $(web_public_port)"
     else
         _ports="${WEB_MTPROXY_PORT:-15443} ${WEB_LISTEN_PORT:-15080} ${WEB_TLS_PORT:-15444}"
@@ -727,12 +878,18 @@ web_status_print() {
     else
         echo -e "   🔴 Состояние        ${DIM}выключен${NC}"
     fi
+    echo -e "   🧩 Режим            $(proxy_transport_mode_title)"
     echo -e "   🔗 Домен            $(web_domain 2>/dev/null || echo '—')"
-    echo -e "   🎭 Домен маскировки $(web_faketls_domain 2>/dev/null || echo '—')"
+    if mtproto_is_enabled; then
+        echo -e "   🎭 Домен маскировки $(web_faketls_domain 2>/dev/null || echo '—')"
+    fi
     echo -e "   🚚 Carrier          ${WEB_CARRIER:-—}"
     echo -e "   🔑 Режим секрета    ${WEB_SECRET_MODE:-—}"
     echo -e "   📍 public_addr      $(web_public_addr 2>/dev/null || echo '—')"
-    if web_layout_is_split; then
+    if web_is_only_mode; then
+        echo -e "   🧭 Раскладка        ${BOLD}WEB-only${NC} — без обычного MTProto"
+        echo -e "   🪟 Порты            nginx :$(web_public_port) → WEB :${WEB_LISTEN_PORT:-15080}"
+    elif web_layout_is_split; then
         echo -e "   🧭 Раскладка        ${BOLD}split${NC} — свой порт у WEB"
         echo -e "   🪟 Порты            nginx :$(web_public_port) → WEB :${WEB_LISTEN_PORT:-15080}, прокси :${PROXY_PORT:-443} напрямую"
     else
@@ -793,6 +950,7 @@ handle_web_command() {
         json)    load_secrets 2>/dev/null; web_status_json ;;
         enable)  check_root; load_secrets; web_enable ;;
         disable) check_root; load_secrets; web_disable ;;
+        mode)    check_root; load_secrets; web_set_proxy_mode "${1:-}" ;;
         links)   load_secrets; web_links_print ;;
         sync)    check_root; load_secrets; web_sync_profiles ;;
         set)     check_root; web_set_param "${1:-}" "${2:-}" ;;
@@ -802,6 +960,7 @@ handle_web_command() {
             echo -e "    ${GREEN}web status${NC}    Статус"
             echo -e "    ${GREEN}web enable${NC}    Включить"
             echo -e "    ${GREEN}web disable${NC}   Выключить"
+            echo -e "    ${GREEN}web mode${NC} web|combined  Переключить транспорт"
             echo -e "    ${GREEN}web links${NC}     Ссылки tg://webproxy"
             echo -e "    ${GREEN}web sync${NC}      Свести профили WEB со списком пользователей"
             echo -e "    ${GREEN}web set${NC} K V    Изменить параметр"
@@ -814,7 +973,7 @@ handle_web_command() {
 _WEB_SETTABLE=(
     "WEB_LAYOUT|enum:shared,split|shared — один порт с FakeTLS по SNI, split — свой порт"
     "WEB_PUBLIC_PORT|range:1:65535|Публичный порт WEB в раскладке split"
-    "WEB_DOMAIN|custom:_validate_web_domain|Домен WEB Proxy, отличный от домена маскировки"
+    "WEB_DOMAIN|custom:_validate_web_domain|Публичный домен WEB Proxy"
     "WEB_CARRIER|enum:https,https-lanes,websocket,websocket-lanes|Транспорт carrier"
     "WEB_SECRET_MODE|enum:plain,dd|Представление секрета в ссылке"
     "WEB_LISTEN_PORT|range:1:65535|Приватный порт listener'а движка"
@@ -828,10 +987,14 @@ _WEB_SETTABLE=(
 
 _validate_web_domain() {
     local _v="$1"
-    [ -n "$_v" ] || return 0
+    if [ -z "$_v" ]; then
+        [ "${SELFMASK_ENABLED:-false}" = "true" ] && [ -n "${SELFMASK_DOMAIN:-}" ] && return 0
+        echo "без Selfmask домен WEB обязателен" >&2
+        return 1
+    fi
     [[ "$_v" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$ ]] || {
         echo "не похоже на доменное имя" >&2; return 1; }
-    web_layout_is_split || [ "$_v" != "$(web_faketls_domain)" ] || {
+    web_is_only_mode || web_layout_is_split || [ "$_v" != "$(web_faketls_domain)" ] || {
         echo "совпадает с доменом маскировки, а в раскладке shared их различают по SNI" >&2; return 1; }
 }
 
@@ -900,7 +1063,7 @@ web_set_param() {
 # Короткая строка для шапки главного меню.
 web_status_line() {
     if web_is_enabled; then
-        echo -e "${GREEN}включён${NC} ($(web_domain 2>/dev/null), ${WEB_LAYOUT:-shared})"
+        echo -e "${GREEN}включён${NC} ($(web_domain 2>/dev/null), $(proxy_transport_mode_title))"
     else
         echo -e "${DIM}выключен${NC}"
     fi

@@ -74,6 +74,7 @@ export type MtproxylMode = 'manager' | 'reanimator';
 
 export interface MtproxylModeStatus {
   mode: MtproxylMode;
+  proxy_mode?: 'mtproto' | 'web' | 'combined';
   /** Чем менеджер держит движок: docker (контейнер) или binary (служба). */
   engine?: string;
   detected_mode: string;
@@ -117,6 +118,8 @@ export interface SelfmaskStatus {
 
 export interface WebStatus {
   enabled: boolean;
+  proxy_mode: string;
+  mtproto_enabled?: boolean;
   /** shared — один публичный порт на двоих, split — у WEB свой. */
   layout: string;
   public_port: number;
@@ -315,6 +318,11 @@ export const mtproxylApi = {
     request<MtproxylOperation>(MTPROXYL_BASE, '/web/enable', { method: 'POST' }),
   webDisable: () =>
     request<MtproxylOperation>(MTPROXYL_BASE, '/web/disable', { method: 'POST' }),
+  webMode: (mode: 'web' | 'combined') =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/web/mode', {
+      method: 'POST',
+      body: JSON.stringify({ mode }),
+    }),
   webLinks: () => request<{ output: string }>(MTPROXYL_BASE, '/web/links'),
   // Профиль WEB движок сам не заводит: пользователь, созданный через его
   // /v1/users, попадает только в [access.users] и остаётся без WEB-ссылки.

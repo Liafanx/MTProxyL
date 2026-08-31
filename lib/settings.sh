@@ -8,6 +8,9 @@ MTPROXYL_MODE="manager"
 ENGINE_BACKEND="docker"
 ENGINE_VERSION=""
 PROXY_PORT=443
+# Какие клиентские транспорты поднимает менеджер: обычный MTProto, WEB или оба.
+# Для старых settings.conf значение выводится из WEB_ENABLED при загрузке.
+PROXY_MODE="mtproto"
 PROXY_METRICS_PORT=9090
 # REST API движка. MTProxyL включает его явно и вешает на localhost:
 # у telemt по умолчанию listen = "0.0.0.0:9091", то есть без явной
@@ -105,6 +108,8 @@ WEB_DECOY_MODE="static_directory"   # static_directory|http_upstream
 WEB_DECOY_DIR=""
 WEB_DECOY_UPSTREAM=""
 WEB_DEBUG="false"           # [web.debug].enabled, страница /web-status
+WEB_ONLY_PREV_NFT="false"
+WEB_ONLY_PREV_ZAPRET2="false"
 
 # Снимок того, что было до включения Selfmask — иначе отключение не может
 # вернуть прежний fake SNI. Файл per-mode: один набор имён на оба режима.
@@ -150,6 +155,7 @@ ENGINE_BACKEND='${ENGINE_BACKEND}'
 ENGINE_VERSION='${ENGINE_VERSION}'
 
 # Конфигурация прокси
+PROXY_MODE='${PROXY_MODE}'
 PROXY_PORT='${PROXY_PORT}'
 PROXY_METRICS_PORT='${PROXY_METRICS_PORT}'
 PROXY_API_PORT='${PROXY_API_PORT}'
@@ -237,6 +243,8 @@ WEB_DECOY_MODE='${WEB_DECOY_MODE}'
 WEB_DECOY_DIR='${WEB_DECOY_DIR}'
 WEB_DECOY_UPSTREAM='${WEB_DECOY_UPSTREAM}'
 WEB_DEBUG='${WEB_DEBUG}'
+WEB_ONLY_PREV_NFT='${WEB_ONLY_PREV_NFT}'
+WEB_ONLY_PREV_ZAPRET2='${WEB_ONLY_PREV_ZAPRET2}'
 
 # Режим супер эксперта
 SUPEREXPERT_ENABLED='${SUPEREXPERT_ENABLED}'
@@ -399,6 +407,7 @@ _fix_settings_perms() {
 }
 
 load_settings() {
+    local _proxy_mode_loaded="false"
     # Отсутствие settings.conf раньше означало выход сразу, вместе с ним
     # пропускался load_selfmask_settings — и 'selfmask set' затирал значения.
     if [ -f "$SETTINGS_FILE" ]; then
@@ -418,7 +427,7 @@ load_settings() {
 
             case "$key" in
                 MTPROXYL_MODE|ENGINE_BACKEND|ENGINE_VERSION|\
-                PROXY_PORT|PROXY_METRICS_PORT|PROXY_API_PORT|PROXY_DOMAIN|PROXY_CONCURRENCY|\
+                PROXY_MODE|PROXY_PORT|PROXY_METRICS_PORT|PROXY_API_PORT|PROXY_DOMAIN|PROXY_CONCURRENCY|\
                 PROXY_CPUS|PROXY_MEMORY|CUSTOM_IP|FAKE_CERT_LEN|\
                 PROXY_PROTOCOL|PROXY_PROTOCOL_TRUSTED_CIDRS|\
                 AD_TAG|GEOBLOCK_MODE|BLOCKLIST_COUNTRIES|\
@@ -437,10 +446,12 @@ load_settings() {
                 WEB_ENABLED|WEB_LAYOUT|WEB_PUBLIC_PORT|WEB_DOMAIN|WEB_CARRIER|WEB_SECRET_MODE|\
                 WEB_LISTEN_PORT|WEB_TLS_PORT|WEB_MTPROXY_PORT|\
                 WEB_DECOY_MODE|WEB_DECOY_DIR|WEB_DECOY_UPSTREAM|WEB_DEBUG|\
+                WEB_ONLY_PREV_NFT|WEB_ONLY_PREV_ZAPRET2|\
                 SUPEREXPERT_ENABLED|\
                 IPBLOCK_ENABLED|IPBLOCK_ACTION|IPBLOCK_LIST|IPBLOCK_LIST6|\
                 PORT_PROFILE_MANAGER|PORT_PROFILE_REANIMATOR)
                     printf -v "$key" '%s' "$val"
+                    [ "$key" = "PROXY_MODE" ] && _proxy_mode_loaded="true"
                     ;;
             esac
         done < "$SETTINGS_FILE"
@@ -484,6 +495,15 @@ load_settings() {
     esac
 
     [ "$WEB_ENABLED" = "true" ] || WEB_ENABLED="false"
+    if [ "${_proxy_mode_loaded:-false}" != "true" ]; then
+        [ "$WEB_ENABLED" = "true" ] && PROXY_MODE="combined" || PROXY_MODE="mtproto"
+    fi
+    case "$PROXY_MODE" in
+        mtproto)  WEB_ENABLED="false" ;;
+        web)      WEB_ENABLED="true" ;;
+        combined) WEB_ENABLED="true" ;;
+        *)        PROXY_MODE="$([ "$WEB_ENABLED" = "true" ] && echo combined || echo mtproto)" ;;
+    esac
     case "$WEB_LAYOUT" in
         shared|split) ;;
         *) WEB_LAYOUT="shared" ;;

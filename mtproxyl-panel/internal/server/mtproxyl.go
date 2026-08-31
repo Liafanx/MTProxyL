@@ -357,6 +357,30 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
 	}))
 
+	mux.Handle("POST /api/mtproxyl/web/mode", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			Mode string `json:"mode"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "Некорректный JSON")
+			return
+		}
+		if req.Mode != "web" && req.Mode != "combined" {
+			writeError(w, http.StatusBadRequest, "invalid_mode", "Режим: web или combined")
+			return
+		}
+		if !runner.Start("web:mode:"+req.Mode, func(ctx context.Context) (string, error) {
+			return client.WebMode(ctx, req.Mode)
+		}) {
+			writeError(w, http.StatusConflict, "operation_busy", "Другая операция MTProxyL уже выполняется")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
+	}))
+
 	mux.Handle("POST /api/mtproxyl/web/sync", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
 			return

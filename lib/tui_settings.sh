@@ -20,9 +20,15 @@ tui_settings_menu() {
         clear_screen
         draw_header "НАСТРОЙКИ"
         echo ""
-        echo -e "  ${BOLD}Порт:${NC}              ${PROXY_PORT}"
+        echo -e "  ${BOLD}Транспорт:${NC}         $(proxy_transport_mode_title)"
+        if web_is_only_mode; then
+            echo -e "  ${BOLD}WEB:${NC}              $(web_domain 2>/dev/null || echo '—'):$(web_public_port 2>/dev/null || echo 443)"
+            echo -e "  ${BOLD}Порт MTProto:${NC}      ${PROXY_PORT} ${DIM}(резерв для совместного режима)${NC}"
+        else
+            echo -e "  ${BOLD}Порт:${NC}              ${PROXY_PORT}"
+        fi
         echo -e "  ${BOLD}IP/домен сервера:${NC}  ${CUSTOM_IP:-$(get_public_ip 2>/dev/null) ${DIM}(авто)${NC}}"
-        echo -e "  ${BOLD}Домен(SNI):${NC}        ${PROXY_DOMAIN}"
+        echo -e "  ${BOLD}Домен(SNI):${NC}        ${PROXY_DOMAIN}$([ "${PROXY_MODE:-mtproto}" = "web" ] && echo " ${DIM}(резерв)${NC}")"
         echo -e "  ${BOLD}CPU:${NC}               ${PROXY_CPUS:-без ограничений}"
         echo -e "  ${BOLD}Память:${NC}            ${PROXY_MEMORY:-без ограничений}"
         echo -e "  ${BOLD}Маскировка:${NC}        ${MASKING_ENABLED}$([ "$MASKING_ENABLED" = "true" ] && echo " → ${MASKING_HOST:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}")"

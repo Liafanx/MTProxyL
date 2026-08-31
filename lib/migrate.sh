@@ -268,6 +268,19 @@ _mig_warn_dns() {
         esac
     fi
 
+    if web_is_enabled 2>/dev/null; then
+        local _web_domain; _web_domain=$(web_domain 2>/dev/null)
+        if [ -n "$_web_domain" ] && { [ "${SELFMASK_ENABLED:-false}" != "true" ] \
+           || [ "$_web_domain" != "${SELFMASK_DOMAIN:-}" ]; }; then
+            _mig_dns_ready "$_web_domain"
+            case $? in
+                0) log_success "DNS ${_web_domain} уже смотрит на новую машину — WEB поднимется сразу" ;;
+                1) log_warn "WEB: A-запись ${_web_domain} ведёт на $(_mig_resolve_a "$_web_domain"), а не на ${_MIG_NEW_IP}"; _blocked=1 ;;
+                2) log_warn "WEB: A-запись ${_web_domain} проверить не вышло"; _blocked=1 ;;
+            esac
+        fi
+    fi
+
     local _acme; _acme=$(_mig_panel_acme_domain 2>/dev/null)
     if [ -n "$_acme" ] && [ "$_MIG_WITH_PANEL" != "no" ]; then
         _mig_dns_ready "$_acme"
@@ -290,13 +303,13 @@ _mig_warn_dns() {
     echo ""
     echo -e "  ${YELLOW}${BOLD}Сертификат Let's Encrypt выпускается в момент установки.${NC}"
     echo -e "  ${DIM}Пока A-запись смотрит на старый сервер, проверка домена уйдёт${NC}"
-    echo -e "  ${DIM}туда же, и на новой машине не поднимутся ни Selfmask, ни HTTPS${NC}"
-    echo -e "  ${DIM}панели. Переезд при этом пройдёт — прокси, секреты и фиксы${NC}"
+    echo -e "  ${DIM}туда же, и на новой машине не поднимутся WEB, Selfmask или HTTPS${NC}"
+    echo -e "  ${DIM}панели. Переезд при этом пройдёт — настройки и секреты${NC}"
     echo -e "  ${DIM}встанут, но их придётся доделать вручную.${NC}"
     echo ""
     echo -e "  ${BOLD}Как лучше:${NC} сначала переведите A-запись на ${_MIG_NEW_IP:-новый адрес},"
     echo -e "  дождитесь, пока она разойдётся, и повторите переезд."
-    echo -e "  ${DIM}Доделать потом: mtproxyl selfmask setup, mtproxyl panel cert <домен>${NC}"
+    echo -e "  ${DIM}Доделать потом: mtproxyl web enable, mtproxyl selfmask setup, mtproxyl panel cert <домен>${NC}"
     return 1
 }
 
@@ -304,6 +317,7 @@ _mig_warn_dns() {
 # и должно заработать там.
 _mig_build_args() {
     local -a _a=(--mode manager --force)
+    _a+=(--proxy-mode "${PROXY_MODE:-mtproto}")
     # Движок переезжает тем же носителем: у кого бинарник — тому и версию,
     # чтобы на новой машине встало ровно то же, что работало на старой.
     if [ "$(engine_backend)" = "binary" ]; then
@@ -367,6 +381,18 @@ _mig_build_args() {
         [ -n "${SELFMASK_CERT_EMAIL:-}" ] && _a+=(--selfmask-email "$SELFMASK_CERT_EMAIL")
         [ -n "${SELFMASK_SITE_SOURCE:-}" ] && _a+=(--selfmask-template "$SELFMASK_SITE_SOURCE")
         [ -n "${SELFMASK_NGINX_BACKEND_PORT:-}" ] && _a+=(--selfmask-backend-port "$SELFMASK_NGINX_BACKEND_PORT")
+    fi
+    if web_is_enabled 2>/dev/null; then
+        _a+=(--web yes --web-layout "${WEB_LAYOUT:-shared}")
+        _a+=(--web-carrier "${WEB_CARRIER:-websocket}")
+        _a+=(--web-secret-mode "${WEB_SECRET_MODE:-dd}")
+        [ -n "${WEB_DOMAIN:-}" ] && _a+=(--web-domain "$WEB_DOMAIN")
+        { web_is_only_mode || [ "${WEB_LAYOUT:-shared}" = "split" ]; } \
+            && _a+=(--web-port "${WEB_PUBLIC_PORT:-443}")
+        if [ "${SELFMASK_ENABLED:-false}" != "true" ]; then
+            [ -n "${SELFMASK_CERT_EMAIL:-}" ] && _a+=(--selfmask-email "$SELFMASK_CERT_EMAIL")
+            [ -n "${SELFMASK_SITE_SOURCE:-}" ] && _a+=(--selfmask-template "$SELFMASK_SITE_SOURCE")
+        fi
     fi
 
     printf '%s\n' "${_a[@]}"

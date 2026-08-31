@@ -57,7 +57,7 @@ tui_links_menu() {
 _tui_print_links() {
     local _ip="$1" _port="$2" _pairs="$3" _raw="${5:-}"
     local _kind _sec _label
-    while IFS='|' read -r _kind _sec; do
+    while mtproto_is_enabled 2>/dev/null && IFS='|' read -r _kind _sec; do
         [ -z "$_sec" ] && continue
         _label="$(link_kind_title "$_kind")"
         echo -e "  ${BOLD}TG${NC} ${DIM}(${_label})${NC}  ${CYAN}tg://proxy?server=${_ip}&port=${_port}&secret=${_sec}${NC}"

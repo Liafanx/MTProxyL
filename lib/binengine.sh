@@ -329,7 +329,7 @@ binengine_uptime() {
 
 binengine_launch() {
     binengine_write_unit || return 1
-    log_info "Запуск MTProxyL-Telemt на порту ${PROXY_PORT}..."
+    log_info "Запуск MTProxyL-Telemt: $(proxy_transport_mode_title 2>/dev/null || echo MTProto)..."
     systemctl restart "$ENGINE_SERVICE" 2>/dev/null || {
         log_error "Не удалось запустить ${ENGINE_SERVICE}"
         journalctl -u "$ENGINE_SERVICE" -n 10 --no-pager 2>/dev/null | sed 's/^/    /'

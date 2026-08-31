@@ -13,7 +13,9 @@ import (
 // never terminates TLS, nginx does, and forwards plain HTTP/1.1 to a private
 // listener.
 type WebStatus struct {
-	Enabled bool `json:"enabled"`
+	Enabled        bool   `json:"enabled"`
+	ProxyMode      string `json:"proxy_mode"`
+	MTProtoEnabled *bool  `json:"mtproto_enabled,omitempty"`
 	// Layout is "shared" (one public port split by SNI) or "split" (WEB gets
 	// its own port and the proxy keeps PROXY_PORT untouched).
 	Layout      string `json:"layout"`
@@ -56,6 +58,14 @@ func (c *Client) WebEnable(ctx context.Context) (string, error) {
 // WebDisable turns WEB mode off and hands the public port back to the engine.
 func (c *Client) WebDisable(ctx context.Context) (string, error) {
 	out, err := c.run(ctx, "web", "disable")
+	return stripANSI(out), err
+}
+
+func (c *Client) WebMode(ctx context.Context, mode string) (string, error) {
+	if mode != "web" && mode != "combined" {
+		return "", fmt.Errorf("unknown WEB mode %q", mode)
+	}
+	out, err := c.run(ctx, "web", "mode", mode)
 	return stripANSI(out), err
 }
 

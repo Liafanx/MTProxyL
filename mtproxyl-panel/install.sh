@@ -522,6 +522,8 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script web links
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script web set WEB_[A-Z_]* *
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script web enable
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script web disable
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script web mode web
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script web mode combined
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script web sync
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup
 # Пользователи и настройки MTProxyL: в режиме Manager конфиг движка

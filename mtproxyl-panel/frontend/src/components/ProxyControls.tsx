@@ -70,7 +70,7 @@ export function ProxyControls() {
                   ? 'Свой движок MTProxyL-Telemt'
                   : 'Свой контейнер MTProxyL'
                 : `Цель: ${status.detected_mode}`}{' '}
-              · порт {status.port}
+              · {status.proxy_mode === 'web' ? 'WEB :443' : `порт ${status.port}`}
             </div>
           )}
         </div>
