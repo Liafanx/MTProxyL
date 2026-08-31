@@ -68,7 +68,7 @@ install_args_help() {
     --selfmask <домен>         включить Selfmask на этом домене
     --selfmask-cert letsencrypt|selfsigned
     --selfmask-email <email>   почта для Let's Encrypt (необязательна)
-    --selfmask-template stub|filemanager|catrunner|mekorunner|<url>
+    --selfmask-template stub|filemanager|catrunner|mekorunner|<url>|</path>
     --selfmask-backend-port N  локальный порт nginx (по умолчанию 8444)
 
   WEB Proxy

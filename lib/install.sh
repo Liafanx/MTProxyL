@@ -82,17 +82,7 @@ run_installer() {
     draw_header "НАСТРОЙКА ПРОКСИ"
     echo ""
 
-    echo -e "  ${BOLD}Транспорт прокси${NC}"
-    echo -e "  ${BOLD}[1]${NC} Только WEB      ${DIM}— сайт и WEB Proxy на 443, без обычного MTProto${NC}"
-    echo -e "  ${BOLD}[2]${NC} MTProto + WEB   ${DIM}— оба типа прокси${NC}"
-    local _transport_choice; _transport_choice=$(read_choice "выбор" "2")
-    if [ "$_transport_choice" = "1" ]; then
-        PROXY_MODE="web"
-    else
-        PROXY_MODE="combined"
-    fi
-    WEB_ENABLED="false"
-    WEB_PUBLIC_PORT="443"
+    installer_pick_proxy_transport
 
     # Порт
     if mtproto_is_enabled; then
@@ -184,7 +174,7 @@ run_installer() {
             fi
             if [ "$api_input" = "${PROXY_METRICS_PORT:-9090}" ] \
                || { mtproto_is_enabled && [ "$api_input" = "${PROXY_PORT:-443}" ]; } \
-               || [ "$api_input" = "${WEB_PUBLIC_PORT:-443}" ]; then
+               || { [ "$PROXY_MODE" != "mtproto" ] && [ "$api_input" = "${WEB_PUBLIC_PORT:-443}" ]; }; then
                 log_error "Этот порт уже занят самим прокси или метриками"
                 continue
             fi
@@ -249,31 +239,24 @@ run_installer() {
         MASKING_ENABLED="false"
     fi
 
-    echo ""
-    echo -e "  ${BOLD}Домен WEB Proxy${NC}"
-    echo -e "  ${DIM}A-запись домена должна вести на этот сервер. WEB работает только на 443.${NC}"
-    while true; do
-        echo -en "  ${BOLD}Домен:${NC} "
-        local _web_domain; read_line _web_domain
-        _web_domain="${_web_domain,,}"
-        validate_domain "$_web_domain" && { WEB_DOMAIN="$_web_domain"; break; }
-        log_error "Введите корректное доменное имя"
-    done
-    SELFMASK_DOMAIN="$WEB_DOMAIN"
-    SELFMASK_CERT_MODE="letsencrypt"
-    echo -en "  ${DIM}Email для Let's Encrypt [необязательно]:${NC} "
-    read_line SELFMASK_CERT_EMAIL
+    if [ "$PROXY_MODE" != "mtproto" ]; then
+        echo ""
+        echo -e "  ${BOLD}Домен WEB Proxy${NC}"
+        echo -e "  ${DIM}A-запись домена должна вести на этот сервер. WEB работает только на 443.${NC}"
+        while true; do
+            echo -en "  ${BOLD}Домен:${NC} "
+            local _web_domain; read_line _web_domain
+            _web_domain="${_web_domain,,}"
+            validate_domain "$_web_domain" && { WEB_DOMAIN="$_web_domain"; break; }
+            log_error "Введите корректное доменное имя"
+        done
+        SELFMASK_DOMAIN="$WEB_DOMAIN"
+        SELFMASK_CERT_MODE="letsencrypt"
+        echo -en "  ${DIM}Email для Let's Encrypt [необязательно]:${NC} "
+        read_line SELFMASK_CERT_EMAIL
 
-    echo ""
-    echo -e "  ${BOLD}Сайт-заглушка WEB${NC}"
-    echo -e "  ${DIM}[1] Обычная  [2] Файловый менеджер  [3] Cat runner  [4] MEKO runner${NC}"
-    local _site_choice; _site_choice=$(read_choice "выбор" "1")
-    case "$_site_choice" in
-        2) SELFMASK_SITE_SOURCE="filemanager" ;;
-        3) SELFMASK_SITE_SOURCE="catrunner" ;;
-        4) SELFMASK_SITE_SOURCE="mekorunner" ;;
-        *) SELFMASK_SITE_SOURCE="stub" ;;
-    esac
+        installer_pick_web_site
+    fi
 
     # Ресурсы
     echo ""
@@ -332,10 +315,17 @@ run_installer() {
     echo ""
     draw_header "ЗАПУСК ПРОКСИ"
     echo ""
-    web_enable || {
-        log_error "Установка остановлена: WEB Proxy не поднялся"
-        return 1
-    }
+    if [ "$PROXY_MODE" = "mtproto" ]; then
+        run_proxy_container || {
+            log_error "Установка остановлена: MTProto-прокси не поднялся"
+            return 1
+        }
+    else
+        web_enable || {
+            log_error "Установка остановлена: WEB Proxy не поднялся"
+            return 1
+        }
+    fi
 
     if command -v systemctl &>/dev/null; then
         install_ip_history_timer
@@ -356,6 +346,52 @@ run_installer() {
     read -rn 256 -t 0.05 _ 2>/dev/null || true
     load_settings; load_secrets
     show_main_menu
+}
+
+installer_pick_proxy_transport() {
+    echo -e "  ${BOLD}Транспорт прокси${NC}"
+    echo -e "  ${BOLD}[1]${NC} Только MTProto  ${DIM}— обычный прокси без WEB${NC}"
+    echo -e "  ${BOLD}[2]${NC} Только WEB      ${DIM}— сайт и WEB Proxy на 443${NC}"
+    echo -e "  ${BOLD}[3]${NC} MTProto + WEB   ${DIM}— оба типа прокси${NC}"
+    local _choice; _choice=$(read_choice "выбор" "1")
+    case "$_choice" in
+        2) PROXY_MODE="web" ;;
+        3) PROXY_MODE="combined" ;;
+        *) PROXY_MODE="mtproto" ;;
+    esac
+    WEB_ENABLED="false"
+    WEB_PUBLIC_PORT="443"
+}
+
+installer_pick_web_site() {
+    echo ""
+    echo -e "  ${BOLD}Сайт-заглушка WEB${NC}"
+    echo -e "  ${DIM}[1]${NC} Обычная"
+    echo -e "  ${DIM}[2]${NC} Файловый менеджер"
+    echo -e "  ${DIM}[3]${NC} Cat runner"
+    echo -e "  ${DIM}[4]${NC} MEKO runner"
+    echo -e "  ${CYAN}[5]${NC} URL файла index.html"
+    echo -e "  ${CYAN}[6]${NC} Папка с сайтом на этом сервере"
+    local _choice; _choice=$(read_choice "выбор" "1")
+    case "$_choice" in
+        2) SELFMASK_SITE_SOURCE="filemanager" ;;
+        3) SELFMASK_SITE_SOURCE="catrunner" ;;
+        4) SELFMASK_SITE_SOURCE="mekorunner" ;;
+        5)
+            echo -en "  ${BOLD}URL файла index.html:${NC} "
+            local _url; read_line _url
+            [[ "$_url" =~ ^https?:// ]] || { log_error "Нужен URL вида http(s)://..."; return 1; }
+            SELFMASK_SITE_SOURCE="$_url"
+            ;;
+        6)
+            echo -e "  ${DIM}Укажите абсолютный путь к папке или к её index.html.${NC}"
+            echo -en "  ${BOLD}Путь:${NC} "
+            local _path _resolved; read_line _path
+            _resolved=$(_selfmask_resolve_local_site "$_path") || return 1
+            SELFMASK_SITE_SOURCE="$_resolved"
+            ;;
+        *) SELFMASK_SITE_SOURCE="stub" ;;
+    esac
 }
 
 # Чем менеджер будет держать движок. Docker привычнее, бинарник экономит
@@ -661,7 +697,9 @@ show_install_summary() {
     echo -e "  ${GREEN}mtproxyl secret add${NC}   Добавить пользователя"
     echo -e "  ${GREEN}mtproxyl help${NC}         Справка"
     echo ""
-    if web_is_only_mode; then
+    if ! web_is_enabled; then
+        echo -e "  ${YELLOW}Фаервол: откройте TCP порт ${PROXY_PORT}${NC}"
+    elif web_is_only_mode; then
         echo -e "  ${YELLOW}Фаервол: откройте TCP 80 и 443${NC}"
     else
         echo -e "  ${YELLOW}Фаервол: откройте TCP ${PROXY_PORT}, 80 и 443${NC}"

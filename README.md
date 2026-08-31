@@ -103,8 +103,8 @@ mtproxyl
    wget -qO /tmp/mtproxyl-install.sh https://raw.githubusercontent.com/Liafanx/MTProxyL/main/install.sh && sudo bash /tmp/mtproxyl-install.sh && source ~/.bashrc
    ```
 
-2. Следуйте мастеру настройки — выберите `Только WEB` или `MTProto + WEB`,
-   движок, домен и сайт-заглушку
+2. Следуйте мастеру настройки — выберите `Только MTProto`, `Только WEB` или
+   `MTProto + WEB`, затем настройте выбранный транспорт
 
 3. Получите ссылку на прокси (выводится после установки) или:
    ```bash
@@ -244,7 +244,7 @@ mtproxyl install --help          # полный список аргументо�
 | `--selfmask` | домен | выключен | Включить Selfmask: обычный MTProto прикрывается настоящим сайтом на этом домене. Для WEB не обязателен. |
 | `--selfmask-cert` | `letsencrypt`, `selfsigned` | `letsencrypt` | Тип сертификата. `letsencrypt` требует A-записи домена на этот сервер, `selfsigned` — нет. |
 | `--selfmask-email` | почта | пусто | Адрес для писем Let's Encrypt об истечении сертификата. **Необязателен:** без него сертификат выпускается так же, просто напоминаний не будет. |
-| `--selfmask-template` | `stub`, `filemanager`, `catrunner`, `mekorunner` или URL на `index.html` | `stub` | Что показывать на сайте-маске. |
+| `--selfmask-template` | `stub`, `filemanager`, `catrunner`, `mekorunner`, URL на `index.html` или путь к папке | `stub` | Что показывать на сайте-маске. |
 | `--selfmask-backend-port` | 1–65535 | `8444` | Локальный порт nginx, куда прокси отправляет замаскированные запросы. |
 
 **WEB Proxy**
@@ -861,7 +861,7 @@ mtproxyl selfmask settable    # Список параметров с текущ�
 
 mtproxyl selfmask set SELFMASK_DOMAIN example.com
 mtproxyl selfmask set SELFMASK_CERT_MODE selfsigned      # letsencrypt|selfsigned
-mtproxyl selfmask set SELFMASK_SITE_SOURCE mekorunner    # stub|filemanager|catrunner|mekorunner|URL
+mtproxyl selfmask set SELFMASK_SITE_SOURCE mekorunner    # встроенный шаблон, URL или путь к папке
 mtproxyl selfmask set SELFMASK_CERT_EMAIL admin@example.com
 mtproxyl selfmask set SELFMASK_NGINX_BACKEND_PORT 8444
 mtproxyl selfmask set SELFMASK_AUTO_RENEW true
@@ -1182,11 +1182,15 @@ telemt, делает резервную копию и сохраняет вла�
 Начиная с telemt 3.5.1 движок умеет тип прокси **WEB**:
 MTProto едет внутри обычного HTTPS или WebSocket. MTProxyL поднимает такой
 режим одной командой — `mtproxyl web enable`. На новой установке менеджера
-мастер сразу предлагает два транспорта:
+мастер сразу предлагает три транспорта:
 
+- **Только MTProto** — обычный прокси без WEB, WEB-домен и сайт не требуются.
 - **Только WEB** — в конфиге нет обычного MTProto listener; nginx принимает
   HTTPS на 443 и передаёт его WEB listener движка на loopback.
 - **MTProto + WEB** — работают обычные `tg://proxy` и WEB-ссылки.
+
+Для сайта WEB мастер предлагает встроенный шаблон, прямой URL файла
+`index.html` либо абсолютный путь к папке с готовым сайтом на сервере.
 
 Выбранный транспорт виден в главном меню, панели и боте. Переключить его можно
 через меню WEB Proxy либо командами `mtproxyl web mode web|combined`. В
