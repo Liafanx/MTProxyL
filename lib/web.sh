@@ -458,6 +458,11 @@ _web_prepare_frontend() {
 
     _selfmask_install_deps || return 1
     _selfmask_install_pq_nginx || return 1
+    if ! web_frontend_is_direct && ! web_nginx_has_stream; then
+        log_info "Для общей раскладки нужен nginx со stream — устанавливаем сборку MTProxyL..."
+        _selfmask_install_pq_nginx nginx force || return 1
+        web_nginx_has_stream || { log_error "Установленный nginx не поддерживает stream"; return 1; }
+    fi
     if [ "${WEB_DECOY_MODE:-static_directory}" = "static_directory" ] \
        && [ ! -f "$(web_decoy_dir)/index.html" ]; then
         _selfmask_deploy_site || return 1
@@ -769,9 +774,9 @@ web_preflight_problems() {
     fi
     web_port_is_443 || _p+="публичный порт WEB $(web_public_port), а клиент ходит туда только на 443"$'\n'
     web_public_addr >/dev/null 2>&1 || _p+="не определён публичный IP"$'\n'
-    # ssl_preread нужен только там, где по SNI действительно разводят.
-    web_frontend_is_direct || web_nginx_has_stream || \
-        _p+="nginx собран без stream — обновите его (mtproxyl selfmask pq-nginx) либо возьмите раскладку split"$'\n'
+    if [ "$_already" = "true" ] && ! web_frontend_is_direct && ! web_nginx_has_stream; then
+        _p+="nginx активного WEB не поддерживает stream — примените WEB заново: mtproxyl web enable"$'\n'
+    fi
     if mtproto_is_enabled && web_layout_is_split && [ "${PROXY_PORT:-443}" = "$(web_public_port)" ]; then
         _p+="в раскладке split у прокси и WEB должны быть разные порты, сейчас оба ${PROXY_PORT}"$'\n'
     fi

@@ -187,27 +187,30 @@ run_installer() {
         done
     fi
 
-    # IP
-    echo ""
-    local _det_ip; _det_ip=$(CUSTOM_IP="" get_public_ip)
-    echo -e "  ${BOLD}IP или домен для ссылок${NC}"
-    echo -e "  ${DIM}Определён: ${_det_ip:-?}${NC}"
-    echo -e "  ${DIM}Введите свой IPv4 или домен, либо Enter для автоопределения.${NC}"
-    echo ""
-    echo -en "  ${BOLD}IP/домен [${_det_ip:-авто}]:${NC} "
-    local ip_input=""
-    read_line ip_input
-    if [ -n "$ip_input" ]; then
-        if validate_ip_literal "$ip_input"; then
-            CUSTOM_IP="$ip_input"
-            log_success "IP: ${CUSTOM_IP}"
-        elif validate_domain "$ip_input"; then
-            CUSTOM_IP="$ip_input"
-            log_success "Домен: ${CUSTOM_IP}"
-        else
-            log_warn "Некорректный IP/домен: '${ip_input}' — используем автоопределение"
-            CUSTOM_IP=""
+    if mtproto_is_enabled; then
+        echo ""
+        local _det_ip; _det_ip=$(CUSTOM_IP="" get_public_ip)
+        echo -e "  ${BOLD}IP или домен для ссылок${NC}"
+        echo -e "  ${DIM}Определён: ${_det_ip:-?}${NC}"
+        echo -e "  ${DIM}Введите свой IPv4 или домен, либо Enter для автоопределения.${NC}"
+        echo ""
+        echo -en "  ${BOLD}IP/домен [${_det_ip:-авто}]:${NC} "
+        local ip_input=""
+        read_line ip_input
+        if [ -n "$ip_input" ]; then
+            if validate_ip_literal "$ip_input"; then
+                CUSTOM_IP="$ip_input"
+                log_success "IP: ${CUSTOM_IP}"
+            elif validate_domain "$ip_input"; then
+                CUSTOM_IP="$ip_input"
+                log_success "Домен: ${CUSTOM_IP}"
+            else
+                log_warn "Некорректный IP/домен: '${ip_input}' — используем автоопределение"
+                CUSTOM_IP=""
+            fi
         fi
+    else
+        CUSTOM_IP=""
     fi
 
     # Домен обычного FakeTLS
@@ -303,6 +306,7 @@ run_installer() {
         run_fix_arsenal_wizard
     else
         log_info "MTProto-фиксы пропущены: выбран режим «Только WEB»"
+        run_meko_optimization_wizard
     fi
 
     # Автозапуск ставим до движка: снятие прежнего юнита дёргает
@@ -642,7 +646,10 @@ run_fix_arsenal_wizard() {
       fi
     fi 
 
-    # Оптимизация By-MEKO
+    run_meko_optimization_wizard
+}
+
+run_meko_optimization_wizard() {
     echo ""
     echo -e "  ${BOLD}Оптимизация системы By-MEKO${NC}"
     echo -e "  ${DIM}TCP keepalive 45s, BBR, расширенные очереди.${NC}"

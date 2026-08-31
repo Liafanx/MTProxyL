@@ -477,6 +477,7 @@ run_installer_args() {
         run_fix_arsenal_wizard
     else
         log_info "MTProto-фиксы пропущены: выбран режим «Только WEB»"
+        run_meko_optimization_wizard
     fi
 
     install_autostart_unit

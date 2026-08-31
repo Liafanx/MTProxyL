@@ -63,10 +63,22 @@ _system_nginx_has_pq() {
     _version_ge "$_ssl" "$SELFMASK_MIN_SYSTEM_OPENSSL"
 }
 
+_system_nginx_has_stream() {
+    local _bin; _bin=$(command -v nginx 2>/dev/null) || return 1
+    "$_bin" -V 2>&1 | grep -q -- '--with-stream_ssl_preread_module'
+}
+
+_selfmask_web_needs_stream() {
+    [ "${WEB_ENABLED:-false}" = "true" ] \
+        && [ "${PROXY_MODE:-mtproto}" != "web" ] \
+        && [ "${WEB_LAYOUT:-shared}" != "split" ]
+}
+
 # Какой nginx использовать для заглушки. Системный годится при OpenSSL
 # 3.5.0+, но запускаем со своим конфигом и юнитом: в /etc/nginx чужой сайт.
 _selfmask_nginx_bin() {
-    if _system_nginx_has_pq; then
+    if _system_nginx_has_pq \
+       && { ! _selfmask_web_needs_stream || _system_nginx_has_stream; }; then
         command -v nginx
         return 0
     fi
@@ -74,7 +86,8 @@ _selfmask_nginx_bin() {
 }
 
 _selfmask_nginx_source() {
-    if _system_nginx_has_pq; then
+    if _system_nginx_has_pq \
+       && { ! _selfmask_web_needs_stream || _system_nginx_has_stream; }; then
         echo "системный nginx ($(nginx -V 2>&1 | grep -oE 'OpenSSL [0-9]+\.[0-9]+\.[0-9]+' | head -1))"
     else
         echo "nginx из состава MTProxyL (OpenSSL ${SELFMASK_PQ_OPENSSL_VERSION})"
