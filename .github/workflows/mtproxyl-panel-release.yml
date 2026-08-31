@@ -81,8 +81,7 @@ jobs:
           done
           cat checksums.txt
 
-      # Список изменений живёт в mtproxyl-panel/RELEASE_NOTES.md и обновляется
-      # перед выпуском тега. Автосписок коммитов идёт следом, за ним.
+      # Описание релиза берётся из подготовленного файла без автодополнений.
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
@@ -91,4 +90,3 @@ jobs:
             mtproxyl-panel/release/*.sha256
             mtproxyl-panel/release/checksums.txt
           body_path: mtproxyl-panel/RELEASE_NOTES.md
-          generate_release_notes: true
