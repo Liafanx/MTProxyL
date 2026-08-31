@@ -103,6 +103,10 @@ export interface SelfmaskStatus {
   auto_renew: boolean;
   nginx_conf: string;
   nginx_conf_exists: boolean;
+  nginx_custom_enabled: boolean;
+  nginx_custom_active: boolean;
+  nginx_custom_file: string;
+  nginx_custom_file_exists: boolean;
   cert_found: boolean;
   pq_nginx_active: boolean;
   /** Чем проверять домен на PQ: описание источника, пусто — нечем. */
@@ -306,6 +310,20 @@ export const mtproxylApi = {
     request<{ output: string }>(MTPROXYL_BASE, '/selfmask/verify', { method: 'POST' }),
   selfmaskDisable: () =>
     request<{ output: string }>(MTPROXYL_BASE, '/selfmask/disable', { method: 'POST' }),
+  selfmaskNginxConfig: () =>
+    request<{ content: string }>(MTPROXYL_BASE, '/selfmask/nginx-config'),
+  writeSelfmaskNginxConfig: (content: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/selfmask/nginx-config', {
+      method: 'PUT',
+      body: JSON.stringify({ content }),
+    }),
+  toggleSelfmaskNginxConfig: (enabled: boolean) =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/selfmask/nginx-config/toggle', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    }),
+  testSelfmaskNginxConfig: () =>
+    request<{ output: string }>(MTPROXYL_BASE, '/selfmask/nginx-config/test', { method: 'POST' }),
 
   web: () => request<WebStatus>(MTPROXYL_BASE, '/web'),
   webParams: () => request<WebParam[]>(MTPROXYL_BASE, '/web/params'),

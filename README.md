@@ -614,6 +614,8 @@ mtproxyl block import list.txt append     # добавить к текущему
 - X25519MLKEM768, 3 шаблона сайтов
 - Два типа сертификата: **Let's Encrypt** (реальный домен с A-записью) либо
   **самоподписанный** (любой домен, в т.ч. несуществующий — A-запись и порт 80 не нужны)
+- Пользовательский `nginx.conf` для дополнительных сайтов и TCP-маршрутов —
+  MTProxyL проверяет его, но не перезаписывает
 
 ### WEB Proxy *(новое в v1.6.0)*
 - Тип прокси **WEB**: MTProto внутри обычного HTTPS
@@ -851,6 +853,13 @@ mtproxyl selfmask verify      # Проверить
 mtproxyl selfmask panel-cert  # Отдать сертификат веб-панели
 mtproxyl selfmask disable     # Отключить
 mtproxyl selfmask menu        # Открыть меню
+
+mtproxyl selfmask nginx-config on       # Создать копию рабочего nginx.conf и включить
+mtproxyl selfmask nginx-config off      # Вернуть автоматическую генерацию
+mtproxyl selfmask nginx-config edit     # Редактировать с проверкой nginx -t
+mtproxyl selfmask nginx-config show     # Показать файл
+mtproxyl selfmask nginx-config test     # Проверить файл
+mtproxyl selfmask nginx-config write < nginx.conf
 ```
 
 **Без мастера** — параметры задаются по отдельности и применяются одной
@@ -1672,11 +1681,29 @@ mask-backend, поэтому «снаружи» домен не открывае
 |-----------|------|----------|
 | PQ nginx | `/opt/mtproxyl-nginx/sbin/nginx` | nginx 1.28.3 + OpenSSL 3.5.7 (статический) |
 | PQ OpenSSL | `/opt/mtproxyl-nginx/bin/openssl` | Для PQ-проверок |
-| Конфиг | `/opt/mtproxyl-nginx/conf/nginx.conf` | Генерируется автоматически |
+| Стандартный конфиг | `/opt/mtproxyl-nginx/conf/nginx.conf` | Генерируется автоматически |
+| Пользовательский конфиг | `/opt/mtproxyl/nginx-custom.conf` | После включения принадлежит пользователю |
 | Сайт | `/var/www/mtproxyl-selfmask/` | HTML-заглушка или шаблон |
 | Сертификат (LE) | `/etc/letsencrypt/live/<домен>/` | Let's Encrypt (автопродление) |
 | Сертификат (self) | `/opt/mtproxyl-nginx/selfsigned/<домен>/` | Самоподписанный, 10 лет |
 | Служба | `mtproxyl-pq-nginx.service` | Systemd unit |
+
+### Пользовательский nginx.conf
+
+Если на том же nginx нужны дополнительные сайты, Xray, AdGuard Home или свои
+TCP-маршруты, включите пользовательский конфиг в меню Selfmask либо командой
+`mtproxyl selfmask nginx-config on`. При первом включении файл создаётся копией
+текущего рабочего конфига. После этого MTProxyL больше не меняет его при
+переключении и применении настроек Selfmask/WEB Proxy.
+
+Сохранение из TUI и панели проходит только после успешного `nginx -t`; если
+служба не запустилась, прежняя версия файла возвращается. При изменении домена,
+порта, сертификата или раскладки WEB соответствующие строки нужно обновлять в
+пользовательском файле вручную. Выключение режима возвращает автоматическую
+генерацию, но сам файл сохраняется для следующего включения. Он входит в
+обычные и зашифрованные бэкапы, экспорт и переезд на другой сервер.
+Если конфиг содержит блок `stream`, а в системном nginx нет нужного модуля,
+проверка автоматически установит и выберет nginx из состава MTProxyL.
 
 ### Шаблоны сайтов
 

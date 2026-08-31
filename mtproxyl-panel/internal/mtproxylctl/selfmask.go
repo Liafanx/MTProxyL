@@ -12,17 +12,21 @@ import (
 // serves a real HTTPS decoy from a private nginx so probing the SNI looks like
 // an ordinary website, while Telegram clients still get MTProto on that port.
 type SelfmaskStatus struct {
-	Enabled         bool   `json:"enabled"`
-	Domain          string `json:"domain"`
-	SiteSource      string `json:"site_source"`
-	SiteDir         string `json:"site_dir"`
-	BackendPort     int    `json:"backend_port"`
-	CertMode        string `json:"cert_mode"`
-	AutoRenew       bool   `json:"auto_renew"`
-	NginxConf       string `json:"nginx_conf"`
-	NginxConfExists bool   `json:"nginx_conf_exists"`
-	CertFound       bool   `json:"cert_found"`
-	PQNginxActive   bool   `json:"pq_nginx_active"`
+	Enabled               bool   `json:"enabled"`
+	Domain                string `json:"domain"`
+	SiteSource            string `json:"site_source"`
+	SiteDir               string `json:"site_dir"`
+	BackendPort           int    `json:"backend_port"`
+	CertMode              string `json:"cert_mode"`
+	AutoRenew             bool   `json:"auto_renew"`
+	NginxConf             string `json:"nginx_conf"`
+	NginxConfExists       bool   `json:"nginx_conf_exists"`
+	NginxCustomEnabled    bool   `json:"nginx_custom_enabled"`
+	NginxCustomActive     bool   `json:"nginx_custom_active"`
+	NginxCustomFile       string `json:"nginx_custom_file"`
+	NginxCustomFileExists bool   `json:"nginx_custom_file_exists"`
+	CertFound             bool   `json:"cert_found"`
+	PQNginxActive         bool   `json:"pq_nginx_active"`
 	// PQSource, PQAvailable и PQSystem описывают, чем проверять домен на
 	// постквантовый обмен ключами: системным OpenSSL 3.5.0+, нашей сборкой,
 	// или нечем — тогда панель предлагает её поставить.
@@ -58,6 +62,37 @@ func (c *Client) SelfmaskVerify(ctx context.Context) (string, error) {
 // SelfmaskDisable tears the decoy site down.
 func (c *Client) SelfmaskDisable(ctx context.Context) (string, error) {
 	out, err := c.run(ctx, "selfmask", "disable")
+	return stripANSI(out), err
+}
+
+// SelfmaskNginxConfig returns the saved custom config, or the generated config
+// before custom mode has been enabled for the first time.
+func (c *Client) SelfmaskNginxConfig(ctx context.Context) (string, error) {
+	return c.run(ctx, "selfmask", "nginx-config", "show")
+}
+
+// WriteSelfmaskNginxConfig validates and atomically replaces the custom file.
+func (c *Client) WriteSelfmaskNginxConfig(ctx context.Context, content string) (string, error) {
+	if content == "" || len(content) > 2<<20 {
+		return "", fmt.Errorf("nginx config size must be between 1 byte and 2 MiB")
+	}
+	out, err := c.runWithStdin(ctx, content, "selfmask", "nginx-config", "write")
+	return stripANSI(out), err
+}
+
+// SetSelfmaskNginxCustom switches between the generated and user-owned files.
+func (c *Client) SetSelfmaskNginxCustom(ctx context.Context, enabled bool) (string, error) {
+	action := "off"
+	if enabled {
+		action = "on"
+	}
+	out, err := c.run(ctx, "selfmask", "nginx-config", action)
+	return stripANSI(out), err
+}
+
+// TestSelfmaskNginxConfig runs nginx -t against the saved custom file.
+func (c *Client) TestSelfmaskNginxConfig(ctx context.Context) (string, error) {
+	out, err := c.run(ctx, "selfmask", "nginx-config", "test")
 	return stripANSI(out), err
 }
 

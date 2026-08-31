@@ -91,14 +91,26 @@ export function SelfmaskPage() {
   const [verifying, setVerifying] = useState(false);
   const [disabling, setDisabling] = useState(false);
   const [confirmDisable, setConfirmDisable] = useState(false);
+  const [nginxConfig, setNginxConfig] = useState('');
+  const [nginxOriginal, setNginxOriginal] = useState('');
+  const [nginxSaving, setNginxSaving] = useState(false);
+  const [nginxTesting, setNginxTesting] = useState(false);
+  const [nginxOutput, setNginxOutput] = useState<string | null>(null);
+  const [confirmNginxToggle, setConfirmNginxToggle] = useState<boolean | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [st, ps] = await Promise.all([mtproxylApi.selfmask(), mtproxylApi.selfmaskParams()]);
+      let config = '';
+      if (st.nginx_custom_file_exists) {
+        config = (await mtproxylApi.selfmaskNginxConfig()).content;
+      }
       setStatus(st);
       setParams(ps);
       setEdits({});
+      setNginxConfig(config);
+      setNginxOriginal(config);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось получить статус Selfmask');
@@ -197,6 +209,50 @@ export function SelfmaskPage() {
       setConfirmDisable(false);
     } finally {
       setDisabling(false);
+    }
+  };
+
+  const toggleNginxCustom = async () => {
+    const enabled = confirmNginxToggle;
+    setConfirmNginxToggle(null);
+    if (enabled === null) return;
+    setNotice(null);
+    setNginxOutput(null);
+    try {
+      start(await mtproxylApi.toggleSelfmaskNginxConfig(enabled));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось переключить конфиг nginx');
+    }
+  };
+
+  const saveNginxConfig = async () => {
+    setNginxSaving(true);
+    setNginxOutput(null);
+    try {
+      const res = await mtproxylApi.writeSelfmaskNginxConfig(nginxConfig);
+      setNginxOriginal(nginxConfig);
+      setNginxOutput(res.output || 'Конфиг сохранён и проверен');
+      setError(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось сохранить конфиг nginx');
+    } finally {
+      setNginxSaving(false);
+    }
+  };
+
+  const testNginxConfig = async () => {
+    setNginxTesting(true);
+    setNginxOutput(null);
+    try {
+      const res = await mtproxylApi.testSelfmaskNginxConfig();
+      setNginxOutput(res.output || 'Конфиг корректен');
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Проверка nginx завершилась ошибкой');
+    } finally {
+      setNginxTesting(false);
     }
   };
 
@@ -336,9 +392,105 @@ export function SelfmaskPage() {
                 )}
               </CardContent>
             </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-3">
+                  Пользовательский конфиг nginx
+                  <StatusBadge
+                    status={status.nginx_custom_active}
+                    labelOn="ВКЛЮЧЁН"
+                    labelOff="ВЫКЛЮЧЕН"
+                  />
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-sm text-text-secondary">
+                  При включении текущий рабочий конфиг копируется один раз. После этого MTProxyL
+                  не перезаписывает его при изменении Selfmask или WEB Proxy: домены, порты и
+                  дополнительные маршруты вы поддерживаете вручную.
+                </p>
+                <Row
+                  label="Файл"
+                  value={status.nginx_custom_file || '/opt/mtproxyl/nginx-custom.conf'}
+                  mono
+                />
+                {status.nginx_custom_enabled && !status.nginx_custom_active && (
+                  <div className="rounded-md border border-danger/40 bg-danger/10 p-3 text-sm text-text-primary">
+                    Режим отмечен как включённый, но файл не найден. Выключите режим и включите его
+                    заново, чтобы создать конфиг.
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant={status.nginx_custom_enabled ? 'outline' : 'default'}
+                    onClick={() => setConfirmNginxToggle(!status.nginx_custom_enabled)}
+                    disabled={running || nginxSaving}
+                  >
+                    {status.nginx_custom_enabled ? 'Вернуть стандартный конфиг' : 'Включить свой конфиг'}
+                  </Button>
+                  {status.nginx_custom_file_exists && (
+                    <Button
+                      variant="outline"
+                      onClick={testNginxConfig}
+                      disabled={running || nginxSaving || nginxTesting}
+                    >
+                      {nginxTesting ? 'Проверка…' : 'Проверить nginx -t'}
+                    </Button>
+                  )}
+                </div>
+                {status.nginx_custom_file_exists && (
+                  <>
+                    <textarea
+                      value={nginxConfig}
+                      onChange={(e) => setNginxConfig(e.target.value)}
+                      spellCheck={false}
+                      autoCapitalize="off"
+                      autoCorrect="off"
+                      className="min-h-[28rem] w-full resize-y rounded border border-border bg-background p-3 font-mono text-xs text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/50"
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        onClick={saveNginxConfig}
+                        disabled={
+                          running || nginxSaving || nginxConfig === nginxOriginal || nginxConfig.length === 0
+                        }
+                      >
+                        {nginxSaving ? 'Проверка и сохранение…' : 'Сохранить конфиг'}
+                      </Button>
+                      {nginxConfig !== nginxOriginal && (
+                        <span className="text-xs text-text-secondary">Есть несохранённые изменения</span>
+                      )}
+                    </div>
+                  </>
+                )}
+                {nginxOutput && (
+                  <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background p-3 font-mono text-xs text-text-secondary">
+                    {nginxOutput}
+                  </pre>
+                )}
+              </CardContent>
+            </Card>
           </>
         )
       )}
+
+      <ConfirmDialog
+        open={confirmNginxToggle !== null}
+        onClose={() => setConfirmNginxToggle(null)}
+        onConfirm={toggleNginxCustom}
+        title={
+          confirmNginxToggle
+            ? 'Включить пользовательский nginx.conf'
+            : 'Вернуть стандартный nginx.conf'
+        }
+        message={
+          confirmNginxToggle
+            ? 'Текущий рабочий конфиг будет скопирован один раз. После этого изменения Selfmask и WEB Proxy нужно переносить в него вручную.'
+            : 'MTProxyL снова начнёт генерировать nginx.conf из своих настроек. Пользовательский файл сохранится, но дополнительные маршруты из него перестанут применяться.'
+        }
+        confirmLabel={confirmNginxToggle ? 'Включить' : 'Вернуть стандартный'}
+      />
 
       <ConfirmDialog
         open={confirmDisable}

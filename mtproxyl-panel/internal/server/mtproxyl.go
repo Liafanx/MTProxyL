@@ -282,6 +282,75 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 
+	mux.Handle("GET /api/mtproxyl/selfmask/nginx-config", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		content, err := client.SelfmaskNginxConfig(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"content": content}})
+	}))
+
+	mux.Handle("PUT /api/mtproxyl/selfmask/nginx-config", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			Content string `json:"content"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Content == "" || len(req.Content) > 2<<20 {
+			writeError(w, http.StatusBadRequest, "invalid_config", "Конфиг должен быть размером от 1 байта до 2 МБ")
+			return
+		}
+		out, err := client.WriteSelfmaskNginxConfig(r.Context(), req.Content)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/selfmask/nginx-config/toggle", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		var req struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Enabled == nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Укажите состояние режима")
+			return
+		}
+		enabled := *req.Enabled
+		name := "selfmask:nginx-custom-off"
+		if enabled {
+			name = "selfmask:nginx-custom-on"
+		}
+		started := runner.Start(name, func(ctx context.Context) (string, error) {
+			return client.SetSelfmaskNginxCustom(ctx, enabled)
+		})
+		if !started {
+			writeError(w, http.StatusConflict, "operation_busy", "Другая операция MTProxyL уже выполняется")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/selfmask/nginx-config/test", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		out, err := client.TestSelfmaskNginxConfig(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
 	// ── WEB Proxy ───────────────────────────────────────────────────────────
 	mux.Handle("GET /api/mtproxyl/web", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {

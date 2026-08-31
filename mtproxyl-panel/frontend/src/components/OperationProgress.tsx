@@ -5,6 +5,8 @@ const OPERATION_LABELS: Record<string, string> = {
   'mode:manager': 'Переключение в режим Manager',
   'mode:reanimator': 'Переключение в режим Reanimator',
   'selfmask:apply': 'Настройка Selfmask',
+  'selfmask:nginx-custom-on': 'Включение пользовательского nginx.conf',
+  'selfmask:nginx-custom-off': 'Возврат стандартного nginx.conf',
   'web:enable': 'Включение WEB Proxy',
   'web:disable': 'Отключение WEB Proxy',
   'selfmask:pq-install': 'Установка PQ OpenSSL',

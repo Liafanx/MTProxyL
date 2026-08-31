@@ -170,6 +170,9 @@ _mig_check_local() {
     if _superexpert_active 2>/dev/null; then
         log_info "Включён режим супер эксперта — ваш конфиг движка поедет вместе с остальным"
     fi
+    if [ -f "${NGINX_CUSTOM_FILE:-/opt/mtproxyl/nginx-custom.conf}" ]; then
+        log_info "Пользовательский конфиг nginx поедет вместе с остальным"
+    fi
     return 0
 }
 
@@ -411,6 +414,8 @@ _mig_quote() {
 _MIG_SECRETS_SNAPSHOT=""
 
 _MIG_SUPEREXPERT_SNAPSHOT=""
+_MIG_NGINX_CUSTOM_SNAPSHOT=""
+_MIG_NGINX_CUSTOM_WAS_ACTIVE="false"
 
 _mig_snapshot_superexpert() {
     _superexpert_active 2>/dev/null || return 0
@@ -441,6 +446,41 @@ _mig_push_superexpert() {
         _mig_ssh "mtproxyl restart" </dev/null >/dev/null 2>&1 || true
     else
         log_warn "Конфиг положили, но режим не включился — на новом сервере: mtproxyl superexpert on"
+    fi
+}
+
+_mig_snapshot_nginx_custom() {
+    [ -f "$NGINX_CUSTOM_FILE" ] || return 0
+    _MIG_NGINX_CUSTOM_SNAPSHOT=$(mktemp /tmp/.mtproxyl-migrate-nginx.XXXXXX) || {
+        _MIG_NGINX_CUSTOM_SNAPSHOT=""
+        return 0
+    }
+    chmod 600 "$_MIG_NGINX_CUSTOM_SNAPSHOT"
+    cat "$NGINX_CUSTOM_FILE" > "$_MIG_NGINX_CUSTOM_SNAPSHOT"
+    nginx_custom_active 2>/dev/null && _MIG_NGINX_CUSTOM_WAS_ACTIVE="true"
+}
+
+_mig_push_nginx_custom() {
+    [ -n "$_MIG_NGINX_CUSTOM_SNAPSHOT" ] && [ -f "$_MIG_NGINX_CUSTOM_SNAPSHOT" ] || return 0
+    log_info "Переносим пользовательский конфиг nginx..."
+    if ! _mig_scp "$_MIG_NGINX_CUSTOM_SNAPSHOT" "/tmp/mtproxyl-nginx-custom.conf"; then
+        log_warn "Пользовательский конфиг nginx не доехал"
+        return 0
+    fi
+    if ! _mig_ssh "install -m 600 -o root -g root /tmp/mtproxyl-nginx-custom.conf ${NGINX_CUSTOM_FILE} && rm -f /tmp/mtproxyl-nginx-custom.conf" \
+        </dev/null >/dev/null 2>&1; then
+        log_warn "Не удалось положить пользовательский конфиг nginx"
+        return 0
+    fi
+    if [ "$_MIG_NGINX_CUSTOM_WAS_ACTIVE" = "true" ]; then
+        if _mig_ssh "MTPROXYL_ASSUME_YES=1 mtproxyl selfmask nginx-config on" </dev/null >/dev/null 2>&1; then
+            log_success "Пользовательский конфиг nginx включён"
+            log_warn "Проверьте в нём домены, адреса и пути на новом сервере"
+        else
+            log_warn "Конфиг перенесён, но режим не включился — проверьте nginx -t на новом сервере"
+        fi
+    else
+        log_success "Пользовательский конфиг nginx перенесён и оставлен выключенным"
     fi
 }
 
@@ -572,6 +612,7 @@ migrate_run() {
     _mig_check_remote || return 1
     _mig_snapshot_secrets
     _mig_snapshot_superexpert
+    _mig_snapshot_nginx_custom
 
     _mig_ask_extras
 
@@ -591,6 +632,8 @@ migrate_run() {
     echo -e "  ${BOLD}Selfmask:${NC}   $([ "${SELFMASK_ENABLED:-false}" = "true" ] && echo "${SELFMASK_DOMAIN} (${SELFMASK_CERT_MODE:-letsencrypt})" || echo "${DIM}выключен${NC}")"
     _superexpert_active 2>/dev/null && \
         echo -e "  ${BOLD}Супер эксперт:${NC} свой конфиг движка едет вместе с остальным"
+    [ -f "$NGINX_CUSTOM_FILE" ] && \
+        echo -e "  ${BOLD}Свой nginx:${NC}  конфиг едет вместе с остальным$([ "$_MIG_NGINX_CUSTOM_WAS_ACTIVE" = "true" ] || echo " ${DIM}(выключен)${NC}")"
     echo -e "  ${BOLD}Панель:${NC}     $(if ! panel_installed 2>/dev/null; then echo "${DIM}не установлена${NC}"; elif [ "$_MIG_WITH_PANEL" = "no" ]; then echo "${DIM}пропускаем${NC}"; else echo "переносим"; fi)"
     echo -e "  ${BOLD}Бот:${NC}        $(if ! tgbot_installed 2>/dev/null; then echo "${DIM}не установлен${NC}"; elif [ "$_MIG_WITH_TGBOT" = "no" ]; then echo "${DIM}пропускаем${NC}"; else echo "переносим"; fi)"
     echo ""
@@ -661,6 +704,7 @@ migrate_run() {
     fi
 
     _mig_push_secrets
+    _mig_push_nginx_custom
     _mig_push_superexpert
 
     if [ "$_MIG_WITH_PANEL" != "no" ]; then _mig_push_panel; fi
@@ -668,6 +712,7 @@ migrate_run() {
 
     [ -n "$_MIG_SECRETS_SNAPSHOT" ] && rm -f "$_MIG_SECRETS_SNAPSHOT"
     [ -n "$_MIG_SUPEREXPERT_SNAPSHOT" ] && rm -f "$_MIG_SUPEREXPERT_SNAPSHOT"
+    [ -n "$_MIG_NGINX_CUSTOM_SNAPSHOT" ] && rm -f "$_MIG_NGINX_CUSTOM_SNAPSHOT"
     _mig_finish
 }
 

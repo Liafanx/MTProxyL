@@ -15,7 +15,7 @@ create_backup() {
 
     local files=()
     for f in settings.conf secrets.conf upstreams.conf nft-rules.conf expert.conf tunings.conf \
-             superexpert.toml selfmask-manager.conf selfmask-reanimator.conf backup_meta.txt; do
+             superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf backup_meta.txt; do
         [ -f "${INSTALL_DIR}/$f" ] && files+=("$f")
     done
     [ -d "$STATS_DIR" ] && files+=("relay_stats")
@@ -239,7 +239,7 @@ migrate_export() {
     local tmp; tmp=$(mktemp -d) || { log_error "Не удалось создать временную директорию"; return 1; }
     local count=0
     for f in settings.conf secrets.conf upstreams.conf nft-rules.conf expert.conf tunings.conf \
-             superexpert.toml selfmask-manager.conf selfmask-reanimator.conf; do
+             superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf; do
         [ -f "${INSTALL_DIR}/$f" ] && { cp "${INSTALL_DIR}/$f" "$tmp/" && count=$((count + 1)); }
     done
     echo "v${VERSION}" > "$tmp/MIGRATE_VERSION"
@@ -263,7 +263,7 @@ migrate_import() {
 
     local restored=0 base
     for f in settings.conf secrets.conf upstreams.conf nft-rules.conf expert.conf tunings.conf \
-             superexpert.toml selfmask-manager.conf selfmask-reanimator.conf; do
+             superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf; do
         [ -f "${tmp}/${f}" ] && { cp "${tmp}/${f}" "${INSTALL_DIR}/$f" && chmod 600 "${INSTALL_DIR}/$f" && restored=$((restored + 1)); }
     done
 

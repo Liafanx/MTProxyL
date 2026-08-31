@@ -76,6 +76,7 @@ WARP_DISABLED_UPSTREAMS=""
 # Режим супер эксперта: конфиг движка ведёт пользователь вручную,
 # менеджер только копирует его файл на место config.toml
 SUPEREXPERT_ENABLED="false"
+NGINX_CUSTOM_ENABLED="false"
 
 # Selfmask (локальный nginx + Let's Encrypt либо самоподписанный сертификат)
 SELFMASK_ENABLED="false"
@@ -248,6 +249,9 @@ WEB_ONLY_PREV_ZAPRET2='${WEB_ONLY_PREV_ZAPRET2}'
 
 # Режим супер эксперта
 SUPEREXPERT_ENABLED='${SUPEREXPERT_ENABLED}'
+
+# Пользовательский конфиг nginx
+NGINX_CUSTOM_ENABLED='${NGINX_CUSTOM_ENABLED}'
 
 # Порты, запомненные за режимами
 PORT_PROFILE_MANAGER='${PORT_PROFILE_MANAGER}'
@@ -447,7 +451,7 @@ load_settings() {
                 WEB_LISTEN_PORT|WEB_TLS_PORT|WEB_MTPROXY_PORT|\
                 WEB_DECOY_MODE|WEB_DECOY_DIR|WEB_DECOY_UPSTREAM|WEB_DEBUG|\
                 WEB_ONLY_PREV_NFT|WEB_ONLY_PREV_ZAPRET2|\
-                SUPEREXPERT_ENABLED|\
+                SUPEREXPERT_ENABLED|NGINX_CUSTOM_ENABLED|\
                 IPBLOCK_ENABLED|IPBLOCK_ACTION|IPBLOCK_LIST|IPBLOCK_LIST6|\
                 PORT_PROFILE_MANAGER|PORT_PROFILE_REANIMATOR)
                     printf -v "$key" '%s' "$val"
@@ -528,6 +532,7 @@ load_settings() {
     [[ "$WEB_MTPROXY_PORT" =~ ^[0-9]+$ ]] && [ "$WEB_MTPROXY_PORT" -ge 1 ] && [ "$WEB_MTPROXY_PORT" -le 65535 ] || WEB_MTPROXY_PORT="15443"
 
     [ "$SUPEREXPERT_ENABLED" = "true" ] || SUPEREXPERT_ENABLED="false"
+    [ "$NGINX_CUSTOM_ENABLED" = "true" ] || NGINX_CUSTOM_ENABLED="false"
     [[ "$IP_HISTORY_INTERVAL" =~ ^[0-9]+$ ]] || IP_HISTORY_INTERVAL="5"
 
     [ "$AVAILABILITY_ENABLED" = "false" ] || AVAILABILITY_ENABLED="true"
