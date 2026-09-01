@@ -41,7 +41,7 @@ canvas{display:block;flex:0 0 auto;margin:0 auto;cursor:pointer;touch-action:non
   var c = document.getElementById('c'),
       ui = document.querySelector('.ui'),
       ctx = c.getContext('2d'),
-      W, H, dpr, ground, meko, foes, clouds, particles, spd, score, best, dead, frame, shake, nightCycle;
+      W, H, dpr, ground, portrait, meko, foes, clouds, particles, spd, score, best, dead, frame, shake, nightCycle;
 
   best = parseInt(localStorage.getItem('mekoBest') || '0', 10);
   document.getElementById('hi').textContent = best;
@@ -50,19 +50,22 @@ canvas{display:block;flex:0 0 auto;margin:0 auto;cursor:pointer;touch-action:non
     var viewport = window.visualViewport,
         vw = viewport ? viewport.width : window.innerWidth,
         vh = viewport ? viewport.height : window.innerHeight,
-        uiHeight = ui.getBoundingClientRect().height;
+        uiHeight = ui.getBoundingClientRect().height,
+        oldGround = ground,
+        wasGrounded = meko && oldGround && Math.abs(meko.y - (oldGround - meko.h)) < 2;
     W = Math.min(Math.floor(vw), 720);
     H = Math.max(160, Math.floor(vh - uiHeight));
+    portrait = vh > vw;
     dpr = Math.min(window.devicePixelRatio || 1, 2);
     c.style.width = W + 'px';
     c.style.height = H + 'px';
     c.width = Math.floor(W * dpr);
     c.height = Math.floor(H * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ground = H - 40;
+    ground = portrait ? Math.max(120, Math.floor(H * 0.72)) : H - 40;
     if (meko) {
       var floor = ground - meko.h;
-      if (meko.y > floor) meko.y = floor;
+      if (wasGrounded || meko.y > floor) meko.y = floor;
     }
   }
 
@@ -523,7 +526,7 @@ canvas{display:block;flex:0 0 auto;margin:0 auto;cursor:pointer;touch-action:non
   }
 
   function draw() {
-    var sx = 0, sy = 0;
+    var sx = 0, sy = 0, roadBottom = ground + 40;
     if (shake > 0) {
       sx = (Math.random() - 0.5) * shake;
       sy = (Math.random() - 0.5) * shake;
@@ -532,6 +535,9 @@ canvas{display:block;flex:0 0 auto;margin:0 auto;cursor:pointer;touch-action:non
     }
     ctx.save();
     ctx.translate(sx, sy);
+
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, W, H);
 
     // небо
     var skyTop = lerpColor('#e8b892', '#1a1a3e', nightCycle);
@@ -566,11 +572,11 @@ canvas{display:block;flex:0 0 auto;margin:0 auto;cursor:pointer;touch-action:non
     }
 
     // земля
-    var gndGrd = ctx.createLinearGradient(0, ground, 0, H);
+    var gndGrd = ctx.createLinearGradient(0, ground, 0, roadBottom);
     gndGrd.addColorStop(0, '#6b4423');
     gndGrd.addColorStop(1, '#3d2612');
     ctx.fillStyle = gndGrd;
-    ctx.fillRect(0, ground, W, H - ground);
+    ctx.fillRect(0, ground, W, 40);
 
     // асфальтовая разметка
     ctx.fillStyle = '#f6d55c';
