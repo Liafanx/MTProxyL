@@ -40,6 +40,15 @@ case "$1 $2 $3" in
     echo "  [✓] Бэкап создан: /opt/mtproxyl/backups/mtproxyl-20260202-121212.tar.gz"
     echo "/opt/mtproxyl/backups/mtproxyl-20260202-121212.tar.gz"
     ;;
+  "geoblock list --json")
+    echo '{"mode":"whitelist","rules_active":true,"ports_match":true,"service_enabled":true,"countries":["ru","kz"]}'
+    ;;
+  "geoblock mode whitelist")
+    echo "  [✓] Режим: разрешать только выбранные"
+    ;;
+  "geoblock reapply ")
+    echo "  [✓] Гео-блокировка применена"
+    ;;
   "mode manager ")
     echo "  [✓] Режим: manager"
     ;;

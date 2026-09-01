@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { OperationProgress } from '@/components/OperationProgress';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { mtproxylNetApi } from '@/lib/api';
 import { useMtproxylOperation } from '@/hooks/useMtproxyl';
 
@@ -33,16 +34,25 @@ const COUNTRY_NAMES: Record<string, string> = {
 
 export function GeoblockPage() {
   const [countries, setCountries] = useState<string[]>([]);
+  const [mode, setMode] = useState<'blacklist' | 'whitelist'>('blacklist');
+  const [rulesActive, setRulesActive] = useState(false);
+  const [portsMatch, setPortsMatch] = useState(true);
+  const [serviceEnabled, setServiceEnabled] = useState(false);
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [confirmWhitelist, setConfirmWhitelist] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const st = await mtproxylNetApi.geoblock();
       setCountries(st.countries);
+      setMode(st.mode || 'blacklist');
+      setRulesActive(st.rules_active);
+      setPortsMatch(st.ports_match ?? true);
+      setServiceEnabled(st.service_enabled);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось получить список');
@@ -87,12 +97,34 @@ export function GeoblockPage() {
     }
   };
 
+  const changeMode = async (next: 'blacklist' | 'whitelist') => {
+    setConfirmWhitelist(false);
+    if (next === mode) return;
+    try {
+      start(await mtproxylNetApi.geoblockMode(next));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось сменить режим');
+    }
+  };
+
+  const reapply = async () => {
+    try {
+      start(await mtproxylNetApi.geoblockReapply());
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось переприменить правила');
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-semibold text-text-primary">Блокировка по странам</h1>
         <p className="text-sm text-text-secondary mt-1">
-          Диапазоны адресов выбранных стран блокируются на публичных портах прокси и WEB.
+          {mode === 'whitelist'
+            ? 'На публичных портах прокси и WEB разрешены только выбранные страны.'
+            : 'Диапазоны адресов выбранных стран блокируются на публичных портах прокси и WEB.'}
           Списки берутся с ipdeny.com, поэтому первое добавление страны занимает время.
         </p>
       </div>
@@ -102,7 +134,45 @@ export function GeoblockPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Добавить страну</CardTitle>
+          <CardTitle>Режим</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant={mode === 'blacklist' ? 'default' : 'outline'}
+              onClick={() => void changeMode('blacklist')}
+              disabled={running}
+            >
+              Блокировать выбранные
+            </Button>
+            <Button
+              variant={mode === 'whitelist' ? 'default' : 'outline'}
+              onClick={() => setConfirmWhitelist(true)}
+              disabled={running || countries.length === 0}
+            >
+              Разрешать только выбранные
+            </Button>
+            {countries.length > 0 && (
+              <Button variant="outline" onClick={() => void reapply()} disabled={running}>
+                Переприменить
+              </Button>
+            )}
+          </div>
+          <div className="text-xs text-text-secondary space-y-1">
+            <div>
+              Правила: {rulesActive ? (portsMatch ? 'активны' : 'нужно переприменить на текущие порты') : countries.length > 0 ? 'не применены' : 'список пуст'}
+            </div>
+            <div>После перезагрузки: {serviceEnabled ? 'восстановятся автоматически' : 'служба не включена'}</div>
+            {countries.length === 0 && (
+              <div>Для реверсивного режима сначала добавьте хотя бы одну страну.</div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{mode === 'whitelist' ? 'Добавить разрешённую страну' : 'Добавить заблокированную страну'}</CardTitle>
         </CardHeader>
         <CardContent>
           <form
@@ -120,7 +190,7 @@ export function GeoblockPage() {
               className="max-w-[120px]"
             />
             <Button type="submit" disabled={running}>
-              Заблокировать
+              Добавить
             </Button>
             <span className="text-xs text-text-secondary">
               Двухбуквенный код ISO 3166-1
@@ -131,7 +201,7 @@ export function GeoblockPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Заблокированные страны</CardTitle>
+          <CardTitle>{mode === 'whitelist' ? 'Разрешённые страны' : 'Заблокированные страны'}</CardTitle>
         </CardHeader>
         <CardContent>
           {loading && countries.length === 0 ? (
@@ -153,7 +223,7 @@ export function GeoblockPage() {
                   <button
                     onClick={() => remove(c)}
                     disabled={removing === c || running}
-                    title="Разблокировать"
+                    title="Удалить из списка"
                     className="p-1 rounded-full hover:bg-danger/15 hover:text-danger disabled:opacity-40"
                   >
                     <X size={14} />
@@ -164,6 +234,15 @@ export function GeoblockPage() {
           )}
         </CardContent>
       </Card>
+
+      <ConfirmDialog
+        open={confirmWhitelist}
+        title="Включить реверсивную блокировку?"
+        message="Подключаться к прокси смогут только адреса выбранных стран. Остальные страны будут заблокированы на публичных портах."
+        confirmLabel="Включить"
+        onConfirm={() => void changeMode('whitelist')}
+        onClose={() => setConfirmWhitelist(false)}
+      />
     </div>
   );
 }

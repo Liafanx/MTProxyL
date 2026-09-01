@@ -833,6 +833,7 @@ uninstall() {
 
     # Гео-блокировка
     log_info "Удаление гео-блокировки..."
+    geoblock_remove_service >/dev/null 2>&1 || true
     geoblock_remove_all >/dev/null 2>&1 || true
 
     if [ "${MTPROXYL_MODE:-manager}" = "manager" ] && engine_is_binary; then

@@ -7,6 +7,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { OperationProgress } from '@/components/OperationProgress';
 import { ParamField } from '@/components/ParamField';
 import { NginxCustomConfigCard } from '@/components/NginxCustomConfigCard';
+import { SiteSourcePicker, siteSourceLabel } from '@/components/SiteSourcePicker';
 import { mtproxylApi, type SelfmaskStatus, type WebParam, type WebStatus } from '@/lib/api';
 import { useManagerOnly, useMtproxylOperation } from '@/hooks/useMtproxyl';
 
@@ -74,8 +75,14 @@ export function WebPage() {
 
   // В shared публичный порт задаёт сам прокси, поэтому поле не показываем.
   const layout = valueOf('WEB_LAYOUT') || 'shared';
+  const decoyMode = valueOf('WEB_DECOY_MODE') || 'static_directory';
   const visibleParams = params.filter((p) => {
     if (status?.proxy_mode === 'web' && ['WEB_LAYOUT', 'WEB_TLS_PORT', 'WEB_MTPROXY_PORT'].includes(p.key)) return false;
+    if (decoyMode === 'http_upstream') {
+      if (['WEB_DECOY_SOURCE', 'WEB_DECOY_DIR'].includes(p.key)) return false;
+    } else if (p.key === 'WEB_DECOY_UPSTREAM') {
+      return false;
+    }
     return layout === 'split' || status?.proxy_mode === 'web' || p.key !== 'WEB_PUBLIC_PORT';
   });
 
@@ -194,7 +201,14 @@ export function WebPage() {
                       }
                       mono
                     />
-                    <Row label="Сайт-заглушка" value={status.decoy_dir} mono />
+                    {status.decoy_mode === 'static_directory' ? (
+                      <>
+                        <Row label="Шаблон заглушки" value={siteSourceLabel(status.decoy_source || 'stub')} />
+                        <Row label="Сайт-заглушка" value={status.decoy_dir} mono />
+                      </>
+                    ) : (
+                      <Row label="Сайт-заглушка" value="HTTP upstream" />
+                    )}
                   </>
                 )}
                 {status.layout === 'target' && (
@@ -271,12 +285,20 @@ export function WebPage() {
                         <div className="text-sm text-text-primary">{p.desc}</div>
                         <div className="font-mono text-xs text-text-secondary">{p.key}</div>
                       </div>
-                      <ParamField
-                        param={p}
-                        value={valueOf(p.key)}
-                        onChange={(v) => setEdits((e) => ({ ...e, [p.key]: v }))}
-                        disabled={saving || running}
-                      />
+                      {p.key === 'WEB_DECOY_SOURCE' ? (
+                        <SiteSourcePicker
+                          value={valueOf(p.key)}
+                          onChange={(v) => setEdits((e) => ({ ...e, [p.key]: v }))}
+                          disabled={saving || running}
+                        />
+                      ) : (
+                        <ParamField
+                          param={p}
+                          value={valueOf(p.key)}
+                          onChange={(v) => setEdits((e) => ({ ...e, [p.key]: v }))}
+                          disabled={saving || running}
+                        />
+                      )}
                     </div>
                   ))}
                 </CardContent>

@@ -20,6 +20,24 @@ func TestValidateCountryCode(t *testing.T) {
 	}
 }
 
+func TestGeoblockStatusAndMode(t *testing.T) {
+	c := newStubClient(t)
+	status, err := c.GeoblockList(t.Context())
+	if err != nil {
+		t.Fatalf("GeoblockList: %v", err)
+	}
+	if status.Mode != "whitelist" || !status.RulesActive || !status.PortsMatch ||
+		!status.ServiceEnabled || !slices.Equal(status.Countries, []string{"ru", "kz"}) {
+		t.Fatalf("unexpected geoblock status: %+v", status)
+	}
+	if _, err := c.GeoblockSetMode(t.Context(), "whitelist"); err != nil {
+		t.Fatalf("GeoblockSetMode: %v", err)
+	}
+	if _, err := c.GeoblockReapply(t.Context()); err != nil {
+		t.Fatalf("GeoblockReapply: %v", err)
+	}
+}
+
 func TestUpstreamSpecValidate(t *testing.T) {
 	base := UpstreamSpec{Name: "warp", Type: "socks5", Address: "127.0.0.1:1080", Weight: 10}
 	if err := base.Validate(); err != nil {
@@ -122,6 +140,9 @@ func TestNetworkCommandsValidateBeforeRunning(t *testing.T) {
 
 	if _, err := c.GeoblockAdd(ctx, "us; id"); err == nil {
 		t.Error("GeoblockAdd accepted an injection")
+	}
+	if _, err := c.GeoblockSetMode(ctx, "whitelist; id"); err == nil {
+		t.Error("GeoblockSetMode accepted an injection")
 	}
 	if _, err := c.UpstreamRemove(ctx, "a; id"); err == nil {
 		t.Error("UpstreamRemove accepted an injection")

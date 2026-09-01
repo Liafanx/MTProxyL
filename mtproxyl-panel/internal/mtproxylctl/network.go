@@ -14,7 +14,11 @@ import (
 
 // GeoblockStatus is the output of `mtproxyl geoblock list --json`.
 type GeoblockStatus struct {
-	Countries []string `json:"countries"`
+	Mode           string   `json:"mode"`
+	RulesActive    bool     `json:"rules_active"`
+	PortsMatch     bool     `json:"ports_match"`
+	ServiceEnabled bool     `json:"service_enabled"`
+	Countries      []string `json:"countries"`
 }
 
 // countryCodeRe matches the two-letter codes MTProxyL accepts. The code is
@@ -25,6 +29,13 @@ var countryCodeRe = regexp.MustCompile(`^[a-zA-Z]{2}$`)
 func ValidateCountryCode(code string) error {
 	if !countryCodeRe.MatchString(code) {
 		return fmt.Errorf("invalid country code %q", code)
+	}
+	return nil
+}
+
+func ValidateGeoblockMode(mode string) error {
+	if mode != "blacklist" && mode != "whitelist" {
+		return fmt.Errorf("invalid geoblock mode %q", mode)
 	}
 	return nil
 }
@@ -61,6 +72,19 @@ func (c *Client) GeoblockRemove(ctx context.Context, code string) (string, error
 		return "", err
 	}
 	out, err := c.run(ctx, "geoblock", "remove", strings.ToLower(code))
+	return stripANSI(out), err
+}
+
+func (c *Client) GeoblockSetMode(ctx context.Context, mode string) (string, error) {
+	if err := ValidateGeoblockMode(mode); err != nil {
+		return "", err
+	}
+	out, err := c.run(ctx, "geoblock", "mode", mode)
+	return stripANSI(out), err
+}
+
+func (c *Client) GeoblockReapply(ctx context.Context) (string, error) {
+	out, err := c.run(ctx, "geoblock", "reapply")
 	return stripANSI(out), err
 }
 

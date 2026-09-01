@@ -5,6 +5,7 @@
 # отдаёт обычный HTTP/1.1 на приватный listener transport = "web".
 
 WEB_MIN_ENGINE_VERSION="3.5.1"
+WEB_SITE_REDEPLOY_MARKER="${INSTALL_DIR}/.web-site-redeploy"
 
 web_is_enabled() { [ "${WEB_ENABLED:-false}" = "true" ]; }
 mtproto_is_enabled() { [ "${PROXY_MODE:-mtproto}" != "web" ]; }
@@ -97,28 +98,61 @@ web_server_ip() {
     return 1
 }
 
-# A-запись WEB-домена. Пусто — записи нет вовсе.
-# Спрашиваем DNS, а не getent: клиенты и Let's Encrypt ходят в публичный DNS,
-# а строка в /etc/hosts видна только этой машине и врала бы про домен.
-web_domain_ip() {
-    local _d _ip; _d=$(web_domain) || return 1
+# Публичный DNS спрашиваем по HTTPS: локальный split-DNS может намеренно
+# возвращать частный адрес, которого внешние клиенты и Let's Encrypt не видят.
+_web_doh_ipv4() {
+    local _d="$1" _json _endpoint _answered="false"
+    for _endpoint in "https://dns.google/resolve" "https://cloudflare-dns.com/dns-query"; do
+        _json=$(curl -fsSL --max-time 5 -G -H 'accept: application/dns-json' \
+            --data-urlencode "name=${_d}" --data-urlencode 'type=A' "$_endpoint" 2>/dev/null) || continue
+        grep -q '"Status"' <<< "$_json" || continue
+        _answered="true"
+        grep -Eq '"Status"[[:space:]]*:[[:space:]]*0' <<< "$_json" || continue
+        grep -oE '"data"[[:space:]]*:[[:space:]]*"[0-9]{1,3}(\.[0-9]{1,3}){3}"' <<< "$_json" \
+            | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' | sort -u
+        return 0
+    done
+    [ "$_answered" = "true" ] && return 0
+    return 1
+}
+
+web_domain_ips() {
+    local _d _ips _resolver; _d=$(web_domain) || return 1
     [ -n "$_d" ] || return 1
-    if command -v dig >/dev/null 2>&1; then
-        _ip=$(dig +short +time=3 +tries=1 A "$_d" 2>/dev/null | grep -E '^[0-9.]+$' | head -1)
-    elif command -v host >/dev/null 2>&1; then
-        _ip=$(host -t A "$_d" 2>/dev/null | awk '/has address/{print $NF; exit}')
+    if command -v curl >/dev/null 2>&1 && _ips=$(_web_doh_ipv4 "$_d"); then
+        printf '%s\n' "$_ips" | sed '/^$/d'
+        return 0
     fi
-    [ -n "$_ip" ] || _ip=$(getent ahostsv4 "$_d" 2>/dev/null | awk '{print $1; exit}')
-    printf '%s' "$_ip"
+    if command -v dig >/dev/null 2>&1; then
+        for _resolver in 1.1.1.1 8.8.8.8; do
+            if _ips=$(dig @"$_resolver" +short +time=3 +tries=1 A "$_d" 2>/dev/null); then
+                printf '%s\n' "$_ips" | grep -E '^[0-9.]+$' | sort -u
+                return 0
+            fi
+        done
+    fi
+    getent ahostsv4 "$_d" 2>/dev/null | awk '{print $1}' | sort -u
+}
+
+web_domain_ip() {
+    web_domain_ips | sed -n '1p'
 }
 
 # public_addr движок принимает только IP-литералом. Берём A-запись домена — она
 # и есть тот публичный адрес, на который придёт клиент; если её нет, отдаём
 # адрес сервера, чтобы конфиг хотя бы собрался.
 web_public_ip() {
-    local _ip; _ip=$(web_domain_ip 2>/dev/null)
+    local _ip _ips _server
+    _ips=$(web_domain_ips 2>/dev/null)
+    _server=$(web_server_ip 2>/dev/null)
+    if [ -n "$_server" ] && grep -Fxq "$_server" <<< "$_ips"; then
+        echo "$_server"
+        return 0
+    fi
+    _ip=$(sed -n '1p' <<< "$_ips")
     validate_ip_literal "$_ip" 2>/dev/null && { echo "$_ip"; return 0; }
-    web_server_ip
+    [ -n "$_server" ] && { echo "$_server"; return 0; }
+    return 1
 }
 
 web_public_addr() {
@@ -449,6 +483,9 @@ _web_prepare_frontend() {
         SELFMASK_CERT_MODE="letsencrypt"
     fi
     WEB_DECOY_DIR="${WEB_DECOY_DIR:-${SELFMASK_SITE_DIR}}"
+    if [ "${SELFMASK_ENABLED:-false}" != "true" ]; then
+        SELFMASK_SITE_DIR="$WEB_DECOY_DIR"
+    fi
 
     if engine_is_binary; then
         binengine_ensure_installed || return 1
@@ -464,8 +501,9 @@ _web_prepare_frontend() {
         web_nginx_has_stream || { log_error "Установленный nginx не поддерживает stream"; return 1; }
     fi
     if [ "${WEB_DECOY_MODE:-static_directory}" = "static_directory" ] \
-       && [ ! -f "$(web_decoy_dir)/index.html" ]; then
+       && { [ ! -f "$(web_decoy_dir)/index.html" ] || [ -f "$WEB_SITE_REDEPLOY_MARKER" ]; }; then
         _selfmask_deploy_site || return 1
+        rm -f "$WEB_SITE_REDEPLOY_MARKER"
     fi
     return 0
 }
@@ -724,14 +762,15 @@ web_status_json() {
     _d=$(web_domain 2>/dev/null)
     _addr=$(web_public_addr 2>/dev/null)
     _problems=$(web_preflight_problems 2>/dev/null | tr '\n' ';')
-    printf '{"enabled":%s,"proxy_mode":"%s","mtproto_enabled":%s,"layout":"%s","public_port":%s,"domain":"%s","carrier":"%s","secret_mode":"%s","public_addr":"%s","listen_port":%s,"tls_port":%s,"mtproxy_port":%s,"decoy_mode":"%s","decoy_dir":"%s","debug":%s,"problems":"%s"}\n' \
+    printf '{"enabled":%s,"proxy_mode":"%s","mtproto_enabled":%s,"layout":"%s","public_port":%s,"domain":"%s","carrier":"%s","secret_mode":"%s","public_addr":"%s","listen_port":%s,"tls_port":%s,"mtproxy_port":%s,"decoy_mode":"%s","decoy_source":"%s","decoy_dir":"%s","debug":%s,"problems":"%s"}\n' \
         "$(web_is_enabled && echo true || echo false)" \
         "$(json_escape "${PROXY_MODE:-mtproto}")" "$(mtproto_is_enabled && echo true || echo false)" \
         "$(json_escape "$([ "${PROXY_MODE:-mtproto}" = web ] && echo web || echo "${WEB_LAYOUT:-shared}")")" "$(web_public_port)" \
         "$(json_escape "$_d")" "$(json_escape "${WEB_CARRIER:-}")" \
         "$(json_escape "${WEB_SECRET_MODE:-}")" "$(json_escape "$_addr")" \
         "${WEB_LISTEN_PORT:-15080}" "${WEB_TLS_PORT:-15444}" "${WEB_MTPROXY_PORT:-15443}" \
-        "$(json_escape "${WEB_DECOY_MODE:-}")" "$(json_escape "$(web_decoy_dir)")" \
+        "$(json_escape "${WEB_DECOY_MODE:-}")" "$(json_escape "${SELFMASK_SITE_SOURCE:-stub}")" \
+        "$(json_escape "$(web_decoy_dir)")" \
         "$([ "${WEB_DEBUG:-false}" = "true" ] && echo true || echo false)" \
         "$(json_escape "$_problems")"
 }
@@ -756,15 +795,16 @@ web_preflight_problems() {
     # Сверяем с адресом сервера, а не с самим доменом: без этого проверка
     # проходила всегда, а Let's Encrypt потом упирался в неподтверждаемый домен.
     if [ -n "$_d" ]; then
-        local _dip _sip
-        _dip=$(web_domain_ip 2>/dev/null)
+        local _dips _dip_label _sip
+        _dips=$(web_domain_ips 2>/dev/null)
         _sip=$(web_server_ip 2>/dev/null)
         if [ -z "$_sip" ]; then
             _p+="не удалось определить публичный адрес сервера — задайте его: mtproxyl ip set <IP>"$'\n'
-        elif [ -z "$_dip" ]; then
+        elif [ -z "$_dips" ]; then
             _p+="у домена ${_d} нет A-записи — заведите её у регистратора на ${_sip}"$'\n'
-        elif [ "$_dip" != "$_sip" ]; then
-            _p+="A-запись ${_d} ведёт на ${_dip}, а сервер — ${_sip}: исправьте её у регистратора на ${_sip} (если домен за прокси CDN, отключите проксирование)"$'\n'
+        elif ! grep -Fxq "$_sip" <<< "$_dips"; then
+            _dip_label=$(paste -sd, <<< "$_dips")
+            _p+="публичная A-запись ${_d} ведёт на ${_dip_label}, а сервер — ${_sip}: исправьте её у регистратора на ${_sip} (если домен за прокси CDN, отключите проксирование)"$'\n'
         fi
     fi
     if [ "${WEB_DECOY_MODE:-static_directory}" = "static_directory" ]; then
@@ -987,6 +1027,7 @@ _WEB_SETTABLE=(
     "WEB_TLS_PORT|range:1:65535|Порт TLS-сервера nginx на loopback"
     "WEB_MTPROXY_PORT|range:1:65535|Порт FakeTLS-listener'а движка на loopback"
     "WEB_DECOY_MODE|enum:static_directory,http_upstream|Тип сайта-заглушки"
+    "WEB_DECOY_SOURCE|custom:_validate_web_site_source|Шаблон, URL на index.html или папка с сайтом"
     "WEB_DECOY_DIR|custom:_validate_web_decoy_dir|Каталог сайта-заглушки"
     "WEB_DECOY_UPSTREAM|custom:_validate_web_upstream|HTTP-origin заглушки"
     "WEB_DEBUG|enum:true,false|Страница диагностики /web-status"
@@ -1011,6 +1052,14 @@ _validate_web_decoy_dir() {
     [ -d "$_v" ] || { echo "каталог не найден" >&2; return 1; }
 }
 
+_validate_web_site_source() {
+    local _saved_dir="${SELFMASK_SITE_DIR:-}" _rc
+    SELFMASK_SITE_DIR="$(web_decoy_dir)"
+    _validate_selfmask_template "$1"; _rc=$?
+    SELFMASK_SITE_DIR="$_saved_dir"
+    return "$_rc"
+}
+
 _validate_web_upstream() {
     local _v="$1"
     [ -n "$_v" ] || return 0
@@ -1019,14 +1068,19 @@ _validate_web_upstream() {
 }
 
 web_settable_json() {
-    local _e _k _v _d _first=1
+    local _e _k _v _d _value _first=1
     printf '['
     for _e in "${_WEB_SETTABLE[@]}"; do
         IFS='|' read -r _k _v _d <<< "$_e"
         [ "$_first" -eq 1 ] || printf ','
         _first=0
+        if [ "$_k" = "WEB_DECOY_SOURCE" ]; then
+            _value="${SELFMASK_SITE_SOURCE:-stub}"
+        else
+            _value="${!_k:-}"
+        fi
         printf '{"key":"%s","validator":"%s","desc":"%s","value":"%s"}' \
-            "$_k" "$(json_escape "$_v")" "$(json_escape "$_d")" "$(json_escape "${!_k:-}")"
+            "$_k" "$(json_escape "$_v")" "$(json_escape "$_d")" "$(json_escape "$_value")"
     done
     printf ']\n'
 }
@@ -1060,7 +1114,12 @@ web_set_param() {
         return 1
     fi
 
-    printf -v "$_key" '%s' "$_val"
+    if [ "$_key" = "WEB_DECOY_SOURCE" ]; then
+        SELFMASK_SITE_SOURCE="$_val"
+        touch "$WEB_SITE_REDEPLOY_MARKER"
+    else
+        printf -v "$_key" '%s' "$_val"
+    fi
     save_settings
     log_success "${_key} = ${_val}"
     web_is_enabled && log_info "Примените заново: mtproxyl web enable"

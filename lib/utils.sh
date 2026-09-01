@@ -882,6 +882,20 @@ self_update() {
         echo ""
     fi
 
+    if [ -n "${BLOCKLIST_COUNTRIES:-}" ] && [ -r "${LIB_DIR}/geoblock.sh" ]; then
+        source "${LIB_DIR}/geoblock.sh"
+        if declare -F geoblock_install_service >/dev/null; then
+            geoblock_install_service >/dev/null 2>&1 \
+                && log_success "Автовосстановление гео-блокировки включено" \
+                || log_warn "Не удалось включить службу ${GEOBLOCK_SERVICE:-mtproxyl-geoblock}"
+            if ! geoblock_rules_active || ! geoblock_rules_match_ports; then
+                geoblock_restore >/dev/null 2>&1 \
+                    && log_success "Правила гео-блокировки восстановлены" \
+                    || log_warn "Правила не восстановились — выполните: mtproxyl geoblock reapply"
+            fi
+        fi
+    fi
+
     # Код бота живёт в том же репозитории и обновляется вместе со скриптом:
     # иначе бот однажды позовёт подкоманду, которой в его правах ещё нет.
     if tgbot_installed 2>/dev/null; then
@@ -1138,7 +1152,7 @@ show_cli_help() {
     echo -e "  ${BOLD}Веб-панель:${NC}     panel status|install|restart|password|uninstall"
     echo -e "  ${BOLD}Телеграм-бот:${NC}   tgbot status|install|setup|start|stop|restart|logs|uninstall"
     echo -e "  ${BOLD}PQ проверка:${NC}    pq-check [домен[:порт]]"
-    echo -e "  ${BOLD}Безопасность:${NC}   geoblock add|remove|list | upstream list|add|remove | sni-policy"
+    echo -e "  ${BOLD}Безопасность:${NC}   geoblock add|remove|mode|list | upstream list|add|remove | sni-policy"
     echo -e "  ${BOLD}Мониторинг:${NC}     traffic | connections | metrics [live] | logs | health | info"
     echo -e "  ${BOLD}История IP:${NC}     ip-history status|flush|on|off"
     echo -e "  ${BOLD}Доступность:${NC}    availability status|check|details|target|on|off|interval|token"

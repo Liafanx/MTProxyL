@@ -28,6 +28,7 @@ type WebStatus struct {
 	TLSPort     int    `json:"tls_port"`
 	MTProxyPort int    `json:"mtproxy_port"`
 	DecoyMode   string `json:"decoy_mode"`
+	DecoySource string `json:"decoy_source"`
 	DecoyDir    string `json:"decoy_dir"`
 	Debug       bool   `json:"debug"`
 	// Problems is a semicolon-separated list of preflight blockers. Empty means

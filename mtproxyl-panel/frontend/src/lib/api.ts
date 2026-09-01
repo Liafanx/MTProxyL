@@ -135,6 +135,7 @@ export interface WebStatus {
   tls_port: number;
   mtproxy_port: number;
   decoy_mode: string;
+  decoy_source: string;
   decoy_dir: string;
   debug: boolean;
   /** Что мешает включению, через точку с запятой. Пусто — можно включать. */
@@ -146,6 +147,14 @@ export interface WebParam {
   validator: string;
   desc: string;
   value: string;
+}
+
+export interface GeoblockStatus {
+  mode: 'blacklist' | 'whitelist';
+  rules_active: boolean;
+  ports_match: boolean;
+  service_enabled: boolean;
+  countries: string[];
 }
 
 export interface SelfmaskParam {
@@ -582,7 +591,7 @@ export const mtproxylNetApi = {
     }),
   ipblockExportUrl: () => `${MTPROXYL_BASE}/ipblock/export`,
 
-  geoblock: () => request<{ countries: string[] }>(MTPROXYL_BASE, '/geoblock'),
+  geoblock: () => request<GeoblockStatus>(MTPROXYL_BASE, '/geoblock'),
   geoblockAdd: (country: string) =>
     request<MtproxylOperation>(MTPROXYL_BASE, '/geoblock', {
       method: 'POST',
@@ -591,6 +600,15 @@ export const mtproxylNetApi = {
   geoblockRemove: (country: string) =>
     request<{ output: string }>(MTPROXYL_BASE, `/geoblock/${encodeURIComponent(country)}`, {
       method: 'DELETE',
+    }),
+  geoblockMode: (mode: 'blacklist' | 'whitelist') =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/geoblock/mode', {
+      method: 'PUT',
+      body: JSON.stringify({ mode }),
+    }),
+  geoblockReapply: () =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/geoblock/reapply', {
+      method: 'POST',
     }),
 
   upstreams: () => request<Upstream[]>(MTPROXYL_BASE, '/upstreams'),

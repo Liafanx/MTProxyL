@@ -1100,6 +1100,48 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
 	}))
 
+	mux.Handle("PUT /api/mtproxyl/geoblock/mode", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			Mode string `json:"mode"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		if err := mtproxylctl.ValidateGeoblockMode(req.Mode); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_mode", "Режим: blacklist или whitelist")
+			return
+		}
+		mode := req.Mode
+		started := runner.Start("geoblock:mode:"+mode, func(ctx context.Context) (string, error) {
+			return client.GeoblockSetMode(ctx, mode)
+		})
+		if !started {
+			writeError(w, http.StatusConflict, "operation_busy",
+				"Другая операция MTProxyL уже выполняется")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/geoblock/reapply", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		started := runner.Start("geoblock:reapply", func(ctx context.Context) (string, error) {
+			return client.GeoblockReapply(ctx)
+		})
+		if !started {
+			writeError(w, http.StatusConflict, "operation_busy",
+				"Другая операция MTProxyL уже выполняется")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
+	}))
+
 	mux.Handle("DELETE /api/mtproxyl/geoblock/{country}", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) || busy(w) {
 			return

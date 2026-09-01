@@ -288,6 +288,11 @@ func TestGeoblockRejectsBadCountry(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("add: got %d, want 400", rec.Code)
 	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, authedRequest(t, http.MethodPut, "/api/mtproxyl/geoblock/mode", `{"mode":"whitelist; id"}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("geoblock mode injection status = %d, want 400", rec.Code)
+	}
 
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, authedRequest(t, http.MethodDelete,

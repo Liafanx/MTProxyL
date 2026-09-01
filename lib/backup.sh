@@ -19,6 +19,7 @@ create_backup() {
         [ -f "${INSTALL_DIR}/$f" ] && files+=("$f")
     done
     [ -d "$STATS_DIR" ] && files+=("relay_stats")
+    [ -d "$GEOBLOCK_CACHE_DIR" ] && files+=("geoblock")
 
     tar czf "$backup_file" -C "$INSTALL_DIR" --exclude='*.lock' "${files[@]}" 2>/dev/null
     chmod 600 "$backup_file"
@@ -72,6 +73,13 @@ restore_backup() {
     load_settings
     load_secrets
     load_nft_settings 2>/dev/null
+    if [ -n "${BLOCKLIST_COUNTRIES:-}" ]; then
+        geoblock_remove_all >/dev/null 2>&1 || true
+        geoblock_reapply_all >/dev/null 2>&1 || true
+        geoblock_install_service >/dev/null 2>&1 || true
+    else
+        geoblock_remove_service >/dev/null 2>&1 || true
+    fi
 
     # Бэкап мог приехать с другим носителем движка. Прежний остался бы держать
     # порт, и восстановленный движок не поднялся бы.
@@ -242,6 +250,9 @@ migrate_export() {
              superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf; do
         [ -f "${INSTALL_DIR}/$f" ] && { cp "${INSTALL_DIR}/$f" "$tmp/" && count=$((count + 1)); }
     done
+    if [ -d "${GEOBLOCK_CACHE_DIR}" ]; then
+        cp -a "${GEOBLOCK_CACHE_DIR}" "$tmp/geoblock" && count=$((count + 1))
+    fi
     echo "v${VERSION}" > "$tmp/MIGRATE_VERSION"
     tar -czf "$out" -C "$tmp" . 2>/dev/null && log_success "Экспортировано ${count} файлов в ${out}" || { log_error "Экспорт не удался"; rm -rf "$tmp"; return 1; }
     rm -rf "$tmp"; chmod 600 "$out"
@@ -266,9 +277,21 @@ migrate_import() {
              superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf; do
         [ -f "${tmp}/${f}" ] && { cp "${tmp}/${f}" "${INSTALL_DIR}/$f" && chmod 600 "${INSTALL_DIR}/$f" && restored=$((restored + 1)); }
     done
+    if [ -d "${tmp}/geoblock" ]; then
+        mkdir -p "$GEOBLOCK_CACHE_DIR"
+        cp -a "${tmp}/geoblock/." "$GEOBLOCK_CACHE_DIR/"
+        restored=$((restored + 1))
+    fi
 
     rm -rf "$tmp"
     load_settings; load_secrets
+    if [ -n "${BLOCKLIST_COUNTRIES:-}" ]; then
+        geoblock_remove_all >/dev/null 2>&1 || true
+        geoblock_reapply_all >/dev/null 2>&1 || true
+        geoblock_install_service >/dev/null 2>&1 || true
+    else
+        geoblock_remove_service >/dev/null 2>&1 || true
+    fi
     log_success "Импортировано ${restored} файлов из ${file}"
 
     if is_proxy_running; then

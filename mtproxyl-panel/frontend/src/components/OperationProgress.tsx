@@ -27,6 +27,9 @@ const OPERATION_LABELS: Record<string, string> = {
   'nft:zapret2-wscale': 'Настройка окна Zapret2',
   'nft:preset:classic': 'Переключение лимитера в classic',
   'nft:preset:smart': 'Переключение лимитера в smart',
+  'geoblock:mode:blacklist': 'Включение блокировки выбранных стран',
+  'geoblock:mode:whitelist': 'Включение доступа только выбранным странам',
+  'geoblock:reapply': 'Переприменение блокировки стран',
   'tgbot:install': 'Установка телеграм-бота',
 };
 
@@ -35,7 +38,7 @@ function label(name?: string): string {
   if (OPERATION_LABELS[name]) return OPERATION_LABELS[name];
   // Имена вида "geoblock:add:ir" собираются с аргументом на конце.
   if (name.startsWith('geoblock:add:')) {
-    return `Блокировка страны ${name.slice('geoblock:add:'.length).toUpperCase()}`;
+    return `Добавление страны ${name.slice('geoblock:add:'.length).toUpperCase()}`;
   }
   return name;
 }

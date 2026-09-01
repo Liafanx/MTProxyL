@@ -7,78 +7,14 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { OperationProgress } from '@/components/OperationProgress';
 import { ParamField } from '@/components/ParamField';
 import { NginxCustomConfigCard } from '@/components/NginxCustomConfigCard';
+import { SiteSourcePicker, siteSourceLabel } from '@/components/SiteSourcePicker';
 import { mtproxylApi, type SelfmaskParam, type SelfmaskStatus } from '@/lib/api';
 import { useMtproxylOperation } from '@/hooks/useMtproxyl';
-
-const SITE_SOURCE_LABELS: Record<string, string> = {
-  stub: 'Заглушка «сайт недоступен»',
-  filemanager: 'Файловый менеджер',
-  catrunner: 'Мини-игра Cat Runner',
-  mekorunner: 'Мини-игра MEKO Runner',
-};
 
 const CERT_MODE_LABELS: Record<string, string> = {
   letsencrypt: "Let's Encrypt",
   selfsigned: 'Самоподписанный',
 };
-
-function siteSourceLabel(v: string): string {
-  if (SITE_SOURCE_LABELS[v]) return SITE_SOURCE_LABELS[v];
-  if (v.startsWith('http')) return `Свой сайт: ${v}`;
-  if (v.startsWith('/')) return `Свой сайт из папки: ${v}`;
-  return v;
-}
-
-/**
- * Шаблон задаётся строкой: имя встроенного, ссылка на index.html либо путь к
- * папке с готовым сайтом на сервере. Поле ввода показываем только там, где оно
- * осмысленно, — иначе выбор из списка превращается в свободный текст.
- */
-function TemplatePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const isUrl = value.startsWith('http');
-  const isPath = value.startsWith('/');
-  const kind = isUrl ? 'url' : isPath ? 'path' : value || 'stub';
-
-  const pick = (next: string) => {
-    if (next === 'url') return onChange('https://');
-    if (next === 'path') return onChange('/var/www/');
-    onChange(next);
-  };
-
-  return (
-    <div className="space-y-2">
-      <select
-        value={kind}
-        onChange={(e) => pick(e.target.value)}
-        className="rounded border border-border bg-surface px-2 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 max-w-[260px]"
-      >
-        {Object.entries(SITE_SOURCE_LABELS).map(([k, label]) => (
-          <option key={k} value={k}>
-            {label}
-          </option>
-        ))}
-        <option value="url">Свой сайт по ссылке</option>
-        <option value="path">Свой сайт из папки на сервере</option>
-      </select>
-      {(isUrl || isPath) && (
-        <>
-          <input
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={isPath ? '/var/www/some.name.ru' : 'https://example.com/index.html'}
-            spellCheck={false}
-            className="w-full max-w-[260px] rounded border border-border bg-surface px-2 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/50"
-          />
-          {isPath && (
-            <div className="text-xs text-text-secondary max-w-[260px]">
-              Папка с index.html на этом сервере — скопируется целиком.
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
 
 export function SelfmaskPage() {
   const [status, setStatus] = useState<SelfmaskStatus | null>(null);
@@ -274,7 +210,7 @@ export function SelfmaskPage() {
                         <div className="text-xs text-text-secondary font-mono truncate">{p.key}</div>
                       </div>
                       {p.key === 'SELFMASK_SITE_SOURCE' ? (
-                        <TemplatePicker
+                        <SiteSourcePicker
                           value={valueOf(p.key)}
                           onChange={(v) => setEdits((prev) => ({ ...prev, [p.key]: v }))}
                         />

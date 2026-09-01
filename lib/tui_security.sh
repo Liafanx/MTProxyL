@@ -78,11 +78,10 @@ tui_geoblock_menu() {
         clear_screen
         draw_header "ГЕО-БЛОКИРОВКА"
         echo ""
-        echo -e "  ${BOLD}Режим:${NC}   ${GEOBLOCK_MODE}"
-        echo -e "  ${BOLD}Страны:${NC} ${BLOCKLIST_COUNTRIES:-${DIM}нет${NC}}"
+        echo -e "  ${BOLD}Режим:${NC}   $(geoblock_mode_title)"
+        echo -e "  ${BOLD}Страны:${NC}  ${BLOCKLIST_COUNTRIES:-${DIM}нет${NC}}"
+        echo -e "  ${BOLD}После загрузки:${NC} $(geoblock_service_enabled && echo -e "${GREEN}восстановятся${NC}" || echo -e "${YELLOW}служба не включена${NC}")"
         if [ -n "${BLOCKLIST_COUNTRIES:-}" ]; then
-            # Правила iptables/ipset не переживают перезагрузку — показываем
-            # реальное состояние, а не только список стран в настройках.
             if geoblock_rules_active; then
                 local _gp; _gp=$(geoblock_rules_ports | paste -sd, -)
                 if ! geoblock_rules_match_ports; then
@@ -95,20 +94,32 @@ tui_geoblock_menu() {
             fi
         fi
         echo ""
-        echo -e "  ${DIM}[1]${NC} Добавить страну"
-        echo -e "  ${DIM}[2]${NC} Удалить страну"
-        echo -e "  ${DIM}[3]${NC} Переприменить правила"
-        echo -e "  ${DIM}[4]${NC} Очистить все"
+        echo -e "  ${DIM}[1]${NC} Сменить режим"
+        echo -e "  ${DIM}[2]${NC} Добавить страну"
+        echo -e "  ${DIM}[3]${NC} Удалить страну"
+        echo -e "  ${DIM}[4]${NC} Переприменить правила"
+        echo -e "  ${DIM}[5]${NC} Очистить все"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
-            1) echo -e "  ${DIM}Коды: US DE NL FR GB SG JP CN RU IR${NC}"
+            1) local _next="blacklist"
+               [ "$GEOBLOCK_MODE" = "blacklist" ] && _next="whitelist"
+               if [ "$_next" = "whitelist" ]; then
+                   echo -e "  ${YELLOW}Доступ к прокси останется только у выбранных стран.${NC}"
+                   echo -en "  ${BOLD}Включить реверсивный режим? [y/N]:${NC} "
+                   local _yn; read_line _yn
+                   [[ "$_yn" =~ ^[yYдД] ]] && handle_geoblock_command mode "$_next"
+               else
+                   handle_geoblock_command mode "$_next"
+               fi
+               press_any_key ;;
+            2) echo -e "  ${DIM}Коды: US DE NL FR GB SG JP CN RU IR${NC}"
                echo -en "  ${BOLD}Код:${NC} "; local cc; read_line cc
                [ -n "$cc" ] && handle_geoblock_command add "$cc"; press_any_key ;;
-            2) echo -en "  ${BOLD}Код:${NC} "; local cc; read_line cc
+            3) echo -en "  ${BOLD}Код:${NC} "; local cc; read_line cc
                [ -n "$cc" ] && handle_geoblock_command remove "$cc"; press_any_key ;;
-            3) handle_geoblock_command reapply; press_any_key ;;
-            4) handle_geoblock_command clear; press_any_key ;;
+            4) handle_geoblock_command reapply; press_any_key ;;
+            5) handle_geoblock_command clear; press_any_key ;;
             0|"") return ;;
         esac
     done
