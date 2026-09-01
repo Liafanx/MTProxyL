@@ -4,8 +4,10 @@
 GEOBLOCK_CACHE_DIR="${INSTALL_DIR}/geoblock"
 GEOBLOCK_IPSET_PREFIX="mtproxyl_"
 GEOBLOCK_COMMENT="mtproxyl-geoblock"
+GEOBLOCK_LOCAL_COMMENT="${GEOBLOCK_COMMENT}-local"
 GEOBLOCK_SERVICE="mtproxyl-geoblock"
 GEOBLOCK_UNIT="/etc/systemd/system/${GEOBLOCK_SERVICE}.service"
+GEOBLOCK_LOCAL_CIDRS=("127.0.0.0/8" "10.0.0.0/8" "172.16.0.0/12" "192.168.0.0/16")
 
 # Блокировку xtables держат соседи: zapret2 и synlimit движка правят те же
 # таблицы. Без ожидания вызов просто падает, а правило молча не применяется.
@@ -145,22 +147,43 @@ _remove_country_rules() {
 }
 
 _remove_default_drop() {
-    local _port
+    local _port _cidr
     while IFS= read -r _port; do
         _ipt -D INPUT -p tcp --dport "$_port" \
             -m comment --comment "${GEOBLOCK_COMMENT}-default" -j DROP 2>/dev/null || true
+        for _cidr in "${GEOBLOCK_LOCAL_CIDRS[@]}"; do
+            _ipt -D INPUT -s "$_cidr" -p tcp --dport "$_port" \
+                -m comment --comment "$GEOBLOCK_LOCAL_COMMENT" -j ACCEPT 2>/dev/null || true
+        done
     done < <({ geoblock_ports; geoblock_rules_ports; } | sort -nu)
+}
+
+_ensure_local_accepts() {
+    local _port _cidr
+    while IFS= read -r _port; do
+        for _cidr in "${GEOBLOCK_LOCAL_CIDRS[@]}"; do
+            if ! _ipt -C INPUT -s "$_cidr" -p tcp --dport "$_port" \
+                -m comment --comment "$GEOBLOCK_LOCAL_COMMENT" -j ACCEPT 2>/dev/null; then
+                _ipt -I INPUT 1 -s "$_cidr" -p tcp --dport "$_port" \
+                    -m comment --comment "$GEOBLOCK_LOCAL_COMMENT" -j ACCEPT || {
+                    log_error "iptables: исключение ${_cidr} на порту ${_port} добавить не удалось"
+                    return 1
+                }
+            fi
+        done
+    done < <(geoblock_ports)
 }
 
 _ensure_default_drop() {
     [ "$GEOBLOCK_MODE" = "whitelist" ] || return 0
     [ -n "$BLOCKLIST_COUNTRIES" ] || return 0
+    _ensure_local_accepts || return 1
     local _port
     while IFS= read -r _port; do
         if ! _ipt -C INPUT -p tcp --dport "$_port" \
             -m comment --comment "${GEOBLOCK_COMMENT}-default" -j DROP 2>/dev/null; then
             local _allows _position
-            _allows=$(_ipt_dump | grep -E -- "^-A INPUT .*--comment \"?${GEOBLOCK_COMMENT}\"?.*-j ACCEPT" | wc -l)
+            _allows=$(_ipt_dump | grep -E -- "^-A INPUT .*--comment \"?${GEOBLOCK_COMMENT}(-local)?\"?.*-j ACCEPT" | wc -l)
             _position=$((_allows + 1))
             _ipt -I INPUT "$_position" -p tcp --dport "$_port" \
                 -m comment --comment "${GEOBLOCK_COMMENT}-default" -j DROP || {
@@ -178,10 +201,14 @@ geoblock_rules_active() {
     local _dump; _dump=$(_ipt_dump) || return 1
     grep -Eq -- "--comment \"?${GEOBLOCK_COMMENT}\"?([[:space:]]|$)" <<< "$_dump" || return 1
     if [ "${GEOBLOCK_MODE:-blacklist}" = "whitelist" ]; then
-        local _port
+        local _port _cidr
         while IFS= read -r _port; do
             _ipt -C INPUT -p tcp --dport "$_port" \
                 -m comment --comment "${GEOBLOCK_COMMENT}-default" -j DROP 2>/dev/null || return 1
+            for _cidr in "${GEOBLOCK_LOCAL_CIDRS[@]}"; do
+                _ipt -C INPUT -s "$_cidr" -p tcp --dport "$_port" \
+                    -m comment --comment "$GEOBLOCK_LOCAL_COMMENT" -j ACCEPT 2>/dev/null || return 1
+            done
         done < <(geoblock_ports)
     fi
     return 0
@@ -196,7 +223,7 @@ geoblock_rules_port() {
 geoblock_rules_ports() {
     command -v iptables &>/dev/null || return 1
     local _dump; _dump=$(_ipt_dump) || return 1
-    grep -E -- "--comment \"?${GEOBLOCK_COMMENT}(-default)?\"?" <<< "$_dump" \
+    grep -E -- "--comment \"?${GEOBLOCK_COMMENT}(-(default|local))?\"?" <<< "$_dump" \
         | grep -oE '\--dport [0-9]+' | awk '{print $2}' | sort -nu
 }
 
@@ -336,7 +363,7 @@ geoblock_remove_all() {
         while IFS= read -r rule; do
             [ -n "$rule" ] || continue
             _ipt $rule 2>/dev/null || true
-        done < <(grep -E -- "--comment \"?${GEOBLOCK_COMMENT}(-default)?\"?" <<< "$_dump" \
+        done < <(grep -E -- "--comment \"?${GEOBLOCK_COMMENT}(-(default|local))?\"?" <<< "$_dump" \
                     | sed 's/^-A/-D/; s/--comment "\([^"]*\)"/--comment \1/')
     fi
 
