@@ -51,6 +51,7 @@ func TestMtproxylRoutesRequireAuth(t *testing.T) {
 		"/api/mtproxyl/status",
 		"/api/mtproxyl/mode",
 		"/api/mtproxyl/selfmask",
+		"/api/mtproxyl/web/haproxy-config",
 		"/api/mtproxyl/backups",
 		"/api/mtproxyl/backups/mtproxyl-20260101-101010.tar.gz/download",
 	} {

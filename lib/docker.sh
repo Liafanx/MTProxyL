@@ -548,8 +548,8 @@ run_proxy_container() {
 
         # Сайт-заглушку WEB движок читает с диска, а у контейнера своя ФС —
         # без проброса он не стартует вовсе.
-        if web_is_enabled 2>/dev/null && [ "${WEB_DECOY_MODE:-static_directory}" = "static_directory" ]; then
-            local _decoy; _decoy=$(web_decoy_dir 2>/dev/null)
+        if web_is_enabled 2>/dev/null && [ "${WEB_DECOY_MODE:-empty}" != "http_upstream" ]; then
+            local _decoy; _decoy=$(web_effective_decoy_dir 2>/dev/null)
             [ -d "$_decoy" ] && _args+=(-v "${_decoy}:${_decoy}:ro")
         fi
 

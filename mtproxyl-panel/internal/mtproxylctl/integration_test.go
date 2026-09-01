@@ -49,6 +49,12 @@ case "$1 $2 $3" in
   "geoblock reapply ")
     echo "  [✓] Гео-блокировка применена"
     ;;
+  "web json ")
+    echo '{"enabled":true,"proxy_mode":"combined","mtproto_enabled":true,"frontend":"haproxy","haproxy_ready":true,"haproxy_cert":"/etc/haproxy/certs/web.example.com.pem","layout":"shared","public_port":443,"proxy_port":443,"domain":"web.example.com","carrier":"websocket","secret_mode":"dd","public_addr":"203.0.113.10:443","listen_port":15080,"tls_port":15444,"mtproxy_port":15443,"decoy_mode":"static_directory","decoy_source":"stub","decoy_dir":"/var/www/x","debug":false,"problems":""}'
+    ;;
+  "web haproxy-config ")
+    printf 'frontend mtproxyl_public\n    bind :443\n'
+    ;;
   "mode manager ")
     echo "  [✓] Режим: manager"
     ;;

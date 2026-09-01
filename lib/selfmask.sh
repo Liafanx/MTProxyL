@@ -882,6 +882,8 @@ _selfmask_deploy_site() {
     log_info "Развёртывание сайта-маски..."
 
     mkdir -p "$SELFMASK_SITE_DIR"
+    rm -f "${SELFMASK_SITE_DIR}/mtproxyl-decoy.css" "${SELFMASK_SITE_DIR}/mtproxyl-decoy.js" \
+          "${SELFMASK_SITE_DIR}/mtproxyl-web-inline.css" "${SELFMASK_SITE_DIR}/mtproxyl-web-inline.js"
 
     local _src="${SELFMASK_SITE_SOURCE:-stub}"
     local _templates_base="${GITHUB_RAW}/templates_html"
@@ -913,8 +915,9 @@ _selfmask_deploy_site() {
 
 _selfmask_download_builtin_template() {
     _selfmask_download_template "$1" || return 1
-    rm -f "${SELFMASK_SITE_DIR}/mtproxyl-decoy.css" "${SELFMASK_SITE_DIR}/mtproxyl-decoy.js"
-    _selfmask_externalize_inline_assets
+    rm -f "${SELFMASK_SITE_DIR}/mtproxyl-decoy.css" "${SELFMASK_SITE_DIR}/mtproxyl-decoy.js" \
+          "${SELFMASK_SITE_DIR}/style.css" "${SELFMASK_SITE_DIR}/app.js"
+    _selfmask_externalize_inline_assets style app
 }
 
 _selfmask_externalize_tag() {
@@ -987,11 +990,12 @@ _selfmask_has_inline_assets() {
 }
 
 _selfmask_externalize_inline_assets() {
-    local _prefix="${1:-mtproxyl-decoy}"
+    local _style_base="${1:-style}" _script_base="${2:-app}"
     local _html="${SELFMASK_SITE_DIR}/index.html" _tmp _legacy_login="false" _script_tag
     [ -f "$_html" ] || return 1
 
-    if [ "$_prefix" = "mtproxyl-decoy" ] && grep -q 'onsubmit="return tryLogin()"' "$_html"; then
+    if [ "${SELFMASK_SITE_SOURCE:-stub}" = "filemanager" ] \
+       && grep -q 'onsubmit="return tryLogin()"' "$_html"; then
         _legacy_login="true"
         _tmp=$(_mktemp "$SELFMASK_SITE_DIR") || return 1
         awk '{gsub(/ onsubmit="return tryLogin\(\)"/, ""); print}' "$_html" > "$_tmp"
@@ -999,17 +1003,19 @@ _selfmask_externalize_inline_assets() {
     fi
 
     _selfmask_externalize_tag \
-        "$_html" style "${SELFMASK_SITE_DIR}/${_prefix}.css" \
-        "<link rel=\"stylesheet\" href=\"/${_prefix}.css\">" || return 1
+        "$_html" style "${SELFMASK_SITE_DIR}/${_style_base}.css" \
+        "<link rel=\"stylesheet\" href=\"/${_style_base}.css\">" || return 1
 
-    _script_tag="<script src=\"/${_prefix}.js\"></script>"
-    [ "$_prefix" != "mtproxyl-decoy" ] || \
-        _script_tag="<script src=\"/${_prefix}.js\" defer></script>"
+    _script_tag="<script src=\"/${_script_base}.js\"></script>"
+    case "${SELFMASK_SITE_SOURCE:-stub}" in
+        stub|filemanager|catrunner|mekorunner)
+            _script_tag="<script src=\"/${_script_base}.js\" defer></script>" ;;
+    esac
     _selfmask_externalize_tag \
-        "$_html" script "${SELFMASK_SITE_DIR}/${_prefix}.js" "$_script_tag" || return 1
+        "$_html" script "${SELFMASK_SITE_DIR}/${_script_base}.js" "$_script_tag" || return 1
 
-    if [ "$_legacy_login" = "true" ] && [ -f "${SELFMASK_SITE_DIR}/${_prefix}.js" ]; then
-        cat >> "${SELFMASK_SITE_DIR}/${_prefix}.js" <<'JS_EOF'
+    if [ "$_legacy_login" = "true" ] && [ -f "${SELFMASK_SITE_DIR}/${_script_base}.js" ]; then
+        cat >> "${SELFMASK_SITE_DIR}/${_script_base}.js" <<'JS_EOF'
 document.getElementById('lf').addEventListener('submit',function(e){
   e.preventDefault();
   tryLogin();
@@ -1018,21 +1024,45 @@ JS_EOF
     fi
 
     chmod 644 "$_html" 2>/dev/null || return 1
-    [ ! -f "${SELFMASK_SITE_DIR}/${_prefix}.css" ] || \
-        chmod 644 "${SELFMASK_SITE_DIR}/${_prefix}.css" 2>/dev/null || return 1
-    [ ! -f "${SELFMASK_SITE_DIR}/${_prefix}.js" ] || \
-        chmod 644 "${SELFMASK_SITE_DIR}/${_prefix}.js" 2>/dev/null || return 1
+    [ ! -f "${SELFMASK_SITE_DIR}/${_style_base}.css" ] || \
+        chmod 644 "${SELFMASK_SITE_DIR}/${_style_base}.css" 2>/dev/null || return 1
+    [ ! -f "${SELFMASK_SITE_DIR}/${_script_base}.js" ] || \
+        chmod 644 "${SELFMASK_SITE_DIR}/${_script_base}.js" 2>/dev/null || return 1
+}
+
+_selfmask_migrate_asset_names() {
+    local _html="${SELFMASK_SITE_DIR}/index.html" _old="$1" _style="$2" _script="$3"
+    [ -f "$_html" ] || return 0
+    if grep -q "/${_old}.css" "$_html"; then
+        [ ! -f "${SELFMASK_SITE_DIR}/${_old}.css" ] \
+            || mv -f "${SELFMASK_SITE_DIR}/${_old}.css" "${SELFMASK_SITE_DIR}/${_style}.css"
+        sed -i "s|/${_old}\\.css|/${_style}.css|g" "$_html"
+    fi
+    if grep -q "/${_old}.js" "$_html"; then
+        [ ! -f "${SELFMASK_SITE_DIR}/${_old}.js" ] \
+            || mv -f "${SELFMASK_SITE_DIR}/${_old}.js" "${SELFMASK_SITE_DIR}/${_script}.js"
+        sed -i "s|/${_old}\\.js|/${_script}.js|g" "$_html"
+    fi
 }
 
 selfmask_prepare_web_decoy() {
-    [ "${WEB_DECOY_MODE:-static_directory}" = "static_directory" ] || return 0
-    local _prefix="mtproxyl-web-inline"
+    [ "${WEB_DECOY_MODE:-empty}" = "static_directory" ] || return 0
+    [ -e "${SELFMASK_SITE_DIR}/404.html" ] \
+        || install -m 0644 /dev/null "${SELFMASK_SITE_DIR}/404.html" || return 1
     case "${SELFMASK_SITE_SOURCE:-stub}" in
-        stub|filemanager|catrunner|mekorunner) _prefix="mtproxyl-decoy" ;;
+        stub|filemanager|catrunner|mekorunner)
+            _selfmask_migrate_asset_names mtproxyl-decoy style app
+            _selfmask_externalize_inline_assets style app || return 1
+            ;;
+        *)
+            _selfmask_migrate_asset_names mtproxyl-web-inline inline-style inline-script
+            _selfmask_externalize_inline_assets inline-style inline-script || return 1
+            ;;
     esac
-    _selfmask_externalize_inline_assets "$_prefix" || return 1
-    if [ "$_prefix" = "mtproxyl-web-inline" ] && \
-        _selfmask_has_inline_assets "${SELFMASK_SITE_DIR}/index.html"; then
+    case "${SELFMASK_SITE_SOURCE:-stub}" in
+        stub|filemanager|catrunner|mekorunner) return 0 ;;
+    esac
+    if _selfmask_has_inline_assets "${SELFMASK_SITE_DIR}/index.html"; then
         log_warn "WEB: в пользовательской заглушке остался inline CSS или JavaScript"
         log_info "Вынесите сложные inline-блоки в отдельные локальные .css/.js файлы"
     fi
@@ -1052,7 +1082,8 @@ _selfmask_download_template() {
 
 _selfmask_fallback_stub() {
     log_info "Создаём встроенную заглушку..."
-    rm -f "${SELFMASK_SITE_DIR}/mtproxyl-decoy.css" "${SELFMASK_SITE_DIR}/mtproxyl-decoy.js"
+    rm -f "${SELFMASK_SITE_DIR}/mtproxyl-decoy.css" "${SELFMASK_SITE_DIR}/mtproxyl-decoy.js" \
+          "${SELFMASK_SITE_DIR}/style.css" "${SELFMASK_SITE_DIR}/app.js"
     cat > "${SELFMASK_SITE_DIR}/index.html" << 'HTML_EOF'
 <!doctype html>
 <html lang="ru">
@@ -1074,7 +1105,7 @@ _selfmask_fallback_stub() {
 </body>
 </html>
 HTML_EOF
-    _selfmask_externalize_inline_assets || return 1
+    _selfmask_externalize_inline_assets style app || return 1
     log_success "Встроенная заглушка создана"
 }
 
@@ -2042,6 +2073,11 @@ selfmask_verify() {
 selfmask_setup() {
     check_root
 
+    if web_is_enabled 2>/dev/null && web_frontend_is_haproxy 2>/dev/null; then
+        log_error "Selfmask нельзя включить, пока внешний HAProxy держит WEB на :443"
+        return 1
+    fi
+
     if ! selfmask_supported_os; then
         log_error "Selfmask пока поддерживается только на Debian/Ubuntu"
         return 1
@@ -2654,6 +2690,11 @@ selfmask_settable_json() {
 # значения по умолчанию, а не введённые в интерфейсе.
 selfmask_apply() {
     check_root
+
+    if web_is_enabled 2>/dev/null && web_frontend_is_haproxy 2>/dev/null; then
+        log_error "Selfmask нельзя применить, пока внешний HAProxy держит WEB на :443"
+        return 1
+    fi
 
     if ! selfmask_supported_os; then
         log_error "Selfmask пока поддерживается только на Debian/Ubuntu"

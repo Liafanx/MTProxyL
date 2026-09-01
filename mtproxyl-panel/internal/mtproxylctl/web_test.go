@@ -1,6 +1,9 @@
 package mtproxylctl
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateWebParamAllowsSiteSource(t *testing.T) {
 	for _, value := range []string{
@@ -17,5 +20,23 @@ func TestValidateWebParamAllowsSiteSource(t *testing.T) {
 func TestValidateWebParamRejectsSelfmaskKey(t *testing.T) {
 	if err := ValidateWebParam("SELFMASK_DOMAIN", "example.com"); err == nil {
 		t.Fatal("ValidateWebParam accepted an unrelated Selfmask key")
+	}
+}
+
+func TestWebHAProxyStatusAndConfig(t *testing.T) {
+	c := newStubClient(t)
+	status, err := c.WebStatus(t.Context())
+	if err != nil {
+		t.Fatalf("WebStatus: %v", err)
+	}
+	if status.Frontend != "haproxy" || !status.HAProxyReady || status.ProxyPort != 443 {
+		t.Fatalf("unexpected WEB status: %+v", status)
+	}
+	config, err := c.WebHAProxyConfig(t.Context())
+	if err != nil {
+		t.Fatalf("WebHAProxyConfig: %v", err)
+	}
+	if !strings.Contains(config, "frontend mtproxyl_public\n    bind :443") {
+		t.Fatalf("unexpected HAProxy config: %q", config)
 	}
 }

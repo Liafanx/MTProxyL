@@ -124,9 +124,13 @@ export interface WebStatus {
   enabled: boolean;
   proxy_mode: string;
   mtproto_enabled?: boolean;
+  frontend: string;
+  haproxy_ready: boolean;
+  haproxy_cert: string;
   /** shared — один публичный порт на двоих, split — у WEB свой. */
   layout: string;
   public_port: number;
+  proxy_port: number;
   domain: string;
   carrier: string;
   secret_mode: string;
@@ -351,6 +355,7 @@ export const mtproxylApi = {
       body: JSON.stringify({ mode }),
     }),
   webLinks: () => request<{ output: string }>(MTPROXYL_BASE, '/web/links'),
+  webHAProxyConfig: () => request<{ output: string }>(MTPROXYL_BASE, '/web/haproxy-config'),
   // Профиль WEB движок сам не заводит: пользователь, созданный через его
   // /v1/users, попадает только в [access.users] и остаётся без WEB-ссылки.
   webSync: () =>

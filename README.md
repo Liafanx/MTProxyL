@@ -254,9 +254,13 @@ mtproxyl install --help          # полный список аргументо�
 | `--web` | `yes`, `no` | `no` | Включить WEB. `--proxy-mode web` и `combined` включают его автоматически. |
 | `--web-domain` | домен | — | Публичный домен WEB с A-записью на сервер. Обязателен без `--selfmask`. |
 | `--web-carrier` | `https`, `https-lanes`, `websocket`, `websocket-lanes` | `websocket` | Транспорт WEB. |
-| `--web-layout` | `shared`, `split` | `shared` | Раскладка совместного режима. В WEB-only nginx напрямую занимает публичный порт. |
-| `--web-port` | 1–65535 | `443` | Публичный порт WEB для `split` и WEB-only. Клиент WEB использует 443. |
+| `--web-layout` | `shared`, `split` | `shared` | Раскладка совместного режима. |
+| `--web-frontend` | `nginx`, `haproxy` | `nginx` | Встроенный nginx либо существующий HAProxy на этой машине. |
+| `--web-haproxy-cert` | абсолютный путь | `/etc/haproxy/certs/<домен>.pem` | PEM с сертификатом и ключом для фрагмента HAProxy. |
+| `--web-port` | 1–65535 | `443` | Публичный порт встроенного nginx для `split` и WEB-only. |
 | `--web-secret-mode` | `plain`, `dd` | `dd` | Представление секрета в WEB-ссылке. |
+| `--web-decoy` | `empty`, `site`, `upstream` | `empty` | Пустой ответ, статический сайт либо приватный HTTP-origin. |
+| `--web-decoy-upstream` | `http://IP[:порт]` | — | Origin для `--web-decoy upstream`. |
 
 **Дополнения**
 
@@ -837,8 +841,10 @@ mtproxyl web mode web         # Только WEB, без обычного MTProt
 mtproxyl web mode combined    # MTProto + WEB
 mtproxyl web links            # Ссылки tg://webproxy
 mtproxyl web sync             # Свести профили WEB со списком пользователей
+mtproxyl web haproxy-config   # Готовый фрагмент внешнего HAProxy
 mtproxyl web nginx-config on|off|edit|show|test
 mtproxyl web nginx-config write < nginx.conf
+mtproxyl web set WEB_DECOY_MODE empty
 mtproxyl web set WEB_DECOY_SOURCE mekorunner
 mtproxyl web set КЛЮЧ ЗНАЧ    # Изменить параметр
 mtproxyl web settable         # Список параметров (JSON)
@@ -1209,12 +1215,13 @@ MTProto едет внутри обычного HTTPS или WebSocket. MTProxyL 
 мастер сразу предлагает три транспорта:
 
 - **Только MTProto** — обычный прокси без WEB, WEB-домен и сайт не требуются.
-- **Только WEB** — в конфиге нет обычного MTProto listener; nginx принимает
-  HTTPS на 443 и передаёт его WEB listener движка на loopback.
+- **Только WEB** — в конфиге нет обычного MTProto listener; выбранный frontend
+  принимает HTTPS на 443 и передаёт его WEB listener движка на loopback.
 - **MTProto + WEB** — работают обычные `tg://proxy` и WEB-ссылки.
 
 Для сайта WEB мастер предлагает встроенный шаблон, прямой URL файла
-`index.html` либо абсолютный путь к папке с готовым сайтом на сервере.
+`index.html` либо абсолютный путь к папке с готовым сайтом на сервере. Видимая
+заглушка по умолчанию выключена; при необходимости её включают явно.
 В режиме «Только WEB» отдельный адрес для обычных ссылок не спрашивается:
 достаточно обязательного WEB-домена. MTProto-лимитеры пропускаются, а
 оптимизация системы By-MEKO предлагается отдельно.
@@ -1225,28 +1232,29 @@ WEB-only выключить WEB нельзя: сначала нужно верн
 
 ### Раскладки совместного режима
 
-TLS движок не терминирует — публичный порт держит nginx. Как поделить порты,
-выбирает `WEB_LAYOUT`.
+TLS движок не терминирует — публичный порт держит nginx MTProxyL либо внешний
+HAProxy. Как поделить порты, выбирает `WEB_LAYOUT`.
 
-**`shared` — один порт на двоих (по умолчанию).** nginx слушает `PROXY_PORT`,
-разбирает SNI и разводит трафик:
+**`shared` — один порт на двоих (по умолчанию).** Frontend слушает публичный
+`:443`, разбирает SNI и разводит трафик:
 
 ```
 клиент :443
-  └─ nginx, ssl_preread
+  └─ nginx ssl_preread или HAProxy TCP/SNI
        ├─ SNI = web-домен → TLS + HTTP/2 → listener движка transport="web"
        └─ всё остальное   → FakeTLS-listener движка на loopback
 ```
 
 Обе ветки идут с PROXY protocol, поэтому движок видит настоящий адрес клиента,
 а не loopback. FakeTLS работает ровно как раньше: политика неизвестного SNI и
-маскировка не меняются. Нужен nginx со `stream` и `ssl_preread`.
+маскировка не меняются. Для встроенного frontend нужен nginx со `stream` и
+`ssl_preread`.
 
-**`split` — у каждого свой порт.** nginx слушает `WEB_PUBLIC_PORT` (443) и
-занимается только WEB, движок остаётся на `PROXY_PORT` напрямую:
+**`split` — у каждого свой порт.** Frontend слушает WEB на 443, а движок
+остаётся на `PROXY_PORT` напрямую:
 
 ```
-клиент :443   → nginx → listener движка transport="web"
+клиент :443   → nginx или HAProxy → listener движка transport="web"
 клиент :2053  → FakeTLS-listener движка, без посредников
 ```
 
@@ -1257,6 +1265,54 @@ SYN-лимитер фильтруются по порту прокси и WEB н
 При смене `PROXY_PORT` правила zapret2 и SYN-лимитера переезжают на новый порт
 сами. Гео-блокировка ставится сразу на оба публичных порта и автоматически
 перестраивается при включении или выключении WEB.
+
+### Внешний HAProxy
+
+Режим `WEB_FRONTEND=haproxy` предназначен для уже установленного HAProxy на
+той же машине. MTProxyL не меняет его файлы, не запускает службу и не управляет
+сертификатом. Он поднимает WEB-listener на `127.0.0.1:WEB_LISTEN_PORT` и выдаёт
+готовый фрагмент:
+
+```bash
+mtproxyl web set WEB_FRONTEND haproxy
+mtproxyl web set WEB_HAPROXY_CERT /etc/haproxy/certs/web.example.com.pem
+mtproxyl web haproxy-config
+mtproxyl web enable
+```
+
+В WEB-only и `split` HAProxy терминирует публичный TLS и передаёт обычный
+HTTP/1.1 прямо в telemt. В `shared` публичный frontend работает в TCP mode:
+по SNI WEB-домен уходит во внутренний TLS/HTTP frontend HAProxy, остальное — в
+FakeTLS-listener telemt с PROXY protocol. Поэтому настоящий IP сохраняется в
+обеих ветках. `public_addr` всегда остаётся равным публичному `IP:443`, а
+нестандартными являются только приватные backend-порты.
+
+Внешний HAProxy несовместим с активным Selfmask: оба претендуют на публичный
+`:443`. При `shared` WEB нельзя выключить одной командой, пока HAProxy держит
+общий порт; сначала перейдите на `split` с отдельным портом MTProto либо
+верните frontend nginx. Статус и готовый фрагмент доступны также в панели.
+
+### Защита от отпечатка заглушки
+
+При выключенной заглушке telemt получает пустые `index.html` и `404.html`:
+обычный запрос не раскрывает шаблон MTProxyL. У включённых встроенных шаблонов
+ассеты называются нейтрально — `style.css` и `app.js`. Старые ссылки
+`mtproxyl-decoy.*` автоматически переименовываются при следующем применении WEB.
+
+Для статического сайта без собственного `404.html` MTProxyL создаёт пустой
+файл, поэтому неизвестный путь больше не получает тело главной страницы.
+Встроенный nginx и выдаваемый фрагмент HAProxy удаляют `ETag` и
+`Last-Modified`, а также не передают `If-None-Match` в WEB-listener. Полностью
+убрать секцию decoy нельзя: telemt использует её и для безопасного ответа на
+некорректные carrier-запросы.
+
+Пользовательский `nginx.conf` MTProxyL не переписывает. Для статического decoy
+проверка потребует добавить в его proxy-location две директивы:
+
+```nginx
+proxy_hide_header ETag;
+proxy_set_header If-None-Match "";
+```
 
 ### Что нужно
 
@@ -1271,6 +1327,8 @@ SYN-лимитер фильтруются по порту прокси и WEB н
   Selfmask включён, его сайт и сертификат переиспользуются, а WEB-домен при
   необходимости добавляется в сертификат отдельным SAN. Самоподписанный
   сертификат Selfmask для WEB не подходит: WEB-клиент проверяет цепочку доверия.
+  Это относится к frontend `nginx`; во внешнем HAProxy сертификатом управляет
+  сам HAProxy, а Selfmask должен быть выключен из-за общего порта 443.
 
   Чужой домен подставить нельзя, и это не ограничение MTProxyL. FakeTLS обходится
   чужим именем потому, что клиент там сертификат не проверяет. Клиент WEB ходит
@@ -1301,7 +1359,7 @@ SYN-лимитер фильтруются по порту прокси и WEB н
   поднимает лимит сам, с запасом кратно 32; таблица `[web.limits]` применяется
   только перезапуском, поэтому движок в этот момент перезапускается, а не
   перечитывает конфиг на лету.
-- **nginx со stream и ssl_preread** — только для `shared` совместного режима.
+- **nginx со stream и ssl_preread** — только для `shared` со встроенным nginx.
   В WEB-only и `split` nginx принимает WEB напрямую. Обновить:
   `mtproxyl selfmask pq-nginx`.
 - **IPv6 не обязателен.** На IPv4-only VPS nginx получает только
@@ -1310,8 +1368,8 @@ SYN-лимитер фильтруются по порту прокси и WEB н
   пишет.
 
 Всё это проверяется до включения, и `mtproxyl web status` показывает, чего не
-хватает. Если движок или nginx не поднимутся, включение само откатится и вернёт
-прокси на публичный порт.
+хватает. В режиме HAProxy статус отдельно показывает, применён ли ожидаемый
+публичный и внутренний listener. Сам HAProxy остаётся под управлением владельца.
 
 ### Ссылки
 
@@ -1352,7 +1410,18 @@ mtproxyl install --mode manager --port 443 \
   --web yes --web-layout split --web-port 443 --port 2053
 ```
 
-`--web` требует `--selfmask`: оттуда берутся домен, сертификат и заглушка.
+С существующим HAProxy:
+
+```bash
+mtproxyl install --mode manager --proxy-mode combined --port 443 \
+  --web yes --web-domain web.example.com --web-layout shared \
+  --web-frontend haproxy \
+  --web-haproxy-cert /etc/haproxy/certs/web.example.com.pem \
+  --web-decoy empty
+```
+
+`--web` требует WEB-домен либо Selfmask. В режиме HAProxy сертификат и его
+объединённый PEM готовит владелец HAProxy, а сайт-заглушку разворачивает MTProxyL.
 Генератор команды переезда (`Обновление → Экспорт аргументов`) добавляет ключи
 WEB сам, так что на новом сервере он поднимется вместе с остальным.
 

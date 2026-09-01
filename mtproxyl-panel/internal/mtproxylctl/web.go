@@ -10,16 +10,20 @@ import (
 
 // WebStatus is the output of `mtproxyl web json`. WEB mode carries MTProto
 // inside ordinary HTTPS for the "WEB" proxy type: the engine
-// never terminates TLS, nginx does, and forwards plain HTTP/1.1 to a private
+// never terminates TLS; nginx or HAProxy forwards plain HTTP/1.1 to a private
 // listener.
 type WebStatus struct {
 	Enabled        bool   `json:"enabled"`
 	ProxyMode      string `json:"proxy_mode"`
 	MTProtoEnabled *bool  `json:"mtproto_enabled,omitempty"`
+	Frontend       string `json:"frontend"`
+	HAProxyReady   bool   `json:"haproxy_ready"`
+	HAProxyCert    string `json:"haproxy_cert"`
 	// Layout is "shared" (one public port split by SNI) or "split" (WEB gets
 	// its own port and the proxy keeps PROXY_PORT untouched).
 	Layout      string `json:"layout"`
 	PublicPort  int    `json:"public_port"`
+	ProxyPort   int    `json:"proxy_port"`
 	Domain      string `json:"domain"`
 	Carrier     string `json:"carrier"`
 	SecretMode  string `json:"secret_mode"`
@@ -83,6 +87,12 @@ func (c *Client) WebSync(ctx context.Context) (string, error) {
 // builds them itself.
 func (c *Client) WebLinks(ctx context.Context) (string, error) {
 	out, err := c.run(ctx, "web", "links")
+	return stripANSI(out), err
+}
+
+// WebHAProxyConfig returns the fragment generated for the selected WEB mode.
+func (c *Client) WebHAProxyConfig(ctx context.Context) (string, error) {
+	out, err := c.run(ctx, "web", "haproxy-config")
 	return stripANSI(out), err
 }
 

@@ -20,7 +20,7 @@ export LC_NUMERIC=C
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="1.6.7"
+VERSION="1.6.8"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"

@@ -90,6 +90,9 @@ def status_text(st: dict, md: dict) -> str:
     if web.get("enabled") and not web_only:
         lines.append(f"WEB Proxy: <code>{esc(web.get('domain') or '—')}</code>"
                      f" ({esc(web.get('carrier') or '')})")
+    if web.get("enabled") and web.get("frontend"):
+        frontend = "HAProxy" if web.get("frontend") == "haproxy" else "nginx"
+        lines.append(f"WEB frontend: <code>{frontend}</code>")
     return "\n".join(lines)
 
 

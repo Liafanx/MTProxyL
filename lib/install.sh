@@ -254,11 +254,33 @@ run_installer() {
             log_error "Введите корректное доменное имя"
         done
         SELFMASK_DOMAIN="$WEB_DOMAIN"
-        SELFMASK_CERT_MODE="letsencrypt"
-        echo -en "  ${DIM}Email для Let's Encrypt [необязательно]:${NC} "
-        read_line SELFMASK_CERT_EMAIL
+        echo ""
+        echo -e "  ${BOLD}Frontend WEB Proxy${NC}"
+        echo -e "  ${DIM}[1] nginx MTProxyL  [2] Существующий HAProxy${NC}"
+        local _web_frontend_choice; _web_frontend_choice=$(read_choice "выбор" "1")
+        if [ "$_web_frontend_choice" = "2" ]; then
+            WEB_FRONTEND="haproxy"
+            echo -en "  ${DIM}PEM сертификат + ключ [$(web_haproxy_cert)]:${NC} "
+            local _haproxy_cert; read_line _haproxy_cert
+            [ -n "$_haproxy_cert" ] && WEB_HAPROXY_CERT="$_haproxy_cert"
+            log_info "После установки примените фрагмент: mtproxyl web haproxy-config"
+        else
+            WEB_FRONTEND="nginx"
+            SELFMASK_CERT_MODE="letsencrypt"
+            echo -en "  ${DIM}Email для Let's Encrypt [необязательно]:${NC} "
+            read_line SELFMASK_CERT_EMAIL
+        fi
 
-        installer_pick_web_site
+        echo ""
+        echo -en "  ${BOLD}Показывать сайт-заглушку? [y/N]:${NC} "
+        local _web_decoy_choice; read_line _web_decoy_choice
+        if [[ "$_web_decoy_choice" =~ ^[yYдД] ]]; then
+            WEB_DECOY_MODE="static_directory"
+            installer_pick_web_site
+        else
+            WEB_DECOY_MODE="empty"
+            log_info "Видимая заглушка выключена; обычные запросы получают пустой ответ"
+        fi
     fi
 
     # Ресурсы

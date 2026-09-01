@@ -98,8 +98,8 @@ restore_backup() {
     echo -e "    Секретов: ${#SECRETS_LABELS[@]}"
     echo ""
 
-    # WEB после восстановления может потребовать заново собрать nginx и
-    # сертификат даже тогда, когда движок до этого был остановлен.
+    # WEB после восстановления заново применяет listener'ы и свой frontend.
+    # Внешний HAProxy при этом не изменяется.
     if [ "$_was_running" = "true" ] || is_proxy_running || web_is_enabled 2>/dev/null; then
         if web_is_enabled 2>/dev/null; then
             echo -en "  ${BOLD}Применить WEB-конфиг и запустить прокси? [Y/n]:${NC} "

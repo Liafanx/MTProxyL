@@ -474,6 +474,18 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 
+	mux.Handle("GET /api/mtproxyl/web/haproxy-config", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		out, err := client.WebHAProxyConfig(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
 	// ── Настройки MTProxyL ──────────────────────────────────────────────────
 	// Живут в settings.conf, а не в конфиге движка: в Manager тот примонтирован
 	// только для чтения.

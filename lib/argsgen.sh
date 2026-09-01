@@ -82,7 +82,7 @@ _argsgen_defaults() {
 
     if web_is_enabled 2>/dev/null; then
         _AG_ON[web]="yes"
-        _AG_VAL[web]="$(web_domain 2>/dev/null) (${WEB_LAYOUT:-shared}, ${WEB_CARRIER:-websocket})"
+        _AG_VAL[web]="$(web_domain 2>/dev/null) (${WEB_FRONTEND:-nginx}, ${WEB_LAYOUT:-shared}, ${WEB_CARRIER:-websocket}, ${WEB_DECOY_MODE:-empty})"
     else
         _AG_ON[web]="no"; _AG_VAL[web]="выключен"
     fi
@@ -168,10 +168,23 @@ _argsgen_build() {
 
     if [ "${_AG_ON[web]}" = "yes" ]; then
         _a+=(--web yes --web-layout "${WEB_LAYOUT:-shared}")
+        _a+=(--web-frontend "${WEB_FRONTEND:-nginx}")
+        if [ "${WEB_FRONTEND:-nginx}" = "haproxy" ] && [ -n "${WEB_HAPROXY_CERT:-}" ]; then
+            _a+=(--web-haproxy-cert "$WEB_HAPROXY_CERT")
+        fi
         _a+=(--web-carrier "${WEB_CARRIER:-websocket}")
         _a+=(--web-secret-mode "${WEB_SECRET_MODE:-dd}")
         [ -n "${WEB_DOMAIN:-}" ] && _a+=(--web-domain "$WEB_DOMAIN")
-        { web_is_only_mode || [ "${WEB_LAYOUT:-shared}" = "split" ]; } \
+        case "${WEB_DECOY_MODE:-empty}" in
+            static_directory) _a+=(--web-decoy site) ;;
+            http_upstream)
+                _a+=(--web-decoy upstream)
+                [ -n "${WEB_DECOY_UPSTREAM:-}" ] \
+                    && _a+=(--web-decoy-upstream "$WEB_DECOY_UPSTREAM") ;;
+            *) _a+=(--web-decoy empty) ;;
+        esac
+        { [ "${WEB_FRONTEND:-nginx}" = "nginx" ] \
+          && { web_is_only_mode || [ "${WEB_LAYOUT:-shared}" = "split" ]; }; } \
             && _a+=(--web-port "${WEB_PUBLIC_PORT:-443}")
         if [ "${_AG_ON[selfmask]}" != "yes" ]; then
             [ -n "${SELFMASK_CERT_EMAIL:-}" ] && _a+=(--selfmask-email "$SELFMASK_CERT_EMAIL")
