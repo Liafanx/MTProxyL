@@ -2,16 +2,29 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Meko Runner</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#1a1a2e;overflow:hidden;font-family:system-ui,-apple-system,sans-serif}
-canvas{display:block;margin:0 auto;cursor:pointer}
-.ui{text-align:center;padding:16px;color:#e0e0e0}
+html,body{width:100%;height:100%;overflow:hidden}
+body{position:fixed;inset:0;display:flex;flex-direction:column;background:#1a1a2e;font-family:system-ui,-apple-system,sans-serif;user-select:none;-webkit-user-select:none;touch-action:none;overscroll-behavior:none}
+canvas{display:block;flex:0 0 auto;margin:0 auto;cursor:pointer;touch-action:none}
+.ui{flex:0 0 auto;text-align:center;padding:16px;color:#e0e0e0}
 .ui h1{font-size:1.4rem;margin-bottom:4px;letter-spacing:2px}
 .ui .score{font-size:1.1rem;color:#f6d55c}
 .ui .hint{font-size:.8rem;color:#888;margin-top:6px}
+@media(max-width:600px){
+  .ui{padding:10px 8px 9px}
+  .ui h1{font-size:clamp(1.05rem,5.5vw,1.4rem);letter-spacing:1px}
+  .ui .score{font-size:1rem}
+  .ui .hint{font-size:.72rem;margin-top:4px}
+}
+@media(max-height:520px){
+  .ui{padding:6px 8px}
+  .ui h1{font-size:1rem;margin-bottom:1px}
+  .ui .score{font-size:.85rem}
+  .ui .hint{display:none}
+}
 </style>
 </head>
 <body>
@@ -26,17 +39,26 @@ canvas{display:block;margin:0 auto;cursor:pointer}
 <script>
 (function () {
   var c = document.getElementById('c'),
+      ui = document.querySelector('.ui'),
       ctx = c.getContext('2d'),
-      W, H, ground, meko, foes, clouds, particles, spd, score, best, dead, frame, shake, nightCycle;
+      W, H, dpr, ground, meko, foes, clouds, particles, spd, score, best, dead, frame, shake, nightCycle;
 
   best = parseInt(localStorage.getItem('mekoBest') || '0', 10);
   document.getElementById('hi').textContent = best;
 
   function resize() {
-    W = Math.min(window.innerWidth, 720);
-    H = 320;
-    c.width = W;
-    c.height = H;
+    var viewport = window.visualViewport,
+        vw = viewport ? viewport.width : window.innerWidth,
+        vh = viewport ? viewport.height : window.innerHeight,
+        uiHeight = ui.getBoundingClientRect().height;
+    W = Math.min(Math.floor(vw), 720);
+    H = Math.max(160, Math.floor(vh - uiHeight));
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    c.style.width = W + 'px';
+    c.style.height = H + 'px';
+    c.width = Math.floor(W * dpr);
+    c.height = Math.floor(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ground = H - 40;
     if (meko) {
       var floor = ground - meko.h;
@@ -673,9 +695,13 @@ canvas{display:block;margin:0 auto;cursor:pointer}
   window.addEventListener('keydown', function (e) {
     if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); jump(); }
   });
-  c.addEventListener('touchstart', function (e) { e.preventDefault(); jump(); }, { passive: false });
-  c.addEventListener('click', function () { jump(); });
+  document.addEventListener('pointerdown', function (e) {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    jump();
+  }, { passive: false });
   window.addEventListener('resize', resize);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
 
   init();
   loop();

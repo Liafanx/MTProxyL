@@ -148,7 +148,7 @@ export function GeoblockPage() {
             <Button
               variant={mode === 'whitelist' ? 'default' : 'outline'}
               onClick={() => setConfirmWhitelist(true)}
-              disabled={running || countries.length === 0}
+              disabled={running}
             >
               Разрешать только выбранные
             </Button>
@@ -163,8 +163,8 @@ export function GeoblockPage() {
               Правила: {rulesActive ? (portsMatch ? 'активны' : 'нужно переприменить на текущие порты') : countries.length > 0 ? 'не применены' : 'список пуст'}
             </div>
             <div>После перезагрузки: {serviceEnabled ? 'восстановятся автоматически' : 'служба не включена'}</div>
-            {countries.length === 0 && (
-              <div>Для реверсивного режима сначала добавьте хотя бы одну страну.</div>
+            {mode === 'whitelist' && countries.length === 0 && (
+              <div>Ограничения включатся после добавления первой разрешённой страны.</div>
             )}
           </div>
         </CardContent>
@@ -238,7 +238,9 @@ export function GeoblockPage() {
       <ConfirmDialog
         open={confirmWhitelist}
         title="Включить реверсивную блокировку?"
-        message="Подключаться к прокси смогут только адреса выбранных стран. Остальные страны будут заблокированы на публичных портах."
+        message={countries.length === 0
+          ? 'Режим будет выбран сейчас. Пока список пуст, подключения не ограничиваются. После добавления первой страны доступ останется только у выбранных стран.'
+          : 'Подключаться к прокси смогут только адреса выбранных стран. Остальные страны будут заблокированы на публичных портах.'}
         confirmLabel="Включить"
         onConfirm={() => void changeMode('whitelist')}
         onClose={() => setConfirmWhitelist(false)}

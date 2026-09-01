@@ -81,6 +81,9 @@ tui_geoblock_menu() {
         echo -e "  ${BOLD}Режим:${NC}   $(geoblock_mode_title)"
         echo -e "  ${BOLD}Страны:${NC}  ${BLOCKLIST_COUNTRIES:-${DIM}нет${NC}}"
         echo -e "  ${BOLD}После загрузки:${NC} $(geoblock_service_enabled && echo -e "${GREEN}восстановятся${NC}" || echo -e "${YELLOW}служба не включена${NC}")"
+        if [ "${GEOBLOCK_MODE:-blacklist}" = "whitelist" ] && [ -z "${BLOCKLIST_COUNTRIES:-}" ]; then
+            echo -e "  ${BOLD}Ограничения:${NC} ${YELLOW}не активны до добавления первой страны${NC}"
+        fi
         if [ -n "${BLOCKLIST_COUNTRIES:-}" ]; then
             if geoblock_rules_active; then
                 local _gp; _gp=$(geoblock_rules_ports | paste -sd, -)
@@ -105,7 +108,11 @@ tui_geoblock_menu() {
             1) local _next="blacklist"
                [ "$GEOBLOCK_MODE" = "blacklist" ] && _next="whitelist"
                if [ "$_next" = "whitelist" ]; then
-                   echo -e "  ${YELLOW}Доступ к прокси останется только у выбранных стран.${NC}"
+                   if [ -n "${BLOCKLIST_COUNTRIES:-}" ]; then
+                       echo -e "  ${YELLOW}Доступ к прокси останется только у выбранных стран.${NC}"
+                   else
+                       echo -e "  ${YELLOW}Пока список пуст, подключения ограничиваться не будут.${NC}"
+                   fi
                    echo -en "  ${BOLD}Включить реверсивный режим? [y/N]:${NC} "
                    local _yn; read_line _yn
                    [[ "$_yn" =~ ^[yYдД] ]] && handle_geoblock_command mode "$_next"

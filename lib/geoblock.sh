@@ -301,10 +301,6 @@ geoblock_set_mode() {
         *) log_error "Режим: blacklist или whitelist"; return 1 ;;
     esac
     [ "$_new" != "$_old" ] || { log_info "Режим уже включён: $(geoblock_mode_title)"; return 0; }
-    if [ "$_new" = "whitelist" ] && [ -z "${BLOCKLIST_COUNTRIES:-}" ]; then
-        log_error "Сначала добавьте хотя бы одну разрешённую страну"
-        return 1
-    fi
     IFS=',' read -ra _codes <<< "${BLOCKLIST_COUNTRIES:-}"
     for _code in "${_codes[@]}"; do
         [ -z "$_code" ] || _download_country_cidrs "$_code" || return 1
@@ -313,8 +309,15 @@ geoblock_set_mode() {
     save_settings
     geoblock_remove_all >/dev/null 2>&1 || true
     if [ -z "${BLOCKLIST_COUNTRIES:-}" ] || geoblock_reapply_all; then
-        [ -z "${BLOCKLIST_COUNTRIES:-}" ] || geoblock_install_service || true
+        if [ -z "${BLOCKLIST_COUNTRIES:-}" ]; then
+            geoblock_remove_service
+        else
+            geoblock_install_service || true
+        fi
         log_success "Режим: $(geoblock_mode_title)"
+        if [ "$_new" = "whitelist" ] && [ -z "${BLOCKLIST_COUNTRIES:-}" ]; then
+            log_info "Список пуст — ограничения включатся после добавления первой страны"
+        fi
         return 0
     fi
     GEOBLOCK_MODE="$_old"
@@ -446,6 +449,9 @@ handle_geoblock_command() {
             echo -e "  ${BOLD}Выбранные страны:${NC} ${BLOCKLIST_COUNTRIES:-${DIM}нет${NC}}"
             echo -e "  ${BOLD}Режим:${NC} $(geoblock_mode_title)"
             echo -e "  ${BOLD}После загрузки:${NC} $(geoblock_service_enabled && echo -e "${GREEN}восстановятся${NC}" || echo -e "${YELLOW}служба не включена${NC}")"
+            if [ "${GEOBLOCK_MODE:-blacklist}" = "whitelist" ] && [ -z "${BLOCKLIST_COUNTRIES:-}" ]; then
+                echo -e "  ${BOLD}Ограничения:${NC} ${YELLOW}не активны до добавления первой страны${NC}"
+            fi
             if [ -n "$BLOCKLIST_COUNTRIES" ]; then
                 if geoblock_rules_active; then
                     local _rp; _rp=$(geoblock_rules_ports | paste -sd, -)
