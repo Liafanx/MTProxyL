@@ -1126,7 +1126,7 @@ web_nginx_has_stream() {
     local _bin
     _bin=$(_selfmask_nginx_bin 2>/dev/null) || return 1
     [ -x "$_bin" ] || return 1
-    "$_bin" -V 2>&1 | grep -q -- '--with-stream_ssl_preread_module'
+    _nginx_bin_has_static_stream "$_bin"
 }
 
 web_haproxy_ready() {

@@ -63,9 +63,18 @@ _system_nginx_has_pq() {
     _version_ge "$_ssl" "$SELFMASK_MIN_SYSTEM_OPENSSL"
 }
 
+_nginx_bin_has_static_stream() {
+    local _bin="$1" _args
+    [ -x "$_bin" ] || command -v "$_bin" >/dev/null 2>&1 || return 1
+    _args=$("$_bin" -V 2>&1)
+    grep -q -- '--with-stream_ssl_preread_module' <<< "$_args" || return 1
+    grep -qE -- '--with-stream([[:space:]]|$)' <<< "$_args" || return 1
+    ! grep -q -- '--with-stream=dynamic' <<< "$_args"
+}
+
 _system_nginx_has_stream() {
     local _bin; _bin=$(command -v nginx 2>/dev/null) || return 1
-    "$_bin" -V 2>&1 | grep -q -- '--with-stream_ssl_preread_module'
+    _nginx_bin_has_static_stream "$_bin"
 }
 
 _selfmask_web_needs_stream() {
@@ -643,7 +652,8 @@ _selfmask_install_pq_nginx() {
     # Системный nginx с OpenSSL 3.5.0+ умеет X25519MLKEM768 сам — качать свою
     # сборку незачем. Каталоги под конфиг и логи всё равно готовим: запускаем
     # его со своим конфигом, чтобы не трогать чужой /etc/nginx.
-    if [ "$_need" = "nginx" ] && [ "$_force" != "force" ] && _system_nginx_has_pq; then
+    if [ "$_need" = "nginx" ] && [ "$_force" != "force" ] && _system_nginx_has_pq \
+       && { ! _selfmask_web_needs_stream || _system_nginx_has_stream; }; then
         log_success "Используем $(_selfmask_nginx_source)"
         log_info "Своя сборка nginx не нужна — обновления придут из дистрибутива"
         mkdir -p /var/log/mtproxyl-nginx /var/lib/mtproxyl-nginx/{body,proxy,fastcgi} /var/lock
@@ -1374,6 +1384,16 @@ _selfmask_activate_nginx_conf() {
     local _conf="$1" _test_out="" _nginx_bin
     [ -f "$_conf" ] || { log_error "Конфиг nginx не найден: ${_conf}"; return 1; }
     _nginx_bin="$(_selfmask_nginx_bin_for_conf "$_conf")"
+    if _selfmask_conf_needs_stream "$_conf" \
+       && ! _nginx_bin_has_static_stream "$_nginx_bin"; then
+        log_info "Конфигу нужен статический stream — устанавливаем nginx из состава MTProxyL"
+        _selfmask_install_pq_nginx nginx force || return 1
+        _nginx_bin="$(_selfmask_pq_nginx_bin)"
+        _nginx_bin_has_static_stream "$_nginx_bin" || {
+            log_error "Установленный nginx не содержит статический stream"
+            return 1
+        }
+    fi
 
     _test_out=$("$_nginx_bin" -t -c "$_conf" 2>&1) || {
         log_error "Ошибка конфига nginx"
@@ -1470,6 +1490,10 @@ EOF
     if web_is_enabled 2>/dev/null; then
         _web_stream=$(web_nginx_stream_block) || {
             log_error "Не удалось собрать stream-блок WEB"; return 1; }
+        if web_frontend_is_direct 2>/dev/null && [ -n "$_web_stream" ]; then
+            log_error "WEB: раскладка split/WEB-only не должна содержать stream-блок"
+            return 1
+        fi
         _web_map=$(web_nginx_upgrade_map)
         _web_server=$(web_nginx_http_server "$_cert_dir") || return 1
         if web_uses_managed_nginx 2>/dev/null \
@@ -2325,7 +2349,7 @@ selfmask_refresh_pq_nginx() {
     log_info "Обновление nginx из состава MTProxyL (${SELFMASK_PQ_RELEASE_TAG})..."
     _selfmask_install_pq_nginx nginx force || return 1
     local _bin; _bin=$(_selfmask_pq_nginx_bin)
-    if "$_bin" -V 2>&1 | grep -q -- '--with-stream_ssl_preread_module'; then
+    if _nginx_bin_has_static_stream "$_bin"; then
         log_success "nginx умеет stream и ssl_preread — WEB Proxy можно включать"
     else
         log_warn "В этой сборке нет stream — раскладка shared работать не будет"

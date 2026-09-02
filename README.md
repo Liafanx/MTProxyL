@@ -1369,6 +1369,9 @@ proxy_set_header If-None-Match "";
 - **nginx со stream и ssl_preread** — только для `shared` со встроенным nginx.
   В WEB-only и `split` nginx принимает WEB напрямую. Обновить:
   `mtproxyl selfmask pq-nginx`.
+  Системная сборка с `--with-stream=dynamic` без явного `load_module` не
+  используется: MTProxyL автоматически выбирает свою сборку со статическим
+  stream, чтобы исключить ошибку `unknown directive "stream"`.
 - **IPv6 не обязателен.** На IPv4-only VPS nginx получает только
   IPv4-listener; это работает одинаково в `split` и `shared`.
 - **Порт 443 для WEB.** Клиент ходит туда только на него и порт в ссылку не
