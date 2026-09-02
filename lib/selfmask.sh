@@ -1472,6 +1472,11 @@ EOF
             log_error "Не удалось собрать stream-блок WEB"; return 1; }
         _web_map=$(web_nginx_upgrade_map)
         _web_server=$(web_nginx_http_server "$_cert_dir") || return 1
+        if web_uses_managed_nginx 2>/dev/null \
+           && [ "$(grep -c 'proxy_next_upstream off;' <<< "$_web_server")" -ne 1 ]; then
+            log_error "WEB: proxy_next_upstream off должен встречаться в nginx-блоке ровно один раз"
+            return 1
+        fi
     fi
 
     local _selfmask_servers=""
@@ -1673,7 +1678,10 @@ _selfmask_apply_mtproxyl_settings() {
     if is_proxy_running; then
         log_info "Перезапуск прокси..."
         load_secrets
-        restart_proxy_container || true
+        restart_proxy_container || return 1
+        if web_is_enabled 2>/dev/null; then
+            _web_ensure_static_snapshot || return 1
+        fi
     else
         log_info "Прокси не запущен — запустите позже командой mtproxyl start"
     fi

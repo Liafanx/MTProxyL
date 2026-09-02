@@ -601,6 +601,63 @@ web_link_for_label() {
     return 1
 }
 
+_web_static_probe_paths() {
+    local _dir _file _rel _files
+    _dir=$(web_decoy_dir)
+    printf '/\n'
+    [ -d "$_dir" ] || return 0
+    _files=$(find "$_dir" -type f \( -iname '*.css' -o -iname '*.js' \) 2>/dev/null \
+        | sort | sed -n '1,64p')
+    while IFS= read -r _file; do
+        [ -n "$_file" ] || continue
+        _rel="${_file#${_dir%/}/}"
+        case "$_rel" in *[[:space:]]*) continue ;; esac
+        printf '/%s\n' "$_rel"
+    done <<< "$_files"
+}
+
+_web_static_snapshot_ready() {
+    [ "${WEB_DECOY_MODE:-empty}" = "static_directory" ] || return 0
+    web_is_reanimator && return 0
+    local _domain _path _code _paths
+    _domain=$(web_domain 2>/dev/null) || return 1
+    _paths=$(_web_static_probe_paths)
+    WEB_STATIC_SNAPSHOT_FAILURE=""
+    while IFS= read -r _path; do
+        [ -n "$_path" ] || continue
+        _code=$(curl -sS --noproxy '*' --connect-timeout 1 --max-time 2 --head -o /dev/null \
+            -w '%{http_code}' -H "Host: ${_domain}" \
+            -H 'X-Forwarded-For: 198.51.100.10' \
+            "http://127.0.0.1:${WEB_LISTEN_PORT:-15080}${_path}" 2>/dev/null) || _code="000"
+        if [ "$_code" != "200" ]; then
+            WEB_STATIC_SNAPSHOT_FAILURE="${_path} (HTTP ${_code})"
+            return 1
+        fi
+    done <<< "$_paths"
+    return 0
+}
+
+_web_wait_static_snapshot() {
+    local _attempt
+    for _attempt in 1 2 3 4 5; do
+        _web_static_snapshot_ready && return 0
+        [ "$_attempt" -eq 5 ] || sleep 1
+    done
+    return 1
+}
+
+_web_ensure_static_snapshot() {
+    [ "${WEB_DECOY_MODE:-empty}" = "static_directory" ] || return 0
+    _web_wait_static_snapshot && return 0
+    log_warn "WEB snapshot не отдаёт ${WEB_STATIC_SNAPSHOT_FAILURE:-статические файлы} — перезапускаем движок"
+    MTPROXYL_QUIET_LINKS="true" restart_proxy_container >/dev/null 2>&1 || return 1
+    _web_wait_static_snapshot || {
+        log_error "WEB snapshot по-прежнему не отдаёт ${WEB_STATIC_SNAPSHOT_FAILURE:-статические файлы}"
+        return 1
+    }
+    log_success "WEB snapshot статических файлов перестроен"
+}
+
 # ── Включение и выключение ────────────────────────────────────
 
 _web_prepare_frontend() {
@@ -763,6 +820,12 @@ web_enable() {
         return 1
     fi
 
+    if ! _web_ensure_static_snapshot; then
+        log_error "Статическая заглушка WEB не загрузилась — откатываем"
+        _web_restore_runtime "$_old_mode" "$_old_enabled" "$_old_running"
+        return 1
+    fi
+
     if web_uses_managed_nginx; then
         log_info "Настройка nginx на публичном порту..."
         if ! _selfmask_configure_nginx || ! systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null; then
@@ -913,6 +976,7 @@ web_sync_profiles() {
     fi
     web_is_enabled || { log_info "WEB Proxy выключен — синхронизировать нечего"; return 0; }
     reload_proxy_config || return 1
+    _web_ensure_static_snapshot || return 1
     log_success "Профили WEB пересобраны: $(web_profile_count) шт."
 }
 
