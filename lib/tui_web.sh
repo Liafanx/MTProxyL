@@ -7,7 +7,7 @@ _tui_web_layout_menu() {
     echo -e "  ${BOLD}Раскладка портов${NC}"
     echo ""
     echo -e "  ${CYAN}[1]${NC}  shared — WEB и обычный прокси на одном порту"
-    echo -e "       ${DIM}$(web_frontend_is_haproxy && echo 'HAProxy' || echo 'nginx') разбирает SNI. Домен WEB должен отличаться от домена${NC}"
+    echo -e "       ${DIM}$(web_frontend_has_haproxy && echo 'HAProxy' || echo 'nginx') разбирает SNI. Домен WEB должен отличаться от домена${NC}"
     echo -e "       ${DIM}маскировки.${NC}"
     echo ""
     echo -e "  ${CYAN}[2]${NC}  split — у WEB свой порт"
@@ -43,12 +43,22 @@ _tui_web_frontend_menu() {
     echo ""
     echo -e "  ${CYAN}[1]${NC}  nginx MTProxyL  ${DIM}сертификат и конфиг управляются автоматически${NC}"
     echo -e "  ${CYAN}[2]${NC}  внешний HAProxy ${DIM}уже установлен на этой машине${NC}"
+    echo -e "  ${CYAN}[3]${NC}  HAProxy → nginx MTProxyL ${DIM}публичный порт у HAProxy, TLS и заглушка у нас${NC}"
     echo ""
     echo -e "  ${DIM}[0]${NC}  Отмена"
     echo ""
-    local _c; _c=$(read_choice "выбор" "$([ "${WEB_FRONTEND:-nginx}" = haproxy ] && echo 2 || echo 1)")
+    local _cur=1
+    web_frontend_is_haproxy && _cur=2
+    web_frontend_is_haproxy_nginx && _cur=3
+    local _c; _c=$(read_choice "выбор" "$_cur")
     case "$_c" in
         1) web_set_param WEB_FRONTEND nginx ;;
+        3)
+            web_set_param WEB_FRONTEND haproxy-nginx || return 0
+            echo ""
+            log_info "HAProxy остаётся вашим: фрагмент — mtproxyl web haproxy-config"
+            log_info "Сертификат выпускает и продлевает MTProxyL, PEM для HAProxy не нужен"
+            ;;
         2)
             web_set_param WEB_FRONTEND haproxy || return 0
             echo ""
@@ -131,7 +141,7 @@ tui_web_menu() {
         echo -e "  ${CYAN}[6]${NC}  Домен  ${DIM}$(web_domain 2>/dev/null || echo '—')${NC}"
         echo -e "  ${CYAN}[7]${NC}  Ссылки tg://webproxy"
         echo -e "  ${CYAN}[8]${NC}  Диагностика /web-status  ${DIM}$([ "${WEB_DEBUG:-false}" = "true" ] && echo "включена" || echo "выключена")${NC}"
-        if web_frontend_is_haproxy; then
+        if web_frontend_has_haproxy; then
             echo -e "  ${CYAN}[9]${NC}  Конфигурация HAProxy"
         else
             echo -e "  ${CYAN}[9]${NC}  Пользовательский конфиг nginx  ${DIM}$(nginx_custom_status_line)${NC}"
@@ -187,7 +197,7 @@ tui_web_menu() {
                 fi
                 press_any_key ;;
             9)
-                if web_frontend_is_haproxy; then
+                if web_frontend_has_haproxy; then
                     echo ""
                     web_haproxy_config
                     press_any_key

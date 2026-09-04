@@ -519,7 +519,7 @@ load_settings() {
         *) WEB_LAYOUT="shared" ;;
     esac
     case "$WEB_FRONTEND" in
-        nginx|haproxy) ;;
+        nginx|haproxy|haproxy-nginx) ;;
         *) WEB_FRONTEND="nginx" ;;
     esac
     [[ "$WEB_PUBLIC_PORT" =~ ^[0-9]+$ ]] && [ "$WEB_PUBLIC_PORT" -ge 1 ] && [ "$WEB_PUBLIC_PORT" -le 65535 ] || WEB_PUBLIC_PORT="443"

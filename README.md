@@ -255,7 +255,7 @@ mtproxyl install --help          # полный список аргументо�
 | `--web-domain` | домен | — | Публичный домен WEB с A-записью на сервер. Обязателен без `--selfmask`. |
 | `--web-carrier` | `https`, `https-lanes`, `websocket`, `websocket-lanes` | `websocket` | Транспорт WEB. |
 | `--web-layout` | `shared`, `split` | `shared` | Раскладка совместного режима. |
-| `--web-frontend` | `nginx`, `haproxy` | `nginx` | Встроенный nginx либо существующий HAProxy на этой машине. |
+| `--web-frontend` | `nginx`, `haproxy`, `haproxy-nginx` | `nginx` | Встроенный nginx, существующий HAProxy на этой машине либо HAProxy перед встроенным nginx. |
 | `--web-haproxy-cert` | абсолютный путь | `/etc/haproxy/certs/<домен>.pem` | PEM с сертификатом и ключом для фрагмента HAProxy. |
 | `--web-port` | 1–65535 | `443` | Публичный порт встроенного nginx для `split` и WEB-only. |
 | `--web-secret-mode` | `plain`, `dd` | `dd` | Представление секрета в WEB-ссылке. |
@@ -1291,6 +1291,31 @@ FakeTLS-listener telemt с PROXY protocol. Поэтому настоящий IP 
 `:443`. При `shared` WEB нельзя выключить одной командой, пока HAProxy держит
 общий порт; сначала перейдите на `split` с отдельным портом MTProto либо
 верните frontend nginx. Статус и готовый фрагмент доступны также в панели.
+
+### HAProxy перед nginx MTProxyL
+
+Режим `WEB_FRONTEND=haproxy-nginx` оставляет HAProxy публичный порт, но всё
+остальное — сертификат, TLS, заглушку и разбор WEB — по-прежнему делает nginx
+MTProxyL. HAProxy работает в TCP mode и передаёт соединение как есть, с
+`send-proxy`, поэтому настоящий IP клиента виден и nginx, и движку:
+
+```bash
+mtproxyl web set WEB_FRONTEND haproxy-nginx
+mtproxyl web haproxy-config
+mtproxyl web enable
+```
+
+| Раскладка | Путь трафика |
+|-----------|--------------|
+| `shared` | HAProxy `:443` разводит по SNI: WEB-домен → nginx `:WEB_TLS_PORT` → движок, остальное → FakeTLS-listener движка |
+| WEB-only | HAProxy `:443` → nginx `:WEB_TLS_PORT` → движок |
+| `split` | HAProxy `:443` → nginx `:WEB_TLS_PORT`, отдельный frontend `:PROXY_PORT` → FakeTLS-listener движка |
+
+Отличия от голого `haproxy`: PEM для HAProxy не нужен — сертификат выпускает и
+продлевает MTProxyL; Selfmask можно оставить включённым, потому что публичный
+порт делит HAProxy, а не nginx; stream-модуль nginx в этом режиме не требуется.
+Порт `80` должен оставаться свободным для ACME — его слушает nginx MTProxyL,
+и включение об этом предупредит, если порт занял HAProxy.
 
 ### Защита от отпечатка заглушки
 

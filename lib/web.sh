@@ -11,7 +11,15 @@ web_is_enabled() { [ "${WEB_ENABLED:-false}" = "true" ]; }
 mtproto_is_enabled() { [ "${PROXY_MODE:-mtproto}" != "web" ]; }
 web_is_only_mode() { [ "${PROXY_MODE:-mtproto}" = "web" ]; }
 web_frontend_is_haproxy() { [ "${WEB_FRONTEND:-nginx}" = "haproxy" ]; }
-web_frontend_title() { web_frontend_is_haproxy && echo "внешний HAProxy" || echo "nginx MTProxyL"; }
+# HAProxy держит публичный порт, но TLS и заглушку по-прежнему обслуживает
+# nginx MTProxyL: клиент приходит в него по PROXY protocol с приватного порта.
+web_frontend_is_haproxy_nginx() { [ "${WEB_FRONTEND:-nginx}" = "haproxy-nginx" ]; }
+web_frontend_has_haproxy() { web_frontend_is_haproxy || web_frontend_is_haproxy_nginx; }
+web_frontend_title() {
+    if web_frontend_is_haproxy; then echo "внешний HAProxy"
+    elif web_frontend_is_haproxy_nginx; then echo "внешний HAProxy → nginx MTProxyL"
+    else echo "nginx MTProxyL"; fi
+}
 web_uses_managed_nginx() { ! web_frontend_is_haproxy; }
 web_can_disable() { mtproto_is_enabled && { web_uses_managed_nginx || web_layout_is_split; }; }
 
@@ -26,12 +34,17 @@ proxy_transport_mode_title() {
 # shared — один публичный порт на двоих, nginx разводит по SNI.
 # split — у WEB свой порт, движок остаётся на PROXY_PORT напрямую.
 web_layout_is_split() { [ "${WEB_LAYOUT:-shared}" = "split" ]; }
-web_frontend_is_direct() { web_is_only_mode || web_layout_is_split; }
+# Публичный порт слушает nginx сам. За HAProxy он всегда сидит на приватном,
+# поэтому «прямой» раскладки там нет ни в split, ни в WEB-only.
+web_frontend_is_direct() {
+    web_frontend_is_haproxy_nginx && return 1
+    web_is_only_mode || web_layout_is_split
+}
 
 # Порт, на который приходит клиент WEB. В ссылку он не пишется, но именно
 # он идёт в public_addr.
 web_public_port() {
-    web_frontend_is_haproxy && { echo 443; return 0; }
+    web_frontend_has_haproxy && { echo 443; return 0; }
     if web_frontend_is_direct; then echo "${WEB_PUBLIC_PORT:-443}"; else echo "${PROXY_PORT:-443}"; fi
 }
 
@@ -391,6 +404,8 @@ web_nginx_stream_block() {
     web_uses_managed_nginx || return 0
     # В split разводить нечего: у WEB свой порт, nginx слушает его напрямую.
     web_frontend_is_direct && return 0
+    # За HAProxy по SNI разводит он сам — nginx получает уже свою ветку.
+    web_frontend_is_haproxy_nginx && return 0
     local _domain _port _listen6=""
     _domain=$(web_domain) || return 1
     _port="${PROXY_PORT:-443}"
@@ -532,12 +547,96 @@ web_nginx_upgrade_map() {
 NGX
 }
 
+# HAProxy держит только публичный порт и отдаёт соединение как есть: TLS,
+# заглушку и разбор WEB по-прежнему делает nginx MTProxyL, поэтому сертификат
+# остаётся под нашим управлением, а HAProxy не нужен ни один crt.
+_web_haproxy_nginx_config() {
+    local _domain="$1"
+    local _web_backend="server mtproxyl_web_nginx_1 127.0.0.1:${WEB_TLS_PORT:-15444} send-proxy"
+    local _mtproto_backend="server mtproxyl_mtproto_1 127.0.0.1:${WEB_MTPROXY_PORT:-15443} send-proxy"
+
+    if mtproto_is_enabled && ! web_layout_is_split; then
+        cat <<HAP
+# Общий порт: HAProxy разводит по SNI, дальше всё делает nginx MTProxyL.
+# Если frontend :443 уже существует, перенесите в него ACL/use_backend,
+# а backend'ы добавьте целиком.
+frontend mtproxyl_public
+    bind :443
+    mode tcp
+    no log
+    timeout client 65s
+    tcp-request inspect-delay 5s
+    tcp-request content accept if { req.ssl_hello_type 1 }
+    acl mtproxyl_web_sni req.ssl_sni -i ${_domain}
+    use_backend mtproxyl_web_nginx if mtproxyl_web_sni
+    default_backend mtproxyl_mtproto
+
+backend mtproxyl_web_nginx
+    mode tcp
+    retries 0
+    timeout connect 5s
+    timeout server 65s
+    ${_web_backend}
+
+backend mtproxyl_mtproto
+    mode tcp
+    retries 0
+    timeout connect 5s
+    timeout server 300s
+    ${_mtproto_backend}
+HAP
+        return 0
+    fi
+
+    cat <<HAP
+# WEB приходит на публичный :443 и уходит в nginx MTProxyL как есть.
+frontend mtproxyl_web_public
+    bind :443
+    mode tcp
+    no log
+    timeout client 65s
+    default_backend mtproxyl_web_nginx
+
+backend mtproxyl_web_nginx
+    mode tcp
+    retries 0
+    timeout connect 5s
+    timeout server 65s
+    ${_web_backend}
+HAP
+
+    if mtproto_is_enabled && web_layout_is_split; then
+        cat <<HAP
+
+# MTProto в раскладке split ходит своим портом — движок ждёт его от HAProxy.
+frontend mtproxyl_mtproto_public
+    bind :${PROXY_PORT:-443}
+    mode tcp
+    no log
+    timeout client 65s
+    default_backend mtproxyl_mtproto
+
+backend mtproxyl_mtproto
+    mode tcp
+    retries 0
+    timeout connect 5s
+    timeout server 300s
+    ${_mtproto_backend}
+HAP
+    fi
+}
+
 web_haproxy_config() {
     local _domain _cert _csp
     _domain=$(web_domain 2>/dev/null) || return 1
     [ -n "$_domain" ] || { log_error "Сначала задайте WEB_DOMAIN"; return 1; }
     _cert=$(web_haproxy_cert)
     _csp=$(web_csp_policy)
+
+    if web_frontend_is_haproxy_nginx; then
+        _web_haproxy_nginx_config "$_domain"
+        return $?
+    fi
 
     if mtproto_is_enabled && ! web_layout_is_split; then
         cat <<HAP
@@ -777,7 +876,7 @@ _web_prepare_frontend() {
     if web_uses_managed_nginx; then
         _selfmask_install_deps || return 1
         _selfmask_install_pq_nginx || return 1
-        if ! web_frontend_is_direct && ! web_nginx_has_stream; then
+        if ! web_frontend_is_direct && ! web_frontend_is_haproxy_nginx && ! web_nginx_has_stream; then
             log_info "Для общей раскладки нужен nginx со stream — устанавливаем сборку MTProxyL..."
             _selfmask_install_pq_nginx nginx force || return 1
             web_nginx_has_stream || { log_error "Установленный nginx не поддерживает stream"; return 1; }
@@ -1139,7 +1238,7 @@ web_preflight_problems() {
     web_port_is_443 || _p+="публичный порт WEB $(web_public_port), а клиент ходит туда только на 443"$'\n'
     web_public_addr >/dev/null 2>&1 || _p+="не определён публичный IP"$'\n'
     if web_uses_managed_nginx && [ "$_already" = "true" ] \
-       && ! web_frontend_is_direct && ! web_nginx_has_stream; then
+       && ! web_frontend_is_direct && ! web_frontend_is_haproxy_nginx && ! web_nginx_has_stream; then
         _p+="nginx активного WEB не поддерживает stream — примените WEB заново: mtproxyl web enable"$'\n'
     fi
     if web_uses_managed_nginx && nginx_custom_active 2>/dev/null \
@@ -1152,9 +1251,14 @@ web_preflight_problems() {
     if mtproto_is_enabled && web_layout_is_split && [ "${PROXY_PORT:-443}" = "$(web_public_port)" ]; then
         _p+="в раскладке split у прокси и WEB должны быть разные порты, сейчас оба ${PROXY_PORT}"$'\n'
     fi
-    if web_frontend_is_haproxy && mtproto_is_enabled && ! web_layout_is_split \
+    if web_frontend_has_haproxy && mtproto_is_enabled && ! web_layout_is_split \
        && [ "${PROXY_PORT:-443}" != "443" ]; then
         _p+="для shared через HAProxy обычный MTProto тоже выходит на :443 — установите PROXY_PORT = 443"$'\n'
+    fi
+    # Сертификат остаётся у нас, значит и ACME-порт нужен нам.
+    if web_frontend_is_haproxy_nginx && [ "${SELFMASK_CERT_MODE:-letsencrypt}" != "selfsigned" ] \
+       && web_haproxy_port_owned 80; then
+        _p+="порт 80 занят HAProxy, а через него nginx MTProxyL выпускает сертификат — освободите :80"$'\n'
     fi
     web_engine_supports || _p+="движок $(engine_current_version 2>/dev/null) не умеет WEB, нужен ${WEB_MIN_ENGINE_VERSION} или новее"$'\n'
     # У каждого vhost должен быть хотя бы один профиль, а профиль — это
@@ -1194,6 +1298,9 @@ web_busy_ports() {
         _ports="${WEB_LISTEN_PORT:-15080}"
         mtproto_is_enabled && ! web_layout_is_split \
             && _ports="${_ports} ${WEB_MTPROXY_PORT:-15443}"
+    elif web_frontend_is_haproxy_nginx; then
+        # Публичный порт занимает HAProxy — нам нужны только приватные.
+        _ports="${WEB_LISTEN_PORT:-15080} ${WEB_TLS_PORT:-15444} ${WEB_MTPROXY_PORT:-15443}"
     elif web_frontend_is_direct; then
         _ports="${WEB_LISTEN_PORT:-15080} $(web_public_port)"
     else
@@ -1224,8 +1331,15 @@ web_nginx_has_stream() {
 }
 
 web_haproxy_ready() {
-    web_frontend_is_haproxy || return 1
+    web_frontend_has_haproxy || return 1
     web_haproxy_port_owned 443 || return 1
+    if web_frontend_is_haproxy_nginx; then
+        # 15444 держит наш nginx, у HAProxy проверяем только публичные порты.
+        if mtproto_is_enabled && web_layout_is_split; then
+            web_haproxy_port_owned "${PROXY_PORT:-443}" || return 1
+        fi
+        return 0
+    fi
     if mtproto_is_enabled && ! web_layout_is_split; then
         web_haproxy_port_owned "${WEB_TLS_PORT:-15444}" || return 1
     fi
@@ -1281,7 +1395,16 @@ web_status_print() {
     echo -e "   🚚 Carrier          ${WEB_CARRIER:-—}"
     echo -e "   🔑 Режим секрета    ${WEB_SECRET_MODE:-—}"
     echo -e "   📍 public_addr      $(web_public_addr 2>/dev/null || echo '—')"
-    if web_frontend_is_haproxy && web_is_only_mode; then
+    if web_frontend_is_haproxy_nginx && web_is_only_mode; then
+        echo -e "   🧭 Раскладка        ${BOLD}WEB-only${NC} — без обычного MTProto"
+        echo -e "   🪟 Порты            HAProxy :443 → nginx :${WEB_TLS_PORT:-15444} → WEB :${WEB_LISTEN_PORT:-15080}"
+    elif web_frontend_is_haproxy_nginx && web_layout_is_split; then
+        echo -e "   🧭 Раскладка        ${BOLD}split${NC} — свой порт у WEB"
+        echo -e "   🪟 Порты            HAProxy :443 → nginx :${WEB_TLS_PORT:-15444} → WEB :${WEB_LISTEN_PORT:-15080}, MTProto HAProxy :${PROXY_PORT:-443} → движок :${WEB_MTPROXY_PORT:-15443}"
+    elif web_frontend_is_haproxy_nginx; then
+        echo -e "   🧭 Раскладка        ${BOLD}shared${NC} — HAProxy разбирает SNI"
+        echo -e "   🪟 Порты            HAProxy :443 → nginx :${WEB_TLS_PORT:-15444} → WEB :${WEB_LISTEN_PORT:-15080}; MTProto → движок :${WEB_MTPROXY_PORT:-15443}"
+    elif web_frontend_is_haproxy && web_is_only_mode; then
         echo -e "   🧭 Раскладка        ${BOLD}WEB-only${NC} — без обычного MTProto"
         echo -e "   🪟 Порты            HAProxy :443 → WEB :${WEB_LISTEN_PORT:-15080}"
     elif web_frontend_is_haproxy && web_layout_is_split; then
@@ -1300,7 +1423,7 @@ web_status_print() {
         echo -e "   🧭 Раскладка        ${BOLD}shared${NC} — один порт, разбор по SNI"
         echo -e "   🪟 Порты            nginx :${PROXY_PORT:-443} → движок :${WEB_MTPROXY_PORT:-15443}, WEB :${WEB_LISTEN_PORT:-15080}"
     fi
-    if web_frontend_is_haproxy; then
+    if web_frontend_has_haproxy; then
         local _haproxy_state
         if web_haproxy_ready; then
             _haproxy_state="${GREEN}слушает ожидаемые порты${NC}"
@@ -1308,7 +1431,11 @@ web_status_print() {
             _haproxy_state="${YELLOW}нужно применить конфигурацию${NC}"
         fi
         echo -e "   ⚙️  HAProxy          ${_haproxy_state}"
-        echo -e "   📄 PEM              $(web_haproxy_cert)"
+        if web_frontend_is_haproxy_nginx; then
+            echo -e "   📄 Сертификат       у nginx MTProxyL: $(web_cert_dir 2>/dev/null || echo '—')"
+        else
+            echo -e "   📄 PEM              $(web_haproxy_cert)"
+        fi
     fi
     if [ "${WEB_DECOY_MODE:-empty}" = "empty" ]; then
         echo -e "   🕸  Заглушка         ${DIM}выключена — пустой ответ${NC}"
@@ -1393,7 +1520,7 @@ handle_web_command() {
 
 # Формат как в каталогах NFT и Selfmask: КЛЮЧ|валидатор|описание.
 _WEB_SETTABLE=(
-    "WEB_FRONTEND|enum:nginx,haproxy|Frontend публичного WEB: nginx MTProxyL или внешний HAProxy"
+    "WEB_FRONTEND|enum:nginx,haproxy,haproxy-nginx|Frontend публичного WEB: nginx MTProxyL, внешний HAProxy или HAProxy перед нашим nginx"
     "WEB_LAYOUT|enum:shared,split|shared — один порт с FakeTLS по SNI, split — свой порт"
     "WEB_PUBLIC_PORT|range:1:65535|Порт nginx WEB в раскладке split"
     "WEB_DOMAIN|custom:_validate_web_domain|Публичный домен WEB Proxy"
