@@ -935,6 +935,10 @@ _web_prepare_frontend() {
                 _selfmask_deploy_site || return 1
                 rm -f "$WEB_SITE_REDEPLOY_MARKER"
             fi
+            # Готовый сайт заново не разворачиваем, но недостающие файлы
+            # дописываем: иначе после обновления заглушка остаётся без
+            # robots.txt, favicon.ico и своей страницы 404.
+            _selfmask_deploy_site_extras "$(web_decoy_dir)" 2>/dev/null || true
             _web_ensure_404 || return 1
             ;;
     esac
@@ -1392,6 +1396,26 @@ web_haproxy_ready() {
     return 0
 }
 
+# Применены ли правки против отпечатка заглушки. Спрашивают об этом часто:
+# без переприменения WEB конфиг nginx остаётся прежним, а с чужим frontend
+# или своим nginx.conf заголовки задаёт владелец конфигурации.
+web_fingerprint_state() {
+    if web_frontend_is_haproxy; then
+        echo "заголовки задаёт HAProxy — возьмите фрагмент: mtproxyl web haproxy-config"
+        return 0
+    fi
+    if nginx_custom_active 2>/dev/null; then
+        echo "пользовательский nginx.conf — заголовки не подставляются"
+        return 0
+    fi
+    local _conf; _conf=$(_selfmask_generated_pq_conf 2>/dev/null)
+    if [ -f "$_conf" ] && grep -q 'mtproxyl_csp' "$_conf" 2>/dev/null; then
+        echo "свои заголовки и server_tokens off"
+        return 0
+    fi
+    echo "старый конфиг nginx — переприменить: mtproxyl web enable"
+}
+
 # ── Команда CLI ───────────────────────────────────────────────
 
 # В реаниматоре конфигом владеет цель: мы ничего не настраиваем, только
@@ -1487,6 +1511,7 @@ web_status_print() {
         echo -e "   🕸  Заглушка         ${DIM}выключена — пустой ответ${NC}"
     else
         echo -e "   🕸  Заглушка         $(web_decoy_dir)"
+        echo -e "   🎯 Отпечаток        $(web_fingerprint_state)"
     fi
     if web_zapret2_hurts 2>/dev/null; then
         echo -e "   ⚠️  Zapret2          ${YELLOW}режет скорость на ${WEB_CARRIER}${NC} — возьмите websocket"
