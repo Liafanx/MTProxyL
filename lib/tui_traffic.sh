@@ -70,8 +70,7 @@ tui_ip_history_menu() {
                 fi
                 press_any_key ;;
             2)
-                echo -en "  ${BOLD}Минут между снимками [${_min}, 0 — выключить]:${NC} "
-                local _v; read_line _v
+                local _v; read_line _v "  ${BOLD}Минут между снимками [${_min}, 0 — выключить]:${NC} "
                 [ -n "$_v" ] || continue
                 if [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -le 1440 ]; then
                     IP_HISTORY_INTERVAL="$_v"
@@ -96,8 +95,7 @@ tui_ip_history_menu() {
                 fi
                 press_any_key ;;
             4)
-                echo -en "  ${BOLD}Адресов на пользователя [$(_user_ip_history_cap)]:${NC} "
-                local _c; read_line _c
+                local _c; read_line _c "  ${BOLD}Адресов на пользователя [$(_user_ip_history_cap)]:${NC} "
                 [ -n "$_c" ] || continue
                 if [[ "$_c" =~ ^[0-9]+$ ]] && [ "$_c" -ge 1 ] && [ "$_c" -le 100000 ]; then
                     IP_HISTORY_LIMIT="$_c"
@@ -331,8 +329,7 @@ tui_stats_reset_menu() {
             4) _tui_stats_confirm "Убрать данные удалённых пользователей?" || { press_any_key; continue; }
                handle_stats_command reset orphans; press_any_key ;;
             5) echo ""
-               echo -en "  ${BOLD}Метка пользователя:${NC} "
-               local _l; read_line _l
+               local _l; read_line _l "  ${BOLD}Метка пользователя:${NC} "
                if [ -n "$_l" ]; then
                    _tui_stats_confirm "Сбросить статистику ${_l}?" \
                        && handle_stats_command reset user "$_l"
@@ -345,8 +342,7 @@ tui_stats_reset_menu() {
 
 _tui_stats_confirm() {
     echo ""
-    echo -en "  ${YELLOW}${1}${NC} [y/N]: "
-    local _a; read_line _a
+    local _a; read_line _a "  ${YELLOW}${1}${NC} [y/N]: "
     [[ "$_a" =~ ^[yYдД] ]] && return 0
     log_info "Отменено"
     return 1

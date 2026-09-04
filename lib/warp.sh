@@ -698,8 +698,7 @@ _warp_me_gate() {
         return 1
     fi
 
-    echo -en "  ${BOLD}Выключить middle proxy и продолжить? [y/N]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Выключить middle proxy и продолжить? [y/N]:${NC} "
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Ничего не меняем — WARP не включён"; return 1; }
 
     handle_expert_command set general use_middle_proxy false --no-apply >/dev/null || {
@@ -793,8 +792,7 @@ _warp_apply_upstream() {
         echo -e "  ${DIM}Движок раскладывает трафик между всеми такими маршрутами по весу —${NC}"
         echo -e "  ${DIM}часть соединений пойдёт мимо туннеля. Их нужно выключить.${NC}"
         if [ "${MTPROXYL_ASSUME_YES:-}" != "1" ]; then
-            echo -en "  ${BOLD}Выключить их на время работы WARP? [Y/n]:${NC} "
-            local _yn; read_line _yn
+            local _yn; read_line _yn "  ${BOLD}Выключить их на время работы WARP? [Y/n]:${NC} "
             [[ "$_yn" =~ ^[nN] ]] && { log_error "Без этого вариант C работать не будет"; return 1; }
         fi
     fi

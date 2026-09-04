@@ -153,8 +153,7 @@ except: print('?')
 
     # Предложить перезапуск
     if is_proxy_running; then
-        echo -en "  ${BOLD}Перезапустить прокси? [Y/n]:${NC} "
-        local yn; read_line yn
+        local yn; read_line yn "  ${BOLD}Перезапустить прокси? [Y/n]:${NC} "
         if [[ ! "$yn" =~ ^[nN] ]]; then
             load_secrets
             restart_proxy_container
@@ -208,8 +207,7 @@ engine_rollback() {
     done <<< "$images"
 
     echo ""
-    echo -en "  ${BOLD}Номер версии для отката:${NC} "
-    local choice; read_line choice
+    local choice; read_line choice "  ${BOLD}Номер версии для отката:${NC} "
 
     local selected
     selected=$(echo "$images" | sed -n "${choice}p")
@@ -220,8 +218,7 @@ engine_rollback() {
     log_success "Версия переключена на ${selected}"
 
     if is_proxy_running; then
-        echo -en "  ${BOLD}Перезапустить прокси? [Y/n]:${NC} "
-        local yn; read_line yn
+        local yn; read_line yn "  ${BOLD}Перезапустить прокси? [Y/n]:${NC} "
         if [[ ! "$yn" =~ ^[nN] ]]; then
             load_secrets
             restart_proxy_container
@@ -294,8 +291,7 @@ handle_engine_command() {
                 done <<< "$releases"
 
                 echo ""
-                echo -en "  ${BOLD}Номер версии для установки:${NC} "
-                local choice; read_line choice
+                local choice; read_line choice "  ${BOLD}Номер версии для установки:${NC} "
                 local selected_tag
                 selected_tag=$(echo "$releases" | sed -n "${choice}p" | cut -d'|' -f1)
                 [ -z "$selected_tag" ] && { log_error "Неверный номер"; return 1; }

@@ -93,8 +93,7 @@ _mig_handle_host_key_change() {
         log_error "Забыть старый ключ и повторить: ssh-keygen -R ${_MIG_HOST}"
         return 1
     fi
-    echo -en "  ${BOLD}Систему на ${_MIG_HOST} переставляли — забыть старый ключ? [y/N]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Систему на ${_MIG_HOST} переставляли — забыть старый ключ? [y/N]:${NC} "
     [[ "$_yn" =~ ^[yY] ]] || {
         log_error "Оставили как есть. Разберитесь с ключом хоста и повторите переезд"
         log_info "Забыть вручную: ssh-keygen -R ${_MIG_HOST}"
@@ -138,8 +137,7 @@ _mig_ensure_auth() {
     echo ""
     echo -e "  ${DIM}Скопируем ваш публичный ключ на новый сервер. Пароль спросит${NC}"
     echo -e "  ${DIM}сам ssh-copy-id — MTProxyL его не видит и не сохраняет.${NC}"
-    echo -en "  ${BOLD}Скопировать ключ? [Y/n]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Скопировать ключ? [Y/n]:${NC} "
     [[ "$_yn" =~ ^[nN] ]] && { log_error "Без входа по ключу переезд невозможен"; return 1; }
 
     [ -f "${HOME}/.ssh/id_ed25519.pub" ] || [ -f "${HOME}/.ssh/id_rsa.pub" ] || {
@@ -589,8 +587,7 @@ _mig_ask_extras() {
             echo -e "  ${YELLOW}Ветка ${GITHUB_BRANCH} — панель будет собираться из исходников${NC}"
             echo -e "  ${DIM}в Docker: несколько минут и заметная нагрузка на новую машину.${NC}"
         fi
-        echo -en "  ${BOLD}Переносить панель? [Y/n]:${NC} "
-        read_line _yn
+        read_line _yn "  ${BOLD}Переносить панель? [Y/n]:${NC} "
         [[ "$_yn" =~ ^[nN] ]] && _MIG_WITH_PANEL="no" || _MIG_WITH_PANEL="yes"
     fi
 
@@ -598,8 +595,7 @@ _mig_ask_extras() {
         echo ""
         echo -e "  ${DIM}Бот поедет с прежним токеном и админами. Два бота на одном${NC}"
         echo -e "  ${DIM}токене не уживутся — старого придётся остановить.${NC}"
-        echo -en "  ${BOLD}Переносить телеграм-бота? [Y/n]:${NC} "
-        read_line _yn
+        read_line _yn "  ${BOLD}Переносить телеграм-бота? [Y/n]:${NC} "
         [[ "$_yn" =~ ^[nN] ]] && _MIG_WITH_TGBOT="no" || _MIG_WITH_TGBOT="yes"
     fi
     return 0
@@ -747,8 +743,7 @@ _mig_finish() {
     echo -e "  ${BOLD}Старая копия на этом сервере${NC}"
     echo -e "  ${DIM}Пока она жива, два прокси делят один токен бота и одни ссылки.${NC}"
     echo -e "  ${DIM}Удалять стоит после того, как проверите новый сервер.${NC}"
-    echo -en "  ${BOLD}Удалить MTProxyL здесь сейчас? [y/N]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Удалить MTProxyL здесь сейчас? [y/N]:${NC} "
     if [[ "$_yn" =~ ^[yY] ]]; then
         uninstall
     else

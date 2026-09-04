@@ -622,24 +622,40 @@ _fix_read_choice() {
     read_choice "$_prompt" "$_default"
 }
 
+# Цветовые последовательности закрываем \001..\002: иначе readline считает их
+# видимыми символами, промахивается с шириной приглашения и при забое затирает
+# его вместе с введённым символом.
+_rl_prompt() {
+    printf '%b' "$1" | awk 'BEGIN { ORS = "" } { gsub(/\033\[[0-9;]*m/, sprintf("%c&%c", 1, 2)); print }'
+}
+
+# Приглашение вторым аргументом отдаётся readline — тогда оно переживает
+# забой и перерисовку строки. Без него приглашение печатает вызывающий код.
 read_line() {
-    local __var="$1" __ans=""
+    local __var="$1" __prompt="${2-}" __ans=""
     # Неинтерактивный режим (панель, скрипты): подтверждения не спрашиваем.
     # Отдаём слово, которого ждут все подтверждающие ветки: 'yes' проходит
     # и строгие проверки [ "$_c" != "yes" ], и мягкие [[ =~ ^[yY] ]].
     if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ]; then
+        [ -n "$__prompt" ] && printf '%b' "$__prompt"
         printf -v "$__var" '%s' "yes"
+        [ -n "$__prompt" ] && echo "yes"
         return 0
     fi
     # Установка аргументами: отвечать некому, а ждать ввода — значит зависнуть.
     # Пустой ответ равен нажатому Enter, то есть значению по умолчанию.
     if [ "${MTPROXYL_NONINTERACTIVE:-false}" = "true" ]; then
+        [ -n "$__prompt" ] && printf '%b' "$__prompt"
         printf -v "$__var" '%s' ""
         echo "<по умолчанию>"
         return 0
     fi
-    IFS= read -er __ans || true
-    [ -z "$__ans" ] && [ -t 0 ] && echo ""
+    if [ -n "$__prompt" ]; then
+        IFS= read -erp "$(_rl_prompt "$__prompt")" __ans || true
+    else
+        IFS= read -er __ans || true
+        [ -z "$__ans" ] && [ -t 0 ] && echo ""
+    fi
     printf -v "$__var" '%s' "$__ans"
 }
 
@@ -1042,8 +1058,7 @@ handle_domain_command() {
         if [ "$MASKING_ENABLED" = "true" ] && [ "$PROXY_DOMAIN" != "$_old_domain" ]; then
             local _cur_mask="${MASKING_HOST:-$_old_domain}"
             if [ "$_cur_mask" = "$_old_domain" ] || [ -z "$MASKING_HOST" ]; then
-                echo -en "  ${BOLD}Обновить mask backend на ${PROXY_DOMAIN}? [Y/n]:${NC} "
-                local _mask_yn; read_line _mask_yn
+                local _mask_yn; read_line _mask_yn "  ${BOLD}Обновить mask backend на ${PROXY_DOMAIN}? [Y/n]:${NC} "
                 if [[ ! "$_mask_yn" =~ ^[nN] ]]; then
                     MASKING_HOST="$PROXY_DOMAIN"
                     save_settings

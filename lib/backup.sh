@@ -47,8 +47,7 @@ restore_backup() {
         echo ""
     fi
 
-    echo -en "  ${YELLOW}Текущая конфигурация будет перезаписана. Продолжить? [y/N]:${NC} "
-    local confirm; read_line confirm
+    local confirm; read_line confirm "  ${YELLOW}Текущая конфигурация будет перезаписана. Продолжить? [y/N]:${NC} "
     [[ "$confirm" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     # Работал ли прокси ДО восстановления — спрашиваем сейчас, пока настройки

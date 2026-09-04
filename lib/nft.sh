@@ -319,8 +319,7 @@ load_nft_settings() {
 # ── Применить NFT правила после изменения настроек ────────────
 prompt_apply_nft_rules() {
     echo ""
-    echo -en "  ${BOLD}Применить новые NFT-правила сейчас? [Y/n]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Применить новые NFT-правила сейчас? [Y/n]:${NC} "
     if [[ ! "$_yn" =~ ^[nN] ]]; then
         apply_nft_rules || true
         [ "${NFT_ENABLED:-false}" = "true" ] && install_nft_service || true
@@ -753,8 +752,7 @@ enable_smart_mode() {
         echo ""
     fi
 
-    echo -en "  ${BOLD}Включить Smart режим? [Y/n]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Включить Smart режим? [Y/n]:${NC} "
     [[ "$_yn" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     # Отключаем iOS Fix v2 если был
@@ -890,8 +888,7 @@ ios_fix_remove() {
         echo -e "  ${BOLD}Откат фикса для iOS (вариант 1)${NC}"; echo ""
         echo -e "  ${DIM}Будет удалён: ${IOS_SYSCTL_FILE}${NC}"
         echo -e "  ${DIM}Значения ядра будут восстановлены к тем, которые были до применения фикса.${NC}"; echo ""
-        echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-        local _confirm; read_line _confirm
+        local _confirm; read_line _confirm "  ${BOLD}Продолжить? [Y/n]:${NC} "
         [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
     fi
 
@@ -939,8 +936,7 @@ _ios2_check_client_mss() {
         echo -e "  ${CYAN}mtproxyl expert clear client_mss${NC}"
         echo -e "  ${CYAN}mtproxyl restart${NC}"
         echo ""
-        echo -en "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
-        local _proceed; read_line _proceed
+        local _proceed; read_line _proceed "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
         [[ "$_proceed" =~ ^[yY] ]] || return 1
     fi
     return 0
@@ -953,8 +949,7 @@ ios2_fix_apply() {
         echo -e "  ${YELLOW}⚠ Smart режим активен — iOS Fix v2 не нужен.${NC}"
         echo -e "  ${DIM}Smart режим автоматически разделяет iOS и Android на одном порту.${NC}"
         echo ""
-        echo -en "  ${BOLD}Всё равно включить iOS Fix v2? [y/N]:${NC} "
-        local _force; read_line _force
+        local _force; read_line _force "  ${BOLD}Всё равно включить iOS Fix v2? [y/N]:${NC} "
         [[ "$_force" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
     fi
 
@@ -975,8 +970,7 @@ ios2_fix_apply() {
 
     _ios2_check_client_mss || return 0
 
-    echo -en "  ${BOLD}Применить? [Y/n]:${NC} "
-    local _confirm; read_line _confirm
+    local _confirm; read_line _confirm "  ${BOLD}Применить? [Y/n]:${NC} "
     [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     IOS2_FIX_ENABLED="true"
@@ -1012,8 +1006,7 @@ ios2_fix_remove() {
     if [ "$force" != "true" ]; then
         echo -e "  ${BOLD}Отключение iOS Fix v2${NC}"; echo ""
         echo -e "  ${DIM}Редирект ${IOS2_EXTERNAL_PORT} → ${IOS2_TARGET_PORT:-${PROXY_PORT:-443}} будет удалён.${NC}"; echo ""
-        echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-        local _confirm; read_line _confirm
+        local _confirm; read_line _confirm "  ${BOLD}Продолжить? [Y/n]:${NC} "
         [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
     fi
 
@@ -1190,8 +1183,7 @@ meko_opt_remove() {
     echo -e "    default_qdisc        → ${MEKO_ORIG_DEFAULT_QDISC:-pfifo_fast}"
     echo -e "    congestion_control   → ${MEKO_ORIG_TCP_CONGESTION:-cubic}"
     echo ""
-    echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-    local _confirm; read_line _confirm
+    local _confirm; read_line _confirm "  ${BOLD}Продолжить? [Y/n]:${NC} "
     [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     rm -f "$MEKO_OPT_FILE"
@@ -2062,8 +2054,7 @@ EOF
         done <<< "$_conf"
         echo ""
         echo -e "  ${DIM}Строки с этими ключами можно закомментировать — рядом останется копия.${NC}"
-        echo -en "  ${BOLD}Сделать это? [Y/n]:${NC} "
-        local _yn; read_line _yn
+        local _yn; read_line _yn "  ${BOLD}Сделать это? [Y/n]:${NC} "
         if [[ ! "$_yn" =~ ^[nN] ]]; then
             while IFS= read -r _f; do
                 [ -n "$_f" ] && _zapret2_wscale_disarm_file "$_f"
@@ -2433,8 +2424,7 @@ zapret2_install() {
     local _reinstall="false"
     if [ "${ZAPRET2_APPLIED:-false}" = "true" ] && [ -x "$ZAPRET2_BIN" ]; then
         echo -e "  ${YELLOW}Zapret2 уже установлен. Переустановить?${NC}"
-        echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-        local _yn; read_line _yn
+        local _yn; read_line _yn "  ${BOLD}Продолжить? [Y/n]:${NC} "
         [[ "$_yn" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
         _reinstall="true"
     fi
@@ -2442,8 +2432,7 @@ zapret2_install() {
     local _force=""
     if zapret2_bundle_cached; then
         echo -e "  ${DIM}Архив ${ZAPRET2_RELEASE} уже скачан — ставим из кэша.${NC}"
-        echo -en "  ${BOLD}Скачать заново? [y/N]:${NC} "
-        local _yn_dl; read_line _yn_dl
+        local _yn_dl; read_line _yn_dl "  ${BOLD}Скачать заново? [y/N]:${NC} "
         [[ "$_yn_dl" =~ ^[yY] ]] && _force="force"
         echo -en "  ${BOLD}Установить zapret2? [Y/n]:${NC} "
     else
@@ -2540,8 +2529,7 @@ zapret2_remove() {
     echo ""
     echo -e "  ${RED}${BOLD}Удаление Zapret2 MTProto fix${NC}"
     echo ""
-    echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Продолжить? [y/N]:${NC} "
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     zapret2_stop
@@ -2636,8 +2624,7 @@ zapret2_check_wscale() {
         fi
 
         echo ""
-        echo -en "  ${BOLD}Применить оптимизацию? [Y/n]:${NC} "
-        local _yn_opt; read_line _yn_opt
+        local _yn_opt; read_line _yn_opt "  ${BOLD}Применить оптимизацию? [Y/n]:${NC} "
         if [[ "$_yn_opt" =~ ^[nN] ]]; then
             log_info "Отменено — дробление ClientHello работать не будет"
             return 0

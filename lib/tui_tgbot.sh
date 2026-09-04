@@ -128,8 +128,7 @@ _tui_tgbot_proxy() {
     echo -e "  ${DIM}Бот пойдёт к Telegram через локальный SOCKS5. Поднимаете его вы —${NC}"
     echo -e "  ${DIM}MTProxyL прокси не ставит и за ним не следит.${NC}"
     echo -e "  ${DIM}Формат: socks5://[логин:пароль@]хост:порт, 'off' — напрямую.${NC}"
-    echo -en "  ${BOLD}Прокси:${NC} "
-    local _v; read_line _v
+    local _v; read_line _v "  ${BOLD}Прокси:${NC} "
     [ -n "$_v" ] || return 0
     # Перезапуск делает сам tgbot_set_param — настройка живёт только в сессии.
     tgbot_set_param proxy "$_v" || return 1
@@ -180,8 +179,7 @@ _tui_tgbot_notify() {
 _tui_tgbot_dc_threshold() {
     echo ""
     echo -e "  ${DIM}Ниже этого покрытия бот пишет о просадке. 0 — не писать вовсе.${NC}"
-    echo -en "  ${BOLD}Порог, %${NC} ${DIM}(сейчас $(_dc_threshold))${NC}: "
-    local _v; read_line _v
+    local _v; read_line _v "  ${BOLD}Порог, %${NC} ${DIM}(сейчас $(_dc_threshold))${NC}: "
     [ -n "$_v" ] || return 0
     dc_set_threshold "$_v" || true
     press_any_key
@@ -200,8 +198,7 @@ _tui_tgbot_interval() {
         4) _key="dc" ;;
         *) return ;;
     esac
-    echo -en "  ${BOLD}Минут${NC} ${DIM}(текущее $(_tgbot_cfg_get ".intervals.${_key}" 15))${NC}: "
-    local _v; read_line _v
+    local _v; read_line _v "  ${BOLD}Минут${NC} ${DIM}(текущее $(_tgbot_cfg_get ".intervals.${_key}" 15))${NC}: "
     [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 1 ] && [ "$_v" -le 1440 ] || {
         log_error "Нужно число от 1 до 1440"
         press_any_key
@@ -238,8 +235,7 @@ _tui_tgbot_autobackup() {
         case "$c" in
             1) _tgbot_cfg_set '.autobackup.enabled = (.autobackup.enabled | not)' ;;
             2)
-                echo -en "  ${BOLD}Время в формате ЧЧ:ММ:${NC} "
-                local _v; read_line _v
+                local _v; read_line _v "  ${BOLD}Время в формате ЧЧ:ММ:${NC} "
                 if [[ "$_v" =~ ^([01]?[0-9]|2[0-3]):[0-5][0-9]$ ]]; then
                     _tgbot_cfg_set ".autobackup.time = \"${_v}\"" && log_success "Время: ${_v}"
                 else

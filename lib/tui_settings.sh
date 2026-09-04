@@ -218,8 +218,7 @@ tui_settings_menu() {
                 echo -e "  ${DIM}Текущий: 127.0.0.1:${PROXY_METRICS_PORT:-9090}${NC}"
                 echo ""
                 while true; do
-                    echo -en "  ${BOLD}Новый порт метрик [${PROXY_METRICS_PORT:-9090}]:${NC} "
-                    local _mp; read_line _mp
+                    local _mp; read_line _mp "  ${BOLD}Новый порт метрик [${PROXY_METRICS_PORT:-9090}]:${NC} "
                     [ -z "$_mp" ] && break
                     if validate_port "$_mp"; then
                         if is_port_available "$_mp"; then
@@ -244,8 +243,7 @@ tui_settings_menu() {
                 echo -e "  ${DIM}  /etc/mtproxyl-panel/config.toml → [telemt] url${NC}"
                 echo ""
                 while true; do
-                    echo -en "  ${BOLD}Новый порт API [${PROXY_API_PORT:-9091}]:${NC} "
-                    local _ap; read_line _ap
+                    local _ap; read_line _ap "  ${BOLD}Новый порт API [${PROXY_API_PORT:-9091}]:${NC} "
                     [ -z "$_ap" ] && break
                     if ! validate_port "$_ap"; then
                         log_error "Некорректный порт"; continue

@@ -23,8 +23,7 @@ _tui_web_layout_menu() {
             web_set_param WEB_LAYOUT split || return 0
             echo ""
             if web_uses_managed_nginx; then
-                echo -en "  ${BOLD}Публичный порт WEB [${WEB_PUBLIC_PORT:-443}]:${NC} "
-                local _p; read_line _p
+                local _p; read_line _p "  ${BOLD}Публичный порт WEB [${WEB_PUBLIC_PORT:-443}]:${NC} "
                 [ -n "$_p" ] && web_set_param WEB_PUBLIC_PORT "$_p"
             fi
             # Порт прокси менять здесь нельзя: за ним тянутся ссылки, гео и фиксы.
@@ -62,8 +61,7 @@ _tui_web_frontend_menu() {
         2)
             web_set_param WEB_FRONTEND haproxy || return 0
             echo ""
-            echo -en "  ${BOLD}PEM сертификат + ключ [$(web_haproxy_cert)]:${NC} "
-            local _cert; read_line _cert
+            local _cert; read_line _cert "  ${BOLD}PEM сертификат + ключ [$(web_haproxy_cert)]:${NC} "
             [ -n "$_cert" ] && web_set_param WEB_HAPROXY_CERT "$_cert"
             echo ""
             log_info "MTProxyL не меняет HAProxy. Фрагмент: mtproxyl web haproxy-config"
@@ -113,8 +111,7 @@ _tui_web_decoy_menu() {
             web_set_param WEB_DECOY_SOURCE "$SELFMASK_SITE_SOURCE"
             ;;
         3)
-            echo -en "  ${BOLD}HTTP-origin [${WEB_DECOY_UPSTREAM:-http://127.0.0.1:18081}]:${NC} "
-            local _upstream; read_line _upstream
+            local _upstream; read_line _upstream "  ${BOLD}HTTP-origin [${WEB_DECOY_UPSTREAM:-http://127.0.0.1:18081}]:${NC} "
             [ -z "$_upstream" ] && _upstream="${WEB_DECOY_UPSTREAM:-http://127.0.0.1:18081}"
             web_set_param WEB_DECOY_UPSTREAM "$_upstream" || return 0
             web_set_param WEB_DECOY_MODE http_upstream
@@ -181,8 +178,7 @@ tui_web_menu() {
                 else
                     echo -e "  ${DIM}Без Selfmask нужен собственный домен с A-записью на сервер.${NC}"
                 fi
-                echo -en "  ${BOLD}Домен WEB [$(web_domain 2>/dev/null)]:${NC} "
-                local _d; read_line _d
+                local _d; read_line _d "  ${BOLD}Домен WEB [$(web_domain 2>/dev/null)]:${NC} "
                 web_set_param WEB_DOMAIN "$_d"
                 press_any_key ;;
             7) web_links_print; press_any_key ;;

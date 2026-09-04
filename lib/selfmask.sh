@@ -1801,8 +1801,7 @@ _selfmask_apply_target_settings() {
         return 1
     fi
 
-    echo -en "  ${BOLD}Применить в ${DETECTED_CONFIG_PATH} и перезапустить цель? [Y/n]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Применить в ${DETECTED_CONFIG_PATH} и перезапустить цель? [Y/n]:${NC} "
     if [[ "$_yn" =~ ^[nN] ]]; then
         log_info "Пропущено — примените параметры вручную и перезапустите цель"
         return 0
@@ -2496,8 +2495,7 @@ nginx_custom_enable() {
     echo ""
     log_warn "MTProxyL перестанет пересобирать nginx.conf при изменении настроек"
     echo -e "  ${DIM}Маршруты, домены и порты в пользовательском файле нужно синхронизировать вручную.${NC}"
-    echo -en "  ${BOLD}Включить пользовательский конфиг nginx? [y/N]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Включить пользовательский конфиг nginx? [y/N]:${NC} "
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     if [ ! -f "$NGINX_CUSTOM_FILE" ]; then
@@ -2548,8 +2546,7 @@ nginx_custom_disable() {
     echo ""
     log_warn "Nginx снова будет собираться из настроек MTProxyL"
     echo -e "  ${DIM}Пользовательский файл останется на месте для повторного включения.${NC}"
-    echo -en "  ${BOLD}Выключить пользовательский конфиг nginx? [y/N]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Выключить пользовательский конфиг nginx? [y/N]:${NC} "
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     NGINX_CUSTOM_ENABLED="false"
@@ -2846,8 +2843,7 @@ selfmask_install_pq_tools() {
         log_success "Уже есть: $(_pq_openssl_source)"
         log_info "Системный OpenSSL умеет PQ сам, своя сборка не обязательна"
         echo ""
-        echo -en "  ${BOLD}Всё равно поставить сборку из Release (${SELFMASK_PQ_OPENSSL_VERSION})? [y/N]:${NC} "
-        local _a; read_line _a
+        local _a; read_line _a "  ${BOLD}Всё равно поставить сборку из Release (${SELFMASK_PQ_OPENSSL_VERSION})? [y/N]:${NC} "
         [[ "$_a" =~ ^[yY] ]] || { log_info "Оставляем системный"; return 0; }
     elif [ -n "$_installed" ]; then
         log_info "Установлено сейчас: OpenSSL ${_installed}"
@@ -2856,8 +2852,7 @@ selfmask_install_pq_tools() {
             log_warn "Версия та же — переустановка заменит файлы теми же самыми"
         fi
         echo ""
-        echo -en "  ${BOLD}Скачать и переустановить из Release? [y/N]:${NC} "
-        local _a; read_line _a
+        local _a; read_line _a "  ${BOLD}Скачать и переустановить из Release? [y/N]:${NC} "
         [[ "$_a" =~ ^[yY] ]] || { log_info "Оставляем как есть"; return 0; }
     fi
 

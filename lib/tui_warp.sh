@@ -114,8 +114,7 @@ tui_warp_menu() {
             12) _warp_upstream_manual_hint; press_any_key ;;
             13)
                 echo ""
-                echo -en "  ${BOLD}Удалить warpscout, службы и правила? [y/N]:${NC} "
-                local _yn; read_line _yn
+                local _yn; read_line _yn "  ${BOLD}Удалить warpscout, службы и правила? [y/N]:${NC} "
                 [[ "$_yn" =~ ^[yY] ]] && warp_remove
                 press_any_key ;;
             0|"") return ;;
@@ -161,8 +160,7 @@ _tui_warp_location() {
             echo -e "  ${DIM}  узлы Cloudflare тремя, по коду аэропорта — FRA, AMS, HEL, ARN.${NC}"
             echo -e "  ${DIM}Можно смешивать: DE,AMS. Чем уже список, тем выше шанс,${NC}"
             echo -e "  ${DIM}что живых эндпоинтов не найдётся вовсе.${NC}"
-            echo -en "  ${BOLD}Локация:${NC} "
-            local _v; read_line _v
+            local _v; read_line _v "  ${BOLD}Локация:${NC} "
             [ -n "$_v" ] && warp_set_location "$_v"
             ;;
         *) return 0 ;;
@@ -175,8 +173,7 @@ _tui_warp_endpoint() {
     echo -e "  ${DIM}Закреплённый адрес избавляет от полной разведки при старте.${NC}"
     echo -e "  ${DIM}Если он замолчит, MTProxyL всё равно найдёт новый.${NC}"
     echo -e "  ${DIM}Формат: 188.114.98.58:2408, «clear» — выбирать разведкой.${NC}"
-    echo -en "  ${BOLD}Эндпоинт:${NC} "
-    local _v; read_line _v
+    local _v; read_line _v "  ${BOLD}Эндпоинт:${NC} "
     [ -n "$_v" ] && warp_set_endpoint "$_v"
     press_any_key
 }

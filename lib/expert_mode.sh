@@ -231,8 +231,7 @@ expert_set_interactive() {
 
     local current_val; current_val=$(get_expert_override_value "$section" "$key")
 
-    echo -en "  ${BOLD}Введите значение [${current_val:-${EXPERT_P_DEFAULT}}]:${NC} "
-    local input; read_line input
+    local input; read_line input "  ${BOLD}Введите значение [${current_val:-${EXPERT_P_DEFAULT}}]:${NC} "
     [ -z "$input" ] && { log_info "Отменено (значение не изменено)"; return 0; }
 
     # Валидация
@@ -294,8 +293,7 @@ expert_delete_interactive() {
     if [ ! -f "$EXPERT_OVERRIDES_FILE" ] || [ ! -s "$EXPERT_OVERRIDES_FILE" ]; then
         press_any_key; return; fi
 
-    echo -en "  ${BOLD}Номер override для удаления (или 0 для отмены):${NC} "
-    local _sel; read_line _sel
+    local _sel; read_line _sel "  ${BOLD}Номер override для удаления (или 0 для отмены):${NC} "
     [ "$_sel" = "0" ] || [ -z "$_sel" ] && { log_info "Отменено"; return; }
 
     local _n=0 _s="" _k=""
@@ -329,8 +327,7 @@ tui_expert_section_menu() {
     echo ""
     echo -e "  ${DIM}[0]${NC}  Назад"
     echo ""
-    echo -en "  Выбор раздела: "
-    local _sel; read_line _sel
+    local _sel; read_line _sel "  Выбор раздела: "
     [ "$_sel" = "0" ] || [ -z "$_sel" ] && return
 
     if [[ "$_sel" =~ ^[0-9]+$ ]] && [ "$_sel" -ge 1 ] && [ "$_sel" -le "${#_sec_map[@]}" ]; then
@@ -375,8 +372,7 @@ tui_expert_key_menu() {
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
-        echo -en "  Выбор параметра: "
-        local _sel; read_line _sel
+        local _sel; read_line _sel "  Выбор параметра: "
         [ "$_sel" = "0" ] || [ -z "$_sel" ] && return
 
         if [[ "$_sel" =~ ^[0-9]+$ ]] && [ "$_sel" -ge 1 ] && [ "$_sel" -le "${#_keys[@]}" ]; then
@@ -434,8 +430,7 @@ tui_expert_menu() {
             2) show_expert_overrides; press_any_key ;;
             3) expert_delete_interactive; press_any_key ;;
             4)
-                echo -en "  ${RED}Очистить все override? Введите 'yes':${NC} "
-                local _c; read_line _c
+                local _c; read_line _c "  ${RED}Очистить все override? Введите 'yes':${NC} "
                 if [ "$_c" = "yes" ]; then
                     clear_all_expert_overrides
                     log_success "Все expert override удалены"
