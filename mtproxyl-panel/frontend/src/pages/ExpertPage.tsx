@@ -137,7 +137,7 @@ export function ExpertPage() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="p-4 lg:p-6 space-y-4">
       <div>
         <h1 className="text-xl font-semibold text-text-primary">Экспертные параметры</h1>
         <p className="text-sm text-text-secondary mt-1">

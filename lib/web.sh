@@ -494,7 +494,24 @@ web_nginx_http_server() {
         real_ip_header proxy_protocol;
 "
     fi
+    # Браузер переиспользует HTTP/2-соединение для другого имени с тем же
+    # сертификатом: запросы к домену маскировки приходили в WEB-сервер и
+    # получали «Not Found» движка. 421 заставляет открыть своё соединение.
+    local _listen_default; _listen_default=${_listen//;/ default_server;}
     cat << NGX
+
+    server {
+        ${_listen_default}
+        http2 on;
+        server_name _;
+        server_tokens off;
+
+        ${_realip}
+        ssl_certificate     ${_cert_dir}/fullchain.pem;
+        ssl_certificate_key ${_cert_dir}/privkey.pem;
+
+        return 421;
+    }
 
     server {
         ${_listen}
@@ -521,10 +538,11 @@ web_nginx_http_server() {
             proxy_hide_header Content-Security-Policy;
             proxy_hide_header X-Frame-Options;
             proxy_hide_header Referrer-Policy;
-            add_header Content-Security-Policy "$(web_csp_policy)" always;
+            proxy_hide_header X-Content-Type-Options;
+            add_header Content-Security-Policy \$mtproxyl_csp always;
             add_header X-Content-Type-Options nosniff always;
-            add_header X-Frame-Options SAMEORIGIN always;
-            add_header Referrer-Policy no-referrer always;
+            add_header X-Frame-Options \$mtproxyl_xfo always;
+            add_header Referrer-Policy \$mtproxyl_refpol always;
             proxy_connect_timeout 5s;
             proxy_send_timeout 65s;
             proxy_read_timeout 65s;
@@ -537,12 +555,40 @@ NGX
 }
 
 # map для Upgrade живёт в http-контексте и нужен только при включённом WEB.
+# Здесь же карты заголовков: свои значения подставляем только тем ответам,
+# чья политика не разрешает скрипты — то есть заглушке. У bridge-страницы
+# движка политика своя, и подмена её ломала запуск WEB-клиента.
 web_nginx_upgrade_map() {
     web_uses_managed_nginx || return 0
-    cat << 'NGX'
-    map $http_upgrade $mtproxyl_connection_upgrade {
+    local _csp; _csp=$(web_csp_policy)
+    cat << NGX
+    map \$http_upgrade \$mtproxyl_connection_upgrade {
         default upgrade;
         ''      '';
+    }
+
+    map \$upstream_http_content_security_policy \$mtproxyl_csp {
+        default        "${_csp}";
+        ''             '';
+        '~nonce-'      \$upstream_http_content_security_policy;
+        '~unsafe-'     \$upstream_http_content_security_policy;
+        '~script-src'  \$upstream_http_content_security_policy;
+    }
+
+    map \$upstream_http_content_security_policy \$mtproxyl_xfo {
+        default        'SAMEORIGIN';
+        ''             \$upstream_http_x_frame_options;
+        '~nonce-'      \$upstream_http_x_frame_options;
+        '~unsafe-'     \$upstream_http_x_frame_options;
+        '~script-src'  \$upstream_http_x_frame_options;
+    }
+
+    map \$upstream_http_content_security_policy \$mtproxyl_refpol {
+        default        'no-referrer';
+        ''             \$upstream_http_referrer_policy;
+        '~nonce-'      \$upstream_http_referrer_policy;
+        '~unsafe-'     \$upstream_http_referrer_policy;
+        '~script-src'  \$upstream_http_referrer_policy;
     }
 NGX
 }
