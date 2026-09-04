@@ -929,7 +929,8 @@ _selfmask_deploy_site() {
 # robots.txt с favicon. Пустой 404 и голый nginx на этих путях выдавали
 # заглушку не хуже уникального CSP.
 _selfmask_deploy_site_extras() {
-    local _dir="$SELFMASK_SITE_DIR" _seed _d1 _d2
+    local _dir="${1:-$SELFMASK_SITE_DIR}" _seed _d1 _d2
+    [ -d "$_dir" ] || return 0
     _seed=$(printf 'site%s' "$(web_fp_seed 2>/dev/null)" | md5sum 2>/dev/null | cut -c1-2)
     _d1=$(( 16#${_seed:0:1} )); _d2=$(( 16#${_seed:1:1} ))
 
