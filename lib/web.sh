@@ -69,7 +69,9 @@ _web_prepare_empty_decoy() {
     install -m 0644 /dev/null "${_dir}/404.html"
 }
 
-_web_ensure_empty_404() {
+# Своя страница 404 приходит вместе с сайтом; пустой файл нужен, только
+# если её нет — иначе неизвестный путь отдавал бы чужой ответ.
+_web_ensure_404() {
     local _file="$(web_decoy_dir)/404.html"
     [ -e "$_file" ] || install -m 0644 /dev/null "$_file"
 }
@@ -416,6 +418,45 @@ ${_listen6}
 NGX
 }
 
+# Своя строка на установку: по ней собираются заголовки заглушки, чтобы
+# одинаковый отпечаток не выдавал все инсталляции разом.
+web_fp_seed() {
+    if [ -z "${WEB_FP_SEED:-}" ]; then
+        WEB_FP_SEED=$(head -c 8 /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n')
+        [ -n "$WEB_FP_SEED" ] || WEB_FP_SEED=$(date +%s%N)
+        save_settings >/dev/null 2>&1 || true
+    fi
+    printf '%s' "$WEB_FP_SEED"
+}
+
+# CSP движка совпадает с примером из его README — по этой строке прокси
+# узнаётся массово. Набор и порядок директив берём из своего seed.
+web_csp_policy() {
+    local _hex _i _n _tmp _parts=() _out=""
+    local -a _d=()
+    _hex=$(printf 'csp%s' "$(web_fp_seed)" | md5sum 2>/dev/null | cut -c1-32)
+    [ ${#_hex} -eq 32 ] || _hex="0123456789abcdef0123456789abcdef"
+    for (( _i = 0; _i < 32; _i++ )); do _d+=( $(( 16#${_hex:$_i:1} )) ); done
+
+    _parts=( "default-src 'self'" )
+    if [ $(( _d[0] % 2 )) -eq 0 ]; then _parts+=( "img-src 'self' data:" ); else _parts+=( "img-src 'self'" ); fi
+    [ $(( _d[1] % 2 )) -eq 0 ] && _parts+=( "style-src 'self'" )
+    [ $(( _d[2] % 2 )) -eq 0 ] && _parts+=( "script-src 'self'" )
+    [ $(( _d[3] % 3 )) -eq 0 ] && _parts+=( "font-src 'self' data:" )
+    if [ $(( _d[4] % 2 )) -eq 0 ]; then _parts+=( "frame-ancestors 'none'" ); else _parts+=( "frame-ancestors 'self'" ); fi
+    [ $(( _d[5] % 2 )) -eq 0 ] && _parts+=( "base-uri 'self'" )
+    [ $(( _d[6] % 2 )) -eq 0 ] && _parts+=( "form-action 'self'" )
+
+    for (( _i = ${#_parts[@]} - 1; _i > 0; _i-- )); do
+        _n=$(( _d[(7 + _i) % 32] % (_i + 1) ))
+        _tmp="${_parts[$_i]}"; _parts[$_i]="${_parts[$_n]}"; _parts[$_n]="$_tmp"
+    done
+    for _i in "${!_parts[@]}"; do
+        [ -z "$_out" ] && _out="${_parts[$_i]}" || _out="${_out}; ${_parts[$_i]}"
+    done
+    printf '%s' "$_out"
+}
+
 # Таймауты выше long_poll_secs (25 с) и удвоенного liveness WebSocket —
 # иначе фронт рвал бы carrier сам.
 web_nginx_http_server() {
@@ -462,6 +503,13 @@ web_nginx_http_server() {
             proxy_set_header Connection \$mtproxyl_connection_upgrade;
             proxy_hide_header ETag;
             proxy_hide_header Last-Modified;
+            proxy_hide_header Content-Security-Policy;
+            proxy_hide_header X-Frame-Options;
+            proxy_hide_header Referrer-Policy;
+            add_header Content-Security-Policy "$(web_csp_policy)" always;
+            add_header X-Content-Type-Options nosniff always;
+            add_header X-Frame-Options SAMEORIGIN always;
+            add_header Referrer-Policy no-referrer always;
             proxy_connect_timeout 5s;
             proxy_send_timeout 65s;
             proxy_read_timeout 65s;
@@ -485,10 +533,11 @@ NGX
 }
 
 web_haproxy_config() {
-    local _domain _cert
+    local _domain _cert _csp
     _domain=$(web_domain 2>/dev/null) || return 1
     [ -n "$_domain" ] || { log_error "Сначала задайте WEB_DOMAIN"; return 1; }
     _cert=$(web_haproxy_cert)
+    _csp=$(web_csp_policy)
 
     if mtproto_is_enabled && ! web_layout_is_split; then
         cat <<HAP
@@ -538,6 +587,10 @@ backend mtproxyl_web
     http-request del-header If-None-Match
     http-response del-header ETag
     http-response del-header Last-Modified
+    http-response set-header Content-Security-Policy "${_csp}"
+    http-response set-header X-Content-Type-Options nosniff
+    http-response set-header X-Frame-Options SAMEORIGIN
+    http-response set-header Referrer-Policy no-referrer
     server mtproxyl_web_1 127.0.0.1:${WEB_LISTEN_PORT:-15080} check
 HAP
         return 0
@@ -567,6 +620,10 @@ backend mtproxyl_web
     http-request del-header If-None-Match
     http-response del-header ETag
     http-response del-header Last-Modified
+    http-response set-header Content-Security-Policy "${_csp}"
+    http-response set-header X-Content-Type-Options nosniff
+    http-response set-header X-Frame-Options SAMEORIGIN
+    http-response set-header Referrer-Policy no-referrer
     server mtproxyl_web_1 127.0.0.1:${WEB_LISTEN_PORT:-15080} check
 HAP
 }
@@ -733,7 +790,7 @@ _web_prepare_frontend() {
                 _selfmask_deploy_site || return 1
                 rm -f "$WEB_SITE_REDEPLOY_MARKER"
             fi
-            _web_ensure_empty_404 || return 1
+            _web_ensure_404 || return 1
             ;;
     esac
     return 0

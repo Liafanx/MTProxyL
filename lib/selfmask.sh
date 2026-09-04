@@ -919,8 +919,67 @@ _selfmask_deploy_site() {
             ;;
     esac
 
+    _selfmask_deploy_site_extras
+
     chown -R www-data:www-data "$SELFMASK_SITE_DIR" 2>/dev/null || true
     chmod -R 755 "$SELFMASK_SITE_DIR" 2>/dev/null || true
+}
+
+# Обычный сайт отвечает своей страницей на неизвестный путь и держит
+# robots.txt с favicon. Пустой 404 и голый nginx на этих путях выдавали
+# заглушку не хуже уникального CSP.
+_selfmask_deploy_site_extras() {
+    local _dir="$SELFMASK_SITE_DIR" _seed _d1 _d2
+    _seed=$(printf 'site%s' "$(web_fp_seed 2>/dev/null)" | md5sum 2>/dev/null | cut -c1-2)
+    _d1=$(( 16#${_seed:0:1} )); _d2=$(( 16#${_seed:1:1} ))
+
+    if [ ! -s "${_dir}/404.html" ]; then
+        if [ -s "${_dir}/style.css" ]; then
+            cat > "${_dir}/404.html" << 'HTML_EOF'
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Страница не найдена</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <h1>Страница не найдена</h1>
+  <p>Такой страницы здесь нет. Проверьте адрес или вернитесь на <a href="/">главную</a>.</p>
+  <p class="footer">&copy; 2026</p>
+</body>
+</html>
+HTML_EOF
+        elif [ -s "${_dir}/index.html" ]; then
+            cp -f "${_dir}/index.html" "${_dir}/404.html"
+        fi
+    fi
+
+    if [ ! -e "${_dir}/robots.txt" ]; then
+        case $(( _d1 % 3 )) in
+            0) printf 'User-agent: *\nDisallow:\n' > "${_dir}/robots.txt" ;;
+            1) printf 'User-agent: *\nAllow: /\n' > "${_dir}/robots.txt" ;;
+            *) printf 'User-agent: *\nDisallow: /admin/\nDisallow: /private/\n' > "${_dir}/robots.txt" ;;
+        esac
+    fi
+
+    [ -e "${_dir}/favicon.ico" ] || _selfmask_write_favicon "${_dir}/favicon.ico" "$_d2"
+}
+
+# 16×16 однотонная иконка: заголовок ICO, BITMAPINFOHEADER, пиксели BGRA и
+# пустая AND-маска. Цвет берём из seed установки.
+_selfmask_write_favicon() {
+    local _f="$1" _n="${2:-0}" _i _r _g _b _px
+    _r=$(( 32 + (_n * 13) % 190 )); _g=$(( 48 + (_n * 29) % 170 )); _b=$(( 64 + (_n * 47) % 160 ))
+    {
+        printf '\x00\x00\x01\x00\x01\x00\x10\x10\x00\x00\x01\x00\x20\x00\x68\x04\x00\x00\x16\x00\x00\x00'
+        printf '\x28\x00\x00\x00\x10\x00\x00\x00\x20\x00\x00\x00\x01\x00\x20\x00\x00\x00\x00\x00'
+        printf '\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+        _px=$(printf '\\x%02x\\x%02x\\x%02x\\xff' "$_b" "$_g" "$_r")
+        for (( _i = 0; _i < 256; _i++ )); do printf "$_px"; done
+        for (( _i = 0; _i < 64; _i++ )); do printf '\x00'; done
+    } > "$_f"
 }
 
 _selfmask_download_builtin_template() {
@@ -1287,6 +1346,8 @@ events {
 
 http {
 ${_mime}
+    server_tokens off;
+
     server {
         listen 80;
         server_name ${SELFMASK_DOMAIN};
@@ -1563,6 +1624,7 @@ events {
 ${_web_stream}
 http {
 ${_mime}
+    server_tokens off;
 ${_web_map}
 ${_http80}
 ${_selfmask_servers}
