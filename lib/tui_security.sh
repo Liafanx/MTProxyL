@@ -113,8 +113,7 @@ tui_geoblock_menu() {
                    else
                        echo -e "  ${YELLOW}Пока список пуст, подключения ограничиваться не будут.${NC}"
                    fi
-                   echo -en "  ${BOLD}Включить реверсивный режим? [y/N]:${NC} "
-                   local _yn; read_line _yn
+                   local _yn; read_line _yn "  ${BOLD}Включить реверсивный режим? [y/N]:${NC} "
                    [[ "$_yn" =~ ^[yYдД] ]] && handle_geoblock_command mode "$_next"
                else
                    handle_geoblock_command mode "$_next"

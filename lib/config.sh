@@ -213,8 +213,7 @@ superexpert_enable() {
         echo -e "  ${DIM}Файл будет создан копией текущего рабочего конфига.${NC}"
     fi
     echo ""
-    echo -en "  ${BOLD}Включить режим супер эксперта? [y/N]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Включить режим супер эксперта? [y/N]:${NC} "
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     if [ ! -f "$SUPEREXPERT_FILE" ]; then
@@ -243,8 +242,7 @@ superexpert_enable() {
     if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ]; then
         return 0
     fi
-    echo -en "  ${BOLD}Открыть файл в редакторе сейчас? [Y/n]:${NC} "
-    local _e; read_line _e
+    local _e; read_line _e "  ${BOLD}Открыть файл в редакторе сейчас? [Y/n]:${NC} "
     [[ "$_e" =~ ^[nN] ]] || superexpert_edit
     return 0
 }
@@ -263,8 +261,7 @@ superexpert_disable() {
     echo -e "  ${DIM}Ваш файл ${SUPEREXPERT_FILE} не удаляется: при повторном включении${NC}"
     echo -e "  ${DIM}режима будет использован он же, а не новая копия.${NC}"
     echo ""
-    echo -en "  ${BOLD}Выключить режим супер эксперта? [y/N]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Выключить режим супер эксперта? [y/N]:${NC} "
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     SUPEREXPERT_ENABLED="false"
@@ -315,8 +312,7 @@ superexpert_edit() {
 
 superexpert_offer_restart() {
     is_proxy_running || { log_info "Прокси не запущен — изменения применятся при запуске"; return 0; }
-    echo -en "  ${BOLD}Перезапустить прокси, чтобы применить? [Y/n]:${NC} "
-    local _r; read_line _r
+    local _r; read_line _r "  ${BOLD}Перезапустить прокси, чтобы применить? [Y/n]:${NC} "
     [[ "$_r" =~ ^[nN] ]] && { log_info "Позже: меню «Управление прокси» → Перезапустить"; return 0; }
     load_secrets 2>/dev/null || true
     restart_proxy_container || true
@@ -335,8 +331,7 @@ superexpert_recreate() {
         echo -e "  ${DIM}Копия старого файла останется рядом с суффиксом .bak${NC}"
     fi
     echo -e "  ${DIM}Новый файл будет собран из настроек и секретов MTProxyL.${NC}"
-    echo -en "  ${BOLD}Пересоздать? [y/N]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Пересоздать? [y/N]:${NC} "
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     # Генерируем эталонный конфиг менеджера во временный файл: включённый
@@ -693,8 +688,7 @@ expert_apply_now() {
 }
 
 _expert_apply_prompt() {
-    echo -en "  ${BOLD}Пересобрать конфиг и применить сейчас? [Y/n]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Пересобрать конфиг и применить сейчас? [Y/n]:${NC} "
     [[ "$_yn" =~ ^[nN] ]] && { log_info "Позже: mtproxyl config или меню → Режим эксперта → Пересобрать"; return 0; }
     _expert_generate_and_apply
 }

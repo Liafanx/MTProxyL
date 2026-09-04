@@ -139,8 +139,7 @@ panel_install() {
         log_info "Панель уже установлена: $(panel_status_line)"
         if [ "$_mode" != "--update" ]; then
             echo ""
-            echo -en "  ${BOLD}Запустить установщик повторно (обновление/перенастройка)? [y/N]:${NC} "
-            local _yn; read_line _yn
+            local _yn; read_line _yn "  ${BOLD}Запустить установщик повторно (обновление/перенастройка)? [y/N]:${NC} "
             [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
         fi
     elif [ "$_mode" = "--update" ]; then
@@ -219,8 +218,7 @@ panel_install() {
     log_info "Панель можно собрать из исходников ветки ${GITHUB_BRANCH}"
     _panel_report_build_toolchain
     log_info "Нужен git; сборка занимает несколько минут"
-    echo -en "  ${BOLD}Собрать из исходников? [y/N]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Собрать из исходников? [y/N]:${NC} "
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 1; }
 
     sh "$_tmp" install "--from-source=${GITHUB_BRANCH}" \
@@ -332,8 +330,7 @@ _panel_offer_cert_after_install() {
     fi
 
     echo ""
-    echo -en "  ${BOLD}Выпустить сертификат Let's Encrypt сейчас? [Y/n]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Выпустить сертификат Let's Encrypt сейчас? [Y/n]:${NC} "
     if [[ "$_yn" =~ ^[nN] ]]; then
         log_info "Позже: mtproxyl panel cert ${_domain} (меню панели → [6])"
         return 0
@@ -351,8 +348,7 @@ panel_uninstall() {
     if [ "${1:-}" != "--no-confirm" ]; then
         echo ""
         log_warn "Панель, служба и права sudo будут удалены"
-        echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-        local _yn; read_line _yn
+        local _yn; read_line _yn "  ${BOLD}Продолжить? [Y/n]:${NC} "
         [[ "$_yn" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
     fi
 
@@ -362,8 +358,7 @@ panel_uninstall() {
     echo -e "  ${DIM}Конфиг ${PANEL_CONFIG_DIR}/config.toml хранит логин и пароль.${NC}"
     echo -e "  ${DIM}Если оставить, при новой установке мастер будет пропущен${NC}"
     echo -e "  ${DIM}и пароль останется прежним.${NC}"
-    echo -en "  ${BOLD}Удалить конфиг и данные тоже? [Y/n]:${NC} "
-    local _purge; read_line _purge
+    local _purge; read_line _purge "  ${BOLD}Удалить конфиг и данные тоже? [Y/n]:${NC} "
     local _cmd="purge"
     [[ "$_purge" =~ ^[nN] ]] && _cmd="uninstall"
 
@@ -708,15 +703,13 @@ panel_issue_cert() {
         log_info "а он шифрует соединение сам. Чтобы открыть панель наружу,"
         log_info "смените listen в ${PANEL_CONFIG_DIR}/config.toml и перезапустите её."
         echo ""
-        echo -en "  ${BOLD}Всё равно выпустить? [y/N]:${NC} "
-        local _yn_local; read_line _yn_local
+        local _yn_local; read_line _yn_local "  ${BOLD}Всё равно выпустить? [y/N]:${NC} "
         [[ "$_yn_local" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
     fi
 
     if [ -z "$_domain" ]; then
         local _suggest; _suggest=$(panel_cert_domain 2>/dev/null)
-        echo -en "  ${BOLD}Домен панели${_suggest:+ [${_suggest}]}:${NC} "
-        read_line _domain
+        read_line _domain "  ${BOLD}Домен панели${_suggest:+ [${_suggest}]}:${NC} "
         [ -n "$_domain" ] || _domain="$_suggest"
     fi
     [ -n "$_domain" ] || { log_error "Домен не задан"; return 1; }
@@ -755,8 +748,7 @@ panel_issue_cert() {
     if [ -z "$_email" ]; then
         echo -e "  ${DIM}Email нужен только для писем об истечении сертификата.${NC}"
         echo -e "  ${DIM}Можно оставить пустым — выпуск от этого не зависит.${NC}"
-        echo -en "  ${BOLD}Email для Let's Encrypt${SELFMASK_CERT_EMAIL:+ [${SELFMASK_CERT_EMAIL}]}:${NC} "
-        read_line _email
+        read_line _email "  ${BOLD}Email для Let's Encrypt${SELFMASK_CERT_EMAIL:+ [${SELFMASK_CERT_EMAIL}]}:${NC} "
         [ -n "$_email" ] || _email="${SELFMASK_CERT_EMAIL:-}"
     fi
 
@@ -793,8 +785,7 @@ panel_issue_cert() {
             echo -e "  ${DIM}На время выпуска эти службы будут остановлены и сразу запущены обратно.${NC}"
             echo -e "  ${DIM}Обычно это несколько секунд.${NC}"
             echo ""
-            echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-            local _yn; read_line _yn
+            local _yn; read_line _yn "  ${BOLD}Продолжить? [Y/n]:${NC} "
             [[ "$_yn" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
             local _svc

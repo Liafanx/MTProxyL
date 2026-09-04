@@ -110,6 +110,7 @@ WEB_DECOY_MODE="empty"              # empty|static_directory|http_upstream
 WEB_DECOY_DIR=""
 WEB_DECOY_UPSTREAM=""
 WEB_DEBUG="false"           # [web.debug].enabled, страница /web-status
+WEB_FP_SEED=""              # своя строка на установку: из неё берётся CSP заглушки
 WEB_ONLY_PREV_NFT="false"
 WEB_ONLY_PREV_ZAPRET2="false"
 
@@ -247,6 +248,7 @@ WEB_DECOY_MODE='${WEB_DECOY_MODE}'
 WEB_DECOY_DIR='${WEB_DECOY_DIR}'
 WEB_DECOY_UPSTREAM='${WEB_DECOY_UPSTREAM}'
 WEB_DEBUG='${WEB_DEBUG}'
+WEB_FP_SEED='${WEB_FP_SEED}'
 WEB_ONLY_PREV_NFT='${WEB_ONLY_PREV_NFT}'
 WEB_ONLY_PREV_ZAPRET2='${WEB_ONLY_PREV_ZAPRET2}'
 
@@ -453,7 +455,7 @@ load_settings() {
                 WEB_ENABLED|WEB_FRONTEND|WEB_LAYOUT|WEB_PUBLIC_PORT|WEB_DOMAIN|WEB_CARRIER|WEB_SECRET_MODE|\
                 WEB_LISTEN_PORT|WEB_TLS_PORT|WEB_MTPROXY_PORT|\
                 WEB_HAPROXY_CERT|\
-                WEB_DECOY_MODE|WEB_DECOY_DIR|WEB_DECOY_UPSTREAM|WEB_DEBUG|\
+                WEB_DECOY_MODE|WEB_DECOY_DIR|WEB_DECOY_UPSTREAM|WEB_DEBUG|WEB_FP_SEED|\
                 WEB_ONLY_PREV_NFT|WEB_ONLY_PREV_ZAPRET2|\
                 SUPEREXPERT_ENABLED|NGINX_CUSTOM_ENABLED|\
                 IPBLOCK_ENABLED|IPBLOCK_ACTION|IPBLOCK_LIST|IPBLOCK_LIST6|\
@@ -517,7 +519,7 @@ load_settings() {
         *) WEB_LAYOUT="shared" ;;
     esac
     case "$WEB_FRONTEND" in
-        nginx|haproxy) ;;
+        nginx|haproxy|haproxy-nginx) ;;
         *) WEB_FRONTEND="nginx" ;;
     esac
     [[ "$WEB_PUBLIC_PORT" =~ ^[0-9]+$ ]] && [ "$WEB_PUBLIC_PORT" -ge 1 ] && [ "$WEB_PUBLIC_PORT" -le 65535 ] || WEB_PUBLIC_PORT="443"

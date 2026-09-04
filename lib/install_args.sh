@@ -76,8 +76,9 @@ install_args_help() {
   WEB Proxy
     --web yes|no               включить WEB Proxy
     --web-layout shared|split  один порт с FakeTLS по SNI либо свой порт
-    --web-frontend nginx|haproxy
-                               встроенный nginx либо существующий HAProxy
+    --web-frontend nginx|haproxy|haproxy-nginx
+                               встроенный nginx, внешний HAProxy либо
+                               HAProxy перед встроенным nginx
     --web-haproxy-cert ПУТЬ    PEM сертификат + ключ для фрагмента HAProxy
     --web-domain <домен>       по умолчанию web.<домен selfmask>
     --web-carrier https|https-lanes|websocket|websocket-lanes
@@ -341,8 +342,8 @@ _install_args_validate() {
     fi
     if [ -n "$_IA_WEB_FRONTEND" ]; then
         case "$_IA_WEB_FRONTEND" in
-            nginx|haproxy) ;;
-            *) log_error "--web-frontend: nginx или haproxy"; _ok=false ;;
+            nginx|haproxy|haproxy-nginx) ;;
+            *) log_error "--web-frontend: nginx, haproxy или haproxy-nginx"; _ok=false ;;
         esac
     fi
     if [ -n "$_IA_WEB_HAPROXY_CERT" ] \

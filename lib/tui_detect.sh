@@ -55,8 +55,7 @@ tui_target_menu() {
                     echo -e "  ${DIM}Пользователи, ссылки и статистика движка уйдут из меню:${NC}"
                     echo -e "  ${DIM}их неоткуда брать. Останутся фиксы хоста — zapret2, лимитер,${NC}"
                     echo -e "  ${DIM}оптимизация By-MEKO, гео-блокировка, дополнения.${NC}"
-                    echo -en "  ${BOLD}Включить режим «только оптимизация»? [y/N]:${NC} "
-                    local _yn; read_line _yn
+                    local _yn; read_line _yn "  ${BOLD}Включить режим «только оптимизация»? [y/N]:${NC} "
                     if [[ "$_yn" =~ ^[yY] ]]; then
                         TOOLS_ONLY="true"; save_settings
                         log_success "Только оптимизация: движок больше не трогаем"

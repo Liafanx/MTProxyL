@@ -216,6 +216,76 @@ warp_scan_best() {
     echo "$_out"
 }
 
+_warp_scan_file() { echo "$(_warp_dir)/last-scan.json"; }
+
+# Отчёт warpscout — таблица с фиксированной шириной колонок. Нас интересует
+# секция «Best endpoint per node»: по ней видно, какие локации вообще живы.
+_warp_report_to_json() {
+    local _file="$1"
+    awk -v loc="${WARP_LOCATION:-}" -v proto="$(_warp_proto)" -v ts="$(date -u +%s)" '
+        function trim(v) { gsub(/^[ \t]+|[ \t]+$/, "", v); gsub(/[\\"]/, "", v); return v }
+        /^# Best endpoint per node/ { sect = 1; next }
+        sect && /^NODE/ { hdr = 1; next }
+        sect && hdr {
+            if ($0 ~ /^[ \t]*$/ || $0 ~ /^#/) { sect = 0; next }
+            node = trim(substr($0, 1, 6)); ep = trim(substr($0, 8, 22))
+            ping = trim(substr($0, 31, 13)); seen = trim(substr($0, 45, 10))
+            place = trim(substr($0, 56))
+            if (node == "" || ep !~ /^[0-9a-fA-F:.]+:[0-9]+$/) next
+            printf "%s{\"node\":\"%s\",\"endpoint\":\"%s\",\"ping\":\"%s\",\"region\":\"%s\",\"location\":\"%s\"}", sep, node, ep, ping, seen, place
+            sep = ","
+            n++
+        }
+        BEGIN { printf "{\"scanned_at\":%s,\"proto\":\"%s\",\"filter\":\"%s\",\"nodes\":[", ts, proto, loc }
+        END { printf "]}\n" }
+    ' "$_file"
+}
+
+# Разведка с отчётом: кроме лучшего эндпоинта запоминаем список узлов, чтобы
+# в TUI и панели было видно, из чего выбирать локацию.
+warp_scan_collect() {
+    local -a _args=()
+    local _line
+    while IFS= read -r _line; do _args+=("$_line"); done < <(_warp_scan_args)
+    local _report; _report=$(mktemp /tmp/warpscout-report.XXXXXX) || return 1
+    "$(_warp_bin)" scan "${_args[@]}" -o "$_report" >/dev/null 2>&1
+    if [ ! -s "$_report" ]; then rm -f "$_report"; return 1; fi
+    _warp_report_to_json "$_report" > "$(_warp_scan_file)"
+    rm -f "$_report"
+    grep -q '"endpoint"' "$(_warp_scan_file)" 2>/dev/null
+}
+
+warp_scan_json() {
+    local _f; _f=$(_warp_scan_file)
+    if [ -s "$_f" ]; then cat "$_f"; else echo '{"scanned_at":0,"nodes":[]}'; fi
+}
+
+# Таблица узлов из последней разведки — то, что вводится в «Локацию».
+warp_scan_print() {
+    local _f; _f=$(_warp_scan_file)
+    [ -s "$_f" ] || { log_info "Разведки ещё не было: mtproxyl warp scan"; return 1; }
+    local _rows
+    _rows=$(tr '{' '\n' < "$_f" | awk -F'"' '
+        /"node":/ {
+            node = ""; ep = ""; ping = ""; region = ""; place = ""
+            for (i = 1; i < NF; i++) {
+                if ($i == "node")     node = $(i + 2)
+                if ($i == "endpoint") ep = $(i + 2)
+                if ($i == "ping")     ping = $(i + 2)
+                if ($i == "region")   region = $(i + 2)
+                if ($i == "location") place = $(i + 2)
+            }
+            if (node != "") printf "  %-6s %-22s %-9s %-6s %s\n", node, ep, ping, region, place
+        }')
+    [ -n "$_rows" ] || { log_warn "В последней разведке живых узлов нет"; return 1; }
+    echo ""
+    echo -e "  ${BOLD}Живые узлы последней разведки${NC}"
+    echo -e "  ${DIM}Узел   Эндпоинт               Пинг      Выход  Локация${NC}"
+    printf '%s\n' "$_rows"
+    echo ""
+    echo -e "  ${DIM}Локация задаётся кодом узла (FRA) или страны (DE): mtproxyl warp location DE${NC}"
+}
+
 # Закреплённый эндпоинт проверяем точечно; молчит — ищем заново.
 warp_resolve_endpoint() {
     local _pin="${WARP_ENDPOINT:-}"
@@ -628,8 +698,7 @@ _warp_me_gate() {
         return 1
     fi
 
-    echo -en "  ${BOLD}Выключить middle proxy и продолжить? [y/N]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Выключить middle proxy и продолжить? [y/N]:${NC} "
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Ничего не меняем — WARP не включён"; return 1; }
 
     handle_expert_command set general use_middle_proxy false --no-apply >/dev/null || {
@@ -723,8 +792,7 @@ _warp_apply_upstream() {
         echo -e "  ${DIM}Движок раскладывает трафик между всеми такими маршрутами по весу —${NC}"
         echo -e "  ${DIM}часть соединений пойдёт мимо туннеля. Их нужно выключить.${NC}"
         if [ "${MTPROXYL_ASSUME_YES:-}" != "1" ]; then
-            echo -en "  ${BOLD}Выключить их на время работы WARP? [Y/n]:${NC} "
-            local _yn; read_line _yn
+            local _yn; read_line _yn "  ${BOLD}Выключить их на время работы WARP? [Y/n]:${NC} "
             [[ "$_yn" =~ ^[nN] ]] && { log_error "Без этого вариант C работать не будет"; return 1; }
         fi
     fi
@@ -1132,6 +1200,11 @@ warp_scan_show() {
     echo ""
     log_info "Разведка эндпоинтов WARP (${WARP_LOCATION:-лучший по задержке}, $(_warp_proto))"
     log_info "Это несколько минут: к каждому кандидату поднимается настоящий туннель"
+    if warp_scan_collect; then
+        warp_scan_print
+    else
+        log_warn "Список узлов собрать не удалось — показываем только лучший эндпоинт"
+    fi
     local _ep; _ep=$(warp_scan_best) || { log_error "Живых эндпоинтов не нашлось"; return 1; }
     log_success "Лучший эндпоинт: ${_ep}"
     echo -e "  ${DIM}Закрепить: mtproxyl warp endpoint ${_ep}${NC}"
@@ -1147,7 +1220,10 @@ handle_warp_command() {
         install)     check_root; warp_install_binary ;;
         remove|uninstall) warp_remove ;;
         reapply)     warp_reapply ;;
-        scan)        warp_scan_show ;;
+        scan)
+            if [ "${2:-}" = "--json" ]; then warp_scan_json
+            elif [ "${2:-}" = "--last" ]; then warp_scan_print
+            else warp_scan_show; fi ;;
         location)    warp_set_location "${2:-}" ;;
         endpoint)    warp_set_endpoint "${2:-}" ;;
         proto)       warp_set_proto "${2:-}" ;;

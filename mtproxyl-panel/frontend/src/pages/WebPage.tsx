@@ -18,6 +18,12 @@ const LAYOUT_LABELS: Record<string, string> = {
   split: 'split — у WEB свой порт',
 };
 
+const FRONTEND_LABELS: Record<string, string> = {
+  nginx: 'nginx MTProxyL',
+  haproxy: 'Внешний HAProxy',
+  'haproxy-nginx': 'HAProxy → nginx MTProxyL',
+};
+
 const CARRIER_LABELS: Record<string, string> = {
   websocket: 'websocket — по умолчанию, стабильный один сокет',
   'websocket-lanes': 'websocket-lanes — сокет на каждый поток',
@@ -83,7 +89,7 @@ export function WebPage() {
   const visibleParams = params.filter((p) => {
     if (status?.proxy_mode === 'web' && ['WEB_LAYOUT', 'WEB_TLS_PORT', 'WEB_MTPROXY_PORT'].includes(p.key)) return false;
     if (layout === 'split' && ['WEB_TLS_PORT', 'WEB_MTPROXY_PORT'].includes(p.key)) return false;
-    if (frontend === 'haproxy' && p.key === 'WEB_PUBLIC_PORT') return false;
+    if (frontend.startsWith('haproxy') && p.key === 'WEB_PUBLIC_PORT') return false;
     if (frontend !== 'haproxy' && p.key === 'WEB_HAPROXY_CERT') return false;
     if (decoyMode === 'empty') {
       if (['WEB_DECOY_SOURCE', 'WEB_DECOY_DIR', 'WEB_DECOY_UPSTREAM'].includes(p.key)) return false;
@@ -167,7 +173,7 @@ export function WebPage() {
   const proxyMode = status?.proxy_mode || (status?.enabled ? 'combined' : 'mtproto');
 
   return (
-    <div className="space-y-4">
+    <div className="p-4 lg:p-6 space-y-4">
       <div>
         <h1 className="text-xl font-semibold text-text-primary">WEB Proxy</h1>
         <p className="text-sm text-text-secondary mt-1">
@@ -208,14 +214,16 @@ export function WebPage() {
                 {status.layout !== 'target' && (
                   <>
                     <Row label="Раскладка" value={LAYOUT_LABELS[status.layout] ?? status.layout} />
-                    <Row label="Frontend" value={status.frontend === 'haproxy' ? 'Внешний HAProxy' : 'nginx MTProxyL'} />
+                    <Row label="Frontend" value={FRONTEND_LABELS[status.frontend] ?? status.frontend} />
                     <Row label="Транспорт" value={CARRIER_LABELS[status.carrier] ?? status.carrier} />
                     <Row label="Секрет в ссылке" value={status.secret_mode} />
                     <Row label="public_addr" value={status.public_addr || 'не определён'} mono />
                     <Row
                       label="Порты"
                       value={
-                        status.frontend === 'haproxy'
+                        status.frontend === 'haproxy-nginx'
+                          ? `HAProxy :443 → nginx :${status.tls_port} → WEB :${status.listen_port}${status.layout === 'shared' ? `; MTProto :${status.mtproxy_port}` : status.layout === 'split' ? `, MTProto HAProxy :${status.proxy_port}` : ''}`
+                          : status.frontend === 'haproxy'
                           ? status.layout === 'shared'
                             ? `HAProxy :443 → MTProto :${status.mtproxy_port}, TLS :${status.tls_port} → WEB :${status.listen_port}`
                             : `HAProxy :443 → WEB :${status.listen_port}${status.layout === 'split' ? `, MTProto :${status.proxy_port}` : ''}`
@@ -227,10 +235,10 @@ export function WebPage() {
                       }
                       mono
                     />
-                    {status.frontend === 'haproxy' && (
+                    {status.frontend.startsWith('haproxy') && (
                       <>
                         <Row label="HAProxy" value={status.haproxy_ready ? 'слушает ожидаемые порты' : 'нужно применить конфигурацию'} />
-                        <Row label="PEM" value={status.haproxy_cert} mono />
+                        {status.frontend === 'haproxy' && <Row label="PEM" value={status.haproxy_cert} mono />}
                       </>
                     )}
                     {status.decoy_mode === 'empty' ? (
@@ -355,7 +363,7 @@ export function WebPage() {
                     <Button variant="outline" onClick={showLinks} disabled={running}>
                       Ссылки
                     </Button>
-                    {proxyMode !== 'web' && !(status.frontend === 'haproxy' && status.layout === 'shared') && <Button
+                    {proxyMode !== 'web' && !(status.frontend.startsWith('haproxy') && status.layout === 'shared') && <Button
                       variant="danger"
                       onClick={() => setConfirmDisable(true)}
                       disabled={running}
@@ -376,7 +384,7 @@ export function WebPage() {
               />
             )}
 
-            {isManager && frontend === 'haproxy' && (
+            {isManager && frontend.startsWith('haproxy') && (
               <Card>
                 <CardHeader>
                   <CardTitle>Конфигурация HAProxy</CardTitle>
@@ -385,6 +393,7 @@ export function WebPage() {
                   <p className="text-sm text-text-secondary">
                     MTProxyL не изменяет и не перезапускает HAProxy. Добавьте этот
                     фрагмент в существующую конфигурацию и примените её самостоятельно.
+                    {frontend === 'haproxy-nginx' && ' Сертификат остаётся у nginx MTProxyL — PEM для HAProxy не нужен.'}
                   </p>
                   <Button variant="outline" onClick={() => void showHAProxyConfig()} disabled={running}>
                     Показать конфигурацию

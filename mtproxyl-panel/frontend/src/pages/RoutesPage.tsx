@@ -155,7 +155,7 @@ export function RoutesPage() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="p-4 lg:p-6 space-y-4">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-semibold text-text-primary">Исходящие маршруты</h1>

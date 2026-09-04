@@ -56,8 +56,7 @@ tui_backup_menu() {
                     log_info "Нет бэкапов"; press_any_key; continue
                 fi
                 echo ""
-                echo -en "  ${BOLD}Номер бэкапа или полный путь:${NC} "
-                local _sel; read_line _sel
+                local _sel; read_line _sel "  ${BOLD}Номер бэкапа или полный путь:${NC} "
                 local _file=""
                 if [[ "$_sel" =~ ^[0-9]+$ ]] && [ "$_sel" -ge 1 ] && [ "$_sel" -le "$_idx" ]; then
                     _file="${_backups[$((_sel - 1))]}"
@@ -97,8 +96,7 @@ _tui_migrate_ssh() {
     echo -e "  ${DIM}Вход только по ключу; A-запись домена переводите сами.${NC}"
     echo ""
     echo -e "  ${DIM}Например: root@203.0.113.10 или root@203.0.113.10:2222${NC}"
-    echo -en "  ${BOLD}Новый сервер:${NC} "
-    local _t; read_line _t
+    local _t; read_line _t "  ${BOLD}Новый сервер:${NC} "
     [ -n "$_t" ] || { log_info "Отменено"; return 0; }
     handle_migrate_command "$_t"
 }

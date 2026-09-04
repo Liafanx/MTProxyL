@@ -99,7 +99,7 @@ export function TgbotPage() {
 
   if (!supported) {
     return (
-      <div className="space-y-4">
+      <div className="p-4 lg:p-6 space-y-4">
         <PageTitle />
         <Card className="p-6 text-sm text-text-secondary">{message}</Card>
       </div>
@@ -107,7 +107,7 @@ export function TgbotPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="p-4 lg:p-6 space-y-4">
       <PageTitle />
       {error && <ErrorAlert message={error} onRetry={() => void load()} />}
       <OperationProgress operation={operation} onDismiss={dismiss} />

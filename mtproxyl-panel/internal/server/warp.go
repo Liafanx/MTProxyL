@@ -93,6 +93,27 @@ func (s *Server) registerWarpRoutes(
 		start(w, "warp:off", client.WarpDisable)
 	}))
 
+	mux.Handle("GET /api/warp/scan", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		res, err := client.WarpGetScan(r.Context())
+		if err != nil {
+			if errors.Is(err, mtproxylctl.ErrWarpUnsupported) {
+				writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
+					"supported": false,
+				}})
+				return
+			}
+			writeCLIError(w, "warp_scan_failed", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
+			"supported": true,
+			"scan":      res,
+		}})
+	}))
+
 	mux.Handle("POST /api/warp/scan", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
 			return

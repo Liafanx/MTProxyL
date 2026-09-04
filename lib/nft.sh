@@ -70,6 +70,18 @@ ZAPRET2_CONF="${ZAPRET2_ETC_DIR}/mtproto.conf"
 ZAPRET2_LUA="${ZAPRET2_LUA_DIR}/mtproto.lua"
 ZAPRET2_SERVICE="mtproxyl-zapret2.service"
 ZAPRET2_NFT_TABLE="MTProtoL"
+ZAPRET2_RELEASE="v1.0.3"
+ZAPRET2_CACHE_DIR="${ZAPRET2_DIR}/cache"
+
+zapret2_bundle_cache_file() {
+    printf '%s/zapret2-%s.tar.gz\n' "$ZAPRET2_CACHE_DIR" "${1:-$ZAPRET2_RELEASE}"
+}
+
+# Битый архив кэшем не считаем: иначе распаковка падала бы каждый раз.
+zapret2_bundle_cached() {
+    local _f; _f=$(zapret2_bundle_cache_file "${1:-$ZAPRET2_RELEASE}")
+    [ -s "$_f" ] && tar tzf "$_f" >/dev/null 2>&1
+}
 
 # Мимо очереди пропускаем только пакеты с данными. Если мимо пройдёт FIN,
 # nfqws2 не увидит закрытия и будет считать соединение живым — а за NAT порт
@@ -307,8 +319,7 @@ load_nft_settings() {
 # ── Применить NFT правила после изменения настроек ────────────
 prompt_apply_nft_rules() {
     echo ""
-    echo -en "  ${BOLD}Применить новые NFT-правила сейчас? [Y/n]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Применить новые NFT-правила сейчас? [Y/n]:${NC} "
     if [[ ! "$_yn" =~ ^[nN] ]]; then
         apply_nft_rules || true
         [ "${NFT_ENABLED:-false}" = "true" ] && install_nft_service || true
@@ -502,6 +513,11 @@ apply_nft_rules() {
         log_error "SYN-лимитер предназначен для обычного MTProto и отключён в режиме «Только WEB»"
         return 1
     fi
+    if zapret2_in_effect 2>/dev/null; then
+        log_error "Zapret2 активен — вместе с ним SYN-лимитер не работает"
+        log_info "Сначала уберите zapret2: меню NFT → Zapret2 → удалить"
+        return 1
+    fi
     ensure_nftables_installed || return 1
 
     generate_nft_script
@@ -511,6 +527,32 @@ apply_nft_rules() {
         log_error "Не удалось применить NFT правила"
         return 1
     fi
+}
+
+# Лимитер и zapret2 фильтруют один и тот же трафик — работает только один.
+nft_limiter_in_effect() {
+    [ "${NFT_ENABLED:-false}" = "true" ] && return 0
+    nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null
+}
+
+# Уступаем zapret2: правила и служба снимаются, флаг гасим — иначе после
+# перезагрузки лимитер возвращался и работал вместе с zapret2.
+nft_limiter_yield() {
+    nft_limiter_in_effect || return 0
+    remove_nft_rules >/dev/null 2>&1 || true
+    remove_nft_service >/dev/null 2>&1 || true
+    NFT_ENABLED="false"
+    save_nft_settings
+    log_info "SYN-лимитер выключен — вместе с zapret2 он не работает"
+}
+
+zapret2_yield() {
+    zapret2_is_running || zapret2_in_effect 2>/dev/null || return 0
+    zapret2_stop >/dev/null 2>&1 || true
+    ZAPRET2_APPLIED="false"
+    ZAPRET2_SERVICE_ENABLED="false"
+    save_nft_settings
+    log_info "Zapret2 остановлен — вместе с лимитером он не работает"
 }
 
 remove_nft_rules() {
@@ -702,17 +744,15 @@ enable_smart_mode() {
         echo ""
     fi
 
-    # Zapret2 и лимитер фильтруют один трафик. zapret2_install лимитер снимает,
-    # обратной стороны не было — включение Smart оставляло оба работать.
+    # Zapret2 и лимитер фильтруют один трафик — оставляем что-то одно.
     local _zapret_was_running="false"
-    if zapret2_is_running; then
+    if zapret2_is_running || zapret2_in_effect 2>/dev/null; then
         _zapret_was_running="true"
-        echo -e "  ${YELLOW}⚠ Zapret2 сейчас работает — Smart режим его заменяет.${NC}"
+        echo -e "  ${YELLOW}⚠ Zapret2 сейчас работает — Smart режим его заменит и остановит.${NC}"
         echo ""
     fi
 
-    echo -en "  ${BOLD}Включить Smart режим? [Y/n]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Включить Smart режим? [Y/n]:${NC} "
     [[ "$_yn" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     # Отключаем iOS Fix v2 если был
@@ -722,16 +762,7 @@ enable_smart_mode() {
         log_info "iOS Fix v2 отключён (Smart режим его заменяет)"
     fi
 
-    if [ "$_zapret_was_running" = "true" ]; then
-        echo -en "  ${BOLD}Остановить Zapret2? [Y/n]:${NC} "
-        local _yn_z; read_line _yn_z
-        if [[ ! "$_yn_z" =~ ^[nN] ]]; then
-            zapret2_stop
-        else
-            _zapret_was_running="false"
-            log_warn "Zapret2 оставлен работать вместе с лимитером — они мешают друг другу"
-        fi
-    fi
+    [ "$_zapret_was_running" = "true" ] && zapret2_yield
 
     apply_nft_preset smart
     save_nft_settings
@@ -857,8 +888,7 @@ ios_fix_remove() {
         echo -e "  ${BOLD}Откат фикса для iOS (вариант 1)${NC}"; echo ""
         echo -e "  ${DIM}Будет удалён: ${IOS_SYSCTL_FILE}${NC}"
         echo -e "  ${DIM}Значения ядра будут восстановлены к тем, которые были до применения фикса.${NC}"; echo ""
-        echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-        local _confirm; read_line _confirm
+        local _confirm; read_line _confirm "  ${BOLD}Продолжить? [Y/n]:${NC} "
         [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
     fi
 
@@ -906,8 +936,7 @@ _ios2_check_client_mss() {
         echo -e "  ${CYAN}mtproxyl expert clear client_mss${NC}"
         echo -e "  ${CYAN}mtproxyl restart${NC}"
         echo ""
-        echo -en "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
-        local _proceed; read_line _proceed
+        local _proceed; read_line _proceed "  ${BOLD}Продолжить всё равно? [y/N]:${NC} "
         [[ "$_proceed" =~ ^[yY] ]] || return 1
     fi
     return 0
@@ -920,8 +949,7 @@ ios2_fix_apply() {
         echo -e "  ${YELLOW}⚠ Smart режим активен — iOS Fix v2 не нужен.${NC}"
         echo -e "  ${DIM}Smart режим автоматически разделяет iOS и Android на одном порту.${NC}"
         echo ""
-        echo -en "  ${BOLD}Всё равно включить iOS Fix v2? [y/N]:${NC} "
-        local _force; read_line _force
+        local _force; read_line _force "  ${BOLD}Всё равно включить iOS Fix v2? [y/N]:${NC} "
         [[ "$_force" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
     fi
 
@@ -942,8 +970,7 @@ ios2_fix_apply() {
 
     _ios2_check_client_mss || return 0
 
-    echo -en "  ${BOLD}Применить? [Y/n]:${NC} "
-    local _confirm; read_line _confirm
+    local _confirm; read_line _confirm "  ${BOLD}Применить? [Y/n]:${NC} "
     [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     IOS2_FIX_ENABLED="true"
@@ -979,8 +1006,7 @@ ios2_fix_remove() {
     if [ "$force" != "true" ]; then
         echo -e "  ${BOLD}Отключение iOS Fix v2${NC}"; echo ""
         echo -e "  ${DIM}Редирект ${IOS2_EXTERNAL_PORT} → ${IOS2_TARGET_PORT:-${PROXY_PORT:-443}} будет удалён.${NC}"; echo ""
-        echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-        local _confirm; read_line _confirm
+        local _confirm; read_line _confirm "  ${BOLD}Продолжить? [Y/n]:${NC} "
         [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
     fi
 
@@ -1157,8 +1183,7 @@ meko_opt_remove() {
     echo -e "    default_qdisc        → ${MEKO_ORIG_DEFAULT_QDISC:-pfifo_fast}"
     echo -e "    congestion_control   → ${MEKO_ORIG_TCP_CONGESTION:-cubic}"
     echo ""
-    echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-    local _confirm; read_line _confirm
+    local _confirm; read_line _confirm "  ${BOLD}Продолжить? [Y/n]:${NC} "
     [[ "$_confirm" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
     rm -f "$MEKO_OPT_FILE"
@@ -1419,29 +1444,37 @@ zapret2_download_bundle() {
         *) log_error "Неподдерживаемая архитектура: $_arch"; return 1 ;;
     esac
 
-    local _ver="v1.0.3"
+    local _force="${1:-}"
+    local _ver="$ZAPRET2_RELEASE"
     local _url="https://github.com/bol-van/zapret2/releases/download/${_ver}/zapret2-${_ver}.tar.gz"
-    local _tmp="/tmp/zapret2-release.tar.gz"
+    local _tar; _tar=$(zapret2_bundle_cache_file "$_ver")
     local _tmpdir="/tmp/zapret2-unpack-$$"
 
     log_info "Архитектура: ${_arch} (${_zapret_arch})"
-    log_info "Скачивание: ${_url}"
 
-    if ! curl -fsSL --max-time 120 -o "$_tmp" "$_url"; then
-        log_error "Не удалось скачать zapret2 релиз"
-        rm -f "$_tmp"
-        return 1
+    [ "$_force" = "force" ] && rm -f "$_tar"
+    if zapret2_bundle_cached "$_ver"; then
+        log_info "Архив уже скачан: ${_tar}"
+    else
+        log_info "Скачивание: ${_url}"
+        mkdir -p "$(dirname "$_tar")"
+        if ! curl -fsSL --max-time 120 -o "${_tar}.part" "$_url"; then
+            log_error "Не удалось скачать zapret2 релиз"
+            rm -f "${_tar}.part"
+            return 1
+        fi
+        mv -f "${_tar}.part" "$_tar"
     fi
 
     log_info "Распаковка..."
     rm -rf "$_tmpdir"
     mkdir -p "$_tmpdir"
-    if ! tar xzf "$_tmp" -C "$_tmpdir"; then
+    if ! tar xzf "$_tar" -C "$_tmpdir"; then
         log_error "Не удалось распаковать архив"
-        rm -f "$_tmp"; rm -rf "$_tmpdir"
+        rm -f "$_tar"; rm -rf "$_tmpdir"
+        log_info "Архив удалён — повторите установку, он скачается заново"
         return 1
     fi
-    rm -f "$_tmp"
 
     local _root
     _root=$(find "$_tmpdir" -maxdepth 1 -mindepth 1 -type d | head -1)
@@ -2021,8 +2054,7 @@ EOF
         done <<< "$_conf"
         echo ""
         echo -e "  ${DIM}Строки с этими ключами можно закомментировать — рядом останется копия.${NC}"
-        echo -en "  ${BOLD}Сделать это? [Y/n]:${NC} "
-        local _yn; read_line _yn
+        local _yn; read_line _yn "  ${BOLD}Сделать это? [Y/n]:${NC} "
         if [[ ! "$_yn" =~ ^[nN] ]]; then
             while IFS= read -r _f; do
                 [ -n "$_f" ] && _zapret2_wscale_disarm_file "$_f"
@@ -2180,6 +2212,11 @@ zapret2_start() {
         log_error "Бинарник nfqws2 не найден: ${ZAPRET2_BIN}"
         return 1
     fi
+    if nft_limiter_in_effect; then
+        log_error "SYN-лимитер активен — вместе с ним zapret2 не запускается"
+        log_info "Сначала выключите лимитер: меню NFT → выключить правила"
+        return 1
+    fi
     systemctl daemon-reload
     systemctl enable "$ZAPRET2_SERVICE" >/dev/null 2>&1 || true
     systemctl restart "$ZAPRET2_SERVICE" 2>/dev/null || true
@@ -2238,23 +2275,13 @@ zapret2_start_existing() {
     # Лимитер снимаем так же, как при установке: обе защиты фильтруют один
     # трафик. Запуск уже установленного zapret2 этого не делал.
     local _restore_limiter="false" _restore_limiter_service="false"
-    if [ "${NFT_ENABLED:-false}" = "true" ] || nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1; then
+    if nft_limiter_in_effect; then
         _restore_limiter="true"
         [ "${NFT_ENABLED:-false}" = "true" ] && _restore_limiter_service="true"
 
         echo ""
         echo -e "  ${YELLOW}⚠ SYN limiter активен — zapret2 его заменит.${NC}"
-        echo -en "  ${BOLD}Отключить SYN limiter? [Y/n]:${NC} "
-        local _yn_syn; read_line _yn_syn
-        if [[ ! "$_yn_syn" =~ ^[nN] ]]; then
-            remove_nft_rules 2>/dev/null || true
-            remove_nft_service 2>/dev/null || true
-            log_success "SYN limiter отключён"
-        else
-            _restore_limiter="false"
-            _restore_limiter_service="false"
-            log_warn "Лимитер оставлен работать вместе с Zapret2 — они мешают друг другу"
-        fi
+        nft_limiter_yield
     fi
 
     zapret2_apply_nft || {
@@ -2284,6 +2311,10 @@ zapret2_start_existing() {
 _zapret2_restore_limiter() {
     [ "${1:-false}" = "true" ] || return 0
     log_info "Возвращаю SYN limiter..."
+    # zapret2 не поднялся — гасим его флаг, иначе лимитер не вернуть.
+    ZAPRET2_SERVICE_ENABLED="false"
+    [ "${2:-false}" = "true" ] && NFT_ENABLED="true"
+    save_nft_settings
     apply_nft_rules >/dev/null 2>&1 || true
     if [ "${2:-false}" = "true" ]; then
         install_nft_service >/dev/null 2>&1 || true
@@ -2393,13 +2424,20 @@ zapret2_install() {
     local _reinstall="false"
     if [ "${ZAPRET2_APPLIED:-false}" = "true" ] && [ -x "$ZAPRET2_BIN" ]; then
         echo -e "  ${YELLOW}Zapret2 уже установлен. Переустановить?${NC}"
-        echo -en "  ${BOLD}Продолжить? [Y/n]:${NC} "
-        local _yn; read_line _yn
+        local _yn; read_line _yn "  ${BOLD}Продолжить? [Y/n]:${NC} "
         [[ "$_yn" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
         _reinstall="true"
     fi
 
-    echo -en "  ${BOLD}Скачать и установить zapret2? [Y/n]:${NC} "
+    local _force=""
+    if zapret2_bundle_cached; then
+        echo -e "  ${DIM}Архив ${ZAPRET2_RELEASE} уже скачан — ставим из кэша.${NC}"
+        local _yn_dl; read_line _yn_dl "  ${BOLD}Скачать заново? [y/N]:${NC} "
+        [[ "$_yn_dl" =~ ^[yY] ]] && _force="force"
+        echo -en "  ${BOLD}Установить zapret2? [Y/n]:${NC} "
+    else
+        echo -en "  ${BOLD}Скачать и установить zapret2? [Y/n]:${NC} "
+    fi
     local _yn; read_line _yn
     [[ "$_yn" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
@@ -2408,7 +2446,7 @@ zapret2_install() {
     # или процесс от прошлой попытки ещё живы.
     zapret2_free_own_queue
 
-    zapret2_download_bundle || return 1
+    zapret2_download_bundle "$_force" || return 1
 
     # Проверяем занятость NFQUEUE и подбираем свободную
     if zapret2_queue_in_use "${ZAPRET2_QNUM}"; then
@@ -2433,23 +2471,14 @@ zapret2_install() {
     local _restore_limiter="false"
     local _restore_limiter_service="false"
 
-    # Отключаем SYN limiter если активен
-    if [ "${NFT_ENABLED:-false}" = "true" ] || nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null 2>&1; then
+    # Отключаем SYN limiter если активен: одновременно с zapret2 он не работает
+    if nft_limiter_in_effect; then
         _restore_limiter="true"
         [ "${NFT_ENABLED:-false}" = "true" ] && _restore_limiter_service="true"
 
         echo ""
         echo -e "  ${YELLOW}⚠ SYN limiter активен — zapret2 его заменит.${NC}"
-        echo -en "  ${BOLD}Отключить SYN limiter? [Y/n]:${NC} "
-        local _yn_syn; read_line _yn_syn
-        if [[ ! "$_yn_syn" =~ ^[nN] ]]; then
-            remove_nft_rules 2>/dev/null || true
-            remove_nft_service 2>/dev/null || true
-            log_success "SYN limiter отключён"
-        else
-            _restore_limiter="false"
-            _restore_limiter_service="false"
-        fi
+        nft_limiter_yield
     fi
 
     zapret2_autoconfigure_scope
@@ -2466,13 +2495,7 @@ zapret2_install() {
 
         zapret2_cleanup_failed_install || true
 
-        if [ "$_restore_limiter" = "true" ]; then
-            log_info "Возвращаю SYN limiter..."
-            apply_nft_rules || true
-            if [ "$_restore_limiter_service" = "true" ]; then
-                install_nft_service || true
-            fi
-        fi
+        _zapret2_restore_limiter "$_restore_limiter" "$_restore_limiter_service"
 
         return 1
     fi
@@ -2506,8 +2529,7 @@ zapret2_remove() {
     echo ""
     echo -e "  ${RED}${BOLD}Удаление Zapret2 MTProto fix${NC}"
     echo ""
-    echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Продолжить? [y/N]:${NC} "
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     zapret2_stop
@@ -2602,8 +2624,7 @@ zapret2_check_wscale() {
         fi
 
         echo ""
-        echo -en "  ${BOLD}Применить оптимизацию? [Y/n]:${NC} "
-        local _yn_opt; read_line _yn_opt
+        local _yn_opt; read_line _yn_opt "  ${BOLD}Применить оптимизацию? [Y/n]:${NC} "
         if [[ "$_yn_opt" =~ ^[nN] ]]; then
             log_info "Отменено — дробление ClientHello работать не будет"
             return 0

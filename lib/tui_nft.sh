@@ -191,8 +191,7 @@ tui_nft_presets() {
 
     if [ "$choice" != "0" ] && [ -n "$choice" ] && [ "$choice" != "s" ] && [ "$choice" != "S" ]; then
         echo ""
-        echo -en "  ${BOLD}Применить NFT правила сейчас? [Y/n]:${NC} "
-        local yn; read_line yn
+        local yn; read_line yn "  ${BOLD}Применить NFT правила сейчас? [Y/n]:${NC} "
         if [[ ! "$yn" =~ ^[nN] ]]; then
             apply_nft_rules || true
             [ "${NFT_ENABLED:-false}" = "true" ] && install_nft_service || true
@@ -231,8 +230,7 @@ tui_nft_settings() {
     local choice; choice=$(read_choice "выбор" "0")
     case "$choice" in
         1)
-            echo -en "  ${BOLD}Новый Rate (напр. 1/second, 2/second) [${NFT_RATE}]:${NC} "
-            local r; read_line r
+            local r; read_line r "  ${BOLD}Новый Rate (напр. 1/second, 2/second) [${NFT_RATE}]:${NC} "
             if [ -n "$r" ]; then
                 NFT_RATE="$r"
                 save_nft_settings
@@ -241,8 +239,7 @@ tui_nft_settings() {
             fi
             ;;
         2)
-            echo -en "  ${BOLD}Новый Burst [${NFT_BURST}]:${NC} "
-            local b; read_line b
+            local b; read_line b "  ${BOLD}Новый Burst [${NFT_BURST}]:${NC} "
             if [[ "$b" =~ ^[0-9]+$ ]]; then
                 NFT_BURST="$b"
                 save_nft_settings
@@ -253,8 +250,7 @@ tui_nft_settings() {
             fi
             ;;
         3)
-            echo -en "  ${BOLD}Новый Timeout (напр. 30s, 60s, 120s) [${NFT_METER_TIMEOUT}]:${NC} "
-            local t; read_line t
+            local t; read_line t "  ${BOLD}Новый Timeout (напр. 30s, 60s, 120s) [${NFT_METER_TIMEOUT}]:${NC} "
             if [ -n "$t" ]; then
                 NFT_METER_TIMEOUT="$t"
                 save_nft_settings
@@ -333,8 +329,7 @@ tui_nft_smart_settings_menu() {
                 if [ "${NFT_IOS_LIMIT_ENABLED:-true}" != "true" ]; then
                     log_warn "Лимит iOS отключён — сначала включите его"
                 else
-                    echo -en "  ${BOLD}iOS Rate [${NFT_IOS_RATE}]:${NC} "
-                    local v; read_line v
+                    local v; read_line v "  ${BOLD}iOS Rate [${NFT_IOS_RATE}]:${NC} "
                     [ -n "$v" ] && { NFT_IOS_RATE="$v"; save_nft_settings; log_success "iOS Rate: ${v}"; prompt_apply_nft_rules; }
                 fi
                 press_any_key ;;
@@ -342,15 +337,13 @@ tui_nft_smart_settings_menu() {
                 if [ "${NFT_IOS_LIMIT_ENABLED:-true}" != "true" ]; then
                     log_warn "Лимит iOS отключён — сначала включите его"
                 else
-                    echo -en "  ${BOLD}iOS Burst [${NFT_IOS_BURST}]:${NC} "
-                    local v; read_line v
+                    local v; read_line v "  ${BOLD}iOS Burst [${NFT_IOS_BURST}]:${NC} "
                     [[ "$v" =~ ^[0-9]+$ ]] && { NFT_IOS_BURST="$v"; save_nft_settings; log_success "iOS Burst: ${v}"; prompt_apply_nft_rules; }
                 fi
                 press_any_key ;;
             3)
                 if [ "${NFT_IOS_LIMIT_ENABLED:-true}" = "true" ]; then
-                    echo -en "  ${BOLD}Отключить лимит iOS? [y/N]:${NC} "
-                    local yn; read_line yn
+                    local yn; read_line yn "  ${BOLD}Отключить лимит iOS? [y/N]:${NC} "
                     if [[ "$yn" =~ ^[yY] ]]; then
                         NFT_IOS_LIMIT_ENABLED="false"
                         save_nft_settings
@@ -368,8 +361,7 @@ tui_nft_smart_settings_menu() {
                 if [ "${NFT_OTHER_LIMIT_ENABLED:-true}" != "true" ]; then
                     log_warn "Лимит Other отключён — сначала включите его"
                 else
-                    echo -en "  ${BOLD}Other Rate [${NFT_OTHER_RATE}]:${NC} "
-                    local v; read_line v
+                    local v; read_line v "  ${BOLD}Other Rate [${NFT_OTHER_RATE}]:${NC} "
                     [ -n "$v" ] && { NFT_OTHER_RATE="$v"; save_nft_settings; log_success "Other Rate: ${v}"; prompt_apply_nft_rules; }
                 fi
                 press_any_key ;;
@@ -377,16 +369,14 @@ tui_nft_smart_settings_menu() {
                 if [ "${NFT_OTHER_LIMIT_ENABLED:-true}" != "true" ]; then
                     log_warn "Лимит Other отключён — сначала включите его"
                 else
-                    echo -en "  ${BOLD}Other Burst [${NFT_OTHER_BURST}]:${NC} "
-                    local v; read_line v
+                    local v; read_line v "  ${BOLD}Other Burst [${NFT_OTHER_BURST}]:${NC} "
                     [[ "$v" =~ ^[0-9]+$ ]] && { NFT_OTHER_BURST="$v"; save_nft_settings; log_success "Other Burst: ${v}"; prompt_apply_nft_rules; }
                 fi
                 press_any_key ;;
             6) tui_nft_other_action_menu ;;
             7)
                 if [ "${NFT_OTHER_LIMIT_ENABLED:-true}" = "true" ]; then
-                    echo -en "  ${BOLD}Отключить лимит Other? [y/N]:${NC} "
-                    local yn; read_line yn
+                    local yn; read_line yn "  ${BOLD}Отключить лимит Other? [y/N]:${NC} "
                     if [[ "$yn" =~ ^[yY] ]]; then
                         NFT_OTHER_LIMIT_ENABLED="false"
                         save_nft_settings
@@ -401,8 +391,7 @@ tui_nft_smart_settings_menu() {
                 fi
                 press_any_key ;;
             8)
-                echo -en "  ${BOLD}Timeout [${NFT_METER_TIMEOUT}]:${NC} "
-                local v; read_line v
+                local v; read_line v "  ${BOLD}Timeout [${NFT_METER_TIMEOUT}]:${NC} "
                 [ -n "$v" ] && { NFT_METER_TIMEOUT="$v"; save_nft_settings; log_success "Timeout: ${v}"; prompt_apply_nft_rules; }
                 press_any_key ;;
             9)
@@ -446,8 +435,7 @@ tui_nft_ip_settings() {
     echo ""
 
     while true; do
-        echo -en "  ${BOLD}IPv4 [${NFT_SERVER_IP:-none}]:${NC} "
-        local _val; read_line _val
+        local _val; read_line _val "  ${BOLD}IPv4 [${NFT_SERVER_IP:-none}]:${NC} "
 
         [ -z "$_val" ] && break
 
@@ -525,26 +513,22 @@ tui_nft_extra_menu() {
                     echo ""
                 fi
                 local _p=""
-                echo -en "  ${BOLD}Порт:${NC} "
-                read_line _p
+                read_line _p "  ${BOLD}Порт:${NC} "
                 if ! [[ "$_p" =~ ^[0-9]+$ ]] || [ "$_p" -lt 1 ] || [ "$_p" -gt 65535 ]; then
                     log_error "Некорректный порт"
                     press_any_key; continue
                 fi
                 local _eip=""
-                echo -en "  ${BOLD}IP (пусто = все):${NC} "
-                read_line _eip
+                read_line _eip "  ${BOLD}IP (пусто = все):${NC} "
                 if [ -n "$_eip" ] && ! validate_ip_literal "$_eip"; then
                     log_error "Некорректный IPv4"
                     press_any_key; continue
                 fi
                 local _r=""
-                echo -en "  ${BOLD}Rate [1/second]:${NC} "
-                read_line _r
+                read_line _r "  ${BOLD}Rate [1/second]:${NC} "
                 [ -z "$_r" ] && _r="1/second"
                 local _b=""
-                echo -en "  ${BOLD}Burst [1]:${NC} "
-                read_line _b
+                read_line _b "  ${BOLD}Burst [1]:${NC} "
                 [ -z "$_b" ] && _b="1"
                 nft_extra_add "$_p" "$_eip" "$_r" "$_b"
                 local _add_rc=$?
@@ -561,12 +545,10 @@ tui_nft_extra_menu() {
                 press_any_key ;;
             2)
                 [ "$NFT_EXTRA_COUNT" -eq 0 ] && { log_info "Нет правил для удаления"; press_any_key; continue; }
-                echo -en "  ${BOLD}Номер правила для удаления:${NC} "
-                local _idx; read_line _idx
+                local _idx; read_line _idx "  ${BOLD}Номер правила для удаления:${NC} "
                 nft_extra_remove "$_idx" || true
                 echo ""
-                echo -en "  ${BOLD}Применить правила заново? [Y/n]:${NC} "
-                local _yn; read_line _yn
+                local _yn; read_line _yn "  ${BOLD}Применить правила заново? [Y/n]:${NC} "
                 if [[ ! "$_yn" =~ ^[nN] ]]; then
                     apply_nft_rules || true
                     [ "${NFT_ENABLED:-false}" = "true" ] && install_nft_service || true
@@ -684,22 +666,19 @@ tui_ios1_menu() {
             1) ios_fix_apply; press_any_key ;;
             2) ios_fix_remove; press_any_key ;;
             3)
-                echo -en "  ${BOLD}tcp_keepalive_time [${IOS_KA_TIME}]:${NC} "
-                local _v; read_line _v
+                local _v; read_line _v "  ${BOLD}tcp_keepalive_time [${IOS_KA_TIME}]:${NC} "
                 if [[ "$_v" =~ ^[0-9]+$ ]]; then
                     IOS_KA_TIME="$_v"; save_nft_settings; log_success "keepalive_time = $_v"
                 elif [ -n "$_v" ]; then log_error "Должно быть числом"; fi
                 press_any_key ;;
             4)
-                echo -en "  ${BOLD}tcp_keepalive_intvl [${IOS_KA_INTVL}]:${NC} "
-                local _v; read_line _v
+                local _v; read_line _v "  ${BOLD}tcp_keepalive_intvl [${IOS_KA_INTVL}]:${NC} "
                 if [[ "$_v" =~ ^[0-9]+$ ]]; then
                     IOS_KA_INTVL="$_v"; save_nft_settings; log_success "keepalive_intvl = $_v"
                 elif [ -n "$_v" ]; then log_error "Должно быть числом"; fi
                 press_any_key ;;
             5)
-                echo -en "  ${BOLD}tcp_keepalive_probes [${IOS_KA_PROBES}]:${NC} "
-                local _v; read_line _v
+                local _v; read_line _v "  ${BOLD}tcp_keepalive_probes [${IOS_KA_PROBES}]:${NC} "
                 if [[ "$_v" =~ ^[0-9]+$ ]]; then
                     IOS_KA_PROBES="$_v"; save_nft_settings; log_success "keepalive_probes = $_v"
                 elif [ -n "$_v" ]; then log_error "Должно быть числом"; fi
@@ -744,24 +723,21 @@ tui_ios2_menu() {
             1) ios2_fix_apply; press_any_key ;;
             2) ios2_fix_remove; press_any_key ;;
             3)
-                echo -en "  ${BOLD}Новый внешний порт iOS [${IOS2_EXTERNAL_PORT}]:${NC} "
-                local _p; read_line _p
+                local _p; read_line _p "  ${BOLD}Новый внешний порт iOS [${IOS2_EXTERNAL_PORT}]:${NC} "
                 if [[ "$_p" =~ ^[0-9]+$ ]] && [ "$_p" -ge 1 ] && [ "$_p" -le 65535 ]; then
                     IOS2_EXTERNAL_PORT="$_p"; save_nft_settings; log_success "Внешний порт: $_p"
                     prompt_apply_nft_rules
                 elif [ -n "$_p" ]; then log_error "Некорректный порт (1..65535)"; fi
                 press_any_key ;;
             4)
-                echo -en "  ${BOLD}Новый целевой порт [${_target}]:${NC} "
-                local _p; read_line _p
+                local _p; read_line _p "  ${BOLD}Новый целевой порт [${_target}]:${NC} "
                 if [[ "$_p" =~ ^[0-9]+$ ]] && [ "$_p" -ge 1 ] && [ "$_p" -le 65535 ]; then
                     IOS2_TARGET_PORT="$_p"; save_nft_settings; log_success "Целевой порт: $_p"
                     prompt_apply_nft_rules
                 elif [ -n "$_p" ]; then log_error "Некорректный порт (1..65535)"; fi
                 press_any_key ;;
             5)
-                echo -en "  ${BOLD}Новый MSS [${IOS2_MSS}] (88..4096):${NC} "
-                local _m; read_line _m
+                local _m; read_line _m "  ${BOLD}Новый MSS [${IOS2_MSS}] (88..4096):${NC} "
                 if [[ "$_m" =~ ^[0-9]+$ ]] && [ "$_m" -ge 88 ] && [ "$_m" -le 4096 ]; then
                     IOS2_MSS="$_m"; save_nft_settings; log_success "MSS: $_m"
                     prompt_apply_nft_rules
@@ -957,8 +933,7 @@ tui_zapret2_menu() {
                     echo -e "    NFQUEUE: ${ZAPRET2_DEFAULT_QNUM}  fwmark: ${ZAPRET2_DEFAULT_FWMARK}"
                     echo -e "    UID:GID: ${ZAPRET2_DEFAULT_UID}:${ZAPRET2_DEFAULT_GID}"
                     echo ""
-                    echo -en "  ${BOLD}Сбросить и перезапустить? [y/N]:${NC} "
-                    local _yn; read_line _yn
+                    local _yn; read_line _yn "  ${BOLD}Сбросить и перезапустить? [y/N]:${NC} "
                     if [[ "$_yn" =~ ^[yY] ]]; then
                         ZAPRET2_OUT_RANGE="$ZAPRET2_DEFAULT_OUT_RANGE"
                         ZAPRET2_IN_RANGE="$ZAPRET2_DEFAULT_IN_RANGE"
@@ -1001,8 +976,7 @@ tui_zapret2_menu() {
                     zapret2_remove
                 elif zapret2_has_residue; then
                     echo ""
-                    echo -en "  ${BOLD}Очистить следы неудачной установки zapret2? [Y/n]:${NC} "
-                    local _yn; read_line _yn
+                    local _yn; read_line _yn "  ${BOLD}Очистить следы неудачной установки zapret2? [Y/n]:${NC} "
                     if [[ ! "$_yn" =~ ^[nN] ]]; then
                         zapret2_cleanup_failed_install
                     else
@@ -1064,32 +1038,28 @@ tui_zapret2_settings() {
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
             1)
-                echo -en "  out-range [${ZAPRET2_OUT_RANGE}]: "
-                local _v; read_line _v
+                local _v; read_line _v "  out-range [${ZAPRET2_OUT_RANGE}]: "
                 if [ -n "$_v" ]; then
                     ZAPRET2_OUT_RANGE="$_v"; save_nft_settings
                     log_success "out-range = ${_v}"; zapret2_update_config
                 fi
                 press_any_key ;;
             2)
-                echo -en "  split len [${ZAPRET2_SPLIT_LEN}] (50..1000): "
-                local _v; read_line _v
+                local _v; read_line _v "  split len [${ZAPRET2_SPLIT_LEN}] (50..1000): "
                 if [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 50 ] && [ "$_v" -le 1000 ]; then
                     ZAPRET2_SPLIT_LEN="$_v"; save_nft_settings
                     log_success "split len = ${_v}"; zapret2_update_config
                 elif [ -n "$_v" ]; then log_error "Диапазон: 50..1000"; fi
                 press_any_key ;;
             3)
-                echo -en "  win SYN+ACK [${ZAPRET2_WIN_SYNACK}]: "
-                local _v; read_line _v
+                local _v; read_line _v "  win SYN+ACK [${ZAPRET2_WIN_SYNACK}]: "
                 if [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 10 ] && [ "$_v" -le 65535 ]; then
                     ZAPRET2_WIN_SYNACK="$_v"; save_nft_settings
                     log_success "win SYN+ACK = ${_v}"; zapret2_update_config
                 elif [ -n "$_v" ]; then log_error "Диапазон: 10..65535"; fi
                 press_any_key ;;
             4)
-                echo -en "  win ACK [${ZAPRET2_WIN_ACK}]: "
-                local _v; read_line _v
+                local _v; read_line _v "  win ACK [${ZAPRET2_WIN_ACK}]: "
                 if [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 1 ] && [ "$_v" -le 65535 ]; then
                     ZAPRET2_WIN_ACK="$_v"; save_nft_settings
                     echo -e "  ${YELLOW}⚠ Если перестанет подключаться — верните 10${NC}"
@@ -1097,24 +1067,21 @@ tui_zapret2_settings() {
                 elif [ -n "$_v" ]; then log_error "Диапазон: 1..65535"; fi
                 press_any_key ;;
             5)
-                echo -en "  in-range [${ZAPRET2_IN_RANGE}]: "
-                local _v; read_line _v
+                local _v; read_line _v "  in-range [${ZAPRET2_IN_RANGE}]: "
                 if [ -n "$_v" ]; then
                     ZAPRET2_IN_RANGE="$_v"; save_nft_settings
                     log_success "in-range = ${_v}"; zapret2_update_config
                 fi
                 press_any_key ;;
             6)
-                echo -en "  NFQUEUE [${ZAPRET2_QNUM}]: "
-                local _v; read_line _v
+                local _v; read_line _v "  NFQUEUE [${ZAPRET2_QNUM}]: "
                 if [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 0 ] && [ "$_v" -le 65535 ]; then
                     ZAPRET2_QNUM="$_v"; save_nft_settings
                     log_success "NFQUEUE = ${_v}"; zapret2_update_config
                 elif [ -n "$_v" ]; then log_error "Диапазон: 0..65535"; fi
                 press_any_key ;;
             7)
-                echo -en "  fwmark [${ZAPRET2_FWMARK}]: "
-                local _v; read_line _v
+                local _v; read_line _v "  fwmark [${ZAPRET2_FWMARK}]: "
                 if [ -n "$_v" ]; then
                     ZAPRET2_FWMARK="$_v"; save_nft_settings
                     log_success "fwmark = ${_v}"; zapret2_update_config
@@ -1123,16 +1090,14 @@ tui_zapret2_settings() {
             8) zapret2_check_wscale "false"; press_any_key ;;
             9)
                 if [ "${ZAPRET2_DEBUG:-false}" = "true" ]; then
-                    echo -en "  ${BOLD}Выключить debug лог? [Y/n]:${NC} "
-                    local _yn; read_line _yn
+                    local _yn; read_line _yn "  ${BOLD}Выключить debug лог? [Y/n]:${NC} "
                     if [[ ! "$_yn" =~ ^[nN] ]]; then
                         ZAPRET2_DEBUG="false"; save_nft_settings
                         log_success "Debug лог выключен"; zapret2_update_config
                     fi
                 else
                     echo -e "  ${YELLOW}⚠ Debug лог может быстро расти — выключите после отладки${NC}"
-                    echo -en "  ${BOLD}Включить debug лог? [Y/n]:${NC} "
-                    local _yn; read_line _yn
+                    local _yn; read_line _yn "  ${BOLD}Включить debug лог? [Y/n]:${NC} "
                     if [[ ! "$_yn" =~ ^[nN] ]]; then
                         ZAPRET2_DEBUG="true"; save_nft_settings
                         log_success "Debug лог включён → ${ZAPRET2_DEBUG_LOG}"; zapret2_update_config
@@ -1144,8 +1109,7 @@ tui_zapret2_settings() {
                 echo -e "  ${DIM}Порт прокси (${PROXY_PORT:-443}) добавляется автоматически.${NC}"
                 echo -e "  ${DIM}Формат: 8443,9000-9100 — сколько угодно портов и диапазонов.${NC}"
                 echo -e "  ${DIM}Пусто — убрать дополнительные порты.${NC}"
-                echo -en "  Доп. порты [${ZAPRET2_EXTRA_PORTS:-нет}]: "
-                local _ep; read_line _ep
+                local _ep; read_line _ep "  Доп. порты [${ZAPRET2_EXTRA_PORTS:-нет}]: "
                 if [ -z "$_ep" ]; then
                     if [ -n "${ZAPRET2_EXTRA_PORTS:-}" ]; then
                         ZAPRET2_EXTRA_PORTS=""
@@ -1213,11 +1177,9 @@ tui_zapret2_settings() {
                 echo -e "  ${DIM}nfqws2 сбрасывает привилегии под этого пользователя.${NC}"
                 echo -e "  ${DIM}65534:65534 — nobody:nogroup, подходит почти везде.${NC}"
                 echo -e "  ${DIM}Менять стоит, только если служба падает на setgroups.${NC}"
-                echo -en "  UID [${ZAPRET2_UID}]: "
-                local _u; read_line _u
+                local _u; read_line _u "  UID [${ZAPRET2_UID}]: "
                 [ -n "$_u" ] || _u="$ZAPRET2_UID"
-                echo -en "  GID [${ZAPRET2_GID}]: "
-                local _g; read_line _g
+                local _g; read_line _g "  GID [${ZAPRET2_GID}]: "
                 [ -n "$_g" ] || _g="$ZAPRET2_GID"
                 if [[ "$_u" =~ ^[0-9]+$ ]] && [[ "$_g" =~ ^[0-9]+$ ]] \
                    && [ "$_u" -le 65535 ] && [ "$_g" -le 65535 ]; then
@@ -1233,8 +1195,7 @@ tui_zapret2_settings() {
                 echo -e "  ${DIM}Менять стоит, когда клиенты приходят на другой порт:${NC}"
                 echo -e "  ${DIM}проброс, балансировщик, свой DNAT.${NC}"
                 echo -e "  ${DIM}Пусто — вернуться к порту из конфига.${NC}"
-                echo -en "  Основной порт [$(zapret2_main_port)]: "
-                local _mp; read_line _mp
+                local _mp; read_line _mp "  Основной порт [$(zapret2_main_port)]: "
                 if [ -z "$_mp" ]; then
                     if [ -n "${ZAPRET2_PORT:-}" ]; then
                         ZAPRET2_PORT=""; save_nft_settings
@@ -1258,8 +1219,7 @@ tui_zapret2_settings() {
                 echo -e "  ${DIM}Нужен адрес из пакетов: за NAT это частный адрес сервера,${NC}"
                 echo -e "  ${DIM}а не тот, под которым он виден снаружи.${NC}"
                 echo -e "  ${DIM}«off» — выключить фильтр, «auto» — определить адрес заново.${NC}"
-                echo -en "  IP [${ZAPRET2_FILTER_IP:-не задан}]: "
-                local _fip; read_line _fip
+                local _fip; read_line _fip "  IP [${ZAPRET2_FILTER_IP:-не задан}]: "
                 case "${_fip,,}" in
                     "") ;;
                     off|нет|выкл)
@@ -1296,8 +1256,7 @@ tui_zapret2_settings() {
                 echo -e "  ${DIM}Список через пробел, можно с «*».${NC}"
                 echo -e "  ${DIM}«auto» — найденные сейчас${_present:+ (${_present})}, «std» — маски ${ZAPRET2_DEFAULT_EXCLUDE_IFACES}.${NC}"
                 echo -e "  ${DIM}«off» — не исключать ничего.${NC}"
-                echo -en "  Интерфейсы [${ZAPRET2_EXCLUDE_IFACES:-нет}]: "
-                local _ifs; read_line _ifs
+                local _ifs; read_line _ifs "  Интерфейсы [${ZAPRET2_EXCLUDE_IFACES:-нет}]: "
                 case "${_ifs,,}" in
                     "") ;;
                     off|нет|выкл)

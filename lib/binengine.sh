@@ -402,8 +402,7 @@ binengine_update_to() {
     save_settings 2>/dev/null || true
     binengine_write_unit || return 1
     if binengine_running || [ "$(binengine_state)" != "absent" ]; then
-        echo -en "  ${BOLD}Перезапустить прокси? [Y/n]:${NC} "
-        local _yn; read_line _yn
+        local _yn; read_line _yn "  ${BOLD}Перезапустить прокси? [Y/n]:${NC} "
         if [[ ! "$_yn" =~ ^[nN] ]]; then
             load_secrets
             restart_proxy_container
@@ -428,8 +427,7 @@ binengine_rollback() {
         echo ""
         echo -e "  ${BOLD}Текущая:${NC}    ${_cur}"
         echo -e "  ${BOLD}Предыдущая:${NC} ${_prev:-неизвестна}"
-        echo -en "  ${BOLD}Откатиться? [y/N]:${NC} "
-        local _yn; read_line _yn
+        local _yn; read_line _yn "  ${BOLD}Откатиться? [y/N]:${NC} "
         [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
     fi
 
@@ -462,8 +460,7 @@ _binengine_offer_image_cleanup() {
     echo ""
     echo -e "  ${DIM}Образы движка больше не нужны:${NC}"
     printf '    %s\n' $_imgs
-    echo -en "  ${BOLD}Удалить их? [Y/n]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Удалить их? [Y/n]:${NC} "
     [[ "$_yn" =~ ^[nN] ]] && { log_info "Образы оставлены"; return 0; }
     local _i
     for _i in $_imgs; do docker rmi "$_i" >/dev/null 2>&1 || true; done
@@ -502,8 +499,7 @@ engine_switch_backend() {
         echo -e "  ${DIM}Секреты, настройки и порт сохранятся: конфиг генерируется заново${NC}"
         echo -e "  ${DIM}в ${CONFIG_DIR}/telemt.toml, контейнер ${CONTAINER_NAME} будет удалён.${NC}"
         echo -e "  ${DIM}Сам Docker остаётся в системе — его мы не ставили и не убираем.${NC}"
-        echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
-        local _yn; read_line _yn
+        local _yn; read_line _yn "  ${BOLD}Продолжить? [y/N]:${NC} "
         [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
         ENGINE_BACKEND="binary"
@@ -520,8 +516,7 @@ engine_switch_backend() {
         echo ""
         log_warn "Движок переедет из бинарника в Docker-контейнер"
         echo -e "  ${DIM}Понадобится Docker: если его нет, он будет установлен.${NC}"
-        echo -en "  ${BOLD}Продолжить? [y/N]:${NC} "
-        local _yn; read_line _yn
+        local _yn; read_line _yn "  ${BOLD}Продолжить? [y/N]:${NC} "
         [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
         install_docker || { log_error "Без Docker перейти не получится"; return 1; }

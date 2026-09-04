@@ -127,12 +127,10 @@ run_installer() {
     else
         echo -e "  ${YELLOW}Порт ${PROXY_METRICS_PORT} занят, рекомендуем выбрать другой${NC}"
     fi
-    echo -en "  ${BOLD}Оставить порт метрик ${PROXY_METRICS_PORT}? [Y/n]:${NC} "
-    local metrics_keep; read_line metrics_keep
+    local metrics_keep; read_line metrics_keep "  ${BOLD}Оставить порт метрик ${PROXY_METRICS_PORT}? [Y/n]:${NC} "
     if [[ "$metrics_keep" =~ ^[nN] ]]; then
         while true; do
-            echo -en "  ${BOLD}Введите порт метрик [${PROXY_METRICS_PORT}]:${NC} "
-            local metrics_input; read_line metrics_input
+            local metrics_input; read_line metrics_input "  ${BOLD}Введите порт метрик [${PROXY_METRICS_PORT}]:${NC} "
             [ -z "$metrics_input" ] && break
             if validate_port "$metrics_input"; then
                 if is_port_available "$metrics_input"; then
@@ -161,12 +159,10 @@ run_installer() {
     else
         echo -e "  ${YELLOW}Порт ${PROXY_API_PORT} занят, рекомендуем выбрать другой${NC}"
     fi
-    echo -en "  ${BOLD}Оставить порт API ${PROXY_API_PORT}? [Y/n]:${NC} "
-    local api_keep; read_line api_keep
+    local api_keep; read_line api_keep "  ${BOLD}Оставить порт API ${PROXY_API_PORT}? [Y/n]:${NC} "
     if [[ "$api_keep" =~ ^[nN] ]]; then
         while true; do
-            echo -en "  ${BOLD}Введите порт API [${PROXY_API_PORT}]:${NC} "
-            local api_input; read_line api_input
+            local api_input; read_line api_input "  ${BOLD}Введите порт API [${PROXY_API_PORT}]:${NC} "
             [ -z "$api_input" ] && break
             if ! validate_port "$api_input"; then
                 log_error "Некорректный порт"
@@ -235,8 +231,7 @@ run_installer() {
     # Маскировка
     echo ""
     echo -e "  ${BOLD}Маскировка трафика${NC}"
-    echo -en "  ${DIM}Включить? [Y/n]:${NC} "
-    local mask_input; read_line mask_input
+    local mask_input; read_line mask_input "  ${DIM}Включить? [Y/n]:${NC} "
     [[ "$mask_input" =~ ^[nN] ]] && MASKING_ENABLED="false" || MASKING_ENABLED="true"
     else
         MASKING_ENABLED="false"
@@ -247,8 +242,7 @@ run_installer() {
         echo -e "  ${BOLD}Домен WEB Proxy${NC}"
         echo -e "  ${DIM}A-запись домена должна вести на этот сервер. WEB работает только на 443.${NC}"
         while true; do
-            echo -en "  ${BOLD}Домен:${NC} "
-            local _web_domain; read_line _web_domain
+            local _web_domain; read_line _web_domain "  ${BOLD}Домен:${NC} "
             _web_domain="${_web_domain,,}"
             validate_domain "$_web_domain" && { WEB_DOMAIN="$_web_domain"; break; }
             log_error "Введите корректное доменное имя"
@@ -260,20 +254,17 @@ run_installer() {
         local _web_frontend_choice; _web_frontend_choice=$(read_choice "выбор" "1")
         if [ "$_web_frontend_choice" = "2" ]; then
             WEB_FRONTEND="haproxy"
-            echo -en "  ${DIM}PEM сертификат + ключ [$(web_haproxy_cert)]:${NC} "
-            local _haproxy_cert; read_line _haproxy_cert
+            local _haproxy_cert; read_line _haproxy_cert "  ${DIM}PEM сертификат + ключ [$(web_haproxy_cert)]:${NC} "
             [ -n "$_haproxy_cert" ] && WEB_HAPROXY_CERT="$_haproxy_cert"
             log_info "После установки примените фрагмент: mtproxyl web haproxy-config"
         else
             WEB_FRONTEND="nginx"
             SELFMASK_CERT_MODE="letsencrypt"
-            echo -en "  ${DIM}Email для Let's Encrypt [необязательно]:${NC} "
-            read_line SELFMASK_CERT_EMAIL
+            read_line SELFMASK_CERT_EMAIL "  ${DIM}Email для Let's Encrypt [необязательно]:${NC} "
         fi
 
         echo ""
-        echo -en "  ${BOLD}Показывать сайт-заглушку? [y/N]:${NC} "
-        local _web_decoy_choice; read_line _web_decoy_choice
+        local _web_decoy_choice; read_line _web_decoy_choice "  ${BOLD}Показывать сайт-заглушку? [y/N]:${NC} "
         if [[ "$_web_decoy_choice" =~ ^[yYдД] ]]; then
             WEB_DECOY_MODE="static_directory"
             installer_pick_web_site
@@ -298,8 +289,7 @@ run_installer() {
     echo ""
     draw_header "СЕКРЕТ"
     echo ""
-    echo -en "  ${DIM}Метка (имя пользователя) [по умолчанию default]:${NC} "
-    local first_label; read_line first_label
+    local first_label; read_line first_label "  ${DIM}Метка (имя пользователя) [по умолчанию default]:${NC} "
     [ -z "$first_label" ] && first_label="default"
     [[ "$first_label" =~ ^[a-zA-Z0-9_-]+$ ]] || first_label="default"
 
@@ -404,8 +394,7 @@ installer_pick_web_site() {
         3) SELFMASK_SITE_SOURCE="catrunner" ;;
         4) SELFMASK_SITE_SOURCE="mekorunner" ;;
         5)
-            echo -en "  ${BOLD}URL файла index.html:${NC} "
-            local _url; read_line _url
+            local _url; read_line _url "  ${BOLD}URL файла index.html:${NC} "
             [[ "$_url" =~ ^https?:// ]] || { log_error "Нужен URL вида http(s)://..."; return 1; }
             SELFMASK_SITE_SOURCE="$_url"
             ;;
@@ -524,8 +513,7 @@ offer_tgbot_install() {
     echo -e "  ${DIM}Понадобится токен от @BotFather. Поставить можно и позже:${NC}"
     echo -e "  ${DIM}главное меню → Телеграм бот.${NC}"
     echo ""
-    echo -en "  ${BOLD}Установить телеграм-бота? [y/N]:${NC} "
-    local _yn; read_line _yn
+    local _yn; read_line _yn "  ${BOLD}Установить телеграм-бота? [y/N]:${NC} "
     [[ "$_yn" =~ ^[yYдД] ]] || { log_info "Пропускаем — поставите когда понадобится"; return 0; }
     tgbot_install
 }
@@ -565,6 +553,7 @@ run_fix_arsenal_wizard() {
                 fi
             fi
 
+            nft_limiter_yield
             zapret2_autoconfigure_scope
             zapret2_write_conf
             zapret2_write_lua
@@ -771,13 +760,11 @@ uninstall() {
     echo -e "  ${DIM}- Глобальный Docker build cache${NC}"
     echo ""
 
-    echo -en "  ${BOLD}Введите 'yes' для подтверждения:${NC} "
-    local confirm; read_line confirm
+    local confirm; read_line confirm "  ${BOLD}Введите 'yes' для подтверждения:${NC} "
     [ "$confirm" != "yes" ] && { log_info "Отменено"; return; }
 
     # Экспорт секретов
-    echo -en "  ${BOLD}Сохранить секреты перед удалением? [y/N]:${NC} "
-    local export_choice; read_line export_choice
+    local export_choice; read_line export_choice "  ${BOLD}Сохранить секреты перед удалением? [y/N]:${NC} "
     if [[ "$export_choice" =~ ^[yY] ]]; then
         local export_file="${HOME}/mtproxyl-secrets-backup.txt"
         if [ -f "$SECRETS_FILE" ]; then
@@ -796,8 +783,7 @@ uninstall() {
         echo -e "  ${BOLD}Установлена веб-панель MTProxyL-Panel${NC}"
         echo -e "  ${DIM}Без MTProxyL она останется работать как обычная панель telemt,${NC}"
         echo -e "  ${DIM}но разделы режима, Selfmask и лимитера в ней перестанут работать.${NC}"
-        echo -en "  ${BOLD}Удалить панель тоже? [Y/n]:${NC} "
-        local _panel_yn; read_line _panel_yn
+        local _panel_yn; read_line _panel_yn "  ${BOLD}Удалить панель тоже? [Y/n]:${NC} "
         if [[ ! "$_panel_yn" =~ ^[nN] ]]; then
             panel_uninstall --no-confirm || log_warn "Не удалось удалить панель — проверьте вручную"
         fi

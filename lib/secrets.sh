@@ -237,8 +237,7 @@ secret_remove() {
 
     if [ "$force" != "true" ] && [ -t 0 ]; then
         echo -e "  ${YELLOW}Удалить секрет '${label}'? Пользователи с этим ключом будут отключены.${NC}"
-        echo -en "  ${BOLD}Введите 'yes':${NC} "
-        local confirm; read_line confirm
+        local confirm; read_line confirm "  ${BOLD}Введите 'yes':${NC} "
         [ "$confirm" != "yes" ] && { log_info "Отменено"; return 0; }
     fi
 
@@ -1104,8 +1103,7 @@ _target_users_apply() {
         log_success "Цель применила изменения на ходу — перезапуск не нужен"
         return 0
     fi
-    echo -en "  ${BOLD}Перезапустить цель, чтобы применить? [Y/n]:${NC} "
-    local _r; read_line _r
+    local _r; read_line _r "  ${BOLD}Перезапустить цель, чтобы применить? [Y/n]:${NC} "
     if [[ "$_r" =~ ^[nN] ]]; then
         log_info "Перезапуск отложен — изменения вступят в силу после restart"
         return 0

@@ -76,7 +76,11 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
           </button>
         </div>
 
-        <nav className="flex-1 min-h-0 overflow-y-auto p-3 space-y-1">
+        {/* pr-4 и стабильный жёлоб: иначе длинные пункты уходили под полосу прокрутки */}
+        <nav
+          className="flex-1 min-h-0 overflow-y-auto p-3 pr-4 space-y-1"
+          style={{ scrollbarGutter: 'stable' }}
+        >
           {navItems.map(({ to, icon: Icon, label }) => (
             <NavLink
               key={to}
@@ -85,15 +89,15 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
               onClick={onClose}
               className={({ isActive }) =>
                 cn(
-                  'flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors',
+                  'flex items-center gap-3 min-w-0 px-3 py-2 rounded-md text-sm transition-colors',
                   isActive
                     ? 'bg-accent/15 text-accent'
                     : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
                 )
               }
             >
-              <Icon size={18} />
-              {label}
+              <Icon size={18} className="shrink-0" />
+              <span className="truncate">{label}</span>
             </NavLink>
           ))}
 
@@ -111,15 +115,15 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
                   onClick={onClose}
                   className={({ isActive }) =>
                     cn(
-                      'flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors',
+                      'flex items-center gap-3 min-w-0 px-3 py-2 rounded-md text-sm transition-colors',
                       isActive
                         ? 'bg-accent/15 text-accent'
                         : 'text-text-secondary hover:text-text-primary hover:bg-surface-hover'
                     )
                   }
                 >
-                  <Icon size={18} />
-                  {label}
+                  <Icon size={18} className="shrink-0" />
+                  <span className="truncate">{label}</span>
                 </NavLink>
               ))}
             </>

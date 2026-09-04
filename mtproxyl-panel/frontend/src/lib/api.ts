@@ -960,6 +960,26 @@ export interface WarpStatusResponse {
   status?: WarpStatus;
 }
 
+export interface WarpScanNode {
+  node: string;
+  endpoint: string;
+  ping: string;
+  region: string;
+  location: string;
+}
+
+export interface WarpScanResult {
+  scanned_at: number;
+  proto?: string;
+  filter?: string;
+  nodes: WarpScanNode[];
+}
+
+export interface WarpScanResponse {
+  supported: boolean;
+  scan?: WarpScanResult;
+}
+
 export interface WarpSettingsPatch {
   location?: string;
   endpoint?: string;
@@ -975,6 +995,7 @@ export const warpApi = {
     }),
   disable: () => request<MtproxylOperation>(WARP_BASE, '/disable', { method: 'POST' }),
   scan: () => request<MtproxylOperation>(WARP_BASE, '/scan', { method: 'POST' }),
+  lastScan: () => request<WarpScanResponse>(WARP_BASE, '/scan'),
   reapply: () => request<MtproxylOperation>(WARP_BASE, '/reapply', { method: 'POST' }),
   save: (patch: WarpSettingsPatch) =>
     request<WarpStatusResponse>(WARP_BASE, '/settings', {

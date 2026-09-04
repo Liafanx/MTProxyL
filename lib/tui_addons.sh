@@ -122,8 +122,7 @@ tui_dc_menu() {
         case "$choice" in
             1) ;;
             2)
-                echo -en "  ${BOLD}Порог в процентах${NC} ${DIM}(0..100, 0 или off — без предупреждений)${NC}: "
-                local _v; read_line _v
+                local _v; read_line _v "  ${BOLD}Порог в процентах${NC} ${DIM}(0..100, 0 или off — без предупреждений)${NC}: "
                 [ -n "$_v" ] && { dc_set_threshold "$_v"; press_any_key; }
                 ;;
             0|"") return ;;
@@ -168,20 +167,17 @@ tui_availability_menu() {
                 press_any_key
                 ;;
             3)
-                echo -en "  ${BOLD}Интервал в минутах${NC} ${DIM}(текущий $(availability_interval_minutes))${NC}: "
-                local _v; read_line _v
+                local _v; read_line _v "  ${BOLD}Интервал в минутах${NC} ${DIM}(текущий $(availability_interval_minutes))${NC}: "
                 [ -n "$_v" ] && { settings_set_param AVAILABILITY_INTERVAL "$_v"; press_any_key; }
                 ;;
             4)
                 echo -e "  ${DIM}Каждый зонд — кредит. 20 зондов раз в 15 минут это 80 кредитов в час${NC}"
-                echo -en "  ${BOLD}Зондов (1-50)${NC} ${DIM}(текущее $(availability_probe_limit))${NC}: "
-                local _v; read_line _v
+                local _v; read_line _v "  ${BOLD}Зондов (1-50)${NC} ${DIM}(текущее $(availability_probe_limit))${NC}: "
                 [ -n "$_v" ] && { settings_set_param AVAILABILITY_PROBES "$_v"; press_any_key; }
                 ;;
             5)
                 echo -e "  ${DIM}Ниже этого процента телеграм-бот пришлёт предупреждение${NC}"
-                echo -en "  ${BOLD}Порог в процентах${NC} ${DIM}(текущий $(availability_threshold))${NC}: "
-                local _v; read_line _v
+                local _v; read_line _v "  ${BOLD}Порог в процентах${NC} ${DIM}(текущий $(availability_threshold))${NC}: "
                 [ -n "$_v" ] && { settings_set_param AVAILABILITY_THRESHOLD "$_v"; press_any_key; }
                 ;;
             6)
@@ -226,8 +222,7 @@ _tui_availability_token() {
     echo -e "  ${DIM}часовой лимит с 250 до 500 кредитов. Пусто — оставить как есть,${NC}"
     echo -e "  ${DIM}слово ${BOLD}удалить${NC}${DIM} — стереть сохранённый.${NC}"
     echo ""
-    echo -en "  ${BOLD}Токен:${NC} "
-    local _v; read_line _v
+    local _v; read_line _v "  ${BOLD}Токен:${NC} "
     case "$_v" in
         "")      log_info "Токен не изменён" ;;
         удалить) availability_set_token "" && log_success "Токен удалён" ;;

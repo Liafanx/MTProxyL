@@ -9,12 +9,18 @@ import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { OperationProgress } from '@/components/OperationProgress';
 import { useMtproxylOperation } from '@/hooks/useMtproxyl';
-import { warpApi, type MtproxylOperation, type WarpStatus } from '@/lib/api';
+import {
+  warpApi,
+  type MtproxylOperation,
+  type WarpScanResult,
+  type WarpStatus,
+} from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 /** Маршрут до Telegram через WARP: в туннель уходят только подсети Telegram. */
 export function WarpPage() {
   const [status, setStatus] = useState<WarpStatus | null>(null);
+  const [scan, setScan] = useState<WarpScanResult | null>(null);
   const [unsupported, setUnsupported] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -30,6 +36,13 @@ export function WarpPage() {
       } else {
         setUnsupported(null);
         setStatus(res.status ?? null);
+        // Результат разведки — вспомогательный: его отсутствие не ошибка.
+        try {
+          const sc = await warpApi.lastScan();
+          setScan(sc.supported ? sc.scan ?? null : null);
+        } catch {
+          setScan(null);
+        }
       }
       setError(null);
     } catch (e) {
@@ -150,12 +163,117 @@ export function WarpPage() {
               <WarningMe />
             </Card>
 
+            <ScanResults
+              scan={scan}
+              busy={busy || running}
+              onPick={async (patch) => {
+                setBusy(true);
+                setError(null);
+                try {
+                  await warpApi.save(patch);
+                  await load();
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : 'Не удалось сохранить');
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            />
+
             <VariantsHelp />
             <SettingsForm status={status} onSaved={load} />
           </>
         )}
       </div>
     </div>
+  );
+}
+
+// Результаты последней разведки: без них локацию приходилось искать
+// warpscout'ом в консоли и вписывать в настройки руками.
+function ScanResults({
+  scan,
+  busy,
+  onPick,
+}: {
+  scan: WarpScanResult | null;
+  busy: boolean;
+  onPick: (patch: { location?: string; endpoint?: string }) => Promise<void>;
+}) {
+  if (!scan || scan.nodes.length === 0) {
+    return (
+      <Card className="p-4 space-y-2">
+        <div className="text-sm font-medium text-text-primary">Результаты разведки</div>
+        <p className="text-xs text-text-secondary">
+          Разведки ещё не было. Нажмите «Разведка» выше — она займёт несколько минут,
+          после чего здесь появятся живые узлы Cloudflare и можно будет выбрать локацию.
+        </p>
+      </Card>
+    );
+  }
+  const when = scan.scanned_at ? new Date(scan.scanned_at * 1000).toLocaleString('ru-RU') : '—';
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <div className="text-sm font-medium text-text-primary">Результаты разведки</div>
+        <span className="text-xs text-text-secondary">
+          {when}
+          {scan.proto ? ` · ${scan.proto}` : ''}
+          {scan.filter ? ` · фильтр ${scan.filter}` : ''}
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-text-secondary">
+              <th className="py-1 pr-3 font-medium">Узел</th>
+              <th className="py-1 pr-3 font-medium">Локация</th>
+              <th className="py-1 pr-3 font-medium">Выход</th>
+              <th className="py-1 pr-3 font-medium">Пинг</th>
+              <th className="py-1 pr-3 font-medium">Эндпоинт</th>
+              <th className="py-1 font-medium">Выбрать</th>
+            </tr>
+          </thead>
+          <tbody>
+            {scan.nodes.map((n) => (
+              <tr key={n.node + n.endpoint} className="border-t border-border">
+                <td className="py-1.5 pr-3 font-mono">{n.node}</td>
+                <td className="py-1.5 pr-3">{n.location}</td>
+                <td className="py-1.5 pr-3 font-mono">{n.region}</td>
+                <td className="py-1.5 pr-3 whitespace-nowrap">{n.ping}</td>
+                <td className="py-1.5 pr-3 font-mono">{n.endpoint}</td>
+                <td className="py-1.5">
+                  <div className="flex flex-wrap gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => void onPick({ location: n.node, endpoint: '' })}
+                    >
+                      Локация
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => void onPick({ endpoint: n.endpoint })}
+                    >
+                      Закрепить
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-text-secondary">
+        «Локация» задаёт узел выхода и снимает закреплённый эндпоинт — при следующей
+        разведке MTProxyL выберет живой адрес внутри него. «Закрепить» фиксирует
+        конкретный адрес: старт без полной разведки, а если он замолчит, MTProxyL
+        найдёт новый.
+      </p>
+    </Card>
   );
 }
 
