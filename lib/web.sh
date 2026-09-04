@@ -637,7 +637,35 @@ _web_static_snapshot_ready() {
     return 0
 }
 
+_web_listener_ready() {
+    ss -lnt "sport = :${WEB_LISTEN_PORT:-15080}" 2>/dev/null | grep -q LISTEN
+}
+
+# На чистом хосте движок открывает listener не сразу: сначала тянет
+# proxy-secret и конфиг ME. Пока порт закрыт, любой запрос даёт HTTP 000,
+# и раньше это принимали за сломанный snapshot.
+_web_wait_listener() {
+    local _i _limit="${WEB_LISTENER_WAIT_SECS:-60}"
+    for (( _i = 0; _i < _limit; _i++ )); do
+        _web_listener_ready && return 0
+        is_proxy_running || return 1
+        sleep 1
+    done
+    return 1
+}
+
+_web_engine_hint() {
+    log_info "Логи движка: $(engine_is_binary && echo "journalctl -u ${ENGINE_SERVICE} -n 50" \
+        || echo "docker logs --tail 50 ${CONTAINER_NAME}")"
+    if engine_is_binary; then
+        journalctl -u "$ENGINE_SERVICE" -n 10 --no-pager 2>/dev/null | sed 's/^/    /'
+    else
+        docker logs --tail 10 "$CONTAINER_NAME" 2>&1 | sed 's/^/    /'
+    fi
+}
+
 _web_wait_static_snapshot() {
+    _web_wait_listener || return 2
     local _attempt
     for _attempt in 1 2 3 4 5; do
         _web_static_snapshot_ready && return 0
@@ -648,11 +676,20 @@ _web_wait_static_snapshot() {
 
 _web_ensure_static_snapshot() {
     [ "${WEB_DECOY_MODE:-empty}" = "static_directory" ] || return 0
-    _web_wait_static_snapshot && return 0
+    web_is_reanimator && return 0
+    local _rc
+    _web_wait_static_snapshot; _rc=$?
+    [ "$_rc" -eq 0 ] && return 0
+    if [ "$_rc" -eq 2 ]; then
+        log_error "Движок не открыл приватный WEB-порт ${WEB_LISTEN_PORT:-15080} за ${WEB_LISTENER_WAIT_SECS:-60} с"
+        _web_engine_hint
+        return 1
+    fi
     log_warn "WEB snapshot не отдаёт ${WEB_STATIC_SNAPSHOT_FAILURE:-статические файлы} — перезапускаем движок"
     MTPROXYL_QUIET_LINKS="true" restart_proxy_container >/dev/null 2>&1 || return 1
     _web_wait_static_snapshot || {
         log_error "WEB snapshot по-прежнему не отдаёт ${WEB_STATIC_SNAPSHOT_FAILURE:-статические файлы}"
+        _web_engine_hint
         return 1
     }
     log_success "WEB snapshot статических файлов перестроен"

@@ -565,6 +565,7 @@ run_fix_arsenal_wizard() {
                 fi
             fi
 
+            nft_limiter_yield
             zapret2_autoconfigure_scope
             zapret2_write_conf
             zapret2_write_lua
