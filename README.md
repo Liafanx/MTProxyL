@@ -1966,7 +1966,9 @@ mtproxyl warp on socks          # Вариант A: SOCKS5 warpscout + redsocks
 mtproxyl warp on iface          # Вариант B: интерфейс WireGuard
 mtproxyl warp on upstream       # Вариант C: socks5-upstream движка, без правил
 mtproxyl warp off               # Выключить, вернуть прямой ход
-mtproxyl warp scan              # Разведка: найти лучший эндпоинт
+mtproxyl warp scan              # Разведка: живые узлы и лучший эндпоинт
+mtproxyl warp scan --last       # Показать результат прошлой разведки
+mtproxyl warp scan --json       # То же в JSON (для панели и скриптов)
 mtproxyl warp location DE,NL    # Где выходить (clear — лучший по задержке)
 mtproxyl warp endpoint A:PORT   # Закрепить адрес (clear — искать разведкой)
 mtproxyl warp proto awg|wg|masque
@@ -1976,6 +1978,11 @@ mtproxyl warp reapply           # Обновить список подсетей
 
 Меню: **Безопасность и маршрутизация → Telegram через WARP**. В панели —
 раздел «Telegram через WARP». Включённый маршрут виден строкой в главном меню.
+
+Разведка запоминает результат: лучший эндпоинт каждого живого узла Cloudflare
+с задержкой и регионом выхода. Таблица показывается сразу после разведки, при
+выборе локации в TUI и на странице панели, где узел или адрес выбираются
+кнопкой. Так видно, что вообще имеет смысл вписывать в «Локацию».
 
 ### Какой вариант выбрать
 

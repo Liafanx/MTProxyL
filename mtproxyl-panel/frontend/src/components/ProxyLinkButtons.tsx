@@ -50,8 +50,10 @@ export function ProxyLinkButtons({ links }: { links: ProxyLinkGroup[] }) {
   if (links.length === 0) {
     return <span className="text-text-secondary text-xs">Нет ссылок</span>;
   }
+  // Кнопки протоколов идут одной строкой и переносятся только по нехватке
+  // ширины: столбиком они раздували высоту строки в списке пользователей.
   return (
-    <div className="flex flex-col items-start gap-2">
+    <div className="flex flex-wrap items-start gap-x-2 gap-y-1.5">
       {links.map((group) => (
         <ProxyLinkGroupButtons key={group.label} group={group} />
       ))}

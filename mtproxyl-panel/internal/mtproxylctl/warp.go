@@ -90,6 +90,43 @@ func (c *Client) WarpScan(ctx context.Context) (string, error) {
 	return stripANSI(out), err
 }
 
+// WarpScanNode is one row of «Best endpoint per node» from the last scan.
+type WarpScanNode struct {
+	Node     string `json:"node"`
+	Endpoint string `json:"endpoint"`
+	Ping     string `json:"ping"`
+	Region   string `json:"region"`
+	Location string `json:"location"`
+}
+
+// WarpScanResult is `mtproxyl warp scan --json`: the cached scan, not a new one.
+type WarpScanResult struct {
+	ScannedAt int64          `json:"scanned_at"`
+	Proto     string         `json:"proto"`
+	Filter    string         `json:"filter"`
+	Nodes     []WarpScanNode `json:"nodes"`
+}
+
+// WarpGetScan returns the last scan without starting a new one.
+func (c *Client) WarpGetScan(ctx context.Context) (*WarpScanResult, error) {
+	out, err := c.run(ctx, "warp", "scan", "--json")
+	if err != nil {
+		if unsupportedCommand(out, err) {
+			return nil, ErrWarpUnsupported
+		}
+		return nil, err
+	}
+	line := firstJSONLine(out)
+	if line == "" {
+		return nil, ErrWarpUnsupported
+	}
+	var res WarpScanResult
+	if err := json.Unmarshal([]byte(line), &res); err != nil {
+		return nil, fmt.Errorf("parse warp scan: %w", err)
+	}
+	return &res, nil
+}
+
 // WarpReapply refreshes the Telegram subnet list and the rules built from it.
 func (c *Client) WarpReapply(ctx context.Context) (string, error) {
 	out, err := c.run(ctx, "warp", "reapply")

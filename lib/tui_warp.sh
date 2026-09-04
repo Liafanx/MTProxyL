@@ -154,6 +154,7 @@ _tui_warp_location() {
     case "$_c" in
         1) warp_set_location clear ;;
         2)
+            warp_scan_print 2>/dev/null || true
             echo ""
             echo -e "  ${DIM}Вводите через запятую, регистр не важен:${NC}"
             echo -e "  ${DIM}  страны двумя буквами — DE, NL, FI, SE, TR;${NC}"
