@@ -46,7 +46,7 @@ export function ParamField({
       <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} className={selectClass}>
         {options.map((o) => (
           <option key={o} value={o}>
-            {o}
+            {({ silent: 'Тихий', normal: 'Обычный', verbose: 'Подробный', debug: 'Отладка' } as Record<string, string>)[o] || o}
           </option>
         ))}
       </select>

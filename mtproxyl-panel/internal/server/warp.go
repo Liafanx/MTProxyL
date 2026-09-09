@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 
 	"github.com/Liafanx/mtproxyl-panel/internal/auth"
@@ -68,7 +69,9 @@ func (s *Server) registerWarpRoutes(
 			return
 		}
 		var req struct {
-			Mode string `json:"mode"`
+			Mode                         string `json:"mode"`
+			AllowDisableMiddleProxy      bool   `json:"allow_disable_middle_proxy"`
+			AllowDisableDefaultUpstreams bool   `json:"allow_disable_default_upstreams"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "Ожидается {\"mode\": \"socks\"|\"iface\"|\"upstream\"}")
@@ -81,9 +84,23 @@ func (s *Server) registerWarpRoutes(
 			return
 		}
 		mode := req.Mode
+		allowME := req.AllowDisableMiddleProxy
+		allowRoutes := req.AllowDisableDefaultUpstreams
 		start(w, "warp:on:"+mode, func(ctx context.Context) (string, error) {
-			return client.WarpEnable(ctx, mode)
+			return client.WarpEnable(ctx, mode, allowME, allowRoutes)
 		})
+	}))
+
+	mux.Handle("GET /api/warp/preflight", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		result, err := client.WarpPreflight(r.Context(), r.URL.Query().Get("mode"))
+		if err != nil {
+			writeCLIError(w, "warp_preflight_failed", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: result})
 	}))
 
 	mux.Handle("POST /api/warp/disable", protected(func(w http.ResponseWriter, r *http.Request) {
@@ -118,8 +135,30 @@ func (s *Server) registerWarpRoutes(
 		if !guard(w) {
 			return
 		}
-		start(w, "warp:scan", client.WarpScan)
+		var req struct {
+			Mode string `json:"mode"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "bad_request", "Неверный запрос разведки")
+			return
+		}
+		switch req.Mode {
+		case "", "socks", "iface", "upstream":
+		default:
+			writeError(w, http.StatusBadRequest, "invalid_mode", "Неверный вариант WARP")
+			return
+		}
+		start(w, "warp:scan", func(ctx context.Context) (string, error) { return client.WarpScanMode(ctx, req.Mode) })
 	}))
+
+	for _, action := range []string{"apply", "recover", "install", "watchdog-on", "watchdog-off"} {
+		mux.Handle("POST /api/warp/"+action, protected(func(w http.ResponseWriter, r *http.Request) {
+			if !guard(w) {
+				return
+			}
+			start(w, "warp:"+action, func(ctx context.Context) (string, error) { return client.WarpAction(ctx, action) })
+		}))
+	}
 
 	mux.Handle("POST /api/warp/reapply", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
@@ -128,10 +167,13 @@ func (s *Server) registerWarpRoutes(
 		start(w, "warp:reapply", client.WarpReapply)
 	}))
 
-	// Настройки применяются со следующей разведкой, менять их можно и на
-	// выключенном WARP — поэтому они не идут через runner.
+	// Сохранение выбора не переключает работающий туннель.
 	mux.Handle("PUT /api/warp/settings", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
+			return
+		}
+		if runner.Busy() {
+			writeError(w, http.StatusConflict, "operation_busy", "Дождитесь завершения текущей операции")
 			return
 		}
 		var req struct {
@@ -143,23 +185,9 @@ func (s *Server) registerWarpRoutes(
 			writeError(w, http.StatusBadRequest, "bad_request", "Не удалось разобрать запрос")
 			return
 		}
-		if req.Proto != nil {
-			if _, err := client.WarpSetProto(r.Context(), *req.Proto); err != nil {
-				writeCLIError(w, "warp_proto_failed", err)
-				return
-			}
-		}
-		if req.Location != nil {
-			if _, err := client.WarpSetLocation(r.Context(), *req.Location); err != nil {
-				writeCLIError(w, "warp_location_failed", err)
-				return
-			}
-		}
-		if req.Endpoint != nil {
-			if _, err := client.WarpSetEndpoint(r.Context(), *req.Endpoint); err != nil {
-				writeCLIError(w, "warp_endpoint_failed", err)
-				return
-			}
+		if _, err := client.WarpSetSettings(r.Context(), req.Proto, req.Location, req.Endpoint); err != nil {
+			writeCLIError(w, "warp_settings_failed", err)
+			return
 		}
 		st, err := client.WarpGetStatus(r.Context())
 		if err != nil {

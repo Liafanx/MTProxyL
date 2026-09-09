@@ -474,6 +474,29 @@ web_csp_policy() {
 
 # Таймауты выше long_poll_secs (25 с) и удвоенного liveness WebSocket —
 # иначе фронт рвал бы carrier сам.
+https_nginx_headers() {
+    local _age=0
+    if [ "${HTTPS_HSTS_ENABLED:-true}" = "true" ] && [ "${1:-letsencrypt}" != "selfsigned" ]; then
+        _age=15552000
+    fi
+    [ "${1:-letsencrypt}" = "selfsigned" ] || printf 'add_header Strict-Transport-Security "max-age=%s" always;\n' "$_age"
+    if [ "${HTTPS_PERMISSIONS_ENABLED:-true}" = "true" ]; then
+        echo 'add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;'
+    fi
+    return 0
+}
+
+https_haproxy_headers() {
+    local _age=0
+    [ "${HTTPS_HSTS_ENABLED:-true}" = "true" ] && _age=15552000
+    printf 'http-response set-header Strict-Transport-Security "max-age=%s"\n' "$_age"
+    if [ "${HTTPS_PERMISSIONS_ENABLED:-true}" = "true" ]; then
+        echo 'http-response set-header Permissions-Policy "camera=(), microphone=(), geolocation=()"'
+    else
+        echo 'http-response del-header Permissions-Policy'
+    fi
+}
+
 web_nginx_http_server() {
     web_uses_managed_nginx || return 0
     local _domain _cert_dir _listen _realip=""
@@ -539,6 +562,9 @@ web_nginx_http_server() {
             proxy_hide_header X-Frame-Options;
             proxy_hide_header Referrer-Policy;
             proxy_hide_header X-Content-Type-Options;
+            proxy_hide_header Strict-Transport-Security;
+            proxy_hide_header Permissions-Policy;
+            $(https_nginx_headers "${SELFMASK_CERT_MODE:-letsencrypt}")
             add_header Content-Security-Policy \$mtproxyl_csp always;
             add_header X-Content-Type-Options nosniff always;
             add_header X-Frame-Options \$mtproxyl_xfo always;
@@ -736,6 +762,7 @@ backend mtproxyl_web
     http-response set-header X-Content-Type-Options nosniff
     http-response set-header X-Frame-Options SAMEORIGIN
     http-response set-header Referrer-Policy no-referrer
+    $(https_haproxy_headers)
     server mtproxyl_web_1 127.0.0.1:${WEB_LISTEN_PORT:-15080} check
 HAP
         return 0
@@ -769,6 +796,7 @@ backend mtproxyl_web
     http-response set-header X-Content-Type-Options nosniff
     http-response set-header X-Frame-Options SAMEORIGIN
     http-response set-header Referrer-Policy no-referrer
+    $(https_haproxy_headers)
     server mtproxyl_web_1 127.0.0.1:${WEB_LISTEN_PORT:-15080} check
 HAP
 }

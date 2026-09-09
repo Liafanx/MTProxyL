@@ -27,7 +27,7 @@ const GROUPS: { title: string; description: string; keys: string[] }[] = [
   {
     title: 'Нагрузка и протокол',
     description: 'Ограничения движка и приём заголовка от вышестоящего балансировщика.',
-    keys: ['PROXY_CONCURRENCY', 'PROXY_PROTOCOL'],
+    keys: ['PROXY_CONCURRENCY', 'PROXY_PROTOCOL', 'PROXY_LOG_LEVEL'],
   },
   {
     title: 'Служебные порты',
@@ -124,8 +124,8 @@ export function SettingsPage() {
         <h1 className="text-xl font-semibold text-text-primary">Настройки прокси</h1>
         <p className="text-sm text-text-secondary mt-1">
           Настройки MTProxyL, из которых он собирает конфиг движка. Меняются через его CLI:
-          в режиме Manager конфиг примонтирован в контейнер только для чтения, и сам telemt
-          изменить их не может.
+          в режиме Manager конфигурацией управляет MTProxyL для Docker и бинарного движка.
+          Уровень логирования применяется на лету; переменная RUST_LOG движка имеет приоритет.
         </p>
       </div>
 

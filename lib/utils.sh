@@ -928,6 +928,11 @@ self_update() {
 
     log_success "MTProxyL обновлён: v${VERSION} → v${_new_ver}"
 
+    if [ "${WARP_ENABLED:-false}" = true ]; then
+        "${INSTALL_DIR}/mtproxyl.sh" warp refresh \
+            || log_warn "WARP требует обновления: mtproxyl warp refresh"
+    fi
+
     # Панель ходит к нам через список разрешённых подкоманд. Новая версия
     # приносит новые — без перевыпуска они у панели отказывают с sudo.
     if panel_installed 2>/dev/null; then

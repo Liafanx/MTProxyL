@@ -3,7 +3,7 @@ import { CheckCircle2, Download, RefreshCw, Undo2 } from 'lucide-react';
 import { MetricCard } from '@/components/MetricCard';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { OperationProgress } from '@/components/OperationProgress';
-import { mtproxylApi, type MtproxylEngineVersions } from '@/lib/api';
+import { mtproxylApi, type MtproxylEngineVersions, type MtproxylEngineCleanup } from '@/lib/api';
 import { useMtproxyl, useMtproxylOperation } from '@/hooks/useMtproxyl';
 import { cn } from '@/lib/utils';
 
@@ -15,12 +15,15 @@ export function MtproxylEngineCard() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [tag, setTag] = useState('');
+  const [cleanup, setCleanup] = useState<MtproxylEngineCleanup | null>(null);
+  const [cleanupLoading, setCleanupLoading] = useState(false);
 
   const load = useCallback(async () => {
     if (!enabled) return;
     setLoading(true);
     try {
       setInfo(await mtproxylApi.engineVersions());
+      setCleanup(null);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось получить версии движка');
@@ -58,6 +61,18 @@ export function MtproxylEngineCard() {
   };
 
   const current = info?.current ?? '';
+  const previewCleanup = async () => {
+    setCleanupLoading(true);
+    setActionError(null);
+    try { setCleanup(await mtproxylApi.engineCleanupPreview()); }
+    catch (e) { setActionError(e instanceof Error ? e.message : 'Не удалось получить список очистки'); }
+    finally { setCleanupLoading(false); }
+  };
+  const applyCleanup = async () => {
+    if (!cleanup?.candidates.length || !window.confirm('Удалить показанные неиспользуемые теги образов? Для этих версий потребуется повторное скачивание.')) return;
+    try { start(await mtproxylApi.engineCleanup()); }
+    catch (e) { setActionError(e instanceof Error ? e.message : 'Не удалось запустить очистку'); }
+  };
   const latest = info?.releases?.[0]?.tag ?? '';
   const isLatest = Boolean(latest) && latest.replace(/^v/, '') === current.replace(/^v/, '');
   // Откатываться есть куда, только если на диске лежит не только текущая.
@@ -212,6 +227,24 @@ export function MtproxylEngineCard() {
         </p>
 
         <OperationProgress operation={operation} onDismiss={dismiss} />
+        {info && (info.docker_available ?? !info.binary) && (
+          <div className="rounded-md border border-border p-3 space-y-2 text-xs">
+            <p className="font-medium">Очистка Docker-образов</p>
+            <p className="text-text-secondary">Освобождает место на диске. Сохраняются используемые контейнерами образы, latest, текущая и одна версия для отката. Чужие образы и кэш сборки не удаляются.</p>
+            <button onClick={() => void previewCleanup()} disabled={running || cleanupLoading}
+              className="rounded bg-accent/15 text-accent px-3 py-2 disabled:opacity-50">Показать список очистки</button>
+            {cleanup && (
+              <>
+                <div className="max-h-48 overflow-auto space-y-1">
+                  {cleanup.candidates.map(c => <p key={c.reference} className="break-all font-mono">{c.reference} — {c.size}</p>)}
+                </div>
+                <p className="text-text-secondary">{cleanup.candidates.length ? 'Размеры включают общие слои; фактически освобождённое место может быть меньше.' : 'Нет образов для очистки.'}</p>
+                <button onClick={() => void applyCleanup()} disabled={running || !cleanup.candidates.length}
+                  className="rounded bg-warning/15 text-warning px-3 py-2 disabled:opacity-50">Очистить неиспользуемые</button>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

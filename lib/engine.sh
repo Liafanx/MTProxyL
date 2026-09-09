@@ -56,9 +56,10 @@ engine_local_versions() {
 # что лежит на диске и что есть в релизах.
 engine_versions_json() {
     local _cur; _cur=$(engine_current_version)
-    printf '{"backend":"%s","current":"%s","binary":%s,' \
+    printf '{"backend":"%s","current":"%s","binary":%s,"docker_available":%s,' \
         "$(json_escape "$(engine_backend)")" "$(json_escape "$_cur")" \
-        "$(engine_is_binary && echo true || echo false)"
+        "$(engine_is_binary && echo true || echo false)" \
+        "$(command -v docker >/dev/null && echo true || echo false)"
 
     printf '"local":['
     local _v _first=1
@@ -226,6 +227,87 @@ engine_rollback() {
     fi
 }
 
+# Не трогаем используемые образы, latest, текущий и одну версию для отката.
+_engine_cleanup_rows() {
+    command -v docker >/dev/null || { log_error "Docker не установлен" >&2; return 1; }
+    local _images _containers _used="" _current _repo _tag _id _size _versions="" _keep=""
+    _images=$(docker image ls --no-trunc --format '{{.Repository}}|{{.Tag}}|{{.ID}}|{{.Size}}') || return 1
+    _containers=$(docker ps -aq --no-trunc) || return 1
+    if [ -n "$_containers" ]; then
+        local -a _ids=()
+        mapfile -t _ids <<< "$_containers"
+        _used=$(docker inspect --format '{{.Image}}' "${_ids[@]}") || return 1
+    fi
+    local -A _protected=()
+    while IFS= read -r _id; do [ -z "$_id" ] || _protected["$_id"]=1; done <<< "$_used"
+    _current=$(cat "$INSTALL_DIR/.telemt_version" 2>/dev/null) || _current=""
+    while IFS='|' read -r _repo _tag _id _size; do
+        [ -n "$_id" ] || continue
+        case "$_repo" in
+            "$DOCKER_IMAGE_BASE"|"$REGISTRY_IMAGE")
+                if [ "$_tag" = latest ] || { [ -n "$_current" ] && [ "$_tag" = "$_current" ]; }; then
+                    _protected["$_id"]=1
+                fi
+                [[ "$_tag" =~ ^[0-9]+\. ]] && _versions+="${_tag}|${_id}"$'\n'
+                ;;
+            *) _protected["$_id"]=1 ;;
+        esac
+    done <<< "$_images"
+    while IFS='|' read -r _tag _id; do
+        [ -n "$_id" ] && [ -z "${_protected[$_id]:-}" ] || continue
+        if [ -n "$_current" ] && [ "$(printf '%s\n%s\n' "${_tag%%-*}" "${_current%%-*}" | sort -V | head -1)" != "${_tag%%-*}" ]; then
+            continue
+        fi
+        _keep="$_id"; break
+    done < <(printf '%s' "$_versions" | sort -t'|' -k1,1Vr)
+    [ -z "$_keep" ] || _protected["$_keep"]=1
+    while IFS='|' read -r _repo _tag _id _size; do
+        [ -n "$_id" ] && [ -z "${_protected[$_id]:-}" ] || continue
+        case "$_repo" in "$DOCKER_IMAGE_BASE"|"$REGISTRY_IMAGE") ;; *) continue ;; esac
+        [[ "$_tag" =~ ^[0-9]+\. ]] || continue
+        printf '%s:%s|%s|%s\n' "$_repo" "$_tag" "$_id" "$_size"
+    done <<< "$_images"
+    return 0
+}
+
+engine_cleanup_images() {
+    local _mode="${1:-}" _rows _ref _id _size _fresh _actual _failed=0 _removed=0
+    case "$_mode" in ''|--yes|--json|--dry-run) ;; *) log_error "cleanup [--dry-run|--json|--yes]"; return 1 ;; esac
+    _rows=$(_engine_cleanup_rows) || return 1
+    if [ "$_mode" = --json ]; then
+        local _sep=""
+        printf '{"candidates":['
+        while IFS='|' read -r _ref _id _size; do
+            [ -n "$_ref" ] || continue
+            printf '%s{"reference":"%s","id":"%s","size":"%s"}' "$_sep" \
+                "$(json_escape "$_ref")" "$(json_escape "$_id")" "$(json_escape "$_size")"
+            _sep=,
+        done <<< "$_rows"
+        printf ']}\n'
+        return 0
+    fi
+    [ -n "$_rows" ] || { log_info "Нет неиспользуемых образов для очистки"; return 0; }
+    log_info "Теги неиспользуемых образов к удалению:"
+    while IFS='|' read -r _ref _id _size; do printf '  %s (%s)\n' "$_ref" "$_size"; done <<< "$_rows"
+    log_info "Сохраняются используемые образы, latest, текущий и одна версия для отката. Общие слои могут остаться на диске"
+    [ "$_mode" != --dry-run ] || return 0
+    check_root
+    if [ "$_mode" != --yes ]; then
+        local _answer; read_line _answer "  Удалить перечисленные теги образов? [y/N]: "
+        [[ "$_answer" =~ ^[yY] ]] || return 0
+    fi
+    while IFS='|' read -r _ref _id _size; do
+        [ -n "$_ref" ] || continue
+        _fresh=$(_engine_cleanup_rows) || return 1
+        grep -qFx "${_ref}|${_id}|${_size}" <<< "$_fresh" || continue
+        _actual=$(docker image inspect --format '{{.Id}}' "$_ref") || { _failed=1; continue; }
+        [ "$_actual" = "$_id" ] || continue
+        if docker image rm -- "$_ref"; then _removed=$((_removed + 1)); else _failed=1; fi
+    done <<< "$_rows"
+    log_info "Удалено тегов: $_removed. Для удалённых версий потребуется повторное скачивание"
+    return "$_failed"
+}
+
 # CLI handler
 handle_engine_command() {
     local subcmd="${1:-status}"
@@ -306,6 +388,9 @@ handle_engine_command() {
         versions)
             engine_versions_json
             ;;
+        cleanup)
+            engine_cleanup_images "${1:-}"
+            ;;
         rebuild)
             check_root
             if engine_is_binary; then
@@ -314,7 +399,7 @@ handle_engine_command() {
                 is_proxy_running && { load_secrets; restart_proxy_container; }
                 return 0
             fi
-            build_telemt_image true
+            build_telemt_image true || return 1
             if is_proxy_running; then
                 load_secrets
                 restart_proxy_container
@@ -328,6 +413,7 @@ handle_engine_command() {
             echo -e "  ${DIM}update [tag]${NC}    Обновить до версии"
             echo -e "  ${DIM}rollback [tag]${NC}  Откатить к предыдущей или к версии с диска"
             echo -e "  ${DIM}versions${NC}        Версии и релизы одним JSON"
+            echo -e "  ${DIM}cleanup${NC}         Очистить неиспользуемые Docker-образы (с просмотром списка)"
             echo -e "  ${DIM}rebuild${NC}         Пересобрать образ / перекачать бинарник"
             echo -e "  ${DIM}backend <тип>${NC}   Сменить носитель движка: docker | binary"
             ;;

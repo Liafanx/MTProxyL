@@ -52,7 +52,7 @@ _catalog "general" "upstream_connect_retry_backoff_ms" "u64" "100" "✘" "range:
 _catalog "general" "upstream_connect_budget_ms" "u64"  "3000"   "✘" "range:1:60000"                          "миллисекунды"                       "Общий лимит времени на одну попытку upstream"
 _catalog "general" "upstream_unhealthy_fail_threshold" "u32" "5" "✘" "range:1:1000"                          "1..1000"                            "Кол-во неудач до пометки upstream как нездорового"
 _catalog "general" "upstream_connect_failfast_hard_errors" "bool" "false" "✘" "bool"                          "true/false"                         "Пропускать повторные попытки при постоянных ошибках"
-_catalog "general" "log_level"                "enum"   "normal" "✔" "enum:debug,verbose,normal,silent"       "debug/verbose/normal/silent"        "Уровень детализации логов"
+_catalog "general" "log_level"                "enum"   "silent" "✔" "enum:debug,verbose,normal,silent"       "debug/verbose/normal/silent"        "Уровень детализации логов (MTProxyL: silent)"
 _catalog "general" "disable_colors"           "bool"   "false"  "✘" "bool"                                    "true/false"                         "Отключить ANSI-цвета в логах"
 _catalog "general" "rst_on_close"             "enum"   "off"    "✘" "enum:off,errors,always"                 "off/errors/always"                  "Поведение SO_LINGER(0) при закрытии соединений"
 _catalog "general" "update_every"             "u64"    "300"    "✔" "range:1:86400"                          "секунды"                            "Интервал обновления ME-updater"

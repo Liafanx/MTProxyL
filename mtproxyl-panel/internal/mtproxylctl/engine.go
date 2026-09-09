@@ -23,12 +23,43 @@ type EngineRelease struct {
 // EngineVersions is `mtproxyl engine versions`.
 type EngineVersions struct {
 	// Backend is docker or binary.
-	Backend string `json:"backend"`
-	Current string `json:"current"`
-	Binary  bool   `json:"binary"`
+	Backend         string `json:"backend"`
+	Current         string `json:"current"`
+	Binary          bool   `json:"binary"`
+	DockerAvailable bool   `json:"docker_available"`
 	// Local lists versions already on disk: those roll back without network.
 	Local    []string        `json:"local"`
 	Releases []EngineRelease `json:"releases"`
+}
+
+type EngineCleanupCandidate struct {
+	Reference string `json:"reference"`
+	ID        string `json:"id"`
+	Size      string `json:"size"`
+}
+
+type EngineCleanupPreview struct {
+	Candidates []EngineCleanupCandidate `json:"candidates"`
+}
+
+func (c *Client) EngineCleanupPreview(ctx context.Context) (*EngineCleanupPreview, error) {
+	out, err := c.run(ctx, "engine", "cleanup", "--json")
+	if err != nil {
+		return nil, err
+	}
+	var preview EngineCleanupPreview
+	if err := json.Unmarshal([]byte(firstJSONLine(out)), &preview); err != nil {
+		return nil, fmt.Errorf("не удалось прочитать список очистки: обновите MTProxyL")
+	}
+	if preview.Candidates == nil {
+		return nil, fmt.Errorf("установленный MTProxyL не возвращает список очистки")
+	}
+	return &preview, nil
+}
+
+func (c *Client) EngineCleanup(ctx context.Context) (string, error) {
+	out, err := c.run(ctx, "engine", "cleanup", "--yes")
+	return stripANSI(out), err
 }
 
 // engineTagRe bounds what may travel to the CLI as a version argument. The tag

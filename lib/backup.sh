@@ -20,6 +20,7 @@ create_backup() {
     done
     [ -d "$STATS_DIR" ] && files+=("relay_stats")
     [ -d "$GEOBLOCK_CACHE_DIR" ] && files+=("geoblock")
+    [ ! -f "$(_warp_account)" ] || files+=("warp/account.json")
 
     tar czf "$backup_file" -C "$INSTALL_DIR" --exclude='*.lock' "${files[@]}" 2>/dev/null
     chmod 600 "$backup_file"
@@ -62,11 +63,17 @@ restore_backup() {
     create_backup &>/dev/null
 
     # Распаковка
+    if [ "${WARP_ENABLED:-false}" = true ]; then _warp_stop_runtime; fi
     tar xzf "$backup_file" -C "$INSTALL_DIR" --exclude='backup_meta.txt' 2>/dev/null
     # settings.conf намеренно читаем всем (см. lib/settings.sh) — восстановление
     # из бэкапа не должно возвращать ему старые 600.
     chmod "${_SETTINGS_FILE_MODE:-644}" "${SETTINGS_FILE}" 2>/dev/null
     chmod 600 "${SECRETS_FILE}" 2>/dev/null
+    if [ -f "$(_warp_account)" ]; then
+        chmod 700 "$(_warp_dir)"
+        chmod 600 "$(_warp_account)"
+    fi
+    rm -f "$(_warp_state)" "$(_warp_health_file)"
 
     # Перезагрузка настроек в память
     load_settings
@@ -121,6 +128,11 @@ restore_backup() {
 }
 
 _backup_apply_restored_runtime() {
+    if [ "${WARP_ENABLED:-false}" = true ]; then
+        handle_warp_command on "$(_warp_mode)" || return 1
+    else
+        warp_install_watchdog || return 1
+    fi
     if web_is_enabled 2>/dev/null; then
         web_enable || return 1
         if web_is_only_mode; then

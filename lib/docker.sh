@@ -138,7 +138,7 @@ build_telemt_image() {
 
     # Стратегия 1: Pull из реестра
     log_info "Загрузка telemt v${version}..."
-    if docker pull "${REGISTRY_IMAGE}:${version}" 2>/dev/null; then
+    if [ "$force" != source ] && docker pull "${REGISTRY_IMAGE}:${version}" 2>/dev/null; then
         docker tag "${REGISTRY_IMAGE}:${version}" "${DOCKER_IMAGE_BASE}:${version}"
         docker tag "${DOCKER_IMAGE_BASE}:${version}" "${DOCKER_IMAGE_BASE}:latest" 2>/dev/null || true
         log_success "Загружен telemt v${version}"
@@ -146,27 +146,31 @@ build_telemt_image() {
         return 0
     fi
 
-    # Стратегия 2: Pull latest — ТОЛЬКО при обычной установке, не при явном выборе версии
-    if [ "$force" != "source" ] && [ "$force" != "true" ]; then
-        log_info "Точная версия не найдена, пробуем latest..."
-        if docker pull "${REGISTRY_IMAGE}:latest" 2>/dev/null; then
-            docker tag "${REGISTRY_IMAGE}:latest" "${DOCKER_IMAGE_BASE}:${version}"
-            docker tag "${DOCKER_IMAGE_BASE}:${version}" "${DOCKER_IMAGE_BASE}:latest" 2>/dev/null || true
-            log_success "Загружен telemt (latest)"
-            echo "$version" > "${INSTALL_DIR}/.telemt_version"
-            return 0
-        fi
-    fi
-
-    # Стратегия 3: собрать образ вокруг официального бинарника релиза.
-    # Компиляция из исходников на слабой VPS занимает минуты и требует 2 ГБ
-    # памяти; готовый musl-бинарник статический, и образу хватает scratch.
-    # force=source — явная просьба собрать из исходников, её не подменяем.
+    # Стратегия 2: официальный бинарник нужного релиза, без компиляции.
     if [ "$force" != "source" ] && _build_telemt_image_from_release "$version"; then
         docker tag "${DOCKER_IMAGE_BASE}:${version}" "${DOCKER_IMAGE_BASE}:latest" 2>/dev/null || true
         log_success "Собран telemt v${version} из релизного бинарника"
         echo "$version" > "${INSTALL_DIR}/.telemt_version"
         return 0
+    fi
+
+    # Стратегия 3: Pull latest — только без явного выбора версии.
+    if [ "$force" != "source" ] && [ "$force" != "true" ]; then
+        log_info "Точная версия не найдена, пробуем latest..."
+        if docker pull "${REGISTRY_IMAGE}:latest" 2>/dev/null; then
+            local _latest_version="" _latest_output
+            if _latest_output=$(docker run --rm --network none --read-only --cap-drop ALL "${REGISTRY_IMAGE}:latest" --version 2>/dev/null); then
+                _latest_version=$(awk 'END {print $NF}' <<< "$_latest_output")
+            fi
+            if [ "${_latest_version#v}" = "${TELEMT_MIN_VERSION#v}" ]; then
+                docker tag "${REGISTRY_IMAGE}:latest" "${DOCKER_IMAGE_BASE}:${version}"
+                docker tag "${DOCKER_IMAGE_BASE}:${version}" "${DOCKER_IMAGE_BASE}:latest" 2>/dev/null || true
+                log_success "Загружен telemt ${_latest_version} (latest)"
+                echo "$version" > "${INSTALL_DIR}/.telemt_version"
+                return 0
+            fi
+            log_warn "latest не подтверждает требуемую версию ${TELEMT_MIN_VERSION} — пробуем исходники"
+        fi
     fi
 
     # Стратегия 4: Сборка из исходников
@@ -181,8 +185,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /
 RUN git clone "https://github.com/telemt/telemt.git" /build
 WORKDIR /build
 RUN git checkout "${TELEMT_COMMIT}"
-ENV CARGO_PROFILE_RELEASE_LTO=true CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_PROFILE_RELEASE_DEBUG=false
-RUN cargo build --release && strip target/release/telemt 2>/dev/null || true && cp target/release/telemt /telemt
+ENV CARGO_BUILD_JOBS=1 CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 CARGO_PROFILE_RELEASE_DEBUG=0
+RUN cargo build --release --locked -j 1 && (strip target/release/telemt 2>/dev/null || true) && cp target/release/telemt /telemt
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
@@ -192,7 +196,8 @@ STOPSIGNAL SIGINT
 ENTRYPOINT ["telemt"]
 DOCKERFILE_EOF
 
-    log_info "Компиляция (первая сборка может занять несколько минут)..."
+    log_info "Компиляция: одна задача Cargo, без LTO и отладочных символов"
+    log_info "Свободно RAM: $(awk '/MemAvailable:/ {printf "%.0f MiB", $2/1024}' /proc/meminfo), swap: $(awk '/SwapFree:/ {printf "%.0f MiB", $2/1024}' /proc/meminfo)"
     local _platform=""
     case "$(uname -m)" in
         x86_64|amd64) _platform="linux/amd64" ;;
@@ -208,7 +213,9 @@ DOCKERFILE_EOF
         log_success "Собран telemt v${version}"
         echo "$version" > "${INSTALL_DIR}/.telemt_version"
     else
-        log_error "Сборка не удалась — нужно минимум 2ГБ RAM"
+        log_error "Сборка не удалась — причина в выводе Docker/Cargo выше"
+        log_info "При SIGKILL/137 проверьте OOM в журнале ядра, свободную RAM, swap и лимит памяти контейнера"
+        log_info "Гарантированного минимума 2 ГБ нет. Можно использовать готовый образ или бинарный движок"
         rm -rf "$build_dir"
         return 1
     fi

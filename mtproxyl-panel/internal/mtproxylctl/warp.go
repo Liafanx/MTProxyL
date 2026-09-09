@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"regexp"
 	"strings"
 )
@@ -19,7 +20,11 @@ type WarpExit struct {
 
 // WarpStatus is `mtproxyl warp status --json`.
 type WarpStatus struct {
-	Enabled bool `json:"enabled"`
+	WatchdogEnabled bool       `json:"watchdog_enabled"`
+	ActiveEndpoint  string     `json:"active_endpoint"`
+	ActiveProto     string     `json:"active_proto"`
+	Health          WarpHealth `json:"health"`
+	Enabled         bool       `json:"enabled"`
 	// Mode: socks (A), iface (B) или upstream (C).
 	Mode      string `json:"mode"`
 	Proto     string `json:"proto"`
@@ -38,6 +43,24 @@ type WarpStatus struct {
 	// MatchedPackets is the nft counter: proof the route is actually used.
 	MatchedPackets int64    `json:"matched_packets"`
 	Exit           WarpExit `json:"exit"`
+}
+
+type WarpHealth struct {
+	CheckedAt      int64  `json:"checked_at"`
+	Failures       int    `json:"failures"`
+	LastRecoveryAt int64  `json:"last_recovery_at"`
+	Result         string `json:"result"`
+	Error          string `json:"error"`
+}
+
+type WarpPreflight struct {
+	Mode                       string   `json:"mode"`
+	MiddleProxyEnabled         bool     `json:"middle_proxy_enabled"`
+	CanDisableMiddleProxy      bool     `json:"can_disable_middle_proxy"`
+	OwnsEngineConfig           bool     `json:"owns_engine_config"`
+	ManualEngineConfig         bool     `json:"manual_engine_config"`
+	DefaultUpstreams           []string `json:"default_upstreams"`
+	CanDisableDefaultUpstreams bool     `json:"can_disable_default_upstreams"`
 }
 
 // ErrWarpUnsupported means the installed MTProxyL predates the WARP route.
@@ -67,14 +90,46 @@ func (c *Client) WarpGetStatus(ctx context.Context) (*WarpStatus, error) {
 	return &st, nil
 }
 
-// WarpEnable turns the route on; the endpoint scan takes minutes.
-func (c *Client) WarpEnable(ctx context.Context, mode string) (string, error) {
+func validateWarpMode(mode string) error {
 	switch mode {
 	case "socks", "iface", "upstream":
+		return nil
 	default:
-		return "", fmt.Errorf("вариант: socks (A), iface (B) или upstream (C)")
+		return fmt.Errorf("вариант: socks (A), iface (B) или upstream (C)")
 	}
-	out, err := c.run(ctx, "warp", "on", mode)
+}
+
+func (c *Client) WarpPreflight(ctx context.Context, mode string) (*WarpPreflight, error) {
+	if err := validateWarpMode(mode); err != nil {
+		return nil, err
+	}
+	out, err := c.run(ctx, "warp", "preflight", mode, "--json")
+	if err != nil {
+		return nil, err
+	}
+	var result WarpPreflight
+	if err := json.Unmarshal([]byte(firstJSONLine(out)), &result); err != nil {
+		return nil, fmt.Errorf("не удалось прочитать проверку WARP: обновите MTProxyL")
+	}
+	if result.DefaultUpstreams == nil {
+		result.DefaultUpstreams = []string{}
+	}
+	return &result, nil
+}
+
+// WarpEnable turns the route on after explicit consent to conflicting changes.
+func (c *Client) WarpEnable(ctx context.Context, mode string, allowDisableME, allowDisableDefaultUpstreams bool) (string, error) {
+	if err := validateWarpMode(mode); err != nil {
+		return "", err
+	}
+	args := []string{"warp", "on", mode}
+	if allowDisableME {
+		args = append(args, "--allow-disable-me")
+	}
+	if allowDisableDefaultUpstreams {
+		args = append(args, "--allow-disable-default-upstreams")
+	}
+	out, err := c.run(ctx, args...)
 	return stripANSI(out), err
 }
 
@@ -90,21 +145,53 @@ func (c *Client) WarpScan(ctx context.Context) (string, error) {
 	return stripANSI(out), err
 }
 
-// WarpScanNode is one row of «Best endpoint per node» from the last scan.
+func (c *Client) WarpScanMode(ctx context.Context, mode string) (string, error) {
+	if mode == "" {
+		return c.WarpScan(ctx)
+	}
+	if err := validateWarpMode(mode); err != nil {
+		return "", err
+	}
+	out, err := c.run(ctx, "warp", "scan", mode)
+	return stripANSI(out), err
+}
+
+func (c *Client) WarpAction(ctx context.Context, action string) (string, error) {
+	var args []string
+	switch action {
+	case "apply", "recover", "install":
+		args = []string{"warp", action}
+	case "watchdog-on":
+		args = []string{"warp", "watchdog", "on"}
+	case "watchdog-off":
+		args = []string{"warp", "watchdog", "off"}
+	default:
+		return "", fmt.Errorf("неверное действие WARP")
+	}
+	out, err := c.run(ctx, args...)
+	return stripANSI(out), err
+}
+
+// WarpScanNode is one working endpoint from the last scan.
 type WarpScanNode struct {
-	Node     string `json:"node"`
-	Endpoint string `json:"endpoint"`
-	Ping     string `json:"ping"`
-	Region   string `json:"region"`
-	Location string `json:"location"`
+	TunnelPing string `json:"tunnel_ping"`
+	Loss       string `json:"loss"`
+	Node       string `json:"node"`
+	Endpoint   string `json:"endpoint"`
+	Ping       string `json:"ping"`
+	Region     string `json:"region"`
+	Location   string `json:"location"`
 }
 
 // WarpScanResult is `mtproxyl warp scan --json`: the cached scan, not a new one.
 type WarpScanResult struct {
-	ScannedAt int64          `json:"scanned_at"`
-	Proto     string         `json:"proto"`
-	Filter    string         `json:"filter"`
-	Nodes     []WarpScanNode `json:"nodes"`
+	Status       string         `json:"status"`
+	Error        string         `json:"error"`
+	BestEndpoint string         `json:"best_endpoint"`
+	ScannedAt    int64          `json:"scanned_at"`
+	Proto        string         `json:"proto"`
+	Filter       string         `json:"filter"`
+	Nodes        []WarpScanNode `json:"nodes"`
 }
 
 // WarpGetScan returns the last scan without starting a new one.
@@ -148,17 +235,50 @@ func (c *Client) WarpSetLocation(ctx context.Context, loc string) (string, error
 	return stripANSI(out), err
 }
 
-var warpEndpointRe = regexp.MustCompile(`^[0-9a-fA-F:.]+:[0-9]{1,5}$`)
+func validWarpEndpoint(ep string) bool {
+	ap, err := netip.ParseAddrPort(ep)
+	return err == nil && ap.Port() != 0 && ap.Addr().Zone() == ""
+}
 
 // WarpSetEndpoint pins the tunnel endpoint; empty goes back to scanning.
 func (c *Client) WarpSetEndpoint(ctx context.Context, ep string) (string, error) {
 	arg := strings.TrimSpace(ep)
 	if arg == "" {
 		arg = "clear"
-	} else if !warpEndpointRe.MatchString(arg) {
+	} else if !validWarpEndpoint(arg) {
 		return "", fmt.Errorf("эндпоинт: адрес вида 188.114.98.58:2408")
 	}
 	out, err := c.run(ctx, "warp", "endpoint", arg)
+	return stripANSI(out), err
+}
+
+func (c *Client) WarpSetSettings(ctx context.Context, proto, location, endpoint *string) (string, error) {
+	p, l, e := "keep", "keep", "keep"
+	if proto != nil {
+		p = *proto
+		switch p {
+		case "awg", "wg", "masque", "masque-h2":
+		default:
+			return "", fmt.Errorf("неверный протокол WARP")
+		}
+	}
+	if location != nil {
+		l = strings.ToUpper(strings.TrimSpace(*location))
+		if l == "" {
+			l = "clear"
+		} else if !warpLocationRe.MatchString(l) {
+			return "", fmt.Errorf("неверная локация WARP")
+		}
+	}
+	if endpoint != nil {
+		e = strings.TrimSpace(*endpoint)
+		if e == "" {
+			e = "clear"
+		} else if !validWarpEndpoint(e) {
+			return "", fmt.Errorf("неверный endpoint WARP")
+		}
+	}
+	out, err := c.run(ctx, "warp", "settings", p, l, e)
 	return stripANSI(out), err
 }
 

@@ -1020,6 +1020,36 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
 	}))
 
+	mux.Handle("GET /api/mtproxyl/engine/cleanup", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		preview, err := client.EngineCleanupPreview(r.Context())
+		if err != nil {
+			writeCLIError(w, "engine_cleanup_failed", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: preview})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/engine/cleanup", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			Confirm bool `json:"confirm"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&req); err != nil || !req.Confirm {
+			writeError(w, http.StatusBadRequest, "confirmation_required", "Подтвердите удаление неиспользуемых образов")
+			return
+		}
+		if !runner.Start("engine:cleanup", client.EngineCleanup) {
+			writeError(w, http.StatusConflict, "operation_busy", "Другая операция уже выполняется")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
+	}))
+
 	mux.Handle("POST /api/mtproxyl/engine/rollback", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) || busy(w) {
 			return

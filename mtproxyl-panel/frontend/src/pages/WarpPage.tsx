@@ -12,10 +12,19 @@ import { useMtproxylOperation } from '@/hooks/useMtproxyl';
 import {
   warpApi,
   type MtproxylOperation,
+  type WarpPreflight,
   type WarpScanResult,
   type WarpStatus,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
+
+type WarpMode = 'socks' | 'iface' | 'upstream';
+type EnableReview = {
+  mode: WarpMode;
+  preflight: WarpPreflight;
+  disableMiddleProxy: boolean;
+  disableDefaultUpstreams: boolean;
+};
 
 /** Маршрут до Telegram через WARP: в туннель уходят только подсети Telegram. */
 export function WarpPage() {
@@ -25,6 +34,10 @@ export function WarpPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [pendingMode, setPendingMode] = useState<WarpMode | null>(null);
+  const [picked, setPicked] = useState(false);
+  const [enableReview, setEnableReview] = useState<EnableReview | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -40,8 +53,9 @@ export function WarpPage() {
         try {
           const sc = await warpApi.lastScan();
           setScan(sc.supported ? sc.scan ?? null : null);
-        } catch {
-          setScan(null);
+          setScanError(null);
+        } catch (e) {
+          setScanError(e instanceof Error ? e.message : 'Не удалось прочитать результаты разведки');
         }
       }
       setError(null);
@@ -58,6 +72,14 @@ export function WarpPage() {
 
   const { operation, start, dismiss, running } = useMtproxylOperation(load, ['warp:']);
 
+  useEffect(() => {
+    if (!running) return;
+    const id = window.setInterval(() => {
+      void warpApi.lastScan().then(res => setScan(res.scan ?? null)).catch(e => setScanError(String(e)));
+    }, 3000);
+    return () => window.clearInterval(id);
+  }, [running]);
+
   // Всё, кроме настроек, идёт фоновой операцией: разведка занимает минуты.
   const act = async (fn: () => Promise<MtproxylOperation>) => {
     setBusy(true);
@@ -66,6 +88,62 @@ export function WarpPage() {
       start(await fn());
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Команда не выполнилась');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const prepareEnable = async (mode: WarpMode) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const preflight = await warpApi.preflight(mode);
+      if (preflight.middle_proxy_enabled || preflight.default_upstreams.length || preflight.manual_engine_config) {
+        setEnableReview({
+          mode,
+          preflight,
+          disableMiddleProxy: false,
+          disableDefaultUpstreams: false,
+        });
+      } else {
+        setPendingMode(null);
+        start(await warpApi.enable(mode));
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось проверить условия включения WARP');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const enable = async (mode: WarpMode) => {
+    const desiredProto = mode === 'iface' ? 'wg' : status?.proto;
+    const scanProtoCompatible = desiredProto === 'wg' || desiredProto === 'awg'
+      ? scan?.proto === 'wg' || scan?.proto === 'awg'
+      : scan?.proto === desiredProto;
+    const hasScan = scan?.status === 'success' && scan.nodes.length > 0 && scanProtoCompatible;
+    if (hasScan && (status?.endpoint || status?.location)) {
+      await prepareEnable(mode);
+    } else if (hasScan) {
+      setPendingMode(mode);
+      setPicked(false);
+    } else {
+      setPendingMode(mode);
+      setPicked(false);
+      await act(() => warpApi.scan(mode));
+    }
+  };
+
+  const scanAll = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await warpApi.save({ location: '', endpoint: '' });
+      setPendingMode(null);
+      setPicked(false);
+      start(await warpApi.scan());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось запустить разведку без фильтра');
     } finally {
       setBusy(false);
     }
@@ -92,6 +170,7 @@ export function WarpPage() {
         </p>
 
         {error && <ErrorAlert message={error} onRetry={load} />}
+        {scanError && <ErrorAlert message={scanError} onRetry={load} />}
         <OperationProgress operation={operation} onDismiss={dismiss} />
 
         {unsupported && <Card className="p-6 text-sm text-text-secondary">{unsupported}</Card>}
@@ -100,14 +179,18 @@ export function WarpPage() {
           <>
             <StateCard status={status} />
 
+            <SettingsForm status={status} onSaved={load} disabled={busy || running} />
+
             <Card className="p-4 space-y-3">
               <div className="text-sm font-medium text-text-primary">Включение</div>
               <p className="text-xs text-text-secondary">
-                Разведка занимает несколько минут — за ней можно следить в панели операции выше.
+                {scan?.status === 'success' && scan.nodes.length
+                  ? 'Выбранный результат последней разведки используется без повторного поиска.'
+                  : 'Перед первым включением панель запустит разведку; она занимает несколько минут.'}
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 <Button
-                  onClick={() => void act(() => warpApi.enable('socks'))}
+                  onClick={() => void enable('socks')}
                   disabled={busy || running}
                   variant={status.enabled && status.mode === 'socks' ? 'default' : 'outline'}
                   size="sm"
@@ -116,7 +199,7 @@ export function WarpPage() {
                   <Waypoints size={14} /> Вариант A — SOCKS5 + redsocks
                 </Button>
                 <Button
-                  onClick={() => void act(() => warpApi.enable('iface'))}
+                  onClick={() => void enable('iface')}
                   disabled={busy || running}
                   variant={status.enabled && status.mode === 'iface' ? 'default' : 'outline'}
                   size="sm"
@@ -125,7 +208,7 @@ export function WarpPage() {
                   <Waypoints size={14} /> Вариант B — интерфейс WireGuard
                 </Button>
                 <Button
-                  onClick={() => void act(() => warpApi.enable('upstream'))}
+                  onClick={() => void enable('upstream')}
                   disabled={busy || running}
                   variant={status.enabled && status.mode === 'upstream' ? 'default' : 'outline'}
                   size="sm"
@@ -148,8 +231,14 @@ export function WarpPage() {
                   size="sm"
                   className="gap-2"
                 >
-                  <Search size={14} /> Разведка
+                  <Search size={14} /> {status.location ? `Разведка: ${status.location}` : 'Разведка всех адресов'}
                 </Button>
+                {(status.location || status.endpoint) && (
+                  <Button onClick={() => void scanAll()} disabled={busy || running}
+                    variant="outline" size="sm" className="gap-2">
+                    <Search size={14} /> Снять фильтр и разведать всё
+                  </Button>
+                )}
                 <Button
                   onClick={() => void act(() => warpApi.reapply())}
                   disabled={busy || running || !status.enabled}
@@ -160,6 +249,46 @@ export function WarpPage() {
                   <RefreshCw size={14} /> Переприменить правила
                 </Button>
               </div>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" disabled={busy || running || !status.enabled}
+                  onClick={() => void act(warpApi.apply)}>Применить сохранённый выбор</Button>
+                <Button size="sm" variant="outline" disabled={busy || running || !status.enabled}
+                  onClick={() => void act(warpApi.recover)}>Восстановить туннель</Button>
+                <Button size="sm" variant="outline" disabled={busy || running}
+                  onClick={() => void act(warpApi.install)}>Обновить warpscout</Button>
+                <Button size="sm" variant="outline" disabled={busy || running}
+                  onClick={() => void act(() => warpApi.watchdog(!status.watchdog_enabled))}>
+                  Автовосстановление: {status.watchdog_enabled
+                    ? status.enabled ? 'включено' : 'запустится вместе с WARP'
+                    : 'выключено'}
+                </Button>
+              </div>
+              {pendingMode && (
+                <div className="space-y-2 text-sm">
+                  <p>Выберите адрес или локацию в результатах разведки. Рекомендация не применяется автоматически.</p>
+                  <Button disabled={busy || running || !picked} size="sm"
+                    onClick={() => void prepareEnable(pendingMode)}>
+                    Включить {pendingMode} с сохранённым выбором
+                  </Button>
+                </div>
+              )}
+              {enableReview && (
+                <EnableReviewCard
+                  review={enableReview}
+                  busy={busy || running}
+                  onChange={setEnableReview}
+                  onCancel={() => setEnableReview(null)}
+                  onConfirm={() => {
+                    const review = enableReview;
+                    setEnableReview(null);
+                    setPendingMode(null);
+                    void act(() => warpApi.enable(review.mode, {
+                      disableMiddleProxy: review.disableMiddleProxy,
+                      disableDefaultUpstreams: review.disableDefaultUpstreams,
+                    }));
+                  }}
+                />
+              )}
               <WarningMe />
             </Card>
 
@@ -170,7 +299,8 @@ export function WarpPage() {
                 setBusy(true);
                 setError(null);
                 try {
-                  await warpApi.save(patch);
+                  await warpApi.save({ ...patch, proto: scan?.proto });
+                  setPicked(true);
                   await load();
                 } catch (e) {
                   setError(e instanceof Error ? e.message : 'Не удалось сохранить');
@@ -181,9 +311,100 @@ export function WarpPage() {
             />
 
             <VariantsHelp />
-            <SettingsForm status={status} onSaved={load} />
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+function EnableReviewCard({
+  review,
+  busy,
+  onChange,
+  onCancel,
+  onConfirm,
+}: {
+  review: EnableReview;
+  busy: boolean;
+  onChange: (review: EnableReview) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const p = review.preflight;
+  const middleBlocked = p.middle_proxy_enabled && !p.can_disable_middle_proxy;
+  const routesBlocked = p.default_upstreams.length > 0 && !p.can_disable_default_upstreams;
+  const ready =
+    !middleBlocked &&
+    !routesBlocked &&
+    (!p.middle_proxy_enabled || review.disableMiddleProxy) &&
+    (!p.default_upstreams.length || review.disableDefaultUpstreams);
+
+  return (
+    <div className="rounded-md border border-warning/40 bg-warning/5 p-3 space-y-3 text-sm">
+      <div className="font-medium text-text-primary">Перед включением варианта {review.mode}</div>
+
+      {p.middle_proxy_enabled && (
+        <label className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={review.disableMiddleProxy}
+            disabled={busy || !p.can_disable_middle_proxy}
+            onChange={(e) => onChange({ ...review, disableMiddleProxy: e.target.checked })}
+          />
+          <span>
+            <span className="block text-text-primary">Разрешаю выключить middle proxy</span>
+            <span className="block text-xs text-text-secondary">
+              WARP несовместим с ME. Движок перейдёт на прямую маршрутизацию,
+              рекламная метка перестанет действовать. При выключении WARP ME автоматически не включается.
+            </span>
+          </span>
+        </label>
+      )}
+
+      {p.default_upstreams.length > 0 && (
+        <label className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={review.disableDefaultUpstreams}
+            disabled={busy || !p.can_disable_default_upstreams}
+            onChange={(e) => onChange({ ...review, disableDefaultUpstreams: e.target.checked })}
+          />
+          <span>
+            <span className="block text-text-primary">
+              Разрешаю временно выключить маршруты: {p.default_upstreams.join(', ')}
+            </span>
+            <span className="block text-xs text-text-secondary">
+              Иначе часть соединений варианта C пойдёт мимо WARP. Эти маршруты
+              включатся обратно при выключении WARP.
+            </span>
+          </span>
+        </label>
+      )}
+
+      {middleBlocked && (
+        <p className="text-xs text-warning">
+          Панель не владеет конфигурацией движка. Выключите use_middle_proxy в конфиге цели,
+          перезапустите её и повторите включение.
+        </p>
+      )}
+      {routesBlocked && (
+        <p className="text-xs text-warning">
+          Маршруты цели нужно отключить в её конфигурации вручную.
+        </p>
+      )}
+      {p.manual_engine_config && !middleBlocked && (
+        <p className="text-xs text-warning">
+          В режиме Reanimator панель поднимет туннель, но маршрут нужно добавить в конфиг
+          цели вручную. Команда покажет необходимые параметры в журнале операции.
+        </p>
+      )}
+
+      <div className="flex gap-2">
+        <Button size="sm" disabled={busy || !ready} onClick={onConfirm}>Продолжить включение</Button>
+        <Button size="sm" variant="outline" disabled={busy} onClick={onCancel}>Отмена</Button>
       </div>
     </div>
   );
@@ -200,14 +421,24 @@ function ScanResults({
   busy: boolean;
   onPick: (patch: { location?: string; endpoint?: string }) => Promise<void>;
 }) {
+  const [visibleCount, setVisibleCount] = useState(20);
+  useEffect(() => { setVisibleCount(20); }, [scan?.scanned_at]);
   if (!scan || scan.nodes.length === 0) {
     return (
       <Card className="p-4 space-y-2">
         <div className="text-sm font-medium text-text-primary">Результаты разведки</div>
         <p className="text-xs text-text-secondary">
-          Разведки ещё не было. Нажмите «Разведка» выше — она займёт несколько минут,
-          после чего здесь появятся живые узлы Cloudflare и можно будет выбрать локацию.
+          {scan?.status === 'running' ? 'Разведка выполняется. Рабочий туннель не переключается.'
+            : scan?.status === 'error' ? scan.error || 'Ошибка разведки. Подробности — в журнале операции.'
+            : scan?.scanned_at ? 'Рабочих узлов не найдено. Проверьте протокол и фильтр локации.'
+            : 'Разведки ещё не было. Нажмите «Разведка», чтобы получить список узлов.'}
         </p>
+        {scan?.filter && (
+          <Button size="sm" variant="outline" disabled={busy}
+            onClick={() => void onPick({ location: '', endpoint: '' })}>
+            Снять фильтр {scan.filter} (затем запустить разведку)
+          </Button>
+        )}
       </Card>
     );
   }
@@ -218,6 +449,7 @@ function ScanResults({
         <div className="text-sm font-medium text-text-primary">Результаты разведки</div>
         <span className="text-xs text-text-secondary">
           {when}
+          {` · адресов: ${scan.nodes.length}`}
           {scan.proto ? ` · ${scan.proto}` : ''}
           {scan.filter ? ` · фильтр ${scan.filter}` : ''}
         </span>
@@ -235,12 +467,12 @@ function ScanResults({
             </tr>
           </thead>
           <tbody>
-            {scan.nodes.map((n) => (
+            {scan.nodes.slice(0, visibleCount).map((n) => (
               <tr key={n.node + n.endpoint} className="border-t border-border">
-                <td className="py-1.5 pr-3 font-mono">{n.node}</td>
+                <td className="py-1.5 pr-3 font-mono">{n.node}{n.endpoint === scan.best_endpoint && ' ★'}</td>
                 <td className="py-1.5 pr-3">{n.location}</td>
                 <td className="py-1.5 pr-3 font-mono">{n.region}</td>
-                <td className="py-1.5 pr-3 whitespace-nowrap">{n.ping}</td>
+                <td className="py-1.5 pr-3 whitespace-nowrap">{n.tunnel_ping || n.ping}{n.loss && ` · потери ${n.loss}`}</td>
                 <td className="py-1.5 pr-3 font-mono">{n.endpoint}</td>
                 <td className="py-1.5">
                   <div className="flex flex-wrap gap-1.5">
@@ -250,15 +482,15 @@ function ScanResults({
                       disabled={busy}
                       onClick={() => void onPick({ location: n.node, endpoint: '' })}
                     >
-                      Локация
+                      Выбирать узел {n.node}
                     </Button>
                     <Button
                       size="sm"
                       variant="outline"
                       disabled={busy}
-                      onClick={() => void onPick({ endpoint: n.endpoint })}
+                      onClick={() => void onPick({ endpoint: n.endpoint, location: scan.filter || '' })}
                     >
-                      Закрепить
+                      Использовать этот адрес
                     </Button>
                   </div>
                 </td>
@@ -268,10 +500,14 @@ function ScanResults({
         </table>
       </div>
       <p className="text-xs text-text-secondary">
-        «Локация» задаёт узел выхода и снимает закреплённый эндпоинт — при следующей
-        разведке MTProxyL выберет живой адрес внутри него. «Закрепить» фиксирует
-        конкретный адрес: старт без полной разведки, а если он замолчит, MTProxyL
-        найдёт новый.
+        {visibleCount < scan.nodes.length && <Button size="sm" variant="outline" onClick={() => setVisibleCount(n => n + 20)}>Показать ещё адреса ({scan.nodes.length - visibleCount})</Button>}
+        {' '}★ — рекомендованный адрес. Выбор сохраняется отдельно; для работающего WARP нажмите «Применить сохранённый выбор».{' '}
+        «Выбирать узел» сохраняет код узла Cloudflare и снимает точный адрес: при
+        следующей разведке MTProxyL сможет взять другой IP или порт, ведущий на этот
+        узел. «Использовать этот адрес» фиксирует показанный IP:порт и позволяет
+        запускаться без полной разведки; если он перестанет отвечать, MTProxyL ищет замену
+        с учётом сохранённого фильтра. Узел — точка входа Cloudflare, регион в соседней
+        колонке — место выхода трафика WARP.
       </p>
     </Card>
   );
@@ -300,7 +536,7 @@ function StateCard({ status }: { status: WarpStatus }) {
             {status.enabled
               ? working
                 ? 'Cloudflare подтверждает туннель, правила на месте'
-                : 'Правила есть, но выход через WARP не подтверждён'
+                : 'Туннель или маршрут WARP не подтверждён'
               : 'Трафик до Telegram идёт напрямую'}
           </div>
         </div>
@@ -315,8 +551,12 @@ function StateCard({ status }: { status: WarpStatus }) {
           label="Локация выхода"
           value={status.exit.confirmed ? `${status.exit.loc} (${status.exit.colo})` : '—'}
         />
-        <Cell label="Эндпоинт" value={status.endpoint || 'выбирается разведкой'} />
-        <Cell label="Протокол" value={status.proto} />
+        <Cell label="Рабочий эндпоинт" value={status.enabled ? status.active_endpoint || '—' : '—'} />
+        <Cell label="Закреплённый адрес" value={status.endpoint || 'автовыбор'} />
+        <Cell label="Протокол туннеля" value={status.active_proto || status.proto} />
+        <Cell label="Последняя проверка" value={status.health?.checked_at ? new Date(status.health.checked_at * 1000).toLocaleString('ru-RU') : '—'} />
+        <Cell label="Восстановление" value={status.health?.last_recovery_at ? new Date(status.health.last_recovery_at * 1000).toLocaleString('ru-RU') : 'не требовалось'} />
+        {status.health?.error && <Cell label="Причина сбоя" value={status.health.error} />}
         <Cell
           label="Уведено пакетов"
           value={status.matched_packets.toLocaleString('ru-RU')}
@@ -359,11 +599,10 @@ function Cell({ label, value }: { label: string; value: string }) {
 function WarningMe() {
   return (
     <p className="text-xs text-warning/90">
-      Работает только с прямой маршрутизацией движка. Если включён middle proxy
-      (<code>use_middle_proxy</code>, он же режим рекламной метки), MTProxyL
-      откажется включать WARP: ключи ME-рукопожатия считаются от адреса и порта,
-      а общий выход Cloudflare меняет и то и другое — связь с дата-центрами
-      пропадёт целиком.
+      WARP работает только с прямой маршрутизацией движка. Если включён middle proxy
+      (<code>use_middle_proxy</code>), перед запуском появится отдельное согласие на его
+      отключение. Для варианта C панель также покажет маршруты без области, которые
+      нужно временно выключить, чтобы весь трафик Telegram шёл через WARP.
     </p>
   );
 }
@@ -413,7 +652,7 @@ function VariantsHelp() {
   );
 }
 
-function SettingsForm({ status, onSaved }: { status: WarpStatus; onSaved: () => void }) {
+function SettingsForm({ status, onSaved, disabled }: { status: WarpStatus; onSaved: () => void; disabled: boolean }) {
   const [location, setLocation] = useState(status.location);
   const [endpoint, setEndpoint] = useState(status.endpoint);
   const [proto, setProto] = useState(status.proto);
@@ -443,10 +682,10 @@ function SettingsForm({ status, onSaved }: { status: WarpStatus; onSaved: () => 
   };
 
   return (
-    <CollapsibleSection title="Где выходить и через что" defaultOpen={false}>
+    <CollapsibleSection title="Где выходить и через что" defaultOpen>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <label className="flex flex-col gap-1">
-          <span className="text-xs text-text-secondary">Локация выхода</span>
+          <span className="text-xs text-text-secondary">Фильтр разведки и автовыбора</span>
           <Input
             value={location}
             onChange={(e) => setLocation(e.target.value)}
@@ -454,9 +693,12 @@ function SettingsForm({ status, onSaved }: { status: WarpStatus; onSaved: () => 
             spellCheck={false}
           />
           <span className="text-[11px] text-text-secondary/80">
-            Страны двумя буквами (DE, NL, FI), узлы Cloudflare тремя, по коду
-            аэропорта (FRA, AMS, HEL). Через запятую, можно смешивать. Чем уже
-            список, тем выше шанс, что живых эндпоинтов не найдётся вовсе.
+            Пусто — проверять все доступные адреса. Страны выхода задаются двумя
+            буквами (DE, NL), узлы Cloudflare — тремя (FRA, AMS). Через запятую,
+            можно смешивать. Фильтр не создаёт нужную локацию: если с этого сервера
+            все рабочие адреса ведут в AMS, другие узлы в результатах не появятся.
+            Для masque и masque-h2 фильтр не применяется: у них фиксированные
+            anycast-адреса и один узел выхода.
           </span>
         </label>
         <label className="flex flex-col gap-1">
@@ -468,8 +710,8 @@ function SettingsForm({ status, onSaved }: { status: WarpStatus; onSaved: () => 
             spellCheck={false}
           />
           <span className="text-[11px] text-text-secondary/80">
-            Пусто — искать разведкой. Закреплённый избавляет от полной разведки при
-            старте; если он замолчит, MTProxyL всё равно найдёт новый.
+            Пусто — выбирать адрес разведкой по фильтру выше. Адрес, выбранный из
+            результатов, используется при включении без повторной разведки.
           </span>
         </label>
         <label className="flex flex-col gap-1">
@@ -482,6 +724,7 @@ function SettingsForm({ status, onSaved }: { status: WarpStatus; onSaved: () => 
             <option value="awg">awg — обфусцированный, проходит чаще всего</option>
             <option value="wg">wg — обычный WireGuard, быстрее</option>
             <option value="masque">masque — поверх QUIC</option>
+            <option value="masque-h2">masque-h2 — поверх HTTP/2</option>
           </select>
           <span className="text-[11px] text-text-secondary/80">
             Вариант B всегда идёт по чистому wg: awg и masque умеет только
@@ -497,13 +740,13 @@ function SettingsForm({ status, onSaved }: { status: WarpStatus; onSaved: () => 
       )}
 
       <div className="flex items-center gap-2 mt-3 flex-wrap">
-        <Button onClick={save} disabled={saving} size="sm">
+        <Button onClick={save} disabled={saving || disabled} size="sm">
           {saving ? 'Сохраняем…' : 'Сохранить'}
         </Button>
         <span className={cn('text-xs', saved && !error ? 'text-success' : 'text-text-secondary')}>
           {saved && !error
-            ? 'Сохранено — применится при следующей разведке'
-            : 'Применяется при следующей разведке или включении'}
+            ? 'Сохранено. Нажмите «Применить сохранённый выбор» или включите WARP.'
+            : 'Сохранение и разведка не переключают работающий туннель.'}
         </span>
       </div>
     </CollapsibleSection>
