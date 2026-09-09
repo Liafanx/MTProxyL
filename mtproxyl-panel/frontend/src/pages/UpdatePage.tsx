@@ -745,9 +745,9 @@ export function UpdatePage() {
           <div className="bg-surface rounded-lg p-4 lg:p-5 border border-border">
             <h2 className="text-xs lg:text-sm font-semibold text-text-primary mb-2">Версия Telemt</h2>
             <p className="text-sm text-text-secondary">
-              Движком telemt управляет MTProxyL — в режиме Manager он запускается в Docker,
-              а не как systemd-сервис, поэтому встроенный механизм обновления здесь неприменим.
-              Обновляйте движок через MTProxyL: <code className="font-mono text-text-primary">mtproxyl engine</code>.
+              MTProxyL поддерживает Docker и бинарный запуск telemt через systemd.
+              Backend, установленная версия и обновление доступны в разделе «Движок»
+              или через <code className="font-mono text-text-primary">mtproxyl engine</code>.
             </p>
           </div>
         ) : (

@@ -3,6 +3,12 @@
 
 _TUNE_FILE="${INSTALL_DIR}/tunings.conf"
 
+proxy_log_level() {
+    local _v; _v=$(get_expert_override_value general log_level)
+    [ -n "$_v" ] || _v=$(awk -F'|' '$1=="log_level" {v=$2} END {print v}' "$_TUNE_FILE" 2>/dev/null)
+    echo "${_v:-silent}"
+}
+
 # ── Таймауты, которые MTProxyL пишет в свой config.toml ───────
 # Единственный источник истины: их же предлагает визард тюнинга в Reanimator
 # (у telemt по умолчанию заметно ниже: 10/30/15).
@@ -441,7 +447,7 @@ prefer_ipv6 = false
 tg_connect = ${MTPROXYL_TG_CONNECT}
 fast_mode = true
 use_middle_proxy = true
-log_level = "normal"
+log_level = "silent"
 
 [general.modes]
 classic = false

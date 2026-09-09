@@ -837,6 +837,9 @@ uninstall() {
     rm -f /etc/systemd/system/mtproxyl.service
     remove_ip_history_timer >/dev/null 2>&1 || true
     remove_availability_timer >/dev/null 2>&1 || true
+    if _warp_has_artifacts; then
+        handle_warp_command remove || { log_error "WARP занят или не удалён. Повторите удаление после завершения операции"; return 1; }
+    fi
     systemctl daemon-reload >/dev/null 2>&1 || true
 
     # Гео-блокировка

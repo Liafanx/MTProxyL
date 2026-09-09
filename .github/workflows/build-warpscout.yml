@@ -2,19 +2,19 @@ name: Сборка warpscout (запасной бинарник для марш�
 
 # MTProxyL сначала берёт релиз оригинального проекта, а этот ассет — запас:
 # на случай, когда оригинальный релиз недоступен или уехал от того, что зовёт
-# lib/warp.sh. Собираем из своего форка, чтобы запас не зависел от чужого CI.
+# lib/warp.sh. Исходный тег фиксирован, артефакты хранятся в релизах MTProxyL.
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Версия warpscout (тег форка без v)'
+        description: 'Версия warpscout без v'
         required: true
-        default: '0.14.0'
+        default: '0.16.0'
       fork_ref:
-        description: 'Ветка или тег в Liafanx/warpscout'
+        description: 'Тег исходников warpscout: v<версия>'
         required: true
-        default: 'master'
+        default: 'v0.16.0'
       push_release:
         description: 'Опубликовать как Release?'
         required: true
@@ -34,10 +34,16 @@ jobs:
         arch: [amd64, arm64]
 
     steps:
-      - name: Забрать форк warpscout
+      - name: Проверить соответствие версии и тега
+        env:
+          SOURCE_REF: ${{ github.event.inputs.fork_ref }}
+          SOURCE_VERSION: ${{ github.event.inputs.version }}
+        run: test "$SOURCE_REF" = "v$SOURCE_VERSION"
+
+      - name: Забрать исходники warpscout
         uses: actions/checkout@v4
         with:
-          repository: Liafanx/warpscout
+          repository: vernette/warpscout
           ref: ${{ github.event.inputs.fork_ref }}
 
       - name: Go
@@ -64,7 +70,7 @@ jobs:
           # Форк может уехать от оригинала. Пусть это ломает сборку здесь, а не
           # разведку эндпоинтов на сервере пользователя.
           HELP="$(./warpscout scan -h 2>&1 || true)$(./warpscout socks -h 2>&1 || true)"
-          for flag in best conf endpoint country node table-off no-dns plain; do
+          for flag in best conf endpoint country node table-off no-dns plain tun-ping port; do
             echo "$HELP" | grep -q -- "-${flag}" || { echo "нет ключа -${flag}"; exit 1; }
           done
           ./warpscout version
@@ -109,8 +115,8 @@ jobs:
             ## warpscout ${{ github.event.inputs.version }}
 
             Запасной бинарник для маршрута до Telegram через WARP. Собран из
-            форка [Liafanx/warpscout](https://github.com/Liafanx/warpscout),
-            ветка `${{ github.event.inputs.fork_ref }}`.
+            [исходников warpscout](https://github.com/vernette/warpscout),
+            тег `${{ github.event.inputs.fork_ref }}`.
 
             MTProxyL берёт его, только если релиз оригинального проекта
             [vernette/warpscout](https://github.com/vernette/warpscout)

@@ -222,6 +222,9 @@ echo ""
 # Автозапуск. Если скрипт запускали через пайп или подстановку процесса,
 # stdin у нас не терминал — интерактивное меню в таком случае сразу
 # «проваливается». Возвращаем ввод на терминал, пока он есть.
+if [ -f "${INSTALL_DIR}/settings.conf" ] && grep -q '^warp_refresh()' "${INSTALL_DIR}/lib/warp.sh"; then
+    "${INSTALL_DIR}/mtproxyl.sh" warp refresh || echo "  WARP: выполните mtproxyl warp refresh после установки"
+fi
 if [ ${#INSTALL_ARGS[@]} -gt 0 ]; then
     exec /usr/local/bin/mtproxyl install "${INSTALL_ARGS[@]}"
 fi

@@ -149,12 +149,14 @@ tui_web_menu() {
             http_upstream) _decoy_label="HTTP-origin" ;;
         esac
         echo -e "  ${CYAN}[10]${NC} Заглушка  ${DIM}${_decoy_label}${NC}"
+        echo -e "  ${CYAN}[11]${NC} HTTPS-заголовки Selfmask и WEB"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
         local _c; _c=$(read_choice "выбор" "0")
 
         case "$_c" in
+            11) tui_https_headers_menu ;;
             1)
                 if web_is_enabled && ! web_can_disable; then web_enable
                 elif web_is_enabled; then web_disable

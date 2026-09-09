@@ -1,6 +1,24 @@
 #!/bin/bash
 # MTProxyL — подменю: selfmask 
 
+tui_https_headers_menu() {
+    while true; do
+        echo "  Общие настройки HTTPS для Selfmask и WEB"
+        echo "  [1] HSTS: ${HTTPS_HSTS_ENABLED:-true} (кроме самоподписанных сертификатов)"
+        echo "  [2] Permissions-Policy: ${HTTPS_PERMISSIONS_ENABLED:-true}"
+        echo "  [0] Назад. Свой nginx и внешний HAProxy настраиваются вручную."
+        local _c _key _v; _c=$(read_choice "выбор" "0")
+        case "$_c" in
+            1) _key=HTTPS_HSTS_ENABLED ;;
+            2) _key=HTTPS_PERMISSIONS_ENABLED ;;
+            *) return 0 ;;
+        esac
+        _v=true; [ "${!_key}" = true ] && _v=false
+        settings_set_param "$_key" "$_v"
+        press_any_key
+    done
+}
+
 tui_selfmask_menu() {
     while true; do
         clear_screen
@@ -52,12 +70,14 @@ tui_selfmask_menu() {
         echo -e "  ${CYAN}[5]${NC}  Показать конфиг PQ nginx"
         echo -e "  ${CYAN}[6]${NC}  Пользовательский конфиг nginx"
         echo -e "  ${RED}[7]${NC}  Полностью удалить PQ nginx"
+        echo -e "  ${CYAN}[8]${NC}  HTTPS-заголовки Selfmask и WEB"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
 
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
+            8) tui_https_headers_menu ;;
             1) selfmask_show_status; press_any_key ;;
             2) selfmask_setup; press_any_key ;;
             3) selfmask_verify; press_any_key ;;

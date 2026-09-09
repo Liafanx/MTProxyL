@@ -1600,6 +1600,7 @@ EOF
         add_header X-Content-Type-Options nosniff always;
         add_header X-Frame-Options SAMEORIGIN always;
         add_header Referrer-Policy no-referrer always;
+        $(https_nginx_headers "${SELFMASK_CERT_MODE:-letsencrypt}")
 
         location ~* "(wget|curl|chmod|/tmp/|eval\\(|base64)" {
             return 403;

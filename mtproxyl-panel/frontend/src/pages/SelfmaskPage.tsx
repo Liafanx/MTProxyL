@@ -7,6 +7,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { OperationProgress } from '@/components/OperationProgress';
 import { ParamField } from '@/components/ParamField';
 import { NginxCustomConfigCard } from '@/components/NginxCustomConfigCard';
+import { HttpsHeadersCard } from '@/components/HttpsHeadersCard';
 import { SiteSourcePicker, siteSourceLabel } from '@/components/SiteSourcePicker';
 import { mtproxylApi, type SelfmaskParam, type SelfmaskStatus } from '@/lib/api';
 import { useMtproxylOperation } from '@/hooks/useMtproxyl';
@@ -154,6 +155,7 @@ export function SelfmaskPage() {
         </div>
       )}
       <OperationProgress operation={operation} onDismiss={dismiss} />
+      <HttpsHeadersCard disabled={running} />
 
       {loading && !status ? (
         <div className="text-sm text-text-secondary">Загрузка…</div>

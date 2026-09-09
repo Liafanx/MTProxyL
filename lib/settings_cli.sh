@@ -5,6 +5,9 @@
 # Формат каталога: "КЛЮЧ|валидатор|описание", валидаторы из _expert_validate.
 
 _SETTINGS_SETTABLE=(
+    "PROXY_LOG_LEVEL|enum:silent,normal,verbose,debug|Уровень логирования (RUST_LOG имеет приоритет)"
+    "HTTPS_HSTS_ENABLED|bool|HSTS для HTTPS-доменов Selfmask и WEB"
+    "HTTPS_PERMISSIONS_ENABLED|bool|Запрет камеры, микрофона и геолокации для Selfmask и WEB"
     "PROXY_PORT|range:1:65535|Порт прокси"
     "PROXY_DOMAIN|custom:_validate_settings_domain|Домен FakeTLS (SNI)"
     "CUSTOM_IP|custom:_validate_settings_ip|IP или домен для ссылок (пусто — автоопределение)"
@@ -85,6 +88,7 @@ _settings_find() {
 
 # Список настроек с текущими значениями — панель строит по нему форму.
 settings_settable_json() {
+    local PROXY_LOG_LEVEL; PROXY_LOG_LEVEL=$(proxy_log_level)
     local _entry _key _validator _desc _rest _first=1
     printf '['
     for _entry in "${_SETTINGS_SETTABLE[@]}"; do
@@ -126,6 +130,40 @@ settings_set_param() {
     }
 
     case "$_key" in
+        PROXY_LOG_LEVEL)
+            check_root
+            _require_manager_mode && _require_no_superexpert || return 1
+            save_expert_override general log_level "$_val" || return 1
+            load_secrets
+            generate_telemt_config || return 1
+            if is_proxy_running; then
+                if engine_is_binary; then
+                    binengine_reload || return 1
+                else
+                    docker kill -s SIGHUP "$CONTAINER_NAME" >/dev/null || return 1
+                fi
+            fi
+            log_success "Уровень логирования: $_val"
+            log_info "Если у движка задан RUST_LOG, он имеет приоритет"
+            return 0
+            ;;
+        HTTPS_HSTS_ENABLED|HTTPS_PERMISSIONS_ENABLED)
+            check_root
+            local _old="${!_key}"
+            printf -v "$_key" '%s' "$_val"
+            if [ "${NGINX_CUSTOM_ENABLED:-false}" = "true" ]; then
+                log_info "Свой nginx-конфиг: заголовки добавляются вручную"
+            elif [ "${SELFMASK_ENABLED:-false}" = "true" ] || web_is_enabled; then
+                if web_is_enabled && ! web_uses_managed_nginx; then
+                    log_info "Перенесите обновлённый фрагмент: mtproxyl web haproxy-config"
+                elif ! _selfmask_configure_nginx; then
+                    printf -v "$_key" '%s' "$_old"
+                    return 1
+                fi
+            fi
+            save_settings
+            return $?
+            ;;
         PROXY_PORT)
             # Переносит гео-блокировку на новый порт и перезапускает контейнер.
             handle_port_command "$_val"
@@ -199,6 +237,7 @@ settings_set_param() {
 }
 
 handle_settings_command() {
+    local PROXY_LOG_LEVEL; PROXY_LOG_LEVEL=$(proxy_log_level)
     local _sub="${1:-list}"; shift 2>/dev/null || true
     case "$_sub" in
         list)

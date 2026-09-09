@@ -55,9 +55,20 @@ tui_settings_menu() {
         echo -e "  ${DIM}[13]${NC} Тюнинг движка (tune) Telemt"
         echo -e "  ${DIM}[14]${NC} Пользовательские URL Telegram"
         echo -e "  ${DIM}[15]${NC} Selfmask (заглушка + сертификат)"
+        echo -e "  ${DIM}[17]${NC} Уровень логирования [$(proxy_log_level)]"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
+            17)
+                echo "  [1] Тихий  [2] Обычный  [3] Подробный  [4] Отладка  [0] Назад"
+                local _log; _log=$(read_choice "выбор" "0")
+                case "$_log" in
+                    1) settings_set_param PROXY_LOG_LEVEL silent ;;
+                    2) settings_set_param PROXY_LOG_LEVEL normal ;;
+                    3) settings_set_param PROXY_LOG_LEVEL verbose ;;
+                    4) settings_set_param PROXY_LOG_LEVEL debug ;;
+                esac
+                press_any_key ;;
             1)
                 echo -en "  ${BOLD}Новый порт:${NC} "; local p; read_line p
                 if validate_port "$p"; then

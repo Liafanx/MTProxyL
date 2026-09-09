@@ -621,6 +621,8 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script update --no-restart
 # Версия движка: список, установка и откат. Откат без аргумента — на
 # предыдущую, с аргументом — на образ, который уже лежит на диске.
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script engine versions
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script engine cleanup --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script engine cleanup --yes
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script engine update [A-Za-z0-9._-]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script engine rollback --yes
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script engine rollback [A-Za-z0-9._-]*
@@ -642,15 +644,34 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability token *
 # Маршрут до Telegram через WARP. Включение уводит минуты на разведку
 # эндпоинтов Cloudflare, поэтому панель зовёт его фоновой операцией.
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp status --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp preflight socks --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp preflight iface --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp preflight upstream --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp on socks
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp on socks --allow-disable-me
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp on iface
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp on iface --allow-disable-me
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp on upstream
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp on upstream --allow-disable-me
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp on upstream --allow-disable-default-upstreams
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp on upstream --allow-disable-me --allow-disable-default-upstreams
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp off
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp scan
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp scan --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp scan socks
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp scan iface
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp scan upstream
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp settings *
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp recover
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp watchdog on
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp watchdog off
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp apply
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp install
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp reapply
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp location [A-Za-z]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp endpoint [0-9a-fA-F]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp endpoint clear
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script warp endpoint \[*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp proto [a-z]*
 # Телеграм-бот. Токен передаётся аргументом установки, поэтому правило на неё
 # отдельное и с ним же ограничен формат: только то, что похоже на токен.

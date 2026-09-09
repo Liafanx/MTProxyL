@@ -2,7 +2,7 @@
 # MTProxyL — маршрут до Telegram через Cloudflare WARP (warpscout).
 # Вариант A — SOCKS5 + redsocks, вариант B — интерфейс WireGuard.
 
-WARPSCOUT_VERSION="0.14.0"
+WARPSCOUT_VERSION="0.16.0"
 WARPSCOUT_UPSTREAM_REPO="vernette/warpscout"
 
 WARP_IFACE="mtpwarp"
@@ -17,16 +17,70 @@ WARP_SOCKS_UNIT="mtproxyl-warp-socks.service"
 WARP_REDSOCKS_UNIT="mtproxyl-warp-redsocks.service"
 WARP_IFACE_UNIT="mtproxyl-warp-iface.service"
 WARP_ROUTE_UNIT="mtproxyl-warp-route.service"
+WARP_WATCH_UNIT="mtproxyl-warp-watch"
+_warp_unit_dir() { echo /etc/systemd/system; }
+
+_warp_valid_endpoint() {
+    local _host="${1%:*}" _port="${1##*:}"
+    _host="${_host#[}"; _host="${_host%]}"
+    [[ "$_port" =~ ^[0-9]{1,5}$ ]] || return 1
+    [ "$((10#$_port))" -ge 1 ] && [ "$((10#$_port))" -le 65535 ] || return 1
+    if [[ "$_host" == *:* ]]; then
+        [[ "$1" == \[*\]:* ]] || return 1
+        if [[ "$_host" == *.* ]]; then
+            validate_ip_literal "${_host##*:}" || return 1
+            _host="${_host%:*}:0:0"
+        fi
+        [[ "$_host" =~ ^[0-9a-fA-F:]+$ ]] || return 1
+        local _groups=0 _part
+        [[ "$_host" != *:::* ]] || return 1
+        [[ "$_host" != :* || "$_host" == ::* ]] || return 1
+        [[ "$_host" != *: || "$_host" == *:: ]] || return 1
+        local IFS=:
+        for _part in $_host; do
+            [ "${#_part}" -le 4 ] || return 1
+            [ -z "$_part" ] || _groups=$((_groups + 1))
+        done
+        if [[ "$_host" == *::* ]]; then
+            local _tail="${_host#*::}"
+            [[ "$_tail" != *::* ]] && [ "$_groups" -le 7 ] || return 1
+        else
+            [ "$_groups" -eq 8 ] || return 1
+        fi
+    else
+        [[ "$1" != \[* ]] || return 1
+        validate_ip_literal "$_host"
+    fi
+}
+
+_warp_write_state() {
+    local _tmp; _tmp=$(mktemp "$(_warp_dir)/state.XXXXXX") || return 1
+    jq -nc --arg endpoint "$1" --arg proto "$(_warp_proto)" --arg mode "$(_warp_mode)" \
+        --arg location "${WARP_LOCATION:-}" --arg pin "${WARP_ENDPOINT:-}" \
+        --argjson ts "$(date +%s)" '{endpoint:$endpoint,proto:$proto,mode:$mode,location:$location,pin:$pin,picked_at:$ts}' > "$_tmp" \
+        && chmod 600 "$_tmp" && mv "$_tmp" "$(_warp_state)"
+}
 
 _warp_dir()      { echo "${INSTALL_DIR:-/opt/mtproxyl}/warp"; }
 _warp_bin()      { echo "$(_warp_dir)/warpscout"; }
 _warp_account()  { echo "$(_warp_dir)/account.json"; }
 _warp_state()    { echo "$(_warp_dir)/state.json"; }
+_warp_active_endpoint() { jq -r '.endpoint // ""' "$(_warp_state)" 2>/dev/null; }
 _warp_cidr()     { echo "$(_warp_dir)/telegram-cidr.txt"; }
 _warp_conf()     { echo "$(_warp_dir)/${WARP_IFACE}.conf"; }
 _warp_redsocks_conf() { echo "$(_warp_dir)/redsocks.conf"; }
 _warp_nft_script()    { echo "$(_warp_dir)/nft.sh"; }
 _warp_runner()        { echo "$(_warp_dir)/run-socks.sh"; }
+
+_warp_has_artifacts() {
+    [ -d "$(_warp_dir)" ] && return 0
+    local _unit
+    for _unit in "$WARP_WATCH_UNIT.timer" "$WARP_WATCH_UNIT.service" \
+        "$WARP_SOCKS_UNIT" "$WARP_REDSOCKS_UNIT" "$WARP_IFACE_UNIT" "$WARP_ROUTE_UNIT"; do
+        [ -e "$(_warp_unit_dir)/$_unit" ] && return 0
+    done
+    return 1
+}
 
 _warp_fwmark() {
     local _v="${WARP_FWMARK:-$WARP_FWMARK_DEFAULT}"
@@ -39,10 +93,13 @@ _warp_variant_letter() {
 }
 
 _warp_mode()  { case "${WARP_MODE:-socks}" in iface) echo "iface" ;; upstream) echo "upstream" ;; *) echo "socks" ;; esac; }
+_warp_configured_proto() {
+    case "${WARP_PROTO:-awg}" in wg|masque|masque-h2) echo "${WARP_PROTO}" ;; *) echo "awg" ;; esac
+}
 _warp_proto() {
     # У интерфейса выбора нет: awg и masque живут только в туннеле warpscout.
     [ "$(_warp_mode)" = "iface" ] && { echo "wg"; return; }
-    case "${WARP_PROTO:-awg}" in wg|masque|masque-h2) echo "${WARP_PROTO}" ;; *) echo "awg" ;; esac
+    _warp_configured_proto
 }
 _warp_socks_port() {
     local _v="${WARP_SOCKS_PORT:-41080}"
@@ -98,11 +155,11 @@ _warp_bin_version() {
 
 # Понимает ли бинарник ключи, которыми мы его зовём.
 _warp_bin_usable() {
-    local _b; _b=$(_warp_bin)
+    local _b="${1:-$(_warp_bin)}"
     [ -x "$_b" ] || return 1
     local _help; _help=$("$_b" scan -h 2>&1; "$_b" socks -h 2>&1)
     local _flag
-    for _flag in best conf endpoint country node; do
+    for _flag in best conf endpoint country node plain tun-ping port table-off no-dns; do
         grep -q -- "-${_flag}\b" <<< "$_help" || return 1
     done
     return 0
@@ -127,26 +184,29 @@ warp_install_binary() {
     )
     local _names=("оригинального проекта" "сборки MTProxyL")
 
-    local _tmp _i _ok="false"
+    local _tmp _i _extract _ok="false"
     _tmp=$(mktemp -d /tmp/warpscout.XXXXXX) || { log_error "Не удалось создать временный каталог"; return 1; }
     for _i in "${!_sources[@]}"; do
+        _extract="${_tmp}/source-${_i}"
+        mkdir -p "$_extract" || continue
         log_info "Скачиваем warpscout ${WARPSCOUT_VERSION} из ${_names[$_i]}..."
         if ! curl -fsSL --max-time 180 "${_sources[$_i]}" -o "${_tmp}/ws.tar.gz" 2>/dev/null; then
             log_warn "Источник недоступен: ${_sources[$_i]}"
             continue
         fi
-        if ! tar xzf "${_tmp}/ws.tar.gz" -C "$_tmp" 2>/dev/null; then
+        if ! tar xzf "${_tmp}/ws.tar.gz" -C "$_extract" 2>/dev/null; then
             log_warn "Архив не распаковался"
             continue
         fi
-        local _found; _found=$(find "$_tmp" -type f -name warpscout | head -1)
+        local _found; _found=$(find "$_extract" -type f -name warpscout | head -1)
         [ -n "$_found" ] || { log_warn "В архиве нет warpscout"; continue; }
-        install -m 700 "$_found" "$(_warp_bin)" || continue
-        if ! _warp_bin_usable; then
+        chmod 700 "$_found"
+        if ! _warp_bin_usable "$_found" || [ "$("$_found" version 2>/dev/null | head -1)" != "$WARPSCOUT_VERSION" ]; then
             log_warn "Скачанный warpscout не понимает нужные ключи — пробуем следующий источник"
-            rm -f "$(_warp_bin)"
             continue
         fi
+        install -m 700 "$_found" "${_dir}/warpscout.new" || continue
+        mv -f "${_dir}/warpscout.new" "$(_warp_bin)" || continue
         _ok="true"
         break
     done
@@ -158,7 +218,13 @@ warp_install_binary() {
 
 # Бесплатная учётка Cloudflare — без неё warpscout не работает.
 _warp_ensure_account() {
-    [ -s "$(_warp_account)" ] && return 0
+    if [ -e "$(_warp_account)" ]; then
+        if jq -e 'type=="object" and (.private_key | type=="string" and length>0)' "$(_warp_account)" >/dev/null 2>&1; then
+            return 0
+        fi
+        log_error "Учётная запись WARP повреждена. Восстановите account.json из бэкапа"
+        return 1
+    fi
     log_info "Регистрируем учётную запись WARP..."
     "$(_warp_bin)" register -a "$(_warp_account)" >/dev/null 2>&1 || {
         log_error "Cloudflare не выдал учётную запись WARP"
@@ -195,10 +261,19 @@ _warp_location_args() {
 }
 
 _warp_scan_args() {
-    local -a _a=(-a "$(_warp_account)" -p "$(_warp_proto)" -plain)
+    local -a _a=(-a "$(_warp_account)" -p "$(_warp_proto)" -plain -tun-ping)
     local _line
-    while IFS= read -r _line; do [ -n "$_line" ] && _a+=("$_line"); done < <(_warp_location_args)
+    # MASQUE uses two fixed anycast endpoints. warpscout deliberately rejects
+    # -node/-country for it because every candidate exits through one colo.
+    case "$(_warp_proto)" in
+        masque|masque-h2) ;;
+        *) while IFS= read -r _line; do [ -n "$_line" ] && _a+=("$_line"); done < <(_warp_location_args) ;;
+    esac
     printf '%s\n' "${_a[@]}"
+}
+
+_warp_scan_filter() {
+    case "$(_warp_proto)" in masque|masque-h2) echo "" ;; *) echo "${WARP_LOCATION:-}" ;; esac
 }
 
 # Лучший эндпоинт на stdout; прогресс warpscout уходит в stderr.
@@ -209,54 +284,87 @@ warp_scan_best() {
     while IFS= read -r _line; do _args+=("$_line"); done < <(_warp_scan_args)
     _args+=(-best)
     [ -n "$_target" ] && _args+=(-target "$_target")
+    [ -n "${2:-}" ] && _args+=(-port "$2")
 
     local _out
-    _out=$("$(_warp_bin)" scan "${_args[@]}" 2>/dev/null | tail -1 | tr -d '\r')
-    [[ "$_out" =~ ^[0-9a-fA-F:.]+:[0-9]+$ ]] || return 1
+    local _timeout=420; [ -n "$_target" ] && _timeout=45
+    _out=$(timeout --foreground -k 5 "$_timeout" "$(_warp_bin)" scan "${_args[@]}") || return 1
+    _out=$(tail -1 <<< "$_out" | tr -d '\r')
+    _warp_valid_endpoint "$_out" || return 1
     echo "$_out"
 }
 
 _warp_scan_file() { echo "$(_warp_dir)/last-scan.json"; }
 
-# Отчёт warpscout — таблица с фиксированной шириной колонок. Нас интересует
-# секция «Best endpoint per node»: по ней видно, какие локации вообще живы.
+# Читаем все рабочие адреса; старые отчёты могут содержать только сводку узлов.
 _warp_report_to_json() {
-    local _file="$1"
-    awk -v loc="${WARP_LOCATION:-}" -v proto="$(_warp_proto)" -v ts="$(date -u +%s)" '
-        function trim(v) { gsub(/^[ \t]+|[ \t]+$/, "", v); gsub(/[\\"]/, "", v); return v }
-        /^# Best endpoint per node/ { sect = 1; next }
-        sect && /^NODE/ { hdr = 1; next }
-        sect && hdr {
-            if ($0 ~ /^[ \t]*$/ || $0 ~ /^#/) { sect = 0; next }
-            node = trim(substr($0, 1, 6)); ep = trim(substr($0, 8, 22))
-            ping = trim(substr($0, 31, 13)); seen = trim(substr($0, 45, 10))
-            place = trim(substr($0, 56))
-            if (node == "" || ep !~ /^[0-9a-fA-F:.]+:[0-9]+$/) next
-            printf "%s{\"node\":\"%s\",\"endpoint\":\"%s\",\"ping\":\"%s\",\"region\":\"%s\",\"location\":\"%s\"}", sep, node, ep, ping, seen, place
-            sep = ","
-            n++
+    LC_ALL=C awk '
+        function trim(v) { gsub(/^[ \t]+|[ \t]+$/, "", v); return v }
+        function field(start, stop) {
+            if (!start) return ""
+            return trim(substr($0, start + shift, stop ? stop-start : length($0)))
         }
-        BEGIN { printf "{\"scanned_at\":%s,\"proto\":\"%s\",\"filter\":\"%s\",\"nodes\":[", ts, proto, loc }
-        END { printf "]}\n" }
-    ' "$_file"
+        /^#.*torn down/ { section=0; torn=1; next }
+        /^# Best endpoint per node/ { section=full ? 0 : 2; next }
+        /^ENDPOINT[ \t]/ && !torn { full=1; section=1; header=0 }
+        (section==1 && /^ENDPOINT[ \t]/) || (section==2 && /^NODE/) {
+            ep=index($0,"ENDPOINT"); ping=index($0,"ENDPOINT PING")
+            tun=index($0,"TUN PING"); loss=index($0,"LOSS")
+            speed=index($0,"SPEED"); region=index($0,"SEEN AS")
+            nodecol=index($0,"NODE")
+            place=index($0,"NODE LOCATION"); header=1; next
+        }
+        section && header {
+            if ($0 ~ /^[ \t]*$/ || $0 ~ /^#/) {section=0; next}
+            if (!ep || !ping || !region || !place) exit 2
+            endpoint=section==1 ? $1 : $2
+            if (endpoint !~ /:[0-9]+$/) exit 2
+            shift=length(endpoint)-(ping-ep-1); if (shift<0) shift=0
+            node=section==1 ? field(nodecol,place) : $1
+            print node "\t" endpoint "\t" field(ping,tun ? tun : (speed ? speed : region)) "\t" field(region,section==1 ? nodecol : place) "\t" field(place,0) "\t" field(tun,loss) "\t" field(loss,speed ? speed : region)
+        }
+    ' "$1" | jq -Rsc --arg proto "$(_warp_proto)" --arg filter "$(_warp_scan_filter)" --argjson ts "$(date +%s)" '
+        split("\n") | map(select(length>0) | split("\t") |
+        {node:.[0],endpoint:.[1],ping:.[2],region:.[3],location:.[4],tunnel_ping:.[5],loss:.[6]}) |
+        reduce .[] as $r ({seen:{},rows:[]}; if .seen[$r.endpoint] then . else .seen[$r.endpoint]=true | .rows+=[$r] end) | .rows |
+        {scanned_at:$ts,proto:$proto,filter:$filter,nodes:.,status:(if length>0 then "success" else "empty" end),best_endpoint:(.[0].endpoint // "")}'
 }
 
-# Разведка с отчётом: кроме лучшего эндпоинта запоминаем список узлов, чтобы
-# в TUI и панели было видно, из чего выбирать локацию.
-warp_scan_collect() {
+# Сохраняем полный список рабочих адресов для TUI и панели.
+warp_scan_collect() (
+    set -o pipefail
+    umask 077
+    mkdir -p "$(_warp_dir)" || return 1
     local -a _args=()
     local _line
     while IFS= read -r _line; do _args+=("$_line"); done < <(_warp_scan_args)
-    local _report; _report=$(mktemp /tmp/warpscout-report.XXXXXX) || return 1
-    "$(_warp_bin)" scan "${_args[@]}" -o "$_report" >/dev/null 2>&1
-    if [ ! -s "$_report" ]; then rm -f "$_report"; return 1; fi
-    _warp_report_to_json "$_report" > "$(_warp_scan_file)"
-    rm -f "$_report"
-    grep -q '"endpoint"' "$(_warp_scan_file)" 2>/dev/null
-}
+    local _report _json _rc=0
+    _report=$(mktemp "$(_warp_dir)/report.XXXXXX") || return 1
+    _json=$(mktemp "$(_warp_dir)/scan.XXXXXX") || return 1
+    trap 'rm -f "$_report" "$_json"' EXIT
+    trap 'jq -nc "{scanned_at:0,status:\"error\",error:\"Разведка прервана\",nodes:[]}" > "$_json"; mv "$_json" "$(_warp_scan_file)"; exit 143' TERM INT HUP
+    jq -nc --argjson pid "$BASHPID" '{scanned_at:0,status:"running",pid:$pid,nodes:[]}' > "$_json"
+    mv "$_json" "$(_warp_scan_file)"
+    timeout --foreground -k 5 420 "$(_warp_bin)" scan "${_args[@]}" -o "$_report" > "$(_warp_dir)/last-scan.log" 2>&1 || _rc=$?
+    if [ "$_rc" -ne 0 ] || ! _warp_report_to_json "$_report" > "$_json"; then
+        jq -nc --argjson ts "$(date +%s)" --arg error "Разведка завершилась с ошибкой (код $_rc); см. журнал операции" \
+            '{scanned_at:$ts,status:"error",error:$error,nodes:[]}' > "$_json"
+        tail -30 "$(_warp_dir)/last-scan.log" >&2
+        mv "$_json" "$(_warp_scan_file)"
+        return 1
+    fi
+    mv "$_json" "$(_warp_scan_file)"
+    jq -e '.nodes | length>0' "$(_warp_scan_file)" >/dev/null
+)
 
 warp_scan_json() {
     local _f; _f=$(_warp_scan_file)
+    local _pid
+    _pid=$(jq -r 'select(.status=="running") | .pid // 0' "$_f" 2>/dev/null)
+    if [[ "$_pid" =~ ^[0-9]+$ ]] && [ "$_pid" -gt 0 ] && ! kill -0 "$_pid" 2>/dev/null; then
+        jq -c '.status="error" | .error="Разведка прервана; запустите повторно"' "$_f"
+        return
+    fi
     if [ -s "$_f" ]; then cat "$_f"; else echo '{"scanned_at":0,"nodes":[]}'; fi
 }
 
@@ -286,17 +394,55 @@ warp_scan_print() {
     echo -e "  ${DIM}Локация задаётся кодом узла (FRA) или страны (DE): mtproxyl warp location DE${NC}"
 }
 
-# Закреплённый эндпоинт проверяем точечно; молчит — ищем заново.
+# Выбор из успешной разведки уже проверен настоящим туннелем. Повторно гонять
+# warpscout scan перед A/B/C не нужно; жизнеспособность подтвердит запуск службы.
+_warp_cached_endpoint() {
+    local _f; _f=$(_warp_scan_file)
+    [ -s "$_f" ] || return 1
+    local _cached_proto _wanted_proto
+    _cached_proto=$(jq -r '.proto // ""' "$_f" 2>/dev/null) || return 1
+    _wanted_proto=$(_warp_proto)
+    case "${_wanted_proto}:${_cached_proto}" in
+        wg:wg|wg:awg|awg:wg|awg:awg|masque:masque|masque-h2:masque-h2) ;;
+        *) return 1 ;;
+    esac
+    jq -er --arg pin "${WARP_ENDPOINT:-}" --arg location "${WARP_LOCATION:-}" '
+        select(.status == "success" and (.nodes | type == "array" and length > 0)) |
+        if $pin != "" then
+            [.nodes[] | select(.endpoint == $pin)][0].endpoint // empty
+        elif $location != "" then
+            ($location | split(",") | map(gsub("[[:space:]]"; "") | ascii_upcase)) as $wanted |
+            [.nodes[] |
+                (.node // "" | ascii_upcase) as $node |
+                (.region // "" | ascii_upcase) as $region |
+                select(($wanted | index($node)) != null or ($wanted | index($region)) != null)
+            ][0].endpoint // empty
+        else empty end
+    ' "$_f" 2>/dev/null
+}
+
+# Закреплённый адрес без результата разведки проверяем точечно; для нового
+# узла или автовыбора запускаем обычную разведку.
 warp_resolve_endpoint() {
     local _pin="${WARP_ENDPOINT:-}"
+    local _cached=""
+    _cached=$(_warp_cached_endpoint) || _cached=""
+    if [ -n "$_cached" ]; then
+        log_info "Используем выбор из последней разведки без повторного поиска: ${_cached}" >&2
+        echo "$_cached"
+        return 0
+    fi
     if [ -n "$_pin" ]; then
-        local _host="${_pin%:*}"
-        if warp_scan_best "$_host" >/dev/null 2>&1; then
+        log_info "Проверяем закреплённый эндпоинт WARP: ${_pin}" >&2
+        local _host="${_pin%:*}"; _host="${_host#[}"; _host="${_host%]}"
+        if warp_scan_best "$_host" "${_pin##*:}" >/dev/null; then
             echo "$_pin"
             return 0
         fi
-        log_warn "Закреплённый эндпоинт ${_pin} не отвечает — ищем новый"
+        log_warn "Закреплённый эндпоинт ${_pin} не отвечает — ищем новый" >&2
     fi
+    log_info "Ищем живой эндпоинт WARP (${WARP_LOCATION:-лучший по задержке}, протокол $(_warp_proto))..." >&2
+    log_info "Разведка идёт несколько минут — она поднимает туннель к каждому кандидату" >&2
     local _found; _found=$(warp_scan_best) || return 1
     echo "$_found"
 }
@@ -434,42 +580,17 @@ _warp_nft_remove() {
 
 _warp_write_socks_runner() {
     local _runner; _runner=$(_warp_runner)
-    cat > "$_runner" <<EOF
-#!/bin/bash
-# SOCKS5 поверх WARP; перед стартом сверяем, жив ли эндпоинт.
-set -u
-INSTALL_DIR="${INSTALL_DIR:-/opt/mtproxyl}"
-SETTINGS_FILE="\${INSTALL_DIR}/settings.conf"
-[ -f "\$SETTINGS_FILE" ] && . "\$SETTINGS_FILE"
-
-BIN="$(_warp_bin)"
-ACCOUNT="$(_warp_account)"
-STATE="$(_warp_state)"
-PROTO="$(_warp_proto)"
-PORT="$(_warp_socks_port)"
-
-pick() {
-    local args=(-a "\$ACCOUNT" -p "\$PROTO" -plain -best)
-    [ -n "\${WARP_LOCATION:-}" ] && args+=(\$WARP_LOCATION_ARGS)
-    "\$BIN" scan "\${args[@]}" 2>/dev/null | tail -1 | tr -d '\r'
-}
-
-WARP_LOCATION_ARGS="$( _warp_location_args | paste -sd' ' - )"
-EP="\${WARP_ENDPOINT:-}"
-if [ -n "\$EP" ]; then
-    args=(-a "\$ACCOUNT" -p "\$PROTO" -plain -best -target "\${EP%:*}")
-    CHECK=\$("\$BIN" scan "\${args[@]}" 2>/dev/null | tail -1 | tr -d '\r')
-    [ -n "\$CHECK" ] || EP=""
-fi
-[ -n "\$EP" ] || EP=\$(pick)
-if [ -z "\$EP" ]; then
-    echo "warpscout: живого эндпоинта WARP не нашлось" >&2
-    exit 1
-fi
-printf '{"endpoint":"%s","proto":"%s","picked_at":%s}\n' "\$EP" "\$PROTO" "\$(date +%s)" > "\$STATE"
-exec "\$BIN" socks -a "\$ACCOUNT" -e "\$EP" -p "\$PROTO" -l LISTEN_ADDR -port "\$PORT"
-EOF
-    sed -i "s/LISTEN_ADDR/$(_warp_socks_listen)/" "$_runner"
+    {
+        echo '#!/bin/bash'
+        printf 'BIN=%q\nACCOUNT=%q\nSTATE=%q\nPORT=%q\nLISTEN=%q\n' \
+            "$(_warp_bin)" "$(_warp_account)" "$(_warp_state)" "$(_warp_socks_port)" "$(_warp_socks_listen)"
+        cat <<'RUNNER'
+set -eu
+EP=$(jq -er '.endpoint' "$STATE")
+PROTO=$(jq -er '.proto' "$STATE")
+exec "$BIN" socks -a "$ACCOUNT" -e "$EP" -p "$PROTO" -l "$LISTEN" -port "$PORT"
+RUNNER
+    } > "$_runner"
     chmod 700 "$_runner"
 }
 
@@ -496,7 +617,7 @@ EOF
 }
 
 _warp_write_socks_units() {
-    cat > "/etc/systemd/system/${WARP_SOCKS_UNIT}" <<EOF
+    cat > "$(_warp_unit_dir)/${WARP_SOCKS_UNIT}" <<EOF
 [Unit]
 Description=MTProxyL WARP SOCKS5 (warpscout)
 After=network-online.target
@@ -507,13 +628,12 @@ Type=simple
 ExecStart=$(_warp_runner)
 Restart=always
 RestartSec=10
-StartLimitIntervalSec=0
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    cat > "/etc/systemd/system/${WARP_REDSOCKS_UNIT}" <<EOF
+    cat > "$(_warp_unit_dir)/${WARP_REDSOCKS_UNIT}" <<EOF
 [Unit]
 Description=MTProxyL WARP transparent redirector (redsocks)
 After=${WARP_SOCKS_UNIT}
@@ -526,7 +646,6 @@ ExecStartPost=/bin/sh $(_warp_nft_script)
 ExecStopPost=/bin/sh -c '/usr/sbin/nft delete table inet ${WARP_NFT_TABLE} 2>/dev/null || true'
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=0
 
 [Install]
 WantedBy=multi-user.target
@@ -537,7 +656,7 @@ EOF
 # ── Служба варианта B: интерфейс WireGuard + policy routing ─────────────────
 
 _warp_write_iface_units() {
-    cat > "/etc/systemd/system/${WARP_IFACE_UNIT}" <<EOF
+    cat > "$(_warp_unit_dir)/${WARP_IFACE_UNIT}" <<EOF
 [Unit]
 Description=MTProxyL WARP interface (${WARP_IFACE})
 After=network-online.target
@@ -554,7 +673,7 @@ WantedBy=multi-user.target
 EOF
 
     # Маршрут и правило — отдельной службой: интерфейс может подняться заново.
-    cat > "/etc/systemd/system/${WARP_ROUTE_UNIT}" <<EOF
+    cat > "$(_warp_unit_dir)/${WARP_ROUTE_UNIT}" <<EOF
 [Unit]
 Description=MTProxyL WARP policy routing
 After=${WARP_IFACE_UNIT}
@@ -575,28 +694,50 @@ EOF
 
 _warp_generate_iface_conf() {
     local _ep="$1"
-    log_info "Готовим конфиг WireGuard для ${_ep}..."
-    local -a _args=()
-    local _line
-    while IFS= read -r _line; do _args+=("$_line"); done < <(_warp_scan_args)
-    _args+=(-best -target "${_ep%:*}" -conf "$(_warp_conf)" -table-off -no-dns -mtu "$(_warp_mtu)")
+    _warp_valid_endpoint "$_ep" || return 1
+    log_info "Готовим конфиг WireGuard для выбранного эндпоинта ${_ep}..."
+    local _private _public _address _tmp
+    _private=$(jq -er '.private_key | select(type == "string" and length > 0)' "$(_warp_account)" 2>/dev/null) || return 1
+    _public=$(jq -er '.peer_public_key | select(type == "string" and length > 0)' "$(_warp_account)" 2>/dev/null) || return 1
+    _address=$(jq -er '.ipv4 | select(type == "string" and length > 0)' "$(_warp_account)" 2>/dev/null) || return 1
+    [[ "$_private" =~ ^[A-Za-z0-9+/]{43}=$ ]] \
+        && [[ "$_public" =~ ^[A-Za-z0-9+/]{43}=$ ]] \
+        && validate_ip_literal "$_address" || {
+            log_error "В account.json нет корректных данных WireGuard"
+            return 1
+        }
+    _tmp=$(mktemp "$(_warp_dir)/iface.XXXXXX") || return 1
+    if ! cat > "$_tmp" <<EOF
+[Interface]
+Address = ${_address}/32
+PrivateKey = ${_private}
+MTU = $(_warp_mtu)
+Table = off
 
-    "$(_warp_bin)" scan "${_args[@]}" >/dev/null 2>&1
-    [ -s "$(_warp_conf)" ] || { log_error "warpscout не отдал конфиг WireGuard"; return 1; }
+[Peer]
+PublicKey = ${_public}
+Endpoint = ${_ep}
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+EOF
+    then
+        rm -f "$_tmp"
+        return 1
+    fi
+    mv "$_tmp" "$(_warp_conf)" || return 1
     chmod 600 "$(_warp_conf)"
-    # Строка DNS в wg-quick переписала бы /etc/resolv.conf всему серверу.
-    sed -i '/^DNS[[:space:]]*=/d' "$(_warp_conf)"
     return 0
 }
 
 # ── Зависимости ─────────────────────────────────────────────────────────────
 
 _warp_need_packages() {
+    _warp_scan_dependencies || return 1
     local -a _need=()
-    [ "$(_warp_mode)" = "upstream" ] && return 0
+    command -v jq >/dev/null || _need+=("jq")
     if [ "$(_warp_mode)" = "socks" ]; then
         command -v redsocks &>/dev/null || [ -x /usr/sbin/redsocks ] || _need+=("redsocks")
-    else
+    elif [ "$(_warp_mode)" = "iface" ]; then
         command -v wg-quick &>/dev/null || _need+=("wireguard-tools")
     fi
     command -v nft &>/dev/null || _need+=("nftables")
@@ -617,7 +758,7 @@ _warp_need_packages() {
             log_error "redsocks не установился — вариант A без него не работает"
             return 1
         }
-    else
+    elif [ "$(_warp_mode)" = "iface" ]; then
         command -v wg-quick &>/dev/null || {
             log_error "wireguard-tools не установились — вариант B без них не работает"
             return 1
@@ -693,13 +834,15 @@ _warp_me_gate() {
     fi
 
     if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ]; then
-        log_error "Выключите ME сами: mtproxyl expert set general use_middle_proxy false"
-        log_info "Автоматически не выключаем — вместе с ним отключится рекламная метка"
-        return 1
+        if [ "${WARP_ALLOW_DISABLE_ME:-false}" != "true" ]; then
+            log_error "Нужно явное согласие на отключение middle proxy"
+            log_info "CLI: добавьте --allow-disable-me; в панели отметьте согласие"
+            return 1
+        fi
+    else
+        local _yn; read_line _yn "  ${BOLD}Выключить middle proxy и продолжить? [y/N]:${NC} "
+        [[ "$_yn" =~ ^[yY] ]] || { log_info "Ничего не меняем — WARP не включён"; return 1; }
     fi
-
-    local _yn; read_line _yn "  ${BOLD}Выключить middle proxy и продолжить? [y/N]:${NC} "
-    [[ "$_yn" =~ ^[yY] ]] || { log_info "Ничего не меняем — WARP не включён"; return 1; }
 
     handle_expert_command set general use_middle_proxy false --no-apply >/dev/null || {
         log_error "Не удалось выключить middle proxy"
@@ -791,7 +934,13 @@ _warp_apply_upstream() {
         log_warn "Есть другие маршруты без области: ${_others}"
         echo -e "  ${DIM}Движок раскладывает трафик между всеми такими маршрутами по весу —${NC}"
         echo -e "  ${DIM}часть соединений пойдёт мимо туннеля. Их нужно выключить.${NC}"
-        if [ "${MTPROXYL_ASSUME_YES:-}" != "1" ]; then
+        if [ "${MTPROXYL_ASSUME_YES:-}" = "1" ]; then
+            if [ "${WARP_ALLOW_DISABLE_DEFAULT_UPSTREAMS:-false}" != "true" ]; then
+                log_error "Нужно явное согласие на временное отключение маршрутов: ${_others}"
+                log_info "CLI: добавьте --allow-disable-default-upstreams; в панели отметьте согласие"
+                return 1
+            fi
+        else
             local _yn; read_line _yn "  ${BOLD}Выключить их на время работы WARP? [Y/n]:${NC} "
             [[ "$_yn" =~ ^[nN] ]] && { log_error "Без этого вариант C работать не будет"; return 1; }
         fi
@@ -804,9 +953,12 @@ _warp_apply_upstream() {
     IFS="$_old"
     for _name in "${_list[@]}"; do
         [ -n "$_name" ] || continue
-        upstream_toggle "$_name" disable >/dev/null 2>&1 || true
+        upstream_toggle "$_name" disable >/dev/null 2>&1 || { UPSTREAM_DEFER_RESTART=false; return 1; }
+        case ",${WARP_DISABLED_UPSTREAMS:-}," in
+            *",${_name},"*) ;;
+            *) WARP_DISABLED_UPSTREAMS+="${WARP_DISABLED_UPSTREAMS:+,}${_name}" ;;
+        esac
     done
-    WARP_DISABLED_UPSTREAMS="$_others"
 
     upstream_remove "$WARP_UPSTREAM_NAME" >/dev/null 2>&1 || true
     upstream_add "$WARP_UPSTREAM_NAME" socks5 "127.0.0.1:$(_warp_socks_port)" "" "" 1 "" "" >/dev/null \
@@ -849,7 +1001,107 @@ _warp_drop_upstream() {
     UPSTREAM_DEFER_RESTART="false"
 }
 
-warp_enable() {
+_warp_stop_runtime() {
+    systemctl disable --now "$WARP_WATCH_UNIT.timer" "$WARP_REDSOCKS_UNIT" "$WARP_ROUTE_UNIT" \
+        "$WARP_IFACE_UNIT" "$WARP_SOCKS_UNIT" >/dev/null 2>&1 || true
+    systemctl stop "$WARP_WATCH_UNIT.service" >/dev/null 2>&1 || true
+    _warp_nft_remove
+    ip rule del fwmark "$(_warp_fwmark)/$(_warp_fwmark)" lookup "$WARP_RT_TABLE" 2>/dev/null || true
+    ip -6 rule del fwmark "$(_warp_fwmark)/$(_warp_fwmark)" lookup "$WARP_RT_TABLE" 2>/dev/null || true
+    ip route flush table "$WARP_RT_TABLE" 2>/dev/null || true
+    ip -6 route flush table "$WARP_RT_TABLE" 2>/dev/null || true
+}
+
+_warp_tcp_port_busy() {
+    ss -H -ltn "sport = :$1" 2>/dev/null | grep -q .
+}
+
+# После остановки наших служб занятый порт принадлежит другой программе.
+# Подбираем соседнюю свободную пару и сохраняем её вместе с режимом WARP.
+_warp_select_runtime_ports() {
+    [ "$(_warp_mode)" != iface ] || return 0
+    local _socks; _socks=$(_warp_socks_port)
+    local _redir; _redir=$(_warp_redir_port)
+    if ! _warp_tcp_port_busy "$_socks" \
+       && { [ "$(_warp_mode)" != socks ] || { [ "$_socks" != "$_redir" ] && ! _warp_tcp_port_busy "$_redir"; }; }; then
+        return 0
+    fi
+
+    local _candidate
+    for ((_candidate=41080; _candidate<=41198; _candidate+=2)); do
+        _warp_tcp_port_busy "$_candidate" && continue
+        _warp_tcp_port_busy "$((_candidate + 1))" && continue
+        WARP_SOCKS_PORT="$_candidate"
+        WARP_REDIR_PORT="$((_candidate + 1))"
+        log_warn "Порты ${_socks}/${_redir} заняты другой службой — WARP использует ${WARP_SOCKS_PORT}/${WARP_REDIR_PORT}"
+        return 0
+    done
+    log_error "Не нашлось свободной пары TCP-портов для локального туннеля WARP (41080–41199)"
+    return 1
+}
+
+_warp_wait_socks_listener() {
+    local _i
+    for _i in {1..30}; do
+        if _warp_unit_active "$WARP_SOCKS_UNIT" && _warp_tcp_port_busy "$(_warp_socks_port)"; then
+            return 0
+        fi
+        systemctl is-failed --quiet "$WARP_SOCKS_UNIT" 2>/dev/null && break
+        sleep 1
+    done
+    log_error "Локальный туннель WARP не запустился на 127.0.0.1:$(_warp_socks_port)"
+    log_info "Смотрите: journalctl -u ${WARP_SOCKS_UNIT}"
+    return 1
+}
+
+warp_enable() (
+    local WARP_ALLOW_DISABLE_ME=false WARP_ALLOW_DISABLE_DEFAULT_UPSTREAMS=false _arg
+    local _requested_mode="${1:-}"; shift 2>/dev/null || true
+    for _arg in "$@"; do
+        case "$_arg" in
+            --allow-disable-me) WARP_ALLOW_DISABLE_ME=true ;;
+            --allow-disable-default-upstreams) WARP_ALLOW_DISABLE_DEFAULT_UPSTREAMS=true ;;
+            *) log_error "Неизвестный параметр включения WARP: $_arg"; return 1 ;;
+        esac
+    done
+    local _before _file _ok=false _WARP_PREVIOUS_MODE="$(_warp_mode)" _WARP_PREVIOUS_ENABLED="${WARP_ENABLED:-false}"
+    _before=$(mktemp -d "$INSTALL_DIR/warp-transition.XXXXXX") || return 1
+    local -a _files=(settings.conf upstreams.conf expert.conf warp/state.json "warp/$WARP_IFACE.conf")
+    mkdir -p "$_before/warp"
+    for _file in "${_files[@]}"; do
+        [ ! -f "$INSTALL_DIR/$_file" ] || cp -p "$INSTALL_DIR/$_file" "$_before/$_file" || return 1
+    done
+    _warp_transition_cleanup() {
+        if [ "$_ok" != true ]; then
+            if [ "${_WARP_RUNTIME_CHANGED:-false}" = true ]; then _warp_stop_runtime; fi
+            for _file in "${_files[@]}"; do
+                if [ -f "$_before/$_file" ]; then
+                    cp -p "$_before/$_file" "$INSTALL_DIR/$_file"
+                else
+                    rm -f "$INSTALL_DIR/$_file"
+                fi
+            done
+            load_settings; load_secrets; load_upstreams
+            if [ "${_WARP_RUNTIME_CHANGED:-false}" = true ]; then
+                if _warp_owns_engine_config; then
+                    generate_telemt_config >/dev/null 2>&1 || true
+                    if is_proxy_running; then reload_proxy_config >/dev/null 2>&1 || true; fi
+                fi
+                if [ "$_WARP_PREVIOUS_ENABLED" = true ]; then
+                    _warp_start_services >/dev/null 2>&1 || log_warn "Прежний туннель требует восстановления"
+                    warp_install_watchdog >/dev/null 2>&1 || true
+                fi
+            fi
+            log_error "Включение WARP отменено, прежние настройки восстановлены"
+        fi
+        rm -rf "$_before"
+    }
+    trap _warp_transition_cleanup EXIT
+    _warp_enable "$_requested_mode" || return 1
+    _ok=true
+)
+
+_warp_enable() {
     check_root
     local _mode="${1:-$(_warp_mode)}"
     case "$_mode" in
@@ -869,14 +1121,19 @@ warp_enable() {
     _warp_ensure_account || return 1
     warp_update_cidr
 
-    log_info "Ищем живой эндпоинт WARP (${WARP_LOCATION:-лучший по задержке}, протокол $(_warp_proto))..."
-    log_info "Разведка идёт несколько минут — она поднимает туннель к каждому кандидату"
     local _ep; _ep=$(warp_resolve_endpoint) || {
         log_error "Живого эндпоинта WARP не нашлось"
         log_info "Если задана локация, попробуйте убрать её: mtproxyl warp location clear"
         return 1
     }
-    WARP_ENDPOINT="$_ep"
+    _WARP_RUNTIME_CHANGED=true
+    _warp_stop_runtime
+    _warp_select_runtime_ports || return 1
+    if [ "${_WARP_PREVIOUS_MODE:-}" = upstream ] && [ "$(_warp_mode)" != upstream ] && _warp_owns_engine_config; then
+        _warp_drop_upstream
+        _WARP_CONFIG_DIRTY=true
+    fi
+    _warp_write_state "$_ep" || return 1
     log_success "Эндпоинт: ${_ep}"
 
     # Вариант C правил не ставит; исключение — закрытый снаружи порт socks,
@@ -888,13 +1145,9 @@ warp_enable() {
     if [ "$(_warp_mode)" != "iface" ]; then
         _warp_write_socks_runner
         _warp_write_socks_units
-        systemctl enable --now "$WARP_SOCKS_UNIT" >/dev/null 2>&1
-        # Туннель поднимается не мгновенно.
-        local _i
-        for _i in $(seq 1 30); do
-            ss -ltn 2>/dev/null | grep -q ":$(_warp_socks_port)\b" && break
-            sleep 1
-        done
+        systemctl enable "$WARP_SOCKS_UNIT" >/dev/null 2>&1
+        systemctl restart "$WARP_SOCKS_UNIT" || return 1
+        _warp_wait_socks_listener || return 1
     fi
 
     if [ "$(_warp_mode)" = "upstream" ]; then
@@ -907,28 +1160,31 @@ warp_enable() {
         fi
     elif [ "$(_warp_mode)" = "socks" ]; then
         _warp_write_redsocks_conf
-        systemctl enable --now "$WARP_REDSOCKS_UNIT" >/dev/null 2>&1
+        systemctl enable "$WARP_REDSOCKS_UNIT" >/dev/null 2>&1
+        systemctl restart "$WARP_REDSOCKS_UNIT" || return 1
     else
         _warp_generate_iface_conf "$_ep" || return 1
         _warp_write_iface_units
-        systemctl enable --now "$WARP_IFACE_UNIT" >/dev/null 2>&1
-        systemctl enable --now "$WARP_ROUTE_UNIT" >/dev/null 2>&1
+        systemctl enable "$WARP_IFACE_UNIT" "$WARP_ROUTE_UNIT" >/dev/null || return 1
+        systemctl restart "$WARP_IFACE_UNIT" && systemctl restart "$WARP_ROUTE_UNIT" || return 1
     fi
 
     WARP_ENABLED="true"
     save_settings
+    warp_install_watchdog || return 1
 
     # Один перезапуск на все правки конфига: и выключенный ME, и маршруты.
     if [ "$_WARP_CONFIG_DIRTY" = "true" ]; then
-        generate_telemt_config >/dev/null 2>&1 || true
-        is_proxy_running && restart_proxy_container >/dev/null 2>&1
+        generate_telemt_config || return 1
+        if is_proxy_running; then restart_proxy_container || return 1; fi
     fi
 
-    if warp_check_route; then
+    if _warp_wait_route; then
         log_success "Трафик до Telegram идёт через WARP (вариант $(_warp_variant_letter))"
     else
         log_warn "Правила применены, но проверка маршрута не подтвердила выход через WARP"
         log_info "Смотрите: mtproxyl warp status, journalctl -u ${WARP_SOCKS_UNIT}"
+        return 1
     fi
     echo ""
     _warp_dc_hint
@@ -936,6 +1192,9 @@ warp_enable() {
 
 warp_disable() {
     check_root
+    systemctl disable --now "$WARP_WATCH_UNIT.timer" >/dev/null 2>&1 || true
+    systemctl stop "$WARP_WATCH_UNIT.service" >/dev/null 2>&1 || true
+    systemctl reset-failed "$WARP_WATCH_UNIT.service" >/dev/null 2>&1 || true
     local _was_upstream="false"
     if [ "$(_warp_mode)" = "upstream" ]; then
         if _warp_owns_engine_config; then
@@ -968,8 +1227,11 @@ warp_disable() {
 warp_remove() {
     check_root
     warp_disable
-    rm -f "/etc/systemd/system/${WARP_SOCKS_UNIT}" "/etc/systemd/system/${WARP_REDSOCKS_UNIT}" \
-          "/etc/systemd/system/${WARP_IFACE_UNIT}" "/etc/systemd/system/${WARP_ROUTE_UNIT}"
+    systemctl disable --now "$WARP_WATCH_UNIT.timer" >/dev/null 2>&1 || true
+    systemctl stop "$WARP_WATCH_UNIT.service" >/dev/null 2>&1 || true
+    rm -f "$(_warp_unit_dir)/$WARP_WATCH_UNIT.timer" "$(_warp_unit_dir)/$WARP_WATCH_UNIT.service"
+    rm -f "$(_warp_unit_dir)/${WARP_SOCKS_UNIT}" "$(_warp_unit_dir)/${WARP_REDSOCKS_UNIT}" \
+          "$(_warp_unit_dir)/${WARP_IFACE_UNIT}" "$(_warp_unit_dir)/${WARP_ROUTE_UNIT}"
     systemctl daemon-reload 2>/dev/null || true
     rm -rf "$(_warp_dir)"
     log_success "warpscout и его службы удалены"
@@ -996,18 +1258,26 @@ _warp_nft_applied() {
 # Выход по версии самого Cloudflare: в его ответе есть warp=on/off.
 warp_exit_info() {
     local _url="https://www.cloudflare.com/cdn-cgi/trace" _out=""
+    local -a _route=()
     if [ "$(_warp_mode)" != "iface" ] && _warp_unit_active "$WARP_SOCKS_UNIT"; then
-        _out=$(curl -fsS --max-time 10 -x "socks5h://127.0.0.1:$(_warp_socks_port)" "$_url" 2>/dev/null)
+        _route=(-x "socks5h://127.0.0.1:$(_warp_socks_port)")
     elif [ "$(_warp_mode)" = "iface" ] && ip link show "$WARP_IFACE" >/dev/null 2>&1; then
-        _out=$(curl -fsS --max-time 10 --interface "$WARP_IFACE" "$_url" 2>/dev/null)
+        _route=(--proxy '' --interface "$WARP_IFACE")
+    else
+        return 1
     fi
+    for _url in https://www.cloudflare.com/cdn-cgi/trace https://1.1.1.1/cdn-cgi/trace; do
+        _out=$(curl -fsS --noproxy '' --max-time 5 "${_route[@]}" "$_url" 2>/dev/null)
+        if grep -Eq '^warp=(on|plus)$' <<< "$_out"; then break; fi
+        _out=""
+    done
     [ -n "$_out" ] || return 1
     local _ip _loc _colo _warp
     _ip=$(grep -m1 '^ip=' <<< "$_out" | cut -d= -f2)
     _loc=$(grep -m1 '^loc=' <<< "$_out" | cut -d= -f2)
     _colo=$(grep -m1 '^colo=' <<< "$_out" | cut -d= -f2)
     _warp=$(grep -m1 '^warp=' <<< "$_out" | cut -d= -f2)
-    [ "$_warp" = "on" ] || return 1
+    [ "$_warp" = "on" ] || [ "$_warp" = "plus" ] || return 1
     echo "${_ip:-?}|${_loc:-?}|${_colo:-?}"
 }
 
@@ -1072,6 +1342,11 @@ warp_status() {
     echo -e "  ${BOLD}Режим:${NC}        ${_title}"
     echo -e "  ${BOLD}Протокол:${NC}     $(_warp_proto)"
     echo -e "  ${BOLD}Эндпоинт:${NC}     ${WARP_ENDPOINT:-${DIM}выбирается разведкой${NC}}"
+    echo -e "  ${BOLD}Рабочий адрес:${NC} $(_warp_active_endpoint)"
+    echo -e "  ${BOLD}Автовосстановление:${NC} ${WARP_WATCHDOG_ENABLED:-true}"
+    if [ -s "$(_warp_health_file)" ]; then
+        jq -r '"  Проверка: \(.checked_at | todateiso8601), ошибок подряд: \(.failures)", (if .last_recovery_at>0 then "  Восстановление: \(.last_recovery_at | todateiso8601)" else empty end), (if .error!="" then "  Ошибка: \(.error)" else empty end)' "$(_warp_health_file)"
+    fi
     echo -e "  ${BOLD}Локация:${NC}      ${WARP_LOCATION:-${DIM}лучший по задержке${NC}}"
 
     local _exit; _exit=$(warp_exit_info 2>/dev/null)
@@ -1106,7 +1381,7 @@ warp_status() {
     else
         echo -e "  ${BOLD}Интерфейс:${NC}    $(ip link show "$WARP_IFACE" >/dev/null 2>&1 && echo -e "${GREEN}поднят${NC}" || echo -e "${RED}нет${NC}") ${DIM}(${WARP_IFACE}, метка $(_warp_fwmark))${NC}"
     fi
-    echo -e "  ${BOLD}Правила nft:${NC}  $(_warp_nft_applied && echo -e "${GREEN}на месте${NC}" || echo -e "${RED}нет${NC}") ${DIM}(подсетей: $(wc -l < "$(_warp_cidr)" 2>/dev/null || echo 0))${NC}"
+    echo -e "  ${BOLD}Правила nft:${NC}  $(_warp_nft_applied && echo -e "${GREEN}на месте${NC}" || echo -e "${RED}нет${NC}") ${DIM}(подсетей: $(wc -l 2>/dev/null < "$(_warp_cidr)" || echo 0))${NC}"
     echo -e "  ${BOLD}Уведено:${NC}      $(warp_matched_packets) пакетов до Telegram"
     echo ""
     _warp_dc_hint
@@ -1114,6 +1389,10 @@ warp_status() {
 }
 
 warp_status_json() {
+    local _health _active _active_proto
+    _health=$(jq -c . "$(_warp_health_file)" 2>/dev/null) || _health='{}'
+    _active=$(jq -r '.endpoint // ""' "$(_warp_state)" 2>/dev/null)
+    _active_proto=$(jq -r '.proto // ""' "$(_warp_state)" 2>/dev/null)
     local _exit_ip="" _exit_loc="" _exit_colo=""
     local _exit; _exit=$(warp_exit_info 2>/dev/null) && IFS='|' read -r _exit_ip _exit_loc _exit_colo <<< "$_exit"
 
@@ -1122,9 +1401,12 @@ warp_status_json() {
     _warp_unit_active "$WARP_REDSOCKS_UNIT" && _redir="true"
     ip link show "$WARP_IFACE" >/dev/null 2>&1 && _iface="true"
 
-    printf '{"enabled":%s,"mode":"%s","proto":"%s","endpoint":"%s","location":"%s",' \
+    printf '{"watchdog_enabled":%s,"active_endpoint":"%s","active_proto":"%s","health":%s,' \
+        "$([ "${WARP_WATCHDOG_ENABLED:-true}" = true ] && echo true || echo false)" \
+        "$(json_escape "$_active")" "$(json_escape "$_active_proto")" "$_health"
+    printf '"enabled":%s,"mode":"%s","proto":"%s","endpoint":"%s","location":"%s",' \
         "$([ "${WARP_ENABLED:-false}" = "true" ] && echo true || echo false)" \
-        "$(_warp_mode)" "$(_warp_proto)" \
+        "$(_warp_mode)" "$(_warp_configured_proto)" \
         "$(json_escape "${WARP_ENDPOINT:-}")" "$(json_escape "${WARP_LOCATION:-}")"
     printf '"installed":%s,"version":"%s","socks_active":%s,"redirect_active":%s,"iface_active":%s,' \
         "$([ -x "$(_warp_bin)" ] && echo true || echo false)" \
@@ -1132,7 +1414,7 @@ warp_status_json() {
         "$_tunnel" "$_redir" "$_iface"
     printf '"nft_applied":%s,"cidr_count":%s,"socks_port":%s,"redirect_port":%s,"matched_packets":%s,' \
         "$(_warp_nft_applied && echo true || echo false)" \
-        "$(wc -l < "$(_warp_cidr)" 2>/dev/null || echo 0)" \
+        "$(wc -l 2>/dev/null < "$(_warp_cidr)" || echo 0)" \
         "$(_warp_socks_port)" "$(_warp_redir_port)" "$(warp_matched_packets)"
     printf '"exit":{"ip":"%s","loc":"%s","colo":"%s","confirmed":%s}}\n' \
         "$(json_escape "$_exit_ip")" "$(json_escape "$_exit_loc")" "$(json_escape "$_exit_colo")" \
@@ -1165,7 +1447,7 @@ warp_set_location() {
     WARP_LOCATION="$_v"
     save_settings
     log_success "Локация: ${_v} (${_norm})"
-    log_info "Применится при следующей разведке: mtproxyl warp scan"
+    log_info "Для смены действующего туннеля: mtproxyl warp apply"
 }
 
 warp_set_endpoint() {
@@ -1174,7 +1456,7 @@ warp_set_endpoint() {
     case "$_v" in
         clear|auto|"") WARP_ENDPOINT=""; save_settings; log_success "Эндпоинт выбирается разведкой"; return 0 ;;
     esac
-    [[ "$_v" =~ ^[0-9a-fA-F:.]+:[0-9]+$ ]] || { log_error "Эндпоинт: адрес вида 188.114.98.58:2408"; return 1; }
+    _warp_valid_endpoint "$_v" || { log_error "Эндпоинт: IPv4:порт или [IPv6]:порт (1–65535)"; return 1; }
     WARP_ENDPOINT="$_v"
     save_settings
     log_success "Эндпоинт закреплён: ${_v}"
@@ -1195,35 +1477,340 @@ warp_set_proto() {
 # Разведка руками.
 warp_scan_show() {
     check_root
-    [ -x "$(_warp_bin)" ] || { log_error "warpscout не установлен: mtproxyl warp install"; return 1; }
+    _warp_scan_dependencies || return 1
+    warp_install_binary || return 1
+    command -v jq >/dev/null || { log_error "Для разведки нужен jq"; return 1; }
     _warp_ensure_account || return 1
     echo ""
     log_info "Разведка эндпоинтов WARP (${WARP_LOCATION:-лучший по задержке}, $(_warp_proto))"
+    case "$(_warp_proto)" in
+        masque|masque-h2)
+            [ -z "${WARP_LOCATION:-}" ] || log_warn "У MASQUE фиксированные anycast-адреса: фильтр ${WARP_LOCATION} к разведке не применяется"
+            ;;
+    esac
     log_info "Это несколько минут: к каждому кандидату поднимается настоящий туннель"
     if warp_scan_collect; then
         warp_scan_print
     else
-        log_warn "Список узлов собрать не удалось — показываем только лучший эндпоинт"
+        log_error "Разведка не нашла рабочих узлов или завершилась с ошибкой"
+        return 1
     fi
-    local _ep; _ep=$(warp_scan_best) || { log_error "Живых эндпоинтов не нашлось"; return 1; }
+    local _ep; _ep=$(jq -r '.best_endpoint // empty' "$(_warp_scan_file)")
     log_success "Лучший эндпоинт: ${_ep}"
     echo -e "  ${DIM}Закрепить: mtproxyl warp endpoint ${_ep}${NC}"
     echo ""
 }
 
-handle_warp_command() {
+_warp_scan_dependencies() {
+    command -v jq >/dev/null && command -v timeout >/dev/null && return 0
+    case "$(detect_os)" in
+        debian) apt-get update -qq && apt-get install -y -qq jq coreutils ;;
+        rhel) yum install -y -q jq coreutils ;;
+        alpine) apk add --no-cache jq coreutils ;;
+        *) log_error "Установите jq и coreutils"; return 1 ;;
+    esac
+    command -v jq >/dev/null && command -v timeout >/dev/null
+}
+
+warp_set_settings() {
+    local _proto="${1:-keep}" _location="${2:-keep}" _ep="${3:-keep}"
+    case "$_proto" in keep|awg|wg|masque|masque-h2) ;; *) log_error "Неверный протокол WARP"; return 1 ;; esac
+    if [ "$_location" != keep ] && [ "$_location" != clear ]; then
+        [[ "$_location" =~ ^[A-Za-z]{2,3}(,[A-Za-z]{2,3})*$ ]] || { log_error "Неверная локация WARP"; return 1; }
+    fi
+    if [ "$_ep" != keep ] && [ "$_ep" != clear ]; then
+        _warp_valid_endpoint "$_ep" || { log_error "Неверный endpoint WARP"; return 1; }
+    fi
+    [ "$_proto" = keep ] || WARP_PROTO="$_proto"
+    [ "$_location" = keep ] || WARP_LOCATION="${_location^^}"
+    [ "$_location" != clear ] || WARP_LOCATION=""
+    [ "$_ep" = keep ] || WARP_ENDPOINT="$_ep"
+    [ "$_ep" != clear ] || WARP_ENDPOINT=""
+    save_settings || return 1
+    log_success "Выбор сохранён. Для смены действующего туннеля: mtproxyl warp apply"
+}
+
+warp_install_watchdog() {
+    if [ "${WARP_ENABLED:-false}" != true ] || [ "${WARP_WATCHDOG_ENABLED:-true}" != true ]; then
+        systemctl disable --now "$WARP_WATCH_UNIT.timer" >/dev/null 2>&1 || true
+        systemctl stop "$WARP_WATCH_UNIT.service" >/dev/null 2>&1 || true
+        systemctl reset-failed "$WARP_WATCH_UNIT.service" >/dev/null 2>&1 || true
+        return 0
+    fi
+    cat > "$(_warp_unit_dir)/$WARP_WATCH_UNIT.service" <<EOF
+[Unit]
+Description=MTProxyL WARP health and recovery
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=${INSTALL_DIR}/mtproxyl.sh warp watch
+TimeoutStartSec=15min
+KillMode=control-group
+UMask=0077
+EOF
+    cat > "$(_warp_unit_dir)/$WARP_WATCH_UNIT.timer" <<EOF
+[Unit]
+Description=MTProxyL WARP health timer
+
+[Timer]
+OnBootSec=60s
+OnUnitInactiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
+EOF
+    systemctl daemon-reload || return 1
+    systemctl reset-failed "$WARP_WATCH_UNIT.service" >/dev/null 2>&1 || true
+    systemctl enable --now "$WARP_WATCH_UNIT.timer"
+}
+
+warp_refresh() {
+    if [ "${WARP_ENABLED:-false}" != true ]; then
+        # Обновление или чистая установка не должны оживить оставшийся timer.
+        warp_install_watchdog
+        return 0
+    fi
+    _warp_scan_dependencies && warp_install_binary || return 1
+    local _ep _proto
+    _ep=$(jq -r '.endpoint // empty' "$(_warp_state)" 2>/dev/null)
+    [ -n "$_ep" ] || _ep="${WARP_ENDPOINT:-}"
+    _warp_valid_endpoint "$_ep" || { log_error "Нет сохранённого endpoint: mtproxyl warp apply"; return 1; }
+    if ! jq -e '.mode and has("location") and has("pin")' "$(_warp_state)" >/dev/null 2>&1; then
+        _proto=$(jq -r '.proto // empty' "$(_warp_state)" 2>/dev/null)
+        local WARP_PROTO="${_proto:-${WARP_PROTO:-awg}}"
+        _warp_write_state "$_ep" || return 1
+    fi
+    if [ "$(_warp_mode)" = iface ]; then
+        _warp_write_iface_units
+    else
+        _warp_write_socks_runner && _warp_write_socks_units || return 1
+    fi
+    warp_install_watchdog || return 1
+    log_info "Службы WARP обновлены. Новый бинарник используется после восстановления или применения выбора"
+}
+
+_warp_health_file() { echo "$(_warp_dir)/health.json"; }
+
+_warp_health_save() {
+    local _tmp; _tmp=$(mktemp "$(_warp_dir)/health.XXXXXX") || return 1
+    jq -nc --argjson checked_at "$(date +%s)" --argjson failures "$1" \
+        --argjson last_recovery_at "$2" --arg result "$3" --arg error "${4:-}" \
+        '{checked_at:$checked_at,failures:$failures,last_recovery_at:$last_recovery_at,result:$result,error:$error}' \
+        > "$_tmp" && chmod 600 "$_tmp" && mv "$_tmp" "$(_warp_health_file)"
+}
+
+_warp_wait_route() {
+    local _i
+    for _i in {1..15}; do
+        warp_check_route && return 0
+        [ "$_i" -ne 1 ] || log_info "Ждём подтверждение маршрута WARP..."
+        sleep 2
+    done
+    return 1
+}
+
+_warp_start_services() {
+    if [ "$(_warp_mode)" = iface ]; then
+        _warp_write_iface_units || return 1
+        systemctl enable "$WARP_IFACE_UNIT" "$WARP_ROUTE_UNIT" >/dev/null || return 1
+        systemctl reset-failed "$WARP_IFACE_UNIT" "$WARP_ROUTE_UNIT" >/dev/null 2>&1 || true
+        systemctl restart "$WARP_IFACE_UNIT" && systemctl restart "$WARP_ROUTE_UNIT"
+    else
+        _warp_write_socks_runner && _warp_write_socks_units || return 1
+        systemctl enable "$WARP_SOCKS_UNIT" >/dev/null || return 1
+        systemctl reset-failed "$WARP_SOCKS_UNIT" >/dev/null 2>&1 || true
+        systemctl restart "$WARP_SOCKS_UNIT" || return 1
+        if [ "$(_warp_mode)" = socks ]; then
+            _warp_write_redsocks_conf
+            systemctl enable "$WARP_REDSOCKS_UNIT" >/dev/null || return 1
+            systemctl reset-failed "$WARP_REDSOCKS_UNIT" >/dev/null 2>&1 || true
+            systemctl restart "$WARP_REDSOCKS_UNIT" || return 1
+        fi
+    fi
+    if [ "$(_warp_mode)" != upstream ] || [ "$(_warp_socks_listen)" != 127.0.0.1 ]; then
+        _warp_generate_nft && sh "$(_warp_nft_script)" || return 1
+    fi
+    return 0
+}
+
+_warp_activate_endpoint() {
+    _warp_valid_endpoint "$1" || return 1
+    local _old_state="" _old_conf=""
+    [ ! -f "$(_warp_state)" ] || _old_state=$(cat "$(_warp_state)")
+    [ ! -f "$(_warp_conf)" ] || _old_conf=$(cat "$(_warp_conf)")
+    if [ "$(_warp_mode)" = iface ]; then
+        _warp_generate_iface_conf "$1" || return 1
+    fi
+    _warp_write_state "$1" || return 1
+    if _warp_start_services && _warp_wait_route; then
+        return 0
+    fi
+    log_warn "Новый туннель не подтверждён — восстанавливаем прежний"
+    [ -z "$_old_state" ] || printf '%s\n' "$_old_state" > "$(_warp_state)"
+    [ -z "$_old_conf" ] || printf '%s\n' "$_old_conf" > "$(_warp_conf)"
+    _warp_start_services >/dev/null 2>&1 || true
+    return 1
+}
+
+warp_apply() {
+    [ "${WARP_ENABLED:-false}" = true ] || { log_error "Сначала включите WARP"; return 1; }
+    local _ep
+    _ep=$(warp_resolve_endpoint) || return 1
+    _warp_activate_endpoint "$_ep" || return 1
+    warp_install_watchdog || return 1
+    log_success "Выбор применён: $_ep"
+}
+
+warp_recover() {
+    [ "${WARP_ENABLED:-false}" = true ] || { log_error "WARP выключен"; return 1; }
+    local _state; _state=$(cat "$(_warp_state)" 2>/dev/null)
+    if ! jq -e '(.mode | IN("socks","iface","upstream")) and (.proto | IN("wg","awg","masque","masque-h2")) and (.location | type=="string") and (.pin | type=="string")' \
+        <<< "$_state" >/dev/null 2>&1; then
+        _warp_health_save 3 "$(date +%s)" failed "Нет настроек активного туннеля: mtproxyl warp refresh или apply"
+        log_error "Не удалось прочитать активные настройки WARP; автоматическая смена локации отменена"
+        return 1
+    fi
+    local WARP_MODE WARP_PROTO WARP_LOCATION WARP_ENDPOINT
+    WARP_MODE=$(jq -r '.mode' <<< "$_state")
+    WARP_PROTO=$(jq -r '.proto' <<< "$_state")
+    WARP_LOCATION=$(jq -r '.location' <<< "$_state")
+    WARP_ENDPOINT=$(jq -r '.pin' <<< "$_state")
+    local _now; _now=$(date +%s)
+    _warp_health_save 0 "$_now" recovering
+    if _warp_start_services && _warp_wait_route; then
+        _warp_health_save 0 "$_now" recovered
+        log_success "Туннель и маршрут WARP восстановлены"
+        return 0
+    fi
+    local _ep _candidate _host
+    _candidate=$(jq -r --arg proto "$(_warp_proto)" --arg filter "$WARP_LOCATION" \
+        --arg active "$(jq -r '.endpoint // ""' <<< "$_state")" \
+        'select(.proto==$proto and .filter==$filter) | [.nodes[] | select(.endpoint!=$active)][0].endpoint // empty' \
+        "$(_warp_scan_file)" 2>/dev/null)
+    if [ -n "$_candidate" ]; then
+        _host="${_candidate%:*}"; _host="${_host#[}"; _host="${_host%]}"
+        _ep=$(warp_scan_best "$_host" "${_candidate##*:}") || _ep=""
+    fi
+    if [ -z "${_ep:-}" ]; then
+        if warp_scan_collect; then
+            _ep=$(jq -r '.best_endpoint // empty' "$(_warp_scan_file)")
+        fi
+    fi
+    if [ -n "${_ep:-}" ] && _warp_activate_endpoint "$_ep"; then
+        _warp_health_save 0 "$_now" recovered
+        log_success "WARP восстановлен через $_ep"
+        return 0
+    fi
+    _warp_health_save 3 "$_now" failed "Не удалось восстановить туннель в выбранной локации"
+    log_error "WARP не восстановлен; локация, протокол и маршруты сохранены"
+    return 1
+}
+
+warp_watch() {
+    [ "${WARP_ENABLED:-false}" = true ] && [ "${WARP_WATCHDOG_ENABLED:-true}" = true ] || return 0
+    local _fails _last _now
+    _fails=$(jq -r '.failures // 0' "$(_warp_health_file)" 2>/dev/null) || _fails=0
+    _last=$(jq -r '.last_recovery_at // 0' "$(_warp_health_file)" 2>/dev/null) || _last=0
+    [[ "$_fails" =~ ^[0-9]+$ ]] || _fails=0
+    [[ "$_last" =~ ^[0-9]+$ ]] || _last=0
+    _now=$(date +%s)
+    if warp_check_route; then
+        _warp_health_save 0 "$_last" healthy
+        return 0
+    fi
+    _fails=$((_fails + 1))
+    _warp_health_save "$_fails" "$_last" unhealthy "Проверка туннеля или маршрута не прошла"
+    [ "$_fails" -ge 3 ] && [ "$((_now - _last))" -ge 300 ] || return 0
+    warp_recover
+}
+
+warp_set_watchdog() {
+    case "${1:-}" in
+        on) WARP_WATCHDOG_ENABLED=true ;;
+        off) WARP_WATCHDOG_ENABLED=false ;;
+        *) log_error "watchdog on|off"; return 1 ;;
+    esac
+    save_settings && warp_install_watchdog
+}
+
+warp_preflight() {
+    local _mode="${1:-$(_warp_mode)}" _me=false _can_me=false _owns=false _manual=false _others=""
+    case "$_mode" in socks|iface|upstream) ;; *) return 1 ;; esac
+    _warp_me_enabled && _me=true
+    if [ "${MTPROXYL_MODE:-manager}" = "manager" ] && ! _superexpert_active 2>/dev/null; then _can_me=true; fi
+    _warp_owns_engine_config && _owns=true
+    if [ "$_mode" = upstream ]; then
+        if [ "$_owns" = true ]; then _others=$(_warp_foreign_default_upstreams); else _manual=true; fi
+    fi
+    jq -nc --arg mode "$_mode" --argjson me "$_me" --argjson canMe "$_can_me" \
+        --argjson owns "$_owns" --argjson manual "$_manual" --arg others "$_others" '
+        {mode:$mode,middle_proxy_enabled:$me,can_disable_middle_proxy:$canMe,
+         owns_engine_config:$owns,manual_engine_config:$manual,
+         default_upstreams:($others|split(",")|map(select(length>0))),
+         can_disable_default_upstreams:($owns and ($mode=="upstream"))}'
+}
+
+handle_warp_command() (
+    case "${1:-}" in
+        off|disable|remove|uninstall)
+            check_root
+            systemctl stop "$WARP_WATCH_UNIT.timer" "$WARP_WATCH_UNIT.service" >/dev/null 2>&1 || true
+            ;;
+    esac
+    case "${1:-status}:${2:-}" in
+        status:*|hint:*|preflight:*|scan:--json|scan:--last) ;;
+        *)
+            check_root
+            mkdir -p "$INSTALL_DIR" || return 1
+            local _lock
+            exec {_lock}>"$INSTALL_DIR/.warp.lock" || return 1
+            if ! flock -n "$_lock"; then
+                # Таймер может попасть ровно в ручное включение/выключение.
+                # Это штатный пропуск проверки, а не падение systemd-службы.
+                [ "${1:-}" = watch ] && return 0
+                log_error "Другая операция WARP уже выполняется"
+                return 1
+            fi
+            load_settings
+            ;;
+    esac
+    _warp_dispatch "$@"
+)
+
+_warp_dispatch() {
     case "${1:-status}" in
         status|"")
             if [ "${2:-}" = "--json" ]; then warp_status_json; else warp_status; fi ;;
-        on|enable)   warp_enable "${2:-}" ;;
+        on|enable)   warp_enable "${@:2}" ;;
         off|disable) warp_disable ;;
-        install)     check_root; warp_install_binary ;;
+        install)
+            check_root
+            _warp_scan_dependencies && warp_install_binary || return 1
+            if [ "${WARP_ENABLED:-false}" = true ]; then
+                log_info "Для запуска обновлённого бинарника: mtproxyl warp recover"
+            fi ;;
         remove|uninstall) warp_remove ;;
         reapply)     warp_reapply ;;
+        apply)       warp_apply ;;
+        refresh)     warp_refresh ;;
+        recover)     warp_recover ;;
+        watch)       warp_watch ;;
+        watchdog)    warp_set_watchdog "${2:-}" ;;
+        settings)    warp_set_settings "${2:-keep}" "${3:-keep}" "${4:-keep}" ;;
+        preflight)
+            [ "${3:-}" = "--json" ] || { log_error "warp preflight <вариант> --json"; return 1; }
+            warp_preflight "${2:-}" ;;
         scan)
             if [ "${2:-}" = "--json" ]; then warp_scan_json
             elif [ "${2:-}" = "--last" ]; then warp_scan_print
-            else warp_scan_show; fi ;;
+            else
+                local WARP_MODE="${WARP_MODE:-socks}"
+                case "${2:-}" in socks|iface|upstream) WARP_MODE="$2" ;; "") ;; *) return 1 ;; esac
+                warp_scan_show
+            fi ;;
         location)    warp_set_location "${2:-}" ;;
         endpoint)    warp_set_endpoint "${2:-}" ;;
         proto)       warp_set_proto "${2:-}" ;;
@@ -1233,6 +1820,8 @@ handle_warp_command() {
             echo -e "  ${BOLD}Маршрут до Telegram через WARP:${NC}"
             echo -e "    ${GREEN}warp status${NC} [--json]  Состояние, выход, службы"
             echo -e "    ${GREEN}warp on${NC} <вариант>     socks (A), iface (B) или upstream (C)"
+            echo -e "      ${DIM}--allow-disable-me --allow-disable-default-upstreams — явные согласия для автоматизации${NC}"
+            echo -e "    ${GREEN}warp preflight${NC} <вариант> --json  Проверить конфликты перед включением"
             echo -e "    ${GREEN}warp off${NC}              Выключить, вернуть прямой ход"
             echo -e "    ${GREEN}warp scan${NC}             Разведка: найти лучший эндпоинт"
             echo -e "    ${GREEN}warp location${NC} <A>     Страны (DE,NL) или узлы (FRA,AMS), clear — авто"

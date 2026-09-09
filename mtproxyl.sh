@@ -20,7 +20,7 @@ export LC_NUMERIC=C
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="1.6.11"
+VERSION="1.6.12"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -45,8 +45,8 @@ GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}"
 GITHUB_RAW_REFS="https://raw.githubusercontent.com/${GITHUB_REPO}/refs/heads/${GITHUB_BRANCH}"
 REGISTRY_IMAGE="ghcr.io/liafanx/mtproxyl-telemt"
 TELEMT_GITHUB="telemt/telemt"
-TELEMT_MIN_VERSION="3.5.5"
-TELEMT_COMMIT="ac71d92"
+TELEMT_MIN_VERSION="3.5.7"
+TELEMT_COMMIT="4ca7418"
 
 # Bash version check
 if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then

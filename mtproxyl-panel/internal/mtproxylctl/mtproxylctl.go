@@ -97,6 +97,9 @@ func (c *Client) runWithStdin(ctx context.Context, stdin string, args ...string)
 	}
 
 	cmd := exec.CommandContext(ctx, name, full...)
+	if len(args) > 0 && args[0] == "warp" {
+		configureWarpCancellation(cmd)
+	}
 	// Inherit nothing: the panel's own environment is irrelevant to the script
 	// and an inherited PATH/HOME from the service unit could change behavior.
 	cmd.Env = []string{

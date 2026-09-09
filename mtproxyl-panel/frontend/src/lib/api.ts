@@ -243,6 +243,7 @@ export interface MtproxylEngineRelease {
 }
 
 export interface MtproxylEngineVersions {
+  docker_available?: boolean;
   /** docker или binary. */
   backend: string;
   current: string;
@@ -250,6 +251,10 @@ export interface MtproxylEngineVersions {
   /** Версии на диске — к ним откатываются без сети. */
   local: string[];
   releases: MtproxylEngineRelease[];
+}
+
+export interface MtproxylEngineCleanup {
+  candidates: { reference: string; id: string; size: string }[];
 }
 
 /** Ответ `mtproxyl stats --json`: что накоплено на диске. */
@@ -273,6 +278,10 @@ export const mtproxylApi = {
 
   engineVersions: () =>
     request<MtproxylEngineVersions>(MTPROXYL_BASE, '/engine/versions'),
+  engineCleanupPreview: () => request<MtproxylEngineCleanup>(MTPROXYL_BASE, '/engine/cleanup'),
+  engineCleanup: () => request<MtproxylOperation>(MTPROXYL_BASE, '/engine/cleanup', {
+    method: 'POST', body: JSON.stringify({ confirm: true }),
+  }),
   engineUpdate: (tag: string) =>
     request<MtproxylOperation>(MTPROXYL_BASE, '/engine/update', {
       method: 'POST',
@@ -933,6 +942,10 @@ export interface WarpExit {
 }
 
 export interface WarpStatus {
+  watchdog_enabled?: boolean;
+  active_endpoint?: string;
+  active_proto?: string;
+  health?: { checked_at?: number; failures?: number; last_recovery_at?: number; result?: string; error?: string };
   enabled: boolean;
   /** socks — A, iface — B, upstream — C. */
   mode: 'socks' | 'iface' | 'upstream';
@@ -960,7 +973,19 @@ export interface WarpStatusResponse {
   status?: WarpStatus;
 }
 
+export interface WarpPreflight {
+  mode: 'socks' | 'iface' | 'upstream';
+  middle_proxy_enabled: boolean;
+  can_disable_middle_proxy: boolean;
+  owns_engine_config: boolean;
+  manual_engine_config: boolean;
+  default_upstreams: string[];
+  can_disable_default_upstreams: boolean;
+}
+
 export interface WarpScanNode {
+  tunnel_ping?: string;
+  loss?: string;
   node: string;
   endpoint: string;
   ping: string;
@@ -969,6 +994,9 @@ export interface WarpScanNode {
 }
 
 export interface WarpScanResult {
+  status?: 'running' | 'success' | 'empty' | 'error';
+  error?: string;
+  best_endpoint?: string;
   scanned_at: number;
   proto?: string;
   filter?: string;
@@ -988,13 +1016,26 @@ export interface WarpSettingsPatch {
 
 export const warpApi = {
   status: () => request<WarpStatusResponse>(WARP_BASE, '/status'),
-  enable: (mode: 'socks' | 'iface' | 'upstream') =>
+  preflight: (mode: 'socks' | 'iface' | 'upstream') =>
+    request<WarpPreflight>(WARP_BASE, `/preflight?mode=${encodeURIComponent(mode)}`),
+  enable: (
+    mode: 'socks' | 'iface' | 'upstream',
+    consent: { disableMiddleProxy?: boolean; disableDefaultUpstreams?: boolean } = {},
+  ) =>
     request<MtproxylOperation>(WARP_BASE, '/enable', {
       method: 'POST',
-      body: JSON.stringify({ mode }),
+      body: JSON.stringify({
+        mode,
+        allow_disable_middle_proxy: Boolean(consent.disableMiddleProxy),
+        allow_disable_default_upstreams: Boolean(consent.disableDefaultUpstreams),
+      }),
     }),
   disable: () => request<MtproxylOperation>(WARP_BASE, '/disable', { method: 'POST' }),
-  scan: () => request<MtproxylOperation>(WARP_BASE, '/scan', { method: 'POST' }),
+  scan: (mode?: 'socks' | 'iface' | 'upstream') => request<MtproxylOperation>(WARP_BASE, '/scan', { method: 'POST', body: JSON.stringify({ mode }) }),
+  apply: () => request<MtproxylOperation>(WARP_BASE, '/apply', { method: 'POST' }),
+  recover: () => request<MtproxylOperation>(WARP_BASE, '/recover', { method: 'POST' }),
+  install: () => request<MtproxylOperation>(WARP_BASE, '/install', { method: 'POST' }),
+  watchdog: (enabled: boolean) => request<MtproxylOperation>(WARP_BASE, enabled ? '/watchdog-on' : '/watchdog-off', { method: 'POST' }),
   lastScan: () => request<WarpScanResponse>(WARP_BASE, '/scan'),
   reapply: () => request<MtproxylOperation>(WARP_BASE, '/reapply', { method: 'POST' }),
   save: (patch: WarpSettingsPatch) =>

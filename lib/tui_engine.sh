@@ -25,6 +25,7 @@ tui_engine_menu() {
             echo -e "  ${DIM}[4]${NC} Пересобрать"
             echo -e "  ${DIM}[5]${NC} Перейти на бинарник (без Docker)"
         fi
+        command -v docker >/dev/null && echo -e "  ${DIM}[6]${NC} Очистить неиспользуемые Docker-образы"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
@@ -32,6 +33,7 @@ tui_engine_menu() {
             2) handle_engine_command update; press_any_key ;;
             3) handle_engine_command rollback; press_any_key ;;
             4) handle_engine_command rebuild; press_any_key ;;
+            6) handle_engine_command cleanup; press_any_key ;;
             5) if engine_is_binary; then
                    engine_switch_backend docker
                else
