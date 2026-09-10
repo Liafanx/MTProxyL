@@ -52,18 +52,25 @@ export interface PanelBranding {
   login_subtitle: string;
   has_background: boolean;
   background_revision?: string;
+  panel_background_mode: PanelBackgroundMode;
+  has_panel_background: boolean;
+  panel_background_revision?: string;
 }
+
+export type PanelBackgroundMode = 'none' | 'login' | 'custom';
 
 export const DEFAULT_PANEL_BRANDING: PanelBranding = {
   panel_name: 'MTProxyL-Panel',
   login_title: 'MTProxyL-Panel',
   login_subtitle: 'Управление MTProxy',
   has_background: false,
+  panel_background_mode: 'none',
+  has_panel_background: false,
 };
 
 export const brandingApi = {
   get: () => request<PanelBranding>(PANEL_BASE, '/branding'),
-  update: (branding: Pick<PanelBranding, 'panel_name' | 'login_title' | 'login_subtitle'>) =>
+  update: (branding: Pick<PanelBranding, 'panel_name' | 'login_title' | 'login_subtitle' | 'panel_background_mode'>) =>
     request<PanelBranding>(PANEL_BASE, '/panel/settings', {
       method: 'PUT',
       body: JSON.stringify(branding),
@@ -78,7 +85,27 @@ export const brandingApi = {
     request<PanelBranding>(PANEL_BASE, '/panel/settings/background', { method: 'DELETE' }),
   backgroundURL: (revision?: string) =>
     `${PANEL_BASE}/branding/background${revision ? `?v=${revision}` : ''}`,
+  uploadPanelBackground: (file: File) =>
+    request<PanelBranding>(PANEL_BASE, '/panel/settings/panel-background', {
+      method: 'PUT',
+      body: file,
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    }),
+  deletePanelBackground: () =>
+    request<PanelBranding>(PANEL_BASE, '/panel/settings/panel-background', { method: 'DELETE' }),
+  panelBackgroundURL: (revision?: string) =>
+    `${PANEL_BASE}/branding/panel-background${revision ? `?v=${revision}` : ''}`,
 };
+
+export function activePanelBackgroundURL(branding: PanelBranding): string {
+  if (branding.panel_background_mode === 'login' && branding.has_background) {
+    return brandingApi.backgroundURL(branding.background_revision);
+  }
+  if (branding.panel_background_mode === 'custom' && branding.has_panel_background) {
+    return brandingApi.panelBackgroundURL(branding.panel_background_revision);
+  }
+  return '';
+}
 
 
 export const panelApi = {

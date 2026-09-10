@@ -25,38 +25,48 @@ const (
 	defaultLoginSubtitle   = "Управление MTProxy"
 	brandingFileName       = "branding.json"
 	brandingBackgroundName = "login-background"
+	panelBackgroundName    = "panel-background"
 	maxBrandingImageSize   = 8 << 20 // 8 MiB
+	panelBackgroundNone    = "none"
+	panelBackgroundLogin   = "login"
+	panelBackgroundCustom  = "custom"
 )
 
 // Branding contains only presentation settings. It deliberately lives outside
 // config.toml: the panel process can persist it without root and upgrades do
 // not rewrite it.
 type Branding struct {
-	PanelName          string `json:"panel_name"`
-	LoginTitle         string `json:"login_title"`
-	LoginSubtitle      string `json:"login_subtitle"`
-	HasBackground      bool   `json:"has_background"`
-	BackgroundRevision string `json:"background_revision,omitempty"`
+	PanelName               string `json:"panel_name"`
+	LoginTitle              string `json:"login_title"`
+	LoginSubtitle           string `json:"login_subtitle"`
+	HasBackground           bool   `json:"has_background"`
+	BackgroundRevision      string `json:"background_revision,omitempty"`
+	PanelBackgroundMode     string `json:"panel_background_mode"`
+	HasPanelBackground      bool   `json:"has_panel_background"`
+	PanelBackgroundRevision string `json:"panel_background_revision,omitempty"`
 }
 
 type brandingFile struct {
-	PanelName     string `json:"panel_name"`
-	LoginTitle    string `json:"login_title"`
-	LoginSubtitle string `json:"login_subtitle"`
+	PanelName           string `json:"panel_name"`
+	LoginTitle          string `json:"login_title"`
+	LoginSubtitle       string `json:"login_subtitle"`
+	PanelBackgroundMode string `json:"panel_background_mode"`
 }
 
 type brandingStore struct {
-	mu             sync.RWMutex
-	settingsPath   string
-	backgroundPath string
-	settings       brandingFile
+	mu                  sync.RWMutex
+	settingsPath        string
+	backgroundPath      string
+	panelBackgroundPath string
+	settings            brandingFile
 }
 
 func defaultBrandingFile() brandingFile {
 	return brandingFile{
-		PanelName:     defaultPanelName,
-		LoginTitle:    defaultLoginTitle,
-		LoginSubtitle: defaultLoginSubtitle,
+		PanelName:           defaultPanelName,
+		LoginTitle:          defaultLoginTitle,
+		LoginSubtitle:       defaultLoginSubtitle,
+		PanelBackgroundMode: panelBackgroundNone,
 	}
 }
 
@@ -69,9 +79,10 @@ func newBrandingStore(dataDir string) (*brandingStore, error) {
 	}
 
 	s := &brandingStore{
-		settingsPath:   filepath.Join(dataDir, brandingFileName),
-		backgroundPath: filepath.Join(dataDir, brandingBackgroundName),
-		settings:       defaultBrandingFile(),
+		settingsPath:        filepath.Join(dataDir, brandingFileName),
+		backgroundPath:      filepath.Join(dataDir, brandingBackgroundName),
+		panelBackgroundPath: filepath.Join(dataDir, panelBackgroundName),
+		settings:            defaultBrandingFile(),
 	}
 	raw, err := os.ReadFile(s.settingsPath)
 	if errors.Is(err, os.ErrNotExist) {
@@ -85,6 +96,7 @@ func newBrandingStore(dataDir string) (*brandingStore, error) {
 	if err := json.Unmarshal(raw, &saved); err != nil {
 		return nil, fmt.Errorf("parse branding settings: %w", err)
 	}
+	saved = normalizeBrandingFile(saved)
 	if err := validateBrandingFile(saved); err != nil {
 		return nil, fmt.Errorf("validate branding settings: %w", err)
 	}
@@ -94,25 +106,31 @@ func newBrandingStore(dataDir string) (*brandingStore, error) {
 
 func (s *brandingStore) get() Branding {
 	s.mu.RLock()
-	settings := s.settings
-	s.mu.RUnlock()
+	defer s.mu.RUnlock()
+	return s.getLocked()
+}
 
+func (s *brandingStore) getLocked() Branding {
+	settings := s.settings
 	result := Branding{
-		PanelName:     settings.PanelName,
-		LoginTitle:    settings.LoginTitle,
-		LoginSubtitle: settings.LoginSubtitle,
+		PanelName:           settings.PanelName,
+		LoginTitle:          settings.LoginTitle,
+		LoginSubtitle:       settings.LoginSubtitle,
+		PanelBackgroundMode: settings.PanelBackgroundMode,
 	}
 	if info, err := os.Stat(s.backgroundPath); err == nil && info.Mode().IsRegular() {
 		result.HasBackground = true
 		result.BackgroundRevision = strconv.FormatInt(info.ModTime().UnixNano(), 10)
 	}
+	if info, err := os.Stat(s.panelBackgroundPath); err == nil && info.Mode().IsRegular() {
+		result.HasPanelBackground = true
+		result.PanelBackgroundRevision = strconv.FormatInt(info.ModTime().UnixNano(), 10)
+	}
 	return result
 }
 
 func (s *brandingStore) update(next brandingFile) (Branding, error) {
-	next.PanelName = strings.TrimSpace(next.PanelName)
-	next.LoginTitle = strings.TrimSpace(next.LoginTitle)
-	next.LoginSubtitle = strings.TrimSpace(next.LoginSubtitle)
+	next = normalizeBrandingFile(next)
 	if err := validateBrandingFile(next); err != nil {
 		return Branding{}, err
 	}
@@ -124,16 +142,18 @@ func (s *brandingStore) update(next brandingFile) (Branding, error) {
 	}
 	s.settings = next
 
-	result := Branding{
-		PanelName:     next.PanelName,
-		LoginTitle:    next.LoginTitle,
-		LoginSubtitle: next.LoginSubtitle,
+	return s.getLocked(), nil
+}
+
+func normalizeBrandingFile(v brandingFile) brandingFile {
+	v.PanelName = strings.TrimSpace(v.PanelName)
+	v.LoginTitle = strings.TrimSpace(v.LoginTitle)
+	v.LoginSubtitle = strings.TrimSpace(v.LoginSubtitle)
+	v.PanelBackgroundMode = strings.TrimSpace(v.PanelBackgroundMode)
+	if v.PanelBackgroundMode == "" {
+		v.PanelBackgroundMode = panelBackgroundNone
 	}
-	if info, err := os.Stat(s.backgroundPath); err == nil && info.Mode().IsRegular() {
-		result.HasBackground = true
-		result.BackgroundRevision = strconv.FormatInt(info.ModTime().UnixNano(), 10)
-	}
-	return result, nil
+	return v
 }
 
 func validateBrandingFile(v brandingFile) error {
@@ -143,7 +163,15 @@ func validateBrandingFile(v brandingFile) error {
 	if err := validateBrandingText("Заголовок страницы входа", v.LoginTitle, 1, 80); err != nil {
 		return err
 	}
-	return validateBrandingText("Подзаголовок страницы входа", v.LoginSubtitle, 0, 160)
+	if err := validateBrandingText("Подзаголовок страницы входа", v.LoginSubtitle, 0, 160); err != nil {
+		return err
+	}
+	switch v.PanelBackgroundMode {
+	case panelBackgroundNone, panelBackgroundLogin, panelBackgroundCustom:
+		return nil
+	default:
+		return errors.New("Фон панели: неизвестный режим")
+	}
 }
 
 func validateBrandingText(name, value string, minRunes, maxRunes int) error {
@@ -203,6 +231,14 @@ func detectBrandingImage(data []byte) (string, error) {
 }
 
 func (s *brandingStore) putBackground(data []byte) (Branding, error) {
+	return s.putImage(s.backgroundPath, data)
+}
+
+func (s *brandingStore) putPanelBackground(data []byte) (Branding, error) {
+	return s.putImage(s.panelBackgroundPath, data)
+}
+
+func (s *brandingStore) putImage(path string, data []byte) (Branding, error) {
 	if len(data) == 0 {
 		return Branding{}, errors.New("файл изображения пуст")
 	}
@@ -210,7 +246,7 @@ func (s *brandingStore) putBackground(data []byte) (Branding, error) {
 		return Branding{}, err
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(s.backgroundPath), ".login-background-*.tmp")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".panel-image-*.tmp")
 	if err != nil {
 		return Branding{}, fmt.Errorf("create temporary image: %w", err)
 	}
@@ -234,37 +270,40 @@ func (s *brandingStore) putBackground(data []byte) (Branding, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := os.Rename(tmpPath, s.backgroundPath); err != nil {
+	if err := os.Rename(tmpPath, path); err != nil {
 		return Branding{}, fmt.Errorf("replace background image: %w", err)
 	}
-	result := Branding{
-		PanelName:     s.settings.PanelName,
-		LoginTitle:    s.settings.LoginTitle,
-		LoginSubtitle: s.settings.LoginSubtitle,
-		HasBackground: true,
-	}
-	if info, err := os.Stat(s.backgroundPath); err == nil {
-		result.BackgroundRevision = strconv.FormatInt(info.ModTime().UnixNano(), 10)
-	}
-	return result, nil
+	return s.getLocked(), nil
 }
 
 func (s *brandingStore) deleteBackground() (Branding, error) {
+	return s.deleteImage(s.backgroundPath)
+}
+
+func (s *brandingStore) deletePanelBackground() (Branding, error) {
+	return s.deleteImage(s.panelBackgroundPath)
+}
+
+func (s *brandingStore) deleteImage(path string) (Branding, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := os.Remove(s.backgroundPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return Branding{}, fmt.Errorf("delete background image: %w", err)
 	}
-	return Branding{
-		PanelName:     s.settings.PanelName,
-		LoginTitle:    s.settings.LoginTitle,
-		LoginSubtitle: s.settings.LoginSubtitle,
-	}, nil
+	return s.getLocked(), nil
 }
 
 func (s *brandingStore) serveBackground(w http.ResponseWriter, r *http.Request) {
+	s.serveImage(w, r, s.backgroundPath, brandingBackgroundName)
+}
+
+func (s *brandingStore) servePanelBackground(w http.ResponseWriter, r *http.Request) {
+	s.serveImage(w, r, s.panelBackgroundPath, panelBackgroundName)
+}
+
+func (s *brandingStore) serveImage(w http.ResponseWriter, r *http.Request, path, name string) {
 	s.mu.RLock()
-	data, err := os.ReadFile(s.backgroundPath)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		s.mu.RUnlock()
 		if errors.Is(err, os.ErrNotExist) {
@@ -274,7 +313,7 @@ func (s *brandingStore) serveBackground(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "background_read_failed", "Не удалось прочитать фон")
 		return
 	}
-	info, statErr := os.Stat(s.backgroundPath)
+	info, statErr := os.Stat(path)
 	s.mu.RUnlock()
 	if statErr != nil {
 		writeError(w, http.StatusInternalServerError, "background_read_failed", "Не удалось прочитать фон")
@@ -287,7 +326,66 @@ func (s *brandingStore) serveBackground(w http.ResponseWriter, r *http.Request) 
 	}
 	w.Header().Set("Content-Type", mime)
 	w.Header().Set("Cache-Control", "public, max-age=300")
-	http.ServeContent(w, r, brandingBackgroundName, info.ModTime(), bytes.NewReader(data))
+	http.ServeContent(w, r, name, info.ModTime(), bytes.NewReader(data))
+}
+
+func readBrandingImage(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBrandingImageSize+1)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "image_too_large", "Изображение больше 8 МБ")
+			return nil, false
+		}
+		writeError(w, http.StatusBadRequest, "image_read_failed", "Не удалось прочитать изображение")
+		return nil, false
+	}
+	if len(data) > maxBrandingImageSize {
+		writeError(w, http.StatusRequestEntityTooLarge, "image_too_large", "Изображение больше 8 МБ")
+		return nil, false
+	}
+	if len(data) == 0 {
+		writeError(w, http.StatusBadRequest, "invalid_image", "Файл изображения пуст")
+		return nil, false
+	}
+	if _, err := detectBrandingImage(data); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_image", err.Error())
+		return nil, false
+	}
+	return data, true
+}
+
+func brandingImageUploadHandler(
+	save func([]byte) (Branding, error), logName, errorMessage string,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		data, ok := readBrandingImage(w, r)
+		if !ok {
+			return
+		}
+		result, err := save(data)
+		if err != nil {
+			log.Printf("%s save: %v", logName, err)
+			writeError(w, http.StatusInternalServerError, "background_save_failed", errorMessage)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: result})
+	}
+}
+
+func brandingImageDeleteHandler(
+	remove func() (Branding, error), logName, errorMessage string,
+) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		result, err := remove()
+		if err != nil {
+			log.Printf("%s delete: %v", logName, err)
+			writeError(w, http.StatusInternalServerError, "background_delete_failed", errorMessage)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: result})
+	}
 }
 
 func (s *Server) registerBrandingRoutes(mux *http.ServeMux, jwtSecret []byte, store *brandingStore) {
@@ -298,6 +396,7 @@ func (s *Server) registerBrandingRoutes(mux *http.ServeMux, jwtSecret []byte, st
 	mux.HandleFunc("GET /api/branding/background", store.serveBackground)
 
 	protected := func(h http.HandlerFunc) http.Handler { return auth.RequireAuth(jwtSecret, h) }
+	mux.Handle("GET /api/branding/panel-background", protected(store.servePanelBackground))
 	mux.Handle("PUT /api/panel/settings", protected(func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		var req brandingFile
@@ -305,9 +404,7 @@ func (s *Server) registerBrandingRoutes(mux *http.ServeMux, jwtSecret []byte, st
 			writeError(w, http.StatusBadRequest, "bad_request", "Некорректное тело запроса")
 			return
 		}
-		req.PanelName = strings.TrimSpace(req.PanelName)
-		req.LoginTitle = strings.TrimSpace(req.LoginTitle)
-		req.LoginSubtitle = strings.TrimSpace(req.LoginSubtitle)
+		req = normalizeBrandingFile(req)
 		if err := validateBrandingFile(req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_branding", err.Error())
 			return
@@ -321,46 +418,16 @@ func (s *Server) registerBrandingRoutes(mux *http.ServeMux, jwtSecret []byte, st
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: result})
 	}))
 
-	mux.Handle("PUT /api/panel/settings/background", protected(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, maxBrandingImageSize+1)
-		data, err := io.ReadAll(r.Body)
-		if err != nil {
-			var tooLarge *http.MaxBytesError
-			if errors.As(err, &tooLarge) {
-				writeError(w, http.StatusRequestEntityTooLarge, "image_too_large", "Изображение больше 8 МБ")
-				return
-			}
-			writeError(w, http.StatusBadRequest, "image_read_failed", "Не удалось прочитать изображение")
-			return
-		}
-		if len(data) > maxBrandingImageSize {
-			writeError(w, http.StatusRequestEntityTooLarge, "image_too_large", "Изображение больше 8 МБ")
-			return
-		}
-		if len(data) == 0 {
-			writeError(w, http.StatusBadRequest, "invalid_image", "Файл изображения пуст")
-			return
-		}
-		if _, err := detectBrandingImage(data); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid_image", err.Error())
-			return
-		}
-		result, err := store.putBackground(data)
-		if err != nil {
-			log.Printf("branding background save: %v", err)
-			writeError(w, http.StatusInternalServerError, "background_save_failed", "Не удалось сохранить фон")
-			return
-		}
-		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: result})
-	}))
-
-	mux.Handle("DELETE /api/panel/settings/background", protected(func(w http.ResponseWriter, r *http.Request) {
-		result, err := store.deleteBackground()
-		if err != nil {
-			log.Printf("branding background delete: %v", err)
-			writeError(w, http.StatusInternalServerError, "background_delete_failed", err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: result})
-	}))
+	mux.Handle("PUT /api/panel/settings/background", protected(brandingImageUploadHandler(
+		store.putBackground, "branding background", "Не удалось сохранить фон страницы входа",
+	)))
+	mux.Handle("DELETE /api/panel/settings/background", protected(brandingImageDeleteHandler(
+		store.deleteBackground, "branding background", "Не удалось удалить фон страницы входа",
+	)))
+	mux.Handle("PUT /api/panel/settings/panel-background", protected(brandingImageUploadHandler(
+		store.putPanelBackground, "panel background", "Не удалось сохранить фон панели",
+	)))
+	mux.Handle("DELETE /api/panel/settings/panel-background", protected(brandingImageDeleteHandler(
+		store.deletePanelBackground, "panel background", "Не удалось удалить фон панели",
+	)))
 }

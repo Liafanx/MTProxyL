@@ -5,6 +5,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useMtproxyl } from '@/hooks/useMtproxyl';
 import { Menu, AlertTriangle } from 'lucide-react';
 import { useBranding } from '@/hooks/useBranding';
+import { activePanelBackgroundURL } from '@/lib/api';
 
 export function AppLayout() {
   const { username, loading } = useAuth();
@@ -13,6 +14,7 @@ export function AppLayout() {
   // адреса API одинаково искажает и пользователей, и телеметрию, и статус.
   const { apiMismatch } = useMtproxyl();
   const { branding } = useBranding();
+  const backgroundURL = activePanelBackgroundURL(branding);
 
   if (loading) {
     return (
@@ -27,7 +29,12 @@ export function AppLayout() {
   }
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <div
+      className={`flex min-h-screen bg-background bg-cover bg-center bg-fixed ${backgroundURL ? 'panel-background' : ''}`}
+      style={backgroundURL ? {
+        backgroundImage: `linear-gradient(rgb(var(--c-background) / 0.72), rgb(var(--c-background) / 0.84)), url("${backgroundURL}")`,
+      } : undefined}
+    >
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
       <main className="flex-1 min-w-0 overflow-x-hidden lg:ml-60 pb-16 lg:pb-0">
