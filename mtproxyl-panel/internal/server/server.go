@@ -145,6 +145,11 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 
 	limiter := newLoginRateLimiter()
 	mux := http.NewServeMux()
+	branding, err := newBrandingStore(s.cfg.DataDir)
+	if err != nil {
+		return fmt.Errorf("panel branding: %w", err)
+	}
+	s.registerBrandingRoutes(mux, jwtSecret, branding)
 
 	// Auth endpoints
 	mux.HandleFunc("POST /api/auth/login", func(w http.ResponseWriter, r *http.Request) {

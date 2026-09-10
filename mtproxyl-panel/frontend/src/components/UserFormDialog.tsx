@@ -37,6 +37,8 @@ interface UserFormDialogProps {
    * не сделает.
    */
   secretRotateOnly?: boolean;
+  /** Переименование выполняет MTProxyL: API самого telemt его не поддерживает. */
+  usernameEditable?: boolean;
 }
 
 /** Байты трудно читать глазами — показываем, сколько это на самом деле. */
@@ -71,6 +73,7 @@ export function UserFormDialog({
   mode,
   currentSecret,
   secretRotateOnly,
+  usernameEditable = true,
 }: UserFormDialogProps) {
   const [form, setForm] = useState<UserFormData>(emptyForm);
   const [loading, setLoading] = useState(false);
@@ -99,8 +102,9 @@ export function UserFormDialog({
     try {
       const payload: Record<string, unknown> = {};
 
-      if (mode === 'create') {
-        payload.username = form.username;
+      const username = form.username.trim();
+      if (mode === 'create' || username !== String(initialData?.username ?? '')) {
+        payload.username = username;
       }
       if (form.secret) payload.secret = form.secret;
       // Пустое поле у telemt — ошибка «must be exactly 32 hex characters»,
@@ -140,22 +144,24 @@ export function UserFormDialog({
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4 py-4">
-          {mode === 'create' && (
-            <div className="space-y-1.5">
-              <Label htmlFor="username">Имя пользователя *</Label>
-              <Input
-                id="username"
-                value={form.username}
-                onChange={set('username')}
-                placeholder="user1"
-                required
-                pattern="[A-Za-z0-9_.\-]+"
-              />
-              <p className="text-xs text-text-secondary">
-                Латиница, цифры, точка, дефис и подчёркивание.
-              </p>
-            </div>
-          )}
+          <div className="space-y-1.5">
+            <Label htmlFor="username">Имя пользователя *</Label>
+            <Input
+              id="username"
+              value={form.username}
+              onChange={set('username')}
+              placeholder="user1"
+              required
+              maxLength={64}
+              pattern="[A-Za-z0-9_.\-]+"
+              disabled={mode === 'edit' && !usernameEditable}
+            />
+            <p className="text-xs text-text-secondary">
+              {mode === 'edit' && !usernameEditable
+                ? 'Переименование доступно при включённой интеграции с MTProxyL.'
+                : 'Латиница, цифры, точка, дефис и подчёркивание.'}
+            </p>
+          </div>
 
           <div className="space-y-1.5">
             <Label htmlFor="secret">Секрет</Label>

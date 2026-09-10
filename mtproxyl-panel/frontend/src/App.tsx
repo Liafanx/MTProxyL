@@ -31,6 +31,8 @@ import { AvailabilityPage } from '@/pages/AvailabilityPage';
 import { WarpPage } from '@/pages/WarpPage';
 import { TgbotPage } from '@/pages/TgbotPage';
 import { MtproxylContext, useMtproxylAvailability } from '@/hooks/useMtproxyl';
+import { BrandingContext, useBrandingProvider } from '@/hooks/useBranding';
+import { PanelSettingsPage } from '@/pages/PanelSettingsPage';
 
 function AuthenticatedApp() {
   const { username, loading } = useAuth();
@@ -63,6 +65,7 @@ function AuthenticatedApp() {
           <Route path="/config" element={<ConfigPage />} />
           <Route path="/update" element={<UpdatePage />} />
           <Route path="/logs" element={<LogsPage />} />
+          <Route path="/panel-settings" element={<PanelSettingsPage />} />
           <Route path="/mode" element={<ModePage />} />
           <Route path="/proxy-settings" element={<SettingsPage />} />
           <Route path="/maintenance" element={<MaintenancePage />} />
@@ -90,15 +93,18 @@ function AuthenticatedApp() {
 export default function App() {
   const auth = useAuthProvider();
   const themeCtx = useThemeProvider();
+  const branding = useBrandingProvider();
 
   return (
-    <ThemeContext.Provider value={themeCtx}>
-      <AuthContext.Provider value={auth}>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="*" element={<AuthenticatedApp />} />
-        </Routes>
-      </AuthContext.Provider>
-    </ThemeContext.Provider>
+    <BrandingContext.Provider value={branding}>
+      <ThemeContext.Provider value={themeCtx}>
+        <AuthContext.Provider value={auth}>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="*" element={<AuthenticatedApp />} />
+          </Routes>
+        </AuthContext.Provider>
+      </ThemeContext.Provider>
+    </BrandingContext.Provider>
   );
 }

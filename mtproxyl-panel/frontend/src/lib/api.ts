@@ -46,6 +46,40 @@ export const telemt = {
 
 const PANEL_BASE = `${BASE}/api`;
 
+export interface PanelBranding {
+  panel_name: string;
+  login_title: string;
+  login_subtitle: string;
+  has_background: boolean;
+  background_revision?: string;
+}
+
+export const DEFAULT_PANEL_BRANDING: PanelBranding = {
+  panel_name: 'MTProxyL-Panel',
+  login_title: 'MTProxyL-Panel',
+  login_subtitle: 'Управление MTProxy',
+  has_background: false,
+};
+
+export const brandingApi = {
+  get: () => request<PanelBranding>(PANEL_BASE, '/branding'),
+  update: (branding: Pick<PanelBranding, 'panel_name' | 'login_title' | 'login_subtitle'>) =>
+    request<PanelBranding>(PANEL_BASE, '/panel/settings', {
+      method: 'PUT',
+      body: JSON.stringify(branding),
+    }),
+  uploadBackground: (file: File) =>
+    request<PanelBranding>(PANEL_BASE, '/panel/settings/background', {
+      method: 'PUT',
+      body: file,
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    }),
+  deleteBackground: () =>
+    request<PanelBranding>(PANEL_BASE, '/panel/settings/background', { method: 'DELETE' }),
+  backgroundURL: (revision?: string) =>
+    `${PANEL_BASE}/branding/background${revision ? `?v=${revision}` : ''}`,
+};
+
 
 export const panelApi = {
   get: <T>(path: string) => request<T>(PANEL_BASE, path),

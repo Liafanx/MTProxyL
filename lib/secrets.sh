@@ -730,6 +730,22 @@ secret_clone() {
 }
 
 # Переименование
+_rename_user_stats_files() {
+    local _from="$1" _to="$2"; shift 2
+    local _file _tmp _failed=0
+    for _file in "$@"; do
+        [ -f "$_file" ] || continue
+        _tmp=$(_mktemp "$(dirname "$_file")") || { _failed=1; continue; }
+        awk -F'|' -v OFS='|' -v old="$_from" -v new="$_to" '
+            $1 == "USER" && $2 == old { $2 = new }
+            $1 == old { $1 = new }
+            { print }
+        ' "$_file" > "$_tmp" && cat "$_tmp" > "$_file" || _failed=1
+        rm -f "$_tmp"
+    done
+    return "$_failed"
+}
+
 secret_rename() {
     local old="$1" new="$2"
     [ -z "$old" ] || [ -z "$new" ] && { log_error "Использование: secret rename <старая> <новая>"; return 1; }
@@ -741,7 +757,12 @@ secret_rename() {
     for i in "${!SECRETS_LABELS[@]}"; do [ "${SECRETS_LABELS[$i]}" = "$new" ] && { log_error "'${new}' уже существует"; return 1; }; done
 
     SECRETS_LABELS[$idx]="$new"
-    save_secrets
+    save_secrets || { SECRETS_LABELS[$idx]="$old"; log_error "Не удалось сохранить новое имя"; return 1; }
+    _rename_user_stats_files "$old" "$new" \
+        "${INSTALL_DIR}/relay_stats/traffic_db" \
+        "${INSTALL_DIR}/relay_stats/user_ips_db" \
+        "${INSTALL_DIR}/relay_stats/user_session_snapshot" \
+        || log_warn "Имя изменено, но накопленную статистику перенести не удалось"
     reload_proxy_config 2>/dev/null || true
     log_success "Переименован: '${old}' → '${new}'"
 }
@@ -1256,6 +1277,15 @@ target_user_rename() {
     _toml_safe_unset "$_from" "access.users" "$DETECTED_CONFIG_PATH" || return 1
     _target_set_in_section "$_to" "\"${_secret}\"" "access.users" || return 1
     [ "$_state" = "off" ] && _toml_toggle_key "$_to" "access.users" "$DETECTED_CONFIG_PATH" "off"
+    web_target_rename_profile "$_from" "$_to" || {
+        log_error "Не удалось переименовать WEB-профиль пользователя"
+        return 1
+    }
+    _rename_user_stats_files "$_from" "$_to" \
+        "${INSTALL_DIR}/relay_stats/target_traffic_db" \
+        "${INSTALL_DIR}/relay_stats/target_user_ips_db" \
+        "${INSTALL_DIR}/relay_stats/target_session_snapshot" \
+        || log_warn "Имя изменено, но накопленную статистику перенести не удалось"
     log_success "Пользователь переименован: ${_from} → ${_to}"
     _target_users_apply
 }

@@ -4,6 +4,7 @@ import { Sidebar, BottomNav } from './Sidebar';
 import { useAuth } from '@/hooks/useAuth';
 import { useMtproxyl } from '@/hooks/useMtproxyl';
 import { Menu, AlertTriangle } from 'lucide-react';
+import { useBranding } from '@/hooks/useBranding';
 
 export function AppLayout() {
   const { username, loading } = useAuth();
@@ -11,6 +12,7 @@ export function AppLayout() {
   // Показываем на всех страницах, а не только на дашборде: несоответствие
   // адреса API одинаково искажает и пользователей, и телеметрию, и статус.
   const { apiMismatch } = useMtproxyl();
+  const { branding } = useBranding();
 
   if (loading) {
     return (
@@ -37,8 +39,8 @@ export function AppLayout() {
           >
             <Menu size={20} />
           </button>
-          <h1 className="text-sm font-semibold text-text-primary">
-            MTProxyL-Panel
+          <h1 className="text-sm font-semibold text-text-primary truncate" title={branding.panel_name}>
+            {branding.panel_name}
           </h1>
         </div>
 
