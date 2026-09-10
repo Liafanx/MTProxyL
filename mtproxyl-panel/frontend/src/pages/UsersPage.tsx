@@ -217,18 +217,31 @@ export function UsersPage() {
 
   const handleEdit = useCallback(async (data: Record<string, unknown>) => {
     if (!editUser) return;
+    const nextUsername = String(data.username ?? editUser.username).trim();
+    const renamed = nextUsername !== editUser.username;
+    const changes = { ...data };
+    delete changes.username;
     if (usersOwnedByMtproxyl) {
       // Смена секрета у MTProxyL — отдельная команда: он его перевыпускает,
       // задать произвольный при правке нельзя.
-      if (data.secret) {
+      if (changes.secret) {
         await mtproxylUsersApi.rotate(editUser.username);
       }
-      await applyMtproxylLimits(editUser.username, data);
-    } else {
-      await telemt.patch(`/v1/users/${editUser.username}`, data);
+      await applyMtproxylLimits(editUser.username, changes);
+    } else if (Object.keys(changes).length > 0) {
+      await telemt.patch(`/v1/users/${editUser.username}`, changes);
+    }
+    // У telemt нет операции rename. MTProxyL переносит имя во всех связанных
+    // секциях (лимиты, квота, WEB-профиль), поэтому переименовываем последним:
+    // если другая правка не прошла, имя останется прежним.
+    if (renamed) {
+      if (!mtproxylEnabled) {
+        throw new Error('Переименование доступно только при включённой интеграции с MTProxyL');
+      }
+      await mtproxylUsersApi.rename(editUser.username, nextUsername);
     }
     refresh();
-  }, [editUser, refresh, usersOwnedByMtproxyl]);
+  }, [editUser, refresh, usersOwnedByMtproxyl, mtproxylEnabled]);
 
   const handleDelete = useCallback(async () => {
     if (!deleteUser) return;
@@ -574,6 +587,7 @@ export function UsersPage() {
         mode="edit"
         currentSecret={extractSecret(editUser?.links)}
         secretRotateOnly={usersOwnedByMtproxyl}
+        usernameEditable={mtproxylEnabled}
       />
 
       <ConfirmDialog

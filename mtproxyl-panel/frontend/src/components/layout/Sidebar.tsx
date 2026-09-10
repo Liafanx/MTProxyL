@@ -1,9 +1,10 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, LogOut, X, Sun, Moon, ToggleLeft, Globe, Globe2, Archive, ShieldAlert, MapPin, Route, SlidersHorizontal, Gauge, FileCode, Puzzle, Radar, Wrench, Bot, Waypoints, ShieldBan } from 'lucide-react';
+import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, LogOut, X, Sun, Moon, ToggleLeft, Globe, Globe2, Archive, ShieldAlert, MapPin, Route, SlidersHorizontal, Gauge, FileCode, Puzzle, Radar, Wrench, Bot, Waypoints, ShieldBan, PanelTop } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 import { useMtproxyl } from '@/hooks/useMtproxyl';
+import { useBranding } from '@/hooks/useBranding';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Дашборд' },
@@ -13,6 +14,7 @@ const navItems = [
   { to: '/security', icon: Shield, label: 'Безопасность' },
   { to: '/upstreams', icon: Network, label: 'Апстримы и DC' },
   { to: '/config', icon: Settings, label: 'Конфигурация' },
+  { to: '/panel-settings', icon: PanelTop, label: 'Настройки панели' },
   { to: '/update', icon: ArrowUpCircle, label: 'Обновление' },
   { to: '/logs', icon: ScrollText, label: 'Логи' },
 ];
@@ -47,6 +49,7 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
   const { logout, username } = useAuth();
   const { theme, toggle: toggleTheme } = useTheme();
   const { enabled: mtproxylEnabled, mode: mtproxylMode } = useMtproxyl();
+  const { branding } = useBranding();
 
   return (
     <>
@@ -65,8 +68,11 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
         isOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <div className="p-4 border-b border-border flex items-center justify-between">
-          <h1 className="text-lg font-bold text-text-primary tracking-tight">
-            MTProxyL-Panel
+          <h1
+            className="text-lg font-bold text-text-primary tracking-tight truncate min-w-0 flex-1"
+            title={branding.panel_name}
+          >
+            {branding.panel_name}
           </h1>
           <button
             onClick={onClose}

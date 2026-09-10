@@ -1871,6 +1871,50 @@ web_target_remove_profile() {
         && log_success "WEB-профиль '${_label}' убран из конфига цели"
 }
 
+# Переименование пользователя должно сохранить его secret_mode. Обычный sync
+# удалил бы старый профиль и создал новый с режимом первого попавшегося
+# пользователя, что меняет WEB-ссылку без предупреждения.
+web_target_rename_profile() {
+    local _from="$1" _to="$2" _f="${DETECTED_CONFIG_PATH:-}"
+    [ -n "$_from" ] && [ -n "$_to" ] && [ -f "$_f" ] || return 0
+    web_target_enabled || return 0
+    web_target_has_profile "$_from" || return 0
+    # Чужой конфиг уже мог содержать осиротевший профиль нового имени. В этом
+    # случае оставляем его и только снимаем старый, не создавая дубль.
+    if web_target_has_profile "$_to"; then
+        web_target_remove_profile "$_from"
+        return $?
+    fi
+
+    local _tmp; _tmp=$(_mktemp "$(dirname "$_f")") || return 1
+    awk -v old="$_from" -v new="$_to" '
+        /^[[:space:]]*\[\[web\.vhosts\.profiles\]\][[:space:]]*$/ { inp = 1; print; next }
+        /^[[:space:]]*\[/ { inp = 0; print; next }
+        inp && /^[[:space:]]*user[[:space:]]*=/ {
+            line = $0
+            eq = index(line, "=")
+            rhs = substr(line, eq + 1)
+            trimmed = rhs; sub(/^[[:space:]]+/, "", trimmed)
+            lead = substr(rhs, 1, length(rhs) - length(trimmed))
+            quote = substr(trimmed, 1, 1)
+            if (quote == "\"" || quote == "\047") {
+                rest = substr(trimmed, 2)
+                end = index(rest, quote)
+                if (end > 0 && substr(rest, 1, end - 1) == old) {
+                    tail = substr(rest, end + 1)
+                    print substr(line, 1, eq) lead quote new quote tail
+                    next
+                }
+            }
+        }
+        { print }
+    ' "$_f" > "$_tmp" || { rm -f "$_tmp"; return 1; }
+    [ -s "$_tmp" ] || { rm -f "$_tmp"; return 1; }
+    cat "$_tmp" > "$_f" || { rm -f "$_tmp"; return 1; }
+    rm -f "$_tmp"
+    log_success "WEB-профиль переименован: '${_from}' → '${_to}'"
+}
+
 # Приводит профили в соответствие со списком пользователей цели. Нужно, когда
 # пользователя завели мимо нас — например панель в реаниматоре создаёт его
 # через /v1/users движка, а тот профиль WEB не заводит.
