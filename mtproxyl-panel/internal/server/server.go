@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -200,7 +201,7 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 			MaxAge:   int(ttl.Seconds()),
 			HttpOnly: true,
 			SameSite: http.SameSiteStrictMode,
-			Secure:   r.TLS != nil,
+			Secure:   requestIsHTTPS(r),
 		})
 
 		writeJSON(w, http.StatusOK, jsonResponse{
@@ -221,6 +222,7 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 			MaxAge:   -1,
 			HttpOnly: true,
 			SameSite: http.SameSiteStrictMode,
+			Secure:   requestIsHTTPS(r),
 		})
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true})
 	})
@@ -775,11 +777,35 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		if r.TLS != nil {
+		if requestIsHTTPS(r) {
 			w.Header().Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// requestIsHTTPS accepts X-Forwarded-Proto only from a loopback peer. This is
+// the deployment used by Selfmask and ordinary local reverse proxies; a
+// public client cannot spoof the header and alter cookie/HSTS behaviour.
+func requestIsHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+
+	host := r.RemoteAddr
+	if parsedHost, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		host = parsedHost
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if ip == nil || !ip.IsLoopback() {
+		return false
+	}
+
+	proto := r.Header.Get("X-Forwarded-Proto")
+	if first, _, _ := strings.Cut(proto, ","); first != "" {
+		proto = first
+	}
+	return strings.EqualFold(strings.TrimSpace(proto), "https")
 }
 
 // basePathHandler strips the base path prefix from incoming requests.

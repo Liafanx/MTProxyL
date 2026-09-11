@@ -20,6 +20,10 @@ listen = "0.0.0.0:8080"
 #   nginx:  location /panel123/ { proxy_pass http://127.0.0.1:8080/panel123/; }
 #
 # base_path = "/panel123"
+#
+# Для управляемого доступа через тот же домен и сертификат, что у Selfmask,
+# не задавайте этот параметр вручную: `mtproxyl panel selfmask on` создаст
+# случайный путь, привяжет backend к 127.0.0.1 и безопасно обновит nginx.
 
 [telemt]
 # Telemt API base URL (no trailing slash)

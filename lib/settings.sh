@@ -93,6 +93,15 @@ SELFMASK_AUTO_RENEW="true"
 SELFMASK_TLS_PROTOCOLS="TLSv1.3"
 SELFMASK_CERT_MODE="letsencrypt"  # letsencrypt|selfsigned
 
+# Доступ к панели через домен Selfmask. Путь хранится отдельно и включается
+# только явной командой `mtproxyl panel selfmask on`: один base_path сам по
+# себе не должен неожиданно публиковать панель через заглушку.
+PANEL_SELFMASK_ENABLED="false"
+PANEL_SELFMASK_PATH=""
+PANEL_SELFMASK_PREV_LISTEN=""
+PANEL_SELFMASK_PREV_BASE_PATH=""
+PANEL_SELFMASK_STATE_FILE="${INSTALL_DIR}/panel-selfmask.conf"
+
 # WEB Proxy (движок 3.5.1+). Публичный TLS держит nginx MTProxyL либо внешний
 # HAProxy. Домен и сайт по умолчанию берутся у Selfmask.
 WEB_ENABLED="false"
@@ -279,6 +288,7 @@ SETTINGS_EOF
     mv "$tmp" "$SETTINGS_FILE"
 
     save_selfmask_settings
+    save_panel_selfmask_settings
 }
 
 # ── Selfmask: отдельный набор настроек на каждый режим ─────────
@@ -318,6 +328,36 @@ SELFMASK_PREV_PUBLIC_HOST='${SELFMASK_PREV_PUBLIC_HOST}'
 SELFMASK_EOF
     chmod 600 "$_tmp"
     mv "$_tmp" "$_f"
+}
+
+# Случайный URL панели — часть защиты вместе с логином, поэтому не кладём его
+# в общий settings.conf с правами 644. Отдельный файл читается только root.
+save_panel_selfmask_settings() {
+    mkdir -p "$INSTALL_DIR"
+    local _tmp; _tmp=$(_mktemp "$INSTALL_DIR") || return 1
+    cat > "$_tmp" << PANEL_SELFMASK_EOF
+# MTProxyL — доступ панели через домен Selfmask
+PANEL_SELFMASK_ENABLED='${PANEL_SELFMASK_ENABLED}'
+PANEL_SELFMASK_PATH='${PANEL_SELFMASK_PATH}'
+PANEL_SELFMASK_PREV_LISTEN='${PANEL_SELFMASK_PREV_LISTEN}'
+PANEL_SELFMASK_PREV_BASE_PATH='${PANEL_SELFMASK_PREV_BASE_PATH}'
+PANEL_SELFMASK_EOF
+    chmod 600 "$_tmp"
+    mv "$_tmp" "$PANEL_SELFMASK_STATE_FILE"
+}
+
+load_panel_selfmask_settings() {
+    [ -f "$PANEL_SELFMASK_STATE_FILE" ] || return 0
+    local _line _key _val
+    while IFS= read -r _line; do
+        [[ "$_line" =~ ^[[:space:]]*# ]] && continue
+        [[ "$_line" =~ ^([A-Z_][A-Z0-9_]*)=\'([^\']*)\'$ ]] || continue
+        _key="${BASH_REMATCH[1]}"; _val="${BASH_REMATCH[2]}"
+        case "$_key" in
+            PANEL_SELFMASK_ENABLED|PANEL_SELFMASK_PATH|PANEL_SELFMASK_PREV_LISTEN|PANEL_SELFMASK_PREV_BASE_PATH)
+                printf -v "$_key" '%s' "$_val" ;;
+        esac
+    done < "$PANEL_SELFMASK_STATE_FILE"
 }
 
 # Значения из per-mode файла перекрывают то, что пришло из settings.conf.
@@ -413,9 +453,13 @@ _fix_settings_perms() {
     [ -f "$SETTINGS_FILE" ] || return 0
     local _cur
     _cur=$(stat -c '%a' "$INSTALL_DIR" "$SETTINGS_FILE" 2>/dev/null | tr '\n' ' ')
-    [ "$_cur" = "${_INSTALL_DIR_MODE} ${_SETTINGS_FILE_MODE} " ] && return 0
+    if [ "$_cur" = "${_INSTALL_DIR_MODE} ${_SETTINGS_FILE_MODE} " ]; then
+        [ -f "$PANEL_SELFMASK_STATE_FILE" ] && chmod 600 "$PANEL_SELFMASK_STATE_FILE" 2>/dev/null || true
+        return 0
+    fi
     chmod "$_INSTALL_DIR_MODE" "$INSTALL_DIR" 2>/dev/null || true
     chmod "$_SETTINGS_FILE_MODE" "$SETTINGS_FILE" 2>/dev/null || true
+    [ -f "$PANEL_SELFMASK_STATE_FILE" ] && chmod 600 "$PANEL_SELFMASK_STATE_FILE" 2>/dev/null || true
     # Подкаталоги закрываем явно: до сих пор их прятал только закрытый на
     # листинг родитель, а теперь через него можно пройти.
     chmod 700 "${STATS_DIR:-${INSTALL_DIR}/relay_stats}" "${BACKUP_DIR:-${INSTALL_DIR}/backups}" 2>/dev/null || true
@@ -458,6 +502,8 @@ load_settings() {
                 SELFMASK_ENABLED|SELFMASK_DOMAIN|SELFMASK_SITE_SOURCE|SELFMASK_SITE_DIR|\
                 SELFMASK_NGINX_BACKEND_PORT|SELFMASK_CERT_EMAIL|SELFMASK_NGINX_SITE_NAME|\
                 SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS|SELFMASK_CERT_MODE|\
+                PANEL_SELFMASK_ENABLED|PANEL_SELFMASK_PATH|PANEL_SELFMASK_PREV_LISTEN|\
+                PANEL_SELFMASK_PREV_BASE_PATH|\
                 WEB_ENABLED|WEB_FRONTEND|WEB_LAYOUT|WEB_PUBLIC_PORT|WEB_DOMAIN|WEB_CARRIER|WEB_SECRET_MODE|\
                 WEB_LISTEN_PORT|WEB_TLS_PORT|WEB_MTPROXY_PORT|\
                 WEB_HAPROXY_CERT|\
@@ -472,6 +518,10 @@ load_settings() {
             esac
         done < "$SETTINGS_FILE"
     fi
+
+    # Root-only файл имеет приоритет. Чтение из settings.conf выше оставлено
+    # только для миграции ранней dev-реализации этого режима.
+    load_panel_selfmask_settings
 
     # Валидация
     case "$MTPROXYL_MODE" in
@@ -502,6 +552,12 @@ load_settings() {
     [ -n "$SELFMASK_NGINX_SITE_NAME" ] || SELFMASK_NGINX_SITE_NAME="mtproxyl-selfmask"
     [ -n "$SELFMASK_SITE_SOURCE" ] || SELFMASK_SITE_SOURCE="stub"
     [ "$SELFMASK_TLS_PROTOCOLS" = "TLSv1.3" ] || SELFMASK_TLS_PROTOCOLS="TLSv1.3"
+    [ "$PANEL_SELFMASK_ENABLED" = "true" ] || PANEL_SELFMASK_ENABLED="false"
+    if [ "$PANEL_SELFMASK_ENABLED" = "true" ] &&
+       ! [[ "$PANEL_SELFMASK_PATH" =~ ^/[A-Za-z0-9_-]{16,64}$ ]]; then
+        PANEL_SELFMASK_ENABLED="false"
+        PANEL_SELFMASK_PATH=""
+    fi
     # Selfmask своего режима — уже после того, как известен MTPROXYL_MODE
     load_selfmask_settings
 

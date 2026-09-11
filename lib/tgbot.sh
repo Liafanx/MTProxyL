@@ -80,6 +80,7 @@ _tgbot_install_deps() {
     # отдельный пакет — без него `python3 -m venv` падает уже на создании.
     python3 -c "import ensurepip" &>/dev/null || _missing+=("python3-venv")
     command -v curl &>/dev/null || _missing+=("curl")
+    command -v jq &>/dev/null || _missing+=("jq")
     # qrencode рисует QR к ссылке. Без него бот пришлёт только ссылку.
     command -v qrencode &>/dev/null || _missing+=("qrencode")
 
@@ -100,7 +101,7 @@ _tgbot_install_deps() {
             local _pkgs=("${_missing[@]/python3-venv/python3}")
             yum install -y -q "${_pkgs[@]}" || _rc=1 ;;
         alpine)
-            apk add --no-cache python3 py3-pip curl libqrencode-tools || _rc=1 ;;
+            apk add --no-cache python3 py3-pip curl jq libqrencode-tools || _rc=1 ;;
         *)
             log_warn "Неизвестный дистрибутив — поставьте вручную: ${_missing[*]}"
             return 1 ;;
@@ -118,6 +119,11 @@ _tgbot_install_deps() {
     command -v curl &>/dev/null || {
         log_error "curl так и не появился — без него не скачать код бота"
         log_info "Поставьте вручную и повторите: apt install curl"
+        return 1
+    }
+    command -v jq &>/dev/null || {
+        log_error "jq так и не появился — без него не проверить конфиг бота"
+        log_info "Поставьте вручную и повторите: apt install jq"
         return 1
     }
     # QR — не повод отказывать в установке: бот пришлёт саму ссылку.
@@ -386,8 +392,10 @@ _tgbot_check_token() {
     # Без -f: на неверный токен Telegram отвечает 401 с описанием, а curl -f
     # просто возвращал ошибку — опечатка была неотличима от недоступной сети
     # и бот ставился с токеном, по которому никогда не заработает.
-    _resp=$(curl -sS --max-time 10 -w $'\n%{http_code}' \
-        "https://api.telegram.org/bot${_token}/getMe" 2>/dev/null) || {
+    # URL передаём curl через stdin-конфиг: токен не появляется в ps и
+    # журнале запуска процесса как часть командной строки.
+    _resp=$(printf 'url = "https://api.telegram.org/bot%s/getMe"\n' "$_token" \
+        | curl --config - -sS --max-time 10 -w $'\n%{http_code}' 2>/dev/null) || {
         log_warn "Telegram не ответил — проверить токен не вышло, продолжаем"
         return 0
     }
@@ -471,8 +479,8 @@ _tgbot_ask_admin() {
         local _deadline=$(( $(date +%s) + 90 )) _resp
         echo -en "  ${DIM}Ожидание"
         while [ "$(date +%s)" -lt "$_deadline" ]; do
-            _resp=$(curl -fsS --max-time 15 \
-                "https://api.telegram.org/bot${_token}/getUpdates?timeout=10&limit=1" 2>/dev/null) || true
+            _resp=$(printf 'url = "https://api.telegram.org/bot%s/getUpdates?timeout=10&limit=1"\n' "$_token" \
+                | curl --config - -fsS --max-time 15 2>/dev/null) || true
             _id=$(jq -r '[.result[]?.message.from.id] | last // empty' <<< "$_resp" 2>/dev/null)
             if [ -n "$_id" ]; then
                 _name=$(jq -r '[.result[]?.message.from.username] | last // empty' <<< "$_resp" 2>/dev/null)
@@ -603,18 +611,29 @@ tgbot_set_param() {
 
 # ── Установка ─────────────────────────────────────────────────
 
-# --token/--admin — установка без вопросов, ими пользуется панель: терминала
-# у неё нет, а мастер с ожиданием /start там негде показать.
+# --token/--admin — установка без вопросов, ими пользуются панель и общий
+# установщик аргументами. --config-file нужен переезду: секрет едет внутри
+# файла по scp и не появляется в аргументах ssh/mtproxyl.
 tgbot_install() {
     check_root
-    local _opt_token="" _opt_admin=""
+    local _opt_token="" _opt_admin="" _opt_config=""
     while [ $# -gt 0 ]; do
         case "$1" in
-            --token) _opt_token="${2:-}"; shift 2 ;;
-            --admin) _opt_admin="${2:-}"; shift 2 ;;
-            *) shift ;;
+            --token) [ $# -ge 2 ] || { log_error "--token: не хватает значения"; return 1; }; _opt_token="$2"; shift 2 ;;
+            --admin) [ $# -ge 2 ] || { log_error "--admin: не хватает значения"; return 1; }; _opt_admin="$2"; shift 2 ;;
+            --config-file) [ $# -ge 2 ] || { log_error "--config-file: не хватает пути"; return 1; }; _opt_config="$2"; shift 2 ;;
+            *) log_error "Неизвестный аргумент tgbot install: $1"; return 1 ;;
         esac
     done
+    if { [ -n "$_opt_token" ] || [ -n "$_opt_admin" ]; } && [ -n "$_opt_config" ]; then
+        log_error "--config-file нельзя совмещать с --token/--admin"
+        return 1
+    fi
+    if { [ -n "$_opt_token" ] && [ -z "$_opt_admin" ]; } ||
+       { [ -z "$_opt_token" ] && [ -n "$_opt_admin" ]; }; then
+        log_error "--token и --admin задаются только вместе"
+        return 1
+    fi
     echo ""
     echo -e "  ${BOLD}Установка телеграм-бота MTProxyL${NC}"
     echo -e "  ${DIM}Каталог: ${TGBOT_DIR}, служба: ${TGBOT_SERVICE}${NC}"
@@ -625,15 +644,34 @@ tgbot_install() {
     # Про токен спрашиваем до тяжёлой части: иначе венв с aiogram ставится две
     # минуты, и только потом выясняется, что заводить бота нечем.
     # Переустановка поверх настроенного не спрашивает — токен уже есть.
-    local _token="" _admin="" _write_config="false"
-    if [ -n "$_opt_token" ]; then
+    local _token="" _admin="" _write_config="false" _copy_config="false"
+    if [ -n "$_opt_config" ]; then
+        [ -r "$_opt_config" ] || { log_error "Конфиг бота не читается: ${_opt_config}"; return 1; }
+        _tgbot_install_deps || return 1
+        if ! jq -e '
+            type == "object" and
+            ((.token // "") | test("^[0-9]{5,}:[A-Za-z0-9_-]{30,}$")) and
+            ((.admins // null) | type == "array") and
+            ((.admins // []) | length > 0) and
+            all((.admins // [])[]; (type == "number") and (. > 0) and (floor == .))
+        ' "$_opt_config" >/dev/null 2>&1; then
+            log_error "Файл не похож на конфиг бота с токеном и администраторами"
+            return 1
+        fi
+        _token=$(jq -r '.token' "$_opt_config")
+        _tgbot_check_token "$_token" || return 1
+        _copy_config="true"
+    elif [ -n "$_opt_token" ]; then
         _token=$(printf '%s' "$_opt_token" | tr -d '[:space:]')
-        _admin=$(printf '%s' "$_opt_admin" | tr -cd '0-9')
+        _admin=$(printf '%s' "$_opt_admin" | tr -d '[:space:]')
         _tgbot_validate_token "$_token" || {
             log_error "Не похоже на токен: ожидается 1234567890:AAH..."
             return 1
         }
-        [ -n "$_admin" ] || { log_error "Нужен числовой Telegram ID администратора"; return 1; }
+        [[ "$_admin" =~ ^[1-9][0-9]{0,19}$ ]] || {
+            log_error "Нужен положительный числовой Telegram ID администратора"
+            return 1
+        }
         _tgbot_check_token "$_token" || return 1
         _write_config="true"
     elif tgbot_configured; then
@@ -656,6 +694,12 @@ tgbot_install() {
     _tgbot_build_venv || return 1
 
     [ "$_write_config" = "true" ] && { _tgbot_write_config "$_token" "$_admin" || return 1; }
+    if [ "$_copy_config" = "true" ] && [ "$_opt_config" != "$TGBOT_CONFIG" ]; then
+        install -m 600 "$_opt_config" "$TGBOT_CONFIG" || {
+            log_error "Не удалось установить переданный конфиг бота"
+            return 1
+        }
+    fi
 
     _tgbot_write_sudoers || return 1
     _tgbot_write_service
@@ -667,6 +711,7 @@ tgbot_install() {
     systemctl restart "$TGBOT_SERVICE"
     sleep 3
 
+    local _result=0
     if tgbot_service_active; then
         log_success "Бот запущен"
         # Повторяем в итоге: предупреждение о qrencode осталось в самом начале
@@ -679,8 +724,10 @@ tgbot_install() {
     else
         log_error "Служба не поднялась"
         journalctl -u "$TGBOT_SERVICE" -n 15 --no-pager 2>/dev/null | sed 's/^/    /'
+        _result=1
     fi
     echo ""
+    return "$_result"
 }
 
 tgbot_setup() {
@@ -858,6 +905,7 @@ handle_tgbot_command() {
         *)
             echo -e "  ${BOLD}Телеграм-бот:${NC}"
             echo -e "    ${GREEN}tgbot install${NC}      Установить или переустановить"
+            echo -e "      ${DIM}--token <токен> --admin <id> — без вопросов${NC}"
             echo -e "    ${GREEN}tgbot setup${NC}        Задать токен и администратора заново"
             echo -e "    ${GREEN}tgbot status${NC}       Состояние (--json для машинного вывода)"
             echo -e "    ${GREEN}tgbot set${NC} K V      Уведомления и таймеры (notify.*, intervals.*, autobackup.*)"
