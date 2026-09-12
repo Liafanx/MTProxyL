@@ -637,6 +637,7 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script stats reset user *
 # пользуются телеграм-бот и меню, а панель только показывает и просит проверить.
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability status --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability details
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script availability history
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability check --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability on
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability off
@@ -1111,7 +1112,7 @@ do_install() {
           SELFMASK_DOMAIN_DETECTED=$(printf '%s' "$_selfmask_json" \
             | sed -n 's/.*"domain"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
           if [ -n "$SELFMASK_DOMAIN_DETECTED" ]; then
-            printf '  3) Через домен Selfmask (%s) — скрытый случайный путь, внешний порт панели закрыт\n' \
+            printf '  3) Через домен Selfmask (%s) — случайный путь + вход по логину и паролю, внешний порт закрыт\n' \
               "$SELFMASK_DOMAIN_DETECTED"
           fi
           ;;

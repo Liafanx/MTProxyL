@@ -58,6 +58,21 @@ fi
 (cd "$panel_repo" && go build -ldflags='-s -w -X main.version=e2e' -o "$test_dir/panel" .)
 password_hash=$(printf 'panel-test-password\n' | "$test_dir/panel" hash-password)
 mkdir -p "$test_dir/panel-config" "$test_dir/data"
+history_limit_file="$test_dir/history-limit"
+printf '1000\n' > "$history_limit_file"
+cat > "$test_dir/mtproxyl.sh" <<EOF
+#!/bin/sh
+if [ "\$1" = availability ] && [ "\$2" = history ]; then
+    printf '{"limit":%s,"points":[{"checked_at":"2026-09-12T00:00:00Z","target":"proxy.example.com:443","level":"yellow","percentage":75,"success_probes":18,"total_probes":24,"measurement_id":"m1","error":""}]}\n' "\$(cat "$history_limit_file")"
+    exit 0
+fi
+if [ "\$1" = settings ] && [ "\$2" = set ] && [ "\$3" = AVAILABILITY_HISTORY_LIMIT ]; then
+    printf '%s\n' "\$4" > "$history_limit_file"
+    exit 0
+fi
+exit 1
+EOF
+chmod 700 "$test_dir/mtproxyl.sh"
 cat > "$test_dir/panel-config/config.toml" <<EOF
 listen = "127.0.0.1:${panel_port}"
 base_path = "${base_path}"
@@ -71,6 +86,12 @@ username = "admin"
 password_hash = "${password_hash}"
 jwt_secret = "0123456789abcdef0123456789abcdef"
 session_ttl = "1h"
+
+[mtproxyl]
+enabled = true
+script_path = "$test_dir/mtproxyl.sh"
+install_dir = "$test_dir/state"
+use_sudo = false
 ${panel_tls_block}
 EOF
 
@@ -135,6 +156,15 @@ wrong_code=$(curl "${curl_common[@]}" --output /dev/null --write-out '%{http_cod
 asset=$(find "$panel_repo/dist/assets" -maxdepth 1 -type f | head -1)
 curl "${curl_common[@]}" --fail --output /dev/null "${base_url}/assets/$(basename "$asset")"
 
+# Случайный путь скрывает страницу, но не заменяет логин и пароль: никакой
+# защищённый API не должен отвечать до создания сессии.
+unauth_me=$(curl "${curl_common[@]}" --output /dev/null --write-out '%{http_code}' "${base_url}/api/auth/me")
+unauth_data=$(curl "${curl_common[@]}" --output /dev/null --write-out '%{http_code}' "${base_url}/api/users/defaults")
+unauth_history=$(curl "${curl_common[@]}" --output /dev/null --write-out '%{http_code}' "${base_url}/api/availability/history")
+[ "$unauth_me" = "401" ]
+[ "$unauth_data" = "401" ]
+[ "$unauth_history" = "401" ]
+
 cookie_jar="$test_dir/cookies.txt"
 curl "${curl_common[@]}" --fail --dump-header "$test_dir/login.headers" \
     --cookie-jar "$cookie_jar" -H 'Content-Type: application/json' \
@@ -145,6 +175,14 @@ grep -qi "Set-Cookie: session=.*Path=${base_path}/.*HttpOnly.*Secure.*SameSite=S
 grep -qi '^Strict-Transport-Security:' "$test_dir/login.headers"
 curl "${curl_common[@]}" --fail --cookie "$cookie_jar" "${base_url}/api/auth/me" \
     | jq -e '.ok == true and .data.username == "admin"' >/dev/null
+curl "${curl_common[@]}" --fail --cookie "$cookie_jar" "${base_url}/api/availability/history" \
+    | jq -e '.ok == true and .data.limit == 1000 and .data.points[0].success_probes == 18 and .data.points[0].total_probes == 24' >/dev/null
+curl "${curl_common[@]}" --fail --cookie "$cookie_jar" -H 'Content-Type: application/json' \
+    -X PUT --data '{"limit":250}' "${base_url}/api/availability/history" \
+    | jq -e '.ok == true and .data.limit == 250' >/dev/null
+invalid_limit=$(curl "${curl_common[@]}" --cookie "$cookie_jar" -H 'Content-Type: application/json' \
+    -X PUT --data '{"limit":0}' --output /dev/null --write-out '%{http_code}' "${base_url}/api/availability/history")
+[ "$invalid_limit" = "400" ]
 
 # Проверяем, что Upgrade/Connection проходят через тот же location. Сырой
 # клиент читает только HTTP-заголовок и не зависает на открытом WebSocket.

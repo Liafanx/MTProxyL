@@ -1030,6 +1030,7 @@ panel_selfmask_enable() {
     log_success "Панель доступна через сертификат и домен Selfmask"
     log_info "Адрес: $(panel_public_url)"
     log_info "Токен пути: ${PANEL_SELFMASK_PATH#/}"
+    log_info "Вход: обычные логин и пароль панели"
     log_info "Порт панели снаружи закрыт: backend слушает только ${_local_listen}"
 }
 
@@ -1089,6 +1090,7 @@ panel_selfmask_status() {
             log_success "Доступ через Selfmask включён"
             log_info "Адрес: $(panel_public_url)"
             log_info "Токен пути: ${PANEL_SELFMASK_PATH#/}"
+            log_info "Вход: обычные логин и пароль панели"
         else
             log_warn "Маршрут панели настроен, но Selfmask в текущем режиме выключен"
             log_info "Панель пока доступна только на локальном backend"

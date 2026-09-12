@@ -171,6 +171,7 @@ session_ttl = "24h"
 #   mtproxyl settings set AVAILABILITY_INTERVAL 15   # период, минут
 #   mtproxyl settings set AVAILABILITY_PROBES 20     # зондов на проверку
 #   mtproxyl settings set AVAILABILITY_THRESHOLD 50  # порог уведомления, %
+#   mtproxyl settings set AVAILABILITY_HISTORY_LIMIT 1000 # точек на графике
 #   mtproxyl availability token <токен>              # квота 250 → 500 в час
 # api_token = "gp_xxxxxxxxxxxxxxxxxxxx"
 # override_host = "my-proxy.example.com"

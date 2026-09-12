@@ -147,6 +147,7 @@ tui_availability_menu() {
         echo -e "  ${CYAN}[6]${NC}  Что проверять ${DIM}(адрес, порт, SNI)${NC}"
         echo -e "  ${CYAN}[7]${NC}  Токен Globalping ${DIM}($([ -n "$(availability_token)" ] && echo "задан, лимит 500/ч" || echo "нет, лимит 250/ч"))${NC}"
         echo -e "  ${CYAN}[8]${NC}  Показать все зонды последней проверки"
+        echo -e "  ${CYAN}[9]${NC}  Размер истории ${DIM}($(availability_history_limit) проверок)${NC}"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -191,6 +192,10 @@ tui_availability_menu() {
             8)
                 _tui_availability_probes
                 press_any_key
+                ;;
+            9)
+                local _v; read_line _v "  ${BOLD}Хранить проверок (1-100000)${NC} ${DIM}(текущее $(availability_history_limit))${NC}: "
+                [ -n "$_v" ] && { settings_set_param AVAILABILITY_HISTORY_LIMIT "$_v"; press_any_key; }
                 ;;
             0|"") return ;;
         esac

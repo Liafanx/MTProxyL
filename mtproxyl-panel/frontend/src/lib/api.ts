@@ -839,6 +839,15 @@ export interface AvailabilityResult {
   error?: string;
 }
 
+/** Короткая точка истории: без тяжёлого списка отдельных зондов. */
+export type AvailabilityHistoryPoint = Omit<AvailabilityResult, 'probes'>;
+
+export interface AvailabilityHistoryResponse {
+  /** Текущий предел хранения в MTProxyL. */
+  limit: number;
+  points: AvailabilityHistoryPoint[];
+}
+
 /** Часовая квота Globalping: один зонд — один кредит. */
 export interface AvailabilityQuota {
   budget: number;
@@ -860,6 +869,8 @@ export interface AvailabilitySchedule {
   probes?: number;
   /** Порог доступности для уведомления в телеграм-боте, %. */
   threshold?: number;
+  /** Сколько последних проверок хранит MTProxyL. */
+  history_limit?: number;
   /** Время следующей проверки, RFC3339. Пусто, если таймер не запущен. */
   next_run?: string;
 }
@@ -898,6 +909,14 @@ export const availabilityApi = {
   status: () => request<AvailabilityStatusResponse>(AVAILABILITY_BASE, '/status'),
   /** Полный результат со списком зондов. */
   details: () => request<AvailabilityDetailsResponse>(AVAILABILITY_BASE, '/details'),
+  /** Компактная история для графика. */
+  history: () => request<AvailabilityHistoryResponse>(AVAILABILITY_BASE, '/history'),
+  /** Изменить число хранимых проверок; уменьшение применяется сразу. */
+  setHistoryLimit: (limit: number) =>
+    request<AvailabilityHistoryResponse>(AVAILABILITY_BASE, '/history', {
+      method: 'PUT',
+      body: JSON.stringify({ limit }),
+    }),
   /** Проверить прямо сейчас. Сервер может отказать: каждый зонд стоит квоты. */
   check: () =>
     request<AvailabilityDetailsResponse>(AVAILABILITY_BASE, '/check', { method: 'POST' }),
