@@ -217,7 +217,13 @@ tui_settings_menu() {
                 [ "$PROXY_PROTOCOL" = "true" ] && PROXY_PROTOCOL="false" || PROXY_PROTOCOL="true"
                 if [ "$PROXY_PROTOCOL" = "true" ]; then
                     echo -en "  ${BOLD}Доверенные CIDR (через запятую):${NC} "; local cidrs; read_line cidrs
-                    PROXY_PROTOCOL_TRUSTED_CIDRS="$cidrs"
+                    if [ -z "${cidrs//[[:space:]]/}" ] || ! _validate_cidr_list "$cidrs" >/dev/null 2>&1; then
+                        log_error "Нужен непустой список CIDR, например 127.0.0.1/32,10.0.0.5/32"
+                        PROXY_PROTOCOL="false"
+                        PROXY_PROTOCOL_TRUSTED_CIDRS=""
+                    else
+                        PROXY_PROTOCOL_TRUSTED_CIDRS="$cidrs"
+                    fi
                 else PROXY_PROTOCOL_TRUSTED_CIDRS=""; fi
                 save_settings; log_success "PROXY protocol: ${PROXY_PROTOCOL}"
                 is_proxy_running && { load_secrets; restart_proxy_container || true; }

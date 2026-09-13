@@ -428,8 +428,8 @@ generate_telemt_config() {
     local metrics_port="${PROXY_METRICS_PORT:-9090}"
     local api_port="${PROXY_API_PORT:-9091}"
 
-    # При включённом WEB порт PROXY_PORT занимает nginx и разводит по SNI, а
-    # движок уходит на loopback. Явные listener'ы отменяют legacy-поля [server]
+    # При включённом WEB порт PROXY_PORT занимает frontend и разводит по SNI, а
+    # движок уходит на приватные listener'ы. Явные listener'ы отменяют legacy-поля [server]
     # целиком, поэтому MTProxy-listener приходится перечислять тоже.
     local web_listeners=""
     if web_is_enabled; then
@@ -464,6 +464,7 @@ port = ${port}
 listen_addr_ipv4 = "0.0.0.0"
 listen_addr_ipv6 = "::"
 proxy_protocol = ${PROXY_PROTOCOL:-false}
+$(web_is_enabled && web_proxy_protocol_trusted_toml)
 metrics_listen = "127.0.0.1:${metrics_port}"
 metrics_whitelist = ["127.0.0.1/32", "::1/128"]
 ${web_listeners}

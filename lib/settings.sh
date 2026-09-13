@@ -115,7 +115,9 @@ WEB_PUBLIC_PORT="443"       # публичный порт встроенного
 WEB_DOMAIN=""
 WEB_CARRIER="websocket"        # https|https-lanes|websocket|websocket-lanes
 WEB_SECRET_MODE="dd"        # plain|dd, ee движок в WEB не поддерживает
+WEB_LISTEN_ADDR="127.0.0.1" # интерфейс plain HTTP listener'а telemt
 WEB_LISTEN_PORT="15080"     # приватный listener telemt, transport = "web"
+WEB_TRUSTED_PROXY_CIDRS="127.0.0.1/32" # кто может передавать X-Forwarded-For
 WEB_TLS_PORT="15444"        # приватный TLS frontend shared
 WEB_MTPROXY_PORT="15443"    # куда nginx отдаёт FakeTLS после разбора SNI
 WEB_HAPROXY_CERT=""          # PEM с сертификатом и ключом для готового фрагмента
@@ -255,7 +257,9 @@ WEB_PUBLIC_PORT='${WEB_PUBLIC_PORT}'
 WEB_DOMAIN='${WEB_DOMAIN}'
 WEB_CARRIER='${WEB_CARRIER}'
 WEB_SECRET_MODE='${WEB_SECRET_MODE}'
+WEB_LISTEN_ADDR='${WEB_LISTEN_ADDR}'
 WEB_LISTEN_PORT='${WEB_LISTEN_PORT}'
+WEB_TRUSTED_PROXY_CIDRS='${WEB_TRUSTED_PROXY_CIDRS}'
 WEB_TLS_PORT='${WEB_TLS_PORT}'
 WEB_MTPROXY_PORT='${WEB_MTPROXY_PORT}'
 WEB_HAPROXY_CERT='${WEB_HAPROXY_CERT}'
@@ -507,7 +511,8 @@ load_settings() {
                 PANEL_SELFMASK_ENABLED|PANEL_SELFMASK_PATH|PANEL_SELFMASK_PREV_LISTEN|\
                 PANEL_SELFMASK_PREV_BASE_PATH|\
                 WEB_ENABLED|WEB_FRONTEND|WEB_LAYOUT|WEB_PUBLIC_PORT|WEB_DOMAIN|WEB_CARRIER|WEB_SECRET_MODE|\
-                WEB_LISTEN_PORT|WEB_TLS_PORT|WEB_MTPROXY_PORT|\
+                WEB_LISTEN_ADDR|WEB_LISTEN_PORT|WEB_TRUSTED_PROXY_CIDRS|\
+                WEB_TLS_PORT|WEB_MTPROXY_PORT|\
                 WEB_HAPROXY_CERT|\
                 WEB_DECOY_MODE|WEB_DECOY_DIR|WEB_DECOY_UPSTREAM|WEB_DEBUG|WEB_FP_SEED|\
                 WEB_ONLY_PREV_NFT|WEB_ONLY_PREV_ZAPRET2|\
@@ -541,6 +546,10 @@ load_settings() {
     [[ "$FAKE_CERT_LEN" =~ ^[0-9]+$ ]] && [ "$FAKE_CERT_LEN" -ge 512 ] || FAKE_CERT_LEN=2048
     [[ "$PROXY_CONCURRENCY" =~ ^[0-9]+$ ]] || PROXY_CONCURRENCY=8192
     [[ "$PROXY_PROTOCOL" == "true" ]] || PROXY_PROTOCOL="false"
+    if [ -n "$PROXY_PROTOCOL_TRUSTED_CIDRS" ] \
+       && ! _validate_cidr_list "$PROXY_PROTOCOL_TRUSTED_CIDRS" >/dev/null 2>&1; then
+        PROXY_PROTOCOL_TRUSTED_CIDRS=""
+    fi
     [[ "$GEOBLOCK_MODE" == "whitelist" ]] || GEOBLOCK_MODE="blacklist"
     case "$UNKNOWN_SNI_ACTION" in
         mask|drop|accept|reject_handshake) ;;
@@ -601,6 +610,9 @@ load_settings() {
         empty|static_directory|http_upstream) ;;
         *) WEB_DECOY_MODE="empty" ;;
     esac
+    _validate_web_listen_addr "$WEB_LISTEN_ADDR" >/dev/null 2>&1 || WEB_LISTEN_ADDR="127.0.0.1"
+    _validate_web_trusted_proxy_cidrs "$WEB_TRUSTED_PROXY_CIDRS" >/dev/null 2>&1 \
+        || WEB_TRUSTED_PROXY_CIDRS="127.0.0.1/32"
     [[ "$WEB_LISTEN_PORT" =~ ^[0-9]+$ ]] && [ "$WEB_LISTEN_PORT" -ge 1 ] && [ "$WEB_LISTEN_PORT" -le 65535 ] || WEB_LISTEN_PORT="15080"
     [[ "$WEB_TLS_PORT" =~ ^[0-9]+$ ]] && [ "$WEB_TLS_PORT" -ge 1 ] && [ "$WEB_TLS_PORT" -le 65535 ] || WEB_TLS_PORT="15444"
     [[ "$WEB_MTPROXY_PORT" =~ ^[0-9]+$ ]] && [ "$WEB_MTPROXY_PORT" -ge 1 ] && [ "$WEB_MTPROXY_PORT" -le 65535 ] || WEB_MTPROXY_PORT="15443"

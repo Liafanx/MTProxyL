@@ -1311,16 +1311,35 @@ SYN-лимитер фильтруются по порту прокси и WEB н
 ### Внешний HAProxy
 
 Режим `WEB_FRONTEND=haproxy` предназначен для уже установленного HAProxy на
-той же машине. MTProxyL не меняет его файлы, не запускает службу и не управляет
-сертификатом. Он поднимает WEB-listener на `127.0.0.1:WEB_LISTEN_PORT` и выдаёт
-готовый фрагмент:
+этой либо отдельной машине. MTProxyL не меняет его файлы, не запускает службу
+и не управляет сертификатом. По умолчанию приватные listener'ы остаются на
+`127.0.0.1`; для HAProxy на другом узле задайте конкретный адрес приватного
+интерфейса сервера MTProxyL и CIDR непосредственного HAProxy:
 
 ```bash
 mtproxyl web set WEB_FRONTEND haproxy
 mtproxyl web set WEB_HAPROXY_CERT /etc/haproxy/certs/web.example.com.pem
+mtproxyl web set WEB_LISTEN_ADDR 10.20.30.40
+mtproxyl web set WEB_TRUSTED_PROXY_CIDRS 10.20.30.5/32
 mtproxyl web haproxy-config
 mtproxyl web enable
 ```
+
+`WEB_LISTEN_ADDR` принимает IPv4, включая `0.0.0.0`, но для удалённого HAProxy
+лучше указывать точный частный адрес: тогда готовый фрагмент сразу содержит
+правильную цель backend. Plain HTTP-порт telemt нельзя открывать в недоверенную
+сеть — ограничьте его firewall адресом HAProxy. Список
+`WEB_TRUSTED_PROXY_CIDRS` обязан быть непустым, сеть `/0` запрещена; только от
+этих прямых peer telemt принимает клиентский `X-Forwarded-For`.
+[Официальное описание `server.listeners`](https://github.com/telemt/telemt/blob/main/docs/Config_params/CONFIG_PARAMS.ru.md#serverlisteners)
+задаёт ту же границу доверия и отдельно запрещает публиковать plain HTTP
+listener в недоверенной сети.
+
+В `shared` на том же адресе поднимается приватный MTProxy-listener. Его список
+доверия PROXY protocol автоматически берётся из
+`PROXY_PROTOCOL_TRUSTED_CIDRS`, а если тот не задан — из
+`WEB_TRUSTED_PROXY_CIDRS`. Локальная схема не меняется: при значениях по
+умолчанию все backend остаются на loopback.
 
 В WEB-only и `split` HAProxy терминирует публичный TLS и передаёт обычный
 HTTP/1.1 прямо в telemt. В `shared` публичный frontend работает в TCP mode:
@@ -2506,6 +2525,13 @@ TCP keepalive 45s, BBR, расширенные очереди. Меню: `[7] �
 `[web.timeouts]` и 9 в `[web.debug]`. `[web] enabled` и `carrier` сюда не входят —
 ими владеет `mtproxyl web`. Вся таблица `[web.limits]` применяется только
 перезапуском движка, о чём каталог предупреждает пометкой hot-reload.
+
+В `server.listeners` доступны также `transport`, `web_client_ip_source` и
+`web_trusted_proxy_cidrs`. Два WEB-only параметра применяются именно к первому
+listener'у с `transport = "web"`, а не к соседнему MTProxy-listener'у. Поэтому
+их можно безопасно задать через экспертный раздел и в режиме MTProto + WEB;
+если WEB выключен, override сохраняется до его включения и не создаёт неполную
+секцию listener'а.
 
 **Параметры вне каталога.** У telemt есть секции-таблицы, ключи которых заранее
 не перечислить — их задаёт сам пользователь. Такие пары каталог описать не

@@ -123,6 +123,7 @@ _catalog "server" "client_mss"                   "string" ""      "✘" "custom:
 _catalog "server" "client_mss_bulk"              "string" ""      "✘" "custom:_validate_client_mss"           "extreme-low/tspu/2in8/88..4096"     "MSS для bulk-фазы после handshake; handshake остаётся на client_mss"
 _catalog "server" "proxy_protocol"               "bool"   "false" "✘" "bool"                                  "true/false"                         "Включить PROXY protocol от HAProxy"
 _catalog "server" "proxy_protocol_header_timeout_ms" "u64" "500"  "✘" "range:1:60000"                         "миллисекунды > 0"                   "Таймаут чтения PROXY-заголовка"
+_catalog "server" "proxy_protocol_trusted_cidrs" "string[]" ""    "✘" "custom:_validate_cidr_list"            "127.0.0.1/32,10.0.0.5/32"          "CIDR, которым разрешено передавать PROXY protocol"
 _catalog "server" "metrics_port"                 "u16"    ""      "✘" "range:1:65535"                         "1..65535"                           "Порт endpoint метрик Prometheus"
 _catalog "server" "metrics_listen"               "string" ""      "✘" "custom:_validate_ipport"               "IP:PORT"                            "Полный адрес метрик (переопределяет metrics_port)"
 _catalog "server" "metrics_whitelist"            "string[]" "127.0.0.1/32,::1/128" "✘" "custom:_validate_cidr_list" "127.0.0.1/32,::1/128"        "CIDR, которым разрешён доступ к метрикам"
@@ -332,6 +333,9 @@ _catalog "server.listeners" "announce"                    "string" ""      "✘"
 _catalog "server.listeners" "announce_ip"                 "string" ""      "✘" "any"                                  "IP-адрес (устарел, см. announce)"   "Устаревший — используйте announce"
 _catalog "server.listeners" "proxy_protocol"              "bool"   ""      "✘" "bool"                                 "true/false или пусто = server.*"    "Override PROXY protocol для listener'а"
 _catalog "server.listeners" "reuse_allow"                 "bool"   "false" "✘" "bool"                                 "true/false"                         "SO_REUSEPORT для совместного использования порта"
+_catalog "server.listeners" "transport"                   "enum"   "mtproxy" "✘" "enum:mtproxy,web"                    "mtproxy/web"                        "Транспорт listener'а"
+_catalog "server.listeners" "web_client_ip_source"        "enum"   "x_forwarded_for" "✘" "enum:x_forwarded_for"             "x_forwarded_for"                    "Источник IP WEB-клиента; применяется к WEB-listener'у"
+_catalog "server.listeners" "web_trusted_proxy_cidrs"     "string[]" ""    "✘" "custom:_validate_web_trusted_proxy_cidrs" "127.0.0.1/32,10.0.0.5/32"       "Доверенные прямые nginx/HAProxy для WEB-listener'а; непусто, /0 запрещён"
 
 # ── upstreams ─────────────────────────────────────────────────
 # Upstreams — только через nano, это массив таблиц TOML

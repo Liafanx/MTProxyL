@@ -15,6 +15,12 @@ web_frontend_is_haproxy() { [ "${WEB_FRONTEND:-nginx}" = "haproxy" ]; }
 # nginx MTProxyL: клиент приходит в него по PROXY protocol с приватного порта.
 web_frontend_is_haproxy_nginx() { [ "${WEB_FRONTEND:-nginx}" = "haproxy-nginx" ]; }
 web_frontend_has_haproxy() { web_frontend_is_haproxy || web_frontend_is_haproxy_nginx; }
+# При direct HAProxy на другом узле публичный DNS закономерно указывает на него,
+# а не на сервер MTProxyL. Нелокальный bind — явный признак такой схемы.
+web_dns_must_point_to_this_server() {
+    web_frontend_is_haproxy && [ "${WEB_LISTEN_ADDR:-127.0.0.1}" != "127.0.0.1" ] && return 1
+    return 0
+}
 web_frontend_title() {
     if web_frontend_is_haproxy; then echo "внешний HAProxy"
     elif web_frontend_is_haproxy_nginx; then echo "внешний HAProxy → nginx MTProxyL"
@@ -91,6 +97,39 @@ _web_ensure_404() {
 
 # Домен маскировки FakeTLS — с ним WEB совпасть не может.
 web_faketls_domain() { echo "${PROXY_DOMAIN:-${SELFMASK_DOMAIN:-}}"; }
+
+# Адрес 0.0.0.0 годится только для bind. Локальные nginx/HAProxy и проверки
+# должны подключаться к loopback; при конкретном частном адресе используют его.
+web_listener_connect_addr() {
+    [ "${WEB_LISTEN_ADDR:-127.0.0.1}" = "0.0.0.0" ] \
+        && echo "127.0.0.1" || echo "${WEB_LISTEN_ADDR:-127.0.0.1}"
+}
+
+# settings.conf хранит список без TOML-скобок и кавычек. Валидатор не допускает
+# кавычек и пробелов внутри элемента, поэтому здесь достаточно безопасно
+# разложить CSV в строковый массив.
+web_trusted_proxy_cidrs_toml() {
+    local _raw="${1:-${WEB_TRUSTED_PROXY_CIDRS:-127.0.0.1/32}}" _item _out=""
+    local -a _items=()
+    local _old_ifs="$IFS"
+    IFS=',' read -ra _items <<< "$_raw"
+    IFS="$_old_ifs"
+    for _item in "${_items[@]}"; do
+        _item="${_item//[[:space:]]/}"
+        [ -n "$_out" ] && _out+=", "
+        _out+="\"${_item}\""
+    done
+    printf '[%s]' "$_out"
+}
+
+# В shared обычный MTProxy-listener тоже принимает PROXY protocol от того же
+# frontend. Явный trust list закрывает подмену клиентского IP, особенно когда
+# HAProxy находится не на этой машине. Отдельная общая настройка имеет приоритет.
+web_proxy_protocol_trusted_toml() {
+    mtproto_is_enabled && ! web_layout_is_split || return 0
+    local _cidrs="${PROXY_PROTOCOL_TRUSTED_CIDRS:-${WEB_TRUSTED_PROXY_CIDRS:-127.0.0.1/32}}"
+    printf 'proxy_protocol_trusted_cidrs = %s\n' "$(web_trusted_proxy_cidrs_toml "$_cidrs")"
+}
 
 # Каталог отдельного сертификата WEB. Он появляется, только если общий с
 # Selfmask выпустить не удалось: тогда имена развязываются, и проблема с одним
@@ -209,7 +248,7 @@ web_public_addr() {
 # Клиент ходит в WEB только на 443 и порт в ссылку не пишет.
 web_port_is_443() { [ "$(web_public_port)" = "443" ]; }
 
-# В shared движок слушает MTProxy на loopback и в свои tg://-ссылки пишет
+# В shared движок слушает MTProxy на приватном адресе и в свои tg://-ссылки пишет
 # именно этот приватный порт. Публичный держит nginx — его и подставляем через
 # [general.links] public_port. В split движок и так стоит на публичном порту.
 web_link_public_port() {
@@ -273,7 +312,7 @@ TOML
         cat << TOML
 
 [[server.listeners]]
-ip = "127.0.0.1"
+ip = "${WEB_LISTEN_ADDR:-127.0.0.1}"
 port = ${WEB_MTPROXY_PORT:-15443}
 transport = "mtproxy"
 proxy_protocol = true
@@ -282,13 +321,13 @@ TOML
     cat << TOML
 
 [[server.listeners]]
-ip = "127.0.0.1"
+ip = "${WEB_LISTEN_ADDR:-127.0.0.1}"
 port = ${WEB_LISTEN_PORT:-15080}
 transport = "web"
 proxy_protocol = false
 reuse_allow = false
 web_client_ip_source = "x_forwarded_for"
-web_trusted_proxy_cidrs = ["127.0.0.1/32"]
+web_trusted_proxy_cidrs = $(web_trusted_proxy_cidrs_toml)
 TOML
 }
 
@@ -406,9 +445,10 @@ web_nginx_stream_block() {
     web_frontend_is_direct && return 0
     # За HAProxy по SNI разводит он сам — nginx получает уже свою ветку.
     web_frontend_is_haproxy_nginx && return 0
-    local _domain _port _listen6=""
+    local _domain _port _listen6="" _connect
     _domain=$(web_domain) || return 1
     _port="${PROXY_PORT:-443}"
+    _connect=$(web_listener_connect_addr)
     web_nginx_ipv6_available && _listen6="        listen [::]:${_port};"
     cat << NGX
 stream {
@@ -418,7 +458,7 @@ stream {
     }
 
     upstream mtproxyl_web     { server 127.0.0.1:${WEB_TLS_PORT:-15444}; }
-    upstream mtproxyl_faketls { server 127.0.0.1:${WEB_MTPROXY_PORT:-15443}; }
+    upstream mtproxyl_faketls { server ${_connect}:${WEB_MTPROXY_PORT:-15443}; }
 
     server {
         listen ${_port};
@@ -499,8 +539,9 @@ https_haproxy_headers() {
 
 web_nginx_http_server() {
     web_uses_managed_nginx || return 0
-    local _domain _cert_dir _listen _realip=""
+    local _domain _cert_dir _listen _realip="" _web_connect
     _domain=$(web_domain) || return 1
+    _web_connect=$(web_listener_connect_addr)
     # Общий каталог приходит аргументом, но у WEB может быть свой сертификат.
     _cert_dir=$(web_cert_dir 2>/dev/null)
     [ -n "$_cert_dir" ] || _cert_dir="$1"
@@ -549,7 +590,7 @@ web_nginx_http_server() {
         client_max_body_size 2m;
 
         location / {
-            proxy_pass http://127.0.0.1:${WEB_LISTEN_PORT:-15080};
+            proxy_pass http://${_web_connect}:${WEB_LISTEN_PORT:-15080};
             proxy_http_version 1.1;
             proxy_set_header Host \$host;
             proxy_set_header X-Forwarded-For \$remote_addr;
@@ -699,11 +740,12 @@ HAP
 }
 
 web_haproxy_config() {
-    local _domain _cert _csp
+    local _domain _cert _csp _web_connect
     _domain=$(web_domain 2>/dev/null) || return 1
     [ -n "$_domain" ] || { log_error "Сначала задайте WEB_DOMAIN"; return 1; }
     _cert=$(web_haproxy_cert)
     _csp=$(web_csp_policy)
+    _web_connect=$(web_listener_connect_addr)
 
     if web_frontend_is_haproxy_nginx; then
         _web_haproxy_nginx_config "$_domain"
@@ -736,7 +778,7 @@ backend mtproxyl_mtproto
     retries 0
     timeout connect 5s
     timeout server 300s
-    server mtproxyl_mtproto_1 127.0.0.1:${WEB_MTPROXY_PORT:-15443} send-proxy
+    server mtproxyl_mtproto_1 ${_web_connect}:${WEB_MTPROXY_PORT:-15443} send-proxy
 
 frontend mtproxyl_web_https
     bind 127.0.0.1:${WEB_TLS_PORT:-15444} accept-proxy ssl crt ${_cert} alpn h2,http/1.1
@@ -763,7 +805,7 @@ backend mtproxyl_web
     http-response set-header X-Frame-Options SAMEORIGIN
     http-response set-header Referrer-Policy no-referrer
     $(https_haproxy_headers)
-    server mtproxyl_web_1 127.0.0.1:${WEB_LISTEN_PORT:-15080} check
+    server mtproxyl_web_1 ${_web_connect}:${WEB_LISTEN_PORT:-15080} check
 HAP
         return 0
     fi
@@ -797,7 +839,7 @@ backend mtproxyl_web
     http-response set-header X-Frame-Options SAMEORIGIN
     http-response set-header Referrer-Policy no-referrer
     $(https_haproxy_headers)
-    server mtproxyl_web_1 127.0.0.1:${WEB_LISTEN_PORT:-15080} check
+    server mtproxyl_web_1 ${_web_connect}:${WEB_LISTEN_PORT:-15080} check
 HAP
 }
 
@@ -858,7 +900,7 @@ _web_static_snapshot_ready() {
         _code=$(curl -sS --noproxy '*' --connect-timeout 1 --max-time 2 --head -o /dev/null \
             -w '%{http_code}' -H "Host: ${_domain}" \
             -H 'X-Forwarded-For: 198.51.100.10' \
-            "http://127.0.0.1:${WEB_LISTEN_PORT:-15080}${_path}" 2>/dev/null) || _code="000"
+            "http://$(web_listener_connect_addr):${WEB_LISTEN_PORT:-15080}${_path}" 2>/dev/null) || _code="000"
         if [ "$_code" != "200" ]; then
             WEB_STATIC_SNAPSHOT_FAILURE="${_path} (HTTP ${_code})"
             return 1
@@ -1071,11 +1113,11 @@ web_enable() {
     fi
 
     if web_is_only_mode; then
-        log_info "WEB listener запускается на loopback, $(web_frontend_title) принимает публичный :443..."
+        log_info "WEB listener запускается на ${WEB_LISTEN_ADDR:-127.0.0.1}, $(web_frontend_title) принимает публичный :443..."
     elif web_layout_is_split; then
         log_info "Прокси остаётся на порту ${PROXY_PORT:-443}, WEB принимает $(web_frontend_title) на :443..."
     else
-        log_info "Движок уходит с порта ${PROXY_PORT:-443} на loopback..."
+        log_info "Движок уходит с порта ${PROXY_PORT:-443} на ${WEB_LISTEN_ADDR:-127.0.0.1}..."
     fi
     generate_telemt_config || {
         _web_restore_runtime "$_old_mode" "$_old_enabled" "$_old_running"
@@ -1292,17 +1334,22 @@ web_preflight_problems() {
     if mtproto_is_enabled && ! web_layout_is_split && [ -n "$_d" ] && [ "$_d" = "$_ft" ]; then
         _p+="домен WEB совпадает с доменом маскировки ${_ft} — в раскладке shared нужны разные имена"$'\n'
     fi
-    # Сверяем с адресом сервера, а не с самим доменом: без этого проверка
-    # проходила всегда, а Let's Encrypt потом упирался в неподтверждаемый домен.
+    # Для нашего nginx и локального HAProxy DNS обязан вести на этот сервер.
+    # При HAProxy на отдельном узле он закономерно ведёт на frontend, а не на
+    # backend MTProxyL: там проверяем только наличие публичной A-записи.
     if [ -n "$_d" ]; then
         local _dips _dip_label _sip
         _dips=$(web_domain_ips 2>/dev/null)
         _sip=$(web_server_ip 2>/dev/null)
-        if [ -z "$_sip" ]; then
+        if [ -z "$_dips" ]; then
+            if web_dns_must_point_to_this_server; then
+                _p+="у домена ${_d} нет A-записи — заведите её у регистратора на ${_sip:-IP этого сервера}"$'\n'
+            else
+                _p+="у домена ${_d} нет A-записи — заведите её на публичный адрес HAProxy"$'\n'
+            fi
+        elif web_dns_must_point_to_this_server && [ -z "$_sip" ]; then
             _p+="не удалось определить публичный адрес сервера — задайте его: mtproxyl ip set <IP>"$'\n'
-        elif [ -z "$_dips" ]; then
-            _p+="у домена ${_d} нет A-записи — заведите её у регистратора на ${_sip}"$'\n'
-        elif ! grep -Fxq "$_sip" <<< "$_dips"; then
+        elif web_dns_must_point_to_this_server && ! grep -Fxq "$_sip" <<< "$_dips"; then
             _dip_label=$(paste -sd, <<< "$_dips")
             _p+="публичная A-запись ${_d} ведёт на ${_dip_label}, а сервер — ${_sip}: исправьте её у регистратора на ${_sip} (если домен за прокси CDN, отключите проксирование)"$'\n'
         fi
@@ -1625,9 +1672,11 @@ _WEB_SETTABLE=(
     "WEB_DOMAIN|custom:_validate_web_domain|Публичный домен WEB Proxy"
     "WEB_CARRIER|enum:https,https-lanes,websocket,websocket-lanes|Транспорт carrier"
     "WEB_SECRET_MODE|enum:plain,dd|Представление секрета в ссылке"
+    "WEB_LISTEN_ADDR|custom:_validate_web_listen_addr|IPv4-адрес WEB и приватного MTProxy-listener'а (127.0.0.1, частный адрес или 0.0.0.0)"
     "WEB_LISTEN_PORT|range:1:65535|Приватный порт listener'а движка"
+    "WEB_TRUSTED_PROXY_CIDRS|custom:_validate_web_trusted_proxy_cidrs|Доверенные адреса nginx/HAProxy через запятую; /0 запрещён"
     "WEB_TLS_PORT|range:1:65535|Приватный TLS frontend для shared"
-    "WEB_MTPROXY_PORT|range:1:65535|Порт FakeTLS-listener'а движка на loopback"
+    "WEB_MTPROXY_PORT|range:1:65535|Порт приватного FakeTLS-listener'а движка"
     "WEB_HAPROXY_CERT|custom:_validate_web_haproxy_cert|PEM сертификат + ключ для фрагмента HAProxy"
     "WEB_DECOY_MODE|enum:empty,static_directory,http_upstream|Тип сайта-заглушки"
     "WEB_DECOY_SOURCE|custom:_validate_web_site_source|Шаблон, URL на index.html или папка с сайтом"
@@ -1635,6 +1684,30 @@ _WEB_SETTABLE=(
     "WEB_DECOY_UPSTREAM|custom:_validate_web_upstream|HTTP-origin заглушки"
     "WEB_DEBUG|enum:true,false|Страница диагностики /web-status"
 )
+
+_validate_web_listen_addr() {
+    _validate_ipv4 "$1" >/dev/null 2>&1 || {
+        echo "нужен IPv4-адрес интерфейса, например 127.0.0.1, 10.0.0.2 или 0.0.0.0" >&2
+        return 1
+    }
+}
+
+_validate_web_trusted_proxy_cidrs() {
+    local _v="$1" _item
+    local -a _items=()
+    [ -n "${_v//[[:space:]]/}" ] || {
+        echo "нужен хотя бы один CIDR непосредственного nginx/HAProxy" >&2
+        return 1
+    }
+    _validate_cidr_list "$_v" || return 1
+    IFS=',' read -ra _items <<< "${_v//[[:space:]]/}"
+    for _item in "${_items[@]}"; do
+        [ "${_item##*/}" != "0" ] || {
+            echo "сеть /0 запрещена telemt; укажите адрес или подсеть только своего frontend" >&2
+            return 1
+        }
+    done
+}
 
 _validate_web_domain() {
     local _v="$1"

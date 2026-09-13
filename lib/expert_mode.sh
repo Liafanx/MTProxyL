@@ -150,6 +150,69 @@ _apply_expert_overrides() {
             section_header="[$section]"
         fi
 
+        # Эти два ключа telemt разрешает только у transport = "web". В
+        # combined-конфиге первым идёт MTProxy-listener, поэтому обычное
+        # правило «первый блок массива» записало бы ключ не туда и движок
+        # отказался бы стартовать. Буферизуем каждый listener и меняем первый
+        # WEB-блок; пока WEB выключен, override сохраняется, но не создаёт
+        # неполную [[server.listeners]] без обязательного ip.
+        if [ "$section" = "server.listeners" ] \
+           && { [ "$key" = "web_client_ip_source" ] || [ "$key" = "web_trusted_proxy_cidrs" ]; }; then
+            awk -v key="$fk" -v val="$fv" '
+                function flush_listener(    i, line, nfields, fields, is_web, replaced) {
+                    if (block_len == 0) return
+                    is_web = 0
+                    for (i = 1; i <= block_len; i++) {
+                        line = block[i]
+                        sub(/^[[:space:]]+/, "", line)
+                        nfields = split(line, fields, /[[:space:]]+/)
+                        if (nfields >= 3 && fields[1] == "transport" && fields[2] == "=" && fields[3] == "\"web\"")
+                            is_web = 1
+                    }
+                    replaced = 0
+                    for (i = 1; i <= block_len; i++) {
+                        line = block[i]
+                        sub(/^[[:space:]]+/, "", line)
+                        nfields = split(line, fields, /[[:space:]]+/)
+                        if (is_web && !done && nfields >= 2 && fields[1] == key && fields[2] == "=") {
+                            if (!replaced) {
+                                print key " = " val
+                                replaced = 1
+                            }
+                            continue
+                        }
+                        print block[i]
+                    }
+                    if (is_web && !done) {
+                        if (!replaced) print key " = " val
+                        done = 1
+                    }
+                    for (i in block) delete block[i]
+                    block_len = 0
+                }
+
+                /^\[\[server\.listeners\]\]$/ {
+                    flush_listener()
+                    buffering = 1
+                    block[++block_len] = $0
+                    next
+                }
+                buffering && /^\[/ {
+                    flush_listener()
+                    buffering = 0
+                    print
+                    next
+                }
+                buffering {
+                    block[++block_len] = $0
+                    next
+                }
+                { print }
+                END { flush_listener() }
+            ' "$work_file" > "${work_file}.new" && mv "${work_file}.new" "$work_file"
+            continue
+        fi
+
         # Заменить/добавить ключ строго внутри нужной секции
         awk -v sec="$section_header" -v key="$fk" -v val="$fv" '
             BEGIN {
