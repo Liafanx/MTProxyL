@@ -881,8 +881,37 @@ _panel_finish_cert() {
 
 _panel_config_value() {
     local _key="$1" _cfg="${PANEL_CONFIG_DIR}/config.toml"
-    grep -oE "^[[:space:]]*${_key}[[:space:]]*=[[:space:]]*\"[^\"]*\"" "$_cfg" 2>/dev/null \
-        | head -1 | sed 's/.*"\([^"]*\)".*/\1/'
+    # TOML допускает и basic strings в двойных кавычках, и literal strings
+    # в одинарных. Go-парсер панели принимает оба варианта; CLI должен
+    # читать их так же. Нужны только верхнеуровневые listen/base_path, поэтому
+    # после первой TOML-секции поиск прекращаем.
+    awk -v wanted="$_key" '
+        {
+            line = $0
+            sub(/\r$/, "", line)
+        }
+        line ~ /^[[:space:]]*#/ { next }
+        line ~ /^[[:space:]]*\[/ { exit }
+        {
+            equals = index(line, "=")
+            if (!equals) next
+
+            name = substr(line, 1, equals - 1)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+            if (name != wanted) next
+
+            value = substr(line, equals + 1)
+            sub(/^[[:space:]]+/, "", value)
+            quote = substr(value, 1, 1)
+            if (quote != "\"" && quote != "\047") exit
+
+            value = substr(value, 2)
+            closing = index(value, quote)
+            if (!closing) exit
+            print substr(value, 1, closing - 1)
+            exit
+        }
+    ' "$_cfg" 2>/dev/null
 }
 
 # Меняет только два верхнеуровневых параметра, сохраняя владельца, права и
@@ -978,9 +1007,14 @@ panel_selfmask_enable() {
 
     _old_listen=$(_panel_config_value listen)
     _old_base=$(_panel_config_value base_path)
+    if [ -z "$_old_listen" ]; then
+        log_error "Не удалось прочитать listen из ${PANEL_CONFIG_DIR}/config.toml"
+        log_info 'Ожидается строка вида: listen = "0.0.0.0:8080"'
+        return 1
+    fi
     _port="${_old_listen##*:}"
     [[ "$_port" =~ ^[0-9]+$ ]] && [ "$_port" -ge 1 ] && [ "$_port" -le 65535 ] || {
-        log_error "Не удалось определить порт панели из ${PANEL_CONFIG_DIR}/config.toml"
+        log_error "В listen панели указан некорректный порт: ${_old_listen}"
         return 1
     }
     [[ "$_old_base" =~ ^(/[A-Za-z0-9._~/%+:,@=-]*)?$ ]] || {
