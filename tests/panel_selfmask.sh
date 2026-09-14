@@ -69,8 +69,10 @@ generated_path=$(_panel_selfmask_random_path)
 [[ "$generated_path" =~ ^/[0-9a-f]{32}$ ]] || fail 'random path must be a bare 32-character token'
 
 cat > "$PANEL_CONFIG_DIR/config.toml" <<'EOF'
-listen = "0.0.0.0:8080"
-base_path = "/old-panel"
+# Одинарные кавычки — валидный TOML. Панель такой конфиг читает,
+# и panel selfmask on не должен терять из него порт.
+listen = '0.0.0.0:8080' # коммент после значения тоже допустим
+base_path = '/old-panel'
 
 [telemt]
 url = "http://127.0.0.1:9091"
