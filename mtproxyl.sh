@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-#  MTProxyL v1.4.3 — Telegram MTProto Proxy Manager
+#  MTProxyL — Telegram MTProto Proxy Manager
 #  https://github.com/Liafanx/MTProxyL
 #  by LiafanX
 # ═══════════════════════════════════════════════════════════════
@@ -20,7 +20,7 @@ export LC_NUMERIC=C
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="1.6.14"
+VERSION="1.6.15"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
