@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { RefreshCw, ChevronDown, ChevronUp, CheckCircle2, XCircle, ExternalLink, Target } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { RefreshCw, ChevronDown, ChevronUp, CheckCircle2, XCircle, ExternalLink, Target, Activity } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +15,8 @@ import {
   type AvailabilityQuota,
   type AvailabilitySchedule,
   type AvailabilityTargetResponse,
+  type AvailabilityHistoryPoint,
+  type AvailabilityHistoryResponse,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -36,6 +38,9 @@ export function AvailabilityPage() {
   const [quota, setQuota] = useState<AvailabilityQuota | undefined>();
   const [autoCheck, setAutoCheck] = useState(true);
   const [schedule, setSchedule] = useState<AvailabilitySchedule>({});
+  const [history, setHistory] = useState<AvailabilityHistoryPoint[]>([]);
+  const [historyLimit, setHistoryLimit] = useState(1000);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
@@ -53,6 +58,14 @@ export function AvailabilityPage() {
       setSchedule(res);
       setMessage(res.message);
       setError(null);
+      try {
+        const historyRes = await availabilityApi.history();
+        setHistory(historyRes.points ?? []);
+        setHistoryLimit(historyRes.limit || res.history_limit || 1000);
+        setHistoryError(null);
+      } catch (historyErr) {
+        setHistoryError(historyErr instanceof Error ? historyErr.message : 'Не удалось загрузить историю');
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось загрузить результаты проверки');
     } finally {
@@ -115,6 +128,20 @@ export function AvailabilityPage() {
         )}
 
         {enabled && <QuotaBanner quota={quota} />}
+
+        {enabled && (
+          <AvailabilityHistoryCard
+            points={history}
+            limit={historyLimit}
+            threshold={schedule.threshold}
+            error={historyError}
+            onChanged={(next) => {
+              setHistory(next.points ?? []);
+              setHistoryLimit(next.limit);
+              setHistoryError(null);
+            }}
+          />
+        )}
 
         {enabled && <TokenForm hasToken={quota?.has_token ?? false} onSaved={load} />}
 
@@ -518,6 +545,428 @@ function TargetForm({ onSaved }: { onSaved: () => void }) {
       </div>
     </CollapsibleSection>
   );
+}
+
+type HistoryScope = 50 | 200 | 'all';
+
+/**
+ * Временной график строится по проценту, но каждая точка показывает свою
+ * фактическую дробь successful/total. Это важно: число доступных российских
+ * зондов меняется от проверки к проверке и не обязано совпадать с настройкой.
+ */
+function AvailabilityHistoryCard({
+  points,
+  limit,
+  threshold,
+  error,
+  onChanged,
+}: {
+  points: AvailabilityHistoryPoint[];
+  limit: number;
+  threshold?: number;
+  error: string | null;
+  onChanged: (result: AvailabilityHistoryResponse) => void;
+}) {
+  const [scope, setScope] = useState<HistoryScope>(50);
+  const [selected, setSelected] = useState<AvailabilityHistoryPoint | null>(null);
+  const [limitValue, setLimitValue] = useState(String(limit));
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  useEffect(() => setLimitValue(String(limit)), [limit]);
+
+  const ordered = useMemo(
+    () => points
+      .filter((point) => !Number.isNaN(new Date(point.checked_at).getTime()))
+      .slice()
+      .sort((a, b) => new Date(a.checked_at).getTime() - new Date(b.checked_at).getTime()),
+    [points],
+  );
+  const visible = useMemo(
+    () => (scope === 'all' ? ordered : ordered.slice(-scope)),
+    [ordered, scope],
+  );
+  const chartPoints = useMemo(() => compactChartPoints(visible, 2000), [visible]);
+
+  useEffect(() => {
+    setSelected(visible[visible.length - 1] ?? null);
+  }, [visible]);
+
+  const saveLimit = async () => {
+    const next = Number(limitValue);
+    if (!Number.isInteger(next) || next < 1 || next > 100000) {
+      setSaveError('Укажите целое число от 1 до 100000');
+      return;
+    }
+    if (next < limit && ordered.length > next && !window.confirm(
+      `Оставить только ${next} последних проверок? Более старые точки будут удалены без возможности восстановления.`,
+    )) {
+      return;
+    }
+    setSaving(true);
+    setSaveError(null);
+    try {
+      onChanged(await availabilityApi.setHistoryLimit(next));
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Не удалось изменить размер истории');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="p-4 lg:p-5 space-y-4">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h3 className="text-sm font-medium text-text-primary flex items-center gap-2">
+            <Activity size={16} className="text-accent" />
+            История доступности
+          </h3>
+          <p className="text-xs text-text-secondary mt-1">
+            Процент нормализует проверки с разным числом зондов; наведите или нажмите точку,
+            чтобы увидеть фактический результат. Уменьшение лимита удаляет старые точки.
+          </p>
+        </div>
+        <div className="flex items-end gap-2 flex-wrap">
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-text-secondary">Хранить проверок</span>
+            <Input
+              type="number"
+              min={1}
+              max={100000}
+              value={limitValue}
+              onChange={(e) => setLimitValue(e.target.value)}
+              className="w-32 h-9"
+            />
+          </label>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={saving || limitValue === String(limit)}
+            onClick={saveLimit}
+          >
+            {saving ? 'Сохраняем…' : 'Применить'}
+          </Button>
+        </div>
+      </div>
+
+      {saveError && <ErrorAlert message={saveError} />}
+      {error && <ErrorAlert message={`История недоступна: ${error}`} />}
+
+      {!error && ordered.length === 0 ? (
+        <div className="h-40 flex items-center justify-center text-sm text-text-secondary border border-dashed border-border rounded-lg">
+          График появится после первой проверки
+        </div>
+      ) : !error ? (
+        <>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-1" aria-label="Период графика">
+              {([50, 200, 'all'] as HistoryScope[]).map((value) => (
+                <Button
+                  key={String(value)}
+                  size="sm"
+                  variant={scope === value ? 'default' : 'outline'}
+                  onClick={() => setScope(value)}
+                >
+                  {value === 'all' ? 'Все' : `Последние ${value}`}
+                </Button>
+              ))}
+            </div>
+            <span className="text-xs text-text-secondary">
+              Показано {visible.length} из {ordered.length} · лимит {limit}
+            </span>
+          </div>
+
+          <AvailabilityChart points={chartPoints} threshold={threshold} selected={selected} onSelect={setSelected} />
+
+          {chartPoints.length > 1 && (
+            <label className="block">
+              <span className="sr-only">Выбрать точку истории</span>
+              <input
+                type="range"
+                min={0}
+                max={chartPoints.length - 1}
+                value={Math.max(0, chartPoints.indexOf(selected ?? chartPoints[chartPoints.length - 1]))}
+                onChange={(e) => setSelected(chartPoints[Number(e.target.value)])}
+                className="w-full accent-accent cursor-pointer"
+                aria-label="Выбрать точку истории"
+              />
+            </label>
+          )}
+
+          {chartPoints.length < visible.length && (
+            <p className="text-[11px] text-text-secondary">
+              Для быстрого отображения {visible.length} проверок график уплотнён до {chartPoints.length} точек
+              с сохранением минимумов и максимумов каждого периода.
+            </p>
+          )}
+
+          {selected && <HistoryPointSummary point={selected} />}
+        </>
+      ) : null}
+    </Card>
+  );
+}
+
+const CHART_WIDTH = 920;
+const CHART_HEIGHT = 270;
+const CHART_LEFT = 52;
+const CHART_RIGHT = 16;
+const CHART_TOP = 18;
+const CHART_BOTTOM = 38;
+
+// Большую увеличенную историю нельзя превращать в десятки тысяч SVG-узлов:
+// браузер начнёт тормозить при каждом движении мыши. Из каждого временного
+// окна оставляем минимум и максимум в исходном порядке — короткие провалы и
+// восстановления при этом не исчезают.
+function compactChartPoints(points: AvailabilityHistoryPoint[], maxPoints: number): AvailabilityHistoryPoint[] {
+  if (points.length <= maxPoints || maxPoints < 4) return points;
+  const result: AvailabilityHistoryPoint[] = [points[0]];
+  const middle = points.slice(1, -1);
+  const buckets = Math.max(1, Math.floor((maxPoints - 2) / 2));
+  const bucketSize = middle.length / buckets;
+  const value = (point: AvailabilityHistoryPoint) =>
+    point.error || point.total_probes === 0 ? -1 : point.percentage;
+
+  for (let bucket = 0; bucket < buckets; bucket += 1) {
+    const start = Math.floor(bucket * bucketSize);
+    const end = Math.min(middle.length, Math.floor((bucket + 1) * bucketSize));
+    if (start >= end) continue;
+    let minIndex = start;
+    let maxIndex = start;
+    for (let index = start + 1; index < end; index += 1) {
+      if (value(middle[index]) < value(middle[minIndex])) minIndex = index;
+      if (value(middle[index]) > value(middle[maxIndex])) maxIndex = index;
+    }
+    if (minIndex === maxIndex) {
+      result.push(middle[minIndex]);
+    } else if (minIndex < maxIndex) {
+      result.push(middle[minIndex], middle[maxIndex]);
+    } else {
+      result.push(middle[maxIndex], middle[minIndex]);
+    }
+  }
+  result.push(points[points.length - 1]);
+  return result;
+}
+
+function AvailabilityChart({
+  points,
+  threshold,
+  selected,
+  onSelect,
+}: {
+  points: AvailabilityHistoryPoint[];
+  threshold?: number;
+  selected: AvailabilityHistoryPoint | null;
+  onSelect: (point: AvailabilityHistoryPoint) => void;
+}) {
+  const times = points.map((point) => new Date(point.checked_at).getTime());
+  let minTime = times[0];
+  let maxTime = times[0];
+  for (const time of times) {
+    if (time < minTime) minTime = time;
+    if (time > maxTime) maxTime = time;
+  }
+  const plotWidth = CHART_WIDTH - CHART_LEFT - CHART_RIGHT;
+  const plotHeight = CHART_HEIGHT - CHART_TOP - CHART_BOTTOM;
+  const xAt = (index: number) =>
+    maxTime === minTime
+      ? CHART_LEFT + plotWidth / 2
+      : CHART_LEFT + ((times[index] - minTime) / (maxTime - minTime)) * plotWidth;
+  const yAt = (percentage: number) =>
+    CHART_TOP + ((100 - Math.max(0, Math.min(100, percentage))) / 100) * plotHeight;
+
+  const plotted = points.map((point, index) => ({
+    point,
+    x: xAt(index),
+    y: yAt(point.percentage),
+    measured: point.total_probes > 0 && !point.error,
+  }));
+  const segments: typeof plotted[] = [];
+  let segment: typeof plotted = [];
+  for (const point of plotted) {
+    if (point.measured) {
+      segment.push(point);
+    } else if (segment.length) {
+      segments.push(segment);
+      segment = [];
+    }
+  }
+  if (segment.length) segments.push(segment);
+
+  const selectedPlot = plotted.find((item) => item.point === selected);
+  const chooseNearest = (event: React.PointerEvent<SVGSVGElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const cursorX = ((event.clientX - rect.left) / rect.width) * CHART_WIDTH;
+    let nearest = plotted[0];
+    for (const candidate of plotted) {
+      if (Math.abs(candidate.x - cursorX) < Math.abs(nearest.x - cursorX)) nearest = candidate;
+    }
+    onSelect(nearest.point);
+  };
+
+  return (
+    <div>
+      <svg
+        viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
+        className="w-full select-none touch-pan-y"
+        style={{ aspectRatio: `${CHART_WIDTH}/${CHART_HEIGHT}` }}
+        role="img"
+        aria-label="График процента доступности по времени"
+        onPointerMove={chooseNearest}
+        onPointerDown={chooseNearest}
+      >
+        {[100, 75, 50, 25, 0].map((value) => {
+          const y = yAt(value);
+          return (
+            <g key={value}>
+              <line
+                x1={CHART_LEFT}
+                x2={CHART_WIDTH - CHART_RIGHT}
+                y1={y}
+                y2={y}
+                stroke="rgb(var(--c-border))"
+                strokeWidth="1"
+              />
+              <text x={CHART_LEFT - 8} y={y + 4} textAnchor="end" fill="rgb(var(--c-text-secondary))" fontSize="11">
+                {value}%
+              </text>
+            </g>
+          );
+        })}
+
+        {threshold !== undefined && threshold >= 0 && threshold <= 100 && (
+          <g>
+            <line
+              x1={CHART_LEFT}
+              x2={CHART_WIDTH - CHART_RIGHT}
+              y1={yAt(threshold)}
+              y2={yAt(threshold)}
+              stroke="rgb(var(--c-warning))"
+              strokeWidth="1.5"
+              strokeDasharray="6 5"
+            />
+            <text
+              x={CHART_WIDTH - CHART_RIGHT - 3}
+              y={yAt(threshold) - 5}
+              textAnchor="end"
+              fill="rgb(var(--c-warning))"
+              fontSize="10"
+            >
+              порог {threshold}%
+            </text>
+          </g>
+        )}
+
+        {segments.map((line, index) => (
+          <polyline
+            key={index}
+            points={line.map((item) => `${item.x},${item.y}`).join(' ')}
+            fill="none"
+            stroke="rgb(var(--c-accent))"
+            strokeWidth="3"
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+        ))}
+
+        {plotted.map((item, index) => {
+          if (!item.measured) {
+            return (
+              <g key={`${item.point.checked_at}-${index}`}>
+                <circle cx={item.x} cy={yAt(0)} r="5" fill="rgb(var(--c-danger))" />
+                <title>{`${formatHistoryTime(item.point.checked_at)} — ошибка проверки: ${item.point.error || 'нет ответивших зондов'}`}</title>
+              </g>
+            );
+          }
+          if (plotted.length > 250 && item.point !== selected) return null;
+          return (
+            <circle
+              key={`${item.point.checked_at}-${index}`}
+              cx={item.x}
+              cy={item.y}
+              r={item.point === selected ? 6 : 3}
+              fill={historyPointColor(item.point)}
+              stroke="rgb(var(--c-surface))"
+              strokeWidth="2"
+            >
+              <title>{`${formatHistoryTime(item.point.checked_at)} — ${item.point.percentage.toFixed(0)}%, ${item.point.success_probes}/${item.point.total_probes} зондов`}</title>
+            </circle>
+          );
+        })}
+
+        {selectedPlot && (
+          <line
+            x1={selectedPlot.x}
+            x2={selectedPlot.x}
+            y1={CHART_TOP}
+            y2={CHART_TOP + plotHeight}
+            stroke="rgb(var(--c-text-primary))"
+            strokeWidth="1"
+            strokeDasharray="3 4"
+            opacity="0.55"
+            pointerEvents="none"
+          />
+        )}
+
+        <text x={CHART_LEFT} y={CHART_HEIGHT - 9} fill="rgb(var(--c-text-secondary))" fontSize="11">
+          {formatHistoryAxis(points[0].checked_at)}
+        </text>
+        <text
+          x={CHART_WIDTH - CHART_RIGHT}
+          y={CHART_HEIGHT - 9}
+          textAnchor="end"
+          fill="rgb(var(--c-text-secondary))"
+          fontSize="11"
+        >
+          {formatHistoryAxis(points[points.length - 1].checked_at)}
+        </text>
+      </svg>
+      <div className="flex items-center gap-4 flex-wrap text-[11px] text-text-secondary mt-1">
+        <span className="flex items-center gap-1.5"><i className="w-2.5 h-2.5 rounded-full bg-success" />80–100%</span>
+        <span className="flex items-center gap-1.5"><i className="w-2.5 h-2.5 rounded-full bg-warning" />50–79%</span>
+        <span className="flex items-center gap-1.5"><i className="w-2.5 h-2.5 rounded-full bg-danger" />0–49% или ошибка</span>
+      </div>
+    </div>
+  );
+}
+
+function HistoryPointSummary({ point }: { point: AvailabilityHistoryPoint }) {
+  const failed = Boolean(point.error) || point.total_probes === 0;
+  return (
+    <div className="bg-surface-hover/60 border border-border rounded-lg px-3 py-2 text-xs flex items-center justify-between gap-3 flex-wrap">
+      <div>
+        <span className="text-text-primary font-medium">{formatHistoryTime(point.checked_at)}</span>
+        <span className="text-text-secondary ml-2">{point.target || 'цель не определена'}</span>
+      </div>
+      {failed ? (
+        <span className="text-danger">Ошибка проверки: {point.error || 'нет ответивших зондов'}</span>
+      ) : (
+        <span style={{ color: historyPointColor(point) }} className="font-medium">
+          {point.percentage.toFixed(0)}% · {point.success_probes} из {point.total_probes} зондов
+        </span>
+      )}
+    </div>
+  );
+}
+
+function historyPointColor(point: AvailabilityHistoryPoint): string {
+  if (point.error || point.total_probes === 0 || point.percentage < 50) return 'rgb(var(--c-danger))';
+  if (point.percentage < 80) return 'rgb(var(--c-warning))';
+  return 'rgb(var(--c-success))';
+}
+
+function formatHistoryTime(value: string): string {
+  return new Date(value).toLocaleString('ru-RU', {
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+}
+
+function formatHistoryAxis(value: string): string {
+  return new Date(value).toLocaleString('ru-RU', {
+    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
 }
 
 function StatCard({

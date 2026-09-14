@@ -17,6 +17,12 @@ func TestValidateWebParamAllowsSiteSource(t *testing.T) {
 	}
 }
 
+func TestValidateWebParamAllowsTrustedProxyCIDRs(t *testing.T) {
+	if err := ValidateWebParam("WEB_TRUSTED_PROXY_CIDRS", "127.0.0.1/32,10.20.0.0/16"); err != nil {
+		t.Fatalf("ValidateWebParam trusted CIDRs: %v", err)
+	}
+}
+
 func TestValidateWebParamRejectsSelfmaskKey(t *testing.T) {
 	if err := ValidateWebParam("SELFMASK_DOMAIN", "example.com"); err == nil {
 		t.Fatal("ValidateWebParam accepted an unrelated Selfmask key")

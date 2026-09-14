@@ -159,6 +159,60 @@ _selfmask_nginx_mime_block() {
     printf '    include       %s;\n    default_type  application/octet-stream;\n\n' "$_f"
 }
 
+# Явно включённый доступ к панели через домен Selfmask. Панель слушает только
+# loopback и сама обслуживает base_path; nginx завершает внешний TLS тем же
+# сертификатом, что и сайт-заглушка, и передаёт URI без переписывания.
+_selfmask_panel_proxy_block() {
+    [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ] || return 0
+    [ "${NGINX_CUSTOM_ENABLED:-false}" != "true" ] || return 0
+
+    local _cfg="${PANEL_CONFIG_DIR:-/etc/mtproxyl-panel}/config.toml"
+    local _path="${PANEL_SELFMASK_PATH:-}" _listen _host _port _scheme="http" _tls=""
+    [ -f "$_cfg" ] && [ -x "${PANEL_BINARY:-/usr/local/bin/mtproxyl-panel}" ] || return 0
+    [[ "$_path" =~ ^/[A-Za-z0-9_-]{16,64}$ ]] || return 0
+
+    _listen=$(grep -oE '^[[:space:]]*listen[[:space:]]*=[[:space:]]*"[^"]+"' "$_cfg" 2>/dev/null \
+        | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+    _host="${_listen%:*}"; _port="${_listen##*:}"
+    case "$_host" in
+        127.0.0.1|localhost|::1|"[::1]") ;;
+        *) return 0 ;;
+    esac
+    [[ "$_port" =~ ^[0-9]+$ ]] && [ "$_port" -ge 1 ] && [ "$_port" -le 65535 ] || return 0
+
+    if grep -qE '^[[:space:]]*(cert_file|acme_domain)[[:space:]]*=' "$_cfg" 2>/dev/null; then
+        _scheme="https"
+        _tls=$(cat << 'TLS_EOF'
+            proxy_ssl_verify off;
+            proxy_ssl_server_name on;
+TLS_EOF
+)
+    fi
+
+    cat << EOF
+        # MTProxyL-Panel: публикуется только после команды panel selfmask on.
+        location = ${_path} {
+            return 308 ${_path}/;
+        }
+
+        location ^~ ${_path}/ {
+            proxy_pass ${_scheme}://127.0.0.1:${_port};
+            proxy_http_version 1.1;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Forwarded-Host \$host;
+            proxy_set_header X-Forwarded-Proto https;
+            # Не сохраняем присланный клиентом X-Forwarded-For: иначе им
+            # обходился лимитер bcrypt на странице входа.
+            proxy_set_header X-Forwarded-For \$remote_addr;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection \$http_connection;
+            proxy_read_timeout 3600s;
+            proxy_buffering off;
+${_tls}
+        }
+EOF
+}
+
 _selfmask_template_label() {
     case "${1:-stub}" in
         stub)        echo "Простая заглушка" ;;
@@ -1565,8 +1619,9 @@ EOF
         fi
     fi
 
-    local _selfmask_servers=""
+    local _selfmask_servers="" _panel_proxy=""
     if [ "${SELFMASK_ENABLED:-false}" = "true" ] || [ "${SELFMASK_CONFIGURE_ACTIVE:-false}" = "true" ]; then
+        _panel_proxy=$(_selfmask_panel_proxy_block)
         _selfmask_servers=$(cat << EOF
     server {
         listen 127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT} ssl default_server;
@@ -1601,6 +1656,8 @@ EOF
         add_header X-Frame-Options SAMEORIGIN always;
         add_header Referrer-Policy no-referrer always;
         $(https_nginx_headers "${SELFMASK_CERT_MODE:-letsencrypt}")
+
+${_panel_proxy}
 
         location ~* "(wget|curl|chmod|/tmp/|eval\\(|base64)" {
             return 403;
@@ -2259,6 +2316,16 @@ selfmask_disable() {
     read_line _yn
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
+    # Иначе nginx исчезнет, а панель останется на 127.0.0.1 со скрытым
+    # base_path и пользователь потеряет внешний доступ к ней.
+    if [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ] &&
+       declare -F panel_selfmask_disable >/dev/null; then
+        panel_selfmask_disable || {
+            log_error "Сначала не удалось снять доступ панели через Selfmask — отключение отменено"
+            return 1
+        }
+    fi
+
     if ! web_is_enabled 2>/dev/null; then
         systemctl disable --now "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
         rm -f "/etc/systemd/system/${SELFMASK_PQ_SERVICE}" 2>/dev/null || true
@@ -2333,6 +2400,14 @@ selfmask_remove_pq_nginx() {
     local _yn
     read_line _yn
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
+
+    if [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ] &&
+       declare -F panel_selfmask_disable >/dev/null; then
+        panel_selfmask_disable || {
+            log_error "Не удалось снять доступ панели через Selfmask — удаление nginx отменено"
+            return 1
+        }
+    fi
 
     # Сначала отключаем selfmask если активен
     if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then

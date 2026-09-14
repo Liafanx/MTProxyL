@@ -7,10 +7,21 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useBranding } from '@/hooks/useBranding';
-import { brandingApi, DEFAULT_PANEL_BRANDING } from '@/lib/api';
+import {
+  activePanelBackgroundURL,
+  brandingApi,
+  DEFAULT_PANEL_BRANDING,
+  type PanelBackgroundMode,
+} from '@/lib/api';
 
 const MAX_BACKGROUND_BYTES = 8 * 1024 * 1024;
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+function imageValidationError(file: File): string {
+  if (file.type && !IMAGE_TYPES.has(file.type)) return 'Поддерживаются только PNG, JPEG и WebP';
+  if (file.size > MAX_BACKGROUND_BYTES) return 'Изображение больше 8 МБ';
+  return '';
+}
 
 interface TextSettings {
   panel_name: string;
@@ -28,9 +39,13 @@ export function PanelSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [panelModeSaving, setPanelModeSaving] = useState(false);
+  const [panelUploading, setPanelUploading] = useState(false);
+  const [panelRemoving, setPanelRemoving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const panelInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setForm({
@@ -49,6 +64,7 @@ export function PanelSettingsPage() {
   const backgroundURL = branding.has_background
     ? brandingApi.backgroundURL(branding.background_revision)
     : '';
+  const panelBackgroundURL = activePanelBackgroundURL(branding);
 
   const set = (key: keyof TextSettings) => (event: React.ChangeEvent<HTMLInputElement>) => {
     setNotice('');
@@ -64,6 +80,7 @@ export function PanelSettingsPage() {
         panel_name: form.panel_name.trim(),
         login_title: form.login_title.trim(),
         login_subtitle: form.login_subtitle.trim(),
+        panel_background_mode: branding.panel_background_mode,
       });
       apply(updated);
       setNotice('Настройки панели сохранены');
@@ -80,12 +97,9 @@ export function PanelSettingsPage() {
     if (!file) return;
     setError('');
     setNotice('');
-    if (file.type && !IMAGE_TYPES.has(file.type)) {
-      setError('Поддерживаются только PNG, JPEG и WebP');
-      return;
-    }
-    if (file.size > MAX_BACKGROUND_BYTES) {
-      setError('Изображение больше 8 МБ');
+    const validationError = imageValidationError(file);
+    if (validationError) {
+      setError(validationError);
       return;
     }
     setUploading(true);
@@ -112,6 +126,64 @@ export function PanelSettingsPage() {
       setError(err instanceof Error ? err.message : 'Не удалось удалить фон');
     } finally {
       setRemoving(false);
+    }
+  };
+
+  const setPanelBackgroundMode = async (mode: PanelBackgroundMode) => {
+    setPanelModeSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const updated = await brandingApi.update({
+        panel_name: branding.panel_name,
+        login_title: branding.login_title,
+        login_subtitle: branding.login_subtitle,
+        panel_background_mode: mode,
+      });
+      apply(updated);
+      setNotice('Режим фона панели сохранён');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось изменить режим фона');
+    } finally {
+      setPanelModeSaving(false);
+    }
+  };
+
+  const uploadPanelBackground = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setError('');
+    setNotice('');
+    const validationError = imageValidationError(file);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+    setPanelUploading(true);
+    try {
+      const updated = await brandingApi.uploadPanelBackground(file);
+      apply(updated);
+      setNotice('Собственный фон панели загружен');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось загрузить фон панели');
+    } finally {
+      setPanelUploading(false);
+    }
+  };
+
+  const removePanelBackground = async () => {
+    setPanelRemoving(true);
+    setError('');
+    setNotice('');
+    try {
+      const updated = await brandingApi.deletePanelBackground();
+      apply(updated);
+      setNotice('Собственный фон панели удалён');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Не удалось удалить фон панели');
+    } finally {
+      setPanelRemoving(false);
     }
   };
 
@@ -179,11 +251,11 @@ export function PanelSettingsPage() {
             </div>
 
             <div className="flex flex-wrap gap-2 pt-2">
-              <Button onClick={save} disabled={saving || !dirty || !form.panel_name.trim() || !form.login_title.trim()}>
+              <Button onClick={save} disabled={saving || panelModeSaving || !dirty || !form.panel_name.trim() || !form.login_title.trim()}>
                 <Save size={16} className="mr-1.5" />
                 {saving ? 'Сохранение…' : 'Сохранить'}
               </Button>
-              <Button type="button" variant="outline" onClick={restoreDefaults} disabled={saving}>
+              <Button type="button" variant="outline" onClick={restoreDefaults} disabled={saving || panelModeSaving}>
                 <RotateCcw size={16} className="mr-1.5" />
                 Вернуть стандартный текст
               </Button>
@@ -256,6 +328,117 @@ export function PanelSettingsPage() {
                 </Button>
               )}
             </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Фон внутри панели</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="panel-background-mode">Изображение интерфейса</Label>
+              <select
+                id="panel-background-mode"
+                value={branding.panel_background_mode}
+                onChange={(event) => void setPanelBackgroundMode(event.target.value as PanelBackgroundMode)}
+                disabled={panelModeSaving || panelUploading || panelRemoving || saving}
+                className="w-full min-h-10 rounded-md border border-border bg-background px-3 py-2 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/50"
+              >
+                <option value="none">Без фонового изображения</option>
+                <option value="login" disabled={!branding.has_background}>
+                  Использовать фон страницы входа
+                </option>
+                <option value="custom">Использовать отдельное изображение</option>
+              </select>
+              <p className="text-xs text-text-secondary">
+                {panelModeSaving
+                  ? 'Сохранение…'
+                  : branding.panel_background_mode === 'login'
+                    ? 'Панель использует изображение страницы входа.'
+                    : branding.panel_background_mode === 'custom'
+                      ? 'Панель использует собственный файл, независимый от страницы входа.'
+                      : 'Страница входа сохраняет свой фон, внутри панели используется обычный цвет темы.'}
+              </p>
+            </div>
+
+            <div
+              className="relative min-h-52 overflow-hidden rounded-lg border border-border bg-background bg-cover bg-center"
+              style={panelBackgroundURL ? {
+                backgroundImage: `linear-gradient(rgb(var(--c-background) / 0.68), rgb(var(--c-background) / 0.80)), url("${panelBackgroundURL}")`,
+              } : undefined}
+            >
+              {panelBackgroundURL ? (
+                <div className="absolute inset-3 flex overflow-hidden rounded-md border border-border shadow-lg">
+                  <div className="w-1/4 bg-surface/90 border-r border-border p-2 space-y-2">
+                    <div className="h-2 rounded bg-text-primary/50" />
+                    <div className="h-1.5 rounded bg-text-secondary/30" />
+                    <div className="h-1.5 rounded bg-text-secondary/30" />
+                    <div className="h-1.5 rounded bg-text-secondary/30" />
+                  </div>
+                  <div className="flex-1 p-3 space-y-3">
+                    <div className="h-4 w-1/3 rounded bg-text-primary/35" />
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="h-16 rounded bg-surface/90 border border-border" />
+                      <div className="h-16 rounded bg-surface/90 border border-border" />
+                    </div>
+                    <div className="h-16 rounded bg-surface/90 border border-border" />
+                  </div>
+                </div>
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center text-text-secondary">
+                  <div className="flex flex-col items-center gap-2 text-center px-4">
+                    <Image size={32} />
+                    {branding.panel_background_mode === 'custom'
+                      ? 'Собственный фон панели не загружен'
+                      : branding.panel_background_mode === 'login'
+                        ? 'Фон страницы входа не загружен'
+                        : 'Фон внутри панели выключен'}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {branding.panel_background_mode === 'custom' && (
+              <>
+                <p className="text-sm text-text-secondary">
+                  PNG, JPEG или WebP, не больше 8 МБ. Карточки и меню становятся слегка
+                  прозрачными, а фон фиксируется при прокрутке.
+                </p>
+                <input
+                  ref={panelInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  onChange={uploadPanelBackground}
+                  className="hidden"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => panelInputRef.current?.click()}
+                    disabled={panelUploading || panelRemoving || panelModeSaving}
+                  >
+                    <Upload size={16} className="mr-1.5" />
+                    {panelUploading
+                      ? 'Загрузка…'
+                      : branding.has_panel_background ? 'Заменить фон панели' : 'Загрузить фон панели'}
+                  </Button>
+                  {branding.has_panel_background && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={removePanelBackground}
+                      disabled={panelUploading || panelRemoving || panelModeSaving}
+                      className="text-danger hover:text-danger"
+                    >
+                      <Trash2 size={16} className="mr-1.5" />
+                      {panelRemoving ? 'Удаление…' : 'Удалить фон панели'}
+                    </Button>
+                  )}
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>

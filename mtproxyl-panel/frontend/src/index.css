@@ -105,3 +105,13 @@
     @apply w-4 h-4 rounded-sm border-border bg-surface text-primary focus:ring-2 focus:ring-primary/50 cursor-pointer;
   }
 }
+
+/* При включённом фоне внутренние поверхности слегка прозрачны: изображение
+   остаётся видно, но контраст текста не зависит от светлой или тёмной темы. */
+.panel-background .bg-surface {
+  background-color: rgb(var(--c-surface) / 0.92);
+}
+
+.panel-background .bg-background {
+  background-color: rgb(var(--c-background) / 0.88);
+}

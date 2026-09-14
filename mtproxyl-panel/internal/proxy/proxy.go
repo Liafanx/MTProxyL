@@ -1,10 +1,13 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -17,7 +20,11 @@ type TelemtProxy struct {
 	handler    http.Handler
 	targetURL  string
 	authHeader string
+	client     *http.Client
+	requestTTL time.Duration
 }
+
+const telemtProxyResponseTimeout = 15 * time.Second
 
 type SystemInfo struct {
 	ConfigPath string `json:"config_path"`
@@ -25,17 +32,41 @@ type SystemInfo struct {
 }
 
 func NewTelemtProxy(targetURL string, authHeader string) (*TelemtProxy, error) {
+	return newTelemtProxy(targetURL, authHeader, telemtProxyResponseTimeout)
+}
+
+func newTelemtProxy(targetURL string, authHeader string, responseTimeout time.Duration) (*TelemtProxy, error) {
 	target, err := url.Parse(targetURL)
 	if err != nil {
 		return nil, err
 	}
+	if responseTimeout <= 0 {
+		responseTimeout = telemtProxyResponseTimeout
+	}
+
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = (&net.Dialer{
+		Timeout:   5 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+	transport.ResponseHeaderTimeout = responseTimeout
+	transport.TLSHandshakeTimeout = 5 * time.Second
+	transport.ExpectContinueTimeout = time.Second
+	transport.IdleConnTimeout = 90 * time.Second
+	transport.MaxIdleConnsPerHost = 16
 
 	tp := &TelemtProxy{
 		targetURL:  targetURL,
 		authHeader: authHeader,
+		requestTTL: responseTimeout,
+		client: &http.Client{
+			Transport: transport,
+			Timeout:   responseTimeout,
+		},
 	}
 
 	proxy := &httputil.ReverseProxy{
+		Transport: transport,
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(target)
 			r.Out.URL.Path = strings.TrimPrefix(r.Out.URL.Path, "/api/telemt")
@@ -75,6 +106,9 @@ func NewTelemtProxy(targetURL string, authHeader string) (*TelemtProxy, error) {
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			if !errors.Is(err, context.Canceled) {
+				log.Printf("[proxy] telemt %s %s: %v", r.Method, r.URL.Path, err)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadGateway)
 			w.Write([]byte(`{"ok":false,"error":{"code":"bad_gateway","message":"telemt API unavailable"}}`))
@@ -100,7 +134,9 @@ func (p *TelemtProxy) touchConfig() {
 }
 
 func (p *TelemtProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	p.handler.ServeHTTP(w, r)
+	ctx, cancel := context.WithTimeout(r.Context(), p.requestTTL)
+	defer cancel()
+	p.handler.ServeHTTP(w, r.WithContext(ctx))
 }
 
 // ConnectivityCheck makes a test request to telemt /v1/health and returns
@@ -178,7 +214,7 @@ func (p *TelemtProxy) GetSystemInfo() (*SystemInfo, error) {
 		req.Header.Set("Authorization", p.authHeader)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := p.client.Do(req)
 	if err != nil {
 		return nil, err
 	}

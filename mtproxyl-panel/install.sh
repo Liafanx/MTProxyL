@@ -637,6 +637,7 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script stats reset user *
 # пользуются телеграм-бот и меню, а панель только показывает и просит проверить.
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability status --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability details
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script availability history
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability check --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability on
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script availability off
@@ -1098,6 +1099,25 @@ do_install() {
     say "Доступ к панели"
     printf '  1) Со всех интерфейсов — панель открыта из интернета\n'
     printf '  2) Только с этой машины (127.0.0.1) — снаружи недоступна, вход через ssh-туннель\n'
+    PANEL_BEHIND_SELFMASK="false"
+    SELFMASK_DOMAIN_DETECTED=""
+    _selfmask_json=""
+    # Старый MTProxyL знает Selfmask, но ещё не умеет безопасно сохранять и
+    # откатывать маршрут панели. Не показываем нерабочий вариант до обновления.
+    if mtproxyl_present &&
+       grep -q 'handle_panel_selfmask_command' "${MTPROXYL_INSTALL_DIR}/lib/panel.sh" 2>/dev/null; then
+      _selfmask_json=$($SUDO "$MTPROXYL_SCRIPT" selfmask status --json 2>/dev/null || true)
+      case "$_selfmask_json" in
+        *'"enabled":true'*'"nginx_custom_enabled":false'*)
+          SELFMASK_DOMAIN_DETECTED=$(printf '%s' "$_selfmask_json" \
+            | sed -n 's/.*"domain"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+          if [ -n "$SELFMASK_DOMAIN_DETECTED" ]; then
+            printf '  3) Через домен Selfmask (%s) — случайный путь + вход по логину и паролю, внешний порт закрыт\n' \
+              "$SELFMASK_DOMAIN_DETECTED"
+          fi
+          ;;
+      esac
+    fi
     BIND_CHOICE=$(prompt "Вариант" "1")
 
     PANEL_LOCAL_ONLY="false"
@@ -1105,6 +1125,12 @@ do_install() {
     if [ "$BIND_CHOICE" = "2" ]; then
       PANEL_LOCAL_ONLY="true"
       PANEL_BIND="127.0.0.1"
+    elif [ "$BIND_CHOICE" = "3" ] && [ -n "$SELFMASK_DOMAIN_DETECTED" ]; then
+      PANEL_LOCAL_ONLY="true"
+      PANEL_BEHIND_SELFMASK="true"
+      PANEL_BIND="127.0.0.1"
+    elif [ "$BIND_CHOICE" = "3" ]; then
+      die "Selfmask не включён — вариант 3 недоступен"
     fi
 
     TLS_BLOCK=""
@@ -1112,10 +1138,16 @@ do_install() {
 
     if [ "$PANEL_LOCAL_ONLY" = "true" ]; then
       # По петле трафик машину не покидает, канал даёт ssh — шифровать нечего.
-      # HTTPS при необходимости включается в конфиге, секция [tls].
+      # Для Selfmask внешний TLS завершает nginx тем же сертификатом, что и
+      # заглушка. В обоих случаях отдельный TLS backend панели не нужен.
       PANEL_SCHEME="http"
-      say "Панель будет слушать 127.0.0.1:${PANEL_PORT} — снаружи недоступна"
-      say "Шифрование не настраивается: соединение не выходит за пределы машины"
+      if [ "$PANEL_BEHIND_SELFMASK" = "true" ]; then
+        say "Backend панели будет слушать 127.0.0.1:${PANEL_PORT}"
+        say "Внешний HTTPS даст Selfmask; прямой порт панели останется закрыт"
+      else
+        say "Панель будет слушать 127.0.0.1:${PANEL_PORT} — снаружи недоступна"
+        say "Шифрование не настраивается: соединение не выходит за пределы машины"
+      fi
       TLS_CHOICE=""
     else
 
@@ -1297,6 +1329,19 @@ session_ttl = \"24h\"${TLS_BLOCK}"
   $SUDO systemctl restart "$SERVICE_NAME"
   say "Служба $SERVICE_NAME запущена и включена в автозагрузку"
 
+  # Отдельный, явный режим: обычный собственный домен панели не зависит от
+  # Selfmask. Здесь же скрываем backend на loopback, задаём случайный
+  # base_path и просим управляемый nginx Selfmask добавить proxy location.
+  if [ "${PANEL_BEHIND_SELFMASK:-false}" = "true" ]; then
+    if $SUDO "$MTPROXYL_SCRIPT" panel selfmask on; then
+      say "Панель опубликована через домен Selfmask"
+    else
+      say "ВНИМАНИЕ: не удалось добавить маршрут Selfmask"
+      say "Панель осталась доступна только локально: http://127.0.0.1:${PANEL_PORT}"
+      say "Повторить: sudo mtproxyl panel selfmask on"
+    fi
+  fi
+
   # Порт 80 занят — выпуск сертификата умеет только MTProxyL (см. выше).
   # Делаем это уже после старта службы: команда сама перепишет [tls] в конфиге
   # панели на выпущенные файлы и перезапустит её.
@@ -1323,6 +1368,7 @@ session_ttl = \"24h\"${TLS_BLOCK}"
   _selfsigned=""
   _panel_port="8080"
   _host="$_ip"
+  _base_path=""
   if [ -f "$CONFIG_FILE" ]; then
     _tls_cert=$($SUDO sh -c "cat '$CONFIG_FILE'" 2>/dev/null | sed -n 's/^[[:space:]]*cert_file[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' | head -1)
     _tls_acme=$($SUDO sh -c "cat '$CONFIG_FILE'" 2>/dev/null | sed -n 's/^[[:space:]]*acme_domain[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' | head -1)
@@ -1339,6 +1385,7 @@ session_ttl = \"24h\"${TLS_BLOCK}"
         [ -n "$_cert_cn" ] && _host="$_cert_cn"
     fi
     _listen=$($SUDO sh -c "cat '$CONFIG_FILE'" 2>/dev/null | sed -n 's/^[[:space:]]*listen[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' | head -1)
+    _base_path=$($SUDO sh -c "cat '$CONFIG_FILE'" 2>/dev/null | sed -n 's/^[[:space:]]*base_path[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' | head -1)
     _from_listen=$(printf '%s' "$_listen" | sed -n 's/.*:\([0-9]\{1,5\}\)$/\1/p')
     [ -n "$_from_listen" ] && _panel_port="$_from_listen"
     # Привязка к петле меняет и адрес, и смысл предупреждений: снаружи такой
@@ -1348,8 +1395,13 @@ session_ttl = \"24h\"${TLS_BLOCK}"
       127.0.0.1|localhost|::1|"[::1]") _local_only="true"; _host="127.0.0.1" ;;
     esac
   fi
-  printf '  Адрес панели:  %s://%s:%s\n' "$_scheme" "$_host" "$_panel_port"
-  if [ "${_local_only:-false}" = "true" ]; then
+  if [ "${PANEL_BEHIND_SELFMASK:-false}" = "true" ] &&
+     [ -n "${SELFMASK_DOMAIN_DETECTED:-}" ] && [ -n "$_base_path" ]; then
+    printf '  Адрес панели:  https://%s%s/\n' "$SELFMASK_DOMAIN_DETECTED" "$_base_path"
+  else
+    printf '  Адрес панели:  %s://%s:%s\n' "$_scheme" "$_host" "$_panel_port"
+  fi
+  if [ "${_local_only:-false}" = "true" ] && [ "${PANEL_BEHIND_SELFMASK:-false}" != "true" ]; then
     printf '                 доступна только с этой машины — снаружи порт не слушается\n'
     printf '\n'
     printf '  Открыть со своего компьютера — прокинуть порт по ssh:\n'
@@ -1379,6 +1431,17 @@ session_ttl = \"24h\"${TLS_BLOCK}"
 # ═════════════════════════════════════════════════════════════════════════════
 do_uninstall() {
   printf '\n  Удаление MTProxyL-Panel\n\n'
+
+  # Установщик можно запустить напрямую, минуя `mtproxyl panel uninstall`.
+  # Если панель опубликована через Selfmask, сначала убираем proxy location и
+  # восстанавливаем её прежние listen/base_path, пока бинарник и конфиг на месте.
+  if [ -f "${MTPROXYL_INSTALL_DIR}/panel-selfmask.conf" ] &&
+     grep -q "^PANEL_SELFMASK_ENABLED='true'" "${MTPROXYL_INSTALL_DIR}/panel-selfmask.conf" 2>/dev/null &&
+     mtproxyl_present; then
+    say "Отключение маршрута панели через Selfmask..."
+    $SUDO "$MTPROXYL_SCRIPT" panel selfmask off || \
+      die "Не удалось убрать маршрут Selfmask — удаление отменено"
+  fi
 
   if [ -f "$SERVICE_FILE" ]; then
     say "Остановка службы..."

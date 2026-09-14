@@ -11,21 +11,34 @@ export class ApiError extends Error {
 
 async function request<T>(base: string, path: string, options?: RequestInit): Promise<T> {
   const url = `${base}${path}`;
-  const res = await fetch(url, {
-    ...options,
-    credentials: 'same-origin',
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-  });
-
-  if (res.status === 401 && base === TELEMT_BASE) {
-    window.location.href = `${BASE}/login`;
-    throw new ApiError('unauthorized', 'Сессия истекла');
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 60_000);
+  let res: Response;
+  let json: any;
+  try {
+    res = await fetch(url, {
+      ...options,
+      credentials: 'same-origin',
+      signal: options?.signal || controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers,
+      },
+    });
+    if (res.status === 401 && base === TELEMT_BASE) {
+      window.location.href = `${BASE}/login`;
+      throw new ApiError('unauthorized', 'Сессия истекла');
+    }
+    json = await res.json();
+  } catch (error) {
+    if (!options?.signal && controller.signal.aborted) {
+      throw new ApiError('timeout', `Сервер панели не ответил за 60 секунд (${options?.method || 'GET'} ${path})`);
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
   }
 
-  const json = await res.json();
   if (!json.ok) {
     const message = json.error?.message || 'Неизвестная ошибка';
     throw new ApiError(json.error?.code || 'unknown', `${message} (${options?.method || 'GET'} ${path})`);
@@ -52,18 +65,25 @@ export interface PanelBranding {
   login_subtitle: string;
   has_background: boolean;
   background_revision?: string;
+  panel_background_mode: PanelBackgroundMode;
+  has_panel_background: boolean;
+  panel_background_revision?: string;
 }
+
+export type PanelBackgroundMode = 'none' | 'login' | 'custom';
 
 export const DEFAULT_PANEL_BRANDING: PanelBranding = {
   panel_name: 'MTProxyL-Panel',
   login_title: 'MTProxyL-Panel',
   login_subtitle: 'Управление MTProxy',
   has_background: false,
+  panel_background_mode: 'none',
+  has_panel_background: false,
 };
 
 export const brandingApi = {
   get: () => request<PanelBranding>(PANEL_BASE, '/branding'),
-  update: (branding: Pick<PanelBranding, 'panel_name' | 'login_title' | 'login_subtitle'>) =>
+  update: (branding: Pick<PanelBranding, 'panel_name' | 'login_title' | 'login_subtitle' | 'panel_background_mode'>) =>
     request<PanelBranding>(PANEL_BASE, '/panel/settings', {
       method: 'PUT',
       body: JSON.stringify(branding),
@@ -78,7 +98,27 @@ export const brandingApi = {
     request<PanelBranding>(PANEL_BASE, '/panel/settings/background', { method: 'DELETE' }),
   backgroundURL: (revision?: string) =>
     `${PANEL_BASE}/branding/background${revision ? `?v=${revision}` : ''}`,
+  uploadPanelBackground: (file: File) =>
+    request<PanelBranding>(PANEL_BASE, '/panel/settings/panel-background', {
+      method: 'PUT',
+      body: file,
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    }),
+  deletePanelBackground: () =>
+    request<PanelBranding>(PANEL_BASE, '/panel/settings/panel-background', { method: 'DELETE' }),
+  panelBackgroundURL: (revision?: string) =>
+    `${PANEL_BASE}/branding/panel-background${revision ? `?v=${revision}` : ''}`,
 };
+
+export function activePanelBackgroundURL(branding: PanelBranding): string {
+  if (branding.panel_background_mode === 'login' && branding.has_background) {
+    return brandingApi.backgroundURL(branding.background_revision);
+  }
+  if (branding.panel_background_mode === 'custom' && branding.has_panel_background) {
+    return brandingApi.panelBackgroundURL(branding.panel_background_revision);
+  }
+  return '';
+}
 
 
 export const panelApi = {
@@ -812,6 +852,15 @@ export interface AvailabilityResult {
   error?: string;
 }
 
+/** Короткая точка истории: без тяжёлого списка отдельных зондов. */
+export type AvailabilityHistoryPoint = Omit<AvailabilityResult, 'probes'>;
+
+export interface AvailabilityHistoryResponse {
+  /** Текущий предел хранения в MTProxyL. */
+  limit: number;
+  points: AvailabilityHistoryPoint[];
+}
+
 /** Часовая квота Globalping: один зонд — один кредит. */
 export interface AvailabilityQuota {
   budget: number;
@@ -833,6 +882,8 @@ export interface AvailabilitySchedule {
   probes?: number;
   /** Порог доступности для уведомления в телеграм-боте, %. */
   threshold?: number;
+  /** Сколько последних проверок хранит MTProxyL. */
+  history_limit?: number;
   /** Время следующей проверки, RFC3339. Пусто, если таймер не запущен. */
   next_run?: string;
 }
@@ -871,6 +922,14 @@ export const availabilityApi = {
   status: () => request<AvailabilityStatusResponse>(AVAILABILITY_BASE, '/status'),
   /** Полный результат со списком зондов. */
   details: () => request<AvailabilityDetailsResponse>(AVAILABILITY_BASE, '/details'),
+  /** Компактная история для графика. */
+  history: () => request<AvailabilityHistoryResponse>(AVAILABILITY_BASE, '/history'),
+  /** Изменить число хранимых проверок; уменьшение применяется сразу. */
+  setHistoryLimit: (limit: number) =>
+    request<AvailabilityHistoryResponse>(AVAILABILITY_BASE, '/history', {
+      method: 'PUT',
+      body: JSON.stringify({ limit }),
+    }),
   /** Проверить прямо сейчас. Сервер может отказать: каждый зонд стоит квоты. */
   check: () =>
     request<AvailabilityDetailsResponse>(AVAILABILITY_BASE, '/check', { method: 'POST' }),

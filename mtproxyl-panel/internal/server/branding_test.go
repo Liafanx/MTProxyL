@@ -51,6 +51,25 @@ func TestBrandingDefaultsArePublic(t *testing.T) {
 	if got.HasBackground {
 		t.Error("HasBackground = true without an image")
 	}
+	if got.PanelBackgroundMode != panelBackgroundNone || got.HasPanelBackground {
+		t.Errorf("unexpected panel background defaults: %+v", got)
+	}
+}
+
+func TestLegacyBrandingDefaultsToNoPanelBackground(t *testing.T) {
+	dir := t.TempDir()
+	legacy := `{"panel_name":"Legacy","login_title":"Login","login_subtitle":"Proxy"}`
+	if err := os.WriteFile(filepath.Join(dir, brandingFileName), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := newBrandingStore(dir)
+	if err != nil {
+		t.Fatalf("load legacy branding: %v", err)
+	}
+	got := store.get()
+	if got.PanelBackgroundMode != panelBackgroundNone {
+		t.Errorf("legacy panel background mode = %q, want %q", got.PanelBackgroundMode, panelBackgroundNone)
+	}
 }
 
 func TestBrandingUpdateRequiresAuthAndPersists(t *testing.T) {
@@ -61,7 +80,7 @@ func TestBrandingUpdateRequiresAuthAndPersists(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	New(nil).registerBrandingRoutes(mux, testJWTSecret, store)
-	body := `{"panel_name":" My panel ","login_title":"Welcome","login_subtitle":"Private proxy"}`
+	body := `{"panel_name":" My panel ","login_title":"Welcome","login_subtitle":"Private proxy","panel_background_mode":"login"}`
 
 	unauthorized := httptest.NewRecorder()
 	mux.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPut, "/api/panel/settings", strings.NewReader(body)))
@@ -75,7 +94,7 @@ func TestBrandingUpdateRequiresAuthAndPersists(t *testing.T) {
 		t.Fatalf("update: got %d (body: %s)", rec.Code, rec.Body.String())
 	}
 	got := decodeBrandingResponse(t, rec)
-	if got.PanelName != "My panel" || got.LoginTitle != "Welcome" || got.LoginSubtitle != "Private proxy" {
+	if got.PanelName != "My panel" || got.LoginTitle != "Welcome" || got.LoginSubtitle != "Private proxy" || got.PanelBackgroundMode != panelBackgroundLogin {
 		t.Errorf("unexpected update: %+v", got)
 	}
 
@@ -83,7 +102,7 @@ func TestBrandingUpdateRequiresAuthAndPersists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if got := reloaded.get(); got.PanelName != "My panel" || got.LoginTitle != "Welcome" {
+	if got := reloaded.get(); got.PanelName != "My panel" || got.LoginTitle != "Welcome" || got.PanelBackgroundMode != panelBackgroundLogin {
 		t.Errorf("settings were not persisted: %+v", got)
 	}
 	info, err := os.Stat(filepath.Join(dir, brandingFileName))
@@ -98,6 +117,16 @@ func TestBrandingUpdateRequiresAuthAndPersists(t *testing.T) {
 func TestBrandingRejectsInvalidText(t *testing.T) {
 	mux, _ := newBrandingMux(t)
 	body := `{"panel_name":"","login_title":"Welcome","login_subtitle":"Proxy"}`
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, authedRequest(t, http.MethodPut, "/api/panel/settings", body))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got %d, want 400 (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestBrandingRejectsInvalidPanelBackgroundMode(t *testing.T) {
+	mux, _ := newBrandingMux(t)
+	body := `{"panel_name":"Panel","login_title":"Welcome","login_subtitle":"Proxy","panel_background_mode":"remote"}`
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, authedRequest(t, http.MethodPut, "/api/panel/settings", body))
 	if rec.Code != http.StatusBadRequest {
@@ -150,5 +179,59 @@ func TestBrandingBackgroundRejectsNonImage(t *testing.T) {
 	mux.ServeHTTP(rec, authedRequest(t, http.MethodPut, "/api/panel/settings/background", "<svg></svg>"))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("got %d, want 400 (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPanelBackgroundIsStoredSeparately(t *testing.T) {
+	mux, _ := newBrandingMux(t)
+	loginPNG := string([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 'l', 'o', 'g', 'i', 'n'})
+	panelPNG := string([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 'p', 'a', 'n', 'e', 'l'})
+
+	for path, body := range map[string]string{
+		"/api/panel/settings/background":       loginPNG,
+		"/api/panel/settings/panel-background": panelPNG,
+	} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, authedRequest(t, http.MethodPut, path, body))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("upload %s: got %d (body: %s)", path, rec.Code, rec.Body.String())
+		}
+	}
+
+	brandingRec := httptest.NewRecorder()
+	mux.ServeHTTP(brandingRec, httptest.NewRequest(http.MethodGet, "/api/branding", nil))
+	branding := decodeBrandingResponse(t, brandingRec)
+	if !branding.HasBackground || !branding.HasPanelBackground || branding.PanelBackgroundRevision == "" {
+		t.Fatalf("both background files were not reported: %+v", branding)
+	}
+
+	for path, want := range map[string]string{
+		"/api/branding/background":       loginPNG,
+		"/api/branding/panel-background": panelPNG,
+	} {
+		rec := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		if path == "/api/branding/panel-background" {
+			request = authedRequest(t, http.MethodGet, path, "")
+		}
+		mux.ServeHTTP(rec, request)
+		if rec.Code != http.StatusOK || rec.Body.String() != want {
+			t.Errorf("serve %s: code=%d body differs=%v", path, rec.Code, rec.Body.String() != want)
+		}
+	}
+	unauthorized := httptest.NewRecorder()
+	mux.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/branding/panel-background", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Errorf("panel background without auth: got %d, want 401", unauthorized.Code)
+	}
+
+	deleted := httptest.NewRecorder()
+	mux.ServeHTTP(deleted, authedRequest(t, http.MethodDelete, "/api/panel/settings/panel-background", ""))
+	if deleted.Code != http.StatusOK {
+		t.Fatalf("delete panel background: got %d (body: %s)", deleted.Code, deleted.Body.String())
+	}
+	got := decodeBrandingResponse(t, deleted)
+	if got.HasPanelBackground || !got.HasBackground {
+		t.Errorf("deleting panel background affected wrong file: %+v", got)
 	}
 }

@@ -18,6 +18,9 @@ create_backup() {
              superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf backup_meta.txt; do
         [ -f "${INSTALL_DIR}/$f" ] && files+=("$f")
     done
+    for f in availability/last.json availability/history.jsonl; do
+        [ -f "${INSTALL_DIR}/$f" ] && files+=("$f")
+    done
     [ -d "$STATS_DIR" ] && files+=("relay_stats")
     [ -d "$GEOBLOCK_CACHE_DIR" ] && files+=("geoblock")
     [ ! -f "$(_warp_account)" ] || files+=("warp/account.json")
@@ -69,6 +72,11 @@ restore_backup() {
     # из бэкапа не должно возвращать ему старые 600.
     chmod "${_SETTINGS_FILE_MODE:-644}" "${SETTINGS_FILE}" 2>/dev/null
     chmod 600 "${SECRETS_FILE}" 2>/dev/null
+    if [ -d "${INSTALL_DIR}/availability" ]; then
+        chmod 700 "${INSTALL_DIR}/availability" 2>/dev/null
+        chmod 600 "${INSTALL_DIR}/availability/last.json" \
+            "${INSTALL_DIR}/availability/history.jsonl" 2>/dev/null || true
+    fi
     if [ -f "$(_warp_account)" ]; then
         chmod 700 "$(_warp_dir)"
         chmod 600 "$(_warp_account)"
@@ -77,6 +85,7 @@ restore_backup() {
 
     # Перезагрузка настроек в память
     load_settings
+    availability_history_compact 2>/dev/null || true
     load_secrets
     load_nft_settings 2>/dev/null
     if [ -n "${BLOCKLIST_COUNTRIES:-}" ]; then
@@ -261,6 +270,12 @@ migrate_export() {
              superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf; do
         [ -f "${INSTALL_DIR}/$f" ] && { cp "${INSTALL_DIR}/$f" "$tmp/" && count=$((count + 1)); }
     done
+    for f in last.json history.jsonl; do
+        if [ -f "${INSTALL_DIR}/availability/$f" ]; then
+            mkdir -p "$tmp/availability"
+            cp "${INSTALL_DIR}/availability/$f" "$tmp/availability/$f" && count=$((count + 1))
+        fi
+    done
     if [ -d "${GEOBLOCK_CACHE_DIR}" ]; then
         cp -a "${GEOBLOCK_CACHE_DIR}" "$tmp/geoblock" && count=$((count + 1))
     fi
@@ -288,6 +303,15 @@ migrate_import() {
              superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf; do
         [ -f "${tmp}/${f}" ] && { cp "${tmp}/${f}" "${INSTALL_DIR}/$f" && chmod 600 "${INSTALL_DIR}/$f" && restored=$((restored + 1)); }
     done
+    for f in last.json history.jsonl; do
+        if [ -f "${tmp}/availability/$f" ]; then
+            mkdir -p "${INSTALL_DIR}/availability"
+            cp "${tmp}/availability/$f" "${INSTALL_DIR}/availability/$f"
+            chmod 600 "${INSTALL_DIR}/availability/$f"
+            restored=$((restored + 1))
+        fi
+    done
+    [ ! -d "${INSTALL_DIR}/availability" ] || chmod 700 "${INSTALL_DIR}/availability"
     if [ -d "${tmp}/geoblock" ]; then
         mkdir -p "$GEOBLOCK_CACHE_DIR"
         cp -a "${tmp}/geoblock/." "$GEOBLOCK_CACHE_DIR/"
@@ -295,7 +319,9 @@ migrate_import() {
     fi
 
     rm -rf "$tmp"
-    load_settings; load_secrets
+    load_settings
+    availability_history_compact 2>/dev/null || true
+    load_secrets
     if [ -n "${BLOCKLIST_COUNTRIES:-}" ]; then
         geoblock_remove_all >/dev/null 2>&1 || true
         geoblock_reapply_all >/dev/null 2>&1 || true

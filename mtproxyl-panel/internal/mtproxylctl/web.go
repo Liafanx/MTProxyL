@@ -122,7 +122,7 @@ var webKeyRe = regexp.MustCompile(`^WEB_[A-Z0-9_]{1,63}$`)
 
 // webValueRe allows what real values look like: domains, paths, URLs, ports,
 // carrier names and booleans.
-var webValueRe = regexp.MustCompile(`^[A-Za-z0-9_.:/@%+-]*$`)
+var webValueRe = regexp.MustCompile(`^[A-Za-z0-9_.:/,@%+-]*$`)
 
 // ValidateWebParam checks a key/value pair before it reaches the CLI.
 func ValidateWebParam(key, value string) error {

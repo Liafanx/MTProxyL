@@ -40,17 +40,26 @@ func (t AvailabilityTarget) OverridePort() int {
 // travel as raw JSON: the panel only reshapes the envelope, and re-encoding the
 // probe list would mean keeping two copies of its schema in step.
 type AvailabilityState struct {
-	Enabled     bool               `json:"enabled"`
-	AutoCheck   bool               `json:"auto_check"`
-	TimerActive bool               `json:"timer_active"`
-	Interval    int                `json:"interval"`
-	Probes      int                `json:"probes"`
-	Threshold   int                `json:"threshold"`
-	NextRun     string             `json:"next_run"`
-	Quota       json.RawMessage    `json:"quota"`
-	Target      AvailabilityTarget `json:"target"`
-	Result      json.RawMessage    `json:"result"`
-	Message     string             `json:"message"`
+	Enabled      bool               `json:"enabled"`
+	AutoCheck    bool               `json:"auto_check"`
+	TimerActive  bool               `json:"timer_active"`
+	Interval     int                `json:"interval"`
+	Probes       int                `json:"probes"`
+	Threshold    int                `json:"threshold"`
+	HistoryLimit int                `json:"history_limit"`
+	NextRun      string             `json:"next_run"`
+	Quota        json.RawMessage    `json:"quota"`
+	Target       AvailabilityTarget `json:"target"`
+	Result       json.RawMessage    `json:"result"`
+	Message      string             `json:"message"`
+}
+
+// AvailabilityHistory is a compact sequence for the panel chart. Every point
+// carries its own success/total pair, so measurements made with a different
+// number of probes remain comparable.
+type AvailabilityHistory struct {
+	Limit  int             `json:"limit"`
+	Points json.RawMessage `json:"points"`
 }
 
 // ErrAvailabilityUnsupported means the installed MTProxyL predates the check.
@@ -71,6 +80,29 @@ func (c *Client) AvailabilityStatus(ctx context.Context) (*AvailabilityState, er
 // AvailabilityDetails returns the same with every probe.
 func (c *Client) AvailabilityDetails(ctx context.Context) (*AvailabilityState, error) {
 	return c.availabilityState(ctx, "details")
+}
+
+// AvailabilityHistory returns compact summaries without the per-probe output.
+func (c *Client) AvailabilityHistory(ctx context.Context) (*AvailabilityHistory, error) {
+	out, err := c.run(ctx, "availability", "history")
+	if err != nil {
+		if unsupportedCommand(out, err) {
+			return nil, ErrAvailabilityUnsupported
+		}
+		return nil, err
+	}
+	line := firstJSONLine(out)
+	if line == "" {
+		return nil, ErrAvailabilityUnsupported
+	}
+	var history AvailabilityHistory
+	if err := json.Unmarshal([]byte(line), &history); err != nil {
+		return nil, fmt.Errorf("parse availability history: %w", err)
+	}
+	if len(history.Points) == 0 || string(history.Points) == "null" {
+		history.Points = json.RawMessage("[]")
+	}
+	return &history, nil
 }
 
 func (c *Client) availabilityState(ctx context.Context, args ...string) (*AvailabilityState, error) {

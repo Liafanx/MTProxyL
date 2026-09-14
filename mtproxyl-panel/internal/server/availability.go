@@ -47,6 +47,41 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 		})})
 	}))
 
+	// Компактная история для графика: без сырых ответов и TLS-метаданных
+	// каждого зонда, но с фактической дробью success/total каждой проверки.
+	mux.Handle("GET /api/availability/history", protected(func(w http.ResponseWriter, r *http.Request) {
+		history, err := client.AvailabilityHistory(r.Context())
+		if err != nil {
+			writeAvailabilityHistoryUnavailable(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: history})
+	}))
+
+	mux.Handle("PUT /api/availability/history", protected(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Limit int `json:"limit"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&body); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "Ожидается {\"limit\": 1000}")
+			return
+		}
+		if body.Limit < 1 || body.Limit > 100000 {
+			writeError(w, http.StatusBadRequest, "invalid_history_limit", "Размер истории — от 1 до 100000 проверок")
+			return
+		}
+		if _, err := client.SetSetting(r.Context(), "AVAILABILITY_HISTORY_LIMIT", strconv.Itoa(body.Limit)); err != nil {
+			writeCLIError(w, "availability_history_limit_failed", err)
+			return
+		}
+		history, err := client.AvailabilityHistory(r.Context())
+		if err != nil {
+			writeAvailabilityHistoryUnavailable(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: history})
+	}))
+
 	// Что проверяем. GET отдаёт и заданное руками, и то, что вышло бы само —
 	// без второго форма не может показать, от чего оператор отступает.
 	mux.Handle("GET /api/availability/target", protected(func(w http.ResponseWriter, r *http.Request) {
@@ -158,19 +193,31 @@ func (s *Server) registerAvailabilityRoutes(mux *http.ServeMux, jwtSecret []byte
 	}))
 }
 
+func writeAvailabilityHistoryUnavailable(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, mtproxylctl.ErrDisabled):
+		writeError(w, http.StatusServiceUnavailable, "availability_disabled", "Интеграция с MTProxyL отключена в конфигурации панели")
+	case errors.Is(err, mtproxylctl.ErrAvailabilityUnsupported):
+		writeError(w, http.StatusNotImplemented, "availability_history_unsupported", "Для истории доступности обновите MTProxyL")
+	default:
+		writeCLIError(w, "availability_history_failed", err)
+	}
+}
+
 // availabilityEnvelope adds the schedule: period, probes and threshold are the
 // operator's own settings, not panel constants.
 func availabilityEnvelope(st *mtproxylctl.AvailabilityState, extra map[string]any) map[string]any {
 	out := map[string]any{
-		"enabled":      true,
-		"quota":        rawOrNil(st.Quota),
-		"auto_check":   st.AutoCheck,
-		"timer_active": st.TimerActive,
-		"interval":     st.Interval,
-		"probes":       st.Probes,
-		"threshold":    st.Threshold,
-		"next_run":     st.NextRun,
-		"message":      st.Message,
+		"enabled":       true,
+		"quota":         rawOrNil(st.Quota),
+		"auto_check":    st.AutoCheck,
+		"timer_active":  st.TimerActive,
+		"interval":      st.Interval,
+		"probes":        st.Probes,
+		"threshold":     st.Threshold,
+		"history_limit": st.HistoryLimit,
+		"next_run":      st.NextRun,
+		"message":       st.Message,
 	}
 	for k, v := range extra {
 		out[k] = v

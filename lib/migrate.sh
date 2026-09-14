@@ -517,6 +517,18 @@ _mig_push_panel() {
     _mig_scp "$_cfg" "/tmp/mtproxyl-panel-config.toml" || { log_warn "Конфиг панели не доехал"; return 0; }
     _mig_ssh "mkdir -p /etc/mtproxyl-panel && install -m 600 /tmp/mtproxyl-panel-config.toml ${_cfg} && rm -f /tmp/mtproxyl-panel-config.toml" \
         || { log_warn "Не удалось положить конфиг панели"; return 0; }
+    if [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ]; then
+        save_panel_selfmask_settings || {
+            log_warn "Не удалось подготовить защищённое состояние маршрута панели"; return 0; }
+        local _panel_state_remote="/tmp/mtproxyl-panel-selfmask.conf"
+        if ! _mig_scp "$PANEL_SELFMASK_STATE_FILE" "$_panel_state_remote" ||
+           ! _mig_ssh "install -m 600 -o root -g root ${_panel_state_remote} ${INSTALL_DIR}/panel-selfmask.conf && rm -f ${_panel_state_remote}" \
+                </dev/null >/dev/null 2>&1; then
+            _mig_ssh "rm -f ${_panel_state_remote}" </dev/null >/dev/null 2>&1 || true
+            log_warn "Скрытый маршрут панели не доехал — панель не запускаем с неполной конфигурацией"
+            return 0
+        fi
+    fi
     # MTPROXYL_NONINTERACTIVE — чтобы установщик не начал сам выпускать
     # сертификат: отвечать на той стороне некому, а A-запись ещё не переехала.
     if ! _mig_ssh "MTPROXYL_NONINTERACTIVE=true mtproxyl panel install" </dev/null; then
@@ -535,10 +547,10 @@ _mig_push_panel() {
 _mig_push_tgbot() {
     tgbot_installed 2>/dev/null || return 0
     log_info "Переносим телеграм-бота..."
-    local _token _first
-    _token=$(jq -r '.token // empty' "$TGBOT_CONFIG" 2>/dev/null)
-    _first=$(jq -r '(.admins // []) | .[0] // empty' "$TGBOT_CONFIG" 2>/dev/null)
-    if [ -z "$_token" ] || [ -z "$_first" ]; then
+    # Токен не читаем в shell-переменную и не помещаем в удалённую команду:
+    # её видно в истории, журнале SSH и ps. Конфиг едет зашифрованным scp.
+    if ! jq -e '((.token // "") | length > 0) and ((.admins // []) | length > 0)' \
+        "$TGBOT_CONFIG" >/dev/null 2>&1; then
         log_warn "Токен или админов бота прочитать не вышло — поставьте бота на новом сервере вручную"
         return 0
     fi
@@ -550,24 +562,32 @@ _mig_push_tgbot() {
     if [ "${_code:-000}" = "000" ]; then
         log_warn "С нового сервера не видно api.telegram.org — бота не ставим"
         log_info "Там он всё равно не запустится: сначала дайте серверу доступ к Telegram"
-        log_info "Когда появится: mtproxyl tgbot install --token <токен> --admin <id>"
+        log_info "Когда доступ появится, повторите перенос бота или установите его вручную"
+        return 0
+    fi
+    local _remote_cfg
+    _remote_cfg=$(_mig_ssh "mktemp /tmp/.mtproxyl-tgbot-migrate.XXXXXX" </dev/null 2>/dev/null | tr -d '\r\n')
+    if ! [[ "$_remote_cfg" =~ ^/tmp/\.mtproxyl-tgbot-migrate\.[A-Za-z0-9]+$ ]]; then
+        log_warn "Не удалось создать защищённый временный файл для конфига бота"
+        return 0
+    fi
+    if ! _mig_scp "$TGBOT_CONFIG" "$_remote_cfg"; then
+        log_warn "Конфиг бота не доехал — токен в аргументы подставлять не будем"
+        return 0
+    fi
+    if ! _mig_ssh "chmod 600 ${_remote_cfg}" </dev/null >/dev/null 2>&1; then
+        _mig_ssh "rm -f ${_remote_cfg}" </dev/null >/dev/null 2>&1 || true
+        log_warn "Не удалось защитить временный конфиг бота — перенос отменён"
         return 0
     fi
     # Сборка venv на слабой машине идёт минутами; ограничение спасает от
-    # переезда, который висит без конца.
-    if ! _mig_ssh "timeout 900 mtproxyl tgbot install --token $(_mig_quote "$_token") --admin $(_mig_quote "$_first")" </dev/null; then
+    # переезда, который висит без конца. В аргументах только путь к файлу,
+    # содержимое и токен там не появляются.
+    if ! _mig_ssh "if timeout 900 mtproxyl tgbot install --config-file ${_remote_cfg}; then rm -f ${_remote_cfg}; else rm -f ${_remote_cfg}; exit 1; fi" </dev/null; then
         log_warn "Бот не установился — поставьте на новом сервере: mtproxyl tgbot install"
         return 0
     fi
-    # Остальные админы, уведомления и интервалы живут в том же файле — везём
-    # его целиком, добавлять по одному нечего.
-    if _mig_scp "$TGBOT_CONFIG" "/tmp/mtproxyl-tgbot-config.json" && \
-       _mig_ssh "install -m 600 -o ${TGBOT_USER} -g ${TGBOT_USER} /tmp/mtproxyl-tgbot-config.json ${TGBOT_CONFIG} && rm -f /tmp/mtproxyl-tgbot-config.json && systemctl restart ${TGBOT_SERVICE}" </dev/null >/dev/null 2>&1; then
-        log_success "Бот установлен: токен, админы и уведомления прежние"
-    else
-        log_success "Бот установлен с прежним токеном"
-        log_warn "Настройки уведомлений не доехали — проверьте меню бота на новом сервере"
-    fi
+    log_success "Бот установлен: токен, админы и уведомления прежние"
     log_warn "Два бота на одном токене не уживутся — старого остановите"
 }
 

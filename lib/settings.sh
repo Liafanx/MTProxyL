@@ -52,6 +52,7 @@ AVAILABILITY_ENABLED="true"
 AVAILABILITY_INTERVAL="15"
 AVAILABILITY_PROBES="20"
 AVAILABILITY_THRESHOLD="50"
+AVAILABILITY_HISTORY_LIMIT="1000"
 AVAILABILITY_HOST=""
 AVAILABILITY_PORT=""
 AVAILABILITY_SNI=""
@@ -93,6 +94,15 @@ SELFMASK_AUTO_RENEW="true"
 SELFMASK_TLS_PROTOCOLS="TLSv1.3"
 SELFMASK_CERT_MODE="letsencrypt"  # letsencrypt|selfsigned
 
+# Доступ к панели через домен Selfmask. Путь хранится отдельно и включается
+# только явной командой `mtproxyl panel selfmask on`: один base_path сам по
+# себе не должен неожиданно публиковать панель через заглушку.
+PANEL_SELFMASK_ENABLED="false"
+PANEL_SELFMASK_PATH=""
+PANEL_SELFMASK_PREV_LISTEN=""
+PANEL_SELFMASK_PREV_BASE_PATH=""
+PANEL_SELFMASK_STATE_FILE="${INSTALL_DIR}/panel-selfmask.conf"
+
 # WEB Proxy (движок 3.5.1+). Публичный TLS держит nginx MTProxyL либо внешний
 # HAProxy. Домен и сайт по умолчанию берутся у Selfmask.
 WEB_ENABLED="false"
@@ -105,7 +115,9 @@ WEB_PUBLIC_PORT="443"       # публичный порт встроенного
 WEB_DOMAIN=""
 WEB_CARRIER="websocket"        # https|https-lanes|websocket|websocket-lanes
 WEB_SECRET_MODE="dd"        # plain|dd, ee движок в WEB не поддерживает
+WEB_LISTEN_ADDR="127.0.0.1" # интерфейс plain HTTP listener'а telemt
 WEB_LISTEN_PORT="15080"     # приватный listener telemt, transport = "web"
+WEB_TRUSTED_PROXY_CIDRS="127.0.0.1/32" # кто может передавать X-Forwarded-For
 WEB_TLS_PORT="15444"        # приватный TLS frontend shared
 WEB_MTPROXY_PORT="15443"    # куда nginx отдаёт FakeTLS после разбора SNI
 WEB_HAPROXY_CERT=""          # PEM с сертификатом и ключом для готового фрагмента
@@ -207,6 +219,7 @@ AVAILABILITY_ENABLED='${AVAILABILITY_ENABLED}'
 AVAILABILITY_INTERVAL='${AVAILABILITY_INTERVAL}'
 AVAILABILITY_PROBES='${AVAILABILITY_PROBES}'
 AVAILABILITY_THRESHOLD='${AVAILABILITY_THRESHOLD}'
+AVAILABILITY_HISTORY_LIMIT='${AVAILABILITY_HISTORY_LIMIT}'
 AVAILABILITY_HOST='${AVAILABILITY_HOST}'
 AVAILABILITY_PORT='${AVAILABILITY_PORT}'
 AVAILABILITY_SNI='${AVAILABILITY_SNI}'
@@ -244,7 +257,9 @@ WEB_PUBLIC_PORT='${WEB_PUBLIC_PORT}'
 WEB_DOMAIN='${WEB_DOMAIN}'
 WEB_CARRIER='${WEB_CARRIER}'
 WEB_SECRET_MODE='${WEB_SECRET_MODE}'
+WEB_LISTEN_ADDR='${WEB_LISTEN_ADDR}'
 WEB_LISTEN_PORT='${WEB_LISTEN_PORT}'
+WEB_TRUSTED_PROXY_CIDRS='${WEB_TRUSTED_PROXY_CIDRS}'
 WEB_TLS_PORT='${WEB_TLS_PORT}'
 WEB_MTPROXY_PORT='${WEB_MTPROXY_PORT}'
 WEB_HAPROXY_CERT='${WEB_HAPROXY_CERT}'
@@ -279,6 +294,7 @@ SETTINGS_EOF
     mv "$tmp" "$SETTINGS_FILE"
 
     save_selfmask_settings
+    save_panel_selfmask_settings
 }
 
 # ── Selfmask: отдельный набор настроек на каждый режим ─────────
@@ -318,6 +334,36 @@ SELFMASK_PREV_PUBLIC_HOST='${SELFMASK_PREV_PUBLIC_HOST}'
 SELFMASK_EOF
     chmod 600 "$_tmp"
     mv "$_tmp" "$_f"
+}
+
+# Случайный URL только скрывает точку входа и не заменяет логин с паролем.
+# Не кладём его в общий settings.conf с правами 644: отдельный файл читает root.
+save_panel_selfmask_settings() {
+    mkdir -p "$INSTALL_DIR"
+    local _tmp; _tmp=$(_mktemp "$INSTALL_DIR") || return 1
+    cat > "$_tmp" << PANEL_SELFMASK_EOF
+# MTProxyL — доступ панели через домен Selfmask
+PANEL_SELFMASK_ENABLED='${PANEL_SELFMASK_ENABLED}'
+PANEL_SELFMASK_PATH='${PANEL_SELFMASK_PATH}'
+PANEL_SELFMASK_PREV_LISTEN='${PANEL_SELFMASK_PREV_LISTEN}'
+PANEL_SELFMASK_PREV_BASE_PATH='${PANEL_SELFMASK_PREV_BASE_PATH}'
+PANEL_SELFMASK_EOF
+    chmod 600 "$_tmp"
+    mv "$_tmp" "$PANEL_SELFMASK_STATE_FILE"
+}
+
+load_panel_selfmask_settings() {
+    [ -f "$PANEL_SELFMASK_STATE_FILE" ] || return 0
+    local _line _key _val
+    while IFS= read -r _line; do
+        [[ "$_line" =~ ^[[:space:]]*# ]] && continue
+        [[ "$_line" =~ ^([A-Z_][A-Z0-9_]*)=\'([^\']*)\'$ ]] || continue
+        _key="${BASH_REMATCH[1]}"; _val="${BASH_REMATCH[2]}"
+        case "$_key" in
+            PANEL_SELFMASK_ENABLED|PANEL_SELFMASK_PATH|PANEL_SELFMASK_PREV_LISTEN|PANEL_SELFMASK_PREV_BASE_PATH)
+                printf -v "$_key" '%s' "$_val" ;;
+        esac
+    done < "$PANEL_SELFMASK_STATE_FILE"
 }
 
 # Значения из per-mode файла перекрывают то, что пришло из settings.conf.
@@ -413,9 +459,13 @@ _fix_settings_perms() {
     [ -f "$SETTINGS_FILE" ] || return 0
     local _cur
     _cur=$(stat -c '%a' "$INSTALL_DIR" "$SETTINGS_FILE" 2>/dev/null | tr '\n' ' ')
-    [ "$_cur" = "${_INSTALL_DIR_MODE} ${_SETTINGS_FILE_MODE} " ] && return 0
+    if [ "$_cur" = "${_INSTALL_DIR_MODE} ${_SETTINGS_FILE_MODE} " ]; then
+        [ -f "$PANEL_SELFMASK_STATE_FILE" ] && chmod 600 "$PANEL_SELFMASK_STATE_FILE" 2>/dev/null || true
+        return 0
+    fi
     chmod "$_INSTALL_DIR_MODE" "$INSTALL_DIR" 2>/dev/null || true
     chmod "$_SETTINGS_FILE_MODE" "$SETTINGS_FILE" 2>/dev/null || true
+    [ -f "$PANEL_SELFMASK_STATE_FILE" ] && chmod 600 "$PANEL_SELFMASK_STATE_FILE" 2>/dev/null || true
     # Подкаталоги закрываем явно: до сих пор их прятал только закрытый на
     # листинг родитель, а теперь через него можно пройти.
     chmod 700 "${STATS_DIR:-${INSTALL_DIR}/relay_stats}" "${BACKUP_DIR:-${INSTALL_DIR}/backups}" 2>/dev/null || true
@@ -451,15 +501,18 @@ load_settings() {
                 PROXY_SECRET_URL|PROXY_CONFIG_V4_URL|PROXY_CONFIG_V6_URL|\
                 BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT|IP_HISTORY_INTERVAL|TOOLS_ONLY|DC_THRESHOLD|\
                 AVAILABILITY_ENABLED|AVAILABILITY_INTERVAL|AVAILABILITY_PROBES|\
-                AVAILABILITY_THRESHOLD|AVAILABILITY_HOST|AVAILABILITY_PORT|AVAILABILITY_SNI|\
+                AVAILABILITY_THRESHOLD|AVAILABILITY_HISTORY_LIMIT|AVAILABILITY_HOST|AVAILABILITY_PORT|AVAILABILITY_SNI|\
                 WARP_ENABLED|WARP_WATCHDOG_ENABLED|WARP_MODE|WARP_PROTO|WARP_LOCATION|WARP_ENDPOINT|\
                 WARP_SOCKS_PORT|WARP_REDIR_PORT|WARP_MTU|WARP_FWMARK|\
                 WARP_DISABLED_UPSTREAMS|\
                 SELFMASK_ENABLED|SELFMASK_DOMAIN|SELFMASK_SITE_SOURCE|SELFMASK_SITE_DIR|\
                 SELFMASK_NGINX_BACKEND_PORT|SELFMASK_CERT_EMAIL|SELFMASK_NGINX_SITE_NAME|\
                 SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS|SELFMASK_CERT_MODE|\
+                PANEL_SELFMASK_ENABLED|PANEL_SELFMASK_PATH|PANEL_SELFMASK_PREV_LISTEN|\
+                PANEL_SELFMASK_PREV_BASE_PATH|\
                 WEB_ENABLED|WEB_FRONTEND|WEB_LAYOUT|WEB_PUBLIC_PORT|WEB_DOMAIN|WEB_CARRIER|WEB_SECRET_MODE|\
-                WEB_LISTEN_PORT|WEB_TLS_PORT|WEB_MTPROXY_PORT|\
+                WEB_LISTEN_ADDR|WEB_LISTEN_PORT|WEB_TRUSTED_PROXY_CIDRS|\
+                WEB_TLS_PORT|WEB_MTPROXY_PORT|\
                 WEB_HAPROXY_CERT|\
                 WEB_DECOY_MODE|WEB_DECOY_DIR|WEB_DECOY_UPSTREAM|WEB_DEBUG|WEB_FP_SEED|\
                 WEB_ONLY_PREV_NFT|WEB_ONLY_PREV_ZAPRET2|\
@@ -472,6 +525,10 @@ load_settings() {
             esac
         done < "$SETTINGS_FILE"
     fi
+
+    # Root-only файл имеет приоритет. Чтение из settings.conf выше оставлено
+    # только для миграции ранней dev-реализации этого режима.
+    load_panel_selfmask_settings
 
     # Валидация
     case "$MTPROXYL_MODE" in
@@ -489,6 +546,10 @@ load_settings() {
     [[ "$FAKE_CERT_LEN" =~ ^[0-9]+$ ]] && [ "$FAKE_CERT_LEN" -ge 512 ] || FAKE_CERT_LEN=2048
     [[ "$PROXY_CONCURRENCY" =~ ^[0-9]+$ ]] || PROXY_CONCURRENCY=8192
     [[ "$PROXY_PROTOCOL" == "true" ]] || PROXY_PROTOCOL="false"
+    if [ -n "$PROXY_PROTOCOL_TRUSTED_CIDRS" ] \
+       && ! _validate_cidr_list "$PROXY_PROTOCOL_TRUSTED_CIDRS" >/dev/null 2>&1; then
+        PROXY_PROTOCOL_TRUSTED_CIDRS=""
+    fi
     [[ "$GEOBLOCK_MODE" == "whitelist" ]] || GEOBLOCK_MODE="blacklist"
     case "$UNKNOWN_SNI_ACTION" in
         mask|drop|accept|reject_handshake) ;;
@@ -502,6 +563,12 @@ load_settings() {
     [ -n "$SELFMASK_NGINX_SITE_NAME" ] || SELFMASK_NGINX_SITE_NAME="mtproxyl-selfmask"
     [ -n "$SELFMASK_SITE_SOURCE" ] || SELFMASK_SITE_SOURCE="stub"
     [ "$SELFMASK_TLS_PROTOCOLS" = "TLSv1.3" ] || SELFMASK_TLS_PROTOCOLS="TLSv1.3"
+    [ "$PANEL_SELFMASK_ENABLED" = "true" ] || PANEL_SELFMASK_ENABLED="false"
+    if [ "$PANEL_SELFMASK_ENABLED" = "true" ] &&
+       ! [[ "$PANEL_SELFMASK_PATH" =~ ^/[A-Za-z0-9_-]{16,64}$ ]]; then
+        PANEL_SELFMASK_ENABLED="false"
+        PANEL_SELFMASK_PATH=""
+    fi
     # Selfmask своего режима — уже после того, как известен MTPROXYL_MODE
     load_selfmask_settings
 
@@ -543,6 +610,9 @@ load_settings() {
         empty|static_directory|http_upstream) ;;
         *) WEB_DECOY_MODE="empty" ;;
     esac
+    _validate_web_listen_addr "$WEB_LISTEN_ADDR" >/dev/null 2>&1 || WEB_LISTEN_ADDR="127.0.0.1"
+    _validate_web_trusted_proxy_cidrs "$WEB_TRUSTED_PROXY_CIDRS" >/dev/null 2>&1 \
+        || WEB_TRUSTED_PROXY_CIDRS="127.0.0.1/32"
     [[ "$WEB_LISTEN_PORT" =~ ^[0-9]+$ ]] && [ "$WEB_LISTEN_PORT" -ge 1 ] && [ "$WEB_LISTEN_PORT" -le 65535 ] || WEB_LISTEN_PORT="15080"
     [[ "$WEB_TLS_PORT" =~ ^[0-9]+$ ]] && [ "$WEB_TLS_PORT" -ge 1 ] && [ "$WEB_TLS_PORT" -le 65535 ] || WEB_TLS_PORT="15444"
     [[ "$WEB_MTPROXY_PORT" =~ ^[0-9]+$ ]] && [ "$WEB_MTPROXY_PORT" -ge 1 ] && [ "$WEB_MTPROXY_PORT" -le 65535 ] || WEB_MTPROXY_PORT="15443"
@@ -555,6 +625,7 @@ load_settings() {
     [[ "$AVAILABILITY_INTERVAL" =~ ^[0-9]+$ ]] && [ "$AVAILABILITY_INTERVAL" -ge 1 ] || AVAILABILITY_INTERVAL="15"
     [[ "$AVAILABILITY_PROBES" =~ ^[0-9]+$ ]] && [ "$AVAILABILITY_PROBES" -ge 1 ] && [ "$AVAILABILITY_PROBES" -le 50 ] || AVAILABILITY_PROBES="20"
     [[ "$AVAILABILITY_THRESHOLD" =~ ^[0-9]+$ ]] && [ "$AVAILABILITY_THRESHOLD" -le 100 ] || AVAILABILITY_THRESHOLD="50"
+    [[ "$AVAILABILITY_HISTORY_LIMIT" =~ ^[0-9]+$ ]] && [ "$AVAILABILITY_HISTORY_LIMIT" -ge 1 ] && [ "$AVAILABILITY_HISTORY_LIMIT" -le 100000 ] || AVAILABILITY_HISTORY_LIMIT="1000"
 
     _fix_settings_perms
     _ensure_ip_history_timer

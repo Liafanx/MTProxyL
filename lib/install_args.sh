@@ -29,6 +29,7 @@ _IA_BLOCK_FILE=""
 _IA_BLOCK_LIST=""
 _IA_BLOCK_ACTION=""
 _IA_ENGINE=""; _IA_ENGINE_VERSION=""
+_IA_TGBOT_TOKEN=""; _IA_TGBOT_ADMIN=""
 _IA_FORCE="false"
 
 install_args_help() {
@@ -94,6 +95,9 @@ install_args_help() {
     --block СПИСОК             заблокированные адреса через запятую
     --block-action drop|reject что делать с заблокированными, по умолчанию drop
                                (по умолчанию no)
+    --tgbot-token <токен>      установить Telegram-бота без вопросов
+    --tgbot-admin <id>         числовой Telegram ID первого администратора;
+                               задаётся только вместе с --tgbot-token
 
   Прочее
     --force                    ставить поверх существующей установки
@@ -220,6 +224,8 @@ _install_args_parse() {
                     no|n|нет|false|off) _IA_GEOIP="no" ;;
                     *) log_error "--geoip: yes или no"; return 1 ;;
                 esac ;;
+            --tgbot-token|--bot-token) _IA_TGBOT_TOKEN="$_v" ;;
+            --tgbot-admin|--bot-admin) _IA_TGBOT_ADMIN="$_v" ;;
             --force|--yes|-y)        _IA_FORCE="true" ;;
             -h|--help)               install_args_help; return 2 ;;
             *) log_error "Неизвестный аргумент: ${_k}"; return 1 ;;
@@ -259,6 +265,18 @@ _install_args_validate() {
     fi
     if [ -n "$_IA_AD_TAG" ] && ! [[ "$_IA_AD_TAG" =~ ^[0-9a-fA-F]{32}$ ]]; then
         log_error "--ad-tag: 32 hex-символа"; _ok=false
+    fi
+    if [ -n "$_IA_TGBOT_TOKEN" ] || [ -n "$_IA_TGBOT_ADMIN" ]; then
+        if [ -z "$_IA_TGBOT_TOKEN" ] || [ -z "$_IA_TGBOT_ADMIN" ]; then
+            log_error "--tgbot-token и --tgbot-admin задаются только вместе"
+            _ok=false
+        elif ! _tgbot_validate_token "$_IA_TGBOT_TOKEN"; then
+            log_error "--tgbot-token: ожидается токен вида 1234567890:AAH..."
+            _ok=false
+        elif ! [[ "$_IA_TGBOT_ADMIN" =~ ^[1-9][0-9]{0,19}$ ]]; then
+            log_error "--tgbot-admin: нужен положительный числовой Telegram ID"
+            _ok=false
+        fi
     fi
     if [ -n "$_IA_MASK" ]; then
         case "${_IA_MASK,,}" in on|off|yes|no|true|false) ;; *) log_error "--mask: on или off"; _ok=false ;; esac
@@ -588,6 +606,14 @@ run_installer_args() {
         fi
         save_settings
         rm -f "$_bl_tmp"
+    fi
+
+    if [ -n "$_IA_TGBOT_TOKEN" ]; then
+        echo ""
+        draw_header "TELEGRAM-БОТ"
+        if ! tgbot_install --token "$_IA_TGBOT_TOKEN" --admin "$_IA_TGBOT_ADMIN"; then
+            log_warn "Telegram-бот не установлен — повторите: mtproxyl tgbot install"
+        fi
     fi
 
 

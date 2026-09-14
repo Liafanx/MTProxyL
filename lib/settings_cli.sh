@@ -29,6 +29,7 @@ _SETTINGS_SETTABLE=(
     "AVAILABILITY_INTERVAL|range:1:1440|Как часто проверять доступность, минут"
     "AVAILABILITY_PROBES|range:1:50|Сколько российских зондов опрашивать (кредит за зонд)"
     "AVAILABILITY_THRESHOLD|range:0:100|Порог доступности для уведомления, %"
+    "AVAILABILITY_HISTORY_LIMIT|range:1:100000|Сколько последних проверок хранить в истории"
     "AVAILABILITY_HOST|custom:_validate_settings_avail_host|Адрес для проверки (пусто — автоопределение)"
     "AVAILABILITY_PORT|custom:_validate_settings_avail_port|Порт для проверки (пусто — порт прокси)"
     "AVAILABILITY_SNI|custom:_validate_settings_mask_host|SNI для проверки (пусто — домен FakeTLS)"
@@ -217,6 +218,11 @@ settings_set_param() {
         BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT|DC_THRESHOLD|\
         AVAILABILITY_THRESHOLD|AVAILABILITY_HOST|AVAILABILITY_PORT|AVAILABILITY_SNI|AVAILABILITY_PROBES)
             # Настройки самого MTProxyL — в конфиг движка не попадают.
+            ;;
+        AVAILABILITY_HISTORY_LIMIT)
+            # Уменьшенный лимит применяется сразу, а не после новой проверки.
+            availability_history_compact || \
+                log_warn "Лимит сохранён, но очистить старую историю сейчас не удалось"
             ;;
         AVAILABILITY_ENABLED|AVAILABILITY_INTERVAL)
             # Интервал зашит в юнит таймера, его надо переписать.

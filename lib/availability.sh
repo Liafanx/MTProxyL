@@ -31,6 +31,8 @@ _AVAIL_IP_SERVICES=(
 
 _avail_dir()        { echo "${INSTALL_DIR}/availability"; }
 _avail_state_file() { echo "${INSTALL_DIR}/availability/last.json"; }
+_avail_history_file() { echo "${INSTALL_DIR}/availability/history.jsonl"; }
+_avail_history_lock_file() { echo "${INSTALL_DIR}/availability/history.lock"; }
 _avail_quota_file() { echo "${INSTALL_DIR}/availability/quota"; }
 _avail_token_file() { echo "${INSTALL_DIR}/availability/token"; }
 _avail_lock_file()  { echo "${INSTALL_DIR}/availability/lock"; }
@@ -63,6 +65,14 @@ availability_threshold() {
     local _v="${AVAILABILITY_THRESHOLD:-50}"
     [[ "$_v" =~ ^[0-9]+$ ]] || _v=50
     [ "$_v" -gt 100 ] && _v=100
+    echo "$_v"
+}
+
+availability_history_limit() {
+    local _v="${AVAILABILITY_HISTORY_LIMIT:-1000}"
+    [[ "$_v" =~ ^[0-9]+$ ]] || _v=1000
+    [ "$_v" -lt 1 ] && _v=1000
+    [ "$_v" -gt 100000 ] && _v=100000
     echo "$_v"
 }
 
@@ -268,16 +278,105 @@ availability_target_json() {
 
 _avail_now_iso() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 
+# История хранит одну короткую строку на проверку. Списки зондов остаются
+# только в last.json: иначе 1000 проверок с 20-50 полными ответами раздули бы
+# файл без пользы для графика. Фактические success/total сохраняются в каждой
+# точке, поэтому смена числа зондов не меняет смысл процента.
+_availability_history_entry() {
+    local _json="$1"
+    jq -c '
+        select(type == "object" and (.checked_at? | type == "string"))
+        | {
+            checked_at,
+            target: (.target // ""),
+            level: (.level // "red"),
+            percentage: ((.percentage // 0) | tonumber? // 0),
+            total_probes: ((.total_probes // 0) | tonumber? // 0),
+            success_probes: ((.success_probes // 0) | tonumber? // 0),
+            measurement_id: (.measurement_id // ""),
+            error: (.error // "")
+        }
+    ' <<< "$_json" 2>/dev/null
+}
+
+_availability_history_retain_unlocked() {
+    local _f _tmp _limit
+    _f=$(_avail_history_file)
+    [ -f "$_f" ] || return 0
+    _limit=$(availability_history_limit)
+    _tmp="${_f}.tmp"
+    jq -Rsc --argjson limit "$_limit" \
+        '[splits("\\n") | fromjson?] | .[-$limit:][]' "$_f" > "$_tmp" 2>/dev/null || return 1
+    chmod 600 "$_tmp" 2>/dev/null || true
+    mv -f "$_tmp" "$_f"
+}
+
+availability_history_compact() (
+    local _lock
+    _availability_ensure_dir || return 1
+    _lock=$(_avail_history_lock_file)
+    { exec 8>"$_lock"; } 2>/dev/null || return 1
+    if command -v flock &>/dev/null; then
+        flock -w 10 8 2>/dev/null || return 1
+    fi
+    _availability_history_retain_unlocked
+)
+
+_availability_history_append() (
+    local _json="$1" _entry _f _lock
+    _entry=$(_availability_history_entry "$_json")
+    [ -n "$_entry" ] || return 1
+    _availability_ensure_dir || return 1
+    _f=$(_avail_history_file)
+    _lock=$(_avail_history_lock_file)
+    { exec 8>"$_lock"; } 2>/dev/null || return 1
+    if command -v flock &>/dev/null; then
+        flock -w 10 8 2>/dev/null || return 1
+    fi
+    printf '%s\n' "$_entry" >> "$_f" || return 1
+    chmod 600 "$_f" 2>/dev/null || true
+    _availability_history_retain_unlocked
+)
+
+availability_history_json() {
+    local _f _last _points="[]" _limit
+    _f=$(_avail_history_file)
+    _limit=$(availability_history_limit)
+    if [ -s "$_f" ]; then
+        # fromjson? пропускает оборванную последнюю строку после внезапного
+        # выключения питания, не ломая весь график.
+        _points=$(jq -Rsc --argjson limit "$_limit" \
+            '[splits("\\n") | fromjson?] | .[-$limit:]' "$_f" 2>/dev/null) || _points="[]"
+    else
+        # После обновления сразу показываем прежний last.json; при следующей
+        # проверке он будет перенесён в постоянную историю.
+        _last=$(availability_last_json)
+        if [ "$_last" != "null" ]; then
+            _last=$(_availability_history_entry "$_last")
+            [ -n "$_last" ] && _points="[$_last]"
+        fi
+    fi
+    printf '{"limit":%s,"points":%s}\n' "$_limit" "$_points"
+}
+
 # Запись через временный файл рядом: оборванная запись оставила бы обрезанный
 # JSON, и панель с ботом читали бы мусор до следующей проверки.
 _availability_write_state() {
-    local _json="$1" _f _tmp
+    local _json="$1" _f _tmp _previous=""
     _f=$(_avail_state_file)
     _availability_ensure_dir || return 1
+    # Первая проверка после обновления не должна уничтожить последний старый
+    # результат: переносим его перед заменой last.json.
+    if [ ! -s "$(_avail_history_file)" ] && [ -s "$_f" ]; then
+        _previous=$(cat "$_f" 2>/dev/null || true)
+    fi
     _tmp="${_f}.tmp"
     printf '%s\n' "$_json" > "$_tmp" || return 1
     chmod 600 "$_tmp" 2>/dev/null || true
-    mv -f "$_tmp" "$_f"
+    mv -f "$_tmp" "$_f" || return 1
+    [ -z "$_previous" ] || _availability_history_append "$_previous" || true
+    _availability_history_append "$_json" || true
+    return 0
 }
 
 # Неудача — тоже результат: без неё страница показывала бы прошлый вердикт как
@@ -608,6 +707,7 @@ availability_show_status() {
     echo -e "  ${BOLD}Квота:${NC}       ${_r} из ${_b} кредитов ${_tok_note}"
     [ "${_reset:-0}" -gt 0 ] && echo -e "  ${BOLD}Обновится:${NC}   через $(_avail_human_age "$_reset")"
     echo -e "  ${BOLD}Порог:${NC}       $(availability_threshold)% ${DIM}(ниже — уведомление в телеграм-боте)${NC}"
+    echo -e "  ${BOLD}История:${NC}      последние $(availability_history_limit) проверок"
 
     if [ -s "$_f" ] && command -v jq &>/dev/null; then
         local _bad
@@ -654,12 +754,13 @@ availability_status_json() {
 
     # enabled — «проверка вообще есть», auto_check — «идёт по расписанию».
     # Выключенное расписание не отменяет ручную проверку.
-    printf '{"enabled":true,"auto_check":%s,"timer_active":%s,"interval":%s,"probes":%s,"threshold":%s,"next_run":"%s","quota":%s,"target":%s,"result":%s,"message":"%s"}\n' \
+    printf '{"enabled":true,"auto_check":%s,"timer_active":%s,"interval":%s,"probes":%s,"threshold":%s,"history_limit":%s,"next_run":"%s","quota":%s,"target":%s,"result":%s,"message":"%s"}\n' \
         "$(availability_enabled && echo true || echo false)" \
         "$_timer" \
         "$(availability_interval_minutes)" \
         "$(availability_probe_limit)" \
         "$(availability_threshold)" \
+        "$(availability_history_limit)" \
         "$(json_escape "$(_avail_next_run)")" \
         "$(availability_quota_json)" \
         "$(availability_target_json)" \
@@ -818,6 +919,8 @@ handle_availability_command() {
             fi ;;
         details)
             check_root; availability_status_json --full ;;
+        history)
+            check_root; availability_history_json ;;
         target)
             check_root; availability_target_json; echo "" ;;
         interval|period)
@@ -867,13 +970,14 @@ handle_availability_command() {
             echo -e "  ${BOLD}Доступность из России:${NC}"
             echo -e "    ${GREEN}availability status${NC} [--json]  Последний вердикт"
             echo -e "    ${GREEN}availability details${NC}          Вердикт со списком зондов (JSON)"
+            echo -e "    ${GREEN}availability history${NC}          История проверок для графика (JSON)"
             echo -e "    ${GREEN}availability check${NC} [--json]   Проверить сейчас"
             echo -e "    ${GREEN}availability target${NC}           Что именно проверяется (JSON)"
             echo -e "    ${GREEN}availability on|off${NC} [мин]     Автопроверка по таймеру"
             echo -e "    ${GREEN}availability interval${NC} [мин]   Период автопроверки, 1..1440"
             echo -e "    ${GREEN}availability token${NC} <токен>    Токен Globalping (--clear чтобы убрать)"
             echo ""
-            echo -e "  ${DIM}Число зондов и порог: mtproxyl settings set AVAILABILITY_PROBES|AVAILABILITY_THRESHOLD${NC}"
+            echo -e "  ${DIM}Зонды, порог и история: mtproxyl settings set AVAILABILITY_PROBES|AVAILABILITY_THRESHOLD|AVAILABILITY_HISTORY_LIMIT${NC}"
             ;;
     esac
 }
