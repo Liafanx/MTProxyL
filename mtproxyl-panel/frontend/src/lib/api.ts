@@ -11,21 +11,34 @@ export class ApiError extends Error {
 
 async function request<T>(base: string, path: string, options?: RequestInit): Promise<T> {
   const url = `${base}${path}`;
-  const res = await fetch(url, {
-    ...options,
-    credentials: 'same-origin',
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-  });
-
-  if (res.status === 401 && base === TELEMT_BASE) {
-    window.location.href = `${BASE}/login`;
-    throw new ApiError('unauthorized', 'Сессия истекла');
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 60_000);
+  let res: Response;
+  let json: any;
+  try {
+    res = await fetch(url, {
+      ...options,
+      credentials: 'same-origin',
+      signal: options?.signal || controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers,
+      },
+    });
+    if (res.status === 401 && base === TELEMT_BASE) {
+      window.location.href = `${BASE}/login`;
+      throw new ApiError('unauthorized', 'Сессия истекла');
+    }
+    json = await res.json();
+  } catch (error) {
+    if (!options?.signal && controller.signal.aborted) {
+      throw new ApiError('timeout', `Сервер панели не ответил за 60 секунд (${options?.method || 'GET'} ${path})`);
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
   }
 
-  const json = await res.json();
   if (!json.ok) {
     const message = json.error?.message || 'Неизвестная ошибка';
     throw new ApiError(json.error?.code || 'unknown', `${message} (${options?.method || 'GET'} ${path})`);

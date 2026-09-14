@@ -201,7 +201,9 @@ TLS_EOF
             proxy_set_header Host \$host;
             proxy_set_header X-Forwarded-Host \$host;
             proxy_set_header X-Forwarded-Proto https;
-            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            # Не сохраняем присланный клиентом X-Forwarded-For: иначе им
+            # обходился лимитер bcrypt на странице входа.
+            proxy_set_header X-Forwarded-For \$remote_addr;
             proxy_set_header Upgrade \$http_upgrade;
             proxy_set_header Connection \$http_connection;
             proxy_read_timeout 3600s;

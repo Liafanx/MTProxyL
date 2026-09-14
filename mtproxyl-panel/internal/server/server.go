@@ -66,8 +66,10 @@ func (rl *loginRateLimiter) cleanup() {
 	}
 }
 
-// allow returns true if the IP has fewer than maxAttempts in the given window.
-func (rl *loginRateLimiter) allow(ip string, maxAttempts int, window time.Duration) bool {
+// take atomically reserves one password check. Recording only after bcrypt
+// allowed many parallel requests from the same address to pass the check and
+// consume all CPU before the first failure was stored.
+func (rl *loginRateLimiter) take(ip string, maxAttempts int, window time.Duration) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
@@ -82,15 +84,44 @@ func (rl *loginRateLimiter) allow(ip string, maxAttempts int, window time.Durati
 		}
 	}
 	rl.attempts[ip] = valid
-
-	return len(valid) < maxAttempts
+	if len(valid) >= maxAttempts {
+		return false
+	}
+	rl.attempts[ip] = append(valid, now)
+	return true
 }
 
-// record adds a failed attempt for the IP.
-func (rl *loginRateLimiter) record(ip string) {
+// reset forgets successful attempts. Legitimate logins do not spend the
+// failure budget, while concurrent guesses are still bounded before bcrypt.
+func (rl *loginRateLimiter) reset(ip string) {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
-	rl.attempts[ip] = append(rl.attempts[ip], time.Now())
+	delete(rl.attempts, ip)
+}
+
+// loginClientIP trusts a forwarded address only from a local reverse proxy.
+// The rightmost valid item is the peer connected to that proxy; this remains
+// safe with legacy `$proxy_add_x_forwarded_for`, where a client could prepend
+// arbitrary values to the header.
+func loginClientIP(r *http.Request) string {
+	host := r.RemoteAddr
+	if parsedHost, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		host = parsedHost
+	}
+	host = strings.Trim(host, "[]")
+	peer := net.ParseIP(host)
+	if peer == nil || !peer.IsLoopback() {
+		return host
+	}
+
+	parts := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		candidate := strings.Trim(strings.TrimSpace(parts[i]), "[]")
+		if net.ParseIP(candidate) != nil {
+			return candidate
+		}
+	}
+	return host
 }
 
 type Server struct {
@@ -154,22 +185,8 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 
 	// Auth endpoints
 	mux.HandleFunc("POST /api/auth/login", func(w http.ResponseWriter, r *http.Request) {
-		ip := r.RemoteAddr
-		// Strip port from RemoteAddr (e.g. "1.2.3.4:12345" → "1.2.3.4")
-		if host, _, ok := strings.Cut(ip, ":"); ok {
-			ip = host
-		}
-		// Use only the first (leftmost, client) IP from X-Forwarded-For
-		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-			if first, _, _ := strings.Cut(fwd, ","); first != "" {
-				ip = strings.TrimSpace(first)
-			}
-		}
-
-		if !limiter.allow(ip, 5, 1*time.Minute) {
-			writeError(w, http.StatusTooManyRequests, "rate_limited", "Слишком много попыток входа, повторите позже")
-			return
-		}
+		started := time.Now()
+		ip := loginClientIP(r)
 
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit
 		var req loginRequest
@@ -177,15 +194,22 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 			writeError(w, http.StatusBadRequest, "bad_request", "Некорректное тело запроса")
 			return
 		}
+		if !limiter.take(ip, 5, time.Minute) {
+			writeError(w, http.StatusTooManyRequests, "rate_limited", "Слишком много попыток входа, повторите позже")
+			return
+		}
+		log.Printf("[auth] login started from %s", ip)
 
 		if req.Username != s.cfg.Auth.Username || !auth.CheckPassword(req.Password, s.cfg.Auth.PasswordHash) {
-			limiter.record(ip)
+			log.Printf("[auth] login failed from %s (%s)", ip, time.Since(started).Round(time.Millisecond))
 			writeError(w, http.StatusUnauthorized, "unauthorized", "Неверный логин или пароль")
 			return
 		}
+		limiter.reset(ip)
 
 		token, err := auth.GenerateToken(req.Username, jwtSecret, ttl)
 		if err != nil {
+			log.Printf("[auth] login token error from %s: %v", ip, err)
 			writeError(w, http.StatusInternalServerError, "internal_error", "Не удалось создать токен сессии")
 			return
 		}
@@ -208,6 +232,7 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 			OK:   true,
 			Data: map[string]string{"username": req.Username},
 		})
+		log.Printf("[auth] login succeeded from %s (%s)", ip, time.Since(started).Round(time.Millisecond))
 	})
 
 	mux.HandleFunc("POST /api/auth/logout", func(w http.ResponseWriter, r *http.Request) {
@@ -716,11 +741,12 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 	handler = securityHeaders(handler)
 
 	srv := &http.Server{
-		Addr:         s.cfg.Listen,
-		Handler:      handler,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Addr:              s.cfg.Listen,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	// TLS: ACME (Let's Encrypt)

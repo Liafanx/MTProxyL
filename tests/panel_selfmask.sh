@@ -93,6 +93,8 @@ panel_selfmask_enable /0123456789abcdef0123456789abcdef
 [[ "$captured_nginx" == *'location ^~ /0123456789abcdef0123456789abcdef/'* ]] || fail 'nginx location missing'
 [[ "$captured_nginx" == *'proxy_pass https://127.0.0.1:8080;'* ]] || fail 'TLS upstream not detected'
 [[ "$captured_nginx" == *'X-Forwarded-Proto https'* ]] || fail 'forwarded HTTPS marker missing'
+[[ "$captured_nginx" == *'X-Forwarded-For $remote_addr'* ]] || fail 'client IP is not overwritten by trusted nginx'
+[[ "$captured_nginx" != *'$proxy_add_x_forwarded_for'* ]] || fail 'spoofable forwarded chain is preserved'
 [[ $(panel_public_url) == "https://mask.example.com/0123456789abcdef0123456789abcdef/" ]] || fail 'public URL incorrect'
 tls_proxy_block="$captured_nginx"
 
