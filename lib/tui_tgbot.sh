@@ -137,7 +137,7 @@ _tui_tgbot_proxy() {
 _tui_tgbot_notify_lines() {
     command -v jq &>/dev/null || return 0
     [ -s "$TGBOT_CONFIG" ] || return 0
-    echo -e "  ${BOLD}Уведомления:${NC} доступность $(_tgbot_flag availability), DC $(_tgbot_flag dc)$([ "$(_dc_threshold)" -eq 0 ] && echo " ${DIM}(порог выключен)${NC}"), прокси $(_tgbot_flag proxy), лимиты $(_tgbot_flag limits), бэкапы $(_tgbot_flag backup)"
+    echo -e "  ${BOLD}Уведомления:${NC} доступность $(_tgbot_flag availability), DC $(_tgbot_flag dc)$([ "$(_dc_threshold)" -eq 0 ] && echo " ${DIM}(порог выключен)${NC}"), нулевой DC $(_tgbot_flag dc_zero), прокси $(_tgbot_flag proxy), лимиты $(_tgbot_flag limits), бэкапы $(_tgbot_flag backup)"
 }
 
 _tui_tgbot_notify() {
@@ -152,23 +152,25 @@ _tui_tgbot_notify() {
         [ "$_dc_thr" -eq 0 ] && _dc_thr_line="порог выключен"
         echo -e "  ${CYAN}[1]${NC}  Доступность ниже порога: $(_tgbot_flag availability)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.availability' 15) мин)${NC}"
         echo -e "  ${CYAN}[2]${NC}  Дата-центры Telegram, ${_dc_thr_line}: $(_tgbot_flag dc)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.dc' 15) мин)${NC}"
-        echo -e "  ${CYAN}[3]${NC}  Прокси упал / поднялся: $(_tgbot_flag proxy)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.proxy' 5) мин)${NC}"
-        echo -e "  ${CYAN}[4]${NC}  Лимиты пользователей: $(_tgbot_flag limits)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.limits' 60) мин)${NC}"
-        echo -e "  ${CYAN}[5]${NC}  Итог автобэкапа: $(_tgbot_flag backup)"
+        echo -e "  ${CYAN}[3]${NC}  DC остался без писателей: $(_tgbot_flag dc_zero)"
+        echo -e "  ${CYAN}[4]${NC}  Прокси упал / поднялся: $(_tgbot_flag proxy)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.proxy' 5) мин)${NC}"
+        echo -e "  ${CYAN}[5]${NC}  Лимиты пользователей: $(_tgbot_flag limits)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.limits' 60) мин)${NC}"
+        echo -e "  ${CYAN}[6]${NC}  Итог автобэкапа: $(_tgbot_flag backup)"
         echo ""
-        echo -e "  ${CYAN}[6]${NC}  Изменить период проверки"
-        echo -e "  ${CYAN}[7]${NC}  Порог покрытия дата-центров: ${_dc_thr}%"
+        echo -e "  ${CYAN}[7]${NC}  Изменить период проверки"
+        echo -e "  ${CYAN}[8]${NC}  Порог покрытия дата-центров: ${_dc_thr}%"
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
         local c; c=$(read_choice "выбор" "0")
         case "$c" in
             1) _tgbot_cfg_set '.notify.availability = (.notify.availability | not)' ;;
             2) _tgbot_cfg_set '.notify.dc = (.notify.dc | not)' ;;
-            3) _tgbot_cfg_set '.notify.proxy = (.notify.proxy | not)' ;;
-            4) _tgbot_cfg_set '.notify.limits = (.notify.limits | not)' ;;
-            5) _tgbot_cfg_set '.notify.backup = (.notify.backup | not)' ;;
-            6) _tui_tgbot_interval ;;
-            7) _tui_tgbot_dc_threshold ;;
+            3) _tgbot_cfg_set '.notify.dc_zero = (.notify.dc_zero | not)' ;;
+            4) _tgbot_cfg_set '.notify.proxy = (.notify.proxy | not)' ;;
+            5) _tgbot_cfg_set '.notify.limits = (.notify.limits | not)' ;;
+            6) _tgbot_cfg_set '.notify.backup = (.notify.backup | not)' ;;
+            7) _tui_tgbot_interval ;;
+            8) _tui_tgbot_dc_threshold ;;
             0|"") return ;;
         esac
     done

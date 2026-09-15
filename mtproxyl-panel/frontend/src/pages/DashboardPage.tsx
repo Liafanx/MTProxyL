@@ -313,9 +313,14 @@ function DcCard({
   const rows = data.dcs ?? [];
   const alive = rows.reduce((s, d) => s + (d.alive_writers || 0), 0);
   const required = rows.reduce((s, d) => s + (d.required_writers || 0), 0);
-  const coverage = required > 0 ? Math.min(100, Math.round((alive * 100) / required)) : 100;
-  // Нулевой порог — предупреждения выключены: цифры показываем, приговор нет.
-  const ok = threshold <= 0 || coverage >= threshold;
+  const covered = rows.reduce(
+    (sum, dc) => sum + Math.min(dc.alive_writers || 0, dc.required_writers || 0),
+    0,
+  );
+  const coverage = required > 0 ? Math.round((covered * 100) / required) : 0;
+  const zeroDcs = rows.filter((dc) => dc.required_writers > 0 && dc.alive_writers === 0);
+  // Нулевой порог выключает процентный приговор, но пустой DC остаётся фактом.
+  const ok = zeroDcs.length === 0 && (threshold <= 0 || coverage >= threshold);
   const rowOk = (cov: number) => (threshold <= 0 ? cov > 0 : cov >= threshold);
   if (!data.middle_proxy_enabled || rows.length === 0) return null;
   return (
@@ -356,7 +361,9 @@ function DcCard({
         </table>
       </div>
       <p className="text-xs text-text-secondary/70 mt-2">
-        Писателей живо {alive} из {required}. Это связь движка с Telegram, а не доступность
+        В зачёт покрытия {covered} из {required}; живых всего {alive}.
+        {zeroDcs.length > 0 && ` Без писателей: ${zeroDcs.map((dc) => `DC ${dc.dc}`).join(', ')}.`}
+        {' '}Это связь движка с Telegram, а не доступность
         прокси для клиентов.
       </p>
       <DcThresholdForm threshold={threshold} editable={editable} onSave={onSave} />

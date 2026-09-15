@@ -1117,6 +1117,19 @@ do_install() {
           fi
           ;;
       esac
+      if [ -z "$SELFMASK_DOMAIN_DETECTED" ]; then
+        _web_json=$($SUDO "$MTPROXYL_SCRIPT" web status --json 2>/dev/null || true)
+        case "$_web_json" in
+          *'"enabled":true'*)
+            case "$_web_json" in
+              *'"frontend":"nginx"'*|*'"frontend":"haproxy-nginx"'*)
+                SELFMASK_DOMAIN_DETECTED=$(printf '%s' "$_web_json" | sed -n 's/.*"domain"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+                [ -z "$SELFMASK_DOMAIN_DETECTED" ] || printf '  3) Через WEB (%s) — случайный путь и вход по логину и паролю\n' "$SELFMASK_DOMAIN_DETECTED"
+                ;;
+            esac
+            ;;
+        esac
+      fi
     fi
     BIND_CHOICE=$(prompt "Вариант" "1")
 
@@ -1130,7 +1143,7 @@ do_install() {
       PANEL_BEHIND_SELFMASK="true"
       PANEL_BIND="127.0.0.1"
     elif [ "$BIND_CHOICE" = "3" ]; then
-      die "Selfmask не включён — вариант 3 недоступен"
+      die "Selfmask или WEB с управляемым nginx не включён — вариант 3 недоступен"
     fi
 
     TLS_BLOCK=""
@@ -1138,12 +1151,12 @@ do_install() {
 
     if [ "$PANEL_LOCAL_ONLY" = "true" ]; then
       # По петле трафик машину не покидает, канал даёт ssh — шифровать нечего.
-      # Для Selfmask внешний TLS завершает nginx тем же сертификатом, что и
+      # Для Selfmask/WEB внешний TLS завершает nginx тем же сертификатом, что и
       # заглушка. В обоих случаях отдельный TLS backend панели не нужен.
       PANEL_SCHEME="http"
       if [ "$PANEL_BEHIND_SELFMASK" = "true" ]; then
         say "Backend панели будет слушать 127.0.0.1:${PANEL_PORT}"
-        say "Внешний HTTPS даст Selfmask; прямой порт панели останется закрыт"
+        say "Внешний HTTPS даст Selfmask/WEB; прямой порт панели останется закрыт"
       else
         say "Панель будет слушать 127.0.0.1:${PANEL_PORT} — снаружи недоступна"
         say "Шифрование не настраивается: соединение не выходит за пределы машины"
@@ -1330,13 +1343,13 @@ session_ttl = \"24h\"${TLS_BLOCK}"
   say "Служба $SERVICE_NAME запущена и включена в автозагрузку"
 
   # Отдельный, явный режим: обычный собственный домен панели не зависит от
-  # Selfmask. Здесь же скрываем backend на loopback, задаём случайный
-  # base_path и просим управляемый nginx Selfmask добавить proxy location.
+  # Selfmask/WEB. Здесь же скрываем backend на loopback, задаём случайный
+  # base_path и просим управляемый nginx добавить proxy location.
   if [ "${PANEL_BEHIND_SELFMASK:-false}" = "true" ]; then
     if $SUDO "$MTPROXYL_SCRIPT" panel selfmask on; then
-      say "Панель опубликована через домен Selfmask"
+      say "Панель опубликована по общему пути Selfmask/WEB"
     else
-      say "ВНИМАНИЕ: не удалось добавить маршрут Selfmask"
+      say "ВНИМАНИЕ: не удалось добавить общий маршрут панели"
       say "Панель осталась доступна только локально: http://127.0.0.1:${PANEL_PORT}"
       say "Повторить: sudo mtproxyl panel selfmask on"
     fi
@@ -1433,14 +1446,14 @@ do_uninstall() {
   printf '\n  Удаление MTProxyL-Panel\n\n'
 
   # Установщик можно запустить напрямую, минуя `mtproxyl panel uninstall`.
-  # Если панель опубликована через Selfmask, сначала убираем proxy location и
+  # Если панель опубликована через Selfmask/WEB, сначала убираем proxy location и
   # восстанавливаем её прежние listen/base_path, пока бинарник и конфиг на месте.
   if [ -f "${MTPROXYL_INSTALL_DIR}/panel-selfmask.conf" ] &&
      grep -q "^PANEL_SELFMASK_ENABLED='true'" "${MTPROXYL_INSTALL_DIR}/panel-selfmask.conf" 2>/dev/null &&
      mtproxyl_present; then
-    say "Отключение маршрута панели через Selfmask..."
+    say "Отключение общего маршрута панели..."
     $SUDO "$MTPROXYL_SCRIPT" panel selfmask off || \
-      die "Не удалось убрать маршрут Selfmask — удаление отменено"
+      die "Не удалось убрать общий маршрут — удаление отменено"
   fi
 
   if [ -f "$SERVICE_FILE" ]; then

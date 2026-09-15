@@ -23,6 +23,7 @@ STATE_PATH = Path(os.environ.get("MTPROXYL_TGBOT_STATE", "/opt/mtproxyl-tgbot/st
 DEFAULT_NOTIFY = {
     "availability": True,
     "dc": True,
+    "dc_zero": True,
     "proxy": True,
     "backup": True,
     "limits": True,

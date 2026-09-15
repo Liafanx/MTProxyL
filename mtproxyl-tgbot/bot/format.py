@@ -344,6 +344,8 @@ def settings_text(cfg, manager: bool) -> str:
     lines = [
         "<b>Настройки бота</b>",
         "",
+        f"Уведомления DC: <b>{flag('dc')}</b> · каждые {cfg.interval('dc')} мин",
+        f"DC без писателей: <b>{flag('dc_zero')}</b>",
         f"Доступность ниже порога: <b>{flag('availability')}</b>"
         f" · проверка каждые {cfg.interval('availability')} мин",
         f"Прокси упал / поднялся: <b>{flag('proxy')}</b>"
@@ -400,12 +402,14 @@ def dc_text(report: dict) -> str:
         ],
     )
     coverage = int(report.get("coverage_pct") or 0)
+    covered = report.get("covered_writers", report.get("alive_writers", 0))
     # Порог 0 — предупреждения выключены: показываем цифры без приговора.
     icon = "🟢" if threshold <= 0 or coverage >= threshold else "🔴"
     limit = "порог выключен" if threshold <= 0 else f"порог {threshold}%"
     return (
         f"<b>Дата-центры Telegram</b>\n"
-        f"{icon} Покрытие {coverage}%, {limit} — писателей "
-        f"{report.get('alive_writers', 0)} из {report.get('required_writers', 0)}\n{table}\n"
+        f"{icon} Покрытие {coverage}%, {limit} — в зачёт "
+        f"{covered} из {report.get('required_writers', 0)}, живых всего "
+        f"{report.get('alive_writers', 0)}\n{table}\n"
         "<i>Писатели: живых / нужно. Это связь движка с Telegram, не доступность прокси.</i>"
     )

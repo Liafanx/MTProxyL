@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,32 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestPanelIconPersistenceAndReset(t *testing.T) {
+	_, store := newBrandingMux(t)
+	// ICO signature is identified by the same content sniffer used by HTTP.
+	data := append([]byte{0, 0, 1, 0}, make([]byte, 32)...)
+	got, err := store.putImage(store.iconPath, data)
+	if err != nil || !got.HasIcon {
+		t.Fatalf("upload: %+v %v", got, err)
+	}
+	reloaded, err := newBrandingStore(filepath.Dir(store.iconPath))
+	if err != nil || !reloaded.get().HasIcon {
+		t.Fatalf("reload: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	reloaded.serveImage(rec, httptest.NewRequest("GET", "/api/branding/icon", nil), reloaded.iconPath, "favicon.ico")
+	if rec.Code != 200 || !bytes.Equal(rec.Body.Bytes(), data) {
+		t.Fatal("icon not served")
+	}
+	if _, err := store.putImage(store.iconPath, []byte("<svg></svg>")); err == nil {
+		t.Fatal("accepted SVG")
+	}
+	got, err = store.deleteImage(store.iconPath)
+	if err != nil || got.HasIcon {
+		t.Fatalf("reset: %+v %v", got, err)
+	}
+}
 
 func newBrandingMux(t *testing.T) (*http.ServeMux, *brandingStore) {
 	t.Helper()

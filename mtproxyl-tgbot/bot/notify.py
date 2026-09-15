@@ -61,7 +61,26 @@ async def check_dc(bot: Bot, state: dict) -> None:
     if not report.get("available"):
         return
 
-    # Нулевой порог — предупреждения выключены целиком (mtproxyl dc threshold 0).
+    cfg = config.load()
+    zeros = sorted(str(d.get("dc")) for d in report.get("dcs", [])
+                   if int(d.get("required_writers") or 0) > 0
+                   and int(d.get("alive_writers") or 0) == 0)
+    previous = state.get("dc_zero", [])
+    state["dc_zero"] = zeros
+    if cfg.notify_on("dc_zero") and zeros != previous:
+        if zeros:
+            await broadcast(bot, "🔴 <b>DC без писателей</b>\n\n"
+                            + esc(", ".join(zeros))
+                            + "\nMiddle proxy может отключиться. Подробнее — /dc")
+        elif previous:
+            await broadcast(bot, "🟢 Во всех DC снова есть писатели. Подробнее — /dc")
+
+    # Общие уведомления покрытия и отдельная тревога о нулевом DC независимы.
+    if not cfg.notify_on("dc"):
+        state.pop("dc_bad", None)
+        return
+
+    # Нулевой порог выключает только общие предупреждения покрытия.
     # Забываем и прошлое состояние: иначе после включения прилетит «просело»
     # про давно прошедшую просадку.
     threshold = int(report.get("threshold") or 0)
@@ -70,6 +89,7 @@ async def check_dc(bot: Bot, state: dict) -> None:
         return
 
     coverage = int(report.get("coverage_pct") or 0)
+    covered = report.get("covered_writers", report.get("alive_writers", 0))
     bad = coverage < threshold
     was_bad = state.get("dc_bad")
 
@@ -87,8 +107,9 @@ async def check_dc(bot: Bot, state: dict) -> None:
         listing = ", ".join(f"DC {d.get('dc')} — {int(d.get('coverage_pct') or 0)}%" for d in weak[:6])
         text = (
             f"🔴 <b>Связь с дата-центрами Telegram просела</b>\n\n"
-            f"Покрытие {coverage}% при пороге {threshold}%: живых писателей "
-            f"{report.get('alive_writers', 0)} из {report.get('required_writers', 0)}.\n"
+            f"Покрытие {coverage}% при пороге {threshold}%: в зачёт "
+            f"{covered} из {report.get('required_writers', 0)}, живых всего "
+            f"{report.get('alive_writers', 0)}.\n"
         )
         if listing:
             text += f"Просели: {esc(listing)}\n"
@@ -96,8 +117,9 @@ async def check_dc(bot: Bot, state: dict) -> None:
     else:
         text = (
             f"🟢 <b>Связь с дата-центрами восстановилась</b>\n\n"
-            f"Покрытие {coverage}% — писателей {report.get('alive_writers', 0)} "
-            f"из {report.get('required_writers', 0)}."
+            f"Покрытие {coverage}% — в зачёт {covered} "
+            f"из {report.get('required_writers', 0)}, живых всего "
+            f"{report.get('alive_writers', 0)}."
         )
     await broadcast(bot, text)
 
@@ -301,7 +323,7 @@ async def run(bot: Bot) -> None:
             cfg = config.load()
             before = dict(state)
 
-            if cfg.notify_on("dc") and _due(state, "dc", cfg.interval("dc")):
+            if (cfg.notify_on("dc") or cfg.notify_on("dc_zero")) and _due(state, "dc", cfg.interval("dc")):
                 _mark(state, "dc")
                 await check_dc(bot, state)
 

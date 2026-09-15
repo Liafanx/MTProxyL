@@ -144,6 +144,7 @@ func (c *Client) TgbotAdmin(ctx context.Context, id int64, add bool) (string, er
 var tgbotSettable = map[string]string{
 	"notify.availability":    "bool",
 	"notify.dc":              "bool",
+	"notify.dc_zero":         "bool",
 	"notify.proxy":           "bool",
 	"notify.limits":          "bool",
 	"notify.backup":          "bool",

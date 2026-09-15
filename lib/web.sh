@@ -537,6 +537,11 @@ https_haproxy_headers() {
     fi
 }
 
+_web_panel_proxy_block() {
+    declare -F _selfmask_panel_proxy_block >/dev/null || return 0
+    _selfmask_panel_proxy_block
+}
+
 web_nginx_http_server() {
     web_uses_managed_nginx || return 0
     local _domain _cert_dir _listen _realip="" _web_connect
@@ -588,6 +593,8 @@ web_nginx_http_server() {
         ssl_certificate_key ${_cert_dir}/privkey.pem;
 
         client_max_body_size 2m;
+
+        $(_web_panel_proxy_block)
 
         location / {
             proxy_pass http://${_web_connect}:${WEB_LISTEN_PORT:-15080};
@@ -975,7 +982,6 @@ _web_prepare_frontend() {
     [ -n "$_domain" ] || { log_error "WEB: домен не задан"; return 1; }
 
     if [ "${SELFMASK_ENABLED:-false}" != "true" ]; then
-        SELFMASK_DOMAIN="$_domain"
         SELFMASK_CERT_MODE="letsencrypt"
     fi
     WEB_DECOY_DIR="${WEB_DECOY_DIR:-${SELFMASK_SITE_DIR}}"
@@ -1063,6 +1069,15 @@ _web_resume_mtproto_fixes() {
 }
 
 # Порядок важен: пока движок держит публичный порт, nginx на него не сядет.
+_web_obtain_cert() {
+    # Переиспользуем выпуск сертификата, но не сохраняем WEB-домен в Selfmask.
+    local SELFMASK_DOMAIN="${SELFMASK_DOMAIN:-}"
+    if [ "${SELFMASK_ENABLED:-false}" != true ]; then
+        SELFMASK_DOMAIN=$(web_domain) || return 1
+    fi
+    _selfmask_obtain_cert
+}
+
 # Поэтому сначала уводим движок на loopback и только потом поднимаем nginx.
 web_enable() {
     if web_is_reanimator; then
@@ -1103,7 +1118,7 @@ web_enable() {
 
     if web_uses_managed_nginx; then
         log_info "Выпуск сертификата с WEB-доменом $(web_domain)..."
-        _selfmask_obtain_cert || {
+        _web_obtain_cert || {
             _web_restore_runtime "$_old_mode" "$_old_enabled" "$_old_running"
             return 1
         }
@@ -1192,6 +1207,18 @@ web_disable() {
         log_error "WEB нельзя выключить, пока HAProxy держит общий :443"
         log_info "Сначала выберите split и отдельный PROXY_PORT либо верните frontend nginx"
         return 1
+    fi
+
+    # Если WEB был единственной внешней точкой панели, сначала возвращаем её
+    # прежний listen/base_path. Иначе после остановки nginx останется только
+    # недоступный снаружи loopback backend.
+    if [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ] &&
+       [ "${SELFMASK_ENABLED:-false}" != "true" ] &&
+       declare -F panel_selfmask_disable >/dev/null; then
+        panel_selfmask_disable || {
+            log_error "Не удалось снять общий путь панели — отключение WEB отменено"
+            return 1
+        }
     fi
 
     PROXY_MODE="mtproto"

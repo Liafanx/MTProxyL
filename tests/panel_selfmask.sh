@@ -97,6 +97,7 @@ panel_selfmask_enable /0123456789abcdef0123456789abcdef
 [[ "$captured_nginx" == *'X-Forwarded-Proto https'* ]] || fail 'forwarded HTTPS marker missing'
 [[ "$captured_nginx" == *'X-Forwarded-For $remote_addr'* ]] || fail 'client IP is not overwritten by trusted nginx'
 [[ "$captured_nginx" != *'$proxy_add_x_forwarded_for'* ]] || fail 'spoofable forwarded chain is preserved'
+[[ "$captured_nginx" == *'client_max_body_size 8m;'* ]] || fail 'panel uploads limited by nginx'
 [[ $(panel_public_url) == "https://mask.example.com/0123456789abcdef0123456789abcdef/" ]] || fail 'public URL incorrect'
 tls_proxy_block="$captured_nginx"
 
@@ -111,6 +112,21 @@ panel_selfmask_disable
 [[ "$PANEL_SELFMASK_ENABLED" == "false" ]] || fail 'mode not disabled'
 [[ -z "$captured_nginx" ]] || fail 'nginx location not removed'
 
+# WEB alone also publishes the same authenticated panel path.
+SELFMASK_ENABLED=false
+WEB_ENABLED=true
+PROXY_MODE=web
+WEB_FRONTEND=nginx
+WEB_DOMAIN=web.example.com
+panel_selfmask_enable /0123456789abcdef0123456789abcdef
+[[ $(panel_public_url) == 'https://web.example.com/0123456789abcdef0123456789abcdef/' ]] || fail 'WEB panel URL incorrect'
+web_block=$(web_nginx_http_server /tmp/certs)
+[[ "$web_block" == *'location ^~ /0123456789abcdef0123456789abcdef/'* ]] || fail 'WEB panel route missing'
+[[ "$SELFMASK_ENABLED" == false ]] || fail 'WEB panel enabled Selfmask'
+panel_selfmask_disable
+WEB_ENABLED=false
+PROXY_MODE=mtproto
+SELFMASK_ENABLED=true
 # HTTP backend is valid too: external HTTPS still terminates at Selfmask.
 sed -i '/^\[tls\]/,$d' "$PANEL_CONFIG_DIR/config.toml"
 _panel_config_set_access "127.0.0.1:8080" "/fedcba9876543210fedcba9876543210"

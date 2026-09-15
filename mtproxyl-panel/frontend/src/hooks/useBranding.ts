@@ -38,6 +38,27 @@ export function useBrandingProvider(): BrandingContextValue {
     document.title = branding.panel_name || DEFAULT_PANEL_BRANDING.panel_name;
   }, [branding.panel_name]);
 
+  useEffect(() => {
+    const existing = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    const icon = existing || document.createElement('link');
+    const original = icon.getAttribute('href');
+    const originalType = icon.getAttribute('type');
+    if (branding.has_icon) {
+      icon.rel = 'icon';
+      icon.removeAttribute('type');
+      icon.href = brandingApi.iconURL(branding.icon_revision);
+      if (!existing) document.head.appendChild(icon);
+    }
+    return () => {
+      if (!existing) icon.remove();
+      else {
+        if (original !== null) icon.setAttribute('href', original);
+        else icon.removeAttribute('href');
+        if (originalType !== null) icon.setAttribute('type', originalType);
+      }
+    };
+  }, [branding.has_icon, branding.icon_revision]);
+
   return { branding, apply: setBranding, refresh };
 }
 

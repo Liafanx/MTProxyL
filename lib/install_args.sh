@@ -704,6 +704,10 @@ _install_args_web() {
     draw_header "WEB PROXY"
     echo ""
     WEB_LAYOUT="${_IA_WEB_LAYOUT:-shared}"
+    if [ -z "$_IA_WEB_LAYOUT" ] && mtproto_is_enabled && [ "${PROXY_PORT:-443}" != 443 ]; then
+        WEB_LAYOUT="split"
+        log_info "MTProto: :${PROXY_PORT}, WEB: :443 — автоматически выбрана раскладка split"
+    fi
     WEB_FRONTEND="${_IA_WEB_FRONTEND:-nginx}"
     WEB_HAPROXY_CERT="${_IA_WEB_HAPROXY_CERT:-}"
     case "${_IA_WEB_DECOY:-}" in
@@ -725,7 +729,6 @@ _install_args_web() {
         fi
     fi
     if [ "${SELFMASK_ENABLED:-false}" != "true" ]; then
-        SELFMASK_DOMAIN="$(web_domain)"
         SELFMASK_CERT_MODE="${_IA_SELFMASK_CERT:-letsencrypt}"
         SELFMASK_CERT_EMAIL="${_IA_SELFMASK_EMAIL}"
         [ -n "$_IA_SELFMASK_TEMPLATE" ] && SELFMASK_SITE_SOURCE="$_IA_SELFMASK_TEMPLATE"

@@ -37,6 +37,7 @@ export function PanelSettingsPage() {
     login_subtitle: branding.login_subtitle,
   });
   const [saving, setSaving] = useState(false);
+  const [iconBusy, setIconBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [panelModeSaving, setPanelModeSaving] = useState(false);
@@ -201,6 +202,31 @@ export function PanelSettingsPage() {
       <Header title="Настройки панели" />
 
       <div className="p-4 lg:p-6 space-y-4 max-w-4xl">
+        <Card>
+          <CardHeader><CardTitle>Иконка сайта</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-text-secondary">ICO или PNG, до 8 МБ. Иконка используется во вкладке браузера и на странице входа.</p>
+            {branding.has_icon && <img className="h-10 w-10 object-contain" alt="Иконка панели" src={brandingApi.iconURL(branding.icon_revision)} />}
+            <Input type="file" accept=".ico,image/x-icon,image/vnd.microsoft.icon,image/png" disabled={iconBusy}
+              aria-label="Загрузить иконку сайта"
+              onChange={async (event) => {
+                const file = event.target.files?.[0];
+                event.target.value = '';
+                if (!file) return;
+                if (file.size > MAX_BACKGROUND_BYTES) { setError('Иконка больше 8 МБ'); return; }
+                setIconBusy(true); setError('');
+                try { apply(await brandingApi.uploadIcon(file)); setNotice('Иконка обновлена'); }
+                catch (err) { setError(err instanceof Error ? err.message : 'Не удалось загрузить иконку'); }
+                finally { setIconBusy(false); }
+              }} />
+            <Button disabled={iconBusy || !branding.has_icon} onClick={async () => {
+              setIconBusy(true); setError('');
+              try { apply(await brandingApi.deleteIcon()); setNotice('Стандартная иконка восстановлена'); }
+              catch (err) { setError(err instanceof Error ? err.message : 'Не удалось восстановить иконку'); }
+              finally { setIconBusy(false); }
+            }}>Вернуть стандартную иконку</Button>
+          </CardContent>
+        </Card>
         {error && <ErrorAlert message={error} />}
         {notice && (
           <div className="bg-success/10 border border-success/30 rounded-lg p-3 text-sm text-text-primary">
