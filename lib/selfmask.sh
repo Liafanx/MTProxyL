@@ -169,7 +169,7 @@ _selfmask_panel_proxy_block() {
     local _cfg="${PANEL_CONFIG_DIR:-/etc/mtproxyl-panel}/config.toml"
     local _path="${PANEL_SELFMASK_PATH:-}" _listen _host _port _scheme="http" _tls=""
     [ -f "$_cfg" ] && [ -x "${PANEL_BINARY:-/usr/local/bin/mtproxyl-panel}" ] || return 0
-    [[ "$_path" =~ ^/[A-Za-z0-9_-]{16,64}$ ]] || return 0
+    [[ "$_path" =~ ^/[A-Za-z0-9_-]{1,64}$ ]] || return 0
 
     _listen=$(_panel_config_value listen)
     _host="${_listen%:*}"; _port="${_listen##*:}"

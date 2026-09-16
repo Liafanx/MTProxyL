@@ -33,11 +33,13 @@ log_warn() { :; }
 log_error() { :; }
 check_root() { :; }
 systemctl() { :; }
+_ensure_ip_history_timer() { :; }
+_ensure_availability_timer() { :; }
 _mktemp() { mktemp "${1:-$test_dir}/fixture.XXXXXX"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 PANEL_SELFMASK_ENABLED=true
-PANEL_SELFMASK_PATH="/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+PANEL_SELFMASK_PATH="/panel"
 PANEL_SELFMASK_PREV_LISTEN="0.0.0.0:8080"
 PANEL_SELFMASK_PREV_BASE_PATH="/old-panel"
 IPBLOCK_ENABLED=false
@@ -51,9 +53,9 @@ PANEL_SELFMASK_ENABLED=false
 PANEL_SELFMASK_PATH=""
 PANEL_SELFMASK_PREV_LISTEN=""
 PANEL_SELFMASK_PREV_BASE_PATH=""
-load_panel_selfmask_settings
+load_settings
 [[ "$PANEL_SELFMASK_ENABLED" == true ]] || fail 'panel state enabled flag not loaded'
-[[ "$PANEL_SELFMASK_PATH" == "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ]] || fail 'panel token state not loaded'
+[[ "$PANEL_SELFMASK_PATH" == "/panel" ]] || fail 'custom panel path not loaded'
 save_settings() { :; }
 
 SELFMASK_ENABLED=true
@@ -105,6 +107,28 @@ captured_nginx=""
 panel_selfmask_enable
 [[ "$captured_nginx" == *'location ^~ /0123456789abcdef0123456789abcdef/'* ]] || fail 'idempotent apply did not refresh nginx'
 [[ $(_panel_config_value listen) == "127.0.0.1:8080" ]] || fail 'idempotent apply changed listen'
+
+# Пользовательский одноуровневый путь короче случайного токена допустим.
+if panel_selfmask_enable /bad/path; then
+    fail 'nested custom path accepted'
+fi
+[[ $(_panel_config_value base_path) == "/0123456789abcdef0123456789abcdef" ]] || fail 'invalid path changed config'
+panel_selfmask_enable panel
+[[ $(_panel_config_value base_path) == "/panel" ]] || fail 'custom path not applied'
+[[ "$captured_nginx" == *'location ^~ /panel/'* ]] || fail 'custom nginx location missing'
+
+# При двух frontend выводится два адреса; при одном — только доступный.
+WEB_ENABLED=true
+PROXY_MODE=combined
+WEB_FRONTEND=nginx
+WEB_DOMAIN=web.example.com
+expected_urls=$'WEB|https://web.example.com/panel/\nSelfmask|https://mask.example.com/panel/'
+[[ $(panel_common_public_urls) == "$expected_urls" ]] || fail 'both frontend URLs not returned'
+status_output=$(_panel_print_public_urls)
+[[ "$status_output" == *'https://web.example.com/panel/'* ]] || fail 'WEB URL missing from panel header'
+[[ "$status_output" == *'https://mask.example.com/panel/'* ]] || fail 'Selfmask URL missing from panel header'
+WEB_ENABLED=false
+[[ $(panel_common_public_urls) == 'Selfmask|https://mask.example.com/panel/' ]] || fail 'disabled WEB URL still returned'
 
 panel_selfmask_disable
 [[ $(_panel_config_value listen) == "0.0.0.0:8080" ]] || fail 'listen not restored'

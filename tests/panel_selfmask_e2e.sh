@@ -38,8 +38,8 @@ PY
 panel_port=$(free_port)
 front_port=$(free_port)
 [ "$front_port" != "$panel_port" ] || front_port=$(free_port)
-token="0123456789abcdef0123456789abcdef"
-base_path="/${token}"
+base_path="${PANEL_E2E_PATH:-/0123456789abcdef0123456789abcdef}"
+case "$base_path" in /*) ;; *) base_path="/$base_path" ;; esac
 domain="mask.example.com"
 backend_scheme="http"
 backend_curl=()
