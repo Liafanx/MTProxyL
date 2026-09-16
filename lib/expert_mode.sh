@@ -533,24 +533,46 @@ tui_expert_menu() {
 # Каталог параметров движка с текущими override-значениями. Валидатор и
 # подсказку отдаём вместе с записью — панель строит по ним поле ввода.
 expert_catalog_json() {
-    local _entry _first=1 _ovr
+    local _entry _first=1 _ovr _s _k _v
+    local _section_esc _key_esc _type_esc _default_esc
+    local _validator_esc _hint_esc _desc_esc _ovr_esc
+    local _hot _has_override
+    local -A _overrides=()
+
+    # Read overrides once. Calling awk for every catalog entry makes this
+    # endpoint painfully slow on small VPSes (and can outlive the panel's HTTP
+    # request timeout).
+    if [ -f "$EXPERT_OVERRIDES_FILE" ]; then
+        while IFS='|' read -r _s _k _v; do
+            [ -n "$_s" ] && [ -n "$_k" ] || continue
+            [[ "$_s" =~ ^[[:space:]]*# ]] && continue
+            _overrides["${_s}|${_k}"]="$_v"
+        done < "$EXPERT_OVERRIDES_FILE"
+    fi
+
     printf '['
     for _entry in "${_EXPERT_CATALOG[@]}"; do
         _expert_parse "$_entry"
-        _ovr=$(get_expert_override_value "$EXPERT_P_SECTION" "$EXPERT_P_KEY")
+        _ovr="${_overrides["${EXPERT_P_SECTION}|${EXPERT_P_KEY}"]:-}"
+        json_escape_fast "$EXPERT_P_SECTION";   _section_esc="$_JSON_ESCAPE_OUT"
+        json_escape_fast "$EXPERT_P_KEY";       _key_esc="$_JSON_ESCAPE_OUT"
+        json_escape_fast "$EXPERT_P_TYPE";      _type_esc="$_JSON_ESCAPE_OUT"
+        json_escape_fast "$EXPERT_P_DEFAULT";   _default_esc="$_JSON_ESCAPE_OUT"
+        json_escape_fast "$EXPERT_P_VALIDATOR"; _validator_esc="$_JSON_ESCAPE_OUT"
+        json_escape_fast "$EXPERT_P_HINT";      _hint_esc="$_JSON_ESCAPE_OUT"
+        json_escape_fast "$EXPERT_P_DESC";      _desc_esc="$_JSON_ESCAPE_OUT"
+        json_escape_fast "$_ovr";               _ovr_esc="$_JSON_ESCAPE_OUT"
+        _hot=false
+        if [ "$EXPERT_P_HOT" = "✔" ] || [ "$EXPERT_P_HOT" = "true" ]; then
+            _hot=true
+        fi
+        _has_override=false
+        [ -n "$_ovr" ] && _has_override=true
         [ $_first -eq 1 ] || printf ','
         _first=0
         printf '{"section":"%s","key":"%s","type":"%s","default":"%s","hot_reload":%s,"validator":"%s","hint":"%s","description":"%s","override":"%s","has_override":%s}' \
-            "$(json_escape "$EXPERT_P_SECTION")" \
-            "$(json_escape "$EXPERT_P_KEY")" \
-            "$(json_escape "$EXPERT_P_TYPE")" \
-            "$(json_escape "$EXPERT_P_DEFAULT")" \
-            "$([ "$EXPERT_P_HOT" = "true" ] && echo true || echo false)" \
-            "$(json_escape "$EXPERT_P_VALIDATOR")" \
-            "$(json_escape "$EXPERT_P_HINT")" \
-            "$(json_escape "$EXPERT_P_DESC")" \
-            "$(json_escape "${_ovr}")" \
-            "$([ -n "$_ovr" ] && echo true || echo false)"
+            "$_section_esc" "$_key_esc" "$_type_esc" "$_default_esc" "$_hot" \
+            "$_validator_esc" "$_hint_esc" "$_desc_esc" "$_ovr_esc" "$_has_override"
     done
     printf ']\n'
 }
