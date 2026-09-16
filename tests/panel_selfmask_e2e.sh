@@ -168,6 +168,15 @@ kill -0 "$nginx_pid" 2>/dev/null || { cat "$test_dir/nginx.log" >&2; exit 1; }
 grep -Fq "window.__BASE_PATH__=\"${base_path}\"" "$test_dir/index.html"
 grep -Fq "<base href=\"${base_path}/\">" "$test_dir/index.html"
 
+# Запрос без завершающего слеша должен остаться на внешнем origin. Nginx
+# Selfmask/HAProxy слушает внутри 8444/15444; абсолютный редирект раскрывал этот
+# порт и отправлял браузер туда, где снаружи ничего не слушает.
+redirect_code=$(curl "${curl_common[@]}" --dump-header "$test_dir/redirect.headers" \
+    --output /dev/null --write-out '%{http_code}' "$base_url")
+[ "$redirect_code" = "308" ]
+redirect_location=$(sed -n 's/^[Ll]ocation:[[:space:]]*//p' "$test_dir/redirect.headers" | tr -d '\r' | head -1)
+[ "$redirect_location" = "${base_path}/" ]
+
 wrong_code=$(curl "${curl_common[@]}" --output /dev/null --write-out '%{http_code}' "https://${domain}:${front_port}/")
 # Корень не должен открыть панель. В WEB-тесте ответ зависит от того, успел ли
 # nginx соединиться с заведомо отсутствующим тестовым backend.

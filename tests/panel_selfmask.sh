@@ -100,6 +100,7 @@ panel_selfmask_enable /0123456789abcdef0123456789abcdef
 [[ "$captured_nginx" == *'X-Forwarded-For $remote_addr'* ]] || fail 'client IP is not overwritten by trusted nginx'
 [[ "$captured_nginx" != *'$proxy_add_x_forwarded_for'* ]] || fail 'spoofable forwarded chain is preserved'
 [[ "$captured_nginx" == *'client_max_body_size 8m;'* ]] || fail 'panel uploads limited by nginx'
+[[ "$captured_nginx" == *'absolute_redirect off;'* ]] || fail 'panel redirect leaks internal nginx port'
 [[ $(panel_public_url) == "https://mask.example.com/0123456789abcdef0123456789abcdef/" ]] || fail 'public URL incorrect'
 tls_proxy_block="$captured_nginx"
 

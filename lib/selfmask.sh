@@ -191,6 +191,9 @@ TLS_EOF
     cat << EOF
         # MTProxyL-Panel: публикуется только после команды panel selfmask on.
         location = ${_path} {
+            # Иначе nginx собирает абсолютный Location из внутреннего listener
+            # (8444/15444), и обновление страницы уводит браузер на backend-порт.
+            absolute_redirect off;
             return 308 ${_path}/;
         }
 
