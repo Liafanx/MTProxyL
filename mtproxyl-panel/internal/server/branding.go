@@ -327,7 +327,7 @@ func (s *brandingStore) serveImage(w http.ResponseWriter, r *http.Request, path,
 		writeError(w, http.StatusInternalServerError, "background_read_failed", "Не удалось прочитать фон")
 		return
 	}
-	mime, err := detectPanelImage(data, path == s.iconPath)
+	mime, err := detectStoredPanelImage(data, path == s.iconPath)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "background_invalid", "Сохранённый фон повреждён")
 		return
@@ -342,10 +342,24 @@ func detectPanelImage(data []byte, icon bool) (string, error) {
 		return detectBrandingImage(data)
 	}
 	mime := http.DetectContentType(data)
+	if mime == "image/x-icon" || mime == "image/vnd.microsoft.icon" {
+		return mime, nil
+	}
+	return "", errors.New("для иконки поддерживается только ICO")
+}
+
+// Старые версии панели разрешали PNG-фавиконки. Новые загрузки принимают
+// только ICO, но уже сохранённый PNG продолжаем отдавать до его замены или
+// сброса, чтобы обновление не оставило пользователя без иконки.
+func detectStoredPanelImage(data []byte, icon bool) (string, error) {
+	if !icon {
+		return detectBrandingImage(data)
+	}
+	mime := http.DetectContentType(data)
 	if mime == "image/png" || mime == "image/x-icon" || mime == "image/vnd.microsoft.icon" {
 		return mime, nil
 	}
-	return "", errors.New("для иконки поддерживаются только ICO и PNG")
+	return "", errors.New("сохранённая иконка имеет неподдерживаемый формат")
 }
 
 func readBrandingImage(w http.ResponseWriter, r *http.Request) ([]byte, bool) {

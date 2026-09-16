@@ -23,6 +23,12 @@ function imageValidationError(file: File): string {
   return '';
 }
 
+function iconValidationError(file: File): string {
+  if (!file.name.toLowerCase().endsWith('.ico')) return 'Поддерживается только файл ICO';
+  if (file.size > MAX_BACKGROUND_BYTES) return 'Иконка больше 8 МБ';
+  return '';
+}
+
 interface TextSettings {
   panel_name: string;
   login_title: string;
@@ -205,15 +211,16 @@ export function PanelSettingsPage() {
         <Card>
           <CardHeader><CardTitle>Иконка сайта</CardTitle></CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-sm text-text-secondary">ICO или PNG, до 8 МБ. Иконка используется во вкладке браузера и на странице входа.</p>
+            <p className="text-sm text-text-secondary">Только ICO, до 8 МБ. Иконка используется во вкладке браузера и на странице входа.</p>
             {branding.has_icon && <img className="h-10 w-10 object-contain" alt="Иконка панели" src={brandingApi.iconURL(branding.icon_revision)} />}
-            <Input type="file" accept=".ico,image/x-icon,image/vnd.microsoft.icon,image/png" disabled={iconBusy}
+            <Input type="file" accept=".ico,image/x-icon,image/vnd.microsoft.icon" disabled={iconBusy}
               aria-label="Загрузить иконку сайта"
               onChange={async (event) => {
                 const file = event.target.files?.[0];
                 event.target.value = '';
                 if (!file) return;
-                if (file.size > MAX_BACKGROUND_BYTES) { setError('Иконка больше 8 МБ'); return; }
+                const validationError = iconValidationError(file);
+                if (validationError) { setError(validationError); return; }
                 setIconBusy(true); setError('');
                 try { apply(await brandingApi.uploadIcon(file)); setNotice('Иконка обновлена'); }
                 catch (err) { setError(err instanceof Error ? err.message : 'Не удалось загрузить иконку'); }
