@@ -80,11 +80,13 @@ log_success() { :; }
 log_error() { :; }
 source "$repo/lib/backup.sh"
 backup_file=$(create_backup)
-tar tzf "$backup_file" | grep -qx 'availability/last.json' || fail 'last result missing from backup'
-tar tzf "$backup_file" | grep -qx 'availability/history.jsonl' || fail 'history missing from backup'
+backup_listing=$(tar tzf "$backup_file")
+grep -qx 'availability/last.json' <<< "$backup_listing" || fail 'last result missing from backup'
+grep -qx 'availability/history.jsonl' <<< "$backup_listing" || fail 'history missing from backup'
 migration_file="$test_dir/migration.tar.gz"
 migrate_export "$migration_file"
-tar tzf "$migration_file" | grep -qx './availability/last.json' || fail 'last result missing from migration export'
-tar tzf "$migration_file" | grep -qx './availability/history.jsonl' || fail 'history missing from migration export'
+migration_listing=$(tar tzf "$migration_file")
+grep -qx './availability/last.json' <<< "$migration_listing" || fail 'last result missing from migration export'
+grep -qx './availability/history.jsonl' <<< "$migration_listing" || fail 'history missing from migration export'
 
 echo 'availability history tests: OK'

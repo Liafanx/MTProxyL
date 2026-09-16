@@ -210,11 +210,20 @@ PY
 curl "${curl_common[@]}" --fail --cookie "$cookie_jar" -H 'Content-Type: image/png' \
     -X PUT --data-binary "@$test_dir/background.png" "${base_url}/api/panel/settings/background" \
     | jq -e '.ok == true and .data.has_background == true' >/dev/null
-curl "${curl_common[@]}" --fail --cookie "$cookie_jar" -H 'Content-Type: image/png' \
-    -X PUT --data-binary "@$test_dir/background.png" "${base_url}/api/panel/settings/icon" \
+png_icon_code=$(curl "${curl_common[@]}" --cookie "$cookie_jar" -H 'Content-Type: image/png' \
+    -X PUT --data-binary "@$test_dir/background.png" --output /dev/null --write-out '%{http_code}' \
+    "${base_url}/api/panel/settings/icon")
+[ "$png_icon_code" = "400" ]
+python3 - "$test_dir/panel.ico" <<'PY'
+import sys
+with open(sys.argv[1], 'wb') as f:
+    f.write(b'\x00\x00\x01\x00' + bytes(32))
+PY
+curl "${curl_common[@]}" --fail --cookie "$cookie_jar" -H 'Content-Type: image/x-icon' \
+    -X PUT --data-binary "@$test_dir/panel.ico" "${base_url}/api/panel/settings/icon" \
     | jq -e '.ok == true and .data.has_icon == true' >/dev/null
 curl "${curl_common[@]}" --fail "${base_url}/api/branding/icon" -o "$test_dir/downloaded-icon"
-cmp "$test_dir/background.png" "$test_dir/downloaded-icon"
+cmp "$test_dir/panel.ico" "$test_dir/downloaded-icon"
 curl "${curl_common[@]}" --fail --cookie "$cookie_jar" -X DELETE "${base_url}/api/panel/settings/icon" \
     | jq -e '.ok == true and .data.has_icon == false' >/dev/null
 grep -qi "Set-Cookie: session=.*Path=${base_path}/.*HttpOnly.*Secure.*SameSite=Strict" "$test_dir/login.headers"
