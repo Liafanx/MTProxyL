@@ -336,7 +336,7 @@ SELFMASK_EOF
     mv "$_tmp" "$_f"
 }
 
-# Случайный URL только скрывает точку входа и не заменяет логин с паролем.
+# Общий URL только задаёт точку входа и не заменяет логин с паролем.
 # Не кладём его в общий settings.conf с правами 644: отдельный файл читает root.
 save_panel_selfmask_settings() {
     mkdir -p "$INSTALL_DIR"
@@ -565,7 +565,7 @@ load_settings() {
     [ "$SELFMASK_TLS_PROTOCOLS" = "TLSv1.3" ] || SELFMASK_TLS_PROTOCOLS="TLSv1.3"
     [ "$PANEL_SELFMASK_ENABLED" = "true" ] || PANEL_SELFMASK_ENABLED="false"
     if [ "$PANEL_SELFMASK_ENABLED" = "true" ] &&
-       ! [[ "$PANEL_SELFMASK_PATH" =~ ^/[A-Za-z0-9_-]{16,64}$ ]]; then
+       ! [[ "$PANEL_SELFMASK_PATH" =~ ^/[A-Za-z0-9_-]{1,64}$ ]]; then
         PANEL_SELFMASK_ENABLED="false"
         PANEL_SELFMASK_PATH=""
     fi

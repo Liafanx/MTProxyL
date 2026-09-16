@@ -60,6 +60,8 @@ export const telemt = {
 const PANEL_BASE = `${BASE}/api`;
 
 export interface PanelBranding {
+  has_icon?: boolean;
+  icon_revision?: string;
   panel_name: string;
   login_title: string;
   login_subtitle: string;
@@ -82,6 +84,11 @@ export const DEFAULT_PANEL_BRANDING: PanelBranding = {
 };
 
 export const brandingApi = {
+  iconURL: (revision?: string) => `${PANEL_BASE}/branding/icon?v=${revision || ''}`,
+  uploadIcon: (file: File) => request<PanelBranding>(PANEL_BASE, '/panel/settings/icon', {
+    method: 'PUT', body: file, headers: { 'Content-Type': file.type || 'application/octet-stream' },
+  }),
+  deleteIcon: () => request<PanelBranding>(PANEL_BASE, '/panel/settings/icon', { method: 'DELETE' }),
   get: () => request<PanelBranding>(PANEL_BASE, '/branding'),
   update: (branding: Pick<PanelBranding, 'panel_name' | 'login_title' | 'login_subtitle' | 'panel_background_mode'>) =>
     request<PanelBranding>(PANEL_BASE, '/panel/settings', {

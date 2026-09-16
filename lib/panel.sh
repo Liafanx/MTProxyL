@@ -129,21 +129,67 @@ panel_scheme() {
     fi
 }
 
-# Внешний URL отличается от listen, когда TLS завершает nginx Selfmask, а
-# сама панель доступна только локально по случайному base_path.
-panel_public_url() {
-    if [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ] &&
-       [ "${SELFMASK_ENABLED:-false}" = "true" ] &&
-       [ -n "${SELFMASK_DOMAIN:-}" ] &&
-       [[ "${PANEL_SELFMASK_PATH:-}" =~ ^/[A-Za-z0-9_-]{16,64}$ ]]; then
+# Внешние URL отличаются от listen, когда TLS завершает nginx Selfmask/WEB,
+# а сама панель доступна только локально по общему base_path.
+_panel_common_path_valid() {
+    [[ "${1:-}" =~ ^/[A-Za-z0-9_-]{1,64}$ ]]
+}
+
+# Строки «frontend|URL». Один и тот же путь публикуется на каждом активном
+# управляемом frontend, поэтому выводы не должны терять второй адрес.
+panel_common_public_urls() {
+    [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ] || return 0
+    _panel_common_path_valid "${PANEL_SELFMASK_PATH:-}" || return 0
+
+    if web_is_enabled && web_uses_managed_nginx; then
+        local _web_port _web_suffix=""
+        _web_port=$(web_public_port)
+        [ "$_web_port" = 443 ] || _web_suffix=":${_web_port}"
+        printf 'WEB|https://%s%s%s/\n' "$(web_domain)" "$_web_suffix" "$PANEL_SELFMASK_PATH"
+    fi
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ] && [ -n "${SELFMASK_DOMAIN:-}" ]; then
         local _port="${PROXY_PORT:-443}" _suffix=""
         [ "$_port" = "443" ] || _suffix=":${_port}"
-        printf 'https://%s%s%s/\n' "$SELFMASK_DOMAIN" "$_suffix" "$PANEL_SELFMASK_PATH"
-        return 0
+        printf 'Selfmask|https://%s%s%s/\n' "$SELFMASK_DOMAIN" "$_suffix" "$PANEL_SELFMASK_PATH"
     fi
+}
+
+panel_public_url() {
+    local _kind _url
+    while IFS='|' read -r _kind _url; do
+        [ -n "$_url" ] || continue
+        printf '%s\n' "$_url"
+        return 0
+    done <<< "$(panel_common_public_urls)"
 
     local _addr; _addr=$(panel_listen_addr) || return 1
     printf '%s://%s\n' "$(panel_scheme)" "$_addr"
+}
+
+_panel_log_public_urls() {
+    local _rows _kind _url
+    _rows=$(panel_common_public_urls)
+    if [ -n "$_rows" ]; then
+        while IFS='|' read -r _kind _url; do
+            [ -n "$_url" ] && log_info "Адрес ${_kind}: ${_url}"
+        done <<< "$_rows"
+        return 0
+    fi
+    _url=$(panel_public_url 2>/dev/null)
+    [ -n "$_url" ] && log_info "Адрес: ${_url}"
+}
+
+_panel_print_public_urls() {
+    local _rows _kind _url
+    _rows=$(panel_common_public_urls)
+    if [ -n "$_rows" ]; then
+        while IFS='|' read -r _kind _url; do
+            [ -n "$_url" ] && echo -e "  ${BOLD}Адрес ${_kind}:${NC} ${_url}"
+        done <<< "$_rows"
+        return 0
+    fi
+    _url=$(panel_public_url 2>/dev/null)
+    [ -n "$_url" ] && echo -e "  ${BOLD}Адрес:${NC}     ${_url}"
 }
 
 panel_install() {
@@ -281,13 +327,12 @@ _panel_install_report() {
     echo ""
     if panel_installed; then
         log_success "Панель установлена"
-        local _url; _url=$(panel_public_url)
-        [ -n "$_url" ] && log_info "Адрес: ${_url}"
+        _panel_log_public_urls
     fi
     if [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ] &&
-       [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+       { [ "${SELFMASK_ENABLED:-false}" = "true" ] || { web_is_enabled && web_uses_managed_nginx; }; }; then
         panel_selfmask_enable || \
-            log_warn "Маршрут панели через Selfmask не обновлён — повторите: mtproxyl panel selfmask on"
+            log_warn "Общий маршрут панели не обновлён — повторите: mtproxyl panel selfmask on"
     fi
     _panel_offer_cert_after_install
 }
@@ -562,8 +607,7 @@ panel_enable() {
         return 1
     }
     log_success "Панель включена"
-    local _url; _url=$(panel_public_url)
-    [ -n "$_url" ] && log_info "Адрес: ${_url}"
+    _panel_log_public_urls
 }
 
 panel_show_status() {
@@ -572,10 +616,9 @@ panel_show_status() {
     echo ""
     echo -e "  ${BOLD}Состояние:${NC} $(panel_status_line)"
     if panel_installed; then
-        local _url; _url=$(panel_public_url)
-        [ -n "$_url" ] && echo -e "  ${BOLD}Адрес:${NC}     ${_url}"
+        _panel_print_public_urls
         if [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ]; then
-            echo -e "  ${BOLD}Токен пути:${NC} ${PANEL_SELFMASK_PATH#/}"
+            echo -e "  ${BOLD}Путь панели:${NC} ${PANEL_SELFMASK_PATH}"
         fi
         echo -e "  ${BOLD}Бинарник:${NC}  ${PANEL_BINARY}"
         echo -e "  ${BOLD}Конфиг:${NC}    ${PANEL_CONFIG_DIR}/config.toml"
@@ -873,8 +916,7 @@ _panel_finish_cert() {
     systemctl restart "$PANEL_SERVICE" &>/dev/null \
         && log_success "Панель перезапущена" \
         || log_warn "Перезапустите панель вручную: mtproxyl panel restart"
-    local _url; _url=$(panel_public_url 2>/dev/null)
-    [ -n "$_url" ] && log_info "Адрес: ${_url}"
+    _panel_log_public_urls
 }
 
 # ── Доступ через домен Selfmask ─────────────────────────────────────────────
@@ -958,12 +1000,23 @@ _panel_selfmask_random_path() {
     printf '/%s\n' "$_token"
 }
 
+_panel_selfmask_read_custom_path() {
+    local _target="$1" _value=""
+    read_line _value "  ${BOLD}Путь панели${NC} ${DIM}(например /panel):${NC} "
+    case "$_value" in /*) ;; *) _value="/${_value}" ;; esac
+    if ! _panel_common_path_valid "$_value"; then
+        log_error "Путь: 1–64 латинских букв, цифр, _ или -; один сегмент без пробелов"
+        return 1
+    fi
+    printf -v "$_target" '%s' "$_value"
+}
+
 panel_selfmask_enable() {
     check_root || return 1
     panel_installed || { log_error "Панель не установлена"; return 1; }
-    [ "${SELFMASK_ENABLED:-false}" = "true" ] && [ -n "${SELFMASK_DOMAIN:-}" ] || {
-        log_error "Selfmask не включён — общий домен и сертификат недоступны"
-        log_info "Сначала настройте Selfmask; собственный домен панели продолжает работать независимо"
+    { [ "${SELFMASK_ENABLED:-false}" = "true" ] && [ -n "${SELFMASK_DOMAIN:-}" ]; } ||
+    { web_is_enabled && web_uses_managed_nginx; } || {
+        log_error "Для общего пути включите Selfmask или WEB с nginx MTProxyL"
         return 1
     }
     [ "${NGINX_CUSTOM_ENABLED:-false}" != "true" ] || {
@@ -981,12 +1034,12 @@ panel_selfmask_enable() {
             127.0.0.1|localhost|::1|"[::1]")
                 if [ "$_configured_base" = "${PANEL_SELFMASK_PATH:-}" ]; then
                     _selfmask_configure_nginx || {
-                        log_error "Не удалось обновить маршрут панели в nginx Selfmask"
+                        log_error "Не удалось обновить маршрут панели в nginx"
                         return 1
                     }
-                    log_success "Маршрут панели через Selfmask обновлён"
-                    log_info "Адрес: $(panel_public_url)"
-                    log_info "Токен пути: ${PANEL_SELFMASK_PATH#/}"
+                    log_success "Общий маршрут панели обновлён"
+                    _panel_log_public_urls
+                    log_info "Путь панели: ${PANEL_SELFMASK_PATH}"
                     return 0
                 fi
                 ;;
@@ -1000,8 +1053,8 @@ panel_selfmask_enable() {
     [ -n "$_path" ] || _path=$(_panel_selfmask_random_path) || {
         log_error "Не удалось создать случайный путь"; return 1; }
     case "$_path" in /*) ;; *) _path="/${_path}" ;; esac
-    [[ "$_path" =~ ^/[A-Za-z0-9_-]{16,64}$ ]] || {
-        log_error "Путь должен содержать 16–64 латинских букв, цифр, _ или -"
+    _panel_common_path_valid "$_path" || {
+        log_error "Путь должен содержать 1–64 латинских букв, цифр, _ или -"
         return 1
     }
 
@@ -1057,13 +1110,13 @@ panel_selfmask_enable() {
         save_settings 2>/dev/null || true
         systemctl restart "$PANEL_SERVICE" &>/dev/null || true
         _selfmask_configure_nginx &>/dev/null || true
-        log_error "nginx Selfmask не принял конфигурацию — прежние настройки возвращены"
+        log_error "nginx не принял конфигурацию — прежние настройки возвращены"
         return 1
     fi
 
-    log_success "Панель доступна через сертификат и домен Selfmask"
-    log_info "Адрес: $(panel_public_url)"
-    log_info "Токен пути: ${PANEL_SELFMASK_PATH#/}"
+    log_success "Панель доступна по общему пути Selfmask / WEB"
+    _panel_log_public_urls
+    log_info "Путь панели: ${PANEL_SELFMASK_PATH}"
     log_info "Вход: обычные логин и пароль панели"
     log_info "Порт панели снаружи закрыт: backend слушает только ${_local_listen}"
 }
@@ -1071,7 +1124,7 @@ panel_selfmask_enable() {
 panel_selfmask_disable() {
     check_root || return 1
     [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ] || {
-        log_info "Доступ через Selfmask уже выключен"; return 0; }
+        log_info "Общий путь панели уже выключен"; return 0; }
 
     local _current_listen _current_base _restore_listen _restore_base
     local _saved_path="$PANEL_SELFMASK_PATH"
@@ -1089,7 +1142,7 @@ panel_selfmask_disable() {
         PANEL_SELFMASK_PATH="$_saved_path"
         _panel_config_set_access "$_current_listen" "$_current_base" 2>/dev/null || true
         _panel_selfmask_refresh_nginx &>/dev/null || true
-        log_error "Не удалось отключить proxy location — доступ через Selfmask оставлен"
+        log_error "Не удалось отключить proxy location — общий путь оставлен"
         return 1
     fi
 
@@ -1105,11 +1158,11 @@ panel_selfmask_disable() {
         save_settings 2>/dev/null || true
         systemctl restart "$PANEL_SERVICE" &>/dev/null || true
         _panel_selfmask_refresh_nginx &>/dev/null || true
-        log_error "Панель не приняла восстановленные настройки — доступ через Selfmask оставлен"
+        log_error "Панель не приняла восстановленные настройки — общий путь оставлен"
         return 1
     fi
-    log_success "Доступ через домен Selfmask выключен"
-    log_info "Текущий адрес: $(panel_public_url)"
+    log_success "Общий путь панели через Selfmask / WEB выключен"
+    _panel_log_public_urls
 }
 
 _panel_selfmask_refresh_nginx() {
@@ -1120,19 +1173,19 @@ _panel_selfmask_refresh_nginx() {
 
 panel_selfmask_status() {
     if [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ]; then
-        if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
-            log_success "Доступ через Selfmask включён"
-            log_info "Адрес: $(panel_public_url)"
-            log_info "Токен пути: ${PANEL_SELFMASK_PATH#/}"
+        if [ "${SELFMASK_ENABLED:-false}" = "true" ] || { web_is_enabled && web_uses_managed_nginx; }; then
+            log_success "Общий путь панели через Selfmask / WEB включён"
+            _panel_log_public_urls
+            log_info "Путь панели: ${PANEL_SELFMASK_PATH}"
             log_info "Вход: обычные логин и пароль панели"
         else
-            log_warn "Маршрут панели настроен, но Selfmask в текущем режиме выключен"
+            log_warn "Маршрут панели настроен, но Selfmask и WEB с nginx выключены"
             log_info "Панель пока доступна только на локальном backend"
         fi
         log_info "Локальный backend: $(_panel_config_value listen)"
     else
-        log_info "Доступ через Selfmask выключен"
-        [ "${SELFMASK_ENABLED:-false}" = "true" ] && \
+        log_info "Общий путь панели выключен"
+        { [ "${SELFMASK_ENABLED:-false}" = "true" ] || web_is_enabled; } && \
             log_info "Включить: mtproxyl panel selfmask on"
     fi
 }
@@ -1175,8 +1228,8 @@ handle_panel_command() {
             echo -e "    ${GREEN}panel password${NC}   Сменить пароль администратора"
             echo -e "    ${GREEN}panel cert${NC} [домен] [email]"
             echo -e "                     Выпустить сертификат Let's Encrypt"
-            echo -e "    ${GREEN}panel selfmask${NC} [status|on|rotate|off]"
-            echo -e "                     Открыть панель по скрытому пути домена Selfmask"
+            echo -e "    ${GREEN}panel selfmask${NC} [status|on [путь]|rotate|off]"
+            echo -e "                     Общий путь панели через Selfmask / WEB"
             echo -e "    ${GREEN}panel uninstall${NC}  Удалить"
             ;;
     esac
@@ -1203,11 +1256,11 @@ tui_panel_menu() {
             if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
                 echo -e "      ${DIM}порт 80 занят Selfmask — выпуск это учитывает${NC}"
             fi
-            if [ "${SELFMASK_ENABLED:-false}" = "true" ] ||
+            if [ "${SELFMASK_ENABLED:-false}" = "true" ] || web_is_enabled ||
                [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ]; then
-                local _selfmask_action="Открыть через домен Selfmask"
+                local _selfmask_action="Открыть через Selfmask / WEB"
                 [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ] && \
-                    _selfmask_action="Доступ через Selfmask: управление"
+                    _selfmask_action="Общий путь панели: управление"
                 echo -e "  ${CYAN}[8]${NC}  ${_selfmask_action}"
             fi
         else
@@ -1235,25 +1288,40 @@ tui_panel_menu() {
                     if [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ]; then
                         echo ""
                         panel_selfmask_status
-                        if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+                        if [ "${SELFMASK_ENABLED:-false}" = "true" ] || web_is_enabled; then
                             echo -e "  ${CYAN}[1]${NC}  Создать новый случайный путь"
+                            echo -e "  ${CYAN}[2]${NC}  Установить свой путь"
                         fi
-                        echo -e "  ${CYAN}[2]${NC}  Выключить доступ через Selfmask"
+                        echo -e "  ${CYAN}[3]${NC}  Выключить общий путь"
                         echo -e "  ${DIM}[0]${NC}  Отмена"
                         local _sm_choice; _sm_choice=$(read_choice "выбор" "0")
                         case "$_sm_choice" in
-                            1) [ "${SELFMASK_ENABLED:-false}" = "true" ] && \
-                               panel_selfmask_enable "$(_panel_selfmask_random_path)" ;;
-                            2) panel_selfmask_disable ;;
+                            1) panel_selfmask_enable "$(_panel_selfmask_random_path)" ;;
+                            2)
+                                local _custom_path=""
+                                _panel_selfmask_read_custom_path _custom_path && \
+                                    panel_selfmask_enable "$_custom_path"
+                                ;;
+                            3) panel_selfmask_disable ;;
                         esac
-                    elif [ "${SELFMASK_ENABLED:-false}" != "true" ]; then
-                        log_warn "Сначала включите Selfmask"
+                    elif [ "${SELFMASK_ENABLED:-false}" != "true" ] && ! web_is_enabled; then
+                        log_warn "Сначала включите Selfmask или WEB"
                     else
                         echo ""
-                        log_info "Панель получит скрытый случайный URL на домене ${SELFMASK_DOMAIN}"
+                        log_info "Панель получит общий путь на активных доменах Selfmask / WEB"
                         log_info "Её порт будет привязан к 127.0.0.1 и перестанет быть доступен напрямую"
+                        echo -e "  ${CYAN}[1]${NC}  Сгенерировать случайный путь ${DIM}(рекомендуется)${NC}"
+                        echo -e "  ${CYAN}[2]${NC}  Указать свой путь"
+                        local _path_choice; _path_choice=$(read_choice "путь" "1")
+                        local _requested_path=""
+                        if [ "$_path_choice" = "2" ]; then
+                            _panel_selfmask_read_custom_path _requested_path || {
+                                press_any_key
+                                continue
+                            }
+                        fi
                         local _sm_yes; read_line _sm_yes "  ${BOLD}Включить? [Y/n]:${NC} "
-                        [[ "$_sm_yes" =~ ^[nN] ]] || panel_selfmask_enable
+                        [[ "$_sm_yes" =~ ^[nN] ]] || panel_selfmask_enable "$_requested_path"
                     fi
                     press_any_key
                     ;;

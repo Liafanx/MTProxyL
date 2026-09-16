@@ -169,10 +169,9 @@ _selfmask_panel_proxy_block() {
     local _cfg="${PANEL_CONFIG_DIR:-/etc/mtproxyl-panel}/config.toml"
     local _path="${PANEL_SELFMASK_PATH:-}" _listen _host _port _scheme="http" _tls=""
     [ -f "$_cfg" ] && [ -x "${PANEL_BINARY:-/usr/local/bin/mtproxyl-panel}" ] || return 0
-    [[ "$_path" =~ ^/[A-Za-z0-9_-]{16,64}$ ]] || return 0
+    [[ "$_path" =~ ^/[A-Za-z0-9_-]{1,64}$ ]] || return 0
 
-    _listen=$(grep -oE '^[[:space:]]*listen[[:space:]]*=[[:space:]]*"[^"]+"' "$_cfg" 2>/dev/null \
-        | head -1 | sed 's/.*"\([^"]*\)".*/\1/')
+    _listen=$(_panel_config_value listen)
     _host="${_listen%:*}"; _port="${_listen##*:}"
     case "$_host" in
         127.0.0.1|localhost|::1|"[::1]") ;;
@@ -196,6 +195,7 @@ TLS_EOF
         }
 
         location ^~ ${_path}/ {
+            client_max_body_size 8m;
             proxy_pass ${_scheme}://127.0.0.1:${_port};
             proxy_http_version 1.1;
             proxy_set_header Host \$host;
@@ -524,6 +524,10 @@ _selfmask_collect_params() {
 
     local _domain=""
     local _saved_domain="${SELFMASK_DOMAIN:-}"
+    if web_is_enabled && ! web_layout_is_split && [ "$_saved_domain" = "$(web_domain)" ]; then
+        _saved_domain=""
+        log_warn "В shared Selfmask и WEB нужны разные домены. Укажите отдельный домен Selfmask."
+    fi
 
     while true; do
         if [ -n "$_saved_domain" ] && validate_domain "$_saved_domain"; then
@@ -537,6 +541,10 @@ _selfmask_collect_params() {
         _domain=$(echo "$_domain" | tr '[:upper:]' '[:lower:]')
 
         if validate_domain "$_domain"; then
+            if web_is_enabled && ! web_layout_is_split && [ "$_domain" = "$(web_domain)" ]; then
+                log_error "Домен занят WEB: в shared этот SNI не попадёт в MTProto. Выберите другой домен."
+                continue
+            fi
             SELFMASK_DOMAIN="$_domain"
             break
         fi
@@ -2258,6 +2266,10 @@ selfmask_setup() {
     else
         _selfmask_collect_params   || return 1
     fi
+    if web_is_enabled && ! web_layout_is_split && [ "${SELFMASK_DOMAIN:-}" = "$(web_domain)" ]; then
+        log_error "В shared домены Selfmask и WEB должны различаться; используйте другой домен или split"
+        return 1
+    fi
     _selfmask_install_deps         || return 1
     _selfmask_install_pq_nginx     || return 1
     _selfmask_deploy_site          || return 1
@@ -2318,7 +2330,7 @@ selfmask_disable() {
 
     # Иначе nginx исчезнет, а панель останется на 127.0.0.1 со скрытым
     # base_path и пользователь потеряет внешний доступ к ней.
-    if [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ] &&
+    if [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ] && ! web_is_enabled &&
        declare -F panel_selfmask_disable >/dev/null; then
         panel_selfmask_disable || {
             log_error "Сначала не удалось снять доступ панели через Selfmask — отключение отменено"

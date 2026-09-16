@@ -38,8 +38,8 @@ PY
 panel_port=$(free_port)
 front_port=$(free_port)
 [ "$front_port" != "$panel_port" ] || front_port=$(free_port)
-token="0123456789abcdef0123456789abcdef"
-base_path="/${token}"
+base_path="${PANEL_E2E_PATH:-/0123456789abcdef0123456789abcdef}"
+case "$base_path" in /*) ;; *) base_path="/$base_path" ;; esac
 domain="mask.example.com"
 backend_scheme="http"
 backend_curl=()
@@ -131,10 +131,27 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=${domain}" \
     printf 'pid %s;\n' "$test_dir/nginx.pid"
     printf 'error_log %s;\n' "$test_dir/nginx-error.log"
     printf 'events { worker_connections 32; }\n'
-    printf 'http { access_log off; server { listen 127.0.0.1:%s ssl; server_name %s;\n' "$front_port" "$domain"
-    printf 'ssl_certificate %s; ssl_certificate_key %s;\n' "$test_dir/cert.pem" "$test_dir/key.pem"
-    printf '%s\n' "$proxy_block"
-    printf 'location / { return 404; }\n} }\n'
+    printf 'http { access_log off;\n'
+    if [ "${PANEL_E2E_FRONTEND:-selfmask}" = web ]; then
+        WEB_ENABLED=true
+        PROXY_MODE=web
+        WEB_DOMAIN="$domain"
+        WEB_PUBLIC_PORT="$front_port"
+        WEB_LISTEN_ADDR=127.0.0.1
+        WEB_LISTEN_PORT=$(free_port)
+        WEB_FRONTEND=nginx
+        web_cert_dir() { printf '%s\n' "$test_dir"; }
+        cp "$test_dir/cert.pem" "$test_dir/fullchain.pem"
+        cp "$test_dir/key.pem" "$test_dir/privkey.pem"
+        web_nginx_upgrade_map
+        web_nginx_http_server "$test_dir"
+    else
+        printf 'server { listen 127.0.0.1:%s ssl; server_name %s;\n' "$front_port" "$domain"
+        printf 'ssl_certificate %s; ssl_certificate_key %s;\n' "$test_dir/cert.pem" "$test_dir/key.pem"
+        printf '%s\n' "$proxy_block"
+        printf 'location / { return 404; }\n}\n'
+    fi
+    printf '}\n'
 } > "$test_dir/nginx.conf"
 "$nginx_bin" -t -p "$test_dir/" -c "$test_dir/nginx.conf" >/dev/null 2>&1
 "$nginx_bin" -p "$test_dir/" -c "$test_dir/nginx.conf" -g 'daemon off;' >"$test_dir/nginx.log" 2>&1 &
@@ -152,7 +169,12 @@ grep -Fq "window.__BASE_PATH__=\"${base_path}\"" "$test_dir/index.html"
 grep -Fq "<base href=\"${base_path}/\">" "$test_dir/index.html"
 
 wrong_code=$(curl "${curl_common[@]}" --output /dev/null --write-out '%{http_code}' "https://${domain}:${front_port}/")
-[ "$wrong_code" = "404" ]
+# Корень не должен открыть панель. В WEB-тесте ответ зависит от того, успел ли
+# nginx соединиться с заведомо отсутствующим тестовым backend.
+case "$wrong_code" in
+    404|502) ;;
+    *) exit 1 ;;
+esac
 asset=$(find "$panel_repo/dist/assets" -maxdepth 1 -type f | head -1)
 curl "${curl_common[@]}" --fail --output /dev/null "${base_url}/assets/$(basename "$asset")"
 
@@ -171,6 +193,21 @@ curl "${curl_common[@]}" --fail --dump-header "$test_dir/login.headers" \
     --data '{"username":"admin","password":"panel-test-password"}' \
     "${base_url}/api/auth/login" | jq -e '.ok == true' >/dev/null
 chmod 600 "$cookie_jar"
+python3 - "$test_dir/background.png" <<'PY'
+import sys
+with open(sys.argv[1], 'wb') as f:
+    f.write(b'\x89PNG\r\n\x1a\n' + bytes(2621440))
+PY
+curl "${curl_common[@]}" --fail --cookie "$cookie_jar" -H 'Content-Type: image/png' \
+    -X PUT --data-binary "@$test_dir/background.png" "${base_url}/api/panel/settings/background" \
+    | jq -e '.ok == true and .data.has_background == true' >/dev/null
+curl "${curl_common[@]}" --fail --cookie "$cookie_jar" -H 'Content-Type: image/png' \
+    -X PUT --data-binary "@$test_dir/background.png" "${base_url}/api/panel/settings/icon" \
+    | jq -e '.ok == true and .data.has_icon == true' >/dev/null
+curl "${curl_common[@]}" --fail "${base_url}/api/branding/icon" -o "$test_dir/downloaded-icon"
+cmp "$test_dir/background.png" "$test_dir/downloaded-icon"
+curl "${curl_common[@]}" --fail --cookie "$cookie_jar" -X DELETE "${base_url}/api/panel/settings/icon" \
+    | jq -e '.ok == true and .data.has_icon == false' >/dev/null
 grep -qi "Set-Cookie: session=.*Path=${base_path}/.*HttpOnly.*Secure.*SameSite=Strict" "$test_dir/login.headers"
 grep -qi '^Strict-Transport-Security:' "$test_dir/login.headers"
 curl "${curl_common[@]}" --fail --cookie "$cookie_jar" "${base_url}/api/auth/me" \

@@ -77,9 +77,11 @@ _dc_rows() {
         {
             if (!match($0, /^[ \t]*-?[0-9]+/)) next
             d = substr($0, RSTART, RLENGTH); gsub(/[ \t]/, "", d)
+            alive = num($0, "alive_writers") + 0
+            required = num($0, "required_writers") + 0
+            coverage = required > 0 ? int(100 * (alive < required ? alive : required) / required + .5) : 0
             printf "%s|%s|%s|%s|%s|%s\n", d, \
-                num($0, "rtt_ms"), num($0, "alive_writers"), num($0, "required_writers"), \
-                num($0, "coverage_pct"), num($0, "available_pct")
+                num($0, "rtt_ms"), alive, required, coverage, num($0, "available_pct")
         }
     '
 }
@@ -89,12 +91,12 @@ _dc_rows() {
 _dc_summary() {
     local _rows="$1"
     printf '%s\n' "$_rows" | awk -F'|' '
-        { a += $3 + 0; r += $4 + 0; n++ }
+        NF >= 4 { a += $3 + 0; r += $4 + 0; covered += ($3 < $4 ? $3 : $4); n++ }
         END {
-            if (n == 0) { print "0|0|0|0"; exit }
-            pct = (r > 0) ? (a * 100 / r) : 100
+            if (n == 0) { print "0|0|0|0|0"; exit }
+            pct = (r > 0) ? (covered * 100 / r) : 0
             if (pct > 100) pct = 100
-            printf "%d|%.0f|%d|%d\n", n, pct, a, r
+            printf "%d|%d|%d|%d|%d\n", n, int(pct + .5), a, r, covered
         }
     '
 }
@@ -143,13 +145,16 @@ dc_status_json() {
         return 0
     fi
 
-    local _n _pct _alive _req
-    IFS='|' read -r _n _pct _alive _req <<< "$(_dc_summary "$_rows")"
+    local _n _pct _alive _req _covered
+    IFS='|' read -r _n _pct _alive _req _covered <<< "$(_dc_summary "$_rows")"
+    local _zero
+    _zero=$(printf '%s\n' "$_rows" | awk -F'|' '$4 > 0 && $3 == 0 { n++ } END { print n+0 }')
 
     # При нулевом пороге приговора нет: бот молчит, панель ничего не красит.
     local _verdict="ok" _mark; _mark=$(_dc_mark_threshold)
     if [ "$_thr" -gt 0 ]; then
         [ "$_pct" -lt "$_thr" ] && _verdict="degraded"
+        [ "$_zero" -gt 0 ] && _verdict="down"
         [ "$_pct" -eq 0 ] && _verdict="down"
     fi
 
@@ -165,8 +170,9 @@ dc_status_json() {
     done <<< "$_rows"
 
     printf '{"available":true,"middle_proxy":%s,"threshold":%d,"verdict":"%s",' "$_me" "$_thr" "$_verdict"
-    printf '"coverage_pct":%d,"dc_total":%d,"alive_writers":%d,"required_writers":%d,"dcs":[%s]}\n' \
-        "$_pct" "$_n" "$_alive" "$_req" "$_out"
+    printf '"zero_writer_dcs":%d,' "$_zero"
+    printf '"coverage_pct":%d,"dc_total":%d,"alive_writers":%d,"covered_writers":%d,"required_writers":%d,"dcs":[%s]}\n' \
+        "$_pct" "$_n" "$_alive" "$_covered" "$_req" "$_out"
 }
 
 # Человеческий вывод: та же таблица, что показывает панель.
@@ -211,11 +217,11 @@ dc_show() {
             "$_mark" "DC ${_d}" "${_rtt:-0}" "${_aw:-0}" "${_rw:-0}" "${_cov:-0}"
     done <<< "$_rows"
 
-    local _n _pct _alive _req
-    IFS='|' read -r _n _pct _alive _req <<< "$(_dc_summary "$_rows")"
+    local _n _pct _alive _req _covered
+    IFS='|' read -r _n _pct _alive _req _covered <<< "$(_dc_summary "$_rows")"
     echo ""
-    local _note="порог ${_thr}%, писателей ${_alive} из ${_req}"
-    [ "$_thr" -eq 0 ] && _note="порог выключен, писателей ${_alive} из ${_req}"
+    local _note="порог ${_thr}%, в зачёт ${_covered} из ${_req}, живых всего ${_alive}"
+    [ "$_thr" -eq 0 ] && _note="порог выключен, в зачёт ${_covered} из ${_req}, живых всего ${_alive}"
     if [ "$_thr" -gt 0 ] && [ "$_pct" -lt "$_thr" ]; then
         echo -e "  ${YELLOW}Общее покрытие: ${_pct}%${NC} ${DIM}(${_note})${NC}"
     else

@@ -1100,23 +1100,47 @@ do_install() {
     printf '  1) Со всех интерфейсов — панель открыта из интернета\n'
     printf '  2) Только с этой машины (127.0.0.1) — снаружи недоступна, вход через ssh-туннель\n'
     PANEL_BEHIND_SELFMASK="false"
+    PANEL_COMMON_PATH=""
+    PANEL_CUSTOM_PATH_SUPPORTED="false"
+    PANEL_WEB_PATH_SUPPORTED="false"
     SELFMASK_DOMAIN_DETECTED=""
+    WEB_DOMAIN_DETECTED=""
     _selfmask_json=""
+    _web_json=""
     # Старый MTProxyL знает Selfmask, но ещё не умеет безопасно сохранять и
     # откатывать маршрут панели. Не показываем нерабочий вариант до обновления.
     if mtproxyl_present &&
        grep -q 'handle_panel_selfmask_command' "${MTPROXYL_INSTALL_DIR}/lib/panel.sh" 2>/dev/null; then
+      if grep -q '_panel_common_path_valid' "${MTPROXYL_INSTALL_DIR}/lib/panel.sh" 2>/dev/null; then
+        PANEL_CUSTOM_PATH_SUPPORTED="true"
+      fi
+      if grep -q 'web_is_enabled && web_uses_managed_nginx' "${MTPROXYL_INSTALL_DIR}/lib/panel.sh" 2>/dev/null; then
+        PANEL_WEB_PATH_SUPPORTED="true"
+      fi
       _selfmask_json=$($SUDO "$MTPROXYL_SCRIPT" selfmask status --json 2>/dev/null || true)
       case "$_selfmask_json" in
         *'"enabled":true'*'"nginx_custom_enabled":false'*)
           SELFMASK_DOMAIN_DETECTED=$(printf '%s' "$_selfmask_json" \
             | sed -n 's/.*"domain"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-          if [ -n "$SELFMASK_DOMAIN_DETECTED" ]; then
-            printf '  3) Через домен Selfmask (%s) — случайный путь + вход по логину и паролю, внешний порт закрыт\n' \
-              "$SELFMASK_DOMAIN_DETECTED"
-          fi
           ;;
       esac
+      if [ "$PANEL_WEB_PATH_SUPPORTED" = "true" ]; then
+        _web_json=$($SUDO "$MTPROXYL_SCRIPT" web status --json 2>/dev/null || true)
+        case "$_web_json" in
+          *'"enabled":true'*'"frontend":"nginx"'*|*'"enabled":true'*'"frontend":"haproxy-nginx"'*)
+            WEB_DOMAIN_DETECTED=$(printf '%s' "$_web_json" \
+              | sed -n 's/.*"domain"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+            ;;
+        esac
+      fi
+      if [ -n "$SELFMASK_DOMAIN_DETECTED" ] && [ -n "$WEB_DOMAIN_DETECTED" ]; then
+        printf '  3) Через Selfmask (%s) и WEB (%s) — общий путь, внешний порт закрыт\n' \
+          "$SELFMASK_DOMAIN_DETECTED" "$WEB_DOMAIN_DETECTED"
+      elif [ -n "$SELFMASK_DOMAIN_DETECTED" ]; then
+        printf '  3) Через Selfmask (%s) — общий путь, внешний порт закрыт\n' "$SELFMASK_DOMAIN_DETECTED"
+      elif [ -n "$WEB_DOMAIN_DETECTED" ]; then
+        printf '  3) Через WEB (%s) — общий путь, внешний порт закрыт\n' "$WEB_DOMAIN_DETECTED"
+      fi
     fi
     BIND_CHOICE=$(prompt "Вариант" "1")
 
@@ -1125,12 +1149,31 @@ do_install() {
     if [ "$BIND_CHOICE" = "2" ]; then
       PANEL_LOCAL_ONLY="true"
       PANEL_BIND="127.0.0.1"
-    elif [ "$BIND_CHOICE" = "3" ] && [ -n "$SELFMASK_DOMAIN_DETECTED" ]; then
+    elif [ "$BIND_CHOICE" = "3" ] && { [ -n "$SELFMASK_DOMAIN_DETECTED" ] || [ -n "$WEB_DOMAIN_DETECTED" ]; }; then
       PANEL_LOCAL_ONLY="true"
       PANEL_BEHIND_SELFMASK="true"
       PANEL_BIND="127.0.0.1"
+      if [ "$PANEL_CUSTOM_PATH_SUPPORTED" = "true" ]; then
+        printf '  1) Сгенерировать случайный путь (рекомендуется)\n'
+        printf '  2) Указать свой путь\n'
+        PANEL_PATH_CHOICE=$(prompt "Способ" "1")
+        if [ "$PANEL_PATH_CHOICE" = "2" ]; then
+          while :; do
+            PANEL_COMMON_PATH=$(prompt "Путь панели" "/panel")
+            case "$PANEL_COMMON_PATH" in /*) ;; *) PANEL_COMMON_PATH="/$PANEL_COMMON_PATH" ;; esac
+            _panel_slug=${PANEL_COMMON_PATH#/}
+            if [ -n "$_panel_slug" ] && [ "${#_panel_slug}" -le 64 ]; then
+              case "$_panel_slug" in
+                *[!A-Za-z0-9_-]*) ;;
+                *) break ;;
+              esac
+            fi
+            say "Путь должен содержать 1–64 латинских букв, цифр, _ или -"
+          done
+        fi
+      fi
     elif [ "$BIND_CHOICE" = "3" ]; then
-      die "Selfmask не включён — вариант 3 недоступен"
+      die "Selfmask или WEB с управляемым nginx не включён — вариант 3 недоступен"
     fi
 
     TLS_BLOCK=""
@@ -1138,12 +1181,12 @@ do_install() {
 
     if [ "$PANEL_LOCAL_ONLY" = "true" ]; then
       # По петле трафик машину не покидает, канал даёт ssh — шифровать нечего.
-      # Для Selfmask внешний TLS завершает nginx тем же сертификатом, что и
+      # Для Selfmask/WEB внешний TLS завершает nginx тем же сертификатом, что и
       # заглушка. В обоих случаях отдельный TLS backend панели не нужен.
       PANEL_SCHEME="http"
       if [ "$PANEL_BEHIND_SELFMASK" = "true" ]; then
         say "Backend панели будет слушать 127.0.0.1:${PANEL_PORT}"
-        say "Внешний HTTPS даст Selfmask; прямой порт панели останется закрыт"
+        say "Внешний HTTPS даст Selfmask/WEB; прямой порт панели останется закрыт"
       else
         say "Панель будет слушать 127.0.0.1:${PANEL_PORT} — снаружи недоступна"
         say "Шифрование не настраивается: соединение не выходит за пределы машины"
@@ -1330,13 +1373,28 @@ session_ttl = \"24h\"${TLS_BLOCK}"
   say "Служба $SERVICE_NAME запущена и включена в автозагрузку"
 
   # Отдельный, явный режим: обычный собственный домен панели не зависит от
-  # Selfmask. Здесь же скрываем backend на loopback, задаём случайный
-  # base_path и просим управляемый nginx Selfmask добавить proxy location.
+  # Selfmask/WEB. Здесь же скрываем backend на loopback, задаём выбранный
+  # base_path и просим управляемый nginx добавить proxy location.
   if [ "${PANEL_BEHIND_SELFMASK:-false}" = "true" ]; then
-    if $SUDO "$MTPROXYL_SCRIPT" panel selfmask on; then
-      say "Панель опубликована через домен Selfmask"
+    _panel_route_rc=0
+    if [ -n "${PANEL_COMMON_PATH:-}" ]; then
+      if _panel_route_result=$($SUDO "$MTPROXYL_SCRIPT" panel selfmask on "$PANEL_COMMON_PATH" 2>&1); then
+        :
+      else
+        _panel_route_rc=$?
+      fi
     else
-      say "ВНИМАНИЕ: не удалось добавить маршрут Selfmask"
+      if _panel_route_result=$($SUDO "$MTPROXYL_SCRIPT" panel selfmask on 2>&1); then
+        :
+      else
+        _panel_route_rc=$?
+      fi
+    fi
+    printf '%s\n' "$_panel_route_result"
+    if [ "$_panel_route_rc" -eq 0 ]; then
+      say "Панель опубликована по общему пути Selfmask/WEB"
+    else
+      say "ВНИМАНИЕ: не удалось добавить общий маршрут панели"
       say "Панель осталась доступна только локально: http://127.0.0.1:${PANEL_PORT}"
       say "Повторить: sudo mtproxyl panel selfmask on"
     fi
@@ -1396,8 +1454,12 @@ session_ttl = \"24h\"${TLS_BLOCK}"
     esac
   fi
   if [ "${PANEL_BEHIND_SELFMASK:-false}" = "true" ] &&
-     [ -n "${SELFMASK_DOMAIN_DETECTED:-}" ] && [ -n "$_base_path" ]; then
-    printf '  Адрес панели:  https://%s%s/\n' "$SELFMASK_DOMAIN_DETECTED" "$_base_path"
+     [ -n "$_base_path" ]; then
+    [ -z "${WEB_DOMAIN_DETECTED:-}" ] || \
+      printf '  Адрес WEB:     https://%s%s/\n' "$WEB_DOMAIN_DETECTED" "$_base_path"
+    [ -z "${SELFMASK_DOMAIN_DETECTED:-}" ] || \
+      printf '  Адрес Selfmask: https://%s%s/\n' "$SELFMASK_DOMAIN_DETECTED" "$_base_path"
+    printf '  Путь панели:   %s\n' "$_base_path"
   else
     printf '  Адрес панели:  %s://%s:%s\n' "$_scheme" "$_host" "$_panel_port"
   fi
@@ -1433,14 +1495,14 @@ do_uninstall() {
   printf '\n  Удаление MTProxyL-Panel\n\n'
 
   # Установщик можно запустить напрямую, минуя `mtproxyl panel uninstall`.
-  # Если панель опубликована через Selfmask, сначала убираем proxy location и
+  # Если панель опубликована через Selfmask/WEB, сначала убираем proxy location и
   # восстанавливаем её прежние listen/base_path, пока бинарник и конфиг на месте.
   if [ -f "${MTPROXYL_INSTALL_DIR}/panel-selfmask.conf" ] &&
      grep -q "^PANEL_SELFMASK_ENABLED='true'" "${MTPROXYL_INSTALL_DIR}/panel-selfmask.conf" 2>/dev/null &&
      mtproxyl_present; then
-    say "Отключение маршрута панели через Selfmask..."
+    say "Отключение общего маршрута панели..."
     $SUDO "$MTPROXYL_SCRIPT" panel selfmask off || \
-      die "Не удалось убрать маршрут Selfmask — удаление отменено"
+      die "Не удалось убрать общий маршрут — удаление отменено"
   fi
 
   if [ -f "$SERVICE_FILE" ]; then

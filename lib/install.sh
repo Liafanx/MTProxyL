@@ -244,10 +244,28 @@ run_installer() {
         while true; do
             local _web_domain; read_line _web_domain "  ${BOLD}Домен:${NC} "
             _web_domain="${_web_domain,,}"
-            validate_domain "$_web_domain" && { WEB_DOMAIN="$_web_domain"; break; }
-            log_error "Введите корректное доменное имя"
+            if ! validate_domain "$_web_domain"; then
+                log_error "Введите корректное доменное имя"
+                continue
+            fi
+            if [ "${PROXY_MODE:-}" = combined ] && [ "${PROXY_PORT:-443}" = 443 ] &&
+               [ "$_web_domain" = "${PROXY_DOMAIN,,}" ]; then
+                log_error "Этот домен уже выбран для FakeTLS: в shared MTProto попадёт в WEB"
+                log_info "Укажите другой WEB-домен либо выберите отдельный порт MTProto"
+                continue
+            fi
+            WEB_DOMAIN="$_web_domain"
+            break
         done
-        SELFMASK_DOMAIN="$WEB_DOMAIN"
+        if [ "${PROXY_MODE:-}" = combined ]; then
+            log_warn "В shared на :443 WEB и MTProto должны иметь разные домены (SNI)."
+            log_info "При совпадении SNI MTProto попадёт в WEB и работать не будет."
+            log_info "Можно выбрать другой FakeTLS-домен либо отдельный порт MTProto."
+            if [ "${PROXY_PORT:-443}" != 443 ]; then
+                WEB_LAYOUT="split"
+                log_info "MTProto: :${PROXY_PORT}, WEB: :443 — включена раскладка split"
+            fi
+        fi
         echo ""
         echo -e "  ${BOLD}Frontend WEB Proxy${NC}"
         echo -e "  ${DIM}[1] nginx MTProxyL  [2] Существующий HAProxy${NC}"

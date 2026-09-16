@@ -527,7 +527,7 @@ async def cb_interval_ask(call: CallbackQuery, state: FSMContext) -> None:
     await ack(call)
     await state.set_state(Ask.notify_interval)
     await state.update_data(interval_key=key)
-    titles = {"availability": "доступности", "proxy": "прокси", "limits": "лимитов"}
+    titles = {"dc": "DC", "availability": "доступности", "proxy": "прокси", "limits": "лимитов"}
     await render(call, f"<b>Период проверки {titles.get(key, key)}</b>\n\n"
                        "Пришлите число минут (1–1440).", kb.cancel("s:intervals"))
 

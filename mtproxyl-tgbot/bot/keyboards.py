@@ -167,6 +167,8 @@ def backups_menu() -> InlineKeyboardMarkup:
 def settings_menu(cfg, manager: bool) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     for key, title in (
+        ("dc", "Дата-центры"),
+        ("dc_zero", "DC без писателей"),
         ("availability", "Доступность"),
         ("proxy", "Прокси"),
         ("limits", "Лимиты"),
@@ -184,6 +186,7 @@ def settings_menu(cfg, manager: bool) -> InlineKeyboardMarkup:
 
 def intervals_menu(cfg) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
+    kb.button(text=f"DC: {cfg.interval('dc')} мин", callback_data="s:int:dc")
     kb.button(text=f"Доступность: {cfg.interval('availability')} мин", callback_data="s:int:availability")
     kb.button(text=f"Прокси: {cfg.interval('proxy')} мин", callback_data="s:int:proxy")
     kb.button(text=f"Лимиты: {cfg.interval('limits')} мин", callback_data="s:int:limits")

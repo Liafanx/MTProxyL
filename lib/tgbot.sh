@@ -552,7 +552,7 @@ tgbot_set_param() {
 
     local _expr=""
     case "$_key" in
-        notify.availability|notify.dc|notify.proxy|notify.limits|notify.backup)
+        notify.availability|notify.dc|notify.dc_zero|notify.proxy|notify.limits|notify.backup)
             case "$_val" in
                 true|false) ;;
                 *) log_error "Ожидается true или false"; return 1 ;;

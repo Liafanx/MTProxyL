@@ -37,6 +37,8 @@ const (
 // not rewrite it.
 type Branding struct {
 	PanelName               string `json:"panel_name"`
+	HasIcon                 bool   `json:"has_icon"`
+	IconRevision            string `json:"icon_revision,omitempty"`
 	LoginTitle              string `json:"login_title"`
 	LoginSubtitle           string `json:"login_subtitle"`
 	HasBackground           bool   `json:"has_background"`
@@ -58,6 +60,7 @@ type brandingStore struct {
 	settingsPath        string
 	backgroundPath      string
 	panelBackgroundPath string
+	iconPath            string
 	settings            brandingFile
 }
 
@@ -82,6 +85,7 @@ func newBrandingStore(dataDir string) (*brandingStore, error) {
 		settingsPath:        filepath.Join(dataDir, brandingFileName),
 		backgroundPath:      filepath.Join(dataDir, brandingBackgroundName),
 		panelBackgroundPath: filepath.Join(dataDir, panelBackgroundName),
+		iconPath:            filepath.Join(dataDir, "panel-icon"),
 		settings:            defaultBrandingFile(),
 	}
 	raw, err := os.ReadFile(s.settingsPath)
@@ -125,6 +129,10 @@ func (s *brandingStore) getLocked() Branding {
 	if info, err := os.Stat(s.panelBackgroundPath); err == nil && info.Mode().IsRegular() {
 		result.HasPanelBackground = true
 		result.PanelBackgroundRevision = strconv.FormatInt(info.ModTime().UnixNano(), 10)
+	}
+	if info, err := os.Stat(s.iconPath); err == nil && info.Mode().IsRegular() {
+		result.HasIcon = true
+		result.IconRevision = strconv.FormatInt(info.ModTime().UnixNano(), 10)
 	}
 	return result
 }
@@ -242,7 +250,7 @@ func (s *brandingStore) putImage(path string, data []byte) (Branding, error) {
 	if len(data) == 0 {
 		return Branding{}, errors.New("файл изображения пуст")
 	}
-	if _, err := detectBrandingImage(data); err != nil {
+	if _, err := detectPanelImage(data, path == s.iconPath); err != nil {
 		return Branding{}, err
 	}
 
@@ -319,7 +327,7 @@ func (s *brandingStore) serveImage(w http.ResponseWriter, r *http.Request, path,
 		writeError(w, http.StatusInternalServerError, "background_read_failed", "Не удалось прочитать фон")
 		return
 	}
-	mime, err := detectBrandingImage(data)
+	mime, err := detectPanelImage(data, path == s.iconPath)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "background_invalid", "Сохранённый фон повреждён")
 		return
@@ -327,6 +335,17 @@ func (s *brandingStore) serveImage(w http.ResponseWriter, r *http.Request, path,
 	w.Header().Set("Content-Type", mime)
 	w.Header().Set("Cache-Control", "public, max-age=300")
 	http.ServeContent(w, r, name, info.ModTime(), bytes.NewReader(data))
+}
+
+func detectPanelImage(data []byte, icon bool) (string, error) {
+	if !icon {
+		return detectBrandingImage(data)
+	}
+	mime := http.DetectContentType(data)
+	if mime == "image/png" || mime == "image/x-icon" || mime == "image/vnd.microsoft.icon" {
+		return mime, nil
+	}
+	return "", errors.New("для иконки поддерживаются только ICO и PNG")
 }
 
 func readBrandingImage(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
@@ -349,7 +368,7 @@ func readBrandingImage(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 		writeError(w, http.StatusBadRequest, "invalid_image", "Файл изображения пуст")
 		return nil, false
 	}
-	if _, err := detectBrandingImage(data); err != nil {
+	if _, err := detectPanelImage(data, strings.HasSuffix(r.URL.Path, "/icon")); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_image", err.Error())
 		return nil, false
 	}
@@ -394,8 +413,19 @@ func (s *Server) registerBrandingRoutes(mux *http.ServeMux, jwtSecret []byte, st
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: store.get()})
 	})
 	mux.HandleFunc("GET /api/branding/background", store.serveBackground)
+	mux.HandleFunc("GET /api/branding/icon", func(w http.ResponseWriter, r *http.Request) {
+		store.serveImage(w, r, store.iconPath, "favicon.ico")
+	})
 
 	protected := func(h http.HandlerFunc) http.Handler { return auth.RequireAuth(jwtSecret, h) }
+	mux.Handle("PUT /api/panel/settings/icon", protected(brandingImageUploadHandler(
+		func(data []byte) (Branding, error) { return store.putImage(store.iconPath, data) },
+		"panel icon", "Не удалось сохранить иконку",
+	)))
+	mux.Handle("DELETE /api/panel/settings/icon", protected(brandingImageDeleteHandler(
+		func() (Branding, error) { return store.deleteImage(store.iconPath) },
+		"panel icon", "Не удалось удалить иконку",
+	)))
 	mux.Handle("GET /api/branding/panel-background", protected(store.servePanelBackground))
 	mux.Handle("PUT /api/panel/settings", protected(func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
