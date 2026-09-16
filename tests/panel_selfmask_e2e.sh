@@ -168,6 +168,15 @@ kill -0 "$nginx_pid" 2>/dev/null || { cat "$test_dir/nginx.log" >&2; exit 1; }
 grep -Fq "window.__BASE_PATH__=\"${base_path}\"" "$test_dir/index.html"
 grep -Fq "<base href=\"${base_path}/\">" "$test_dir/index.html"
 
+# Запрос без завершающего слеша должен остаться на внешнем origin. Nginx
+# Selfmask/HAProxy слушает внутри 8444/15444; абсолютный редирект раскрывал этот
+# порт и отправлял браузер туда, где снаружи ничего не слушает.
+redirect_code=$(curl "${curl_common[@]}" --dump-header "$test_dir/redirect.headers" \
+    --output /dev/null --write-out '%{http_code}' "$base_url")
+[ "$redirect_code" = "308" ]
+redirect_location=$(sed -n 's/^[Ll]ocation:[[:space:]]*//p' "$test_dir/redirect.headers" | tr -d '\r' | head -1)
+[ "$redirect_location" = "${base_path}/" ]
+
 wrong_code=$(curl "${curl_common[@]}" --output /dev/null --write-out '%{http_code}' "https://${domain}:${front_port}/")
 # Корень не должен открыть панель. В WEB-тесте ответ зависит от того, успел ли
 # nginx соединиться с заведомо отсутствующим тестовым backend.
@@ -201,11 +210,20 @@ PY
 curl "${curl_common[@]}" --fail --cookie "$cookie_jar" -H 'Content-Type: image/png' \
     -X PUT --data-binary "@$test_dir/background.png" "${base_url}/api/panel/settings/background" \
     | jq -e '.ok == true and .data.has_background == true' >/dev/null
-curl "${curl_common[@]}" --fail --cookie "$cookie_jar" -H 'Content-Type: image/png' \
-    -X PUT --data-binary "@$test_dir/background.png" "${base_url}/api/panel/settings/icon" \
+png_icon_code=$(curl "${curl_common[@]}" --cookie "$cookie_jar" -H 'Content-Type: image/png' \
+    -X PUT --data-binary "@$test_dir/background.png" --output /dev/null --write-out '%{http_code}' \
+    "${base_url}/api/panel/settings/icon")
+[ "$png_icon_code" = "400" ]
+python3 - "$test_dir/panel.ico" <<'PY'
+import sys
+with open(sys.argv[1], 'wb') as f:
+    f.write(b'\x00\x00\x01\x00' + bytes(32))
+PY
+curl "${curl_common[@]}" --fail --cookie "$cookie_jar" -H 'Content-Type: image/x-icon' \
+    -X PUT --data-binary "@$test_dir/panel.ico" "${base_url}/api/panel/settings/icon" \
     | jq -e '.ok == true and .data.has_icon == true' >/dev/null
 curl "${curl_common[@]}" --fail "${base_url}/api/branding/icon" -o "$test_dir/downloaded-icon"
-cmp "$test_dir/background.png" "$test_dir/downloaded-icon"
+cmp "$test_dir/panel.ico" "$test_dir/downloaded-icon"
 curl "${curl_common[@]}" --fail --cookie "$cookie_jar" -X DELETE "${base_url}/api/panel/settings/icon" \
     | jq -e '.ok == true and .data.has_icon == false' >/dev/null
 grep -qi "Set-Cookie: session=.*Path=${base_path}/.*HttpOnly.*Secure.*SameSite=Strict" "$test_dir/login.headers"

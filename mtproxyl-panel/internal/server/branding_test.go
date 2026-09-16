@@ -31,9 +31,43 @@ func TestPanelIconPersistenceAndReset(t *testing.T) {
 	if _, err := store.putImage(store.iconPath, []byte("<svg></svg>")); err == nil {
 		t.Fatal("accepted SVG")
 	}
+	png := append([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, make([]byte, 16)...)
+	if _, err := store.putImage(store.iconPath, png); err == nil {
+		t.Fatal("accepted PNG icon")
+	}
 	got, err = store.deleteImage(store.iconPath)
 	if err != nil || got.HasIcon {
 		t.Fatalf("reset: %+v %v", got, err)
+	}
+}
+
+func TestLegacyPNGPanelIconStillServed(t *testing.T) {
+	dir := t.TempDir()
+	png := append([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, make([]byte, 16)...)
+	if err := os.WriteFile(filepath.Join(dir, "panel-icon"), png, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := newBrandingStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	store.serveImage(rec, httptest.NewRequest("GET", "/api/branding/icon", nil), store.iconPath, "favicon.ico")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "image/png" {
+		t.Fatalf("Content-Type = %q, want image/png", got)
+	}
+}
+
+func TestPanelIconUploadRejectsPNG(t *testing.T) {
+	mux, _ := newBrandingMux(t)
+	png := string(append([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}, make([]byte, 16)...))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, authedRequest(t, http.MethodPut, "/api/panel/settings/icon", png))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("got %d, want 400 (body: %s)", rec.Code, rec.Body.String())
 	}
 }
 
