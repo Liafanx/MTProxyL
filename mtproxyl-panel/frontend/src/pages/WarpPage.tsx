@@ -480,9 +480,9 @@ function ScanResults({
                       size="sm"
                       variant="outline"
                       disabled={busy}
-                      onClick={() => void onPick({ location: n.node, endpoint: '' })}
+                      onClick={() => void onPick({ location: n.node, endpoint: n.endpoint })}
                     >
-                      Выбирать узел {n.node}
+                      Выбрать узел {n.node} и этот адрес
                     </Button>
                     <Button
                       size="sm"

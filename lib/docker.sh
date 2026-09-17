@@ -133,6 +133,7 @@ build_telemt_image() {
     local version="${TELEMT_MIN_VERSION}-${commit}"
 
     if [ "$force" = "false" ] && docker image inspect "${DOCKER_IMAGE_BASE}:${version}" &>/dev/null; then
+        echo "$version" > "${INSTALL_DIR}/.telemt_version"
         return 0
     fi
 
@@ -220,6 +221,26 @@ DOCKERFILE_EOF
         return 1
     fi
     rm -rf "$build_dir"
+}
+
+# Старые установки не записывали .telemt_version. Перед удалением контейнера
+# запоминаем его фактический управляемый образ, чтобы обычный restart из
+# Selfmask/WEB/настроек не превратился в неявное обновление движка.
+remember_proxy_container_version() {
+    engine_is_binary && return 0
+    [ -s "${INSTALL_DIR}/.telemt_version" ] && return 0
+    local _image _version
+    _image=$(docker inspect -f '{{.Config.Image}}' "$CONTAINER_NAME" 2>/dev/null) || return 0
+    case "$_image" in
+        "${DOCKER_IMAGE_BASE}:"*|"${REGISTRY_IMAGE}:"*) ;;
+        *) return 0 ;;
+    esac
+    _version="${_image##*:}"
+    [[ "$_version" =~ ^[0-9]+\.[0-9]+ ]] || return 0
+    docker image inspect "$_image" &>/dev/null || return 0
+    mkdir -p "$INSTALL_DIR"
+    printf '%s\n' "$_version" > "${INSTALL_DIR}/.telemt_version"
+    chmod 600 "${INSTALL_DIR}/.telemt_version"
 }
 
 get_telemt_version() {
@@ -508,7 +529,11 @@ run_proxy_container() {
     if engine_is_binary; then
         binengine_ensure_installed || { log_error "Не удалось поставить бинарник движка"; return 1; }
     else
-        build_telemt_image || { log_error "Не удалось собрать образ"; return 1; }
+        local _selected_image; _selected_image=$(get_docker_image)
+        if [ "$_selected_image" = "${DOCKER_IMAGE_BASE}:latest" ] \
+           || ! docker image inspect "$_selected_image" &>/dev/null; then
+            build_telemt_image || { log_error "Не удалось собрать образ"; return 1; }
+        fi
     fi
 
     # Пустой массив ещё не значит пустую базу: команда могла не звать
@@ -655,12 +680,14 @@ start_proxy_container() {
         log_info "Прокси уже запущен"
         return 0
     fi
+    remember_proxy_container_version
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
     run_proxy_container
 }
 
 restart_proxy_container() {
     engine_is_binary && { binengine_restart; return; }
+    remember_proxy_container_version
     stop_proxy_container 2>/dev/null || true
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
     run_proxy_container

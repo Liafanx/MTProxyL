@@ -155,8 +155,34 @@ _selfmask_pq_conf() {
 # стартует.
 _selfmask_nginx_mime_block() {
     local _f="${SELFMASK_PQ_PREFIX}/conf/mime.types"
-    [ -f "$_f" ] || return 0
-    printf '    include       %s;\n    default_type  application/octet-stream;\n\n' "$_f"
+    if [ -f "$_f" ]; then
+        printf '    include       %s;\n    default_type  application/octet-stream;\n\n' "$_f"
+        return 0
+    fi
+    # Старые архивы PQ nginx могли не содержать mime.types. С nosniff браузер
+    # отвергает CSS/JS, отданные как text/plain, и пользователь видит голый
+    # HTML. Минимальной встроенной таблицы хватает обычному статическому сайту.
+    cat <<'EOF'
+    types {
+        text/html                             html htm;
+        text/css                              css;
+        application/javascript               js;
+        application/json                     json;
+        image/avif                            avif;
+        image/gif                             gif;
+        image/jpeg                            jpeg jpg;
+        image/png                             png;
+        image/svg+xml                         svg svgz;
+        image/webp                            webp;
+        image/x-icon                          ico;
+        font/woff                             woff;
+        font/woff2                            woff2;
+        application/pdf                      pdf;
+        application/wasm                     wasm;
+    }
+    default_type application/octet-stream;
+
+EOF
 }
 
 # Явно включённый доступ к панели через домен Selfmask. Панель слушает только
