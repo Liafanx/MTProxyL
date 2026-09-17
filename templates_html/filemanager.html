@@ -1,66 +1,865 @@
-<!doctype html>
-<html lang="ru">
+<!DOCTYPE html>
+<html lang="ru" class="dark">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>File Manager — Вход</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,-apple-system,sans-serif;background:#1a1a2e;color:#e0e0e0;display:flex;justify-content:center;align-items:center;min-height:100vh}
-.login-box{background:#16213e;border-radius:12px;padding:40px 36px;width:100%;max-width:380px;box-shadow:0 8px 32px rgba(0,0,0,.4)}
-.login-box h1{font-size:1.3rem;text-align:center;margin-bottom:6px;color:#e94560}
-.login-box p.sub{text-align:center;font-size:.85rem;color:#888;margin-bottom:28px}
-.field{margin-bottom:18px}
-.field label{display:block;font-size:.8rem;color:#aaa;margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px}
-.field input{width:100%;padding:11px 14px;border:1px solid #333;border-radius:8px;background:#0f3460;color:#e0e0e0;font-size:.95rem;outline:none;transition:border .2s}
-.field input:focus{border-color:#e94560}
-.btn{width:100%;padding:12px;border:none;border-radius:8px;background:#e94560;color:#fff;font-size:1rem;font-weight:600;cursor:pointer;transition:background .2s;margin-top:6px}
-.btn:hover{background:#c73e54}
-.btn:active{transform:scale(.98)}
-.error{text-align:center;color:#e94560;font-size:.85rem;margin-top:14px;min-height:20px;opacity:0;transition:opacity .3s}
-.error.show{opacity:1}
-.footer{text-align:center;margin-top:22px;font-size:.75rem;color:#555}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AeroDrive Pro — Корпоративный Файловый Менеджер</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <!-- Tailwind CSS CDN with custom config -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          },
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              400: '#818cf8',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            },
+            accent: {
+              teal: '#14b8a6',
+              cyan: '#06b6d4',
+              emerald: '#10b981',
+              amber: '#f59e0b',
+            }
+          },
+          animation: {
+            'pulse-slow': 'pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            'float': 'float 6s ease-in-out infinite',
+          },
+          keyframes: {
+            float: {
+              '0%, 100%': { transform: 'translateY(0px)' },
+              '50%': { transform: 'translateY(-8px)' },
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* Custom glowing effects and scrollbars */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0b0f19;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #1e293b;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #334155;
+    }
+
+    .glass-panel {
+      background: rgba(15, 23, 42, 0.7);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    
+    .glass-card {
+      background: rgba(17, 24, 39, 0.6);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .glass-card:hover {
+      border-color: rgba(99, 102, 241, 0.35);
+      transform: translateY(-2px);
+      box-shadow: 0 16px 32px -12px rgba(99, 102, 241, 0.15);
+    }
+
+    .glow-bg {
+      background: radial-gradient(circle at 50% 20%, rgba(99, 102, 241, 0.18) 0%, rgba(14, 165, 233, 0.12) 30%, transparent 70%);
+    }
+
+    .grid-pattern {
+      background-size: 32px 32px;
+      background-image: 
+        linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+    }
+  </style>
 </head>
-<body>
-<div class="login-box">
-  <h1>📁 File Manager</h1>
-  <p class="sub">Авторизация для доступа к панели</p>
-  <form id="lf">
-    <div class="field">
-      <label>Логин</label>
-      <input type="text" id="user" autocomplete="username" required>
+<body class="bg-[#0b0f19] text-slate-100 min-h-screen relative overflow-x-hidden font-sans selection:bg-brand-500/30 selection:text-white">
+
+  <!-- Ambient Light Orbs & Grid -->
+  <div class="fixed inset-0 glow-bg pointer-events-none z-0"></div>
+  <div class="fixed inset-0 grid-pattern pointer-events-none z-0"></div>
+  
+  <div class="fixed top-[-10%] left-[20%] w-[500px] h-[500px] bg-brand-600/15 rounded-full blur-[140px] pointer-events-none"></div>
+  <div class="fixed top-[40%] right-[-10%] w-[450px] h-[450px] bg-accent-cyan/10 rounded-full blur-[130px] pointer-events-none"></div>
+  <div class="fixed bottom-[-10%] left-[5%] w-[400px] h-[400px] bg-accent-emerald/10 rounded-full blur-[120px] pointer-events-none"></div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-3 pointer-events-none"></div>
+
+  <!-- Header / Navigation -->
+  <header class="sticky top-0 z-40 glass-panel border-b border-slate-800/80 px-4 sm:px-8 py-3.5">
+    <div class="max-w-7xl mx-auto flex items-center justify-between">
+      <!-- Logo -->
+      <div class="flex items-center gap-3">
+        <div class="h-10 w-10 rounded-xl bg-gradient-to-tr from-brand-600 to-accent-cyan p-0.5 shadow-lg shadow-brand-500/20">
+          <div class="h-full w-full bg-[#0b0f19] rounded-[10px] flex items-center justify-center">
+            <i data-lucide="hard-drive" class="w-5 h-5 text-brand-400"></i>
+          </div>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="font-bold text-lg tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-100 to-slate-400">AeroDrive</span>
+            <span class="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-brand-500/15 text-brand-400 border border-brand-500/25">Enterprise</span>
+          </div>
+          <p class="text-[11px] text-slate-400 font-mono flex items-center gap-1.5">
+            <span class="inline-block w-1.5 h-1.5 rounded-full bg-accent-emerald animate-pulse"></span>
+            Сервер активен • node-01.storage
+          </p>
+        </div>
+      </div>
+
+      <!-- Navigation Links -->
+      <nav class="hidden md:flex items-center gap-6 text-sm font-medium text-slate-300">
+        <a href="#stats" class="hover:text-white transition-colors">Метрики</a>
+        <a href="#features" class="hover:text-white transition-colors">Функции</a>
+        <a href="#protocols" class="hover:text-white transition-colors">Протоколы</a>
+        <a href="#security" class="hover:text-white transition-colors">Безопасность</a>
+      </nav>
+
+      <!-- Action Buttons -->
+      <div class="flex items-center gap-3">
+        <button onclick="openLoginModal('demo')" class="hidden sm:inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 transition-all">
+          <i data-lucide="sparkles" class="w-3.5 h-3.5 text-accent-cyan"></i>
+          Демо доступ
+        </button>
+        <button onclick="openLoginModal('login')" class="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold text-white bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 shadow-lg shadow-brand-500/25 transition-all transform hover:scale-[1.02]">
+          <i data-lucide="log-in" class="w-4 h-4"></i>
+          Войти в менеджер
+        </button>
+      </div>
     </div>
-    <div class="field">
-      <label>Пароль</label>
-      <input type="password" id="pass" autocomplete="current-password" required>
+  </header>
+
+  <!-- Main Content -->
+  <main class="relative z-10 max-w-7xl mx-auto px-4 sm:px-8 py-10 sm:py-16 space-y-16 sm:space-y-24">
+    
+    <!-- Hero Section -->
+    <section class="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
+      <div class="lg:col-span-7 space-y-6 text-left">
+        <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-800/80 border border-slate-700/60 text-xs font-medium text-slate-300">
+          <span class="w-2 h-2 rounded-full bg-accent-emerald animate-ping"></span>
+          <span>Хранилище синхронизировано • v3.4.2</span>
+        </div>
+
+        <h1 class="text-3xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight leading-[1.15]">
+          Управляйте файлами <br>
+          <span class="bg-clip-text text-transparent bg-gradient-to-r from-brand-400 via-indigo-300 to-accent-cyan">
+            быстро, безопасно и легко
+          </span>
+        </h1>
+
+        <p class="text-base sm:text-lg text-slate-400 max-w-2xl leading-relaxed font-normal">
+          Единый шлюз доступа к вашим локальным и облачным хранилищам. Высокопроизводительный проводник с предпросмотром медиа, поддержкой S3/WebDAV, тегированием и шифрованием на лету.
+        </p>
+
+        <!-- CTA Action Area -->
+        <div class="pt-2 flex flex-wrap items-center gap-4">
+          <button onclick="openLoginModal('login')" class="flex items-center gap-2.5 px-6 py-3.5 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-brand-600 via-indigo-600 to-indigo-700 hover:from-brand-500 hover:to-indigo-600 shadow-xl shadow-brand-500/30 transition-all transform hover:-translate-y-0.5">
+            <i data-lucide="folder-git-2" class="w-5 h-5"></i>
+            <span>Открыть файловый менеджер</span>
+            <i data-lucide="arrow-right" class="w-4 h-4 ml-1"></i>
+          </button>
+
+          <button onclick="copyWebDavUrl()" class="flex items-center gap-2 px-5 py-3.5 rounded-xl text-sm font-medium text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 transition-all">
+            <i data-lucide="copy" class="w-4 h-4 text-slate-400"></i>
+            <span>Скопировать WebDAV URL</span>
+          </button>
+        </div>
+
+        <!-- Quick system highlights pills -->
+        <div class="pt-4 flex flex-wrap items-center gap-4 text-xs text-slate-400 font-mono">
+          <div class="flex items-center gap-1.5">
+            <i data-lucide="shield-check" class="w-4 h-4 text-accent-emerald"></i>
+            <span>AES-256 GCM</span>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <i data-lucide="gauge" class="w-4 h-4 text-accent-cyan"></i>
+            <span>NVMe кэширование</span>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <i data-lucide="refresh-cw" class="w-4 h-4 text-brand-400"></i>
+            <span>Realtime WebSockets</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hero Interactive Access Card -->
+      <div class="lg:col-span-5">
+        <div class="glass-panel p-6 sm:p-7 rounded-2xl relative shadow-2xl shadow-black/50 border border-slate-700/50">
+          <div class="absolute -top-3 -right-3 px-3 py-1 rounded-full bg-accent-emerald/15 border border-accent-emerald/30 text-accent-emerald text-xs font-mono font-semibold flex items-center gap-1.5 backdrop-blur-md">
+            <span class="w-2 h-2 rounded-full bg-accent-emerald animate-pulse"></span>
+            PORT 443 READY
+          </div>
+
+          <div class="flex items-center gap-3 mb-5">
+            <div class="p-2 rounded-xl bg-brand-500/10 text-brand-400 border border-brand-500/20">
+              <i data-lucide="terminal" class="w-5 h-5"></i>
+            </div>
+            <div>
+              <h3 class="font-bold text-slate-100 text-base">Быстрый вход в панель</h3>
+              <p class="text-xs text-slate-400">Авторизуйтесь для доступа к корню проводника</p>
+            </div>
+          </div>
+
+          <!-- Quick Form -->
+          <form onsubmit="handleQuickLogin(event)" class="space-y-4">
+            <div>
+              <label class="block text-xs font-semibold text-slate-300 mb-1.5">Пользователь или Токен</label>
+              <div class="relative">
+                <i data-lucide="user" class="w-4 h-4 text-slate-500 absolute left-3.5 top-3"></i>
+                <input id="quick-username" type="text" value="admin@aerodrive.local" class="w-full bg-slate-900/90 border border-slate-700/80 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 font-mono transition-all">
+              </div>
+            </div>
+
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="block text-xs font-semibold text-slate-300">Ключ доступа / Пароль</label>
+                <span class="text-[11px] text-brand-400 cursor-pointer hover:underline" onclick="fillDemoCredentials()">Вставить демо-ключ</span>
+              </div>
+              <div class="relative">
+                <i data-lucide="key-round" class="w-4 h-4 text-slate-500 absolute left-3.5 top-3"></i>
+                <input id="quick-password" type="password" value="••••••••••••" class="w-full bg-slate-900/90 border border-slate-700/80 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 font-mono transition-all">
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between text-xs text-slate-400 py-1">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked class="w-4 h-4 rounded bg-slate-900 border-slate-700 text-brand-600 focus:ring-0">
+                <span>Запомнить сессию</span>
+              </label>
+              <span class="text-slate-500 font-mono">TLS 1.3 Secure</span>
+            </div>
+
+            <button type="submit" id="quick-login-btn" class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white font-bold text-sm shadow-lg shadow-brand-500/20 flex items-center justify-center gap-2 transition-all">
+              <i data-lucide="folder-open" class="w-4 h-4"></i>
+              <span>Запустить проводник</span>
+            </button>
+          </form>
+
+          <!-- Divider -->
+          <div class="relative my-4">
+            <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-slate-800"></div></div>
+            <div class="relative flex justify-center text-[10px] uppercase font-mono tracking-widest text-slate-500 bg-[#0f172a] px-2 w-max mx-auto">или через CLI / API</div>
+          </div>
+
+          <div class="bg-slate-950/80 rounded-xl p-2.5 border border-slate-800 flex items-center justify-between text-xs font-mono text-slate-400">
+            <span class="truncate">$ curl -u admin:key https://storage/api/v1/fs</span>
+            <button onclick="copyCliCommand()" title="Скопировать команду" class="p-1.5 hover:text-white rounded-lg hover:bg-slate-800 transition-colors">
+              <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Metrics & System Stats Grid -->
+    <section id="stats" class="space-y-4">
+      <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-2 border-b border-slate-800/80 pb-4">
+        <div>
+          <h2 class="text-xl font-bold text-slate-100 flex items-center gap-2">
+            <i data-lucide="activity" class="w-5 h-5 text-accent-cyan"></i>
+            Статистика кластера хранения
+          </h2>
+          <p class="text-xs text-slate-400">Данные телеметрии в реальном времени с узлов пула данных</p>
+        </div>
+        <div class="text-xs font-mono text-slate-400 flex items-center gap-2">
+          <span>Синхронизация: <strong class="text-accent-emerald" id="live-clock">00:00:00</strong></span>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <!-- Stat Card 1 -->
+        <div class="glass-card p-5 rounded-xl">
+          <div class="flex items-center justify-between text-slate-400 text-xs mb-3">
+            <span class="font-medium">Дисковое пространство</span>
+            <i data-lucide="pie-chart" class="w-4 h-4 text-brand-400"></i>
+          </div>
+          <div class="text-2xl font-bold text-slate-100 font-mono">1.42 TB <span class="text-xs font-normal text-slate-400">/ 4.0 TB</span></div>
+          <div class="w-full bg-slate-800 h-2 rounded-full mt-3 overflow-hidden">
+            <div class="bg-gradient-to-r from-brand-500 to-accent-cyan h-full rounded-full" style="width: 35.5%"></div>
+          </div>
+          <div class="flex justify-between text-[11px] text-slate-400 mt-2 font-mono">
+            <span>35.5% Занято</span>
+            <span class="text-accent-emerald">2.58 TB свободно</span>
+          </div>
+        </div>
+
+        <!-- Stat Card 2 -->
+        <div class="glass-card p-5 rounded-xl">
+          <div class="flex items-center justify-between text-slate-400 text-xs mb-3">
+            <span class="font-medium">Всего объектов в индексе</span>
+            <i data-lucide="files" class="w-4 h-4 text-accent-cyan"></i>
+          </div>
+          <div class="text-2xl font-bold text-slate-100 font-mono">482,190</div>
+          <div class="flex items-center gap-2 text-[11px] text-slate-400 mt-3 font-mono">
+            <span class="text-accent-emerald flex items-center gap-0.5"><i data-lucide="trending-up" class="w-3 h-3"></i> +1,420</span>
+            <span>за последние 24ч</span>
+          </div>
+          <div class="text-[11px] text-slate-500 mt-1">12,480 каталогов, 940 архивов</div>
+        </div>
+
+        <!-- Stat Card 3 -->
+        <div class="glass-card p-5 rounded-xl">
+          <div class="flex items-center justify-between text-slate-400 text-xs mb-3">
+            <span class="font-medium">Пропускная способность</span>
+            <i data-lucide="zap" class="w-4 h-4 text-accent-amber"></i>
+          </div>
+          <div class="text-2xl font-bold text-slate-100 font-mono">1.25 Gbps</div>
+          <div class="flex items-center gap-2 text-[11px] text-slate-400 mt-3 font-mono">
+            <span class="inline-block w-2 h-2 rounded-full bg-accent-emerald"></span>
+            <span>Задержка ввода/вывода: 1.2 ms</span>
+          </div>
+          <div class="text-[11px] text-slate-500 mt-1 font-mono">Шина NVMe PCIe Gen4 x4</div>
+        </div>
+
+        <!-- Stat Card 4 -->
+        <div class="glass-card p-5 rounded-xl">
+          <div class="flex items-center justify-between text-slate-400 text-xs mb-3">
+            <span class="font-medium">Активные сессии</span>
+            <i data-lucide="users" class="w-4 h-4 text-accent-emerald"></i>
+          </div>
+          <div class="text-2xl font-bold text-slate-100 font-mono">24 онлайн</div>
+          <div class="flex items-center gap-2 text-[11px] text-slate-400 mt-3 font-mono">
+            <span class="text-brand-400 font-semibold">18 Web</span>
+            <span>•</span>
+            <span class="text-accent-cyan font-semibold">4 WebDAV</span>
+            <span>•</span>
+            <span class="text-accent-amber font-semibold">2 SFTP</span>
+          </div>
+          <div class="text-[11px] text-slate-500 mt-1">0 заблокированных попыток</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Key Capabilities / Features -->
+    <section id="features" class="space-y-8">
+      <div class="text-center max-w-3xl mx-auto space-y-3">
+        <h2 class="text-2xl sm:text-3xl font-extrabold text-slate-100">
+          Возможности файлового менеджера
+        </h2>
+        <p class="text-slate-400 text-sm sm:text-base">
+          Всё необходимое для удобного взаимодействия с файлами любых объемов прямо в веб-интерфейсе
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <!-- Feature 1 -->
+        <div class="glass-card p-6 rounded-2xl flex flex-col justify-between">
+          <div>
+            <div class="w-12 h-12 rounded-xl bg-brand-500/10 text-brand-400 border border-brand-500/20 flex items-center justify-center mb-5">
+              <i data-lucide="eye" class="w-6 h-6"></i>
+            </div>
+            <h3 class="text-lg font-bold text-slate-100 mb-2">Мгновенный предпросмотр</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Встроенный плеер видео (4K H.264/HEVC), аудиоспектры, просмотр PDF, офисных документов (Word/Excel) и 3D-моделей без скачивания на диск.
+            </p>
+          </div>
+          <div class="mt-6 pt-4 border-t border-slate-800 text-xs text-brand-400 font-semibold flex items-center gap-1">
+            <span>Более 80 форматов</span>
+            <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
+          </div>
+        </div>
+
+        <!-- Feature 2 -->
+        <div class="glass-card p-6 rounded-2xl flex flex-col justify-between">
+          <div>
+            <div class="w-12 h-12 rounded-xl bg-accent-cyan/10 text-accent-cyan border border-accent-cyan/20 flex items-center justify-center mb-5">
+              <i data-lucide="code" class="w-6 h-6"></i>
+            </div>
+            <h3 class="text-lg font-bold text-slate-100 mb-2">Встроенный редактор кода</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Подсветка синтаксиса для JS, Python, Rust, Go, HTML, CSS, YAML и Dockerfile. Быстрое внесение правок в конфиги прямо на сервере с историей изменений.
+            </p>
+          </div>
+          <div class="mt-6 pt-4 border-t border-slate-800 text-xs text-accent-cyan font-semibold flex items-center gap-1">
+            <span>Monaco Editor Engine</span>
+            <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
+          </div>
+        </div>
+
+        <!-- Feature 3 -->
+        <div class="glass-card p-6 rounded-2xl flex flex-col justify-between">
+          <div>
+            <div class="w-12 h-12 rounded-xl bg-accent-emerald/10 text-accent-emerald border border-accent-emerald/20 flex items-center justify-center mb-5">
+              <i data-lucide="share-2" class="w-6 h-6"></i>
+            </div>
+            <h3 class="text-lg font-bold text-slate-100 mb-2">Умный совместный доступ</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Генерация публичных и защищенных паролем ссылок, таймер автоудаления, ограничение скачиваний и детальный журнал аудита активности.
+            </p>
+          </div>
+          <div class="mt-6 pt-4 border-t border-slate-800 text-xs text-accent-emerald font-semibold flex items-center gap-1">
+            <span>ACL & Ссылки с TTL</span>
+            <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
+          </div>
+        </div>
+
+        <!-- Feature 4 -->
+        <div class="glass-card p-6 rounded-2xl flex flex-col justify-between">
+          <div>
+            <div class="w-12 h-12 rounded-xl bg-accent-amber/10 text-accent-amber border border-accent-amber/20 flex items-center justify-center mb-5">
+              <i data-lucide="archive" class="w-6 h-6"></i>
+            </div>
+            <h3 class="text-lg font-bold text-slate-100 mb-2">Архивы и пакетные операции</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Распаковка и упаковка ZIP, TAR.GZ, 7Z и RAR в фоновом режиме. Пакетное переименование регулярными выражениями и массовая загрузка через Drag & Drop.
+            </p>
+          </div>
+          <div class="mt-6 pt-4 border-t border-slate-800 text-xs text-accent-amber font-semibold flex items-center gap-1">
+            <span>Фоновые воркеры</span>
+            <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
+          </div>
+        </div>
+
+        <!-- Feature 5 -->
+        <div class="glass-card p-6 rounded-2xl flex flex-col justify-between">
+          <div>
+            <div class="w-12 h-12 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20 flex items-center justify-center mb-5">
+              <i data-lucide="search" class="w-6 h-6"></i>
+            </div>
+            <h3 class="text-lg font-bold text-slate-100 mb-2">Глобальный поиск и теги</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Полнотекстовый поиск по содержимому документов (OCR для изображений и PDF), цветовые метки, теги и закладки для быстрого доступа к проектам.
+            </p>
+          </div>
+          <div class="mt-6 pt-4 border-t border-slate-800 text-xs text-purple-400 font-semibold flex items-center gap-1">
+            <span>Индексация за 0.05 сек</span>
+            <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
+          </div>
+        </div>
+
+        <!-- Feature 6 -->
+        <div class="glass-card p-6 rounded-2xl flex flex-col justify-between">
+          <div>
+            <div class="w-12 h-12 rounded-xl bg-rose-500/10 text-rose-400 border border-rose-500/20 flex items-center justify-center mb-5">
+              <i data-lucide="lock" class="w-6 h-6"></i>
+            </div>
+            <h3 class="text-lg font-bold text-slate-100 mb-2">Защита от сбоев и Ransomware</h3>
+            <p class="text-slate-400 text-sm leading-relaxed">
+              Автоматические моментальные снимки (Snapshots), корзина с защитой от мгновенного стирания и двухфакторная аутентификация через TOTP / WebAuthn.
+            </p>
+          </div>
+          <div class="mt-6 pt-4 border-t border-slate-800 text-xs text-rose-400 font-semibold flex items-center gap-1">
+            <span>2FA & Immutable Snapshots</span>
+            <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Protocols & Endpoints Integration Section -->
+    <section id="protocols" class="glass-panel p-6 sm:p-8 rounded-2xl border border-slate-800 space-y-6">
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h2 class="text-xl sm:text-2xl font-bold text-slate-100 flex items-center gap-2">
+            <i data-lucide="network" class="w-6 h-6 text-brand-400"></i>
+            Протоколы подключения к хранилищу
+          </h2>
+          <p class="text-xs sm:text-sm text-slate-400 mt-1">
+            Вы можете подключить этот файловый менеджер как сетевой диск на Windows, macOS или Linux
+          </p>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="px-3 py-1 rounded-lg bg-emerald-500/15 text-emerald-400 text-xs font-mono font-medium border border-emerald-500/30">
+            SSL/TLS Включен
+          </span>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <!-- WebDAV -->
+        <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-800 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-xs font-mono font-bold text-brand-400 uppercase tracking-wider">WebDAV</span>
+              <span class="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">Port 443</span>
+            </div>
+            <p class="text-xs text-slate-400 mb-3">Подключение в «Этот компьютер» или Finder без сторонних программ</p>
+            <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800 font-mono text-xs text-slate-300 truncate">
+              https://storage.local/dav/
+            </div>
+          </div>
+          <button onclick="copyText('https://storage.local/dav/', 'WebDAV URL скопирован')" class="mt-3 w-full py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 flex items-center justify-center gap-2 transition-colors">
+            <i data-lucide="copy" class="w-3.5 h-3.5"></i> Скопировать адрес
+          </button>
+        </div>
+
+        <!-- S3 API -->
+        <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-800 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-xs font-mono font-bold text-accent-cyan uppercase tracking-wider">S3 Compatible</span>
+              <span class="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">Port 9000</span>
+            </div>
+            <p class="text-xs text-slate-400 mb-3">Интеграция с AWS CLI, Cyberduck, Rclone и приложениями бэкапа</p>
+            <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800 font-mono text-xs text-slate-300 truncate">
+              https://s3.storage.local:9000
+            </div>
+          </div>
+          <button onclick="copyText('https://s3.storage.local:9000', 'S3 Endpoint скопирован')" class="mt-3 w-full py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 flex items-center justify-center gap-2 transition-colors">
+            <i data-lucide="copy" class="w-3.5 h-3.5"></i> Скопировать адрес
+          </button>
+        </div>
+
+        <!-- SFTP / SSH -->
+        <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-800 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-xs font-mono font-bold text-accent-emerald uppercase tracking-wider">SFTP / SSH</span>
+              <span class="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">Port 2222</span>
+            </div>
+            <p class="text-xs text-slate-400 mb-3">Безопасная передача файлов через FileZilla, WinSCP или консоль</p>
+            <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800 font-mono text-xs text-slate-300 truncate">
+              sftp://admin@storage.local:2222
+            </div>
+          </div>
+          <button onclick="copyText('sftp://admin@storage.local:2222', 'SFTP адрес скопирован')" class="mt-3 w-full py-2 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 flex items-center justify-center gap-2 transition-colors">
+            <i data-lucide="copy" class="w-3.5 h-3.5"></i> Скопировать адрес
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Quick Shortcuts / Tips -->
+    <section class="glass-card p-6 rounded-2xl">
+      <div class="flex items-center gap-3 mb-4">
+        <i data-lucide="keyboard" class="w-5 h-5 text-slate-400"></i>
+        <h3 class="font-bold text-sm text-slate-200 uppercase tracking-wider">Горячие клавиши веб-проводника</h3>
+      </div>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+        <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800 flex items-center justify-between">
+          <span class="text-slate-400">Быстрый поиск</span>
+          <kbd class="px-2 py-0.5 bg-slate-800 rounded font-mono text-slate-300 border border-slate-700">Ctrl + F</kbd>
+        </div>
+        <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800 flex items-center justify-between">
+          <span class="text-slate-400">Новая папка</span>
+          <kbd class="px-2 py-0.5 bg-slate-800 rounded font-mono text-slate-300 border border-slate-700">Alt + N</kbd>
+        </div>
+        <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800 flex items-center justify-between">
+          <span class="text-slate-400">Предпросмотр</span>
+          <kbd class="px-2 py-0.5 bg-slate-800 rounded font-mono text-slate-300 border border-slate-700">Space</kbd>
+        </div>
+        <div class="bg-slate-900/60 p-2.5 rounded-lg border border-slate-800 flex items-center justify-between">
+          <span class="text-slate-400">Загрузка файлов</span>
+          <kbd class="px-2 py-0.5 bg-slate-800 rounded font-mono text-slate-300 border border-slate-700">Ctrl + U</kbd>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="glass-panel border-t border-slate-800/80 mt-20 py-8 px-4 sm:px-8 text-xs text-slate-400">
+    <div class="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div class="flex items-center gap-2">
+        <i data-lucide="hard-drive" class="w-4 h-4 text-brand-400"></i>
+        <span>AeroDrive File Manager • Версия 3.4.2-release</span>
+      </div>
+      <div class="flex items-center gap-6 font-mono text-[11px]">
+        <span>ОС: Linux 6.6 LTS</span>
+        <span>Uptime: 14 дней, 6 часов</span>
+        <a href="javascript:void(0)" onclick="openLoginModal('login')" class="text-brand-400 hover:underline">Войти в админ-панель</a>
+      </div>
     </div>
-    <button class="btn" type="submit">Войти</button>
-  </form>
-  <div class="error" id="err">Неверный логин или пароль</div>
-  <div class="footer">FileManager v3.2.1 &copy; 2026</div>
-</div>
-<script>
-var a=0;
-function tryLogin(){
-  a++;
-  var e=document.getElementById('err');
-  e.classList.remove('show');
-  var b=document.querySelector('.btn');
-  b.textContent='Проверка...';
-  b.disabled=true;
-  setTimeout(function(){
-    b.textContent='Войти';
-    b.disabled=false;
-    e.textContent=a>2?'Аккаунт временно заблокирован':'Неверный логин или пароль';
-    e.classList.add('show');
-  },800+Math.random()*700);
-  return false;
-}
-document.getElementById('lf').addEventListener('submit',function(e){
-  e.preventDefault();
-  tryLogin();
-});
-</script>
+  </footer>
+
+  <!-- Interactive Login Modal -->
+  <div id="login-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md hidden opacity-0 transition-opacity duration-300">
+    <div class="relative w-full max-w-md glass-panel p-6 sm:p-8 rounded-3xl shadow-2xl border border-slate-700/80 transform scale-95 transition-transform duration-300" id="modal-card">
+      
+      <!-- Close Button -->
+      <button onclick="closeLoginModal()" class="absolute top-4 right-4 p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/80 transition-colors">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <!-- Modal Header -->
+      <div class="flex items-center gap-3 mb-6">
+        <div class="h-11 w-11 rounded-2xl bg-brand-600/20 text-brand-400 border border-brand-500/30 flex items-center justify-center">
+          <i data-lucide="shield" class="w-6 h-6"></i>
+        </div>
+        <div>
+          <h3 class="text-xl font-bold text-white">Вход в файловый менеджер</h3>
+          <p class="text-xs text-slate-400">Выберите тип авторизации</p>
+        </div>
+      </div>
+
+      <!-- Auth Tabs -->
+      <div class="flex rounded-xl bg-slate-900/90 p-1 mb-5 border border-slate-800">
+        <button id="tab-pass" onclick="setAuthTab('pass')" class="flex-1 py-2 text-xs font-semibold rounded-lg bg-brand-600 text-white shadow-sm transition-all">Пароль / Аккаунт</button>
+        <button id="tab-token" onclick="setAuthTab('token')" class="flex-1 py-2 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-200 transition-all">API Токен</button>
+        <button id="tab-sso" onclick="setAuthTab('sso')" class="flex-1 py-2 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-200 transition-all">SSO / LDAP</button>
+      </div>
+
+      <!-- Form: Password -->
+      <form id="modal-form" onsubmit="handleModalSubmit(event)" class="space-y-4">
+        <div id="field-user-group">
+          <label class="block text-xs font-medium text-slate-300 mb-1.5">Логин или Email</label>
+          <div class="relative">
+            <i data-lucide="user" class="w-4 h-4 text-slate-500 absolute left-3.5 top-3.5"></i>
+            <input id="modal-user" type="text" placeholder="user@company.com" class="w-full bg-slate-900/90 border border-slate-700/80 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 font-mono transition-all">
+          </div>
+        </div>
+
+        <div id="field-pass-group">
+          <label class="block text-xs font-medium text-slate-300 mb-1.5">Пароль</label>
+          <div class="relative">
+            <i data-lucide="lock" class="w-4 h-4 text-slate-500 absolute left-3.5 top-3.5"></i>
+            <input id="modal-pass" type="password" placeholder="••••••••••••" class="w-full bg-slate-900/90 border border-slate-700/80 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 font-mono transition-all">
+          </div>
+        </div>
+
+        <div id="field-token-group" class="hidden">
+          <label class="block text-xs font-medium text-slate-300 mb-1.5">Персональный Access Token</label>
+          <div class="relative">
+            <i data-lucide="key" class="w-4 h-4 text-slate-500 absolute left-3.5 top-3.5"></i>
+            <input id="modal-token" type="password" placeholder="aerodrive_pat_xxxxxxxx..." class="w-full bg-slate-900/90 border border-slate-700/80 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 font-mono transition-all">
+          </div>
+        </div>
+
+        <div id="field-sso-group" class="hidden text-center py-4 text-sm text-slate-400">
+          <p class="mb-3">Будет использован единый вход через корпоративный identity provider (Okta, Keycloak, Active Directory).</p>
+        </div>
+
+        <div class="flex items-center justify-between text-xs text-slate-400">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked class="w-4 h-4 rounded bg-slate-900 border-slate-700 text-brand-600 focus:ring-0">
+            <span>Оставаться в системе</span>
+          </label>
+          <a href="javascript:void(0)" onclick="showToast('Обратитесь к системному администратору для сброса пароля', 'info')" class="text-brand-400 hover:underline">Забыли пароль?</a>
+        </div>
+
+        <button type="submit" id="modal-submit-btn" class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white font-bold text-sm shadow-lg shadow-brand-500/25 flex items-center justify-center gap-2 transition-all">
+          <i data-lucide="log-in" class="w-4 h-4"></i>
+          <span>Авторизоваться и войти</span>
+        </button>
+
+        <button type="button" onclick="fillDemoAndLogin()" class="w-full py-2.5 px-4 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-slate-300 font-medium text-xs border border-slate-700 flex items-center justify-center gap-2 transition-colors">
+          <i data-lucide="sparkles" class="w-3.5 h-3.5 text-accent-cyan"></i>
+          <span>Зайти в гостевой демонстрационный режим</span>
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // Initialize Lucide Icons
+    lucide.createIcons();
+
+    // Live Server Clock
+    function updateClock() {
+      const now = new Date();
+      const timeString = now.toLocaleTimeString('ru-RU', { hour12: false });
+      const el = document.getElementById('live-clock');
+      if (el) el.innerText = timeString;
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // Toast Notification System
+    function showToast(message, type = 'success') {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      toast.className = `pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-xl border shadow-2xl backdrop-blur-md transition-all duration-300 transform translate-y-4 opacity-0 text-xs sm:text-sm font-medium ${
+        type === 'success' ? 'bg-slate-900/95 border-accent-emerald/40 text-emerald-300' :
+        type === 'info' ? 'bg-slate-900/95 border-brand-500/40 text-brand-300' :
+        'bg-slate-900/95 border-rose-500/40 text-rose-300'
+      }`;
+
+      const iconName = type === 'success' ? 'check-circle-2' : type === 'info' ? 'info' : 'alert-triangle';
+      toast.innerHTML = `
+        <i data-lucide="${iconName}" class="w-4 h-4 flex-shrink-0"></i>
+        <span>${message}</span>
+      `;
+      container.appendChild(toast);
+      lucide.createIcons({ root: toast });
+
+      requestAnimationFrame(() => {
+        toast.classList.remove('translate-y-4', 'opacity-0');
+        toast.classList.add('translate-y-0', 'opacity-100');
+      });
+
+      setTimeout(() => {
+        toast.classList.remove('translate-y-0', 'opacity-100');
+        toast.classList.add('translate-y-4', 'opacity-0');
+        setTimeout(() => toast.remove(), 300);
+      }, 3500);
+    }
+
+    // Modal Handling
+    const modal = document.getElementById('login-modal');
+    const modalCard = document.getElementById('modal-card');
+
+    function openLoginModal(mode = 'login') {
+      modal.classList.remove('hidden');
+      requestAnimationFrame(() => {
+        modal.classList.remove('opacity-0');
+        modal.classList.add('opacity-100');
+        modalCard.classList.remove('scale-95');
+        modalCard.classList.add('scale-100');
+      });
+
+      if (mode === 'demo') {
+        fillDemoCredentials();
+      }
+    }
+
+    function closeLoginModal() {
+      modal.classList.remove('opacity-100');
+      modal.classList.add('opacity-0');
+      modalCard.classList.remove('scale-100');
+      modalCard.classList.add('scale-95');
+      setTimeout(() => {
+        modal.classList.add('hidden');
+      }, 300);
+    }
+
+    // Close on Escape or Backdrop click
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !modal.classList.contains('hidden')) {
+        closeLoginModal();
+      }
+    });
+
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        closeLoginModal();
+      }
+    });
+
+    // Switch Tabs in Modal
+    let activeTab = 'pass';
+    function setAuthTab(tab) {
+      activeTab = tab;
+      const btnPass = document.getElementById('tab-pass');
+      const btnToken = document.getElementById('tab-token');
+      const btnSso = document.getElementById('tab-sso');
+      const grpUser = document.getElementById('field-user-group');
+      const grpPass = document.getElementById('field-pass-group');
+      const grpToken = document.getElementById('field-token-group');
+      const grpSso = document.getElementById('field-sso-group');
+
+      // Reset classes
+      [btnPass, btnToken, btnSso].forEach(btn => {
+        btn.className = "flex-1 py-2 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-200 transition-all";
+      });
+
+      if (tab === 'pass') {
+        btnPass.className = "flex-1 py-2 text-xs font-semibold rounded-lg bg-brand-600 text-white shadow-sm transition-all";
+        grpUser.classList.remove('hidden');
+        grpPass.classList.remove('hidden');
+        grpToken.classList.add('hidden');
+        grpSso.classList.add('hidden');
+      } else if (tab === 'token') {
+        btnToken.className = "flex-1 py-2 text-xs font-semibold rounded-lg bg-brand-600 text-white shadow-sm transition-all";
+        grpUser.classList.add('hidden');
+        grpPass.classList.add('hidden');
+        grpToken.classList.remove('hidden');
+        grpSso.classList.add('hidden');
+      } else {
+        btnSso.className = "flex-1 py-2 text-xs font-semibold rounded-lg bg-brand-600 text-white shadow-sm transition-all";
+        grpUser.classList.add('hidden');
+        grpPass.classList.add('hidden');
+        grpToken.classList.add('hidden');
+        grpSso.classList.remove('hidden');
+      }
+    }
+
+    // Quick Login Demo helper
+    function fillDemoCredentials() {
+      const user = document.getElementById('quick-username');
+      const pass = document.getElementById('quick-password');
+      if (user) user.value = "guest@aerodrive.demo";
+      if (pass) pass.value = "demo12345";
+
+      const mUser = document.getElementById('modal-user');
+      const mPass = document.getElementById('modal-pass');
+      if (mUser) mUser.value = "guest@aerodrive.demo";
+      if (mPass) mPass.value = "demo12345";
+
+      showToast('Заполнены демонстрационные реквизиты', 'info');
+    }
+
+    function fillDemoAndLogin() {
+      fillDemoCredentials();
+      setTimeout(() => {
+        simulateLogin('Гостевой пользователь (Demo)');
+      }, 400);
+    }
+
+    // Copy to clipboard helpers
+    function copyText(text, successMsg) {
+      navigator.clipboard.writeText(text).then(() => {
+        showToast(successMsg || 'Скопировано в буфер обмена', 'success');
+      }).catch(() => {
+        showToast('Не удалось скопировать', 'error');
+      });
+    }
+
+    function copyWebDavUrl() {
+      copyText('https://storage.local/dav/', 'WebDAV URL скопирован в буфер обмена');
+    }
+
+    function copyCliCommand() {
+      copyText('curl -u admin:key https://storage/api/v1/fs', 'CLI команда скопирована');
+    }
+
+    // Form Submissions
+    function simulateLogin(username) {
+      showToast(`Проверка ключей авторизации для ${username}...`, 'info');
+      setTimeout(() => {
+        showToast('Успешная аутентификация! Перенаправление в проводник...', 'success');
+        setTimeout(() => {
+          // Здесь можно указать реальный путь к файловому менеджеру, например /files/ или ?action=explorer
+          showToast('Заглушка: здесь открывается интерфейс проводника (например /files/ или Web UI)', 'info');
+          closeLoginModal();
+        }, 1200);
+      }, 800);
+    }
+
+    function handleQuickLogin(e) {
+      e.preventDefault();
+      const user = document.getElementById('quick-username').value || 'admin';
+      simulateLogin(user);
+    }
+
+    function handleModalSubmit(e) {
+      e.preventDefault();
+      let user = "admin";
+      if (activeTab === 'pass') {
+        user = document.getElementById('modal-user').value || 'admin';
+      } else if (activeTab === 'token') {
+        user = "API Token User";
+      } else {
+        user = "SSO Corporate User";
+      }
+      simulateLogin(user);
+    }
+  </script>
 </body>
 </html>
