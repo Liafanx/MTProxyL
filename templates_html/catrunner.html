@@ -2,83 +2,539 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Cat Runner</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<title>Cat Runner — Ночной Забег</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;700;800&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#1a1a2e;overflow:hidden;font-family:system-ui,-apple-system,sans-serif}
-canvas{display:block;margin:0 auto;cursor:pointer}
-.ui{text-align:center;padding:16px;color:#e0e0e0}
-.ui h1{font-size:1.4rem;margin-bottom:4px}
-.ui .score{font-size:1.1rem;color:#e94560}
-.ui .hint{font-size:.8rem;color:#888;margin-top:6px}
+html,body{width:100%;height:100%;overflow:hidden;background:#0d111e}
+body{
+  position:fixed;inset:0;display:flex;flex-direction:column;
+  font-family:'Plus Jakarta Sans',system-ui,-apple-system,sans-serif;
+  user-select:none;-webkit-user-select:none;touch-action:none;overscroll-behavior:none;
+  color:#f1f5f9;
+}
+
+/* Ambient glow */
+.ambient-glow {
+  position:absolute;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(circle at 50% 25%, rgba(243,156,18,0.12) 0%, rgba(0,206,201,0.08) 40%, transparent 70%);
+}
+
+/* Top HUD bar */
+.hud {
+  position:relative;z-index:10;flex:0 0 auto;
+  display:flex;flex-direction:column;gap:6px;
+  padding:12px 16px 8px;background:rgba(13,17,30,0.85);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  border-bottom:1px solid rgba(255,255,255,0.08);
+}
+.hud-top {
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+}
+.brand {
+  display:flex;align-items:center;gap:8px;
+}
+.brand-icon {
+  width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#f39c12,#e17055);
+  display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 0 12px rgba(243,156,18,0.4);
+}
+.brand-title {
+  font-weight:800;font-size:1.1rem;letter-spacing:1px;
+  background:linear-gradient(90deg,#fff,#fed330);-webkit-background-clip:text;-webkit-text-fill-color:transparent;
+}
+.level-badge {
+  font-family:'JetBrains Mono',monospace;font-size:0.7rem;font-weight:700;
+  padding:3px 8px;border-radius:6px;background:rgba(243,156,18,0.18);
+  color:#f6e58d;border:1px solid rgba(243,156,18,0.3);letter-spacing:0.5px;
+}
+
+.stats-bar {
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;
+  font-family:'JetBrains Mono',monospace;font-size:0.85rem;
+}
+.stat-pill {
+  display:flex;align-items:center;gap:5px;background:rgba(255,255,255,0.04);
+  padding:4px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);
+}
+.stat-val {color:#f6e58d;font-weight:700}
+.stat-record {color:#00cec9}
+.stat-fish {color:#fd79a8}
+
+/* Level Progress mini-bar */
+.level-progress-wrap {
+  width:100%;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden;
+}
+.level-progress-fill {
+  height:100%;width:0%;background:linear-gradient(90deg,#f39c12,#00cec9,#fd79a8);
+  transition:width 0.2s ease;
+}
+
+/* Control buttons header */
+.controls-hud {
+  display:flex;align-items:center;gap:6px;
+}
+.btn-icon {
+  background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);
+  color:#cbd5e1;padding:4px 8px;border-radius:6px;cursor:pointer;font-size:0.75rem;
+  display:flex;align-items:center;gap:4px;font-family:inherit;transition:all 0.15s ease;
+}
+.btn-icon:hover{background:rgba(255,255,255,0.12);color:#fff}
+.btn-icon:active{transform:scale(0.95)}
+
+/* Active Powerup Banner */
+.powerups-active {
+  display:flex;gap:6px;align-items:center;
+}
+.pup-badge {
+  display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:6px;
+  font-size:0.68rem;font-weight:700;font-family:'JetBrains Mono',monospace;animation:pulse 1s infinite;
+}
+.pup-shield {background:rgba(0,206,201,0.2);border:1px solid rgba(0,206,201,0.4);color:#00cec9}
+.pup-turbo {background:rgba(243,156,18,0.2);border:1px solid rgba(243,156,18,0.4);color:#f39c12}
+
+/* Canvas viewport */
+#canvas-wrapper {
+  position:relative;flex:1 1 auto;width:100%;height:100%;display:flex;
+  align-items:center;justify-content:center;overflow:hidden;
+}
+canvas {
+  display:block;margin:auto;touch-action:none;cursor:pointer;
+}
+
+/* On-screen Touch Controls (Mobile) */
+.touch-controls {
+  position:absolute;bottom:16px;left:0;right:0;padding:0 20px;
+  display:flex;justify-content:space-between;align-items:center;
+  pointer-events:none;z-index:25;
+}
+.touch-btn {
+  pointer-events:auto;
+  width:72px;height:72px;border-radius:24px;
+  background:rgba(13,17,30,0.75);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  border:2px solid rgba(255,255,255,0.15);color:#fff;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:2px;font-weight:800;font-size:0.75rem;box-shadow:0 8px 24px rgba(0,0,0,0.5);
+  transition:all 0.1s ease;-webkit-tap-highlight-color:transparent;
+}
+.touch-btn:active, .touch-btn.active {
+  transform:scale(0.92);background:rgba(243,156,18,0.5);border-color:#f39c12;box-shadow:0 0 16px rgba(243,156,18,0.6);
+}
+.touch-btn svg {width:24px;height:24px;stroke-width:2.5}
+.touch-btn-duck {border-color:rgba(0,206,201,0.35)}
+.touch-btn-jump {border-color:rgba(243,156,18,0.35)}
+
+/* Desktop Keys Help Overlay (Bottom) */
+.keys-hint {
+  position:absolute;bottom:6px;left:50%;transform:translateX(-50%);
+  display:flex;align-items:center;gap:12px;
+  font-size:0.72rem;color:rgba(255,255,255,0.45);font-family:'JetBrains Mono',monospace;
+  pointer-events:none;z-index:5;
+}
+.key-badge {
+  background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);
+  padding:2px 6px;border-radius:4px;color:#cbd5e1;font-weight:700;
+}
+
+@media(max-width:768px){
+  .keys-hint{display:none}
+}
+@media(min-width:769px){
+  .touch-controls{display:none}
+}
 </style>
 </head>
 <body>
-<div class="ui">
-  <h1>🐱 Cat Runner</h1>
-  <div class="score">Счёт: <span id="sc">0</span> &nbsp; Рекорд: <span id="hi">0</span></div>
-  <div class="hint">Пробел / тап — прыжок (×2 в воздухе!)</div>
-</div>
 
-<canvas id="c"></canvas>
+<div class="ambient-glow"></div>
+
+<!-- Top HUD -->
+<header class="hud">
+  <div class="hud-top">
+    <div class="brand">
+      <div class="brand-icon">🐱</div>
+      <div class="brand-title">CAT RUNNER</div>
+      <div id="lvl-badge" class="level-badge">УРОВЕНЬ 1: НЕОНОВЫЙ ОАЗИС</div>
+    </div>
+    
+    <div class="controls-hud">
+      <div id="powerup-slots" class="powerups-active"></div>
+      <button id="btn-sound" class="btn-icon" title="Звук (M)">🔊 <span class="hidden sm:inline">Звук</span></button>
+      <button id="btn-pause" class="btn-icon" title="Пауза (P / Esc)">⏸</button>
+    </div>
+  </div>
+
+  <div class="stats-bar">
+    <div class="stat-pill">
+      <span>Счёт:</span>
+      <span id="sc" class="stat-val">0</span>
+    </div>
+    <div class="stat-pill">
+      <span>Рекорд:</span>
+      <span id="hi" class="stat-record">0</span>
+    </div>
+    <div class="stat-pill">
+      <span>Рыбка:</span>
+      <span id="fish-sc" class="stat-fish">0</span>
+    </div>
+    <div class="stat-pill">
+      <span>Комбо:</span>
+      <span id="combo-sc" class="stat-val" style="color:#fd79a8">x1.0</span>
+    </div>
+  </div>
+
+  <!-- Progress to next level -->
+  <div class="level-progress-wrap" title="Прогресс уровня">
+    <div id="lvl-prog" class="level-progress-fill"></div>
+  </div>
+</header>
+
+<!-- Canvas Workspace -->
+<div id="canvas-wrapper">
+  <canvas id="c"></canvas>
+
+  <!-- Keys Hint on Desktop -->
+  <div class="keys-hint">
+    <span><span class="key-badge">Пробел</span> / <span class="key-badge">W</span> / <span class="key-badge">↑</span> Прыжок (×2)</span>
+    <span><span class="key-badge">S</span> / <span class="key-badge">↓</span> Скользить / Подкат</span>
+    <span><span class="key-badge">P</span> Пауза</span>
+  </div>
+
+  <!-- Touch Controls on Mobile -->
+  <div class="touch-controls">
+    <button id="touch-duck" class="touch-btn touch-btn-duck" aria-label="Скользить">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
+      <span>ПОДКАТ</span>
+    </button>
+    <button id="touch-jump" class="touch-btn touch-btn-jump" aria-label="Прыжок">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+      <span>ПРЫЖОК</span>
+    </button>
+  </div>
+</div>
 
 <script>
 (function () {
+  'use strict';
+
+  /* ──────────────── Web Audio Synthesizer ──────────────── */
+  var audioCtx = null;
+  var soundEnabled = localStorage.getItem('catSound') !== 'false';
+
+  function getAudioCtx() {
+    if (!audioCtx) {
+      var AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (AudioContext) audioCtx = new AudioContext();
+    }
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+    return audioCtx;
+  }
+
+  function playSound(type) {
+    if (!soundEnabled) return;
+    try {
+      var ctx = getAudioCtx();
+      if (!ctx) return;
+      var t = ctx.currentTime;
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      if (type === 'jump') {
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(260, t);
+        osc.frequency.exponentialRampToValueAtTime(620, t + 0.12);
+        gain.gain.setValueAtTime(0.18, t);
+        gain.gain.linearRampToValueAtTime(0.01, t + 0.12);
+        osc.start(t);
+        osc.stop(t + 0.12);
+      } else if (type === 'double_jump') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(520, t);
+        osc.frequency.exponentialRampToValueAtTime(940, t + 0.15);
+        gain.gain.setValueAtTime(0.2, t);
+        gain.gain.linearRampToValueAtTime(0.01, t + 0.15);
+        osc.start(t);
+        osc.stop(t + 0.15);
+      } else if (type === 'duck') {
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(180, t);
+        osc.frequency.linearRampToValueAtTime(90, t + 0.1);
+        gain.gain.setValueAtTime(0.12, t);
+        gain.gain.linearRampToValueAtTime(0.01, t + 0.1);
+        osc.start(t);
+        osc.stop(t + 0.1);
+      } else if (type === 'fish') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(659.25, t); // E5
+        osc.frequency.setValueAtTime(987.77, t + 0.05); // B5
+        osc.frequency.setValueAtTime(1318.51, t + 0.1); // E6
+        gain.gain.setValueAtTime(0.16, t);
+        gain.gain.linearRampToValueAtTime(0.01, t + 0.18);
+        osc.start(t);
+        osc.stop(t + 0.18);
+      } else if (type === 'shield') {
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(349.23, t);
+        osc.frequency.setValueAtTime(523.25, t + 0.08);
+        osc.frequency.setValueAtTime(698.46, t + 0.16);
+        gain.gain.setValueAtTime(0.14, t);
+        gain.gain.linearRampToValueAtTime(0.01, t + 0.28);
+        osc.start(t);
+        osc.stop(t + 0.28);
+      } else if (type === 'levelup') {
+        var freqs = [330, 440, 554.37, 659.25];
+        freqs.forEach(function (f, i) {
+          var o = ctx.createOscillator();
+          var g = ctx.createGain();
+          o.type = 'triangle';
+          o.frequency.setValueAtTime(f, t + i * 0.08);
+          g.gain.setValueAtTime(0.16, t + i * 0.08);
+          g.gain.linearRampToValueAtTime(0.001, t + i * 0.08 + 0.22);
+          o.connect(g);
+          g.connect(ctx.destination);
+          o.start(t + i * 0.08);
+          o.stop(t + i * 0.08 + 0.22);
+        });
+      } else if (type === 'hit') {
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(150, t);
+        osc.frequency.linearRampToValueAtTime(40, t + 0.25);
+        gain.gain.setValueAtTime(0.3, t);
+        gain.gain.linearRampToValueAtTime(0.01, t + 0.25);
+        osc.start(t);
+        osc.stop(t + 0.25);
+      }
+    } catch (e) {}
+  }
+
+  /* ──────────────── DOM & Canvas Setup ──────────────── */
   var c = document.getElementById('c'),
       ctx = c.getContext('2d'),
-      W, H, ground, cat, cacti, clouds, particles, spd, score, best, dead, frame, shake, nightCycle;
+      scEl = document.getElementById('sc'),
+      hiEl = document.getElementById('hi'),
+      fishEl = document.getElementById('fish-sc'),
+      comboEl = document.getElementById('combo-sc'),
+      lvlBadge = document.getElementById('lvl-badge'),
+      lvlProg = document.getElementById('lvl-prog'),
+      pupSlots = document.getElementById('powerup-slots'),
+      btnSound = document.getElementById('btn-sound'),
+      btnPause = document.getElementById('btn-pause'),
+      touchDuck = document.getElementById('touch-duck'),
+      touchJump = document.getElementById('touch-jump');
+
+  var W, H, dpr, ground, portrait;
+  var cat, obstacles, items, clouds, stars, dunes, particles, floatingTexts;
+  var spd, score, best, fishCount, combo, comboTimer, dead, paused, frame, shake;
+  var currentLevel, levelBannerTimer, levelBannerText;
+  var lastTime = 0, accumulator = 0, FIXED_STEP = 1000 / 60;
 
   best = parseInt(localStorage.getItem('catBest') || '0', 10);
-  document.getElementById('hi').textContent = best;
+  hiEl.textContent = best;
 
-  /* ── размеры ── */
+  function updateSoundButton() {
+    btnSound.innerHTML = soundEnabled ? '🔊 <span class="hidden sm:inline">Звук</span>' : '🔇 <span class="hidden sm:inline">Выкл</span>';
+    localStorage.setItem('catSound', soundEnabled ? 'true' : 'false');
+  }
+  updateSoundButton();
+  btnSound.addEventListener('click', function (e) {
+    e.stopPropagation();
+    soundEnabled = !soundEnabled;
+    updateSoundButton();
+    if (soundEnabled) playSound('fish');
+  });
+
+  btnPause.addEventListener('click', function (e) {
+    e.stopPropagation();
+    togglePause();
+  });
+
+  function togglePause() {
+    if (dead) return;
+    paused = !paused;
+    btnPause.textContent = paused ? '▶' : '⏸';
+  }
+
+  /* ──────────────── Levels Configuration ──────────────── */
+  var LEVELS = [
+    {
+      id: 1, name: 'НЕОНОВЫЙ ОАЗИС', minScore: 0, nextScore: 30,
+      skyTop: '#0f3460', skyBot: '#1a1a5e',
+      groundTop: '#2d3436', groundBot: '#1a1a2e',
+      accentCol: '#00cec9', hasBatDrones: false
+    },
+    {
+      id: 2, name: 'НОЧНОЙ КАНЬОН (ЛЕТУЧИЕ ДРОНЫ)', minScore: 30, nextScore: 75,
+      skyTop: '#130f40', skyBot: '#30336b',
+      groundTop: '#1e272e', groundBot: '#0a0d14',
+      accentCol: '#f39c12', hasBatDrones: true
+    },
+    {
+      id: 3, name: 'КИБЕР-ОАЗИС (ЛАЗЕРНЫЕ ЛОВУШКИ)', minScore: 75, nextScore: 140,
+      skyTop: '#2c061f', skyBot: '#5a1038',
+      groundTop: '#371026', groundBot: '#190511',
+      accentCol: '#fd79a8', hasBatDrones: true
+    },
+    {
+      id: 4, name: 'ЗВЁЗДНЫЙ РУБЕЖ: ФИНАЛ', minScore: 140, nextScore: 9999,
+      skyTop: '#051923', skyBot: '#006494',
+      groundTop: '#003554', groundBot: '#051923',
+      accentCol: '#f6e58d', hasBatDrones: true
+    }
+  ];
+
+  function getCurrentLevelConfig() {
+    for (var i = LEVELS.length - 1; i >= 0; i--) {
+      if (score >= LEVELS[i].minScore) return LEVELS[i];
+    }
+    return LEVELS[0];
+  }
+
+  /* ──────────────── Window Resize Handling ──────────────── */
   function resize() {
-    W = Math.min(window.innerWidth, 640);
-    H = 280;
-    c.width = W;
-    c.height = H;
-    ground = H - 36;
+    var wrapper = document.getElementById('canvas-wrapper');
+    var vw = wrapper.clientWidth;
+    var vh = wrapper.clientHeight;
+    W = Math.min(Math.floor(vw), 860);
+    H = Math.max(200, Math.floor(vh));
+    portrait = vh > vw;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    c.style.width = W + 'px';
+    c.style.height = H + 'px';
+    c.width = Math.floor(W * dpr);
+    c.height = Math.floor(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    ground = portrait ? Math.max(140, Math.floor(H * 0.74)) : H - 52;
     if (cat) {
       var floor = ground - cat.h;
-      if (cat.y > floor) cat.y = floor;
+      if (cat.y >= floor - 4) cat.y = floor;
     }
   }
 
-  /* ── инициализация ── */
+  /* ──────────────── Game Initialization ──────────────── */
   function init() {
     resize();
-    score = 0; dead = false; frame = 0; spd = 3.5; shake = 0; nightCycle = 0;
+    lastTime = performance.now();
+    accumulator = 0;
+    score = 0;
+    fishCount = 0;
+    combo = 1.0;
+    comboTimer = 0;
+    dead = false;
+    paused = false;
+    frame = 0;
+    spd = 1.8;
+    shake = 0;
+    currentLevel = LEVELS[0];
+    levelBannerTimer = 0;
+    levelBannerText = '';
+
     cat = {
-      x: 70, y: ground - 36, w: 36, h: 36,
+      x: 70, y: ground - 36, w: 38, h: 36,
       vy: 0, jumps: 0, maxJumps: 2,
-      legFrame: 0, tailAngle: 0, eyeBlink: 0
+      legFrame: 0, tailAngle: 0, eyeBlink: 0,
+      isDucking: false,
+      shield: false,
+      turboTimer: 0,
+      scaleX: 1, scaleY: 1
     };
-    cacti = []; clouds = []; particles = [];
-    for (var i = 0; i < 4; i++) {
+
+    obstacles = [];
+    items = [];
+    clouds = [];
+    stars = [];
+    dunes = [];
+    particles = [];
+    floatingTexts = [];
+
+    // Background dunes
+    for (var d = 0; d < 8; d++) {
+      dunes.push({
+        x: d * 120,
+        w: 100 + Math.random() * 60,
+        h: 30 + Math.random() * 50
+      });
+    }
+
+    // Stars
+    for (var s = 0; s < 35; s++) {
+      stars.push({
+        x: Math.random() * W,
+        y: Math.random() * (ground - 30),
+        size: 0.8 + Math.random() * 1.5,
+        twinkle: Math.random() * Math.PI * 2
+      });
+    }
+
+    // Clouds
+    for (var i = 0; i < 5; i++) {
       clouds.push({
         x: Math.random() * W,
         y: 20 + Math.random() * 60,
-        r: 18 + Math.random() * 22,
-        s: 0.3 + Math.random() * 0.5
+        r: 16 + Math.random() * 22,
+        s: 0.25 + Math.random() * 0.35
       });
     }
-    document.getElementById('sc').textContent = '0';
+
+    updateUI();
   }
 
-  /* ── прыжок ── */
+  function updateUI() {
+    scEl.textContent = score;
+    fishEl.textContent = fishCount;
+    comboEl.textContent = 'x' + combo.toFixed(1);
+
+    var lvl = getCurrentLevelConfig();
+    lvlBadge.textContent = 'УРОВЕНЬ ' + lvl.id + ': ' + lvl.name.split('(')[0];
+
+    var range = (lvl.nextScore - lvl.minScore) || 100;
+    var cur = Math.min(range, score - lvl.minScore);
+    var pct = Math.min(100, Math.floor((cur / range) * 100));
+    lvlProg.style.width = pct + '%';
+
+    // Powerup slots HUD
+    var html = '';
+    if (cat.shield) {
+      html += '<span class="pup-badge pup-shield">🛡️ ЩИТ</span>';
+    }
+    if (cat.turboTimer > 0) {
+      var sec = (cat.turboTimer / 60).toFixed(1);
+      html += '<span class="pup-badge pup-turbo">⚡ ТУРБО ' + sec + 's</span>';
+    }
+    pupSlots.innerHTML = html;
+  }
+
+  /* ──────────────── Controls Logic ──────────────── */
   function jump() {
+    if (paused) return;
     if (dead) { init(); return; }
+
+    if (cat.isDucking) {
+      stopDuck();
+    }
+
     if (cat.jumps < cat.maxJumps) {
-      cat.vy = cat.jumps === 0 ? -11 : -9;
+      cat.vy = cat.jumps === 0 ? -10.8 : -9.4;
       cat.jumps++;
-      for (var i = 0; i < 6; i++) {
+      cat.scaleX = 0.82;
+      cat.scaleY = 1.25;
+      playSound(cat.jumps === 1 ? 'jump' : 'double_jump');
+
+      // Jump dust
+      for (var i = 0; i < 7; i++) {
         particles.push({
           x: cat.x + cat.w / 2,
           y: cat.y + cat.h,
-          vx: (Math.random() - 0.5) * 3,
+          vx: (Math.random() - 0.5) * 4,
           vy: Math.random() * 2 + 1,
-          life: 20 + Math.random() * 10,
+          life: 20, maxLife: 20,
           r: 2 + Math.random() * 3,
           col: cat.jumps === 2 ? '#f6e58d' : '#dfe6e9'
         });
@@ -86,73 +542,350 @@ canvas{display:block;margin:0 auto;cursor:pointer}
     }
   }
 
-  /* ── спавн кактусов ── */
-  function spawnCactus() {
-    var gap = cacti.length ? cacti[cacti.length - 1].x : 0;
-    if (gap > W - 80) return;
-    var h = 26 + Math.random() * 24;
-    var type = Math.random() < 0.3 ? 'double' : 'single';
-    cacti.push({ x: W + 10, w: type === 'double' ? 26 : 14, h: h, type: type });
+  function startDuck() {
+    if (paused || dead) return;
+    if (!cat.isDucking) {
+      cat.isDucking = true;
+      cat.h = 24; // Flat belly-slide height
+      if (cat.jumps === 0) {
+        cat.y = ground - cat.h;
+      } else {
+        cat.vy += 6; // Quick drop from air
+      }
+      playSound('duck');
+    }
   }
 
-  /* ── обновление ── */
+  function stopDuck() {
+    if (cat.isDucking) {
+      cat.isDucking = false;
+      cat.h = 36;
+      cat.y = ground - cat.h;
+      cat.scaleX = 1.12;
+      cat.scaleY = 0.9;
+    }
+  }
+
+  /* ──────────────── Spawning: Obstacles & Powerups ──────────────── */
+  function spawnObstacle() {
+    var last = obstacles.length ? obstacles[obstacles.length - 1] : null;
+    var minGap = 280 + Math.random() * 220;
+    if (last && (W - last.x) < minGap) return;
+
+    var lvl = getCurrentLevelConfig();
+    var roll = Math.random();
+
+    // In Level 2+, spawn aerial Drone-Bats with upward blocking barrier (MUST SLIDE UNDER!)
+    if (lvl.hasBatDrones && roll < 0.38) {
+      obstacles.push({
+        type: 'bat_drone',
+        x: W + 20,
+        y: ground - 50, // Bottom is at ground - 26
+        w: 40,
+        h: 24,
+        wingPhase: 0
+      });
+      return;
+    }
+
+    // In Level 3+, spawn Crystal Laser Barrier
+    if (lvl.id >= 3 && roll > 0.82) {
+      obstacles.push({
+        type: 'crystal_laser',
+        x: W + 20,
+        y: ground - 38,
+        w: 22,
+        h: 38
+      });
+      return;
+    }
+
+    // Default: Cacti (single, double, or tall)
+    var cRoll = Math.random();
+    var ch, cw, cType;
+    if (cRoll < 0.45) {
+      cw = 16; ch = 28 + Math.random() * 10; cType = 'single';
+    } else if (cRoll < 0.8) {
+      cw = 28; ch = 36 + Math.random() * 12; cType = 'double';
+    } else {
+      cw = 34; ch = 48 + Math.random() * 12; cType = 'triple';
+    }
+
+    obstacles.push({
+      type: 'cactus',
+      x: W + 20,
+      w: cw,
+      h: ch,
+      cType: cType
+    });
+  }
+
+  function spawnItem() {
+    var roll = Math.random();
+    var itemType = 'fish';
+    if (roll < 0.15 && !cat.shield) itemType = 'shield';
+    else if (roll < 0.28) itemType = 'turbo';
+
+    items.push({
+      type: itemType,
+      x: W + 30,
+      y: ground - 36 - Math.random() * 50,
+      w: 22,
+      h: 22,
+      bobPhase: Math.random() * Math.PI * 2
+    });
+  }
+
+  function addFloatingText(text, x, y, col) {
+    floatingTexts.push({
+      text: text, x: x, y: y, col: col || '#f6e58d', life: 40, maxLife: 40
+    });
+  }
+
+  /* ──────────────── Game Engine Update Loop ──────────────── */
   function update() {
-    if (dead) return;
+    if (dead || paused) return;
     frame++;
-    nightCycle = (Math.sin(frame * 0.002) + 1) / 2;
 
-    /* спавн */
-    var interval = Math.max(35, 75 - score);
-    if (frame % interval === 0) spawnCactus();
+    // Level progression check
+    var lvl = getCurrentLevelConfig();
+    if (lvl.id !== currentLevel.id) {
+      currentLevel = lvl;
+      levelBannerText = 'НОВЫЙ РУБЕЖ: ' + lvl.name;
+      levelBannerTimer = 110;
+      shake = 10;
+      playSound('levelup');
+      addFloatingText('УРОВЕНЬ ' + lvl.id + '!', W / 2, H / 2 - 20, '#00cec9');
+    }
 
-    /* физика кота */
-    cat.vy += 0.55;
+    // Smooth progressive speed curve: starts at 1.8 and steadily increases
+    var targetSpd = 1.8 + Math.min(4.8, score * 0.022);
+    if (cat.turboTimer > 0) targetSpd += 2.0;
+    spd += (targetSpd - spd) * 0.02;
+
+    // Combo timer
+    if (comboTimer > 0) {
+      comboTimer--;
+      if (comboTimer <= 0) combo = 1.0;
+    }
+
+    // Spawning frequency
+    var foeInterval = Math.max(50, Math.floor(95 - spd * 6));
+    if (frame % foeInterval === 0) spawnObstacle();
+
+    if (frame % 150 === 0 && Math.random() < 0.75) spawnItem();
+
+    // Smooth squash/stretch recovery
+    cat.scaleX += (1.0 - cat.scaleX) * 0.14;
+    cat.scaleY += (1.0 - cat.scaleY) * 0.14;
+
+    // Floaty apex gravity physics
+    var currentG = 0.32;
+    if (Math.abs(cat.vy) < 2.0 && cat.jumps > 0) {
+      currentG = 0.16; // Floaty apex hang-time!
+    }
+    cat.vy += currentG;
     cat.y += cat.vy;
+
     var floor = ground - cat.h;
-    if (cat.y >= floor) { cat.y = floor; cat.vy = 0; cat.jumps = 0; }
+    if (cat.y >= floor) {
+      if (cat.vy > 2.5) {
+        // Landing squash bounce
+        cat.scaleX = 1.2;
+        cat.scaleY = 0.82;
+      }
+      cat.y = floor;
+      cat.vy = 0;
+      cat.jumps = 0;
+    }
 
-    /* анимация лапок */
-    cat.legFrame += spd * 0.15;
-    cat.tailAngle = Math.sin(frame * 0.08) * 0.4;
-    cat.eyeBlink = (frame % 180 < 6) ? 1 : 0;
+    cat.legFrame += spd * 0.22;
+    cat.tailAngle = Math.sin(frame * 0.1) * 0.5;
+    cat.eyeBlink = (frame % 220 < 7) ? 1 : 0;
 
-    /* кактусы */
-    for (var i = cacti.length - 1; i >= 0; i--) {
-      cacti[i].x -= spd;
-      if (cacti[i].x + cacti[i].w < 0) {
-        cacti.splice(i, 1);
-        score++;
-        document.getElementById('sc').textContent = score;
+    // Turbo powerup countdown
+    if (cat.turboTimer > 0) {
+      cat.turboTimer--;
+      // Fiery Turbo particles
+      particles.push({
+        x: cat.x,
+        y: cat.y + Math.random() * cat.h,
+        vx: -spd * 0.8,
+        vy: (Math.random() - 0.5) * 2,
+        life: 16, maxLife: 16,
+        r: 3 + Math.random() * 2,
+        col: Math.random() < 0.5 ? '#f39c12' : '#fd79a8'
+      });
+    }
+
+    // Update Items
+    for (var it = items.length - 1; it >= 0; it--) {
+      var item = items[it];
+      item.x -= spd;
+      item.bobPhase += 0.08;
+
+      // Magnet effect when turbo is active
+      if (cat.turboTimer > 0) {
+        var dx = (cat.x + cat.w / 2) - item.x;
+        var dy = (cat.y + cat.h / 2) - item.y;
+        var dist = Math.hypot(dx, dy);
+        if (dist < 180) {
+          item.x += dx * 0.15;
+          item.y += dy * 0.15;
+        }
+      }
+
+      // Collect item check
+      var collides = (
+        cat.x + cat.w > item.x &&
+        cat.x < item.x + item.w &&
+        cat.y + cat.h > item.y &&
+        cat.y < item.y + item.h
+      );
+
+      if (collides) {
+        if (item.type === 'fish') {
+          var pts = Math.round(10 * combo);
+          score += pts;
+          fishCount++;
+          playSound('fish');
+          addFloatingText('+' + pts + ' Рыбка', item.x, item.y, '#fd79a8');
+        } else if (item.type === 'shield') {
+          cat.shield = true;
+          playSound('shield');
+          addFloatingText('🛡️ КИБЕР-ЩИТ!', item.x, item.y - 10, '#00cec9');
+        } else if (item.type === 'turbo') {
+          cat.turboTimer = 300; // 5 seconds
+          playSound('shield');
+          addFloatingText('⚡ МЯУ-ТУРБО!', item.x, item.y - 10, '#f39c12');
+        }
+        items.splice(it, 1);
         continue;
       }
-      var cx = cacti[i];
-      if (
-        cat.x + cat.w - 8 > cx.x + 2 &&
-        cat.x + 8 < cx.x + cx.w - 2 &&
-        cat.y + cat.h > ground - cx.h + 4
-      ) {
-        dead = true;
-        shake = 12;
-        if (score > best) {
-          best = score;
-          localStorage.setItem('catBest', best);
-          document.getElementById('hi').textContent = best;
-        }
-        for (var j = 0; j < 15; j++) {
-          particles.push({
-            x: cat.x + cat.w / 2,
-            y: cat.y + cat.h / 2,
-            vx: (Math.random() - 0.5) * 6,
-            vy: (Math.random() - 0.5) * 6,
-            life: 30 + Math.random() * 20,
-            r: 2 + Math.random() * 4,
-            col: '#e94560'
-          });
+
+      if (item.x + item.w < -20) items.splice(it, 1);
+    }
+
+    // Update Obstacles
+    for (var i = obstacles.length - 1; i >= 0; i--) {
+      var o = obstacles[i];
+      o.x -= spd;
+
+      // Clean off-screen & award score
+      if (o.x + (o.w || 30) < -20) {
+        obstacles.splice(i, 1);
+        score += Math.round(1 * combo);
+        combo = Math.min(4.0, combo + 0.1);
+        comboTimer = 180;
+        continue;
+      }
+
+      // Collision Boxes
+      var hitBox;
+      if (cat.isDucking) {
+        // Low slide box on the ground
+        hitBox = {
+          x: cat.x + 3,
+          y: cat.y + 2,
+          w: cat.w - 6,
+          h: cat.h - 4
+        };
+      } else {
+        // Full height standing box
+        hitBox = {
+          x: cat.x + 6,
+          y: cat.y + 4,
+          w: cat.w - 12,
+          h: cat.h - 6
+        };
+      }
+
+      var foeBox;
+      if (o.type === 'bat_drone') {
+        o.wingPhase += 0.3;
+        // Blocks all jumps by extending skyward (-300 to ground - 26)
+        // Can ONLY be passed by sliding/ducking underneath!
+        foeBox = { x: o.x + 4, y: -300, w: o.w - 8, h: (ground - 26) - (-300) };
+      } else if (o.type === 'crystal_laser') {
+        foeBox = { x: o.x + 3, y: o.y + 3, w: o.w - 6, h: o.h - 5 };
+      } else {
+        // cactus
+        foeBox = { x: o.x + 4, y: ground - o.h + 4, w: o.w - 8, h: o.h - 5 };
+      }
+
+      var overlap = (
+        hitBox.x + hitBox.w > foeBox.x &&
+        hitBox.x < foeBox.x + foeBox.w &&
+        hitBox.y + hitBox.h > foeBox.y &&
+        hitBox.y < foeBox.y + foeBox.h
+      );
+
+      if (overlap) {
+        if (cat.turboTimer > 0) {
+          // Smash obstacle during turbo
+          obstacles.splice(i, 1);
+          shake = 8;
+          playSound('hit');
+          addFloatingText('ПРОРЫВ! +25', o.x, ground - 40, '#f39c12');
+          score += 25;
+          for (var sp = 0; sp < 15; sp++) {
+            particles.push({
+              x: o.x, y: ground - 25,
+              vx: (Math.random() - 0.5) * 8, vy: (Math.random() - 0.5) * 8,
+              life: 25, maxLife: 25, r: 3, col: '#00cec9'
+            });
+          }
+        } else if (cat.shield) {
+          // Shield absorbs the blow!
+          cat.shield = false;
+          obstacles.splice(i, 1);
+          shake = 12;
+          playSound('hit');
+          addFloatingText('ЩИТ СБИТ!', cat.x, cat.y - 15, '#00cec9');
+          for (var p = 0; p < 18; p++) {
+            particles.push({
+              x: cat.x + cat.w / 2, y: cat.y + cat.h / 2,
+              vx: (Math.random() - 0.5) * 6, vy: (Math.random() - 0.5) * 6,
+              life: 25, maxLife: 25, r: 3, col: '#00cec9'
+            });
+          }
+        } else {
+          // GAME OVER
+          dead = true;
+          shake = 18;
+          playSound('hit');
+          if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+
+          if (score > best) {
+            best = score;
+            localStorage.setItem('catBest', best);
+            hiEl.textContent = best;
+          }
+
+          for (var j = 0; j < 25; j++) {
+            particles.push({
+              x: cat.x + cat.w / 2,
+              y: cat.y + cat.h / 2,
+              vx: (Math.random() - 0.5) * 8,
+              vy: (Math.random() - 0.5) * 8,
+              life: 45, maxLife: 45,
+              r: 2 + Math.random() * 4,
+              col: '#e17055'
+            });
+          }
         }
       }
     }
 
-    /* облака */
+    // Parallax Dunes
+    for (var dIdx = 0; dIdx < dunes.length; dIdx++) {
+      dunes[dIdx].x -= spd * 0.2;
+      if (dunes[dIdx].x + dunes[dIdx].w < 0) {
+        dunes[dIdx].x = W + Math.random() * 50;
+      }
+    }
+
+    // Clouds
     for (var k = 0; k < clouds.length; k++) {
       clouds[k].x -= clouds[k].s;
       if (clouds[k].x + clouds[k].r < 0) {
@@ -161,48 +894,133 @@ canvas{display:block;margin:0 auto;cursor:pointer}
       }
     }
 
-    /* частицы */
-    for (var p = particles.length - 1; p >= 0; p--) {
-      var pt = particles[p];
+    // Particles update
+    for (var ptIdx = particles.length - 1; ptIdx >= 0; ptIdx--) {
+      var pt = particles[ptIdx];
       pt.x += pt.vx; pt.y += pt.vy;
       pt.life--;
-      if (pt.life <= 0) particles.splice(p, 1);
+      if (pt.life <= 0) particles.splice(ptIdx, 1);
     }
 
-    /* ускорение */
-    if (frame % 180 === 0 && spd < 9) spd += 0.25;
+    // Floating Texts update
+    for (var ftIdx = floatingTexts.length - 1; ftIdx >= 0; ftIdx--) {
+      var ft = floatingTexts[ftIdx];
+      ft.y -= 1.2;
+      ft.life--;
+      if (ft.life <= 0) floatingTexts.splice(ftIdx, 1);
+    }
+
+    if (levelBannerTimer > 0) levelBannerTimer--;
+
+    updateUI();
   }
 
-  /* ── рисование кота ── */
+  /* ──────────────── Graphics & Drawing Routines ──────────────── */
+
+  /* ── КОРПУС И АНИМАЦИЯ РЫЖЕГО КОТА ── */
   function drawCat(cx, cy, w, h) {
     var onGround = cat.jumps === 0 && cat.vy === 0;
     var legOff1 = onGround ? Math.sin(cat.legFrame) * 5 : -3;
     var legOff2 = onGround ? Math.sin(cat.legFrame + Math.PI) * 5 : 3;
 
     ctx.save();
-    ctx.translate(cx, cy);
+    // Squash & Stretch Dynamic Center
+    ctx.translate(cx + w / 2, cy + h);
+    ctx.scale(cat.scaleX || 1, cat.scaleY || 1);
+    ctx.translate(-w / 2, -h);
 
-    /* хвост */
+    // Energy Shield Aura
+    if (cat.shield) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(0,206,201,' + (0.6 + Math.sin(frame * 0.2) * 0.3) + ')';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(w / 2, h / 2, Math.max(w, h) * 0.75, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(0,206,201,0.12)';
+      ctx.fill();
+      ctx.restore();
+    }
+
+    if (cat.isDucking) {
+      // ── Поза скольжения на животе (Belly Slide) ──
+      // Искры скольжения
+      ctx.fillStyle = '#f6e58d';
+      for (var spk = 0; spk < 3; spk++) {
+        ctx.fillRect(-6 + Math.random() * 8, h - 2 + Math.random() * 4, 3, 2);
+      }
+
+      // Вытянутый хвост
+      ctx.strokeStyle = '#f39c12';
+      ctx.lineWidth = 3.5;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(2, h * 0.6);
+      ctx.lineTo(-12, h * 0.45);
+      ctx.stroke();
+
+      // Прижатое к земле тело
+      ctx.fillStyle = '#f39c12';
+      ctx.beginPath();
+      ctx.ellipse(w * 0.48, h * 0.65, w * 0.46, h * 0.32, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Голова прижата вперед
+      var dhx = w * 0.8, dhy = h * 0.55;
+      ctx.beginPath();
+      ctx.arc(dhx, dhy, 9, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Прижатые назад уши
+      ctx.beginPath();
+      ctx.moveTo(dhx - 5, dhy - 4);
+      ctx.lineTo(dhx - 14, dhy - 2);
+      ctx.lineTo(dhx - 3, dhy - 8);
+      ctx.closePath();
+      ctx.fill();
+
+      // Глаз
+      ctx.fillStyle = '#2d3436';
+      ctx.beginPath();
+      ctx.arc(dhx + 3, dhy - 1, 2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Нос и усы
+      ctx.fillStyle = '#e17055';
+      ctx.fillRect(dhx + 7, dhy + 1, 2, 2);
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(dhx + 5, dhy + 2); ctx.lineTo(dhx + 14, dhy);
+      ctx.moveTo(dhx + 5, dhy + 4); ctx.lineTo(dhx + 14, dhy + 5);
+      ctx.stroke();
+
+      ctx.restore();
+      return;
+    }
+
+    // ── Обычная поза бега и прыжка ──
+    // Хвост
     ctx.strokeStyle = '#f39c12';
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 3.5;
     ctx.lineCap = 'round';
     ctx.beginPath();
     ctx.moveTo(2, h * 0.5);
     ctx.quadraticCurveTo(-10, h * 0.2 + Math.sin(cat.tailAngle) * 10, -8, h * 0.05);
     ctx.stroke();
 
-    /* тело */
+    // Тело
     ctx.fillStyle = '#f39c12';
     ctx.beginPath();
     ctx.ellipse(w / 2, h * 0.55, w / 2, h * 0.35, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    /* голова */
+    // Голова
     ctx.beginPath();
     ctx.arc(w * 0.72, h * 0.28, 10, 0, Math.PI * 2);
     ctx.fill();
 
-    /* уши */
+    // Уши
     ctx.beginPath();
     ctx.moveTo(w * 0.6, h * 0.15);
     ctx.lineTo(w * 0.55, h * -0.05);
@@ -214,7 +1032,7 @@ canvas{display:block;margin:0 auto;cursor:pointer}
     ctx.lineTo(w * 0.9, h * 0.15);
     ctx.fill();
 
-    /* внутренние уши */
+    // Внутренние ушки
     ctx.fillStyle = '#e17055';
     ctx.beginPath();
     ctx.moveTo(w * 0.62, h * 0.14);
@@ -227,7 +1045,7 @@ canvas{display:block;margin:0 auto;cursor:pointer}
     ctx.lineTo(w * 0.88, h * 0.14);
     ctx.fill();
 
-    /* глаза */
+    // Глаза
     ctx.fillStyle = '#2d3436';
     if (cat.eyeBlink) {
       ctx.fillRect(w * 0.65, h * 0.25, 4, 2);
@@ -235,13 +1053,12 @@ canvas{display:block;margin:0 auto;cursor:pointer}
     } else {
       ctx.beginPath(); ctx.arc(w * 0.67, h * 0.26, 2.5, 0, Math.PI * 2); ctx.fill();
       ctx.beginPath(); ctx.arc(w * 0.78, h * 0.26, 2.5, 0, Math.PI * 2); ctx.fill();
-      /* блики */
       ctx.fillStyle = '#fff';
       ctx.beginPath(); ctx.arc(w * 0.68, h * 0.24, 1, 0, Math.PI * 2); ctx.fill();
       ctx.beginPath(); ctx.arc(w * 0.79, h * 0.24, 1, 0, Math.PI * 2); ctx.fill();
     }
 
-    /* нос */
+    // Носик
     ctx.fillStyle = '#e17055';
     ctx.beginPath();
     ctx.moveTo(w * 0.73, h * 0.32);
@@ -249,49 +1066,35 @@ canvas{display:block;margin:0 auto;cursor:pointer}
     ctx.lineTo(w * 0.75, h * 0.36);
     ctx.fill();
 
-    /* усы */
-    ctx.strokeStyle = '#636e72';
+    // Усы
+    ctx.strokeStyle = '#fff';
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(w * 0.6, h * 0.33); ctx.lineTo(w * 0.45, h * 0.28); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(w * 0.6, h * 0.36); ctx.lineTo(w * 0.44, h * 0.38); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(w * 0.86, h * 0.33); ctx.lineTo(w, h * 0.28); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(w * 0.86, h * 0.33); ctx.lineTo(w * 1.01, h * 0.28); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(w * 0.86, h * 0.36); ctx.lineTo(w * 1.01, h * 0.38); ctx.stroke();
 
-    /* лапы */
+    // Лапки
     ctx.fillStyle = '#e17055';
     ctx.lineWidth = 3;
     ctx.strokeStyle = '#f39c12';
 
-    /* передние */
-    ctx.beginPath();
-    ctx.moveTo(w * 0.65, h * 0.7);
-    ctx.lineTo(w * 0.68, h * 0.95 + legOff1);
-    ctx.stroke();
+    // Передние
+    ctx.beginPath(); ctx.moveTo(w * 0.65, h * 0.7); ctx.lineTo(w * 0.68, h * 0.95 + legOff1); ctx.stroke();
     ctx.beginPath(); ctx.arc(w * 0.68, h * 0.95 + legOff1, 2.5, 0, Math.PI * 2); ctx.fill();
-
-    ctx.beginPath();
-    ctx.moveTo(w * 0.55, h * 0.72);
-    ctx.lineTo(w * 0.57, h * 0.95 + legOff2);
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(w * 0.55, h * 0.72); ctx.lineTo(w * 0.57, h * 0.95 + legOff2); ctx.stroke();
     ctx.beginPath(); ctx.arc(w * 0.57, h * 0.95 + legOff2, 2.5, 0, Math.PI * 2); ctx.fill();
 
-    /* задние */
-    ctx.beginPath();
-    ctx.moveTo(w * 0.25, h * 0.7);
-    ctx.lineTo(w * 0.22, h * 0.95 + legOff2);
-    ctx.stroke();
+    // Задние
+    ctx.beginPath(); ctx.moveTo(w * 0.25, h * 0.7); ctx.lineTo(w * 0.22, h * 0.95 + legOff2); ctx.stroke();
     ctx.beginPath(); ctx.arc(w * 0.22, h * 0.95 + legOff2, 2.5, 0, Math.PI * 2); ctx.fill();
-
-    ctx.beginPath();
-    ctx.moveTo(w * 0.35, h * 0.72);
-    ctx.lineTo(w * 0.33, h * 0.95 + legOff1);
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(w * 0.35, h * 0.72); ctx.lineTo(w * 0.33, h * 0.95 + legOff1); ctx.stroke();
     ctx.beginPath(); ctx.arc(w * 0.33, h * 0.95 + legOff1, 2.5, 0, Math.PI * 2); ctx.fill();
 
-    /* полоски */
+    // Полоски
     ctx.strokeStyle = '#e17055';
     ctx.lineWidth = 1.5;
-    ctx.globalAlpha = 0.5;
+    ctx.globalAlpha = 0.6;
     for (var s = 0; s < 3; s++) {
       var sx = w * 0.3 + s * 8;
       ctx.beginPath();
@@ -304,50 +1107,173 @@ canvas{display:block;margin:0 auto;cursor:pointer}
     ctx.restore();
   }
 
-  /* ── рисование кактуса ── */
+  /* ── КАКТУС ── */
   function drawCactus(cx) {
     var baseX = cx.x, baseH = cx.h, baseW = cx.w;
     var topY = ground - baseH;
 
-    /* градиент */
     var grd = ctx.createLinearGradient(baseX, topY, baseX + baseW, ground);
     grd.addColorStop(0, '#00b894');
     grd.addColorStop(1, '#00cec9');
 
-    /* ствол */
     ctx.fillStyle = grd;
     roundRect(baseX, topY, baseW, baseH, 4);
 
-    /* шипы */
+    // Шипы
     ctx.fillStyle = '#55efc4';
     for (var s = 0; s < baseH; s += 8) {
-      ctx.beginPath();
-      ctx.moveTo(baseX, topY + s);
-      ctx.lineTo(baseX - 4, topY + s + 2);
-      ctx.lineTo(baseX, topY + s + 4);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(baseX + baseW, topY + s);
-      ctx.lineTo(baseX + baseW + 4, topY + s + 2);
-      ctx.lineTo(baseX + baseW, topY + s + 4);
-      ctx.fill();
+      ctx.beginPath(); ctx.moveTo(baseX, topY + s); ctx.lineTo(baseX - 4, topY + s + 2); ctx.lineTo(baseX, topY + s + 4); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(baseX + baseW, topY + s); ctx.lineTo(baseX + baseW + 4, topY + s + 2); ctx.lineTo(baseX + baseW, topY + s + 4); ctx.fill();
     }
 
-    if (cx.type === 'double') {
-      /* боковая ветка */
+    if (cx.cType === 'double' || cx.cType === 'triple') {
       ctx.fillStyle = grd;
       roundRect(baseX + baseW - 2, topY + baseH * 0.3, 10, baseH * 0.5, 3);
     }
+    if (cx.cType === 'triple') {
+      ctx.fillStyle = grd;
+      roundRect(baseX - 10, topY + baseH * 0.2, 10, baseH * 0.5, 3);
+    }
 
-    /* цветок сверху */
+    // Цветок
     ctx.fillStyle = '#fd79a8';
-    ctx.beginPath();
-    ctx.arc(baseX + baseW / 2, topY - 2, 4, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.beginPath(); ctx.arc(baseX + baseW / 2, topY - 2, 4, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#ffeaa7';
+    ctx.beginPath(); ctx.arc(baseX + baseW / 2, topY - 2, 2, 0, Math.PI * 2); ctx.fill();
+  }
+
+  /* ── ЛЕТУЧИЙ ДРОН-ПЕРЕХВАТЧИК (ПЕРЕКРЫВАЕТ ВЕРХ) ── */
+  function drawBatDrone(o) {
+    ctx.save();
+    ctx.translate(o.x, o.y);
+
+    // Upward Anti-Air Laser Barrier (Cannot be jumped over!)
+    var skyY = -o.y - 150;
+    var beamGrad = ctx.createLinearGradient(0, 0, o.w, 0);
+    beamGrad.addColorStop(0, 'rgba(253,121,168,0.06)');
+    beamGrad.addColorStop(0.5, 'rgba(253,121,168,' + (0.35 + Math.sin(frame * 0.25) * 0.2) + ')');
+    beamGrad.addColorStop(1, 'rgba(253,121,168,0.06)');
+    ctx.fillStyle = beamGrad;
+    ctx.fillRect(o.w * 0.1, skyY, o.w * 0.8, -skyY);
+
+    // Twin upward vertical laser beams
+    ctx.strokeStyle = 'rgba(253,121,168,0.85)';
+    ctx.lineWidth = 1.8;
     ctx.beginPath();
-    ctx.arc(baseX + baseW / 2, topY - 2, 2, 0, Math.PI * 2);
+    ctx.moveTo(o.w * 0.2, 0); ctx.lineTo(o.w * 0.2, skyY);
+    ctx.moveTo(o.w * 0.8, 0); ctx.lineTo(o.w * 0.8, skyY);
+    ctx.stroke();
+
+    // Body
+    ctx.fillStyle = '#2d3436';
+    ctx.beginPath();
+    ctx.ellipse(o.w / 2, o.h * 0.5, o.w * 0.35, o.h * 0.35, 0, 0, Math.PI * 2);
     ctx.fill();
+
+    // Mechanical Wings
+    var wingAngle = Math.sin(o.wingPhase) * 12;
+    ctx.fillStyle = '#0984e3';
+    ctx.beginPath();
+    ctx.moveTo(o.w * 0.3, o.h * 0.5);
+    ctx.lineTo(-8, o.h * 0.2 + wingAngle);
+    ctx.lineTo(o.w * 0.2, o.h * 0.8);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(o.w * 0.7, o.h * 0.5);
+    ctx.lineTo(o.w + 8, o.h * 0.2 - wingAngle);
+    ctx.lineTo(o.w * 0.8, o.h * 0.8);
+    ctx.closePath();
+    ctx.fill();
+
+    // Red Scanner Eye
+    ctx.fillStyle = '#ff7675';
+    ctx.beginPath();
+    ctx.arc(o.w * 0.5, o.h * 0.5, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Slide hint under drone
+    ctx.fillStyle = 'rgba(0,206,201,0.85)';
+    ctx.font = 'bold 7px "JetBrains Mono",monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('▼ ПОДКАТ', o.w * 0.5, o.h + 10);
+
+    ctx.restore();
+  }
+
+  /* ── КРИСТАЛЛИЧЕСКИЙ ЛАЗЕРНЫЙ БАРЬЕР ── */
+  function drawCrystalLaser(o) {
+    ctx.save();
+    ctx.translate(o.x, o.y);
+
+    ctx.fillStyle = '#6c5ce7';
+    ctx.fillRect(0, 0, 5, o.h);
+    ctx.fillRect(o.w - 5, 0, 5, o.h);
+
+    var alpha = 0.6 + Math.sin(frame * 0.3) * 0.35;
+    ctx.strokeStyle = 'rgba(253,121,168,' + alpha + ')';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(2, 6); ctx.lineTo(o.w - 2, 6);
+    ctx.moveTo(2, o.h / 2); ctx.lineTo(o.w - 2, o.h / 2);
+    ctx.moveTo(2, o.h - 6); ctx.lineTo(o.w - 2, o.h - 6);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  /* ── ПРЕДМЕТЫ / БОНУСЫ ── */
+  function drawItem(it) {
+    ctx.save();
+    var bobY = it.y + Math.sin(it.bobPhase) * 4;
+    ctx.translate(it.x, bobY);
+
+    if (it.type === 'fish') {
+      // Golden Fish
+      ctx.fillStyle = '#fd79a8';
+      ctx.shadowColor = '#fd79a8';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.ellipse(it.w * 0.45, it.h / 2, it.w * 0.35, it.h * 0.25, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Fish tail
+      ctx.beginPath();
+      ctx.moveTo(it.w * 0.7, it.h / 2);
+      ctx.lineTo(it.w, it.h * 0.2);
+      ctx.lineTo(it.w, it.h * 0.8);
+      ctx.closePath();
+      ctx.fill();
+      // Eye
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(it.w * 0.25, it.h * 0.4, 2, 2);
+    } else if (it.type === 'shield') {
+      ctx.fillStyle = '#00cec9';
+      ctx.shadowColor = '#00cec9';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(it.w / 2, it.h / 2, it.w / 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#2d3436';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🛡', it.w / 2, it.h / 2);
+    } else if (it.type === 'turbo') {
+      ctx.fillStyle = '#f39c12';
+      ctx.shadowColor = '#f39c12';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(it.w / 2, it.h / 2, it.w / 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#2d3436';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('⚡', it.w / 2, it.h / 2);
+    }
+
+    ctx.restore();
   }
 
   function roundRect(x, y, w, h, r) {
@@ -365,42 +1291,47 @@ canvas{display:block;margin:0 auto;cursor:pointer}
     ctx.fill();
   }
 
-  /* ── основная отрисовка ── */
+  /* ──────────────── Main Canvas Rendering ──────────────── */
   function draw() {
-    /* тряска камеры */
     var sx = 0, sy = 0;
     if (shake > 0) {
       sx = (Math.random() - 0.5) * shake;
       sy = (Math.random() - 0.5) * shake;
-      shake *= 0.85;
-      if (shake < 0.5) shake = 0;
+      shake *= 0.86;
+      if (shake < 0.4) shake = 0;
     }
+
     ctx.save();
     ctx.translate(sx, sy);
 
-    /* небо — градиент день/ночь */
-    var skyTop = lerpColor('#0f3460', '#0a0a23', nightCycle);
-    var skyBot = lerpColor('#1a1a5e', '#0f0f2e', nightCycle);
+    var lvl = getCurrentLevelConfig();
+
+    // 1. Sky Gradient
     var sky = ctx.createLinearGradient(0, 0, 0, ground);
-    sky.addColorStop(0, skyTop);
-    sky.addColorStop(1, skyBot);
+    sky.addColorStop(0, lvl.skyTop);
+    sky.addColorStop(1, lvl.skyBot);
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, W, ground);
 
-    /* звёзды ночью */
-    if (nightCycle > 0.4) {
-      ctx.fillStyle = 'rgba(255,255,255,' + ((nightCycle - 0.4) * 1.2) + ')';
-      for (var s = 0; s < 30; s++) {
-        var sx2 = (s * 137.5 + frame * 0.02) % W;
-        var sy2 = (s * 97.3) % (ground - 20) + 10;
-        ctx.beginPath();
-        ctx.arc(sx2, sy2, 1, 0, Math.PI * 2);
-        ctx.fill();
-      }
+    // 2. Stars
+    for (var s = 0; s < stars.length; s++) {
+      var st = stars[s];
+      var tw = Math.sin(frame * 0.05 + st.twinkle) * 0.4 + 0.6;
+      ctx.fillStyle = 'rgba(255,255,255,' + tw + ')';
+      ctx.fillRect(st.x, st.y, st.size, st.size);
     }
 
-    /* облака */
-    ctx.fillStyle = 'rgba(255,255,255,' + (0.12 + nightCycle * 0.05) + ')';
+    // 3. Parallax Dunes
+    for (var d = 0; d < dunes.length; d++) {
+      var dn = dunes[d];
+      ctx.fillStyle = 'rgba(0,0,0,0.2)';
+      ctx.beginPath();
+      ctx.ellipse(dn.x + dn.w / 2, ground, dn.w / 2, dn.h, 0, Math.PI, 0);
+      ctx.fill();
+    }
+
+    // 4. Clouds
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
     for (var k = 0; k < clouds.length; k++) {
       var cl = clouds[k];
       ctx.beginPath();
@@ -410,65 +1341,68 @@ canvas{display:block;margin:0 auto;cursor:pointer}
       ctx.fill();
     }
 
-    /* земля */
+    // 5. Ground / Desert Highway
     var gndGrd = ctx.createLinearGradient(0, ground, 0, H);
-    gndGrd.addColorStop(0, '#2d3436');
-    gndGrd.addColorStop(1, '#1a1a2e');
+    gndGrd.addColorStop(0, lvl.groundTop);
+    gndGrd.addColorStop(1, lvl.groundBot);
     ctx.fillStyle = gndGrd;
     ctx.fillRect(0, ground, W, H - ground);
 
-    /* трава */
-    ctx.strokeStyle = '#00b894';
+    // Glowing Desert Grass / Neon dash
+    ctx.strokeStyle = lvl.accentCol;
     ctx.lineWidth = 1.5;
-    for (var g = 0; g < W; g += 12) {
-      var gh = 4 + Math.sin(g * 0.5 + frame * 0.05) * 2;
+    for (var g = -((frame * spd) % 24); g < W; g += 24) {
       ctx.beginPath();
       ctx.moveTo(g, ground);
-      ctx.lineTo(g + 2, ground - gh);
+      ctx.lineTo(g + 3, ground - 4);
       ctx.stroke();
     }
 
-    /* линия земли */
-    ctx.strokeStyle = '#00b894';
-    ctx.lineWidth = 2;
+    // Neon ground line
     ctx.beginPath();
     ctx.moveTo(0, ground);
     ctx.lineTo(W, ground);
     ctx.stroke();
 
-    /* пыль при беге */
-    if (!dead && cat.jumps === 0) {
-      if (frame % 4 === 0) {
-        particles.push({
-          x: cat.x + 5,
-          y: ground - 2,
-          vx: -Math.random() * 2,
-          vy: -Math.random() * 1.5,
-          life: 12 + Math.random() * 8,
-          r: 1.5 + Math.random() * 2,
-          col: '#b2bec3'
-        });
-      }
+    // 6. Running Dust
+    if (!dead && cat.jumps === 0 && frame % 4 === 0) {
+      particles.push({
+        x: cat.x + 6,
+        y: ground - 3,
+        vx: -Math.random() * 2 - 1,
+        vy: -Math.random() * 1.5,
+        life: 14, maxLife: 14,
+        r: 1.5 + Math.random() * 2,
+        col: '#f6e58d'
+      });
     }
 
-    /* кактусы */
-    for (var i = 0; i < cacti.length; i++) {
-      drawCactus(cacti[i]);
+    // 7. Items
+    for (var it = 0; it < items.length; it++) {
+      drawItem(items[it]);
     }
 
-    /* тень кота */
-    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    // 8. Obstacles (Cacti, Bat Drones, Lasers)
+    for (var i = 0; i < obstacles.length; i++) {
+      var ob = obstacles[i];
+      if (ob.type === 'bat_drone') drawBatDrone(ob);
+      else if (ob.type === 'crystal_laser') drawCrystalLaser(ob);
+      else drawCactus(ob);
+    }
+
+    // 9. Cat Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
     var shadowScale = 1 - (ground - cat.h - cat.y) / 120;
-    if (shadowScale < 0.3) shadowScale = 0.3;
+    if (shadowScale < 0.25) shadowScale = 0.25;
     ctx.beginPath();
-    ctx.ellipse(cat.x + cat.w / 2, ground + 2, cat.w / 2 * shadowScale, 3 * shadowScale, 0, 0, Math.PI * 2);
+    ctx.ellipse(cat.x + cat.w / 2, ground + 2, (cat.w / 2) * shadowScale, 3 * shadowScale, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    /* кот */
+    // 10. Draw Cat
     if (!dead) {
       drawCat(cat.x, cat.y, cat.w, cat.h);
     } else {
-      /* мёртвый кот — перевёрнутый */
+      // Defeated Cat
       ctx.save();
       ctx.translate(cat.x + cat.w / 2, cat.y + cat.h / 2);
       ctx.rotate(Math.PI);
@@ -476,28 +1410,43 @@ canvas{display:block;margin:0 auto;cursor:pointer}
       drawCat(0, 0, cat.w, cat.h);
       ctx.restore();
 
-      /* текст */
-      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      // Game Over Card
+      ctx.fillStyle = 'rgba(13,17,30,0.85)';
       ctx.fillRect(0, 0, W, H);
-      ctx.fillStyle = '#e94560';
-      ctx.font = 'bold 22px system-ui';
+
+      ctx.strokeStyle = '#e17055';
+      ctx.lineWidth = 2;
+      var cardW = Math.min(W - 40, 420);
+      var cardH = 180;
+      var cardX = W / 2 - cardW / 2;
+      var cardY = H / 2 - cardH / 2;
+      ctx.strokeRect(cardX, cardY, cardW, cardH);
+      ctx.fillStyle = 'rgba(19,25,44,0.95)';
+      ctx.fillRect(cardX, cardY, cardW, cardH);
+
       ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('😿 Врезался!', W / 2, H / 2 - 16);
-      ctx.fillStyle = '#dfe6e9';
-      ctx.font = '14px system-ui';
-      ctx.fillText('Счёт: ' + score + ' | Рекорд: ' + best, W / 2, H / 2 + 14);
-      ctx.font = '12px system-ui';
-      ctx.fillStyle = '#888';
-      ctx.fillText('Тап или пробел — заново', W / 2, H / 2 + 38);
+      ctx.fillStyle = '#e17055';
+      ctx.font = 'bold 18px "Plus Jakarta Sans",system-ui';
+      ctx.fillText('😿 КОТ УСТАЛ И ОСТАНОВИЛСЯ', W / 2, cardY + 36);
+
+      ctx.fillStyle = '#f6e58d';
+      ctx.font = 'bold 13px "JetBrains Mono",monospace';
+      ctx.fillText('Счёт: ' + score + '  |  Рекорд: ' + best + '  |  Рыбка: ' + fishCount, W / 2, cardY + 70);
+
+      ctx.fillStyle = '#00cec9';
+      ctx.font = '11px "JetBrains Mono",monospace';
+      ctx.fillText('Локация: ' + lvl.name, W / 2, cardY + 98);
+
+      ctx.fillStyle = '#f39c12';
+      ctx.font = 'bold 12px "Plus Jakarta Sans",system-ui';
+      ctx.fillText('Нажмите ПРОБЕЛ или ТАП для нового забега', W / 2, cardY + 140);
       ctx.textAlign = 'start';
-      ctx.textBaseline = 'alphabetic';
     }
 
-    /* частицы */
+    // 11. Particles Render
     for (var p = 0; p < particles.length; p++) {
       var pt = particles[p];
-      ctx.globalAlpha = pt.life / 30;
+      ctx.globalAlpha = pt.life / pt.maxLife;
       ctx.fillStyle = pt.col;
       ctx.beginPath();
       ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI * 2);
@@ -505,54 +1454,170 @@ canvas{display:block;margin:0 auto;cursor:pointer}
     }
     ctx.globalAlpha = 1;
 
-    /* двойной прыжок индикатор */
+    // 12. Floating Text Popups
+    for (var ft = 0; ft < floatingTexts.length; ft++) {
+      var txt = floatingTexts[ft];
+      ctx.save();
+      ctx.globalAlpha = txt.life / txt.maxLife;
+      ctx.fillStyle = txt.col;
+      ctx.font = 'bold 12px "JetBrains Mono",monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(txt.text, txt.x, txt.y);
+      ctx.restore();
+    }
+
+    // 13. Jump Indicators (Stars)
     if (!dead) {
       for (var d = 0; d < cat.maxJumps; d++) {
+        ctx.fillStyle = d < (cat.maxJumps - cat.jumps) ? '#f6e58d' : '#475569';
         ctx.beginPath();
-        ctx.arc(cat.x + cat.w / 2 - 6 + d * 12, cat.y - 8, 4, 0, Math.PI * 2);
-        ctx.fillStyle = d < (cat.maxJumps - cat.jumps) ? '#f6e58d' : '#636e72';
+        ctx.arc(cat.x + cat.w / 2 - 6 + d * 12, cat.y - 10, 3.5, 0, Math.PI * 2);
         ctx.fill();
-        ctx.strokeStyle = '#2d3436';
-        ctx.lineWidth = 1;
-        ctx.stroke();
       }
     }
 
-    /* скорость */
-    if (!dead) {
-      ctx.fillStyle = 'rgba(255,255,255,0.3)';
-      ctx.font = '10px system-ui';
-      ctx.fillText('×' + spd.toFixed(1), W - 40, 16);
+    // 14. Level Up Banner
+    if (levelBannerTimer > 0) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, levelBannerTimer / 20);
+      ctx.fillStyle = 'rgba(13,17,30,0.88)';
+      ctx.fillRect(0, H * 0.32, W, 42);
+      ctx.strokeStyle = '#f39c12';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(0, H * 0.32, W, 42);
+
+      ctx.font = 'bold 14px "JetBrains Mono",monospace';
+      ctx.fillStyle = '#f6e58d';
+      ctx.textAlign = 'center';
+      ctx.fillText('⭐ ' + levelBannerText + ' ⭐', W / 2, H * 0.32 + 26);
+      ctx.restore();
+    }
+
+    // 15. Pause Screen
+    if (paused) {
+      ctx.fillStyle = 'rgba(13,17,30,0.7)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#f6e58d';
+      ctx.font = 'bold 22px "JetBrains Mono",monospace';
+      ctx.fillText('ПАУЗА', W / 2, H / 2 - 10);
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '12px system-ui';
+      ctx.fillText('Нажмите P или ⏸ чтобы продолжить', W / 2, H / 2 + 18);
+      ctx.textAlign = 'start';
     }
 
     ctx.restore();
   }
 
-  /* ── утилиты цвета ── */
-  function lerpColor(a, b, t) {
-    var ar = parseInt(a.slice(1, 3), 16), ag = parseInt(a.slice(3, 5), 16), ab = parseInt(a.slice(5, 7), 16);
-    var br = parseInt(b.slice(1, 3), 16), bg = parseInt(b.slice(3, 5), 16), bb = parseInt(b.slice(5, 7), 16);
-    var rr = Math.round(ar + (br - ar) * t);
-    var rg = Math.round(ag + (bg - ag) * t);
-    var rb = Math.round(ab + (bb - ab) * t);
-    return '#' + ((1 << 24) + (rr << 16) + (rg << 8) + rb).toString(16).slice(1);
-  }
+  /* ──────────────── Fixed Timestep Loop (60 FPS Locked) ──────────────── */
+  function loop(currentTime) {
+    if (!currentTime) currentTime = performance.now();
+    if (!lastTime) lastTime = currentTime;
 
-  /* ── цикл ── */
-  function loop() {
-    update();
+    var frameDelta = currentTime - lastTime;
+    lastTime = currentTime;
+
+    if (frameDelta > 200) frameDelta = 200;
+
+    accumulator += frameDelta;
+    while (accumulator >= FIXED_STEP) {
+      update();
+      accumulator -= FIXED_STEP;
+    }
+
     draw();
     requestAnimationFrame(loop);
   }
 
-  /* ── управление ── */
-  window.addEventListener('keydown', function (e) {
-    if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); jump(); }
-  });
-  c.addEventListener('touchstart', function (e) { e.preventDefault(); jump(); }, { passive: false });
-  c.addEventListener('click', function () { jump(); });
-  window.addEventListener('resize', resize);
+  /* ──────────────── Event Listeners: PC & Mobile ──────────────── */
 
+  // PC Keyboard
+  window.addEventListener('keydown', function (e) {
+    if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
+      e.preventDefault();
+      jump();
+    } else if (e.code === 'ArrowDown' || e.code === 'KeyS') {
+      e.preventDefault();
+      startDuck();
+    } else if (e.code === 'KeyP' || e.code === 'Escape') {
+      e.preventDefault();
+      togglePause();
+    } else if (e.code === 'KeyM') {
+      soundEnabled = !soundEnabled;
+      updateSoundButton();
+    }
+  });
+
+  window.addEventListener('keyup', function (e) {
+    if (e.code === 'ArrowDown' || e.code === 'KeyS') {
+      stopDuck();
+    }
+  });
+
+  // Canvas direct tap / pointer
+  c.addEventListener('pointerdown', function (e) {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    jump();
+  }, { passive: false });
+
+  // Mobile Touch Buttons
+  if (touchJump) {
+    touchJump.addEventListener('touchstart', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      touchJump.classList.add('active');
+      jump();
+    }, { passive: false });
+    touchJump.addEventListener('touchend', function () {
+      touchJump.classList.remove('active');
+    });
+  }
+
+  if (touchDuck) {
+    touchDuck.addEventListener('touchstart', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      touchDuck.classList.add('active');
+      startDuck();
+    }, { passive: false });
+    touchDuck.addEventListener('touchend', function () {
+      touchDuck.classList.remove('active');
+      stopDuck();
+    });
+    touchDuck.addEventListener('touchcancel', function () {
+      touchDuck.classList.remove('active');
+      stopDuck();
+    });
+  }
+
+  // Swipe Gestures on Mobile
+  var touchStartY = 0;
+  window.addEventListener('touchstart', function (e) {
+    if (e.touches && e.touches[0]) {
+      touchStartY = e.touches[0].clientY;
+    }
+  }, { passive: true });
+
+  window.addEventListener('touchmove', function (e) {
+    if (!e.touches || !e.touches[0]) return;
+    var dy = e.touches[0].clientY - touchStartY;
+    if (dy > 40) { // Swipe Down
+      startDuck();
+    } else if (dy < -40) { // Swipe Up
+      jump();
+    }
+  }, { passive: true });
+
+  window.addEventListener('touchend', function () {
+    stopDuck();
+  }, { passive: true });
+
+  window.addEventListener('resize', resize);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
+
+  // Start game
   init();
   loop();
 })();
