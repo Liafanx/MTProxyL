@@ -2,193 +2,892 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Meko Runner</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<title>Meko Runner — Спецоперация: Побег</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;700;800&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{width:100%;height:100%;overflow:hidden}
-body{position:fixed;inset:0;display:flex;flex-direction:column;background:#1a1a2e;font-family:system-ui,-apple-system,sans-serif;user-select:none;-webkit-user-select:none;touch-action:none;overscroll-behavior:none}
-canvas{display:block;flex:0 0 auto;margin:0 auto;cursor:pointer;touch-action:none}
-.ui{flex:0 0 auto;text-align:center;padding:16px;color:#e0e0e0}
-.ui h1{font-size:1.4rem;margin-bottom:4px;letter-spacing:2px}
-.ui .score{font-size:1.1rem;color:#f6d55c}
-.ui .hint{font-size:.8rem;color:#888;margin-top:6px}
-@media(max-width:600px){
-  .ui{padding:10px 8px 9px}
-  .ui h1{font-size:clamp(1.05rem,5.5vw,1.4rem);letter-spacing:1px}
-  .ui .score{font-size:1rem}
-  .ui .hint{font-size:.72rem;margin-top:4px}
+html,body{width:100%;height:100%;overflow:hidden;background:#0c0f1d}
+body{
+  position:fixed;inset:0;display:flex;flex-direction:column;
+  font-family:'Plus Jakarta Sans',system-ui,-apple-system,sans-serif;
+  user-select:none;-webkit-user-select:none;touch-action:none;overscroll-behavior:none;
+  color:#f1f5f9;
 }
-@media(max-height:520px){
-  .ui{padding:6px 8px}
-  .ui h1{font-size:1rem;margin-bottom:1px}
-  .ui .score{font-size:.85rem}
-  .ui .hint{display:none}
+
+/* Ambient glow */
+.ambient-glow {
+  position:absolute;inset:0;pointer-events:none;z-index:0;
+  background:radial-gradient(circle at 50% 30%, rgba(99,102,241,0.12) 0%, transparent 70%);
+}
+
+/* Top HUD bar */
+.hud {
+  position:relative;z-index:10;flex:0 0 auto;
+  display:flex;flex-direction:column;gap:6px;
+  padding:12px 16px 8px;background:rgba(12,15,29,0.85);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  border-bottom:1px solid rgba(255,255,255,0.08);
+}
+.hud-top {
+  display:flex;align-items:center;justify-content:between;gap:10px;
+}
+.brand {
+  display:flex;align-items:center;gap:8px;
+}
+.brand-icon {
+  width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#f59e0b,#ef4444);
+  display:flex;align-items:center;justify-content:center;font-size:15px;box-shadow:0 0 12px rgba(245,158,11,0.4);
+}
+.brand-title {
+  font-weight:800;font-size:1.1rem;letter-spacing:1px;
+  background:linear-gradient(90deg,#fff,#cbd5e1);-webkit-background-clip:text;-webkit-text-fill-color:transparent;
+}
+.level-badge {
+  font-family:'JetBrains Mono',monospace;font-size:0.7rem;font-weight:700;
+  padding:3px 8px;border-radius:6px;background:rgba(99,102,241,0.2);
+  color:#a5b4fc;border:1px solid rgba(99,102,241,0.3);letter-spacing:0.5px;
+}
+
+.stats-bar {
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;
+  font-family:'JetBrains Mono',monospace;font-size:0.85rem;
+}
+.stat-pill {
+  display:flex;align-items:center;gap:5px;background:rgba(255,255,255,0.04);
+  padding:4px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);
+}
+.stat-val {color:#f6d55c;font-weight:700}
+.stat-record {color:#38bdf8}
+.stat-crypto {color:#34d399}
+
+/* Level Progress mini-bar */
+.level-progress-wrap {
+  width:100%;height:4px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden;
+}
+.level-progress-fill {
+  height:100%;width:0%;background:linear-gradient(90deg,#6366f1,#38bdf8,#f59e0b);
+  transition:width 0.2s ease;
+}
+
+/* Control buttons header */
+.controls-hud {
+  display:flex;align-items:center;gap:6px;
+}
+.btn-icon {
+  background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);
+  color:#cbd5e1;padding:4px 8px;border-radius:6px;cursor:pointer;font-size:0.75rem;
+  display:flex;align-items:center;gap:4px;font-family:inherit;transition:all 0.15s ease;
+}
+.btn-icon:hover{background:rgba(255,255,255,0.12);color:#fff}
+.btn-icon:active{transform:scale(0.95)}
+
+/* Active Powerup Banner */
+.powerups-active {
+  display:flex;gap:6px;align-items:center;
+}
+.pup-badge {
+  display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:6px;
+  font-size:0.68rem;font-weight:700;font-family:'JetBrains Mono',monospace;animation:pulse 1s infinite;
+}
+.pup-shield {background:rgba(56,189,248,0.2);border:1px solid rgba(56,189,248,0.4);color:#38bdf8}
+.pup-turbo {background:rgba(245,158,11,0.2);border:1px solid rgba(245,158,11,0.4);color:#f59e0b}
+
+/* Canvas viewport */
+#canvas-wrapper {
+  position:relative;flex:1 1 auto;width:100%;height:100%;display:flex;
+  align-items:center;justify-content:center;overflow:hidden;
+}
+canvas {
+  display:block;margin:auto;touch-action:none;cursor:pointer;
+}
+
+/* On-screen Touch Controls (Mobile) */
+.touch-controls {
+  position:absolute;bottom:16px;left:0;right:0;padding:0 20px;
+  display:flex;justify-content:space-between;align-items:center;
+  pointer-events:none;z-index:25;
+}
+.touch-btn {
+  pointer-events:auto;
+  width:72px;height:72px;border-radius:24px;
+  background:rgba(15,23,42,0.7);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  border:2px solid rgba(255,255,255,0.15);color:#fff;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:2px;font-weight:800;font-size:0.75rem;box-shadow:0 8px 24px rgba(0,0,0,0.5);
+  transition:all 0.1s ease;-webkit-tap-highlight-color:transparent;
+}
+.touch-btn:active, .touch-btn.active {
+  transform:scale(0.92);background:rgba(99,102,241,0.5);border-color:#818cf8;box-shadow:0 0 16px rgba(99,102,241,0.6);
+}
+.touch-btn svg {width:24px;height:24px;stroke-width:2.5}
+.touch-btn-duck {border-color:rgba(56,189,248,0.3)}
+.touch-btn-jump {border-color:rgba(245,158,11,0.3)}
+
+/* Desktop Keys Help Overlay (Bottom) */
+.keys-hint {
+  position:absolute;bottom:6px;left:50%;transform:translateX(-50%);
+  display:flex;align-items:center;gap:12px;
+  font-size:0.72rem;color:rgba(255,255,255,0.45);font-family:'JetBrains Mono',monospace;
+  pointer-events:none;z-index:5;
+}
+.key-badge {
+  background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);
+  padding:2px 6px;border-radius:4px;color:#cbd5e1;font-weight:700;
+}
+
+@media(max-width:768px){
+  .keys-hint{display:none}
+}
+@media(min-width:769px){
+  .touch-controls{display:none}
 }
 </style>
 </head>
 <body>
-<div class="ui">
-  <h1>⭐ MEKO RUNNER ⭐</h1>
-  <div class="score">Счёт: <span id="sc">0</span> &nbsp; Рекорд: <span id="hi">0</span></div>
-  <div class="hint">Пробел / тап — прыжок (×2 в воздухе). Убегай от РКН!</div>
-</div>
 
-<canvas id="c"></canvas>
+<div class="ambient-glow"></div>
+
+<!-- Top HUD -->
+<header class="hud">
+  <div class="hud-top">
+    <div class="brand">
+      <div class="brand-icon">⭐</div>
+      <div class="brand-title">MEKO RUNNER</div>
+      <div id="lvl-badge" class="level-badge">УРОВЕНЬ 1: ГОРОД</div>
+    </div>
+    
+    <div class="controls-hud">
+      <div id="powerup-slots" class="powerups-active"></div>
+      <button id="btn-sound" class="btn-icon" title="Звук (M)">🔊 <span class="hidden sm:inline">Звук</span></button>
+      <button id="btn-pause" class="btn-icon" title="Пауза (P / Esc)">⏸</button>
+    </div>
+  </div>
+
+  <div class="stats-bar">
+    <div class="stat-pill">
+      <span>Счёт:</span>
+      <span id="sc" class="stat-val">0</span>
+    </div>
+    <div class="stat-pill">
+      <span>Рекорд:</span>
+      <span id="hi" class="stat-record">0</span>
+    </div>
+    <div class="stat-pill">
+      <span>Крипто-пакеты:</span>
+      <span id="crypto-sc" class="stat-crypto">0</span>
+    </div>
+    <div class="stat-pill">
+      <span>Комбо:</span>
+      <span id="combo-sc" class="stat-val" style="color:#a855f7">x1.0</span>
+    </div>
+  </div>
+
+  <!-- Progress to next level -->
+  <div class="level-progress-wrap" title="Прогресс уровня">
+    <div id="lvl-prog" class="level-progress-fill"></div>
+  </div>
+</header>
+
+<!-- Canvas Workspace -->
+<div id="canvas-wrapper">
+  <canvas id="c"></canvas>
+
+  <!-- Keys Hint on Desktop -->
+  <div class="keys-hint">
+    <span><span class="key-badge">Пробел</span> / <span class="key-badge">W</span> / <span class="key-badge">↑</span> Прыжок (×2)</span>
+    <span><span class="key-badge">S</span> / <span class="key-badge">↓</span> Подкат / Присесть</span>
+    <span><span class="key-badge">P</span> Пауза</span>
+  </div>
+
+  <!-- Touch Controls on Mobile -->
+  <div class="touch-controls">
+    <button id="touch-duck" class="touch-btn touch-btn-duck" aria-label="Подкат">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
+      <span>ПОДКАТ</span>
+    </button>
+    <button id="touch-jump" class="touch-btn touch-btn-jump" aria-label="Прыжок">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+      <span>ПРЫЖОК</span>
+    </button>
+  </div>
+</div>
 
 <script>
 (function () {
+  'use strict';
+
+  /* ──────────────── Web Audio Synthesizer ──────────────── */
+  var audioCtx = null;
+  var soundEnabled = localStorage.getItem('mekoSound') !== 'false';
+
+  function getAudioCtx() {
+    if (!audioCtx) {
+      var AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (AudioContext) audioCtx = new AudioContext();
+    }
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+    return audioCtx;
+  }
+
+  function playSound(type) {
+    if (!soundEnabled) return;
+    try {
+      var ctx = getAudioCtx();
+      if (!ctx) return;
+      var t = ctx.currentTime;
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      if (type === 'jump') {
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(220, t);
+        osc.frequency.exponentialRampToValueAtTime(580, t + 0.12);
+        gain.gain.setValueAtTime(0.18, t);
+        gain.gain.linearRampToValueAtTime(0.01, t + 0.12);
+        osc.start(t);
+        osc.stop(t + 0.12);
+      } else if (type === 'double_jump') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(440, t);
+        osc.frequency.exponentialRampToValueAtTime(880, t + 0.15);
+        gain.gain.setValueAtTime(0.2, t);
+        gain.gain.linearRampToValueAtTime(0.01, t + 0.15);
+        osc.start(t);
+        osc.stop(t + 0.15);
+      } else if (type === 'duck') {
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(160, t);
+        osc.frequency.linearRampToValueAtTime(80, t + 0.1);
+        gain.gain.setValueAtTime(0.1, t);
+        gain.gain.linearRampToValueAtTime(0.01, t + 0.1);
+        osc.start(t);
+        osc.stop(t + 0.1);
+      } else if (type === 'coin') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(987.77, t); // B5
+        osc.frequency.setValueAtTime(1318.51, t + 0.06); // E6
+        gain.gain.setValueAtTime(0.15, t);
+        gain.gain.linearRampToValueAtTime(0.01, t + 0.16);
+        osc.start(t);
+        osc.stop(t + 0.16);
+      } else if (type === 'shield') {
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(320, t);
+        osc.frequency.setValueAtTime(480, t + 0.08);
+        osc.frequency.setValueAtTime(640, t + 0.16);
+        gain.gain.setValueAtTime(0.12, t);
+        gain.gain.linearRampToValueAtTime(0.01, t + 0.28);
+        osc.start(t);
+        osc.stop(t + 0.28);
+      } else if (type === 'levelup') {
+        osc.type = 'triangle';
+        var freqs = [392, 523.25, 659.25, 783.99]; // G4, C5, E5, G5
+        freqs.forEach(function (f, i) {
+          var o = ctx.createOscillator();
+          var g = ctx.createGain();
+          o.type = 'triangle';
+          o.frequency.setValueAtTime(f, t + i * 0.08);
+          g.gain.setValueAtTime(0.15, t + i * 0.08);
+          g.gain.linearRampToValueAtTime(0.001, t + i * 0.08 + 0.2);
+          o.connect(g);
+          g.connect(ctx.destination);
+          o.start(t + i * 0.08);
+          o.stop(t + i * 0.08 + 0.2);
+        });
+      } else if (type === 'hit') {
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(140, t);
+        osc.frequency.linearRampToValueAtTime(30, t + 0.25);
+        gain.gain.setValueAtTime(0.3, t);
+        gain.gain.linearRampToValueAtTime(0.01, t + 0.25);
+        osc.start(t);
+        osc.stop(t + 0.25);
+      }
+    } catch (e) {}
+  }
+
+  /* ──────────────── DOM & Canvas Setup ──────────────── */
   var c = document.getElementById('c'),
-      ui = document.querySelector('.ui'),
       ctx = c.getContext('2d'),
-      W, H, dpr, ground, portrait, meko, foes, clouds, particles, spd, score, best, dead, frame, shake, nightCycle;
+      scEl = document.getElementById('sc'),
+      hiEl = document.getElementById('hi'),
+      cryptoEl = document.getElementById('crypto-sc'),
+      comboEl = document.getElementById('combo-sc'),
+      lvlBadge = document.getElementById('lvl-badge'),
+      lvlProg = document.getElementById('lvl-prog'),
+      pupSlots = document.getElementById('powerup-slots'),
+      btnSound = document.getElementById('btn-sound'),
+      btnPause = document.getElementById('btn-pause'),
+      touchDuck = document.getElementById('touch-duck'),
+      touchJump = document.getElementById('touch-jump');
+
+  var W, H, dpr, ground, portrait;
+  var meko, foes, items, clouds, cityBuildings, particles, floatingTexts, rainDrops;
+  var spd, score, best, cryptoCount, combo, comboTimer, dead, paused, frame, shake;
+  var currentLevel, levelBannerTimer, levelBannerText;
+  var lastTime = 0, accumulator = 0, FIXED_STEP = 1000 / 60;
 
   best = parseInt(localStorage.getItem('mekoBest') || '0', 10);
-  document.getElementById('hi').textContent = best;
+  hiEl.textContent = best;
 
+  function updateSoundButton() {
+    btnSound.innerHTML = soundEnabled ? '🔊 <span class="hidden sm:inline">Звук</span>' : '🔇 <span class="hidden sm:inline">Выкл</span>';
+    localStorage.setItem('mekoSound', soundEnabled ? 'true' : 'false');
+  }
+  updateSoundButton();
+  btnSound.addEventListener('click', function (e) {
+    e.stopPropagation();
+    soundEnabled = !soundEnabled;
+    updateSoundButton();
+    if (soundEnabled) playSound('coin');
+  });
+
+  btnPause.addEventListener('click', function (e) {
+    e.stopPropagation();
+    togglePause();
+  });
+
+  function togglePause() {
+    if (dead) return;
+    paused = !paused;
+    btnPause.textContent = paused ? '▶' : '⏸';
+  }
+
+  /* ──────────────── Levels Configuration ──────────────── */
+  var LEVELS = [
+    {
+      id: 1, name: 'ГОРОД: ЗОНА ПАТРУЛЯ', minScore: 0, nextScore: 30,
+      skyTop: '#0f172a', skyBot: '#312e81',
+      groundTop: '#475569', groundBot: '#1e293b',
+      speedBase: 1.8, hasRain: false
+    },
+    {
+      id: 2, name: 'ШОССЕ: ДРОНЫ СПЕЦСЛУЖБ', minScore: 30, nextScore: 75,
+      skyTop: '#030712', skyBot: '#1e1b4b',
+      groundTop: '#334155', groundBot: '#0f172a',
+      speedBase: 2.3, hasRain: true
+    },
+    {
+      id: 3, name: 'СЕРВЕРНОЕ КРИПТО-ЯДРО', minScore: 75, nextScore: 140,
+      skyTop: '#180326', skyBot: '#4a044e',
+      groundTop: '#701a75', groundBot: '#2e1065',
+      speedBase: 2.9, hasRain: false
+    },
+    {
+      id: 4, name: 'ГИПЕРПРОСТРАНСТВО: ПРОРЫВ', minScore: 140, nextScore: 9999,
+      skyTop: '#022c22', skyBot: '#0f766e',
+      groundTop: '#134e4a', groundBot: '#042f2e',
+      speedBase: 3.6, hasRain: false
+    }
+  ];
+
+  function getCurrentLevelConfig() {
+    for (var i = LEVELS.length - 1; i >= 0; i--) {
+      if (score >= LEVELS[i].minScore) return LEVELS[i];
+    }
+    return LEVELS[0];
+  }
+
+  /* ──────────────── Window Resize Handling ──────────────── */
   function resize() {
-    var viewport = window.visualViewport,
-        vw = viewport ? viewport.width : window.innerWidth,
-        vh = viewport ? viewport.height : window.innerHeight,
-        uiHeight = ui.getBoundingClientRect().height,
-        oldGround = ground,
-        wasGrounded = meko && oldGround && Math.abs(meko.y - (oldGround - meko.h)) < 2;
-    W = Math.min(Math.floor(vw), 720);
-    H = Math.max(160, Math.floor(vh - uiHeight));
+    var wrapper = document.getElementById('canvas-wrapper');
+    var vw = wrapper.clientWidth;
+    var vh = wrapper.clientHeight;
+    W = Math.min(Math.floor(vw), 860);
+    H = Math.max(200, Math.floor(vh));
     portrait = vh > vw;
     dpr = Math.min(window.devicePixelRatio || 1, 2);
+
     c.style.width = W + 'px';
     c.style.height = H + 'px';
     c.width = Math.floor(W * dpr);
     c.height = Math.floor(H * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ground = portrait ? Math.max(120, Math.floor(H * 0.72)) : H - 40;
+
+    ground = portrait ? Math.max(140, Math.floor(H * 0.74)) : H - 52;
     if (meko) {
       var floor = ground - meko.h;
-      if (wasGrounded || meko.y > floor) meko.y = floor;
+      if (meko.y >= floor - 4) meko.y = floor;
     }
   }
 
+  /* ──────────────── Game Initialization ──────────────── */
   function init() {
     resize();
-    score = 0; dead = false; frame = 0; spd = 3.8; shake = 0; nightCycle = 0;
+    lastTime = performance.now();
+    accumulator = 0;
+    score = 0;
+    cryptoCount = 0;
+    combo = 1.0;
+    comboTimer = 0;
+    dead = false;
+    paused = false;
+    frame = 0;
+    spd = 1.8;
+    shake = 0;
+    currentLevel = LEVELS[0];
+    levelBannerTimer = 0;
+    levelBannerText = '';
+
     meko = {
-      x: 80, y: ground - 60, w: 44, h: 60,
+      x: 70, y: ground - 60, w: 44, h: 60,
       vy: 0, jumps: 0, maxJumps: 2,
-      legFrame: 0, tailAngle: 0, eyeBlink: 0
+      legFrame: 0, tailAngle: 0, eyeBlink: 0,
+      isDucking: false,
+      shield: false,
+      turboTimer: 0,
+      scaleX: 1, scaleY: 1,
+      trail: []
     };
-    foes = []; clouds = []; particles = [];
-    for (var i = 0; i < 4; i++) {
-      clouds.push({
-        x: Math.random() * W,
-        y: 20 + Math.random() * 70,
-        r: 20 + Math.random() * 25,
-        s: 0.3 + Math.random() * 0.5
+
+    foes = [];
+    items = [];
+    clouds = [];
+    cityBuildings = [];
+    particles = [];
+    floatingTexts = [];
+    rainDrops = [];
+
+    // Background skyline
+    for (var b = 0; b < 12; b++) {
+      cityBuildings.push({
+        x: b * 80,
+        w: 50 + Math.random() * 40,
+        h: 60 + Math.random() * 120,
+        windows: Math.floor(Math.random() * 8)
       });
     }
-    document.getElementById('sc').textContent = '0';
+
+    // Clouds
+    for (var i = 0; i < 5; i++) {
+      clouds.push({
+        x: Math.random() * W,
+        y: 20 + Math.random() * 60,
+        r: 18 + Math.random() * 26,
+        s: 0.3 + Math.random() * 0.4
+      });
+    }
+
+    // Rain
+    for (var r = 0; r < 35; r++) {
+      rainDrops.push({
+        x: Math.random() * W,
+        y: Math.random() * H,
+        len: 8 + Math.random() * 10,
+        spd: 12 + Math.random() * 6
+      });
+    }
+
+    updateUI();
   }
 
+  function updateUI() {
+    scEl.textContent = score;
+    cryptoEl.textContent = cryptoCount;
+    comboEl.textContent = 'x' + combo.toFixed(1);
+
+    var lvl = getCurrentLevelConfig();
+    lvlBadge.textContent = 'УРОВЕНЬ ' + lvl.id + ': ' + lvl.name.split(':')[0];
+
+    var range = (lvl.nextScore - lvl.minScore) || 100;
+    var cur = Math.min(range, score - lvl.minScore);
+    var pct = Math.min(100, Math.floor((cur / range) * 100));
+    lvlProg.style.width = pct + '%';
+
+    // Powerup slots HUD
+    var html = '';
+    if (meko.shield) {
+      html += '<span class="pup-badge pup-shield">🛡️ ЩИТ</span>';
+    }
+    if (meko.turboTimer > 0) {
+      var sec = (meko.turboTimer / 60).toFixed(1);
+      html += '<span class="pup-badge pup-turbo">⚡ ТУРБО ' + sec + 's</span>';
+    }
+    pupSlots.innerHTML = html;
+  }
+
+  /* ──────────────── Controls Logic ──────────────── */
   function jump() {
+    if (paused) return;
     if (dead) { init(); return; }
+
+    if (meko.isDucking) {
+      stopDuck();
+    }
+
     if (meko.jumps < meko.maxJumps) {
-      meko.vy = meko.jumps === 0 ? -12 : -10;
+      meko.vy = meko.jumps === 0 ? -10.8 : -9.4;
       meko.jumps++;
+      meko.scaleX = 0.82;
+      meko.scaleY = 1.25;
+      playSound(meko.jumps === 1 ? 'jump' : 'double_jump');
+
+      // Spawn jump dust particles
       for (var i = 0; i < 8; i++) {
         particles.push({
           x: meko.x + meko.w / 2,
           y: meko.y + meko.h,
-          vx: (Math.random() - 0.5) * 3,
+          vx: (Math.random() - 0.5) * 4,
           vy: Math.random() * 2 + 1,
-          life: 22,
-          maxLife: 22,
+          life: 20, maxLife: 20,
           r: 2 + Math.random() * 3,
-          col: meko.jumps === 2 ? '#f6d55c' : '#dfe6e9'
+          col: meko.jumps === 2 ? '#f6d55c' : '#cbd5e1'
         });
       }
     }
   }
 
-  function spawnFoe() {
+  function startDuck() {
+    if (paused || dead) return;
+    if (!meko.isDucking) {
+      meko.isDucking = true;
+      meko.h = 28; // Compact slide height for passing under drones
+      if (meko.jumps === 0) {
+        meko.y = ground - meko.h;
+      } else {
+        meko.vy += 6; // Controlled quick drop if in air
+      }
+      playSound('duck');
+    }
+  }
+
+  function stopDuck() {
+    if (meko.isDucking) {
+      meko.isDucking = false;
+      meko.h = 60;
+      meko.y = ground - meko.h;
+      meko.scaleX = 1.1;
+      meko.scaleY = 0.92;
+    }
+  }
+
+  /* ──────────────── Spawning: Obstacles & Powerups ──────────────── */
+  function spawnObstacle() {
     var last = foes.length ? foes[foes.length - 1] : null;
-    // случайный минимальный интервал между сотрудниками
-    var minGap = 180 + Math.random() * 200; // 180–380 px
+    var minGap = 280 + Math.random() * 220;
     if (last && (W - last.x) < minGap) return;
 
-    // случайный рост и ширина
-    var type = Math.random();
-    var h, w;
-    if (type < 0.35) {
-      // низкий (сержант)
-      h = 46 + Math.random() * 6;
-      w = 26;
-    } else if (type < 0.75) {
-      // средний
-      h = 58 + Math.random() * 8;
-      w = 30;
+    var lvl = getCurrentLevelConfig();
+    var roll = Math.random();
+
+    // In Level 2+, we introduce flying Surveillance Drones (Дроны спецслужб)
+    // Flying at head-height: hits standing player (60px), safely clears ducking player (28px)!
+    if (lvl.id >= 2 && roll < 0.35) {
+      foes.push({
+        type: 'drone',
+        x: W + 20,
+        y: ground - 54, // Bottom is at ground - 28
+        w: 42,
+        h: 26,
+        wingPhase: 0,
+        scanPhase: 0
+      });
+      return;
+    }
+
+    // In Level 3+, we introduce Laser Barrier / Crypto Firewall
+    if (lvl.id >= 3 && roll > 0.82) {
+      foes.push({
+        type: 'laser',
+        x: W + 20,
+        y: ground - 42,
+        w: 24,
+        h: 42
+      });
+      return;
+    }
+
+    // Default: Сотрудники спецслужб (разные звания и экипировка)
+    var rankRoll = Math.random();
+    var fw, fh, rankName;
+    if (rankRoll < 0.4) {
+      // Младший сотрудник спецслужб
+      fw = 28; fh = 48; rankName = 'Мл. агент';
+    } else if (rankRoll < 0.8) {
+      // Старший оперативник спецслужб
+      fw = 32; fh = 60; rankName = 'Оперативник';
     } else {
-      // высокий (майор)
-      h = 72 + Math.random() * 10;
-      w = 32;
+      // Майор спецслужб в бронежилете
+      fw = 36; fh = 74; rankName = 'Майор';
     }
 
     foes.push({
-      x: W + 10,
-      w: w,
-      h: h,
-      tint: Math.random() < 0.3 ? '#4a3d6b' : '#3d4a6b'
+      type: 'agent',
+      x: W + 20,
+      w: fw,
+      h: fh,
+      rank: rankName,
+      tint: rankRoll > 0.8 ? '#1e293b' : (rankRoll > 0.4 ? '#0f172a' : '#1e1b4b')
     });
   }
 
+  function spawnItem() {
+    var roll = Math.random();
+    var itemType = 'crypto';
+    if (roll < 0.15 && !meko.shield) itemType = 'shield';
+    else if (roll < 0.28) itemType = 'turbo';
+
+    items.push({
+      type: itemType,
+      x: W + 30,
+      y: ground - 40 - Math.random() * 55, // in air or close to ground
+      w: 24,
+      h: 24,
+      bobPhase: Math.random() * Math.PI * 2
+    });
+  }
+
+  function addFloatingText(text, x, y, col) {
+    floatingTexts.push({
+      text: text, x: x, y: y, col: col || '#f6d55c', life: 40, maxLife: 40
+    });
+  }
+
+  /* ──────────────── Game Engine Update Loop ──────────────── */
   function update() {
-    if (dead) return;
+    if (dead || paused) return;
     frame++;
-    nightCycle = (Math.sin(frame * 0.002) + 1) / 2;
 
-    var interval = Math.max(20, 50 - score * 0.3);
-    if (frame % Math.floor(interval) === 0) spawnFoe();
+    // Level progression check
+    var lvl = getCurrentLevelConfig();
+    if (lvl.id !== currentLevel.id) {
+      currentLevel = lvl;
+      levelBannerText = 'НОВЫЙ РУБЕЖ: ' + lvl.name;
+      levelBannerTimer = 110;
+      shake = 10;
+      playSound('levelup');
+      addFloatingText('УРОВЕНЬ ' + lvl.id + '!', W / 2, H / 2 - 20, '#38bdf8');
+    }
 
-    meko.vy += 0.6;
+    // Smooth progressive speed curve: starts at 1.8 and steadily increases with score
+    var targetSpd = 1.8 + Math.min(4.8, score * 0.022);
+    if (meko.turboTimer > 0) targetSpd += 2.0;
+    spd += (targetSpd - spd) * 0.02;
+
+    // Combo timer
+    if (comboTimer > 0) {
+      comboTimer--;
+      if (comboTimer <= 0) combo = 1.0;
+    }
+
+    // Spawning frequency
+    var foeInterval = Math.max(50, Math.floor(95 - spd * 6));
+    if (frame % foeInterval === 0) spawnObstacle();
+
+    if (frame % 160 === 0 && Math.random() < 0.7) spawnItem();
+
+    // Smooth squash/stretch recovery
+    meko.scaleX += (1.0 - meko.scaleX) * 0.14;
+    meko.scaleY += (1.0 - meko.scaleY) * 0.14;
+
+    // Floaty apex gravity physics
+    var currentG = 0.32;
+    if (Math.abs(meko.vy) < 2.0 && meko.jumps > 0) {
+      currentG = 0.16; // Smooth floaty apex hang-time!
+    }
+    meko.vy += currentG;
     meko.y += meko.vy;
+
     var floor = ground - meko.h;
-    if (meko.y >= floor) { meko.y = floor; meko.vy = 0; meko.jumps = 0; }
+    if (meko.y >= floor) {
+      if (meko.vy > 2.5) {
+        // Landing squash
+        meko.scaleX = 1.2;
+        meko.scaleY = 0.82;
+      }
+      meko.y = floor;
+      meko.vy = 0;
+      meko.jumps = 0;
+    }
 
-    meko.legFrame += spd * 0.2;
-    meko.tailAngle = Math.sin(frame * 0.08) * 0.5;
-    meko.eyeBlink = (frame % 200 < 6) ? 1 : 0;
+    meko.legFrame += spd * 0.22;
+    meko.tailAngle = Math.sin(frame * 0.1) * 0.6;
+    meko.eyeBlink = (frame % 220 < 7) ? 1 : 0;
 
-    for (var i = foes.length - 1; i >= 0; i--) {
-      foes[i].x -= spd;
-      if (foes[i].x + foes[i].w < 0) {
-        foes.splice(i, 1);
-        score++;
-        document.getElementById('sc').textContent = score;
+    // Turbo powerup countdown
+    if (meko.turboTimer > 0) {
+      meko.turboTimer--;
+      // Turbo particles
+      particles.push({
+        x: meko.x,
+        y: meko.y + Math.random() * meko.h,
+        vx: -spd * 0.8,
+        vy: (Math.random() - 0.5) * 2,
+        life: 16, maxLife: 16,
+        r: 3 + Math.random() * 2,
+        col: Math.random() < 0.5 ? '#f59e0b' : '#38bdf8'
+      });
+    }
+
+    // Update Items
+    for (var it = items.length - 1; it >= 0; it--) {
+      var item = items[it];
+      item.x -= spd;
+      item.bobPhase += 0.08;
+
+      // Magnet effect when turbo is active
+      if (meko.turboTimer > 0) {
+        var dx = (meko.x + meko.w / 2) - item.x;
+        var dy = (meko.y + meko.h / 2) - item.y;
+        var dist = Math.hypot(dx, dy);
+        if (dist < 180) {
+          item.x += dx * 0.15;
+          item.y += dy * 0.15;
+        }
+      }
+
+      // Collect item check
+      var collides = (
+        meko.x + meko.w > item.x &&
+        meko.x < item.x + item.w &&
+        meko.y + meko.h > item.y &&
+        meko.y < item.y + item.h
+      );
+
+      if (collides) {
+        if (item.type === 'crypto') {
+          var pts = Math.round(10 * combo);
+          score += pts;
+          cryptoCount++;
+          playSound('coin');
+          addFloatingText('+' + pts + ' Crypto', item.x, item.y, '#34d399');
+        } else if (item.type === 'shield') {
+          meko.shield = true;
+          playSound('shield');
+          addFloatingText('🛡️ КИБЕР-ЩИТ!', item.x, item.y - 10, '#38bdf8');
+        } else if (item.type === 'turbo') {
+          meko.turboTimer = 300; // 5 seconds
+          playSound('shield');
+          addFloatingText('⚡ ТУРБО-ПРОРЫВ!', item.x, item.y - 10, '#f59e0b');
+        }
+        items.splice(it, 1);
         continue;
       }
+
+      if (item.x + item.w < -20) items.splice(it, 1);
+    }
+
+    // Update Foes (Сотрудники спецслужб / Дроны / Барьеры)
+    for (var i = foes.length - 1; i >= 0; i--) {
       var f = foes[i];
-      if (
-        meko.x + meko.w - 10 > f.x + 4 &&
-        meko.x + 10 < f.x + f.w - 4 &&
-        meko.y + meko.h > ground - f.h + 6
-      ) {
-        dead = true;
-        shake = 14;
-        if (score > best) {
-          best = score;
-          localStorage.setItem('mekoBest', best);
-          document.getElementById('hi').textContent = best;
+      f.x -= spd;
+
+      // Clean off-screen foes & award score
+      if (f.x + (f.w || 30) < -20) {
+        foes.splice(i, 1);
+        score += Math.round(1 * combo);
+        combo = Math.min(4.0, combo + 0.1);
+        comboTimer = 180; // keep combo for 3 seconds
+        continue;
+      }
+
+      // Collision Detection Box with Hitbox padding
+      var hitBox;
+      if (meko.isDucking) {
+        hitBox = {
+          x: meko.x + 4,
+          y: meko.y + 2,
+          w: meko.w - 8,
+          h: meko.h - 4
+        };
+      } else {
+        hitBox = {
+          x: meko.x + 8,
+          y: meko.y + 4,
+          w: meko.w - 16,
+          h: meko.h - 8
+        };
+      }
+
+      var foeBox;
+      if (f.type === 'drone') {
+        f.wingPhase += 0.3;
+        // Drone vertical barrier: blocks all jumps (extends skyward), can ONLY be passed by sliding under!
+        foeBox = { x: f.x + 4, y: -300, w: f.w - 8, h: (ground - 28) - (-300) };
+      } else if (f.type === 'laser') {
+        foeBox = { x: f.x + 4, y: f.y + 4, w: f.w - 8, h: f.h - 6 };
+      } else {
+        // agent
+        foeBox = { x: f.x + 6, y: ground - f.h + 4, w: f.w - 12, h: f.h - 6 };
+      }
+
+      var overlap = (
+        hitBox.x + hitBox.w > foeBox.x &&
+        hitBox.x < foeBox.x + foeBox.w &&
+        hitBox.y + hitBox.h > foeBox.y &&
+        hitBox.y < foeBox.y + foeBox.h
+      );
+
+      if (overlap) {
+        if (meko.turboTimer > 0) {
+          // Smash obstacle during turbo
+          foes.splice(i, 1);
+          shake = 8;
+          playSound('hit');
+          addFloatingText('ПРОРЫВ! +25', f.x, ground - 50, '#f59e0b');
+          score += 25;
+          for (var sp = 0; sp < 15; sp++) {
+            particles.push({
+              x: f.x, y: ground - 30,
+              vx: (Math.random() - 0.5) * 8, vy: (Math.random() - 0.5) * 8,
+              life: 25, maxLife: 25, r: 3, col: '#f59e0b'
+            });
+          }
+        } else if (meko.shield) {
+          // Shield absorbs the blow!
+          meko.shield = false;
+          foes.splice(i, 1);
+          shake = 12;
+          playSound('hit');
+          addFloatingText('ЩИТ СБИТ!', meko.x, meko.y - 15, '#38bdf8');
+          for (var p = 0; p < 18; p++) {
+            particles.push({
+              x: meko.x + meko.w / 2, y: meko.y + meko.h / 2,
+              vx: (Math.random() - 0.5) * 6, vy: (Math.random() - 0.5) * 6,
+              life: 25, maxLife: 25, r: 3, col: '#38bdf8'
+            });
+          }
+        } else {
+          // MEKO CAUGHT BY SPECIAL SERVICES
+          dead = true;
+          shake = 18;
+          playSound('hit');
+          if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+
+          if (score > best) {
+            best = score;
+            localStorage.setItem('mekoBest', best);
+            hiEl.textContent = best;
+          }
+
+          for (var j = 0; j < 25; j++) {
+            particles.push({
+              x: meko.x + meko.w / 2,
+              y: meko.y + meko.h / 2,
+              vx: (Math.random() - 0.5) * 8,
+              vy: (Math.random() - 0.5) * 8,
+              life: 45, maxLife: 45,
+              r: 2 + Math.random() * 4,
+              col: '#ef4444'
+            });
+          }
         }
-        for (var j = 0; j < 20; j++) {
-          particles.push({
-            x: meko.x + meko.w / 2,
-            y: meko.y + meko.h / 2,
-            vx: (Math.random() - 0.5) * 7,
-            vy: (Math.random() - 0.5) * 7,
-            life: 40, maxLife: 40,
-            r: 2 + Math.random() * 4,
-            col: '#e94560'
-          });
-        }
+      }
+    }
+
+    // Parallax background updates
+    for (var b = 0; b < cityBuildings.length; b++) {
+      cityBuildings[b].x -= spd * 0.15;
+      if (cityBuildings[b].x + cityBuildings[b].w < 0) {
+        cityBuildings[b].x = W + Math.random() * 40;
+        cityBuildings[b].h = 60 + Math.random() * 120;
       }
     }
 
@@ -196,215 +895,45 @@ canvas{display:block;flex:0 0 auto;margin:0 auto;cursor:pointer;touch-action:non
       clouds[k].x -= clouds[k].s;
       if (clouds[k].x + clouds[k].r < 0) {
         clouds[k].x = W + clouds[k].r;
-        clouds[k].y = 20 + Math.random() * 70;
+        clouds[k].y = 20 + Math.random() * 60;
       }
     }
 
-    for (var p = particles.length - 1; p >= 0; p--) {
-      var pt = particles[p];
-      pt.x += pt.vx; pt.y += pt.vy;
-      pt.life--;
-      if (pt.life <= 0) particles.splice(p, 1);
+    // Rain if level has rain
+    if (lvl.hasRain) {
+      for (var rn = 0; rn < rainDrops.length; rn++) {
+        var drop = rainDrops[rn];
+        drop.x -= spd * 0.8;
+        drop.y += drop.spd;
+        if (drop.y > ground || drop.x < 0) {
+          drop.x = Math.random() * (W + 100);
+          drop.y = -10;
+        }
+      }
     }
 
-    if (frame % 200 === 0 && spd < 9.5) spd += 0.25;
+    // Particles update
+    for (var ptIdx = particles.length - 1; ptIdx >= 0; ptIdx--) {
+      var p = particles[ptIdx];
+      p.x += p.vx; p.y += p.vy;
+      p.life--;
+      if (p.life <= 0) particles.splice(ptIdx, 1);
+    }
+
+    // Floating Texts update
+    for (var ftIdx = floatingTexts.length - 1; ftIdx >= 0; ftIdx--) {
+      var ft = floatingTexts[ftIdx];
+      ft.y -= 1.2;
+      ft.life--;
+      if (ft.life <= 0) floatingTexts.splice(ftIdx, 1);
+    }
+
+    if (levelBannerTimer > 0) levelBannerTimer--;
+
+    updateUI();
   }
 
-  /* ── MEKO ── */
-  function drawMeko(px, py, w, h) {
-    var onGround = meko.jumps === 0 && meko.vy === 0;
-    var legPhase = onGround ? Math.sin(meko.legFrame) : 0;
-    var armPhase = onGround ? Math.sin(meko.legFrame + Math.PI) : 0;
-    var legOff1 = onGround ? legPhase * 6 : -4;
-    var legOff2 = onGround ? -legPhase * 6 : 4;
-    var armOff1 = onGround ? armPhase * 5 : -6;
-    var armOff2 = onGround ? -armPhase * 5 : -6;
-
-    ctx.save();
-    ctx.translate(px, py);
-
-    // имя MEKO над головой
-    ctx.save();
-    ctx.font = 'bold 11px system-ui';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(w/2 - 22, -18, 44, 14);
-    ctx.strokeStyle = '#f6d55c';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(w/2 - 22, -18, 44, 14);
-    ctx.fillStyle = '#f6d55c';
-    ctx.fillText('MEKO', w/2, -7);
-    ctx.restore();
-
-    // хвост
-    ctx.strokeStyle = '#0a0a0a';
-    ctx.lineWidth = 5;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(w * 0.15, h * 0.55);
-    ctx.quadraticCurveTo(
-      -6, h * 0.45 + Math.sin(meko.tailAngle) * 8,
-      -4, h * 0.25 + Math.sin(meko.tailAngle + 0.5) * 6
-    );
-    ctx.stroke();
-
-    // ноги
-    ctx.fillStyle = '#1a1a1a';
-    ctx.fillRect(w * 0.32, h * 0.78, 7, 14 + legOff1);
-    ctx.fillRect(w * 0.30, h * 0.78 + 14 + legOff1, 11, 4);
-    ctx.fillRect(w * 0.52, h * 0.78, 7, 14 + legOff2);
-    ctx.fillRect(w * 0.50, h * 0.78 + 14 + legOff2, 11, 4);
-
-    // китель
-    var coatX = w * 0.18, coatY = h * 0.38, coatW = w * 0.64, coatH = h * 0.42;
-    ctx.fillStyle = '#d4a017';
-    ctx.fillRect(coatX - 1, coatY - 1, coatW + 2, coatH + 2);
-
-    var coatGrd = ctx.createLinearGradient(coatX, coatY, coatX, coatY + coatH);
-    coatGrd.addColorStop(0, '#2c3e70');
-    coatGrd.addColorStop(1, '#1a2450');
-    ctx.fillStyle = coatGrd;
-    ctx.fillRect(coatX, coatY, coatW, coatH);
-
-    // звёзды на кителе
-    ctx.fillStyle = '#f6d55c';
-    var starPositions = [
-      [0.28,0.44],[0.42,0.42],[0.58,0.44],[0.72,0.42],
-      [0.35,0.52],[0.52,0.5],[0.68,0.54],[0.25,0.6],
-      [0.45,0.62],[0.62,0.6],[0.75,0.64],[0.32,0.7],
-      [0.55,0.72],[0.7,0.72],[0.38,0.78],[0.6,0.78]
-    ];
-    for (var s = 0; s < starPositions.length; s++) {
-      drawStar(w * starPositions[s][0], h * starPositions[s][1], 1.8);
-    }
-
-    // пуговицы
-    ctx.fillStyle = '#f6d55c';
-    for (var b = 0; b < 4; b++) {
-      ctx.beginPath();
-      ctx.arc(w * 0.5, coatY + 6 + b * 8, 1.8, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.strokeStyle = '#8b6914';
-    ctx.lineWidth = 0.5;
-    for (var b2 = 0; b2 < 4; b2++) {
-      ctx.beginPath();
-      ctx.arc(w * 0.5, coatY + 6 + b2 * 8, 1.8, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-
-    // погоны
-    ctx.fillStyle = '#f6d55c';
-    ctx.fillRect(coatX - 2, coatY, 10, 5);
-    ctx.fillRect(coatX + coatW - 8, coatY, 10, 5);
-    ctx.fillStyle = '#8b6914';
-    drawStar(coatX + 3, coatY + 2.5, 1);
-    drawStar(coatX + coatW - 3, coatY + 2.5, 1);
-
-    // руки
-    ctx.fillStyle = coatGrd;
-    ctx.save();
-    ctx.translate(coatX + 3, coatY + 8);
-    ctx.rotate(armOff1 * 0.08);
-    ctx.fillRect(-3, 0, 7, 20);
-    ctx.fillStyle = '#0a0a0a';
-    ctx.beginPath();
-    ctx.arc(0.5, 22, 3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    ctx.fillStyle = coatGrd;
-    ctx.save();
-    ctx.translate(coatX + coatW - 3, coatY + 8);
-    ctx.rotate(armOff2 * 0.08);
-    ctx.fillRect(-4, 0, 7, 20);
-    ctx.fillStyle = '#0a0a0a';
-    ctx.beginPath();
-    ctx.arc(-0.5, 22, 3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    // воротник
-    ctx.fillStyle = '#d4a017';
-    ctx.fillRect(coatX + 6, coatY - 4, coatW - 12, 5);
-    ctx.fillStyle = '#2c3e70';
-    ctx.fillRect(coatX + 8, coatY - 3, coatW - 16, 3);
-
-    // голова
-    var headX = w * 0.5, headY = h * 0.22, headR = 14;
-
-    // уши
-    ctx.fillStyle = '#0a0a0a';
-    ctx.beginPath();
-    ctx.moveTo(headX - 12, headY - 4);
-    ctx.lineTo(headX - 16, headY - 20);
-    ctx.lineTo(headX - 4, headY - 10);
-    ctx.closePath();
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(headX + 12, headY - 4);
-    ctx.lineTo(headX + 15, headY - 18);
-    ctx.lineTo(headX + 4, headY - 10);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = '#8b3a5c';
-    ctx.beginPath();
-    ctx.moveTo(headX + 10, headY - 6);
-    ctx.lineTo(headX + 13, headY - 15);
-    ctx.lineTo(headX + 6, headY - 9);
-    ctx.closePath();
-    ctx.fill();
-
-    // морда
-    ctx.fillStyle = '#0a0a0a';
-    ctx.beginPath();
-    ctx.arc(headX, headY, headR, 0, Math.PI * 2);
-    ctx.fill();
-
-    // глаза
-    if (meko.eyeBlink) {
-      ctx.fillStyle = '#0a0a0a';
-      ctx.fillRect(headX - 8, headY - 1, 5, 1.5);
-      ctx.fillRect(headX + 3, headY - 1, 5, 1.5);
-    } else {
-      ctx.fillStyle = '#f5f5dc';
-      ctx.beginPath();
-      ctx.arc(headX - 5, headY - 1, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(headX + 5, headY - 1, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#0a0a0a';
-      ctx.beginPath();
-      ctx.arc(headX - 5, headY - 1, 1.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(headX + 5, headY - 1, 1.5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // нос
-    ctx.fillStyle = '#1a1a1a';
-    ctx.beginPath();
-    ctx.moveTo(headX - 2, headY + 4);
-    ctx.lineTo(headX + 2, headY + 4);
-    ctx.lineTo(headX, headY + 7);
-    ctx.closePath();
-    ctx.fill();
-
-    // усы белые
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 1.2;
-    ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(headX - 4, headY + 6); ctx.lineTo(headX - 18, headY + 4); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(headX - 4, headY + 7); ctx.lineTo(headX - 18, headY + 8); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(headX - 4, headY + 8); ctx.lineTo(headX - 17, headY + 12); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(headX + 4, headY + 6); ctx.lineTo(headX + 18, headY + 4); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(headX + 4, headY + 7); ctx.lineTo(headX + 18, headY + 8); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(headX + 4, headY + 8); ctx.lineTo(headX + 17, headY + 12); ctx.stroke();
-
-    ctx.restore();
-  }
+  /* ──────────────── Graphics & Drawing Routines ──────────────── */
 
   function drawStar(cx, cy, size) {
     ctx.beginPath();
@@ -421,41 +950,288 @@ canvas{display:block;flex:0 0 auto;margin:0 auto;cursor:pointer;touch-action:non
     ctx.fill();
   }
 
-  /* ── СОТРУДНИК ── */
-  function drawFoe(f) {
+  /* ── MEKO THE CAT ── */
+  function drawMeko(px, py, w, h) {
+    var onGround = meko.jumps === 0 && meko.vy === 0;
+    var legPhase = onGround ? Math.sin(meko.legFrame) : 0;
+    var armPhase = onGround ? Math.sin(meko.legFrame + Math.PI) : 0;
+    var legOff1 = onGround ? legPhase * 6 : -4;
+    var legOff2 = onGround ? -legPhase * 6 : 4;
+    var armOff1 = onGround ? armPhase * 5 : -6;
+    var armOff2 = onGround ? -armPhase * 5 : -6;
+
+    ctx.save();
+    // Dynamic squash and stretch animation
+    ctx.translate(px + w / 2, py + h);
+    ctx.scale(meko.scaleX || 1, meko.scaleY || 1);
+    ctx.translate(-w / 2, -h);
+
+    // Shield Aura
+    if (meko.shield) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(56,189,248,' + (0.6 + Math.sin(frame * 0.2) * 0.3) + ')';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(w / 2, h / 2, Math.max(w, h) * 0.75, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(56,189,248,0.12)';
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // MEKO Name Plate (only when standing)
+    if (!meko.isDucking) {
+      ctx.save();
+      ctx.font = 'bold 11px "JetBrains Mono",monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(15,23,42,0.8)';
+      ctx.fillRect(w / 2 - 24, -20, 48, 15);
+      ctx.strokeStyle = meko.turboTimer > 0 ? '#f59e0b' : '#f6d55c';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(w / 2 - 24, -20, 48, 15);
+      ctx.fillStyle = meko.turboTimer > 0 ? '#f59e0b' : '#f6d55c';
+      ctx.fillText('MEKO', w / 2, -9);
+      ctx.restore();
+    }
+
+    if (meko.isDucking) {
+      // ── Sliding / Ducking Pose ──
+      // Dust sparks under slide
+      ctx.fillStyle = '#f59e0b';
+      for (var spk = 0; spk < 3; spk++) {
+        ctx.fillRect(-8 + Math.random() * 10, h - 2 + Math.random() * 4, 3, 2);
+      }
+
+      // Body (horizontal)
+      ctx.fillStyle = '#1a2450';
+      ctx.fillRect(w * 0.1, h * 0.35, w * 0.75, h * 0.55);
+
+      // Gold stripes & stars
+      ctx.fillStyle = '#f6d55c';
+      drawStar(w * 0.35, h * 0.6, 2);
+      drawStar(w * 0.6, h * 0.6, 2);
+
+      // Head tucked forward
+      var dhx = w * 0.75, dhy = h * 0.45;
+      ctx.fillStyle = '#0a0a0a';
+      ctx.beginPath();
+      ctx.arc(dhx, dhy, 11, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Ducking ear
+      ctx.beginPath();
+      ctx.moveTo(dhx - 6, dhy - 6);
+      ctx.lineTo(dhx - 14, dhy - 12);
+      ctx.lineTo(dhx - 2, dhy - 12);
+      ctx.closePath();
+      ctx.fill();
+
+      // Eye
+      ctx.fillStyle = '#f6d55c';
+      ctx.beginPath();
+      ctx.arc(dhx + 5, dhy - 1, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Whiskers
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(dhx + 6, dhy + 3); ctx.lineTo(dhx + 16, dhy + 2);
+      ctx.moveTo(dhx + 6, dhy + 5); ctx.lineTo(dhx + 16, dhy + 6);
+      ctx.stroke();
+
+      ctx.restore();
+      return;
+    }
+
+    // ── Normal Running / Jumping Pose ──
+    // Tail
+    ctx.strokeStyle = '#0a0a0a';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(w * 0.15, h * 0.55);
+    ctx.quadraticCurveTo(
+      -6, h * 0.45 + Math.sin(meko.tailAngle) * 8,
+      -4, h * 0.25 + Math.sin(meko.tailAngle + 0.5) * 6
+    );
+    ctx.stroke();
+
+    // Legs
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(w * 0.32, h * 0.78, 7, 14 + legOff1);
+    ctx.fillRect(w * 0.30, h * 0.78 + 14 + legOff1, 11, 4);
+    ctx.fillRect(w * 0.52, h * 0.78, 7, 14 + legOff2);
+    ctx.fillRect(w * 0.50, h * 0.78 + 14 + legOff2, 11, 4);
+
+    // Uniform Coat
+    var coatX = w * 0.18, coatY = h * 0.38, coatW = w * 0.64, coatH = h * 0.42;
+    ctx.fillStyle = '#d4a017';
+    ctx.fillRect(coatX - 1, coatY - 1, coatW + 2, coatH + 2);
+
+    var coatGrd = ctx.createLinearGradient(coatX, coatY, coatX, coatY + coatH);
+    coatGrd.addColorStop(0, '#2c3e70');
+    coatGrd.addColorStop(1, '#1a2450');
+    ctx.fillStyle = coatGrd;
+    ctx.fillRect(coatX, coatY, coatW, coatH);
+
+    // Stars on Uniform
+    ctx.fillStyle = '#f6d55c';
+    var starPositions = [
+      [0.28,0.44],[0.42,0.42],[0.58,0.44],[0.72,0.42],
+      [0.35,0.52],[0.52,0.5],[0.68,0.54],[0.25,0.6],
+      [0.45,0.62],[0.62,0.6],[0.75,0.64],[0.32,0.7],
+      [0.55,0.72],[0.7,0.72],[0.38,0.78],[0.6,0.78]
+    ];
+    for (var s = 0; s < starPositions.length; s++) {
+      drawStar(w * starPositions[s][0], h * starPositions[s][1], 1.8);
+    }
+
+    // Buttons
+    ctx.fillStyle = '#f6d55c';
+    for (var b = 0; b < 4; b++) {
+      ctx.beginPath();
+      ctx.arc(w * 0.5, coatY + 6 + b * 8, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Epaulettes
+    ctx.fillStyle = '#f6d55c';
+    ctx.fillRect(coatX - 2, coatY, 10, 5);
+    ctx.fillRect(coatX + coatW - 8, coatY, 10, 5);
+    ctx.fillStyle = '#8b6914';
+    drawStar(coatX + 3, coatY + 2.5, 1);
+    drawStar(coatX + coatW - 3, coatY + 2.5, 1);
+
+    // Arms
+    ctx.fillStyle = coatGrd;
+    ctx.save();
+    ctx.translate(coatX + 3, coatY + 8);
+    ctx.rotate(armOff1 * 0.08);
+    ctx.fillRect(-3, 0, 7, 20);
+    ctx.fillStyle = '#0a0a0a';
+    ctx.beginPath(); ctx.arc(0.5, 22, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+
+    ctx.fillStyle = coatGrd;
+    ctx.save();
+    ctx.translate(coatX + coatW - 3, coatY + 8);
+    ctx.rotate(armOff2 * 0.08);
+    ctx.fillRect(-4, 0, 7, 20);
+    ctx.fillStyle = '#0a0a0a';
+    ctx.beginPath(); ctx.arc(-0.5, 22, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+
+    // Collar
+    ctx.fillStyle = '#d4a017';
+    ctx.fillRect(coatX + 6, coatY - 4, coatW - 12, 5);
+    ctx.fillStyle = '#2c3e70';
+    ctx.fillRect(coatX + 8, coatY - 3, coatW - 16, 3);
+
+    // Head
+    var headX = w * 0.5, headY = h * 0.22, headR = 14;
+
+    // Ears
+    ctx.fillStyle = '#0a0a0a';
+    ctx.beginPath();
+    ctx.moveTo(headX - 12, headY - 4);
+    ctx.lineTo(headX - 16, headY - 20);
+    ctx.lineTo(headX - 4, headY - 10);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(headX + 12, headY - 4);
+    ctx.lineTo(headX + 15, headY - 18);
+    ctx.lineTo(headX + 4, headY - 10);
+    ctx.closePath();
+    ctx.fill();
+
+    // Inner Ears
+    ctx.fillStyle = '#8b3a5c';
+    ctx.beginPath();
+    ctx.moveTo(headX + 10, headY - 6);
+    ctx.lineTo(headX + 13, headY - 15);
+    ctx.lineTo(headX + 6, headY - 9);
+    ctx.closePath();
+    ctx.fill();
+
+    // Head circle
+    ctx.fillStyle = '#0a0a0a';
+    ctx.beginPath();
+    ctx.arc(headX, headY, headR, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Eyes
+    if (meko.eyeBlink) {
+      ctx.fillStyle = '#0a0a0a';
+      ctx.fillRect(headX - 8, headY - 1, 5, 1.5);
+      ctx.fillRect(headX + 3, headY - 1, 5, 1.5);
+    } else {
+      ctx.fillStyle = '#f5f5dc';
+      ctx.beginPath(); ctx.arc(headX - 5, headY - 1, 3.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(headX + 5, headY - 1, 3.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#0a0a0a';
+      ctx.beginPath(); ctx.arc(headX - 5, headY - 1, 1.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(headX + 5, headY - 1, 1.5, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Nose
+    ctx.fillStyle = '#1a1a1a';
+    ctx.beginPath();
+    ctx.moveTo(headX - 2, headY + 4);
+    ctx.lineTo(headX + 2, headY + 4);
+    ctx.lineTo(headX, headY + 7);
+    ctx.closePath();
+    ctx.fill();
+
+    // Whiskers
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.2;
+    ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(headX - 4, headY + 6); ctx.lineTo(headX - 18, headY + 4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(headX - 4, headY + 7); ctx.lineTo(headX - 18, headY + 8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(headX + 4, headY + 6); ctx.lineTo(headX + 18, headY + 4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(headX + 4, headY + 7); ctx.lineTo(headX + 18, headY + 8); ctx.stroke();
+
+    ctx.restore();
+  }
+
+  /* ── СОТРУДНИКИ СПЕЦСЛУЖБ ── */
+  function drawAgent(f) {
     var fx = f.x, fh = f.h, fw = f.w;
     var topY = ground - fh;
 
     ctx.save();
     ctx.translate(fx, topY);
 
-    // ноги
-    ctx.fillStyle = '#1a2540';
+    // Legs
+    ctx.fillStyle = '#0f172a';
     ctx.fillRect(fw * 0.2, fh * 0.75, fw * 0.27, fh * 0.25);
     ctx.fillRect(fw * 0.53, fh * 0.75, fw * 0.27, fh * 0.25);
-    // ботинки
+    // Tactical Boots
     ctx.fillStyle = '#000';
-    ctx.fillRect(fw * 0.13, fh - 4, fw * 0.37, 4);
-    ctx.fillRect(fw * 0.5, fh - 4, fw * 0.37, 4);
+    ctx.fillRect(fw * 0.13, fh - 5, fw * 0.37, 5);
+    ctx.fillRect(fw * 0.5, fh - 5, fw * 0.37, 5);
 
-    // китель
+    // Uniform / Body Armor
     var uniformGrd = ctx.createLinearGradient(0, fh * 0.35, 0, fh * 0.75);
-    uniformGrd.addColorStop(0, f.tint || '#3d4a6b');
-    uniformGrd.addColorStop(1, '#2a3550');
+    uniformGrd.addColorStop(0, f.tint || '#1e293b');
+    uniformGrd.addColorStop(1, '#0b0f19');
     ctx.fillStyle = uniformGrd;
     ctx.fillRect(fw * 0.13, fh * 0.35, fw * 0.74, fh * 0.42);
 
-    // ремень
+    // Tactical Belt & Holster
     ctx.fillStyle = '#000';
-    ctx.fillRect(fw * 0.13, fh * 0.72, fw * 0.74, 3);
-    ctx.fillStyle = '#f6d55c';
-    ctx.fillRect(fw * 0.43, fh * 0.72, fw * 0.14, 3);
+    ctx.fillRect(fw * 0.13, fh * 0.72, fw * 0.74, 3.5);
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillRect(fw * 0.43, fh * 0.72, fw * 0.14, 3.5);
 
-    // погоны красные
-    ctx.fillStyle = '#c0392b';
+    // Epaulettes
+    ctx.fillStyle = '#1e3a8a';
     ctx.fillRect(fw * 0.1, fh * 0.36, fw * 0.27, 4);
     ctx.fillRect(fw * 0.63, fh * 0.36, fw * 0.27, 4);
-    // золотые полоски (звание = рост)
+    // Gold Rank Stars / Bars
     ctx.fillStyle = '#f6d55c';
     var stripes = fh > 70 ? 3 : (fh > 55 ? 2 : 1);
     for (var st = 0; st < stripes; st++) {
@@ -463,105 +1239,260 @@ canvas{display:block;flex:0 0 auto;margin:0 auto;cursor:pointer;touch-action:non
       ctx.fillRect(fw * 0.67, fh * 0.365 + st * 1.2, fw * 0.2, 0.8);
     }
 
-    // пуговицы
-    ctx.fillStyle = '#f6d55c';
-    ctx.beginPath(); ctx.arc(fw * 0.5, fh * 0.45, 1.2, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(fw * 0.5, fh * 0.55, 1.2, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(fw * 0.5, fh * 0.65, 1.2, 0, Math.PI * 2); ctx.fill();
-
-    // руки
+    // Hands
     ctx.fillStyle = uniformGrd;
     ctx.fillRect(0, fh * 0.38, fw * 0.17, fh * 0.34);
     ctx.fillRect(fw * 0.83, fh * 0.38, fw * 0.17, fh * 0.34);
-    // кисти
-    ctx.fillStyle = '#f2c290';
-    ctx.beginPath(); ctx.arc(fw * 0.08, fh * 0.74, 2.5, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(fw * 0.92, fh * 0.74, 2.5, 0, Math.PI * 2); ctx.fill();
+    // Gloves
+    ctx.fillStyle = '#1e293b';
+    ctx.beginPath(); ctx.arc(fw * 0.08, fh * 0.74, 2.8, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(fw * 0.92, fh * 0.74, 2.8, 0, Math.PI * 2); ctx.fill();
 
-    // шея
-    ctx.fillStyle = '#f2c290';
-    ctx.fillRect(fw * 0.4, fh * 0.3, fw * 0.2, 4);
-
-    // голова
+    // Head
     ctx.fillStyle = '#f2c290';
     ctx.beginPath();
     ctx.arc(fw * 0.5, fh * 0.22, 8, 0, Math.PI * 2);
     ctx.fill();
 
-    // фуражка
-    ctx.fillStyle = '#1a2540';
+    // Dark Sunglasses
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(fw * 0.34, fh * 0.2, fw * 0.32, 3);
+
+    // Uniform Cap
+    ctx.fillStyle = '#0f172a';
     ctx.fillRect(fw * 0.2, fh * 0.14, fw * 0.6, 5);
     ctx.fillRect(fw * 0.27, fh * 0.1, fw * 0.46, 5);
-    // козырёк
+    // Visor
     ctx.fillStyle = '#000';
     ctx.fillRect(fw * 0.13, fh * 0.18, fw * 0.74, 2);
-    // кокарда
-    ctx.fillStyle = '#c0392b';
-    ctx.beginPath(); ctx.arc(fw * 0.5, fh * 0.12, 2, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#f6d55c';
-    ctx.beginPath(); ctx.arc(fw * 0.5, fh * 0.12, 1, 0, Math.PI * 2); ctx.fill();
+    // Cockade
+    ctx.fillStyle = '#38bdf8';
+    ctx.beginPath(); ctx.arc(fw * 0.5, fh * 0.12, 1.8, 0, Math.PI * 2); ctx.fill();
 
-    // глаза
-    ctx.fillStyle = '#000';
-    ctx.fillRect(fw * 0.37, fh * 0.22, 2, 1.5);
-    ctx.fillRect(fw * 0.57, fh * 0.22, 2, 1.5);
-    // брови
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(fw * 0.33, fh * 0.2); ctx.lineTo(fw * 0.47, fh * 0.21); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(fw * 0.53, fh * 0.21); ctx.lineTo(fw * 0.67, fh * 0.2); ctx.stroke();
-    // рот
-    ctx.beginPath(); ctx.moveTo(fw * 0.43, fh * 0.28); ctx.lineTo(fw * 0.57, fh * 0.28); ctx.stroke();
-
-    // табличка РКН
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(fw * 0.33, fh * 0.5, fw * 0.34, 4);
-    ctx.fillStyle = '#c0392b';
-    ctx.font = 'bold 4px system-ui';
+    // ── БЕЙДЖ: СПЕЦСЛУЖБЫ ──
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(fw * 0.25, fh * 0.48, fw * 0.5, 5);
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(fw * 0.25, fh * 0.48, fw * 0.5, 5);
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = 'bold 3.5px "JetBrains Mono",system-ui';
     ctx.textAlign = 'center';
-    ctx.fillText('РКН', fw * 0.5, fh * 0.53);
-    ctx.textAlign = 'start';
+    ctx.fillText('СПЕЦ', fw * 0.5, fh * 0.52);
 
     ctx.restore();
   }
 
+  /* ── ДРОН-ПЕРЕХВАТЧИК СПЕЦСЛУЖБ (ПЕРЕКРЫВАЕТ ВЕРХ) ── */
+  function drawDrone(f) {
+    ctx.save();
+    ctx.translate(f.x, f.y);
+
+    // Upward Anti-Air Security Barrier (blocks all jumps)
+    var skyY = -f.y - 150;
+    var beamGrad = ctx.createLinearGradient(0, 0, f.w, 0);
+    beamGrad.addColorStop(0, 'rgba(239,68,68,0.06)');
+    beamGrad.addColorStop(0.5, 'rgba(239,68,68,' + (0.35 + Math.sin(frame * 0.25) * 0.2) + ')');
+    beamGrad.addColorStop(1, 'rgba(239,68,68,0.06)');
+    ctx.fillStyle = beamGrad;
+    ctx.fillRect(f.w * 0.1, skyY, f.w * 0.8, -skyY);
+
+    // Twin red vertical laser rods going skyward
+    ctx.strokeStyle = 'rgba(239,68,68,0.85)';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(f.w * 0.2, 0); ctx.lineTo(f.w * 0.2, skyY);
+    ctx.moveTo(f.w * 0.8, 0); ctx.lineTo(f.w * 0.8, skyY);
+    ctx.stroke();
+
+    // High-voltage warning spark along barrier
+    if (frame % 8 < 4) {
+      ctx.strokeStyle = '#fca5a5';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(f.w * 0.2, -18);
+      ctx.lineTo(f.w * 0.8, -26);
+      ctx.lineTo(f.w * 0.2, -34);
+      ctx.stroke();
+    }
+
+    // Drone Body
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(f.w * 0.15, f.h * 0.3, f.w * 0.7, f.h * 0.45);
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(f.w * 0.15, f.h * 0.3, f.w * 0.7, f.h * 0.45);
+
+    // Glowing Camera / Scanner Lens
+    ctx.fillStyle = '#ef4444';
+    ctx.beginPath();
+    ctx.arc(f.w * 0.5, f.h * 0.52, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(f.w * 0.5 - 1, f.h * 0.52 - 1, 1, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Rotors Arms
+    ctx.strokeStyle = '#475569';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-4, f.h * 0.35); ctx.lineTo(f.w + 4, f.h * 0.35);
+    ctx.stroke();
+
+    // Spinning Rotors
+    var rOffset = Math.sin(f.wingPhase) * 6;
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-10 + rOffset, f.h * 0.28); ctx.lineTo(8 - rOffset, f.h * 0.28);
+    ctx.moveTo(f.w - 8 + rOffset, f.h * 0.28); ctx.lineTo(f.w + 10 - rOffset, f.h * 0.28);
+    ctx.stroke();
+
+    // Text Label
+    ctx.fillStyle = '#ef4444';
+    ctx.font = 'bold 5px "JetBrains Mono",monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('СЛУЖБА', f.w * 0.5, f.h * 0.18);
+
+    // Indicator underneath: Green arrow suggesting SLIDE / ПОДКАТ
+    ctx.fillStyle = 'rgba(52,211,153,0.85)';
+    ctx.font = 'bold 7px "JetBrains Mono",monospace';
+    ctx.fillText('▼ ПОДКАТ', f.w * 0.5, f.h + 10);
+
+    ctx.restore();
+  }
+
+  /* ── ЛАЗЕРНЫЙ БАРЬЕР / ФАЕРВОЛ ── */
+  function drawLaser(f) {
+    ctx.save();
+    ctx.translate(f.x, f.y);
+
+    // Pylons
+    ctx.fillStyle = '#3b0764';
+    ctx.fillRect(0, 0, 6, f.h);
+    ctx.fillRect(f.w - 6, 0, 6, f.h);
+
+    // Glowing Laser Beams
+    var alpha = 0.6 + Math.sin(frame * 0.3) * 0.35;
+    ctx.strokeStyle = 'rgba(217,70,239,' + alpha + ')';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(3, 8); ctx.lineTo(f.w - 3, 8);
+    ctx.moveTo(3, f.h / 2); ctx.lineTo(f.w - 3, f.h / 2);
+    ctx.moveTo(3, f.h - 8); ctx.lineTo(f.w - 3, f.h - 8);
+    ctx.stroke();
+
+    // Core white beam
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(3, f.h / 2); ctx.lineTo(f.w - 3, f.h / 2);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  /* ── ПРЕДМЕТЫ / БОНУСЫ ── */
+  function drawItem(it) {
+    ctx.save();
+    var bobY = it.y + Math.sin(it.bobPhase) * 4;
+    ctx.translate(it.x, bobY);
+
+    if (it.type === 'crypto') {
+      // Rotating diamond crypto token
+      ctx.fillStyle = '#34d399';
+      ctx.shadowColor = '#34d399';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.moveTo(it.w / 2, 0);
+      ctx.lineTo(it.w, it.h / 2);
+      ctx.lineTo(it.w / 2, it.h);
+      ctx.lineTo(0, it.h / 2);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = '#064e3b';
+      ctx.font = 'bold 9px "JetBrains Mono",monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('$', it.w / 2, it.h / 2);
+    } else if (it.type === 'shield') {
+      // Energy Shield Orb
+      ctx.fillStyle = '#38bdf8';
+      ctx.shadowColor = '#38bdf8';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(it.w / 2, it.h / 2, it.w / 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#0c4a6e';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🛡', it.w / 2, it.h / 2);
+    } else if (it.type === 'turbo') {
+      // Turbo Powerup Bolt
+      ctx.fillStyle = '#f59e0b';
+      ctx.shadowColor = '#f59e0b';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(it.w / 2, it.h / 2, it.w / 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#451a03';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('⚡', it.w / 2, it.h / 2);
+    }
+
+    ctx.restore();
+  }
+
+  /* ──────────────── Main Canvas Rendering ──────────────── */
   function draw() {
-    var sx = 0, sy = 0, roadBottom = ground + 40;
+    var sx = 0, sy = 0;
     if (shake > 0) {
       sx = (Math.random() - 0.5) * shake;
       sy = (Math.random() - 0.5) * shake;
-      shake *= 0.85;
-      if (shake < 0.5) shake = 0;
+      shake *= 0.86;
+      if (shake < 0.4) shake = 0;
     }
+
     ctx.save();
     ctx.translate(sx, sy);
 
-    ctx.fillStyle = '#1a1a2e';
-    ctx.fillRect(0, 0, W, H);
+    var lvl = getCurrentLevelConfig();
 
-    // небо
-    var skyTop = lerpColor('#e8b892', '#1a1a3e', nightCycle);
-    var skyBot = lerpColor('#f4d4b0', '#2a2a5e', nightCycle);
+    // 1. Sky Gradient
     var sky = ctx.createLinearGradient(0, 0, 0, ground);
-    sky.addColorStop(0, skyTop);
-    sky.addColorStop(1, skyBot);
+    sky.addColorStop(0, lvl.skyTop);
+    sky.addColorStop(1, lvl.skyBot);
     ctx.fillStyle = sky;
     ctx.fillRect(0, 0, W, ground);
 
-    // звёзды
-    if (nightCycle > 0.4) {
-      ctx.fillStyle = 'rgba(246,213,92,' + ((nightCycle - 0.4) * 1.2) + ')';
-      for (var s = 0; s < 40; s++) {
-        var sx2 = (s * 137.5 + frame * 0.02) % W;
-        var sy2 = (s * 97.3) % (ground - 20) + 10;
-        ctx.beginPath();
-        ctx.arc(sx2, sy2, 1, 0, Math.PI * 2);
-        ctx.fill();
-      }
+    // 2. Distant Stars & Skyline
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    for (var s = 0; s < 30; s++) {
+      var stx = (s * 113.7 + frame * 0.015) % W;
+      var sty = (s * 83.1) % (ground - 30) + 5;
+      ctx.fillRect(stx, sty, 1.2, 1.2);
     }
 
-    // облака
-    ctx.fillStyle = 'rgba(255,255,255,' + (0.25 + nightCycle * 0.1) + ')';
+    // Skyline
+    ctx.fillStyle = 'rgba(15,23,42,0.6)';
+    for (var b = 0; b < cityBuildings.length; b++) {
+      var bld = cityBuildings[b];
+      ctx.fillRect(bld.x, ground - bld.h, bld.w, bld.h);
+      // Windows
+      ctx.fillStyle = 'rgba(246,213,92,0.15)';
+      for (var w = 0; w < bld.windows; w++) {
+        ctx.fillRect(bld.x + 6 + (w % 3) * 10, ground - bld.h + 10 + Math.floor(w / 3) * 16, 4, 6);
+      }
+      ctx.fillStyle = 'rgba(15,23,42,0.6)';
+    }
+
+    // 3. Clouds
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
     for (var k = 0; k < clouds.length; k++) {
       var cl = clouds[k];
       ctx.beginPath();
@@ -571,57 +1502,80 @@ canvas{display:block;flex:0 0 auto;margin:0 auto;cursor:pointer;touch-action:non
       ctx.fill();
     }
 
-    // земля
-    var gndGrd = ctx.createLinearGradient(0, ground, 0, roadBottom);
-    gndGrd.addColorStop(0, '#6b4423');
-    gndGrd.addColorStop(1, '#3d2612');
-    ctx.fillStyle = gndGrd;
-    ctx.fillRect(0, ground, W, 40);
-
-    // асфальтовая разметка
-    ctx.fillStyle = '#f6d55c';
-    for (var g = -((frame * spd) % 40); g < W; g += 40) {
-      ctx.fillRect(g, ground + 18, 20, 2);
+    // 4. Rain (if Level 2)
+    if (lvl.hasRain) {
+      ctx.strokeStyle = 'rgba(148,163,184,0.3)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (var rn = 0; rn < rainDrops.length; rn++) {
+        var dr = rainDrops[rn];
+        ctx.moveTo(dr.x, dr.y);
+        ctx.lineTo(dr.x - 4, dr.y + dr.len);
+      }
+      ctx.stroke();
     }
 
-    // линия
-    ctx.strokeStyle = '#2a1810';
-    ctx.lineWidth = 2;
+    // 5. Road / Ground
+    var gndGrd = ctx.createLinearGradient(0, ground, 0, H);
+    gndGrd.addColorStop(0, lvl.groundTop);
+    gndGrd.addColorStop(1, lvl.groundBot);
+    ctx.fillStyle = gndGrd;
+    ctx.fillRect(0, ground, W, H - ground);
+
+    // Road Markings (Neon Dash)
+    ctx.fillStyle = '#f6d55c';
+    var markOffset = (frame * spd) % 46;
+    for (var mg = -markOffset; mg < W; mg += 46) {
+      ctx.fillRect(mg, ground + 16, 24, 2.5);
+    }
+
+    // Cyber border line
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(0, ground);
     ctx.lineTo(W, ground);
     ctx.stroke();
 
-    // пыль при беге
+    // 6. Running Dust Particles
     if (!dead && meko.jumps === 0 && frame % 4 === 0) {
       particles.push({
-        x: meko.x + 8,
-        y: ground - 2,
-        vx: -Math.random() * 2,
+        x: meko.x + 6,
+        y: ground - 3,
+        vx: -Math.random() * 2.5 - 1,
         vy: -Math.random() * 1.5,
         life: 14, maxLife: 14,
         r: 1.5 + Math.random() * 2,
-        col: '#8b6914'
+        col: '#94a3b8'
       });
     }
 
-    // сотрудники
-    for (var i = 0; i < foes.length; i++) {
-      drawFoe(foes[i]);
+    // 7. Items
+    for (var it = 0; it < items.length; it++) {
+      drawItem(items[it]);
     }
 
-    // тень MEKO
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    var shadowScale = 1 - (ground - meko.h - meko.y) / 150;
-    if (shadowScale < 0.3) shadowScale = 0.3;
+    // 8. Obstacles (Agents, Drones, Lasers)
+    for (var i = 0; i < foes.length; i++) {
+      var f = foes[i];
+      if (f.type === 'drone') drawDrone(f);
+      else if (f.type === 'laser') drawLaser(f);
+      else drawAgent(f);
+    }
+
+    // 9. MEKO Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    var shadowScale = 1 - (ground - meko.h - meko.y) / 140;
+    if (shadowScale < 0.25) shadowScale = 0.25;
     ctx.beginPath();
-    ctx.ellipse(meko.x + meko.w / 2, ground + 2, meko.w / 2 * shadowScale, 4 * shadowScale, 0, 0, Math.PI * 2);
+    ctx.ellipse(meko.x + meko.w / 2, ground + 2, (meko.w / 2) * shadowScale, 4 * shadowScale, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // MEKO
+    // 10. Draw MEKO
     if (!dead) {
       drawMeko(meko.x, meko.y, meko.w, meko.h);
     } else {
+      // Defeated Meko (Tilted)
       ctx.save();
       ctx.translate(meko.x + meko.w / 2, meko.y + meko.h / 2);
       ctx.rotate(Math.PI / 2);
@@ -629,32 +1583,44 @@ canvas{display:block;flex:0 0 auto;margin:0 auto;cursor:pointer;touch-action:non
       drawMeko(0, 0, meko.w, meko.h);
       ctx.restore();
 
-      ctx.fillStyle = 'rgba(0,0,0,0.7)';
+      // ── GAME OVER MODAL CARD ──
+      ctx.fillStyle = 'rgba(11,15,25,0.85)';
       ctx.fillRect(0, 0, W, H);
 
-      ctx.strokeStyle = '#c0392b';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(20, H/2 - 60, W - 40, 120);
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2;
+      var cardW = Math.min(W - 40, 420);
+      var cardH = 180;
+      var cardX = W / 2 - cardW / 2;
+      var cardY = H / 2 - cardH / 2;
+      ctx.strokeRect(cardX, cardY, cardW, cardH);
+      ctx.fillStyle = 'rgba(15,23,42,0.95)';
+      ctx.fillRect(cardX, cardY, cardW, cardH);
 
-      ctx.fillStyle = '#c0392b';
-      ctx.font = 'bold 20px system-ui';
       ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('⚠ MEKO ПОПАЛСЯ ⚠', W / 2, H / 2 - 30);
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 15px system-ui';
-      ctx.fillText('Его поймали сотрудники РКН!', W / 2, H / 2 - 5);
+      ctx.fillStyle = '#ef4444';
+      ctx.font = 'bold 18px "Plus Jakarta Sans",system-ui';
+      ctx.fillText('⚠ МЕКО ЗАДЕРЖАН ⚠', W / 2, cardY + 35);
+
+      ctx.fillStyle = '#f1f5f9';
+      ctx.font = '600 13px "Plus Jakarta Sans",system-ui';
+      ctx.fillText('Его перехватили сотрудники спецслужб!', W / 2, cardY + 62);
+
       ctx.fillStyle = '#f6d55c';
-      ctx.font = '13px system-ui';
-      ctx.fillText('Счёт: ' + score + '  |  Рекорд: ' + best, W / 2, H / 2 + 20);
-      ctx.fillStyle = '#888';
-      ctx.font = '11px system-ui';
-      ctx.fillText('Тап или пробел — сбежать снова', W / 2, H / 2 + 44);
+      ctx.font = 'bold 13px "JetBrains Mono",monospace';
+      ctx.fillText('Счёт: ' + score + '  |  Рекорд: ' + best + '  |  Крипта: ' + cryptoCount, W / 2, cardY + 92);
+
+      ctx.fillStyle = '#a855f7';
+      ctx.font = '11px "JetBrains Mono",monospace';
+      ctx.fillText('Локация: ' + lvl.name, W / 2, cardY + 115);
+
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 12px "Plus Jakarta Sans",system-ui';
+      ctx.fillText('Нажмите ПРОБЕЛ или ТАП для побега снова', W / 2, cardY + 150);
       ctx.textAlign = 'start';
-      ctx.textBaseline = 'alphabetic';
     }
 
-    // частицы
+    // 11. Particles Render
     for (var p = 0; p < particles.length; p++) {
       var pt = particles[p];
       ctx.globalAlpha = pt.life / pt.maxLife;
@@ -665,50 +1631,168 @@ canvas{display:block;flex:0 0 auto;margin:0 auto;cursor:pointer;touch-action:non
     }
     ctx.globalAlpha = 1;
 
-    // индикатор прыжков
+    // 12. Floating Text Popups
+    for (var ft = 0; ft < floatingTexts.length; ft++) {
+      var txt = floatingTexts[ft];
+      ctx.save();
+      ctx.globalAlpha = txt.life / txt.maxLife;
+      ctx.fillStyle = txt.col;
+      ctx.font = 'bold 12px "JetBrains Mono",monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(txt.text, txt.x, txt.y);
+      ctx.restore();
+    }
+
+    // 13. Jump indicators (Stars)
     if (!dead) {
       for (var d = 0; d < meko.maxJumps; d++) {
-        ctx.fillStyle = d < (meko.maxJumps - meko.jumps) ? '#f6d55c' : '#555';
-        drawStar(meko.x + meko.w / 2 - 8 + d * 16, meko.y - 26, 4);
+        ctx.fillStyle = d < (meko.maxJumps - meko.jumps) ? '#f6d55c' : '#475569';
+        drawStar(meko.x + meko.w / 2 - 8 + d * 16, meko.y - 28, 4);
       }
     }
 
-    // скорость
-    if (!dead) {
-      ctx.fillStyle = 'rgba(255,255,255,0.4)';
-      ctx.font = '10px system-ui';
-      ctx.fillText('×' + spd.toFixed(1), W - 40, 16);
+    // 14. Level Up Banner animation
+    if (levelBannerTimer > 0) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, levelBannerTimer / 20);
+      ctx.fillStyle = 'rgba(15,23,42,0.85)';
+      ctx.fillRect(0, H * 0.32, W, 42);
+      ctx.strokeStyle = '#6366f1';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(0, H * 0.32, W, 42);
+
+      ctx.font = 'bold 14px "JetBrains Mono",monospace';
+      ctx.fillStyle = '#f6d55c';
+      ctx.textAlign = 'center';
+      ctx.fillText('⭐ ' + levelBannerText + ' ⭐', W / 2, H * 0.32 + 26);
+      ctx.restore();
+    }
+
+    // 15. Pause Screen
+    if (paused) {
+      ctx.fillStyle = 'rgba(11,15,25,0.7)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#f6d55c';
+      ctx.font = 'bold 22px "JetBrains Mono",monospace';
+      ctx.fillText('ПАУЗА', W / 2, H / 2 - 10);
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '12px system-ui';
+      ctx.fillText('Нажмите P или ⏸ чтобы продолжить', W / 2, H / 2 + 18);
+      ctx.textAlign = 'start';
     }
 
     ctx.restore();
   }
 
-  function lerpColor(a, b, t) {
-    var ar = parseInt(a.slice(1, 3), 16), ag = parseInt(a.slice(3, 5), 16), ab = parseInt(a.slice(5, 7), 16);
-    var br = parseInt(b.slice(1, 3), 16), bg = parseInt(b.slice(3, 5), 16), bb = parseInt(b.slice(5, 7), 16);
-    var rr = Math.round(ar + (br - ar) * t);
-    var rg = Math.round(ag + (bg - ag) * t);
-    var rb = Math.round(ab + (bb - ab) * t);
-    return '#' + ((1 << 24) + (rr << 16) + (rg << 8) + rb).toString(16).slice(1);
-  }
+  function loop(currentTime) {
+    if (!currentTime) currentTime = performance.now();
+    if (!lastTime) lastTime = currentTime;
 
-  function loop() {
-    update();
+    var frameDelta = currentTime - lastTime;
+    lastTime = currentTime;
+
+    // Prevent jump glitches when tab loses focus
+    if (frameDelta > 200) frameDelta = 200;
+
+    accumulator += frameDelta;
+    while (accumulator >= FIXED_STEP) {
+      update();
+      accumulator -= FIXED_STEP;
+    }
+
     draw();
     requestAnimationFrame(loop);
   }
 
+  /* ──────────────── Event Listeners: PC & Mobile ──────────────── */
+
+  // PC Keyboard
   window.addEventListener('keydown', function (e) {
-    if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); jump(); }
+    if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
+      e.preventDefault();
+      jump();
+    } else if (e.code === 'ArrowDown' || e.code === 'KeyS') {
+      e.preventDefault();
+      startDuck();
+    } else if (e.code === 'KeyP' || e.code === 'Escape') {
+      e.preventDefault();
+      togglePause();
+    } else if (e.code === 'KeyM') {
+      soundEnabled = !soundEnabled;
+      updateSoundButton();
+    }
   });
-  document.addEventListener('pointerdown', function (e) {
+
+  window.addEventListener('keyup', function (e) {
+    if (e.code === 'ArrowDown' || e.code === 'KeyS') {
+      stopDuck();
+    }
+  });
+
+  // Canvas direct tap / pointer
+  c.addEventListener('pointerdown', function (e) {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
     jump();
   }, { passive: false });
+
+  // Mobile Touch Buttons
+  if (touchJump) {
+    touchJump.addEventListener('touchstart', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      touchJump.classList.add('active');
+      jump();
+    }, { passive: false });
+    touchJump.addEventListener('touchend', function () {
+      touchJump.classList.remove('active');
+    });
+  }
+
+  if (touchDuck) {
+    touchDuck.addEventListener('touchstart', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      touchDuck.classList.add('active');
+      startDuck();
+    }, { passive: false });
+    touchDuck.addEventListener('touchend', function () {
+      touchDuck.classList.remove('active');
+      stopDuck();
+    });
+    touchDuck.addEventListener('touchcancel', function () {
+      touchDuck.classList.remove('active');
+      stopDuck();
+    });
+  }
+
+  // Swipe Gestures on Mobile
+  var touchStartY = 0;
+  window.addEventListener('touchstart', function (e) {
+    if (e.touches && e.touches[0]) {
+      touchStartY = e.touches[0].clientY;
+    }
+  }, { passive: true });
+
+  window.addEventListener('touchmove', function (e) {
+    if (!e.touches || !e.touches[0]) return;
+    var dy = e.touches[0].clientY - touchStartY;
+    if (dy > 40) { // Swipe Down
+      startDuck();
+    } else if (dy < -40) { // Swipe Up
+      jump();
+    }
+  }, { passive: true });
+
+  window.addEventListener('touchend', function () {
+    stopDuck();
+  }, { passive: true });
+
   window.addEventListener('resize', resize);
   if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
 
+  // Start game
   init();
   loop();
 })();
