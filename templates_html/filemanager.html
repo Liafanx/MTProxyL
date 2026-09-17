@@ -97,6 +97,15 @@
         linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
         linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
     }
+
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      20%, 60% { transform: translateX(-6px); }
+      40%, 80% { transform: translateX(6px); }
+    }
+    .shake {
+      animation: shake 0.35s cubic-bezier(.36,.07,.19,.97) both;
+    }
   </style>
 </head>
 <body class="bg-[#0b0f19] text-slate-100 min-h-screen relative overflow-x-hidden font-sans selection:bg-brand-500/30 selection:text-white">
@@ -144,10 +153,10 @@
 
       <!-- Action Buttons -->
       <div class="flex items-center gap-3">
-        <button onclick="openLoginModal('demo')" class="hidden sm:inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 transition-all">
-          <i data-lucide="sparkles" class="w-3.5 h-3.5 text-accent-cyan"></i>
-          Демо доступ
-        </button>
+        <a href="#protocols" class="hidden sm:inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-300 hover:text-white bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 transition-all">
+          <i data-lucide="book-open" class="w-3.5 h-3.5 text-accent-cyan"></i>
+          Документация
+        </a>
         <button onclick="openLoginModal('login')" class="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold text-white bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 shadow-lg shadow-brand-500/25 transition-all transform hover:scale-[1.02]">
           <i data-lucide="log-in" class="w-4 h-4"></i>
           Войти в менеджер
@@ -211,7 +220,7 @@
 
       <!-- Hero Interactive Access Card -->
       <div class="lg:col-span-5">
-        <div class="glass-panel p-6 sm:p-7 rounded-2xl relative shadow-2xl shadow-black/50 border border-slate-700/50">
+        <div id="quick-login-card" class="glass-panel p-6 sm:p-7 rounded-2xl relative shadow-2xl shadow-black/50 border border-slate-700/50 transition-all">
           <div class="absolute -top-3 -right-3 px-3 py-1 rounded-full bg-accent-emerald/15 border border-accent-emerald/30 text-accent-emerald text-xs font-mono font-semibold flex items-center gap-1.5 backdrop-blur-md">
             <span class="w-2 h-2 rounded-full bg-accent-emerald animate-pulse"></span>
             PORT 443 READY
@@ -227,24 +236,30 @@
             </div>
           </div>
 
+          <!-- Quick Error Box -->
+          <div id="quick-error-box" class="hidden flex items-center gap-2.5 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-medium mb-4">
+            <i data-lucide="alert-circle" class="w-4 h-4 text-rose-400 flex-shrink-0"></i>
+            <span>Неверный логин или пароль</span>
+          </div>
+
           <!-- Quick Form -->
           <form onsubmit="handleQuickLogin(event)" class="space-y-4">
             <div>
               <label class="block text-xs font-semibold text-slate-300 mb-1.5">Пользователь или Токен</label>
               <div class="relative">
                 <i data-lucide="user" class="w-4 h-4 text-slate-500 absolute left-3.5 top-3"></i>
-                <input id="quick-username" type="text" value="admin@aerodrive.local" class="w-full bg-slate-900/90 border border-slate-700/80 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 font-mono transition-all">
+                <input id="quick-username" type="text" placeholder="Имя пользователя или email" class="w-full bg-slate-900/90 border border-slate-700/80 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 font-mono transition-all">
               </div>
             </div>
 
             <div>
               <div class="flex items-center justify-between mb-1.5">
                 <label class="block text-xs font-semibold text-slate-300">Ключ доступа / Пароль</label>
-                <span class="text-[11px] text-brand-400 cursor-pointer hover:underline" onclick="fillDemoCredentials()">Вставить демо-ключ</span>
+                <a href="javascript:void(0)" onclick="showToast('Для восстановления доступа обратитесь к системному администратору', 'info')" class="text-[11px] text-slate-400 hover:text-brand-400 cursor-pointer hover:underline transition-colors">Забыли пароль?</a>
               </div>
               <div class="relative">
                 <i data-lucide="key-round" class="w-4 h-4 text-slate-500 absolute left-3.5 top-3"></i>
-                <input id="quick-password" type="password" value="••••••••••••" class="w-full bg-slate-900/90 border border-slate-700/80 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 font-mono transition-all">
+                <input id="quick-password" type="password" placeholder="Пароль учетной записи" class="w-full bg-slate-900/90 border border-slate-700/80 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 font-mono transition-all">
               </div>
             </div>
 
@@ -616,6 +631,12 @@
         <button id="tab-sso" onclick="setAuthTab('sso')" class="flex-1 py-2 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-200 transition-all">SSO / LDAP</button>
       </div>
 
+      <!-- Modal Error Box -->
+      <div id="modal-error-box" class="hidden flex items-center gap-2.5 p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs font-medium mb-4">
+        <i data-lucide="alert-circle" class="w-4 h-4 text-rose-400 flex-shrink-0"></i>
+        <span>Неверный логин или пароль</span>
+      </div>
+
       <!-- Form: Password -->
       <form id="modal-form" onsubmit="handleModalSubmit(event)" class="space-y-4">
         <div id="field-user-group">
@@ -630,7 +651,7 @@
           <label class="block text-xs font-medium text-slate-300 mb-1.5">Пароль</label>
           <div class="relative">
             <i data-lucide="lock" class="w-4 h-4 text-slate-500 absolute left-3.5 top-3.5"></i>
-            <input id="modal-pass" type="password" placeholder="••••••••••••" class="w-full bg-slate-900/90 border border-slate-700/80 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 font-mono transition-all">
+            <input id="modal-pass" type="password" placeholder="Введите пароль" class="w-full bg-slate-900/90 border border-slate-700/80 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 font-mono transition-all">
           </div>
         </div>
 
@@ -659,10 +680,10 @@
           <span>Авторизоваться и войти</span>
         </button>
 
-        <button type="button" onclick="fillDemoAndLogin()" class="w-full py-2.5 px-4 rounded-xl bg-slate-800/80 hover:bg-slate-800 text-slate-300 font-medium text-xs border border-slate-700 flex items-center justify-center gap-2 transition-colors">
-          <i data-lucide="sparkles" class="w-3.5 h-3.5 text-accent-cyan"></i>
-          <span>Зайти в гостевой демонстрационный режим</span>
-        </button>
+        <div class="text-center pt-2 text-[11px] text-slate-500 flex items-center justify-center gap-1.5">
+          <i data-lucide="shield-check" class="w-3.5 h-3.5 text-slate-600"></i>
+          <span>Защищенная зона. Все попытки несанкционированного входа логируются.</span>
+        </div>
       </form>
     </div>
   </div>
@@ -716,6 +737,9 @@
     const modalCard = document.getElementById('modal-card');
 
     function openLoginModal(mode = 'login') {
+      const errBox = document.getElementById('modal-error-box');
+      if (errBox) errBox.classList.add('hidden');
+
       modal.classList.remove('hidden');
       requestAnimationFrame(() => {
         modal.classList.remove('opacity-0');
@@ -723,10 +747,6 @@
         modalCard.classList.remove('scale-95');
         modalCard.classList.add('scale-100');
       });
-
-      if (mode === 'demo') {
-        fillDemoCredentials();
-      }
     }
 
     function closeLoginModal() {
@@ -763,6 +783,8 @@
       const grpPass = document.getElementById('field-pass-group');
       const grpToken = document.getElementById('field-token-group');
       const grpSso = document.getElementById('field-sso-group');
+      const errBox = document.getElementById('modal-error-box');
+      if (errBox) errBox.classList.add('hidden');
 
       // Reset classes
       [btnPass, btnToken, btnSso].forEach(btn => {
@@ -790,28 +812,6 @@
       }
     }
 
-    // Quick Login Demo helper
-    function fillDemoCredentials() {
-      const user = document.getElementById('quick-username');
-      const pass = document.getElementById('quick-password');
-      if (user) user.value = "guest@aerodrive.demo";
-      if (pass) pass.value = "demo12345";
-
-      const mUser = document.getElementById('modal-user');
-      const mPass = document.getElementById('modal-pass');
-      if (mUser) mUser.value = "guest@aerodrive.demo";
-      if (mPass) mPass.value = "demo12345";
-
-      showToast('Заполнены демонстрационные реквизиты', 'info');
-    }
-
-    function fillDemoAndLogin() {
-      fillDemoCredentials();
-      setTimeout(() => {
-        simulateLogin('Гостевой пользователь (Demo)');
-      }, 400);
-    }
-
     // Copy to clipboard helpers
     function copyText(text, successMsg) {
       navigator.clipboard.writeText(text).then(() => {
@@ -829,36 +829,63 @@
       copyText('curl -u admin:key https://storage/api/v1/fs', 'CLI команда скопирована');
     }
 
-    // Form Submissions
-    function simulateLogin(username) {
-      showToast(`Проверка ключей авторизации для ${username}...`, 'info');
+    // Authentic Authentication Error Handler
+    function failAuthentication(btnId, errorBoxId, passInputId, formCardId) {
+      const btn = document.getElementById(btnId);
+      const errBox = document.getElementById(errorBoxId);
+      const passInput = document.getElementById(passInputId);
+      const formCard = document.getElementById(formCardId);
+
+      const origHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.classList.add('opacity-75', 'cursor-not-allowed');
+      btn.innerHTML = `
+        <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <span>Проверка учетных данных...</span>
+      `;
+
       setTimeout(() => {
-        showToast('Успешная аутентификация! Перенаправление в проводник...', 'success');
-        setTimeout(() => {
-          // Здесь можно указать реальный путь к файловому менеджеру, например /files/ или ?action=explorer
-          showToast('Заглушка: здесь открывается интерфейс проводника (например /files/ или Web UI)', 'info');
-          closeLoginModal();
-        }, 1200);
-      }, 800);
+        btn.disabled = false;
+        btn.classList.remove('opacity-75', 'cursor-not-allowed');
+        btn.innerHTML = origHtml;
+
+        // Show error message box
+        if (errBox) {
+          errBox.classList.remove('hidden');
+          lucide.createIcons({ root: errBox });
+        }
+
+        // Highlight input in red and clear password
+        if (passInput) {
+          passInput.value = '';
+          passInput.classList.remove('border-slate-700/80', 'focus:border-brand-500', 'focus:ring-brand-500');
+          passInput.classList.add('border-rose-500', 'focus:border-rose-500', 'focus:ring-rose-500');
+          passInput.focus();
+        }
+
+        // Shake effect on form card
+        if (formCard) {
+          formCard.classList.remove('shake');
+          void formCard.offsetWidth; // force reflow
+          formCard.classList.add('shake');
+        }
+
+        showToast('Неверный логин или пароль', 'error');
+      }, 650);
     }
 
     function handleQuickLogin(e) {
       e.preventDefault();
-      const user = document.getElementById('quick-username').value || 'admin';
-      simulateLogin(user);
+      failAuthentication('quick-login-btn', 'quick-error-box', 'quick-password', 'quick-login-card');
     }
 
     function handleModalSubmit(e) {
       e.preventDefault();
-      let user = "admin";
-      if (activeTab === 'pass') {
-        user = document.getElementById('modal-user').value || 'admin';
-      } else if (activeTab === 'token') {
-        user = "API Token User";
-      } else {
-        user = "SSO Corporate User";
-      }
-      simulateLogin(user);
+      const passInputId = activeTab === 'token' ? 'modal-token' : 'modal-pass';
+      failAuthentication('modal-submit-btn', 'modal-error-box', passInputId, 'modal-card');
     }
   </script>
 </body>
