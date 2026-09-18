@@ -40,6 +40,15 @@ HTTPS_PERMISSIONS_ENABLED=false
 HTTPS_HSTS_ENABLED=true
 HTTPS_PERMISSIONS_ENABLED=true
 
+WARP_PROTO=awg
+WARP_LOCATION=ARN
+_warp_exit_matches_location SE ARN || fail 'selected WARP node rejected'
+if _warp_exit_matches_location RU DME; then fail 'wrong WARP node accepted'; fi
+WARP_LOCATION=SE
+_warp_exit_matches_location SE DME || fail 'selected WARP country rejected'
+WARP_LOCATION='ARN,AMS'
+_warp_exit_matches_location NL AMS || fail 'second selected WARP node rejected'
+
 for endpoint in 188.114.98.58:2408 '[2606:4700:d0::a29f:c001]:2408' '[::1]:443' '[::1:2:3:4:5:6:7]:443' '[1:2:3:4:5:6:7::]:443' '[::ffff:192.0.2.1]:443'; do
     _warp_valid_endpoint "$endpoint" || fail "valid endpoint $endpoint"
 done

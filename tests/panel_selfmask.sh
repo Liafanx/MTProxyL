@@ -38,6 +38,13 @@ _ensure_availability_timer() { :; }
 _mktemp() { mktemp "${1:-$test_dir}/fixture.XXXXXX"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+old_pq_prefix="$SELFMASK_PQ_PREFIX"
+SELFMASK_PQ_PREFIX="$test_dir/pq-without-mime-types"
+mime_fallback=$(_selfmask_nginx_mime_block)
+[[ "$mime_fallback" == *'text/css'* && "$mime_fallback" == *'application/javascript'* \
+   && "$mime_fallback" == *'image/svg+xml'* ]] || fail 'missing built-in MIME fallback'
+SELFMASK_PQ_PREFIX="$old_pq_prefix"
+
 PANEL_SELFMASK_ENABLED=true
 PANEL_SELFMASK_PATH="/panel"
 PANEL_SELFMASK_PREV_LISTEN="0.0.0.0:8080"

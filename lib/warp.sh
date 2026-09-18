@@ -1181,6 +1181,17 @@ _warp_enable() {
 
     if _warp_wait_route; then
         log_success "Трафик до Telegram идёт через WARP (вариант $(_warp_variant_letter))"
+        if [ -n "${WARP_LOCATION:-}" ]; then
+            local _exit _exit_ip _exit_loc _exit_colo
+            _exit=$(warp_exit_info 2>/dev/null) || return 1
+            IFS='|' read -r _exit_ip _exit_loc _exit_colo <<< "$_exit"
+            if ! _warp_exit_matches_location "$_exit_loc" "$_exit_colo"; then
+                log_error "Выбрана локация ${WARP_LOCATION}, но фактический выход: страна ${_exit_loc}, узел Cloudflare ${_exit_colo}"
+                log_info "Эндпоинт сменил anycast-маршрут — запустите разведку выбранного узла ещё раз"
+                return 1
+            fi
+            log_success "Выход подтверждён: страна ${_exit_loc}, узел Cloudflare ${_exit_colo}"
+        fi
     else
         log_warn "Правила применены, но проверка маршрута не подтвердила выход через WARP"
         log_info "Смотрите: mtproxyl warp status, journalctl -u ${WARP_SOCKS_UNIT}"
@@ -1281,6 +1292,23 @@ warp_exit_info() {
     echo "${_ip:-?}|${_loc:-?}|${_colo:-?}"
 }
 
+_warp_exit_matches_location() {
+    case "$(_warp_proto)" in masque|masque-h2) return 0 ;; esac
+    local _wanted="${WARP_LOCATION:-}" _loc="${1^^}" _colo="${2^^}" _tok
+    [ -n "$_wanted" ] || return 0
+    local _old="$IFS"; IFS=','
+    local -a _tokens=(); read -ra _tokens <<< "$_wanted"
+    IFS="$_old"
+    for _tok in "${_tokens[@]}"; do
+        _tok="${_tok//[[:space:]]/}"; _tok="${_tok^^}"
+        if { [ "${#_tok}" -eq 2 ] && [ "$_tok" = "$_loc" ]; } \
+           || { [ "${#_tok}" -eq 3 ] && [ "$_tok" = "$_colo" ]; }; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Сколько пакетов правило увело в туннель.
 warp_matched_packets() {
     nft list table inet "${WARP_NFT_TABLE}" 2>/dev/null \
@@ -1320,7 +1348,10 @@ warp_route_ready() {
 # Полная проверка: плюс ответ Cloudflare с warp=on, ходит в сеть.
 warp_check_route() {
     warp_route_ready || return 1
-    warp_exit_info >/dev/null 2>&1
+    local _exit _ip _loc _colo
+    _exit=$(warp_exit_info 2>/dev/null) || return 1
+    IFS='|' read -r _ip _loc _colo <<< "$_exit"
+    _warp_exit_matches_location "$_loc" "$_colo"
 }
 
 warp_status() {
