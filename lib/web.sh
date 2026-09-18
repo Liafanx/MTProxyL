@@ -485,7 +485,9 @@ web_fp_seed() {
 }
 
 # CSP движка совпадает с примером из его README — по этой строке прокси
-# узнаётся массово. Набор и порядок директив берём из своего seed.
+# узнаётся массово. Встроенные одностраничные заглушки используют inline CSS/JS,
+# Google Fonts, Tailwind CDN и Lucide; разрешения для них обязательны. Порядок и
+# безопасно варьируемые директивы по-прежнему выводим из своего seed.
 web_csp_policy() {
     local _hex _i _n _tmp _parts=() _out=""
     local -a _d=()
@@ -493,11 +495,13 @@ web_csp_policy() {
     [ ${#_hex} -eq 32 ] || _hex="0123456789abcdef0123456789abcdef"
     for (( _i = 0; _i < 32; _i++ )); do _d+=( $(( 16#${_hex:$_i:1} )) ); done
 
-    _parts=( "default-src 'self'" )
+    _parts=(
+        "default-src 'self'"
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com"
+        "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://unpkg.com"
+        "font-src 'self' data: https://fonts.gstatic.com"
+    )
     if [ $(( _d[0] % 2 )) -eq 0 ]; then _parts+=( "img-src 'self' data:" ); else _parts+=( "img-src 'self'" ); fi
-    [ $(( _d[1] % 2 )) -eq 0 ] && _parts+=( "style-src 'self'" )
-    [ $(( _d[2] % 2 )) -eq 0 ] && _parts+=( "script-src 'self'" )
-    [ $(( _d[3] % 3 )) -eq 0 ] && _parts+=( "font-src 'self' data:" )
     if [ $(( _d[4] % 2 )) -eq 0 ]; then _parts+=( "frame-ancestors 'none'" ); else _parts+=( "frame-ancestors 'self'" ); fi
     [ $(( _d[5] % 2 )) -eq 0 ] && _parts+=( "base-uri 'self'" )
     [ $(( _d[6] % 2 )) -eq 0 ] && _parts+=( "form-action 'self'" )
