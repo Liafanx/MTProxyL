@@ -548,8 +548,10 @@ function StateCard({ status }: { status: WarpStatus }) {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
         <Cell label="Выход" value={status.exit.confirmed ? `${status.exit.ip}` : '—'} />
         <Cell
-          label="Локация выхода"
-          value={status.exit.confirmed ? `${status.exit.loc} (${status.exit.colo})` : '—'}
+          label="Страна и узел Cloudflare"
+          value={status.exit.confirmed
+            ? `страна ${status.exit.loc} · узел ${status.exit.colo}`
+            : '—'}
         />
         <Cell label="Рабочий эндпоинт" value={status.enabled ? status.active_endpoint || '—' : '—'} />
         <Cell label="Закреплённый адрес" value={status.endpoint || 'автовыбор'} />

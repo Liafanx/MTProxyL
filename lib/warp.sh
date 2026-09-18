@@ -1186,11 +1186,11 @@ _warp_enable() {
             _exit=$(warp_exit_info 2>/dev/null) || return 1
             IFS='|' read -r _exit_ip _exit_loc _exit_colo <<< "$_exit"
             if ! _warp_exit_matches_location "$_exit_loc" "$_exit_colo"; then
-                log_error "Выбранная локация ${WARP_LOCATION}, но фактический выход: ${_exit_loc} (узел ${_exit_colo})"
+                log_error "Выбрана локация ${WARP_LOCATION}, но фактический выход: страна ${_exit_loc}, узел Cloudflare ${_exit_colo}"
                 log_info "Эндпоинт сменил anycast-маршрут — запустите разведку выбранного узла ещё раз"
                 return 1
             fi
-            log_success "Выход подтверждён: ${_exit_loc}, узел ${_exit_colo}"
+            log_success "Выход подтверждён: страна ${_exit_loc}, узел Cloudflare ${_exit_colo}"
         fi
     else
         log_warn "Правила применены, но проверка маршрута не подтвердила выход через WARP"
