@@ -1439,6 +1439,7 @@ events {
 http {
 ${_mime}
     server_tokens off;
+    server_names_hash_bucket_size 128;
 
     server {
         listen 80;
@@ -1722,6 +1723,7 @@ http {
 ${_mime}
     server_tokens off;
     map_hash_bucket_size 128;
+    server_names_hash_bucket_size 128;
 ${_web_map}
 ${_http80}
 ${_selfmask_servers}
