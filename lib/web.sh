@@ -452,6 +452,7 @@ web_nginx_stream_block() {
     web_nginx_ipv6_available && _listen6="        listen [::]:${_port};"
     cat << NGX
 stream {
+    map_hash_bucket_size 128;
     map \$ssl_preread_server_name \$mtproxyl_upstream {
         ${_domain}  mtproxyl_web;
         default     mtproxyl_faketls;
