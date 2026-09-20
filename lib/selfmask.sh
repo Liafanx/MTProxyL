@@ -1721,6 +1721,7 @@ ${_web_stream}
 http {
 ${_mime}
     server_tokens off;
+    map_hash_bucket_size 128;
 ${_web_map}
 ${_http80}
 ${_selfmask_servers}
