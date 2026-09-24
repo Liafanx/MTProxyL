@@ -45,12 +45,13 @@ jobs:
           [ "$rc" -eq 0 ] && echo "версия совпадает везде: $ver"
           exit "$rc"
 
-      # Секция «## vX.Y.Z — дата» до следующего заголовка версии.
+      # Секция «## vX.Y.Z — дата» до следующего заголовка; секции только
+      # панели («## Панель X.Y.Z») в релиз скрипта не попадают.
       - name: Extract changelog section
         run: |
           awk -v ver="${{ steps.version.outputs.value }}" '
             $0 ~ "^## v" ver "( |$|—)" { found = 1; next }
-            found && /^## v/ { exit }
+            found && /^## / { exit }
             found { print }
           ' CHANGELOG.md > release-notes.md
 
