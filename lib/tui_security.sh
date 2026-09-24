@@ -33,11 +33,19 @@ tui_security_menu() {
             echo -e "  ${DIM}reanimator недоступны (конфиг цели чужой).${NC}"
         fi
         echo -e "  ${DIM}[5]${NC} Блокировка IP адресов: $(_tui_ipblock_state_label)"
+        if [ "${MTPROXYL_MODE:-manager}" = manager ] && ! _superexpert_active; then
+            echo -e "  ${DIM}[6]${NC} Ограничение скорости клиентов"
+        fi
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
             1) tui_geoblock_menu ;;
             5) tui_ipblock_menu ;;
+            6)
+                _require_manager_mode || { press_any_key; continue; }
+                _require_no_superexpert || { press_any_key; continue; }
+                shaping_menu
+                press_any_key ;;
             2) tui_warp_menu ;;
             3)
                 _require_manager_mode || { press_any_key; continue; }

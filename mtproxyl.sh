@@ -20,7 +20,7 @@ export LC_NUMERIC=C
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="1.6.20"
+VERSION="1.6.21"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -62,6 +62,7 @@ _stdin_is_payload="false"
 [ "${1:-}" = "superexpert" ] && [ "${2:-}" = "write" ] && _stdin_is_payload="true"
 [ "${1:-}" = "selfmask" ] && [ "${2:-}" = "nginx-config" ] && [ "${3:-}" = "write" ] && _stdin_is_payload="true"
 [ "${1:-}" = "web" ] && [ "${2:-}" = "nginx-config" ] && [ "${3:-}" = "write" ] && _stdin_is_payload="true"
+[ "${1:-}" = "shaping" ] && [ "${2:-}" = "apply" ] && _stdin_is_payload="true"
 
 if [ "$_stdin_is_payload" != "true" ] \
    && [[ ! -t 0 ]] && [[ -e /dev/tty ]] && ps -p $$ -o stat= | grep -q "+"; then
@@ -70,7 +71,7 @@ fi
 
 # Загрузка библиотек
 LIB_DIR="${INSTALL_DIR}/lib"
-for _lib in colors utils settings detect secrets config docker binengine engine traffic stats availability dc warp geoblock geoip upstream backup nft ipblock selfmask web panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
+for _lib in colors utils settings detect secrets config docker binengine engine traffic stats availability dc warp geoblock geoip upstream backup nft ipblock shaping selfmask web panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
     if [ -f "${LIB_DIR}/${_lib}.sh" ]; then
         # shellcheck source=/dev/null
         source "${LIB_DIR}/${_lib}.sh"
@@ -205,6 +206,10 @@ cli_main() {
             else
                 show_traffic
             fi
+            ;;
+        shaping)
+            load_settings; load_secrets; load_upstreams
+            handle_shaping_command "$@"
             ;;
 
         connections)

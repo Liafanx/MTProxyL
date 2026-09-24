@@ -675,22 +675,33 @@ stop_proxy_container() {
 }
 
 start_proxy_container() {
-    engine_is_binary && { binengine_start; return; }
+    if engine_is_binary; then
+        binengine_start || return 1
+        shaping_restore 2>/dev/null || log_warn 'Не удалось восстановить ограничение скорости'
+        return 0
+    fi
     if is_proxy_running; then
         log_info "Прокси уже запущен"
+        shaping_restore 2>/dev/null || log_warn 'Не удалось восстановить ограничение скорости'
         return 0
     fi
     remember_proxy_container_version
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
-    run_proxy_container
+    run_proxy_container || return 1
+    shaping_restore 2>/dev/null || log_warn 'Не удалось восстановить ограничение скорости'
 }
 
 restart_proxy_container() {
-    engine_is_binary && { binengine_restart; return; }
+    if engine_is_binary; then
+        binengine_restart || return 1
+        shaping_restore 2>/dev/null || log_warn 'Не удалось восстановить ограничение скорости'
+        return 0
+    fi
     remember_proxy_container_version
     stop_proxy_container 2>/dev/null || true
     docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
-    run_proxy_container
+    run_proxy_container || return 1
+    shaping_restore 2>/dev/null || log_warn 'Не удалось восстановить ограничение скорости'
 }
 
 reload_proxy_config() {
@@ -699,6 +710,9 @@ reload_proxy_config() {
     local _web_limits_before=""
     web_is_enabled 2>/dev/null && _web_limits_before=$(web_limits_fingerprint 2>/dev/null)
     generate_telemt_config || { log_error "Ошибка генерации конфига"; return 1; }
+    if [ "$(shaping_config | jq -r '.enabled' 2>/dev/null)" = true ]; then
+        shaping_restore 2>/dev/null || log_warn 'Не удалось обновить правила ограничения скорости'
+    fi
     flush_traffic_to_disk 2>/dev/null || true
     if web_is_enabled 2>/dev/null && [ "$(web_limits_fingerprint 2>/dev/null)" != "$_web_limits_before" ]; then
         log_info "Изменились лимиты WEB — нужен перезапуск движка, горячей перезагрузки мало"

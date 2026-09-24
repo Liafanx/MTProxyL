@@ -31,6 +31,7 @@ export const MTPROXYL_NAV_ITEMS: NavItem[] = [
   { to: '/selfmask', icon: Globe, label: 'Selfmask' },
   { to: '/web', icon: Globe2, label: 'WEB Proxy', managerOnly: true },
   { to: '/traffic', icon: Gauge, label: 'Трафик', primary: true },
+  { to: '/shaping', icon: Gauge, label: 'Ограничение скорости', managerOnly: true },
   { to: '/nft', icon: ShieldAlert, label: 'Лимитер и защита' },
   { to: '/geoblock', icon: MapPin, label: 'Блокировка стран' },
   { to: '/ipblock', icon: ShieldBan, label: 'Блокировка IP адресов' },

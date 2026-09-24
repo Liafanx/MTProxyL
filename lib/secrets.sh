@@ -758,6 +758,7 @@ secret_rename() {
 
     SECRETS_LABELS[$idx]="$new"
     save_secrets || { SECRETS_LABELS[$idx]="$old"; log_error "Не удалось сохранить новое имя"; return 1; }
+    shaping_rename_profile "$old" "$new" 2>/dev/null || true
     _rename_user_stats_files "$old" "$new" \
         "${INSTALL_DIR}/relay_stats/traffic_db" \
         "${INSTALL_DIR}/relay_stats/user_ips_db" \

@@ -221,6 +221,10 @@ superexpert_enable() {
     echo ""
     local _yn; read_line _yn "  ${BOLD}Включить режим супер эксперта? [y/N]:${NC} "
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
+    if [ "$(shaping_config | jq -r '.enabled' 2>/dev/null)" = true ]; then
+        log_warn 'Ограничение скорости выключается перед переходом в Супер эксперт'
+        shaping_config | jq '.enabled=false' | shaping_apply || return 1
+    fi
 
     if [ ! -f "$SUPEREXPERT_FILE" ]; then
         # Копию делаем с действующего конфига; если его ещё нет — генерируем
@@ -552,6 +556,7 @@ TOML_EOF
                 echo "${SECRETS_LABELS[$i]} = \"${SECRETS_EXPIRES[$i]}\"" >> "$tmp"
         done
     fi
+    shaping_emit_user_limits "$tmp" || { log_error "Ошибка лимитов скорости"; return 1; }
     # Своя рекламная метка пользователя. Общая из [general] остаётся в силе
     # для всех остальных — секция её не отменяет, а перекрывает поимённо.
     local has_adtag=false

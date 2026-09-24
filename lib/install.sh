@@ -893,6 +893,10 @@ uninstall() {
 
     # Файлы
     log_info "Удаление файлов..."
+    shaping_tc_disable 2>/dev/null || true
+    systemctl disable --now mtproxyl-shaping-update.timer mtproxyl-shaping.service >/dev/null 2>&1 || true
+    rm -f "$SHAPING_BOOT_UNIT" "$SHAPING_TICK_UNIT" "$SHAPING_TIMER_UNIT"
+    systemctl daemon-reload 2>/dev/null || true
     rm -rf "$INSTALL_DIR"
     rm -f /usr/local/bin/mtproxyl
     # Алиас 'mtproxyl → sudo mtproxyl' от установщика. Строки в ~/.bashrc

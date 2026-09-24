@@ -14,7 +14,7 @@ create_backup() {
     rm -f "$meta_tmp"
 
     local files=()
-    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf expert.conf tunings.conf \
+    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf shaping.json expert.conf tunings.conf \
              superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf backup_meta.txt; do
         [ -f "${INSTALL_DIR}/$f" ] && files+=("$f")
     done
@@ -88,6 +88,14 @@ restore_backup() {
     availability_history_compact 2>/dev/null || true
     load_secrets
     load_nft_settings 2>/dev/null
+    if [ "${MTPROXYL_MODE:-manager}" = manager ] && ! _superexpert_active \
+        && [ "$(shaping_config | jq -r '.enabled' 2>/dev/null)" = true ]; then
+        shaping_write_units && shaping_restore && shaping_sync_timer "$(shaping_config)" \
+            || log_warn 'Не удалось восстановить ограничение скорости; проверьте mtproxyl shaping status'
+    else
+        shaping_tc_disable 2>/dev/null || true
+        systemctl disable --now mtproxyl-shaping-update.timer mtproxyl-shaping.service >/dev/null 2>&1 || true
+    fi
     if [ -n "${BLOCKLIST_COUNTRIES:-}" ]; then
         geoblock_remove_all >/dev/null 2>&1 || true
         geoblock_reapply_all >/dev/null 2>&1 || true
@@ -266,7 +274,7 @@ migrate_export() {
     local out="${1:-/tmp/mtproxyl-migrate-$(date +%Y%m%d-%H%M%S).tar.gz}"
     local tmp; tmp=$(mktemp -d) || { log_error "Не удалось создать временную директорию"; return 1; }
     local count=0
-    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf expert.conf tunings.conf \
+    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf shaping.json expert.conf tunings.conf \
              superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf; do
         [ -f "${INSTALL_DIR}/$f" ] && { cp "${INSTALL_DIR}/$f" "$tmp/" && count=$((count + 1)); }
     done
@@ -299,7 +307,7 @@ migrate_import() {
     tar -xzf "$file" -C "$tmp" 2>/dev/null || { log_error "Некорректный архив"; rm -rf "$tmp"; return 1; }
 
     local restored=0 base
-    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf expert.conf tunings.conf \
+    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf shaping.json expert.conf tunings.conf \
              superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf; do
         [ -f "${tmp}/${f}" ] && { cp "${tmp}/${f}" "${INSTALL_DIR}/$f" && chmod 600 "${INSTALL_DIR}/$f" && restored=$((restored + 1)); }
     done

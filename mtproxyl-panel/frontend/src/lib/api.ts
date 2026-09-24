@@ -658,8 +658,32 @@ export interface TrafficReport {
   users: TrafficUser[];
 }
 
+export interface ShapingConfig {
+  enabled: boolean;
+  mode: 'manual' | 'fixed' | 'dynamic';
+  channel_mbps: number;
+  reserve_percent: number;
+  expected_users: number;
+  manual_total_mbps: number;
+  manual_profile_mbps: number;
+  profile_exempt: string[];
+  ip_exempt: string[];
+}
+
+export interface ShapingStatus {
+  config: ShapingConfig;
+  state: { active_ips?: number; last_update_epoch?: number; last_sample_epoch?: number; last_error?: string | null };
+  rates: { total_bps: number; profile_bps: number; denominator: number | null };
+  tc_active: boolean;
+  interface: string;
+}
+
 export const mtproxylNetApi = {
   traffic: () => request<TrafficReport>(MTPROXYL_BASE, '/traffic'),
+  shaping: () => request<ShapingStatus>(MTPROXYL_BASE, '/shaping'),
+  setShaping: (config: ShapingConfig) => request<{ output: string }>(MTPROXYL_BASE, '/shaping', {
+    method: 'POST', body: JSON.stringify(config),
+  }),
   nft: () => request<NftStatus>(MTPROXYL_BASE, '/nft'),
   setNftParam: (key: string, value: string) =>
     request<{ output: string }>(MTPROXYL_BASE, '/nft/params', {

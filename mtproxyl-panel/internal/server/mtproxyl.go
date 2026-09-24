@@ -721,6 +721,41 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
 	}))
 
+	// ── Ограничение скорости клиентов ────────────────────────────────────────
+	mux.Handle("GET /api/mtproxyl/shaping", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		st, err := client.ShapingStatus(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: st})
+	}))
+	mux.Handle("POST /api/mtproxyl/shaping", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req mtproxylctl.ShapingConfig
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 65536))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректные параметры ограничения скорости")
+			return
+		}
+		if err := mtproxylctl.ValidateShapingConfig(req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		out, err := client.ApplyShaping(r.Context(), req)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
 	// ── NFT limiter, iOS fixes, Zapret2 ─────────────────────────────────────
 	mux.Handle("GET /api/mtproxyl/nft", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {

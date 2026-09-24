@@ -1335,6 +1335,10 @@ switch_to_manager_mode() {
     switch_port_profile "manager" && _port_changed="true"
     switch_selfmask_profile "manager"
     save_settings
+    if [ "$(shaping_config | jq -r '.enabled' 2>/dev/null)" = true ] && ! _superexpert_active; then
+        shaping_write_units && shaping_restore && shaping_sync_timer "$(shaping_config)" \
+            || log_warn 'Не удалось восстановить ограничение скорости в Manager'
+    fi
     log_success "Режим: manager"
     if [ "$_port_changed" = "true" ]; then
         log_success "Порт режима manager восстановлен: ${_port_before} → ${PROXY_PORT}"
@@ -1452,6 +1456,8 @@ switch_to_reanimator_mode() {
         _dispose_own_container "$_container_choice"
     fi
 
+    shaping_tc_disable 2>/dev/null || true
+    systemctl disable --now mtproxyl-shaping-update.timer mtproxyl-shaping.service >/dev/null 2>&1 || true
     switch_port_profile "reanimator" || true
     switch_selfmask_profile "reanimator"
     save_settings

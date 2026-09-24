@@ -532,6 +532,8 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script web mode web
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script web mode combined
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script web sync
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script shaping status --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script shaping apply
 # Пользователи и настройки MTProxyL: в режиме Manager конфиг движка
 # примонтирован только для чтения, менять их может лишь MTProxyL.
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script settings list --json
