@@ -1,44 +1,14 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, LogOut, X, Palette, ToggleLeft, Globe, Globe2, Archive, ShieldAlert, MapPin, Route, SlidersHorizontal, Gauge, FileCode, Puzzle, Radar, Wrench, Bot, Waypoints, ShieldBan, PanelTop } from 'lucide-react';
+import { LayoutDashboard, Users, Activity, Network, LogOut, X, Palette } from 'lucide-react';
+import { PANEL_NAV_ITEMS, MTPROXYL_NAV_ITEMS } from './nav';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme, THEMES, THEME_LABELS, isTheme } from '@/hooks/useTheme';
 import { useMtproxyl } from '@/hooks/useMtproxyl';
 import { useBranding } from '@/hooks/useBranding';
 
-const navItems = [
-  { to: '/', icon: LayoutDashboard, label: 'Дашборд' },
-  { to: '/availability', icon: Radar, label: 'Доступность из России' },
-  { to: '/users', icon: Users, label: 'Пользователи' },
-  { to: '/runtime', icon: Activity, label: 'Телеметрия' },
-  { to: '/security', icon: Shield, label: 'Безопасность' },
-  { to: '/upstreams', icon: Network, label: 'Апстримы и DC' },
-  { to: '/config', icon: Settings, label: 'Конфигурация' },
-  { to: '/panel-settings', icon: PanelTop, label: 'Настройки панели' },
-  { to: '/update', icon: ArrowUpCircle, label: 'Обновление' },
-  { to: '/logs', icon: ScrollText, label: 'Логи' },
-];
-
-// Показываются только при включённом мосте MTProxyL.
-// managerOnly — разделы, требующие владения конфигом движка.
-const mtproxylNavItems = [
-  { to: '/mode', icon: ToggleLeft, label: 'Режим работы', managerOnly: false },
-  { to: '/proxy-settings', icon: SlidersHorizontal, label: 'Настройки прокси', managerOnly: true },
-  { to: '/selfmask', icon: Globe, label: 'Selfmask', managerOnly: false },
-  { to: '/web', icon: Globe2, label: 'WEB Proxy', managerOnly: true },
-  { to: '/traffic', icon: Gauge, label: 'Трафик', managerOnly: false },
-  { to: '/nft', icon: ShieldAlert, label: 'Лимитер и защита', managerOnly: false },
-  { to: '/geoblock', icon: MapPin, label: 'Блокировка стран', managerOnly: false },
-  { to: '/ipblock', icon: ShieldBan, label: 'Блокировка IP адресов', managerOnly: false },
-  { to: '/warp', icon: Waypoints, label: 'Telegram через WARP', managerOnly: false },
-  { to: '/backups', icon: Archive, label: 'Бэкапы', managerOnly: true },
-  { to: '/routes', icon: Route, label: 'Маршруты', managerOnly: true },
-  { to: '/expert', icon: SlidersHorizontal, label: 'Экспертные параметры', managerOnly: true },
-  { to: '/superexpert', icon: FileCode, label: 'Супер эксперт', managerOnly: true },
-  { to: '/maintenance', icon: Wrench, label: 'Обслуживание', managerOnly: false },
-  { to: '/tgbot', icon: Bot, label: 'Телеграм-бот', managerOnly: false },
-  { to: '/addons', icon: Puzzle, label: 'Дополнения', managerOnly: false },
-];
+const navItems = PANEL_NAV_ITEMS;
+const mtproxylNavItems = MTPROXYL_NAV_ITEMS;
 
 interface SidebarProps {
   isOpen?: boolean;

@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthContext, useAuthProvider, useAuth } from '@/hooks/useAuth';
 import { WsContext, useWsProvider } from '@/hooks/useWebSocket';
 import { ThemeContext, useThemeProvider } from '@/hooks/useTheme';
+import { NavLayoutContext, useNavLayoutProvider } from '@/hooks/useNavLayout';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { LoginPage } from '@/pages/LoginPage';
 import { DashboardPage } from '@/pages/DashboardPage';
@@ -93,17 +94,20 @@ function AuthenticatedApp() {
 export default function App() {
   const auth = useAuthProvider();
   const themeCtx = useThemeProvider();
+  const navCtx = useNavLayoutProvider();
   const branding = useBrandingProvider();
 
   return (
     <BrandingContext.Provider value={branding}>
       <ThemeContext.Provider value={themeCtx}>
+      <NavLayoutContext.Provider value={navCtx}>
         <AuthContext.Provider value={auth}>
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="*" element={<AuthenticatedApp />} />
           </Routes>
         </AuthContext.Provider>
+      </NavLayoutContext.Provider>
       </ThemeContext.Provider>
     </BrandingContext.Provider>
   );

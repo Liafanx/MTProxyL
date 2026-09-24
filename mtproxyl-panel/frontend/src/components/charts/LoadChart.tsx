@@ -107,13 +107,13 @@ export function LoadChart({ connections, activeUsers, windowSecs = 1800, label, 
       </svg>
       {connPts.length > 1 && <EndDot point={connPts[connPts.length - 1]} tone="accent" size={7} />}
       {userPts.length > 1 && <EndDot point={userPts[userPts.length - 1]} tone="ok" size={6} />}
-      <div className="pointer-events-none absolute inset-y-[7.8%] left-0 flex flex-col justify-between" aria-hidden="true">
+      {!empty && <div className="pointer-events-none absolute inset-y-[7.8%] left-0 flex flex-col justify-between" aria-hidden="true">
         {ticks.map((tick) => (
           <span key={tick} className="rounded bg-surface/80 px-1 font-mono text-[10px] leading-none tabular-nums text-text-faint">
             {formatNumber(tick)}
           </span>
         ))}
-      </div>
+      </div>}
       {empty && (
         <div className="absolute inset-0 flex items-center justify-center text-meta text-text-muted">{emptyLabel}</div>
       )}

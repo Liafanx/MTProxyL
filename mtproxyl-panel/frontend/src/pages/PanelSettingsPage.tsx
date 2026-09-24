@@ -3,6 +3,7 @@ import { Image, RotateCcw, Save, Trash2, Upload } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Chip } from '@/components/ui/chip';
 import { useTheme, THEMES, THEME_LABELS } from '@/hooks/useTheme';
+import { useNavLayout, NAV_LAYOUTS, NAV_LAYOUT_LABELS } from '@/hooks/useNavLayout';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -40,6 +41,7 @@ interface TextSettings {
 export function PanelSettingsPage() {
   const { branding, apply } = useBranding();
   const { theme, setTheme } = useTheme();
+  const { layout, setLayout } = useNavLayout();
   const [form, setForm] = useState<TextSettings>({
     panel_name: branding.panel_name,
     login_title: branding.login_title,
@@ -225,6 +227,25 @@ export function PanelSettingsPage() {
             </div>
             <p className="text-meta text-text-muted">
               Выбор сохраняется в этом браузере. «Системная» следует за настройкой устройства.
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Навигация</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              {NAV_LAYOUTS.map((value) => (
+                <Chip key={value} active={layout === value} onClick={() => setLayout(value)}>
+                  {NAV_LAYOUT_LABELS[value]}
+                </Chip>
+              ))}
+            </div>
+            <p className="text-meta text-text-muted">
+              Новая: нижние табы на телефоне, узкая рельса с иконками на планшете, полное меню на широком экране; остальные разделы — в «Ещё».
+              Классическая: боковое меню со всеми разделами и кнопка‑гамбургер на телефоне. Сохраняется в этом браузере.
             </p>
           </CardContent>
         </Card>

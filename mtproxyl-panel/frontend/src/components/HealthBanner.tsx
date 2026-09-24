@@ -44,7 +44,7 @@ export function HealthBanner({ state, title, detail, facts = [], aside }: Health
   const tone = TONE[state];
   return (
     <section
-      className={cn('flex flex-col gap-4 rounded-xl border p-4 md:flex-row md:items-center md:justify-between md:p-5', tone.border)}
+      className={cn('flex flex-col gap-4 rounded-xl border p-4 lg:flex-row lg:items-center lg:justify-between lg:p-5', tone.border)}
       style={{ backgroundImage: tone.wash }}
     >
       <div className="min-w-0">
@@ -57,7 +57,7 @@ export function HealthBanner({ state, title, detail, facts = [], aside }: Health
         {detail && <p className="mt-1 text-[13px] leading-relaxed text-text-muted">{detail}</p>}
       </div>
       {facts.length > 0 && (
-        <div className="grid shrink-0 grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4 md:gap-x-8">
+        <div className="grid shrink-0 grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4 lg:gap-x-8">
           {facts.map((fact) => (
             <div key={fact.key} className="flex min-w-0 flex-col gap-0.5">
               <span className="truncate text-micro font-semibold uppercase tracking-[0.06em] text-text-faint">{fact.label}</span>
