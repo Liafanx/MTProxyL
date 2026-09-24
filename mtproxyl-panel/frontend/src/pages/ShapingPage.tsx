@@ -59,7 +59,7 @@ export function ShapingPage() {
     if (splitList(profiles).some((x) => !/^[A-Za-z0-9_-]{1,32}$/.test(x))) return 'Профили: только латиница, цифры, _ и -';
     if (splitList(ips).some((x) => {
       const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?:\/(\d{1,2}))?$/.exec(x);
-      return !m || m.slice(1, 5).some((n) => Number(n) > 255) || (m[5] !== undefined && Number(m[5]) > 32);
+      return !m || m.slice(1, 5).some((n) => Number(n) > 255 || (n.length > 1 && n.startsWith('0'))) || (m[5] !== undefined && Number(m[5]) > 32);
     })) return 'Исключения IP: только IPv4 или IPv4/CIDR';
     return '';
   }, [form, profiles, ips]);

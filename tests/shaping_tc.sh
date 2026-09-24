@@ -31,6 +31,22 @@ tc -j filter show dev test0 parent a11: | jq -e 'any(.[]; .options.classid? == "
 shaping_tc_disable
 [ "$(shaping_root_kind test0)" = fq ]
 
+# Полный цикл включения/выключения: без реального telemt и systemd.
+SHAPING_BOOT_UNIT="$test_dir/boot.service"
+SHAPING_TICK_UNIT="$test_dir/tick.service"
+SHAPING_TIMER_UNIT="$test_dir/tick.timer"
+_superexpert_active() { return 1; }
+shaping_reload_telemt() { :; }
+systemctl() { :; }
+log_success() { :; }
+log_error() { echo "$*" >&2; }
+log_warn() { echo "$*" >&2; }
+printf '%s\n' "$cfg" | shaping_apply
+shaping_tc_owned test0
+printf '%s\n' "$cfg" | jq '.enabled=false' | shaping_apply
+[ "$(shaping_root_kind test0)" = fq ]
+[ "$(jq -r '.enabled' "$SHAPING_FILE")" = false ]
+
 # Чужой нестандартный qdisc не заменяем.
 tc qdisc replace dev test0 root tbf rate 10mbit burst 16kbit latency 50ms
 if shaping_tc_apply "$cfg" >/dev/null 2>&1; then echo 'foreign qdisc overwritten' >&2; exit 1; fi
