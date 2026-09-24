@@ -55,7 +55,6 @@ func (b *bucket) UnmarshalJSON(data []byte) error {
 type userTraffic struct {
 	Tiers map[string][]bucket `json:"tiers"`
 	last  counter
-	seen  bool
 }
 
 type trafficFile struct {
