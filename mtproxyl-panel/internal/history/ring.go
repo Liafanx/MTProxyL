@@ -76,6 +76,19 @@ func (r *Ring) Range(name string, fromTS int64) []Point {
 	return out
 }
 
+// Size — число серий и точек в памяти.
+func (r *Ring) Size() (series, points int) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, p := range r.series {
+		if len(p) > 0 {
+			series++
+			points += len(p)
+		}
+	}
+	return series, points
+}
+
 func (r *Ring) Newest(name string) (Point, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

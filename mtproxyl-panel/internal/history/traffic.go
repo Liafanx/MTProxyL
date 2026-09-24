@@ -53,8 +53,9 @@ func (b *bucket) UnmarshalJSON(data []byte) error {
 }
 
 type userTraffic struct {
-	Tiers map[string][]bucket `json:"tiers"`
-	last  counter
+	Tiers    map[string][]bucket `json:"tiers"`
+	LastSeen int64               `json:"last_seen,omitempty"`
+	last     counter
 }
 
 type trafficFile struct {
@@ -71,11 +72,75 @@ type TrafficStore struct {
 	users         map[string]*userTraffic
 	observedSince int64
 	observedUntil int64
+	maxUsers      int
 	dirty         bool
 }
 
 func NewTrafficStore(path string) *TrafficStore {
 	return &TrafficStore{path: path, users: make(map[string]*userTraffic)}
+}
+
+func (t *TrafficStore) Path() string { return t.path }
+
+// SetMaxUsers ограничивает число пользователей в истории; 0 — без предела.
+// Лишние — те, чей трафик наблюдался раньше всех.
+func (t *TrafficStore) SetMaxUsers(n int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.maxUsers = n
+	t.pruneLocked()
+}
+
+func (t *TrafficStore) MaxUsers() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.maxUsers
+}
+
+func (t *TrafficStore) UsersCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.users)
+}
+
+func (t *TrafficStore) Observed() (since, until int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.observedSince, t.observedUntil
+}
+
+// Clear удаляет историю всех пользователей или одного.
+func (t *TrafficStore) Clear(username string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if username == "" {
+		t.users = make(map[string]*userTraffic)
+		t.observedSince, t.observedUntil = 0, 0
+	} else {
+		delete(t.users, username)
+	}
+	t.dirty = true
+}
+
+func (t *TrafficStore) pruneLocked() {
+	if t.maxUsers <= 0 || len(t.users) <= t.maxUsers {
+		return
+	}
+	names := make([]string, 0, len(t.users))
+	for name := range t.users {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		a, b := t.users[names[i]], t.users[names[j]]
+		if a.LastSeen != b.LastSeen {
+			return a.LastSeen < b.LastSeen
+		}
+		return names[i] < names[j]
+	})
+	for _, name := range names[:len(t.users)-t.maxUsers] {
+		delete(t.users, name)
+	}
+	t.dirty = true
 }
 
 // Load читает файл, отсутствие файла — не ошибка.
@@ -109,6 +174,9 @@ func (t *TrafficStore) Load() error {
 		for tier, list := range u.Tiers {
 			sort.Slice(list, func(i, j int) bool { return list[i].TS < list[j].TS })
 			u.Tiers[tier] = list
+			if n := len(list); n > 0 && list[n-1].TS > u.LastSeen {
+				u.LastSeen = list[n-1].TS
+			}
 		}
 		t.users[name] = u
 	}
@@ -168,8 +236,10 @@ func (t *TrafficStore) Observe(ts int64, totals map[string]uint64) {
 		for _, tier := range trafficTiers {
 			u.Tiers[tier.name] = addToBucket(u.Tiers[tier.name], ts-ts%tier.bucket, delta, ts-tier.retention)
 		}
+		u.LastSeen = ts
 		t.dirty = true
 	}
+	t.pruneLocked()
 }
 
 func addToBucket(list []bucket, start int64, delta float64, cutoff int64) []bucket {

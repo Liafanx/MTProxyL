@@ -279,12 +279,24 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 				log.Printf("history: история трафика не загружена: %v", err)
 			}
 			recorder.WithTrafficStore(traffic)
+			fingerprints := history.NewFingerprintStore(filepath.Join(s.cfg.DataDir, "tls-fingerprints.json"))
+			if err := fingerprints.Load(); err != nil {
+				log.Printf("history: история отпечатков не загружена: %v", err)
+			}
+			recorder.WithFingerprintStore(fingerprints)
+			limitsPath := filepath.Join(s.cfg.DataDir, "history-limits.json")
+			limits, err := history.LoadLimits(limitsPath)
+			if err != nil {
+				log.Printf("history: пределы хранения не загружены, взяты значения по умолчанию: %v", err)
+			}
+			recorder.WithLimits(limitsPath, limits)
 		}
 		historyCtx, stopHistory := context.WithCancel(context.Background())
 		defer stopHistory()
 		go recorder.Run(historyCtx)
 	}
 	s.registerHistoryRoutes(mux, jwtSecret, recorder)
+	s.registerFingerprintRoutes(mux, jwtSecret, recorder, telemtProxy)
 
 	// Update endpoints
 	upd := updater.New(

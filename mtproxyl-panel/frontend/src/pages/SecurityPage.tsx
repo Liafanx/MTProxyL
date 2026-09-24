@@ -1,19 +1,16 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Header } from '@/components/layout/Header';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { TelemetryField } from '@/components/TelemetryField';
-import { GatedNotice } from '@/components/GatedNotice';
 import { HealthBanner } from '@/components/HealthBanner';
-import { KV, Panel } from '@/components/KeyValue';
-import { Chip } from '@/components/ui/chip';
+import { Panel } from '@/components/KeyValue';
+import { TlsFingerprintsCard } from '@/components/TlsFingerprintsCard';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatePill, type PillState } from '@/components/ui/state-pill';
 import { useWsSubscription, useEndpoint } from '@/hooks/useWebSocket';
-import { usePolling } from '@/hooks/usePolling';
-import { telemt } from '@/lib/api';
 import { formatNumber, plural } from '@/lib/utils';
 import { fieldMeta } from '@/lib/telemetryLabels';
-import { formatEpoch, gatedData, type Gated } from '@/lib/gated';
+import { formatEpoch } from '@/lib/gated';
 
 interface SecurityPostureData {
   api_read_only: boolean;
@@ -37,40 +34,6 @@ interface WhitelistData {
 interface LimitsData {
   [key: string]: unknown;
 }
-
-interface TlsRow {
-  scope?: string;
-  ja3: string;
-  ja3_raw: string;
-  ja4: string;
-  ja4_raw: string;
-  total: number;
-  auth_success: number;
-  bad_or_probe: number;
-  first_seen_epoch_secs: number;
-  last_seen_epoch_secs: number;
-}
-
-interface TlsFingerprintsPayload {
-  limit: number;
-  retention_secs: number;
-  capacity: number;
-  dropped_total: number;
-  parse_error_total: number;
-  by_fingerprint: TlsRow[];
-  by_ip: TlsRow[];
-  by_cidr: TlsRow[];
-  by_user: TlsRow[];
-}
-
-type TlsScope = 'by_fingerprint' | 'by_ip' | 'by_cidr' | 'by_user';
-
-const TLS_SCOPES: Array<{ key: TlsScope; label: string; column: string }> = [
-  { key: 'by_fingerprint', label: 'По отпечатку', column: 'JA4' },
-  { key: 'by_ip', label: 'По IP', column: 'IP' },
-  { key: 'by_cidr', label: 'По подсети', column: 'Подсеть' },
-  { key: 'by_user', label: 'По пользователю', column: 'Пользователь' },
-];
 
 const ENDPOINTS = ['/v1/security/posture', '/v1/security/whitelist', '/v1/limits/effective'];
 
@@ -122,52 +85,11 @@ function apiVerdict(p: SecurityPostureData): { state: PillState; title: string; 
   };
 }
 
-function TlsTable({ rows, column, suspiciousOnly }: { rows: TlsRow[]; column: string; suspiciousOnly: boolean }) {
-  const visible = rows.filter((r) => !suspiciousOnly || r.bad_or_probe > 0);
-  if (visible.length === 0) return <p className="py-3 text-center text-meta text-text-muted">Записей нет</p>;
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="border-b border-border text-left text-text-muted">
-            <th className="py-1.5 pr-2 font-medium">{column}</th>
-            <th className="py-1.5 px-2 font-medium">JA3</th>
-            <th className="py-1.5 px-2 text-right font-medium">Всего</th>
-            <th className="py-1.5 px-2 text-right font-medium">Успешных</th>
-            <th className="py-1.5 px-2 text-right font-medium">Плохих / зондов</th>
-            <th className="py-1.5 pl-2 text-right font-medium">Последний раз</th>
-          </tr>
-        </thead>
-        <tbody>
-          {visible.map((r, i) => (
-            <tr key={`${r.scope ?? r.ja4}-${i}`} className="border-b border-border/50 last:border-0">
-              <td className="py-1.5 pr-2 font-mono text-text" title={r.ja4_raw}>{r.scope ?? r.ja4}</td>
-              <td className="py-1.5 px-2 font-mono text-text-muted" title={r.ja3_raw}>{r.ja3.slice(0, 12)}{r.ja3.length > 12 ? '…' : ''}</td>
-              <td className="py-1.5 px-2 text-right tabular-nums text-text">{formatNumber(r.total)}</td>
-              <td className="py-1.5 px-2 text-right tabular-nums text-ok">{formatNumber(r.auth_success)}</td>
-              <td className={r.bad_or_probe > 0 ? 'py-1.5 px-2 text-right tabular-nums font-semibold text-warn' : 'py-1.5 px-2 text-right tabular-nums text-text-faint'}>{formatNumber(r.bad_or_probe)}</td>
-              <td className="py-1.5 pl-2 text-right tabular-nums text-text-muted">{formatEpoch(r.last_seen_epoch_secs)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 export function SecurityPage() {
   const { data: wsData, errors, connected, refresh } = useWsSubscription('security', ENDPOINTS, 10);
   const posture = useEndpoint<SecurityPostureData>(wsData, '/v1/security/posture');
   const whitelist = useEndpoint<WhitelistData>(wsData, '/v1/security/whitelist');
   const limits = useEndpoint<LimitsData>(wsData, '/v1/limits/effective');
-
-  const tls = usePolling<Gated<TlsFingerprintsPayload>>(
-    () => telemt.get('/v1/runtime/tls-fingerprints?limit=50'),
-    30_000,
-  );
-  const [scope, setScope] = useState<TlsScope>('by_fingerprint');
-  const [suspiciousOnly, setSuspiciousOnly] = useState(false);
-  const tlsPayload = gatedData(tls.data);
 
   const firstError = Object.values(errors)[0];
   const loading = Object.keys(wsData).length === 0 && !firstError;
@@ -186,10 +108,6 @@ export function SecurityPage() {
     }
     return scalars.length ? [{ title: 'Общее', entries: scalars }, ...groups] : groups;
   }, [limits]);
-
-  const suspiciousTotal = tlsPayload
-    ? TLS_SCOPES.reduce((n, s) => n + tlsPayload[s.key].filter((r) => r.bad_or_probe > 0).length, 0)
-    : 0;
 
   return (
     <div>
@@ -284,42 +202,7 @@ export function SecurityPage() {
               </section>
             )}
 
-            <section className="rounded-xl border border-border bg-surface p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <h3 className="text-[13px] font-semibold text-text">TLS‑отпечатки клиентов</h3>
-                  <p className="mt-0.5 text-micro text-text-muted">
-                    JA3/JA4 отпечатки ClientHello: кто подключается и сколько попыток похожи на зондирование.
-                  </p>
-                </div>
-                {tlsPayload && suspiciousTotal > 0 && <StatePill state="warn">подозрительных {suspiciousTotal}</StatePill>}
-              </div>
-              <div className="mt-3">
-                {tls.loading && !tls.data ? (
-                  <Skeleton className="h-32" />
-                ) : tls.error ? (
-                  <p className="text-meta text-warn">Не удалось получить отпечатки: {tls.error.message}</p>
-                ) : !tlsPayload ? (
-                  <GatedNotice title="TLS‑отпечатки" reason={tls.data?.reason} runtimeEdge />
-                ) : (
-                  <div className="space-y-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      {TLS_SCOPES.map((s) => (
-                        <Chip key={s.key} active={scope === s.key} onClick={() => setScope(s.key)} count={tlsPayload[s.key].length}>{s.label}</Chip>
-                      ))}
-                      <Chip active={suspiciousOnly} onClick={() => setSuspiciousOnly((v) => !v)}>Только подозрительные</Chip>
-                    </div>
-                    <TlsTable rows={tlsPayload[scope]} column={TLS_SCOPES.find((s) => s.key === scope)!.column} suspiciousOnly={suspiciousOnly} />
-                    <div className="grid grid-cols-2 gap-x-6 text-micro text-text-faint md:grid-cols-4">
-                      <KV label="Хранится" value={`${Math.round(tlsPayload.retention_secs / 3600)} ч`} />
-                      <KV label="Ёмкость" value={formatNumber(tlsPayload.capacity)} mono />
-                      <KV label="Потеряно" value={formatNumber(tlsPayload.dropped_total)} mono />
-                      <KV label="Ошибок разбора" value={formatNumber(tlsPayload.parse_error_total)} mono />
-                    </div>
-                  </div>
-                )}
-              </div>
-            </section>
+            <TlsFingerprintsCard />
           </>
         )}
       </div>

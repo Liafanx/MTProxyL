@@ -1218,3 +1218,111 @@ export const trafficHistoryApi = {
   user: (username: string, range: TrafficHistoryRange) =>
     request<TrafficHistorySummary>(HISTORY_BASE, `/history/traffic/users/${encodeURIComponent(username)}?range=${range}`),
 };
+
+// ── TLS-отпечатки и хранилище истории ─────────────────────────────────────
+
+export type FingerprintScope = 'by_fingerprint' | 'by_ip' | 'by_cidr' | 'by_user';
+export type FingerprintSort = 'key' | 'total' | 'auth_success' | 'bad_or_probe' | 'first_seen' | 'last_seen' | 'country';
+
+export interface FingerprintRow {
+  key: string;
+  ja3: string;
+  ja3_raw: string;
+  ja4: string;
+  ja4_raw: string;
+  total: number;
+  auth_success: number;
+  bad_or_probe: number;
+  first_seen_epoch_secs: number;
+  last_seen_epoch_secs: number;
+  country?: string;
+  country_name?: string;
+  city?: string;
+  asn_org?: string;
+}
+
+export interface FingerprintEngineMeta {
+  limit: number;
+  retention_secs: number;
+  capacity: number;
+  dropped_total: number;
+  parse_error_total: number;
+  fetched_at_epoch_secs?: number;
+}
+
+export interface FingerprintsPage {
+  scope: FingerprintScope;
+  source: 'panel' | 'engine';
+  sort: FingerprintSort;
+  order: 'asc' | 'desc';
+  offset: number;
+  limit: number;
+  total: number;
+  counts: Record<FingerprintScope, number>;
+  suspicious: Record<FingerprintScope, number>;
+  rows: FingerprintRow[];
+  gate: { seen: boolean; enabled: boolean; reason?: string };
+  engine: FingerprintEngineMeta;
+  geoip: boolean;
+  observed_since_epoch_secs?: number;
+  observed_until_epoch_secs?: number;
+}
+
+export interface FingerprintsQuery {
+  scope: FingerprintScope;
+  sort: FingerprintSort;
+  order: 'asc' | 'desc';
+  q?: string;
+  suspicious?: boolean;
+  offset?: number;
+  limit?: number;
+}
+
+export const fingerprintsApi = {
+  query: (params: FingerprintsQuery) => {
+    const search = new URLSearchParams({ scope: params.scope, sort: params.sort, order: params.order });
+    if (params.q) search.set('q', params.q);
+    if (params.suspicious) search.set('suspicious', '1');
+    if (params.offset) search.set('offset', String(params.offset));
+    if (params.limit) search.set('limit', String(params.limit));
+    return request<FingerprintsPage>(HISTORY_BASE, `/history/fingerprints?${search.toString()}`);
+  },
+};
+
+export interface HistoryLimits {
+  traffic_max_users: number;
+  fingerprints_max_records: number;
+  fingerprints_retention_days: number;
+}
+
+export interface HistoryStorage {
+  traffic: {
+    enabled: boolean;
+    path?: string;
+    bytes: number;
+    users: number;
+    observed_since_epoch_secs?: number;
+    observed_until_epoch_secs?: number;
+  };
+  fingerprints: {
+    enabled: boolean;
+    path?: string;
+    bytes: number;
+    counts: Record<FingerprintScope, number> | null;
+    records: number;
+    observed_since_epoch_secs?: number;
+    observed_until_epoch_secs?: number;
+  };
+  memory: { points: number; bytes: number; retention_secs: number };
+  limits: HistoryLimits;
+  data_dir: string;
+}
+
+export const historyStorageApi = {
+  get: () => request<HistoryStorage>(HISTORY_BASE, '/history/storage'),
+  setLimits: (limits: HistoryLimits) =>
+    request<HistoryStorage>(HISTORY_BASE, '/history/limits', { method: 'PUT', body: JSON.stringify(limits) }),
+  clearTraffic: (username?: string) =>
+    request<HistoryStorage>(HISTORY_BASE, `/history/traffic${username ? `?user=${encodeURIComponent(username)}` : ''}`, { method: 'DELETE' }),
+  clearFingerprints: () => request<HistoryStorage>(HISTORY_BASE, '/history/fingerprints', { method: 'DELETE' }),
+};

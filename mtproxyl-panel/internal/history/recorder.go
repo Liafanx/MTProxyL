@@ -3,6 +3,7 @@ package history
 import (
 	"context"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -16,8 +17,9 @@ const (
 	MetricActiveIPs          = "active_ips"
 	MetricTraffic            = "traffic"
 
-	StatsInterval = 5 * time.Second
-	UsersInterval = 10 * time.Second
+	StatsInterval        = 5 * time.Second
+	UsersInterval        = 10 * time.Second
+	FingerprintsInterval = time.Minute
 )
 
 var knownMetrics = map[string]bool{
@@ -34,12 +36,15 @@ type Fetcher interface {
 }
 
 type Recorder struct {
-	ring    *Ring
-	fetch   Fetcher
-	now     func() time.Time
-	traffic *TrafficStore
+	ring         *Ring
+	fetch        Fetcher
+	now          func() time.Time
+	traffic      *TrafficStore
+	fingerprints *FingerprintStore
+	limitsPath   string
 
 	mu           sync.Mutex
+	limits       Limits
 	connections  counter
 	refusals     counter
 	trafficTotal counter
@@ -55,7 +60,7 @@ type gateState struct {
 }
 
 func NewRecorder(f Fetcher) *Recorder {
-	return &Recorder{ring: NewRing(), fetch: f, now: time.Now, lastLog: make(map[string]time.Time)}
+	return &Recorder{ring: NewRing(), fetch: f, now: time.Now, lastLog: make(map[string]time.Time), limits: DefaultLimits()}
 }
 
 // WithTrafficStore включает долговременную историю трафика по пользователям.
@@ -64,41 +69,115 @@ func (r *Recorder) WithTrafficStore(t *TrafficStore) *Recorder {
 	return r
 }
 
-func (r *Recorder) Ring() *Ring            { return r.ring }
-func (r *Recorder) Traffic() *TrafficStore { return r.traffic }
+// WithFingerprintStore включает накопление TLS-отпечатков.
+func (r *Recorder) WithFingerprintStore(f *FingerprintStore) *Recorder {
+	r.fingerprints = f
+	return r
+}
+
+// WithLimits задаёт пределы хранения и файл, где они сохраняются.
+func (r *Recorder) WithLimits(path string, l Limits) *Recorder {
+	r.limitsPath = path
+	r.applyLimits(l)
+	return r
+}
+
+func (r *Recorder) Ring() *Ring                     { return r.ring }
+func (r *Recorder) Traffic() *TrafficStore          { return r.traffic }
+func (r *Recorder) Fingerprints() *FingerprintStore { return r.fingerprints }
+
+func (r *Recorder) Limits() Limits {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.limits
+}
+
+// SetLimits применяет пределы к хранилищам и сохраняет их на диск.
+func (r *Recorder) SetLimits(l Limits) error {
+	if err := l.Validate(); err != nil {
+		return err
+	}
+	r.applyLimits(l)
+	return SaveLimits(r.limitsPath, l)
+}
+
+func (r *Recorder) applyLimits(l Limits) {
+	r.mu.Lock()
+	r.limits = l
+	r.mu.Unlock()
+	if r.traffic != nil {
+		r.traffic.SetMaxUsers(l.TrafficMaxUsers)
+	}
+	if r.fingerprints != nil {
+		r.fingerprints.SetLimits(l.FingerprintsMaxRecords, l.FingerprintsRetentionDays, r.now().Unix())
+	}
+}
 
 // Run опрашивает движок до отмены контекста.
 func (r *Recorder) Run(ctx context.Context) {
 	r.PollStats(ctx)
 	r.PollUsers(ctx)
+	r.PollFingerprints(ctx)
 	stats := time.NewTicker(StatsInterval)
 	users := time.NewTicker(UsersInterval)
+	fingerprints := time.NewTicker(FingerprintsInterval)
 	save := time.NewTicker(time.Minute)
 	defer stats.Stop()
 	defer users.Stop()
+	defer fingerprints.Stop()
 	defer save.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			r.saveTraffic()
+			r.Save()
 			return
 		case <-stats.C:
 			r.PollStats(ctx)
 		case <-users.C:
 			r.PollUsers(ctx)
+		case <-fingerprints.C:
+			r.PollFingerprints(ctx)
 		case <-save.C:
-			r.saveTraffic()
+			r.Save()
 		}
 	}
 }
 
-func (r *Recorder) saveTraffic() {
-	if r.traffic == nil {
+// Save сбрасывает изменённые хранилища на диск.
+func (r *Recorder) Save() {
+	if r.traffic != nil {
+		if err := r.traffic.Save(); err != nil {
+			r.warn("traffic-save", err)
+		}
+	}
+	if r.fingerprints != nil {
+		if err := r.fingerprints.Save(); err != nil {
+			r.warn("fingerprints-save", err)
+		}
+	}
+}
+
+type fingerprintsGate struct {
+	Enabled bool                `json:"enabled"`
+	Reason  string              `json:"reason"`
+	Data    *EngineFingerprints `json:"data"`
+}
+
+// PollFingerprints сливает снимок отпечатков движка в хранилище панели.
+func (r *Recorder) PollFingerprints(ctx context.Context) {
+	if r.fingerprints == nil {
 		return
 	}
-	if err := r.traffic.Save(); err != nil {
-		r.warn("traffic-save", err)
+	var gate fingerprintsGate
+	if err := r.fetch.GetJSON(ctx, "/v1/runtime/tls-fingerprints?limit="+strconv.Itoa(FingerprintPollLimit), &gate); err != nil {
+		r.warn("fingerprints", err)
+		return
 	}
+	if !gate.Enabled || gate.Data == nil {
+		r.fingerprints.SetGate(false, gate.Reason)
+		return
+	}
+	r.fingerprints.Merge(r.now().Unix(), gate.Data)
 }
 
 type classCount struct {
