@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 
-export const THEMES = ['system', 'light', 'dark', 'mocha', 'parchment'] as const
+export const THEMES = ['system', 'light', 'dark', 'mocha', 'parchment', 'matrix'] as const
 export type Theme = (typeof THEMES)[number]
 export type ColorScheme = 'dark' | 'light'
 
@@ -10,6 +10,7 @@ export const THEME_LABELS: Record<Theme, string> = {
   dark: 'Тёмная',
   mocha: 'Мокко',
   parchment: 'Пергамент',
+  matrix: 'Матрица',
 }
 
 const STORAGE_KEY = 'mtproxyl-panel-theme'
@@ -19,6 +20,7 @@ const SCHEME: Record<Exclude<Theme, 'system'>, ColorScheme> = {
   light: 'light',
   mocha: 'dark',
   parchment: 'light',
+  matrix: 'dark',
 }
 
 const THEME_COLOR: Record<Exclude<Theme, 'system'>, string> = {
@@ -26,6 +28,7 @@ const THEME_COLOR: Record<Exclude<Theme, 'system'>, string> = {
   light: '#f3f5f8',
   mocha: '#211e1a',
   parchment: '#f3ead9',
+  matrix: '#050c08',
 }
 
 interface ThemeContextValue {

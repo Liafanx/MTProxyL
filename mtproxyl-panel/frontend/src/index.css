@@ -210,6 +210,49 @@
   --bar-fill-full: 171 60 43;
 }
 
+/* «Матрица» — зелёный терминал на почти чёрном фоне. */
+[data-theme="matrix"] {
+  --bg: 5 12 8;
+  --surface-sunken: 3 8 5;
+  --surface: 9 22 14;
+  --surface-2: 16 36 23;
+  --surface-3: 23 51 32;
+
+  --border: 34 73 47;
+  --border-strong: 49 105 66;
+
+  --text: 199 247 211;
+  --text-muted: 143 205 157;
+  --text-faint: 113 178 129;
+
+  --accent: 78 239 122;
+  --accent-strong: 56 191 100;
+  --accent-hover: 114 250 151;
+  --accent-text: 3 17 8;
+
+  --ok: 86 234 123;
+  --warn: 233 190 89;
+  --error: 239 133 129;
+  --error-strong: 173 58 54;
+  --error-text: 255 247 246;
+  --muted: 127 173 136;
+
+  --focus-ring: 78 239 122;
+  --scrim: 0 5 2;
+  --control-knob: 3 17 8;
+
+  --brand-from: 12 75 31;
+  --brand-to: 28 109 52;
+  --brand-text: 235 255 239;
+
+  --bar-track: 20 45 28;
+  --bar-fill: 56 191 100;
+  --bar-fill-warn: 233 190 89;
+  --bar-fill-full: 173 58 54;
+
+  --font-family-sans: ui-monospace, "Cascadia Code", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
 /* Маппинг в Tailwind. Старые имена (background, text-secondary, success…)
    оставлены как алиасы — существующие страницы работают без правок. */
 @theme inline {
@@ -321,6 +364,13 @@
     @apply bg-bg text-text antialiased;
     font-family: var(--font-family-sans);
     font-variant-numeric: tabular-nums;
+  }
+  :root[data-theme="matrix"] body {
+    background-image: repeating-linear-gradient(
+      to bottom,
+      transparent 0 3px,
+      rgb(78 239 122 / 0.035) 3px 4px
+    );
   }
   :focus-visible {
     outline: 2px solid rgb(var(--focus-ring));
