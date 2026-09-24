@@ -44,6 +44,16 @@ type UsersConfig struct {
 	Expiration     string `toml:"expiration" json:"expiration_rfc3339,omitempty"`
 }
 
+// HistoryConfig — история метрик в памяти панели для спарклайнов и графиков.
+type HistoryConfig struct {
+	Enabled *bool `toml:"enabled"`
+}
+
+// IsEnabled: история включена, пока её не выключили явно.
+func (h HistoryConfig) IsEnabled() bool {
+	return h.Enabled == nil || *h.Enabled
+}
+
 type Config struct {
 	Path     string         `toml:"-"` // config file path, set after loading
 	Listen   string         `toml:"listen"`
@@ -56,6 +66,7 @@ type Config struct {
 	TLS      TLSConfig      `toml:"tls"`
 	GeoIP    GeoIPConfig    `toml:"geoip"`
 	Users    UsersConfig    `toml:"users"`
+	History  HistoryConfig  `toml:"history"`
 	// Globalping — устаревшая секция, оставлена для чтения старых конфигов.
 	Globalping GlobalpingConfig `toml:"globalping"`
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/Liafanx/mtproxyl-panel/internal/auth"
 	"github.com/Liafanx/mtproxyl-panel/internal/auto_update"
 	"github.com/Liafanx/mtproxyl-panel/internal/config"
+	"github.com/Liafanx/mtproxyl-panel/internal/history"
 	"github.com/Liafanx/mtproxyl-panel/internal/logs"
 	"github.com/Liafanx/mtproxyl-panel/internal/mtproxylctl"
 	"github.com/Liafanx/mtproxyl-panel/internal/panel_updater"
@@ -267,6 +268,16 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 	// WebSocket endpoint (auth checked via cookie on upgrade)
 	wsHandler := ws.NewHandler(s.cfg.Telemt.URL, s.cfg.Telemt.AuthHeader)
 	mux.Handle("/api/ws", auth.RequireAuth(jwtSecret, wsHandler))
+
+	// История метрик в памяти: спарклайны и график нагрузки на дашборде
+	var recorder *history.Recorder
+	if s.cfg.History.IsEnabled() {
+		recorder = history.NewRecorder(telemtProxy)
+		historyCtx, stopHistory := context.WithCancel(context.Background())
+		defer stopHistory()
+		go recorder.Run(historyCtx)
+	}
+	s.registerHistoryRoutes(mux, jwtSecret, recorder)
 
 	// Update endpoints
 	upd := updater.New(

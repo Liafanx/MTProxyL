@@ -13,7 +13,9 @@ import { StatePill, type PillState } from '@/components/ui/state-pill';
 import { StatusBadge } from '@/components/StatusBadge';
 import { useWsSubscription, useEndpoint } from '@/hooks/useWebSocket';
 import { usePolling } from '@/hooks/usePolling';
-import { useSeries } from '@/hooks/useSeries';
+import { useHistorySeries } from '@/hooks/useHistorySeries';
+import { gaugeValues, rateValues, windowDelta } from '@/lib/history';
+import { LoadCard } from '@/components/LoadCard';
 import { useMtproxyl } from '@/hooks/useMtproxyl';
 import { telemt, mtproxylSettingsApi, availabilityApi, type AvailabilityStatusResponse } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -104,10 +106,21 @@ export function DashboardPage() {
     return usersData.reduce((sum, u) => sum + u.active_unique_ips, 0);
   }, [usersData]);
 
-  const connectionsSeries = useSeries(summary?.connections_total, { cumulative: true });
-  const badSeries = useSeries(summary?.connections_bad_total, { cumulative: true });
-  const trafficSeries = useSeries(usersData ? totalTraffic : undefined, { cumulative: true });
-  const ipsSeries = useSeries(usersData ? totalActiveIPs : undefined);
+  const history = useHistorySeries(
+    ['connections', 'refusals', 'active_ips', 'traffic', 'current_connections', 'active_users'],
+    '30m',
+    10_000,
+  );
+  const connectionsSeries = rateValues(history.series.connections);
+  const badSeries = rateValues(history.series.refusals);
+  const trafficSeries = rateValues(history.series.traffic);
+  const ipsSeries = gaugeValues(history.series.active_ips);
+  const connectionsDelta = windowDelta(history.series.connections);
+  const badDelta = windowDelta(history.series.refusals);
+  const trafficDelta = windowDelta(history.series.traffic);
+  const telemetryOff =
+    history.series.connections?.state === 'ready' &&
+    (history.series.current_connections?.state ?? 'empty') === 'empty';
 
   const isHealthy = health?.status === 'ok';
   const firstError = Object.values(errors)[0];
@@ -115,7 +128,7 @@ export function DashboardPage() {
   const dcThreshold = useDcThreshold();
   const dcSummary = useMemo(() => summarizeDcs(dcs, dcThreshold.value), [dcs, dcThreshold.value]);
 
-  const badRecent = badSeries.slice(-12).reduce((s, v) => s + v, 0);
+  const badRecent = badDelta ?? 0;
   const startupStatus = gates?.startup_status?.toLowerCase();
   const starting = startupStatus !== undefined && startupStatus !== 'ready' && startupStatus !== 'done';
 
@@ -154,7 +167,7 @@ export function DashboardPage() {
     });
   }
   if (badRecent > 0) {
-    problems.push({ key: 'bad', severity: 'info', label: `Ошибочных соединений за минуту: ${formatNumber(badRecent)}`, detail: 'Разбивка по классам ниже.', to: '/security' });
+    problems.push({ key: 'bad', severity: 'info', label: `Ошибочных соединений за 15 минут: ${formatNumber(badRecent)}`, detail: 'Разбивка по классам ниже.', to: '/security' });
   }
   if (availability?.enabled && availability.status && availability.status.level !== 'green') {
     problems.push({
@@ -202,7 +215,7 @@ export function DashboardPage() {
               icon={<Activity size={14} />}
               variant="success"
               series={connectionsSeries}
-              caption={connectionsSeries.length >= 2 ? `+${formatNumber(connectionsSeries.slice(-12).reduce((s, v) => s + v, 0))} за минуту` : undefined}
+              caption={connectionsDelta === null ? undefined : `+${formatNumber(connectionsDelta)} за 15 мин`}
             />
             <MetricCard
               label="Ошибочных соединений"
@@ -211,7 +224,7 @@ export function DashboardPage() {
               variant={summary.connections_bad_total > 0 ? 'warning' : 'default'}
               status={badRecent > 0 ? 'warn' : 'ok'}
               series={badSeries}
-              caption={badSeries.length >= 2 ? `+${formatNumber(badRecent)} за минуту` : undefined}
+              caption={badDelta === null ? undefined : `+${formatNumber(badDelta)} за 15 мин`}
             />
             <MetricCard
               label="Пользователей"
@@ -229,12 +242,21 @@ export function DashboardPage() {
               value={formatBytes(totalTraffic)}
               icon={<ArrowUpDown size={14} />}
               series={trafficSeries}
-              caption={trafficSeries.length >= 2 ? `+${formatBytes(trafficSeries.slice(-6).reduce((s, v) => s + v, 0))} за минуту` : undefined}
+              caption={trafficDelta === null ? undefined : `+${formatBytes(trafficDelta)} за 15 мин`}
             />
           </div>
         )}
 
         <ProblemsCard items={problems} />
+
+        {!history.disabled && (
+          <LoadCard
+            connections={history.series.current_connections}
+            activeUsers={history.series.active_users}
+            telemetryOff={telemetryOff}
+            loading={history.loading}
+          />
+        )}
 
         <AvailabilityCard />
 

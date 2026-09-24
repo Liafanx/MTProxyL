@@ -213,3 +213,35 @@ func writeAndLoad(t *testing.T, toml string) *Config {
 	}
 	return cfg
 }
+
+func TestHistoryEnabledByDefault(t *testing.T) {
+	write := func(extra string) *Config {
+		t.Helper()
+		f, err := os.CreateTemp("", "config-*.toml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.Remove(f.Name())
+		f.WriteString(`
+listen = "0.0.0.0:8080"
+[telemt]
+url = "http://127.0.0.1:9091"
+[auth]
+username = "admin"
+password_hash = "$2a$10$abcdefghijklmnopqrstuvwxABCDEFGHIJ"
+jwt_secret = "test-secret-that-is-at-least-32-characters"
+` + extra)
+		f.Close()
+		cfg, err := Load(f.Name())
+		if err != nil {
+			t.Fatalf("Load failed: %v", err)
+		}
+		return cfg
+	}
+	if !write("").History.IsEnabled() {
+		t.Fatal("history must be enabled by default")
+	}
+	if write("[history]\nenabled = false\n").History.IsEnabled() {
+		t.Fatal("history must honour enabled = false")
+	}
+}

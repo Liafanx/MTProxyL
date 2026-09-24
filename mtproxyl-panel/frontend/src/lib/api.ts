@@ -1144,3 +1144,45 @@ export const warpApi = {
       body: JSON.stringify(patch),
     }),
 };
+
+// ── История метрик (память панели, 2 часа) ────────────────────────────────
+
+export type HistoryRange = '15m' | '30m' | '1h' | '2h';
+export type HistoryMetric =
+  | 'connections'
+  | 'refusals'
+  | 'available'
+  | 'current_connections'
+  | 'active_users'
+  | 'active_ips'
+  | 'traffic';
+
+export interface HistoryPoint {
+  ts: number;
+  v: number;
+}
+
+export interface HistorySeries {
+  metric: HistoryMetric;
+  range: HistoryRange;
+  state: 'ready' | 'partial' | 'empty';
+  requested_from_epoch_secs: number;
+  retention_secs: number;
+  available_from_epoch_secs?: number;
+  source_available?: boolean;
+  points: HistoryPoint[];
+}
+
+export interface HistoryResponse {
+  range: HistoryRange;
+  requested_from_epoch_secs: number;
+  retention_secs: number;
+  series: HistorySeries[];
+}
+
+const HISTORY_BASE = `${BASE}/api`;
+
+export const historyApi = {
+  get: (metrics: HistoryMetric[], range: HistoryRange = '30m') =>
+    request<HistoryResponse>(HISTORY_BASE, `/history?metric=${metrics.join(',')}&range=${range}`),
+};
