@@ -118,9 +118,7 @@ export function DashboardPage() {
   const connectionsDelta = windowDelta(history.series.connections);
   const badDelta = windowDelta(history.series.refusals);
   const trafficDelta = windowDelta(history.series.traffic);
-  const telemetryOff =
-    history.series.connections?.state === 'ready' &&
-    (history.series.current_connections?.state ?? 'empty') === 'empty';
+  const telemetryOff = history.series.current_connections?.state === 'disabled';
 
   const isHealthy = health?.status === 'ok';
   const firstError = Object.values(errors)[0];
@@ -167,7 +165,7 @@ export function DashboardPage() {
     });
   }
   if (badRecent > 0) {
-    problems.push({ key: 'bad', severity: 'info', label: `Ошибочных соединений за 15 минут: ${formatNumber(badRecent)}`, detail: 'Разбивка по классам ниже.', to: '/security' });
+    problems.push({ key: 'bad', severity: 'info', label: `Ошибочных соединений за 15 минут: ${formatNumber(badRecent)}`, detail: 'Разбивка по классам — в блоке «Ошибки соединений» ниже.' });
   }
   if (availability?.enabled && availability.status && availability.status.level !== 'green') {
     problems.push({
@@ -255,6 +253,7 @@ export function DashboardPage() {
             activeUsers={history.series.active_users}
             telemetryOff={telemetryOff}
             loading={history.loading}
+            manager={mtproxylEnabled && mtproxylMode === 'manager'}
           />
         )}
 

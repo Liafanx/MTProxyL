@@ -1165,11 +1165,12 @@ export interface HistoryPoint {
 export interface HistorySeries {
   metric: HistoryMetric;
   range: HistoryRange;
-  state: 'ready' | 'partial' | 'empty';
+  state: 'ready' | 'partial' | 'empty' | 'disabled';
   requested_from_epoch_secs: number;
   retention_secs: number;
   available_from_epoch_secs?: number;
   source_available?: boolean;
+  disabled_reason?: string;
   points: HistoryPoint[];
 }
 

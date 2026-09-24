@@ -152,6 +152,16 @@ func TestRecorderStats(t *testing.T) {
 	if cur := rec.Ring().Range(MetricCurrentConnections, 0); len(cur) != 2 {
 		t.Fatalf("gated connections summary must not append: %+v", cur)
 	}
+	if seen, enabled, reason := rec.EdgeGate(); !seen || enabled || reason != "off" {
+		t.Fatalf("edge gate = %v %v %q", seen, enabled, reason)
+	}
+	s, err := rec.Series(MetricCurrentConnections, "15m", *clock)
+	if err != nil || s.State != "disabled" || s.DisabledReason != "off" || len(s.Points) != 2 {
+		t.Fatalf("gated series = %+v, %v", s, err)
+	}
+	if s, _ := rec.Series(MetricConnections, "15m", *clock); s.State == "disabled" {
+		t.Fatalf("ungated metric must not report disabled")
+	}
 }
 
 func TestRecorderUsers(t *testing.T) {

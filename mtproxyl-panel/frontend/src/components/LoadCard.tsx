@@ -9,10 +9,12 @@ interface LoadCardProps {
   activeUsers?: HistorySeries;
   telemetryOff: boolean;
   loading: boolean;
+  /** Режим Manager: параметр движка можно включить из «Экспертных параметров». */
+  manager?: boolean;
 }
 
 /** Нагрузка за 30 минут: текущие соединения и активные пользователи. */
-export function LoadCard({ connections, activeUsers, telemetryOff, loading }: LoadCardProps) {
+export function LoadCard({ connections, activeUsers, telemetryOff, loading, manager = false }: LoadCardProps) {
   const now = lastValue(connections);
   const peak = peakValue(connections);
   const users = lastValue(activeUsers);
@@ -30,10 +32,23 @@ export function LoadCard({ connections, activeUsers, telemetryOff, loading }: Lo
       </div>
       {telemetryOff ? (
         <div className="rounded-lg border border-dashed border-border-strong px-3 py-4">
-          <p className="text-meta font-semibold text-text">Телеметрия соединений выключена</p>
+          <p className="text-meta font-semibold text-text">Runtime‑телеметрия движка выключена</p>
           <p className="mt-1 text-micro leading-relaxed text-text-muted">
-            Движок не отдаёт текущие соединения: включите runtime‑телеметрию в{' '}
-            <Link to="/config" className="text-accent hover:underline">конфигурации Telemt</Link>.
+            Telemt по умолчанию не отдаёт текущие соединения. Включите параметр{' '}
+            <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[11px] text-text">server.api.runtime_edge_enabled = true</code>
+            {manager ? (
+              <>
+                {' '}в разделе{' '}
+                <Link to="/expert" className="text-accent hover:underline">Экспертные параметры</Link>
+                {' '}или командой <code className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[11px] text-text">mtproxyl expert set server.api runtime_edge_enabled true</code>.
+              </>
+            ) : (
+              <>
+                {' '}в{' '}
+                <Link to="/config" className="text-accent hover:underline">конфигурации Telemt</Link>.
+              </>
+            )}
+            {' '}После применения движок перезапустится, история появится через минуту.
           </p>
         </div>
       ) : (

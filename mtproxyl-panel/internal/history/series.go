@@ -33,8 +33,12 @@ type Series struct {
 	RetentionSecs   int64   `json:"retention_secs"`
 	AvailableFrom   *int64  `json:"available_from_epoch_secs,omitempty"`
 	SourceAvailable *bool   `json:"source_available,omitempty"`
+	DisabledReason  string  `json:"disabled_reason,omitempty"`
 	Points          []Point `json:"points"`
 }
+
+// gatedMetrics зависят от runtime edge движка.
+var gatedMetrics = map[string]bool{MetricCurrentConnections: true, MetricActiveUsers: true}
 
 // Series отдаёт точки метрики за диапазон и оценку полноты.
 func (r *Recorder) Series(metric, rng string, now time.Time) (Series, error) {
@@ -60,6 +64,12 @@ func (r *Recorder) Series(metric, rng string, now time.Time) (Series, error) {
 		RequestedFrom: from,
 		RetentionSecs: retention,
 		Points:        points,
+	}
+	if gatedMetrics[metric] {
+		if seen, enabled, reason := r.EdgeGate(); seen && !enabled {
+			s.State = "disabled"
+			s.DisabledReason = reason
+		}
 	}
 	if len(points) > 0 {
 		first := points[0].TS

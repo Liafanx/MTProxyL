@@ -43,6 +43,14 @@ type Recorder struct {
 	refusals    counter
 	traffic     counter
 	lastLog     map[string]time.Time
+	edge        gateState
+}
+
+// gateState — последнее известное состояние гейта runtime edge.
+type gateState struct {
+	seen    bool
+	enabled bool
+	reason  string
 }
 
 func NewRecorder(f Fetcher) *Recorder {
@@ -84,7 +92,8 @@ type statsSummary struct {
 }
 
 type connectionsSummary struct {
-	Enabled bool `json:"enabled"`
+	Enabled bool   `json:"enabled"`
+	Reason  string `json:"reason"`
 	Data    *struct {
 		Totals struct {
 			CurrentConnections uint64 `json:"current_connections"`
@@ -128,6 +137,9 @@ func (r *Recorder) PollStats(ctx context.Context) {
 		r.warn("connections", err)
 		return
 	}
+	r.mu.Lock()
+	r.edge = gateState{seen: true, enabled: live.Enabled && live.Data != nil, reason: live.Reason}
+	r.mu.Unlock()
 	if !live.Enabled || live.Data == nil {
 		return
 	}
@@ -166,4 +178,11 @@ func (r *Recorder) warn(source string, err error) {
 	}
 	r.lastLog[source] = now
 	log.Printf("history: %s: %v", source, err)
+}
+
+// EdgeGate: известно ли состояние runtime edge и включён ли он.
+func (r *Recorder) EdgeGate() (seen, enabled bool, reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.edge.seen, r.edge.enabled, r.edge.reason
 }
