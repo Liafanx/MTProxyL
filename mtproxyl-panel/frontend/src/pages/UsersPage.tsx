@@ -373,7 +373,7 @@ export function UsersPage() {
         <div className="hidden lg:block border border-border rounded-lg overflow-hidden">
           <div className="overflow-x-auto">
             <Table>
-              <TableHeader>
+              <TableHeader className="[&_th]:font-medium [&_th]:normal-case [&_th]:tracking-normal [&_th]:text-text-secondary">
                 <TableRow>
                   <TableHead className="cursor-pointer select-none" onClick={() => toggleSort('username')}>
                     <span className="inline-flex items-center gap-1">

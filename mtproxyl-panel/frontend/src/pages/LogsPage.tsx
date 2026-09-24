@@ -215,10 +215,10 @@ export function LogsPage() {
         {!streaming ? (
           <button
             onClick={() => start(initialLines, since)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded hover:bg-primary/90"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-accent-strong text-accent-text rounded hover:bg-accent"
           >
             <Play className="w-3.5 h-3.5" />
-            Start
+            Старт
           </button>
         ) : (
           <button
@@ -309,7 +309,7 @@ export function LogsPage() {
         {filteredLines.length === 0 && !streaming ? (
           <div className="text-text-secondary text-center py-8">
             {lines.length === 0
-              ? 'Нажмите «Запустить», чтобы начать поток логов'
+              ? 'Нажмите «Старт», чтобы начать поток логов'
               : 'Нет строк, подходящих под фильтр'}
           </div>
         ) : (
@@ -325,9 +325,9 @@ export function LogsPage() {
       {showScrollButton && (
         <button
           onClick={scrollToBottom}
-          className="fixed bottom-8 right-8 px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-full shadow-lg z-50"
+          className="fixed bottom-8 right-8 px-3 py-1.5 text-xs bg-accent-strong text-accent-text rounded-full shadow-lg z-50"
         >
-          New lines ↓
+          Новые строки ↓
         </button>
       )}
     </div>

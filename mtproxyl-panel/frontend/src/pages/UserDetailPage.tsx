@@ -55,7 +55,11 @@ function countryFlag(code: string): string {
 const PAGE_SIZE = 50;
 
 function formatSeen(epochSecs: number): string {
-  return epochSecs > 0 ? new Date(epochSecs * 1000).toLocaleString() : '—';
+  if (!Number.isFinite(epochSecs) || epochSecs <= 0) return '—';
+  const date = new Date(epochSecs * 1000);
+  if (Number.isNaN(date.getTime())) return '—';
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 interface IPTableProps {
@@ -177,7 +181,7 @@ function IPTable({ ips, geoData, hasGeo, historyByIp }: IPTableProps) {
       <div className="border border-border rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
           <Table>
-            <TableHeader>
+            <TableHeader className="[&_th]:font-medium [&_th]:normal-case [&_th]:tracking-normal [&_th]:text-text-secondary">
               <TableRow>
                 <SortableHead label="IP-адрес" sortKey="ip" active={sortKey} dir={sortDir} onSort={toggleSort} />
                 {hasGeo && (
@@ -344,7 +348,6 @@ export function UserDetailPage() {
   const [geoData, setGeoData] = useState<Map<string, GeoIPInfo>>(new Map());
   const [geoError, setGeoError] = useState<string | null>(null);
   const [geoUnavailable, setGeoUnavailable] = useState(false);
-  const [geoLoading, setGeoLoading] = useState(false);
 
   const user = useMemo(
     () => users?.find((u) => u.username === username) ?? null,
@@ -357,46 +360,51 @@ export function UserDetailPage() {
     return map;
   }, [mtproxylUser]);
 
-  const allIps = useMemo(() => {
-    if (!user) return [];
+  const geoLookupKey = useMemo(() => {
+    if (!user) return '';
     const set = new Set<string>();
     for (const ip of user.active_unique_ips_list ?? []) set.add(ip);
     for (const ip of user.recent_unique_ips_list ?? []) set.add(ip);
     for (const entry of mtproxylUser?.ip_history ?? []) set.add(entry.ip);
-    return Array.from(set);
+    // Опрос возвращает новые объекты каждые 10 секунд. Не запрашиваем GeoIP
+    // повторно, пока фактический набор адресов остаётся прежним.
+    return Array.from(set).sort().join('\n');
   }, [user, mtproxylUser]);
 
   useEffect(() => {
-    if (allIps.length === 0) return;
+    if (!geoLookupKey) {
+      setGeoData(new Map());
+      setGeoError(null);
+      setGeoUnavailable(false);
+      return;
+    }
 
     let cancelled = false;
-    setGeoLoading(true);
 
-    panelApi.post<GeoIPInfo[]>('/geoip/lookup', { ips: allIps })
+    panelApi.post<GeoIPInfo[]>('/geoip/lookup', { ips: geoLookupKey.split('\n') })
       .then((results) => {
         if (cancelled) return;
         const map = new Map<string, GeoIPInfo>();
         for (const info of results) map.set(info.ip, info);
         setGeoData(map);
         setGeoError(null);
+        setGeoUnavailable(false);
       })
       .catch((err) => {
         if (cancelled) return;
         // Отсутствие базы GeoIP — не сбой: панель работает без неё, просто без
         // страны и провайдера. Предупреждение там, где всё исправно, вредно.
         if (err instanceof ApiError && err.code === 'geoip_disabled') {
+          setGeoData(new Map());
           setGeoUnavailable(true);
           setGeoError(null);
           return;
         }
         setGeoError(err instanceof Error ? err.message : 'Не удалось выполнить GeoIP-запрос');
-      })
-      .finally(() => {
-        if (!cancelled) setGeoLoading(false);
       });
 
     return () => { cancelled = true; };
-  }, [allIps]);
+  }, [geoLookupKey]);
 
   const hasGeo = geoData.size > 0;
 
@@ -481,10 +489,6 @@ export function UserDetailPage() {
                 можно прямо из панели: <Link to="/addons" className="text-accent hover:underline">Дополнения</Link>.
                 Она также подхватит базу, установленную системным пакетом или geoipupdate.
               </div>
-            )}
-
-            {geoLoading && (
-              <div className="text-sm text-text-secondary">Загрузка данных GeoIP…</div>
             )}
 
             {/* IP sections */}
