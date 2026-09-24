@@ -6,6 +6,7 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { Header } from '@/components/layout/Header';
 import { formatBytes, formatNumber } from '@/lib/utils';
 import { MetricCard } from '@/components/MetricCard';
+import { TrafficHistoryCard } from '@/components/TrafficHistoryCard';
 import { mtproxylNetApi, type TrafficReport, type TrafficUser } from '@/lib/api';
 import { StatsResetCard } from '@/components/StatsResetCard';
 
@@ -144,6 +145,8 @@ export function TrafficPage() {
                 </div>
                 <p className="px-1 text-micro text-text-faint">{sourceNote(report)}</p>
               </div>
+
+              <TrafficHistoryCard />
 
               <Card>
                 <CardHeader>

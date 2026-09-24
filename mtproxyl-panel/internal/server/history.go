@@ -52,4 +52,32 @@ func (s *Server) registerHistoryRoutes(mux *http.ServeMux, jwtSecret []byte, rec
 		}
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: resp})
 	})))
+
+	trafficSummary := func(w http.ResponseWriter, r *http.Request, username string) {
+		if rec == nil || rec.Traffic() == nil {
+			writeError(w, http.StatusServiceUnavailable, "history_disabled", "История трафика выключена в конфиге панели ([history] enabled = false)")
+			return
+		}
+		rng := r.URL.Query().Get("range")
+		if rng == "" {
+			rng = "7d"
+		}
+		summary, err := rec.Traffic().Summary(rng, username, time.Now())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: summary})
+	}
+	mux.Handle("GET /api/history/traffic", auth.RequireAuth(jwtSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		trafficSummary(w, r, "")
+	})))
+	mux.Handle("GET /api/history/traffic/users/{username}", auth.RequireAuth(jwtSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("username")
+		if name == "" {
+			writeError(w, http.StatusBadRequest, "bad_request", "Укажите пользователя")
+			return
+		}
+		trafficSummary(w, r, name)
+	})))
 }

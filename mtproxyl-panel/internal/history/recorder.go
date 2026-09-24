@@ -34,16 +34,17 @@ type Fetcher interface {
 }
 
 type Recorder struct {
-	ring  *Ring
-	fetch Fetcher
-	now   func() time.Time
+	ring    *Ring
+	fetch   Fetcher
+	now     func() time.Time
+	traffic *TrafficStore
 
-	mu          sync.Mutex
-	connections counter
-	refusals    counter
-	traffic     counter
-	lastLog     map[string]time.Time
-	edge        gateState
+	mu           sync.Mutex
+	connections  counter
+	refusals     counter
+	trafficTotal counter
+	lastLog      map[string]time.Time
+	edge         gateState
 }
 
 // gateState — последнее известное состояние гейта runtime edge.
@@ -57,7 +58,14 @@ func NewRecorder(f Fetcher) *Recorder {
 	return &Recorder{ring: NewRing(), fetch: f, now: time.Now, lastLog: make(map[string]time.Time)}
 }
 
-func (r *Recorder) Ring() *Ring { return r.ring }
+// WithTrafficStore включает долговременную историю трафика по пользователям.
+func (r *Recorder) WithTrafficStore(t *TrafficStore) *Recorder {
+	r.traffic = t
+	return r
+}
+
+func (r *Recorder) Ring() *Ring            { return r.ring }
+func (r *Recorder) Traffic() *TrafficStore { return r.traffic }
 
 // Run опрашивает движок до отмены контекста.
 func (r *Recorder) Run(ctx context.Context) {
@@ -65,17 +73,31 @@ func (r *Recorder) Run(ctx context.Context) {
 	r.PollUsers(ctx)
 	stats := time.NewTicker(StatsInterval)
 	users := time.NewTicker(UsersInterval)
+	save := time.NewTicker(time.Minute)
 	defer stats.Stop()
 	defer users.Stop()
+	defer save.Stop()
 	for {
 		select {
 		case <-ctx.Done():
+			r.saveTraffic()
 			return
 		case <-stats.C:
 			r.PollStats(ctx)
 		case <-users.C:
 			r.PollUsers(ctx)
+		case <-save.C:
+			r.saveTraffic()
 		}
+	}
+}
+
+func (r *Recorder) saveTraffic() {
+	if r.traffic == nil {
+		return
+	}
+	if err := r.traffic.Save(); err != nil {
+		r.warn("traffic-save", err)
 	}
 }
 
@@ -103,6 +125,7 @@ type connectionsSummary struct {
 }
 
 type userRow struct {
+	Username        string `json:"username"`
 	TotalOctets     uint64 `json:"total_octets"`
 	ActiveUniqueIPs int64  `json:"active_unique_ips"`
 }
@@ -157,13 +180,20 @@ func (r *Recorder) PollUsers(ctx context.Context) {
 	}
 	var ips int64
 	var octets uint64
+	perUser := make(map[string]uint64, len(users))
 	for _, u := range users {
 		ips += u.ActiveUniqueIPs
 		octets += u.TotalOctets
+		if u.Username != "" {
+			perUser[u.Username] += u.TotalOctets
+		}
 	}
 	r.mu.Lock()
-	traffic := r.traffic.observe(octets, 0)
+	traffic := r.trafficTotal.observe(octets, 0)
 	r.mu.Unlock()
+	if r.traffic != nil {
+		r.traffic.Observe(ts, perUser)
+	}
 	r.ring.Append(MetricActiveIPs, Point{TS: ts, V: float64(ips)})
 	r.ring.Append(MetricTraffic, Point{TS: ts, V: traffic})
 }

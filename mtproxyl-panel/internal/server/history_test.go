@@ -85,6 +85,21 @@ func TestHistoryRoute(t *testing.T) {
 		}
 	}
 
+	rec.WithTrafficStore(history.NewTrafficStore(""))
+	rec.PollUsers(context.Background())
+	for _, target := range []string{"/api/history/traffic?range=7d", "/api/history/traffic/users/alice?range=24h"} {
+		w = httptest.NewRecorder()
+		mux.ServeHTTP(w, authedRequest(t, http.MethodGet, target, ""))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: status %d: %s", target, w.Code, w.Body.String())
+		}
+	}
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, authedRequest(t, http.MethodGet, "/api/history/traffic?range=2y", ""))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("traffic bad range: status %d", w.Code)
+	}
+
 	w = httptest.NewRecorder()
 	newHistoryMux(t, nil).ServeHTTP(w, authedRequest(t, http.MethodGet, "/api/history?metric=connections", ""))
 	if w.Code != http.StatusServiceUnavailable {

@@ -172,11 +172,16 @@ func TestRecorderUsers(t *testing.T) {
 	rec, clock := newTestRecorder(t, f, start)
 	ctx := context.Background()
 
+	store := NewTrafficStore("")
+	rec.WithTrafficStore(store)
 	rec.PollUsers(ctx)
 	*clock = start.Add(10 * time.Second)
 	f.octets.Store(1500)
 	f.activeIPs.Store(5)
 	rec.PollUsers(ctx)
+	if s, _ := store.Summary("24h", "a", *clock); s.TotalBytes != 500 {
+		t.Fatalf("per-user traffic = %v, want 500", s.TotalBytes)
+	}
 
 	ips := rec.Ring().Range(MetricActiveIPs, 0)
 	if len(ips) != 2 || ips[0].V != 4 || ips[1].V != 6 {

@@ -1187,3 +1187,34 @@ export const historyApi = {
   get: (metrics: HistoryMetric[], range: HistoryRange = '30m') =>
     request<HistoryResponse>(HISTORY_BASE, `/history?metric=${metrics.join(',')}&range=${range}`),
 };
+
+export type TrafficHistoryRange = '24h' | '7d' | '30d' | '1y' | 'month';
+
+export interface TrafficHistoryPoint {
+  ts: number;
+  v: number;
+  tier: '15m' | '1h' | '1d';
+}
+
+export interface TrafficHistorySummary {
+  range: TrafficHistoryRange;
+  tier: '15m' | '1h' | '1d';
+  state: 'ready' | 'partial' | 'empty';
+  requested_from_epoch_secs: number;
+  requested_to_epoch_secs: number;
+  observed_since_epoch_secs?: number;
+  observed_until_epoch_secs?: number;
+  total_bytes: number;
+  previous_total_bytes?: number;
+  today_bytes: number;
+  points: TrafficHistoryPoint[];
+  top_users?: Array<{ username: string; bytes: number }>;
+  username?: string;
+}
+
+export const trafficHistoryApi = {
+  summary: (range: TrafficHistoryRange) =>
+    request<TrafficHistorySummary>(HISTORY_BASE, `/history/traffic?range=${range}`),
+  user: (username: string, range: TrafficHistoryRange) =>
+    request<TrafficHistorySummary>(HISTORY_BASE, `/history/traffic/users/${encodeURIComponent(username)}?range=${range}`),
+};

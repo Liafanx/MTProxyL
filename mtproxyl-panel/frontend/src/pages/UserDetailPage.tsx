@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Header } from '@/components/layout/Header';
 import { ErrorAlert } from '@/components/ErrorAlert';
+import { TrafficHistoryCard } from '@/components/TrafficHistoryCard';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { QuotaBar } from '@/components/QuotaBar';
 import { Badge } from '@/components/ui/badge';
@@ -459,9 +460,16 @@ export function UserDetailPage() {
 
             {resetError && <ErrorAlert message={resetError} />}
 
+            <TrafficHistoryCard
+              username={user.username}
+              title="История трафика"
+              description="Байты этого пользователя по данным движка, накопленные панелью: сегодня, за период и по корзинам времени."
+              defaultRange="24h"
+            />
+
             {/* GeoIP status banner */}
             {geoError && (
-              <div className="flex items-center gap-2 p-3 rounded-lg border border-yellow-500/30 bg-yellow-500/10 text-sm text-yellow-200">
+              <div className="flex items-center gap-2 p-3 rounded-lg border border-warn/30 bg-warn/10 text-sm text-warn">
                 <AlertTriangle size={16} className="shrink-0" />
                 <span>GeoIP недоступен: {geoError}. IP-адреса показаны без геоданных.</span>
               </div>

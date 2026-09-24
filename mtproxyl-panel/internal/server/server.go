@@ -273,6 +273,13 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 	var recorder *history.Recorder
 	if s.cfg.History.IsEnabled() {
 		recorder = history.NewRecorder(telemtProxy)
+		if s.cfg.DataDir != "" {
+			traffic := history.NewTrafficStore(filepath.Join(s.cfg.DataDir, "traffic-history.json"))
+			if err := traffic.Load(); err != nil {
+				log.Printf("history: история трафика не загружена: %v", err)
+			}
+			recorder.WithTrafficStore(traffic)
+		}
 		historyCtx, stopHistory := context.WithCancel(context.Background())
 		defer stopHistory()
 		go recorder.Run(historyCtx)
