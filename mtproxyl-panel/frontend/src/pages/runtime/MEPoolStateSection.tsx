@@ -1,6 +1,10 @@
 import { MetricCard } from '@/components/MetricCard';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
+import { GatedNotice } from '@/components/GatedNotice';
+import { KV, Panel } from '@/components/KeyValue';
+import { StatePill } from '@/components/ui/state-pill';
 import { formatNumber } from '@/lib/utils';
+import { gatedData, formatAge } from '@/lib/gated';
 import type { PoolStateData } from '@/types/runtime';
 
 interface MEPoolStateSectionProps {
@@ -8,79 +12,55 @@ interface MEPoolStateSectionProps {
 }
 
 export function MEPoolStateSection({ data }: MEPoolStateSectionProps) {
-  if (!data?.data) return null;
+  if (!data) return null;
+  const payload = gatedData(data);
+  if (!payload) return <GatedNotice title="Состояние пула ME" reason={data.reason} />;
+  const { generations, hardswap, writers, refill } = payload;
 
   return (
-    <CollapsibleSection title="Состояние пула ME"
-      description="ME — промежуточные серверы Telegram. Прокси держит их пул и обновляет поколениями: прогретое поколение подменяет активное без разрыва соединений.">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-background rounded p-3 border border-border/50">
-          <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Поколения</h4>
-          <div className="space-y-1 text-xs">
-            <div className="flex justify-between">
-              <span className="text-text-secondary">Активные</span>
-              <span className="text-text-primary font-medium">{data.data.generations.active_generation}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-text-secondary">Прогретые</span>
-              <span className="text-text-primary font-medium">{data.data.generations.warm_generation}</span>
-            </div>
-            {data.data.generations.pending_hardswap_generation != null && (
-              <div className="flex justify-between">
-                <span className="text-text-secondary">Ожидает hardswap</span>
-                <span className="text-text-primary font-medium">{data.data.generations.pending_hardswap_generation}</span>
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="bg-background rounded p-3 border border-border/50">
-          <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Контур</h4>
-          <div className="space-y-1 text-xs">
-            <div className="flex justify-between">
-              <span className="text-text-secondary">Активные</span>
-              <span className="text-text-primary font-medium">{data.data.writers.contour.active}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-text-secondary">Прогретые</span>
-              <span className="text-text-primary font-medium">{data.data.writers.contour.warm}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-text-secondary">Выводимые</span>
-              <span className="text-text-primary font-medium">{data.data.writers.contour.draining}</span>
-            </div>
-          </div>
-        </div>
-        <div className="bg-background rounded p-3 border border-border/50">
-          <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Здоровье писателей</h4>
-          <div className="space-y-1 text-xs">
-            <div className="flex justify-between">
-              <span className="text-text-secondary">Здоровые</span>
-              <span className="text-text-primary font-medium">{data.data.writers.health.healthy}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-text-secondary">Деградировавшие</span>
-              <span className="text-text-primary font-medium">{data.data.writers.health.degraded}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-text-secondary">Выводимые</span>
-              <span className="text-text-primary font-medium">{data.data.writers.health.draining}</span>
-            </div>
-          </div>
-        </div>
+    <CollapsibleSection
+      title="Состояние пула ME"
+      description="ME — промежуточные серверы Telegram. Прокси держит их пул и обновляет поколениями: прогретое поколение подменяет активное без разрыва соединений."
+      badge={hardswap.pending ? <StatePill state="warn">ожидает hardswap</StatePill> : undefined}
+    >
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <Panel title="Поколения">
+          <KV label="Активное" value={generations.active_generation} mono />
+          <KV label="Прогретое" value={generations.warm_generation} mono />
+          <KV label="Hardswap" value={hardswap.enabled ? (hardswap.pending ? `ожидает: поколение ${generations.pending_hardswap_generation}` : 'включён') : 'выключен'} />
+          {hardswap.pending && generations.pending_hardswap_age_secs != null && (
+            <KV label="Ожидает уже" value={formatAge(generations.pending_hardswap_age_secs)} />
+          )}
+          {generations.draining_generations.length > 0 && (
+            <KV label="Выводятся" value={generations.draining_generations.join(', ')} mono />
+          )}
+        </Panel>
+        <Panel title="Писатели">
+          <KV label="Всего" value={writers.total} mono />
+          <KV label="Живых вне вывода" value={writers.alive_non_draining} mono />
+          <KV label="Деградировавших" value={writers.degraded} mono />
+          <KV label="Выводимых" value={writers.draining} mono />
+        </Panel>
+        <Panel title="Контур и здоровье">
+          <KV label="Активный контур" value={writers.contour.active} mono />
+          <KV label="Прогретый контур" value={writers.contour.warm} mono />
+          <KV label="Здоровые" value={writers.health.healthy} mono />
+          <KV label="Деградировавшие" value={writers.health.degraded} mono />
+        </Panel>
       </div>
-      {data.data.refill.inflight_endpoints_total > 0 && (
-        <div className="bg-background rounded p-3 border border-border/50 mt-4">
-          <h4 className="text-xs font-semibold text-accent uppercase tracking-wide mb-2">Пополнение</h4>
-          <div className="grid grid-cols-2 gap-2 mb-3">
-            <MetricCard label="Точки в работе" value={formatNumber(data.data.refill.inflight_endpoints_total)} />
-            <MetricCard label="DC в работе" value={formatNumber(data.data.refill.inflight_dc_total)} />
+      {refill.inflight_endpoints_total > 0 && (
+        <div className="mt-3 rounded-lg bg-bg p-3">
+          <h4 className="mb-2 text-micro font-semibold uppercase tracking-[0.06em] text-text-faint">Пополнение</h4>
+          <div className="mb-3 grid grid-cols-2 gap-2">
+            <MetricCard label="Точки в работе" value={formatNumber(refill.inflight_endpoints_total)} />
+            <MetricCard label="DC в работе" value={formatNumber(refill.inflight_dc_total)} />
           </div>
-          {data.data.refill.by_dc.length > 0 && (
+          {refill.by_dc.length > 0 && (
             <div className="flex flex-wrap gap-1">
-              {data.data.refill.by_dc.map((dc, i) => (
-                <span key={i} className="bg-surface px-2 py-0.5 rounded text-[10px] border border-border/30">
-                  <span className="text-text-secondary">DC {dc.dc} ({dc.family}):</span>{' '}
-                  <span className="text-text-primary">{dc.inflight}</span>
+              {refill.by_dc.map((dc, i) => (
+                <span key={i} className="rounded bg-surface px-2 py-0.5 text-[10px]">
+                  <span className="text-text-muted">DC {dc.dc} ({dc.family}):</span>{' '}
+                  <span className="text-text">{dc.inflight}</span>
                 </span>
               ))}
             </div>

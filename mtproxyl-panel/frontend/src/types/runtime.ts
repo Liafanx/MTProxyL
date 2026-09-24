@@ -1,3 +1,5 @@
+import type { Gated } from '@/lib/gated';
+
 export interface EventEntry {
   seq: number;
   ts_epoch_secs: number;
@@ -5,11 +7,13 @@ export interface EventEntry {
   context: string;
 }
 
-export interface EventsData {
+export interface EventsPayload {
   capacity: number;
   dropped_total: number;
   events: EventEntry[];
 }
+
+export type EventsData = Gated<EventsPayload>;
 
 export interface DcRttEntry {
   dc: number;
@@ -26,8 +30,26 @@ export interface MeQualityData {
   data?: {
     counters: Record<string, number>;
     route_drops: Record<string, number>;
+    family_states?: MeFamilyState[];
+    drain_gate?: MeDrainGate;
     dc_rtt: DcRttEntry[];
   };
+}
+
+export interface MeFamilyState {
+  family: string;
+  state: string;
+  state_since_epoch_secs: number;
+  suppressed_until_epoch_secs?: number;
+  fail_streak: number;
+  recover_success_streak: number;
+}
+
+export interface MeDrainGate {
+  route_quorum_ok: boolean;
+  redundancy_ok: boolean;
+  block_reason: string;
+  updated_at_epoch_secs: number;
 }
 
 export interface UpstreamDc {
@@ -55,7 +77,7 @@ export interface ConnectionsTopUser {
   total_octets: number;
 }
 
-export interface ConnectionsData {
+export interface ConnectionsPayload {
   cache: {
     ttl_ms: number;
     served_from_cache: boolean;
@@ -77,6 +99,8 @@ export interface ConnectionsData {
     throughput_is_cumulative: boolean;
   };
 }
+
+export type ConnectionsData = Gated<ConnectionsPayload>;
 
 export interface UpstreamQualityData {
   enabled: boolean;
@@ -210,16 +234,61 @@ export interface NatStunData {
       v4?: { addr: string; age_secs: number };
       v6?: { addr: string; age_secs: number };
     };
-    backoff?: {
-      stun_backoff_remaining_ms: number;
-    };
+    stun_backoff_remaining_ms?: number;
   };
+}
+
+export interface MeRuntimeData {
+  active_generation?: number;
+  warm_generation?: number;
+  quarantined_endpoints_total?: number;
+  quarantined_endpoints?: Array<{ endpoint: string; remaining_ms: number }>;
+  [key: string]: unknown;
+}
+
+export interface NetworkPathEntry {
+  dc: number;
+  ip_preference?: string;
+  selected_addr_v4?: string;
+  selected_addr_v6?: string;
 }
 
 export interface MinimalAllResponse {
   enabled?: boolean;
+  reason?: string;
   data?: {
-    me_runtime?: Record<string, unknown>;
-    network_path?: Array<Record<string, unknown>>;
+    me_runtime?: MeRuntimeData | null;
+    network_path?: NetworkPathEntry[];
   };
+}
+
+export interface InitializationComponent {
+  id: string;
+  title: string;
+  status: string;
+  started_at_epoch_ms: number | null;
+  finished_at_epoch_ms: number | null;
+  duration_ms: number | null;
+  attempts: number;
+  details?: string;
+}
+
+export interface InitializationData {
+  status: string;
+  degraded: boolean;
+  current_stage: string;
+  progress_pct: number;
+  started_at_epoch_secs: number;
+  ready_at_epoch_secs?: number;
+  total_elapsed_ms: number;
+  transport_mode: string;
+  me: {
+    status: string;
+    current_stage: string;
+    progress_pct: number;
+    init_attempt: number;
+    retry_limit: string;
+    last_error?: string;
+  };
+  components: InitializationComponent[];
 }
