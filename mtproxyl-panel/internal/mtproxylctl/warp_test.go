@@ -103,3 +103,29 @@ func TestWarpScanExtendedAndLegacyReports(t *testing.T) {
 		}
 	}
 }
+
+func TestWarpScanDepth(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "cli")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	c := New(config.MtproxylConfig{Enabled: true, ScriptPath: script})
+	for _, tc := range []struct {
+		mode string
+		deep bool
+		want string
+	}{
+		{"", false, "warp\nscan\n"},
+		{"", true, "warp\nscan\n--deep\n"},
+		{"iface", true, "warp\nscan\niface\n--deep\n"},
+	} {
+		got, err := c.WarpScanMode(context.Background(), tc.mode, tc.deep)
+		if err != nil || got != tc.want {
+			t.Fatalf("scan(%q,%v): %q, %v", tc.mode, tc.deep, got, err)
+		}
+	}
+	if _, err := c.WarpScanMode(context.Background(), "other", true); err == nil {
+		t.Fatal("invalid mode accepted")
+	}
+}

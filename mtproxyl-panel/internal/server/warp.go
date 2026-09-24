@@ -137,6 +137,7 @@ func (s *Server) registerWarpRoutes(
 		}
 		var req struct {
 			Mode string `json:"mode"`
+			Deep bool   `json:"deep"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 			writeError(w, http.StatusBadRequest, "bad_request", "Неверный запрос разведки")
@@ -148,7 +149,7 @@ func (s *Server) registerWarpRoutes(
 			writeError(w, http.StatusBadRequest, "invalid_mode", "Неверный вариант WARP")
 			return
 		}
-		start(w, "warp:scan", func(ctx context.Context) (string, error) { return client.WarpScanMode(ctx, req.Mode) })
+		start(w, "warp:scan", func(ctx context.Context) (string, error) { return client.WarpScanMode(ctx, req.Mode, req.Deep) })
 	}))
 
 	for _, action := range []string{"apply", "recover", "install", "watchdog-on", "watchdog-off"} {

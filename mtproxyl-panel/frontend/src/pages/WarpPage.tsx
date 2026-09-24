@@ -26,7 +26,7 @@ type EnableReview = {
   disableDefaultUpstreams: boolean;
 };
 
-/** Маршрут до Telegram через WARP: в туннель уходят только подсети Telegram. */
+/** Маршрут до Telegram через WARP. */
 export function WarpPage() {
   const [status, setStatus] = useState<WarpStatus | null>(null);
   const [scan, setScan] = useState<WarpScanResult | null>(null);
@@ -35,8 +35,7 @@ export function WarpPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
-  const [pendingMode, setPendingMode] = useState<WarpMode | null>(null);
-  const [picked, setPicked] = useState(false);
+  const [scanMode, setScanMode] = useState<'upstream' | 'iface'>('upstream');
   const [enableReview, setEnableReview] = useState<EnableReview | null>(null);
 
   const load = useCallback(async () => {
@@ -106,7 +105,6 @@ export function WarpPage() {
           disableDefaultUpstreams: false,
         });
       } else {
-        setPendingMode(null);
         start(await warpApi.enable(mode));
       }
     } catch (e) {
@@ -116,32 +114,12 @@ export function WarpPage() {
     }
   };
 
-  const enable = async (mode: WarpMode) => {
-    const desiredProto = mode === 'iface' ? 'wg' : status?.proto;
-    const scanProtoCompatible = desiredProto === 'wg' || desiredProto === 'awg'
-      ? scan?.proto === 'wg' || scan?.proto === 'awg'
-      : scan?.proto === desiredProto;
-    const hasScan = scan?.status === 'success' && scan.nodes.length > 0 && scanProtoCompatible;
-    if (hasScan && (status?.endpoint || status?.location)) {
-      await prepareEnable(mode);
-    } else if (hasScan) {
-      setPendingMode(mode);
-      setPicked(false);
-    } else {
-      setPendingMode(mode);
-      setPicked(false);
-      await act(() => warpApi.scan(mode));
-    }
-  };
-
   const scanAll = async () => {
     setBusy(true);
     setError(null);
     try {
       await warpApi.save({ location: '', endpoint: '' });
-      setPendingMode(null);
-      setPicked(false);
-      start(await warpApi.scan());
+      start(await warpApi.scan(scanMode));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось запустить разведку без фильтра');
     } finally {
@@ -155,9 +133,9 @@ export function WarpPage() {
 
       <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
         <p className="text-sm text-text-secondary max-w-3xl">
-          Нужно там, где серверы Telegram с хоста недоступны. В туннель Cloudflare
-          WARP уходят только подсети Telegram — клиенты приходят на сервер как
-          раньше. Эндпоинты ищет{' '}
+          Нужно там, где Telegram с сервера недоступен. В A/B WARP направляет
+          подсети Telegram; в C — исходящие соединения telemt. Клиенты приходят
+          на сервер как раньше. Эндпоинты ищет{' '}
           <a
             href="https://github.com/vernette/warpscout"
             target="_blank"
@@ -184,37 +162,37 @@ export function WarpPage() {
             <Card className="p-4 space-y-3">
               <div className="text-sm font-medium text-text-primary">Включение</div>
               <p className="text-xs text-text-secondary">
-                {scan?.status === 'success' && scan.nodes.length
-                  ? 'Выбранный результат последней разведки используется без повторного поиска.'
-                  : 'Перед первым включением панель запустит разведку; она занимает несколько минут.'}
+                Сохранённый рабочий адрес используется без новой разведки. Если адреса нет,
+                MTProxyL выполнит быструю проверку: до 2 адресов на подсеть.
+                Расширенная разведка ниже проверяет больше адресов и портов.
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 <Button
-                  onClick={() => void enable('socks')}
+                  onClick={() => void prepareEnable('socks')}
                   disabled={busy || running}
                   variant={status.enabled && status.mode === 'socks' ? 'default' : 'outline'}
                   size="sm"
                   className="gap-2"
                 >
-                  <Waypoints size={14} /> Вариант A — SOCKS5 + redsocks
+                  <Waypoints size={14} /> A — SOCKS5 + redsocks (совместимость)
                 </Button>
                 <Button
-                  onClick={() => void enable('iface')}
+                  onClick={() => void prepareEnable('iface')}
                   disabled={busy || running}
                   variant={status.enabled && status.mode === 'iface' ? 'default' : 'outline'}
                   size="sm"
                   className="gap-2"
                 >
-                  <Waypoints size={14} /> Вариант B — интерфейс WireGuard
+                  <Waypoints size={14} /> B — WireGuard (меньше CPU)
                 </Button>
                 <Button
-                  onClick={() => void enable('upstream')}
+                  onClick={() => void prepareEnable('upstream')}
                   disabled={busy || running}
                   variant={status.enabled && status.mode === 'upstream' ? 'default' : 'outline'}
                   size="sm"
                   className="gap-2"
                 >
-                  <Waypoints size={14} /> Вариант C — socks5-upstream движка
+                  <Waypoints size={14} /> C — upstream движка (рекомендуем)
                 </Button>
                 <Button
                   onClick={() => void act(() => warpApi.disable())}
@@ -225,14 +203,33 @@ export function WarpPage() {
                   Выключить
                 </Button>
                 <Button
-                  onClick={() => void act(() => warpApi.scan())}
+                  onClick={() => void act(() => warpApi.scan(scanMode))}
                   disabled={busy || running}
                   variant="outline"
                   size="sm"
                   className="gap-2"
                 >
-                  <Search size={14} /> {status.location ? `Разведка: ${status.location}` : 'Разведка всех адресов'}
+                  <Search size={14} /> Быстрая разведка{status.location ? `: ${status.location}` : ''}
                 </Button>
+                <Button
+                  onClick={() => void act(() => warpApi.scan(scanMode, true))}
+                  disabled={busy || running}
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                >
+                  <Search size={14} /> Расширенная разведка (адреса и порты)
+                </Button>
+                <select
+                  aria-label="Протокол разведки WARP"
+                  value={scanMode}
+                  onChange={(e) => setScanMode(e.target.value as 'upstream' | 'iface')}
+                  disabled={busy || running}
+                  className="h-8 rounded-md border border-border bg-surface px-2 text-xs text-text-primary"
+                >
+                  <option value="upstream">Проверять {status.proto} (A/C)</option>
+                  <option value="iface">Проверять обычный WG (B)</option>
+                </select>
                 {(status.location || status.endpoint) && (
                   <Button onClick={() => void scanAll()} disabled={busy || running}
                     variant="outline" size="sm" className="gap-2">
@@ -263,15 +260,6 @@ export function WarpPage() {
                     : 'выключено'}
                 </Button>
               </div>
-              {pendingMode && (
-                <div className="space-y-2 text-sm">
-                  <p>Выберите адрес или локацию в результатах разведки. Рекомендация не применяется автоматически.</p>
-                  <Button disabled={busy || running || !picked} size="sm"
-                    onClick={() => void prepareEnable(pendingMode)}>
-                    Включить {pendingMode} с сохранённым выбором
-                  </Button>
-                </div>
-              )}
               {enableReview && (
                 <EnableReviewCard
                   review={enableReview}
@@ -281,7 +269,6 @@ export function WarpPage() {
                   onConfirm={() => {
                     const review = enableReview;
                     setEnableReview(null);
-                    setPendingMode(null);
                     void act(() => warpApi.enable(review.mode, {
                       disableMiddleProxy: review.disableMiddleProxy,
                       disableDefaultUpstreams: review.disableDefaultUpstreams,
@@ -299,8 +286,7 @@ export function WarpPage() {
                 setBusy(true);
                 setError(null);
                 try {
-                  await warpApi.save({ ...patch, proto: scan?.proto });
-                  setPicked(true);
+                  await warpApi.save(patch);
                   await load();
                 } catch (e) {
                   setError(e instanceof Error ? e.message : 'Не удалось сохранить');
@@ -429,8 +415,11 @@ function ScanResults({
         <div className="text-sm font-medium text-text-primary">Результаты разведки</div>
         <p className="text-xs text-text-secondary">
           {scan?.status === 'running' ? 'Разведка выполняется. Рабочий туннель не переключается.'
-            : scan?.status === 'error' ? scan.error || 'Ошибка разведки. Подробности — в журнале операции.'
-            : scan?.scanned_at ? 'Рабочих узлов не найдено. Проверьте протокол и фильтр локации.'
+            : scan?.status === 'error'
+              ? `${scan.error || 'Ошибка разведки. Подробности — в журнале операции.'}${scan.proto === 'wg' ? ' Для B нужен обычный WireGuard; при его блокировке используйте C с awg.' : ''}`
+            : scan?.scanned_at ? scan.proto === 'wg'
+              ? 'Обычный WireGuard не нашёл рабочий адрес. Снимите фильтр или используйте C с awg.'
+              : 'Рабочих узлов не найдено. Проверьте протокол и фильтр локации.'
             : 'Разведки ещё не было. Нажмите «Разведка», чтобы получить список узлов.'}
         </p>
         {scan?.filter && (
@@ -452,6 +441,7 @@ function ScanResults({
           {` · адресов: ${scan.nodes.length}`}
           {scan.proto ? ` · ${scan.proto}` : ''}
           {scan.filter ? ` · фильтр ${scan.filter}` : ''}
+          {scan.depth ? ` · ${scan.depth === 'deep' ? 'расширенная' : 'быстрая'}` : ''}
         </span>
       </div>
       <div className="overflow-x-auto">
@@ -459,8 +449,8 @@ function ScanResults({
           <thead>
             <tr className="text-left text-xs text-text-secondary">
               <th className="py-1 pr-3 font-medium">Узел</th>
-              <th className="py-1 pr-3 font-medium">Локация</th>
-              <th className="py-1 pr-3 font-medium">Выход</th>
+              <th className="py-1 pr-3 font-medium">Город узла</th>
+              <th className="py-1 pr-3 font-medium">Cloudflare loc</th>
               <th className="py-1 pr-3 font-medium">Пинг</th>
               <th className="py-1 pr-3 font-medium">Эндпоинт</th>
               <th className="py-1 font-medium">Выбрать</th>
@@ -480,7 +470,7 @@ function ScanResults({
                       size="sm"
                       variant="outline"
                       disabled={busy}
-                      onClick={() => void onPick({ location: n.node, endpoint: n.endpoint })}
+                      onClick={() => void onPick({ location: n.node, endpoint: '' })}
                     >
                       Выбрать узел {n.node} и этот адрес
                     </Button>
@@ -506,8 +496,8 @@ function ScanResults({
         следующей разведке MTProxyL сможет взять другой IP или порт, ведущий на этот
         узел. «Использовать этот адрес» фиксирует показанный IP:порт и позволяет
         запускаться без полной разведки; если он перестанет отвечать, MTProxyL ищет замену
-        с учётом сохранённого фильтра. Узел — точка входа Cloudflare, регион в соседней
-        колонке — место выхода трафика WARP.
+        с учётом сохранённого фильтра. Код и город — физический узел Cloudflare;
+        <code>loc</code> — геометка выходного IP, она может указывать другую страну.
       </p>
     </Card>
   );
@@ -523,6 +513,8 @@ function StateCard({ status }: { status: WarpStatus }) {
   const working =
     status.enabled &&
     status.exit.confirmed &&
+    status.health?.result !== 'unhealthy' &&
+    status.health?.result !== 'failed' &&
     (status.mode === 'upstream' ? status.socks_active : status.nft_applied);
 
   return (
@@ -535,7 +527,7 @@ function StateCard({ status }: { status: WarpStatus }) {
           <div className="text-xs text-text-secondary mt-0.5">
             {status.enabled
               ? working
-                ? 'Cloudflare подтверждает туннель, правила на месте'
+                ? 'Cloudflare подтверждает туннель; доступность Telegram проверяет watchdog'
                 : 'Туннель или маршрут WARP не подтверждён'
               : 'Трафик до Telegram идёт напрямую'}
           </div>
@@ -548,9 +540,9 @@ function StateCard({ status }: { status: WarpStatus }) {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
         <Cell label="Выход" value={status.exit.confirmed ? `${status.exit.ip}` : '—'} />
         <Cell
-          label="Страна и узел Cloudflare"
+          label="GeoIP WARP и узел Cloudflare"
           value={status.exit.confirmed
-            ? `страна ${status.exit.loc} · узел ${status.exit.colo}`
+            ? `loc ${status.exit.loc} · узел ${status.exit.colo}`
             : '—'}
         />
         <Cell label="Рабочий эндпоинт" value={status.enabled ? status.active_endpoint || '—' : '—'} />
@@ -618,9 +610,9 @@ function VariantsHelp() {
           <p className="text-xs text-text-secondary mt-1">
             Туннель поднимает сам warpscout, ядро ни при чём. Умеет обфускацию
             (awg, masque) — проходит там, где обычный WireGuard режут по сигнатуре
-            рукопожатия. Подводные камни: туннель один, без запасного узла — после
-            обрыва службу поднимает systemd и заново ищет эндпоинт, это минута-другая;
-            в тракте лишний процесс redsocks; заворачивается только TCP.
+            рукопожатия. Туннель один, без встроенного переподключения: systemd
+            повторяет тот же адрес, watchdog при необходимости ищет замену. Redsocks
+            добавляет ещё один процесс и точку отказа; заворачивается только TCP.
           </p>
         </div>
         <div>
@@ -645,9 +637,8 @@ function VariantsHelp() {
           </p>
         </div>
         <p className="text-xs text-text-secondary">
-          Проще так: свой telemt — берите C; готовы править чужой конфиг руками —
-          тоже C; иначе B, а если разведка не находит живых эндпоинтов (wg режут по
-          сигнатуре) — A.
+          Свой telemt — C. Если обычный WireGuard проходит и важна нагрузка CPU — B.
+          A оставлен для совместимости; при блокировке WG выбирайте C с awg.
         </p>
       </div>
     </CollapsibleSection>
@@ -695,10 +686,11 @@ function SettingsForm({ status, onSaved, disabled }: { status: WarpStatus; onSav
             spellCheck={false}
           />
           <span className="text-[11px] text-text-secondary/80">
-            Пусто — проверять все доступные адреса. Страны выхода задаются двумя
-            буквами (DE, NL), узлы Cloudflare — тремя (FRA, AMS). Через запятую,
-            можно смешивать. Фильтр не создаёт нужную локацию: если с этого сервера
-            все рабочие адреса ведут в AMS, другие узлы в результатах не появятся.
+            Пусто — проверять все доступные адреса. Страна физического узла —
+            две буквы (DE, SE), код узла — три (FRA, ARN). Через запятую,
+            можно смешивать. Это не геометка выходного WARP-IP (Cloudflare loc):
+            они могут различаться. Фильтр не создаёт нужную локацию: если с этого
+            сервера все рабочие адреса ведут в ARN, другие узлы не появятся.
             Для masque и masque-h2 фильтр не применяется: у них фиксированные
             anycast-адреса и один узел выхода.
           </span>

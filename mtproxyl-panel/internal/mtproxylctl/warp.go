@@ -145,14 +145,18 @@ func (c *Client) WarpScan(ctx context.Context) (string, error) {
 	return stripANSI(out), err
 }
 
-func (c *Client) WarpScanMode(ctx context.Context, mode string) (string, error) {
-	if mode == "" {
-		return c.WarpScan(ctx)
+func (c *Client) WarpScanMode(ctx context.Context, mode string, deep bool) (string, error) {
+	args := []string{"warp", "scan"}
+	if mode != "" {
+		if err := validateWarpMode(mode); err != nil {
+			return "", err
+		}
+		args = append(args, mode)
 	}
-	if err := validateWarpMode(mode); err != nil {
-		return "", err
+	if deep {
+		args = append(args, "--deep")
 	}
-	out, err := c.run(ctx, "warp", "scan", mode)
+	out, err := c.run(ctx, args...)
 	return stripANSI(out), err
 }
 
@@ -191,6 +195,7 @@ type WarpScanResult struct {
 	ScannedAt    int64          `json:"scanned_at"`
 	Proto        string         `json:"proto"`
 	Filter       string         `json:"filter"`
+	Depth        string         `json:"depth"`
 	Nodes        []WarpScanNode `json:"nodes"`
 }
 

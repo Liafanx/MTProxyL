@@ -1138,6 +1138,7 @@ export interface WarpScanResult {
   scanned_at: number;
   proto?: string;
   filter?: string;
+  depth?: 'quick' | 'deep';
   nodes: WarpScanNode[];
 }
 
@@ -1169,7 +1170,7 @@ export const warpApi = {
       }),
     }),
   disable: () => request<MtproxylOperation>(WARP_BASE, '/disable', { method: 'POST' }),
-  scan: (mode?: 'socks' | 'iface' | 'upstream') => request<MtproxylOperation>(WARP_BASE, '/scan', { method: 'POST', body: JSON.stringify({ mode }) }),
+  scan: (mode?: 'socks' | 'iface' | 'upstream', deep = false) => request<MtproxylOperation>(WARP_BASE, '/scan', { method: 'POST', body: JSON.stringify({ mode, deep }) }),
   apply: () => request<MtproxylOperation>(WARP_BASE, '/apply', { method: 'POST' }),
   recover: () => request<MtproxylOperation>(WARP_BASE, '/recover', { method: 'POST' }),
   install: () => request<MtproxylOperation>(WARP_BASE, '/install', { method: 'POST' }),
