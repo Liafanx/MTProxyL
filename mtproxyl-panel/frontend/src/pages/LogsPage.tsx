@@ -189,7 +189,7 @@ export function LogsPage() {
     return (
       <div className="p-6">
         <h1 className="text-xl font-semibold text-text-primary mb-4">Логи</h1>
-        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 text-sm text-red-400">
+        <div className="bg-error/10 border border-error/30 rounded-lg p-4 text-sm text-error">
           <div className="font-medium mb-1">Источник логов недоступен</div>
           <div>{status.error}</div>
         </div>
@@ -215,7 +215,7 @@ export function LogsPage() {
         {!streaming ? (
           <button
             onClick={() => start(initialLines, since)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-accent-strong text-accent-text rounded hover:bg-accent"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-accent-strong text-accent-text rounded hover:bg-accent-hover"
           >
             <Play className="w-3.5 h-3.5" />
             Старт
@@ -223,7 +223,7 @@ export function LogsPage() {
         ) : (
           <button
             onClick={stop}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-error-strong text-error-text rounded hover:bg-error-strong/85"
           >
             <Square className="w-3.5 h-3.5" />
             Остановить
@@ -295,7 +295,7 @@ export function LogsPage() {
 
       {/* Error */}
       {error && (
-        <div className="mb-3 bg-red-500/10 border border-red-500/30 rounded px-3 py-2 text-sm text-red-400">
+        <div className="mb-3 bg-error/10 border border-error/30 rounded px-3 py-2 text-sm text-error">
           {error}
         </div>
       )}

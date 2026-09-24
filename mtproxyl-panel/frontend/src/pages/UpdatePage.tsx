@@ -188,7 +188,7 @@ function AutoUpdateCard({
           <button
             onClick={handleSave}
             disabled={saving}
-            className="px-3 py-1.5 text-sm rounded-lg bg-accent text-white hover:bg-accent/90 disabled:opacity-50 transition-colors"
+            className="px-3 py-1.5 text-sm rounded-lg bg-accent-strong text-accent-text hover:bg-accent-hover disabled:opacity-50 transition-colors"
           >
             {saving ? 'Сохранение...' : 'Сохранить'}
           </button>
@@ -221,9 +221,9 @@ function VersionSelect({
   }
   if (error) {
     return (
-      <div className="text-sm text-red-400">
+      <div className="text-sm text-error">
         {error}{' '}
-        <button onClick={onRetry} className="underline hover:text-red-300">
+        <button onClick={onRetry} className="underline hover:text-error/80">
           Повторить
         </button>
       </div>
@@ -373,7 +373,7 @@ function ConfirmModal({
           </button>
           <button
             onClick={onConfirm}
-            className="px-4 py-2 rounded bg-warning text-white hover:opacity-90 text-sm"
+            className="px-4 py-2 rounded bg-warn/15 text-warn hover:bg-warn/25 text-sm"
           >
             Продолжить
           </button>
@@ -677,7 +677,7 @@ export function UpdatePage() {
                     disabled={!panelSelectedRelease || !!isPanelUpdating}
                     className={cn(
                       'flex items-center justify-center gap-2 px-3 lg:px-4 py-2 rounded-md text-xs lg:text-sm font-medium transition-colors w-full sm:w-auto',
-                      'bg-accent text-white hover:bg-accent/90',
+                      'bg-accent-strong text-accent-text hover:bg-accent-hover',
                       'disabled:opacity-50 disabled:cursor-not-allowed'
                     )}
                   >
@@ -813,7 +813,7 @@ export function UpdatePage() {
                     disabled={!selectedRelease || !!isUpdating}
                     className={cn(
                       'flex items-center justify-center gap-2 px-3 lg:px-4 py-2 rounded-md text-xs lg:text-sm font-medium transition-colors w-full sm:w-auto',
-                      'bg-accent text-white hover:bg-accent/90',
+                      'bg-accent-strong text-accent-text hover:bg-accent-hover',
                       'disabled:opacity-50 disabled:cursor-not-allowed'
                     )}
                   >

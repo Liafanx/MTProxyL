@@ -8,7 +8,7 @@
     <title>MTProxyL-Panel</title>
     <script>
       (function () {
-        var colors = { dark: "#12171d", light: "#f3f5f8", mocha: "#211e1a", parchment: "#f3ead9", matrix: "#050c08" };
+        var colors = { dark: "#12171d", light: "#f3f5f8", mocha: "#211e1a", parchment: "#f3ead9", matrix: "#050c08", custom: "#12171d" };
         var t = "dark";
         try { t = localStorage.getItem("mtproxyl-panel-theme") || "dark"; } catch (e) {}
         if (t === "system") {
@@ -17,6 +17,27 @@
         } else {
           if (!colors[t]) t = "dark";
           document.documentElement.setAttribute("data-theme", t);
+        }
+        if (t === "custom") {
+          try {
+            var saved = JSON.parse(localStorage.getItem("mtproxyl-panel-custom-colors") || "{}");
+            var keys = "bg surface-sunken surface surface-2 surface-3 border border-strong text text-muted text-faint accent accent-strong accent-hover accent-text focus-ring control-knob ok warn error error-strong error-text muted brand-from brand-to brand-text bar-track bar-fill bar-fill-warn bar-fill-full scrim".split(" ");
+            keys.forEach(function (key) {
+              var hex = saved[key];
+              if (typeof hex !== "string" || !/^#[0-9a-f]{6}$/i.test(hex)) return;
+              document.documentElement.style.setProperty("--" + key,
+                parseInt(hex.slice(1, 3), 16) + " " + parseInt(hex.slice(3, 5), 16) + " " + parseInt(hex.slice(5, 7), 16));
+              if (key === "bg") {
+                colors.custom = hex;
+                var rgb = [1, 3, 5].map(function (index) {
+                  var channel = parseInt(hex.slice(index, index + 2), 16) / 255;
+                  return channel <= 0.04045 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4);
+                });
+                document.documentElement.style.colorScheme =
+                  rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722 > 0.3 ? "light" : "dark";
+              }
+            });
+          } catch (e) {}
         }
         var meta = document.getElementById("theme-color-meta");
         if (meta) meta.setAttribute("content", colors[t]);

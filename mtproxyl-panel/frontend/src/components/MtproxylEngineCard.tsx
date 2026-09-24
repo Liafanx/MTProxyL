@@ -169,7 +169,7 @@ export function MtproxylEngineCard() {
             disabled={running || tag.trim() === ''}
             className={cn(
               'flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs lg:text-sm font-medium transition-colors',
-              'bg-accent text-white hover:bg-accent/90',
+              'bg-accent-strong text-accent-text hover:bg-accent-hover',
               'disabled:opacity-50 disabled:cursor-not-allowed',
             )}
           >

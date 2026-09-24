@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Image, RotateCcw, Save, Trash2, Upload } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Chip } from '@/components/ui/chip';
+import { CustomThemeEditor } from '@/components/CustomThemeEditor';
 import { useTheme, THEMES, THEME_LABELS } from '@/hooks/useTheme';
 import { useNavLayout, NAV_LAYOUTS, NAV_LAYOUT_LABELS } from '@/hooks/useNavLayout';
 import { ErrorAlert } from '@/components/ErrorAlert';
@@ -41,7 +42,7 @@ interface TextSettings {
 
 export function PanelSettingsPage() {
   const { branding, apply } = useBranding();
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, customColors, copyThemeColors, syncStatus, syncError, retrySave } = useTheme();
   const { layout, setLayout } = useNavLayout();
   const [form, setForm] = useState<TextSettings>({
     panel_name: branding.panel_name,
@@ -227,8 +228,33 @@ export function PanelSettingsPage() {
               ))}
             </div>
             <p className="text-meta text-text-muted">
-              Выбор сохраняется в этом браузере. «Системная» следует за настройкой устройства.
+              Тема и цвета сохраняются в панели и доступны после входа с другого устройства. «Системная» следует за настройкой устройства.
             </p>
+            {syncStatus === 'saving' || syncStatus === 'pending' ? (
+              <p className="text-meta text-text-muted" role="status">Сохранение темы…</p>
+            ) : syncStatus === 'error' ? (
+              <div className="flex flex-wrap items-center gap-2 text-meta text-error" role="alert">
+                <span>Тема не сохранена: {syncError}</span>
+                <Button variant="outline" size="sm" onClick={retrySave}>Повторить</Button>
+              </div>
+            ) : syncStatus === 'saved' ? (
+              <p className="text-meta text-ok" role="status">Тема сохранена</p>
+            ) : null}
+            {theme === 'custom' ? (
+              <CustomThemeEditor />
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (Object.keys(customColors).length > 0 &&
+                      !window.confirm('Заменить свою сохранённую палитру цветами выбранной темы?')) return;
+                  copyThemeColors(theme);
+                }}
+              >
+                Настроить цвета темы «{THEME_LABELS[theme]}»
+              </Button>
+            )}
           </CardContent>
         </Card>
 

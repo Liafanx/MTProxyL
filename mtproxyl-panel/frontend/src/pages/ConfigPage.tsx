@@ -144,7 +144,7 @@ export function ConfigPage() {
   if (error && !currentContent) {
     return (
       <div className="flex items-center justify-center h-full">
-        <div className="text-red-500">{error}</div>
+        <div className="text-error">{error}</div>
       </div>
     );
   }
@@ -231,7 +231,7 @@ export function ConfigPage() {
           <button
             onClick={() => handleSave(false)}
             disabled={!hasChanges || saving || configOwnedByMtproxyl}
-            className="px-3 py-1.5 text-sm rounded-lg bg-primary text-white hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+            className="px-3 py-1.5 text-sm rounded-lg bg-accent-strong text-accent-text hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
           >
             <Save className="w-4 h-4" />
             {saving ? 'Сохранение…' : 'Сохранить'}
@@ -240,7 +240,7 @@ export function ConfigPage() {
           <button
             onClick={() => handleSave(true)}
             disabled={!hasChanges || saving || configOwnedByMtproxyl}
-            className="px-3 py-1.5 text-sm rounded-lg bg-orange-600 text-white hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+            className="px-3 py-1.5 text-sm rounded-lg bg-warn/15 text-warn hover:bg-warn/25 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
           >
             <RotateCw className="w-4 h-4" />
             {saving ? 'Сохранение…' : 'Сохранить и перезапустить'}
@@ -289,7 +289,7 @@ export function ConfigPage() {
       </div>
 
       {hasChanges && (
-        <div className="px-4 py-2 bg-yellow-500/10 border-t border-yellow-500/20 text-sm text-yellow-600">
+        <div className="px-4 py-2 bg-warn/10 border-t border-warn/20 text-sm text-warn">
           Есть несохранённые изменения
         </div>
       )}

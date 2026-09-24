@@ -59,6 +59,20 @@ export const telemt = {
 
 const PANEL_BASE = `${BASE}/api`;
 
+export interface PanelThemeSettings {
+  theme: string;
+  colors: Record<string, string>;
+  configured: boolean;
+}
+
+export const themeApi = {
+  get: () => request<PanelThemeSettings>(PANEL_BASE, '/theme'),
+  update: (theme: string, colors: Record<string, string>) =>
+    request<PanelThemeSettings>(PANEL_BASE, '/panel/settings/theme', {
+      method: 'PUT', body: JSON.stringify({ theme, colors }),
+    }),
+};
+
 export interface PanelBranding {
   has_icon?: boolean;
   icon_revision?: string;

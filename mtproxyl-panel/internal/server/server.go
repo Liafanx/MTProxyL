@@ -183,6 +183,11 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 		return fmt.Errorf("panel branding: %w", err)
 	}
 	s.registerBrandingRoutes(mux, jwtSecret, branding)
+	theme, err := newThemeStore(s.cfg.DataDir)
+	if err != nil {
+		return fmt.Errorf("panel theme: %w", err)
+	}
+	s.registerThemeRoutes(mux, jwtSecret, theme)
 
 	// Auth endpoints
 	mux.HandleFunc("POST /api/auth/login", func(w http.ResponseWriter, r *http.Request) {

@@ -121,7 +121,7 @@ export function MtproxylUpdateCard() {
                 disabled={running}
                 className={cn(
                   'flex items-center justify-center gap-2 px-3 lg:px-4 py-2 rounded-md text-xs lg:text-sm font-medium transition-colors w-full sm:w-auto',
-                  'bg-accent text-white hover:bg-accent/90',
+                  'bg-accent-strong text-accent-text hover:bg-accent-hover',
                   'disabled:opacity-50 disabled:cursor-not-allowed',
                 )}
               >

@@ -93,7 +93,7 @@ function AuthenticatedApp() {
 
 export default function App() {
   const auth = useAuthProvider();
-  const themeCtx = useThemeProvider();
+  const themeCtx = useThemeProvider(Boolean(auth.username));
   const navCtx = useNavLayoutProvider();
   const branding = useBrandingProvider();
 

@@ -27,9 +27,9 @@ const palette = [
   'bg-accent/20 text-accent',
   'bg-status-ok/20 text-status-ok',
   'bg-status-warn/20 text-status-warn',
-  'bg-purple-500/20 text-purple-400',
-  'bg-pink-500/20 text-pink-400',
-  'bg-teal-500/20 text-teal-400',
+  'bg-error/20 text-error',
+  'bg-accent-strong/20 text-accent',
+  'bg-muted/20 text-text-muted',
 ];
 
 function colorFromName(name: string): string {

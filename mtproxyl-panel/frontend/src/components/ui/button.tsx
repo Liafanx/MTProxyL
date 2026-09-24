@@ -2,7 +2,7 @@ import React from 'react'
 import { cn } from '@/lib/utils'
 
 const variantStyles = {
-  default: 'bg-accent-strong text-accent-text hover:bg-accent active:brightness-95',
+  default: 'bg-accent-strong text-accent-text hover:bg-accent-hover active:brightness-95',
   outline: 'bg-surface-2 text-text hover:bg-surface-3 active:bg-surface-3',
   ghost: 'bg-transparent text-text-muted hover:bg-surface-2 hover:text-text',
   danger: 'bg-error/12 text-error hover:bg-error/20 active:bg-error/25',
