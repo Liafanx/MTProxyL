@@ -34,7 +34,7 @@ function useIsNarrow(): boolean {
 
 export function AdvancedEditorTab({ content, onChange }: AdvancedEditorTabProps) {
   const editorRef = useRef<any>(null);
-  const { theme } = useTheme();
+  const { scheme } = useTheme();
   const narrow = useIsNarrow();
 
   useEffect(() => {
@@ -80,7 +80,7 @@ export function AdvancedEditorTab({ content, onChange }: AdvancedEditorTabProps)
         value={content}
         onChange={(value) => onChange(value || '')}
         onMount={handleEditorDidMount}
-        theme={theme === 'dark' ? 'vs-dark' : 'light'}
+        theme={scheme === 'dark' ? 'vs-dark' : 'light'}
         options={{
           minimap: { enabled: false },
           fontSize: 14,

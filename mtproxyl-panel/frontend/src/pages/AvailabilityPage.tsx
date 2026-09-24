@@ -4,6 +4,7 @@ import { Header } from '@/components/layout/Header';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Chip } from '@/components/ui/chip';
 import { Input } from '@/components/ui/input';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { ErrorAlert } from '@/components/ErrorAlert';
@@ -662,14 +663,9 @@ function AvailabilityHistoryCard({
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-1" aria-label="Период графика">
               {([50, 200, 'all'] as HistoryScope[]).map((value) => (
-                <Button
-                  key={String(value)}
-                  size="sm"
-                  variant={scope === value ? 'default' : 'outline'}
-                  onClick={() => setScope(value)}
-                >
+                <Chip key={String(value)} active={scope === value} onClick={() => setScope(value)}>
                   {value === 'all' ? 'Все' : `Последние ${value}`}
-                </Button>
+                </Chip>
               ))}
             </div>
             <span className="text-xs text-text-secondary">
@@ -826,10 +822,11 @@ function AvailabilityChart({
                 x2={CHART_WIDTH - CHART_RIGHT}
                 y1={y}
                 y2={y}
-                stroke="rgb(var(--c-border))"
+                stroke="rgb(var(--border))"
                 strokeWidth="1"
+                strokeDasharray={value === 0 ? undefined : '3 5'}
               />
-              <text x={CHART_LEFT - 8} y={y + 4} textAnchor="end" fill="rgb(var(--c-text-secondary))" fontSize="11">
+              <text x={CHART_LEFT - 8} y={y + 4} textAnchor="end" fill="rgb(var(--text-muted))" fontSize="11">
                 {value}%
               </text>
             </g>
@@ -843,7 +840,7 @@ function AvailabilityChart({
               x2={CHART_WIDTH - CHART_RIGHT}
               y1={yAt(threshold)}
               y2={yAt(threshold)}
-              stroke="rgb(var(--c-warning))"
+              stroke="rgb(var(--warn))"
               strokeWidth="1.5"
               strokeDasharray="6 5"
             />
@@ -851,7 +848,7 @@ function AvailabilityChart({
               x={CHART_WIDTH - CHART_RIGHT - 3}
               y={yAt(threshold) - 5}
               textAnchor="end"
-              fill="rgb(var(--c-warning))"
+              fill="rgb(var(--warn))"
               fontSize="10"
             >
               порог {threshold}%
@@ -859,23 +856,37 @@ function AvailabilityChart({
           </g>
         )}
 
+        <defs>
+          <linearGradient id="availability-area" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0" stopColor="rgb(var(--accent))" stopOpacity="0.28" />
+            <stop offset="1" stopColor="rgb(var(--accent))" stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
+
         {segments.map((line, index) => (
-          <polyline
-            key={index}
-            points={line.map((item) => `${item.x},${item.y}`).join(' ')}
-            fill="none"
-            stroke="rgb(var(--c-accent))"
-            strokeWidth="3"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-          />
+          <g key={index}>
+            {line.length > 1 && (
+              <path
+                d={`M${line[0].x},${yAt(0)} ${line.map((item) => `L${item.x},${item.y}`).join(' ')} L${line[line.length - 1].x},${yAt(0)} Z`}
+                fill="url(#availability-area)"
+              />
+            )}
+            <polyline
+              points={line.map((item) => `${item.x},${item.y}`).join(' ')}
+              fill="none"
+              stroke="rgb(var(--accent))"
+              strokeWidth="2"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            />
+          </g>
         ))}
 
         {plotted.map((item, index) => {
           if (!item.measured) {
             return (
               <g key={`${item.point.checked_at}-${index}`}>
-                <circle cx={item.x} cy={yAt(0)} r="5" fill="rgb(var(--c-danger))" />
+                <circle cx={item.x} cy={yAt(0)} r="5" fill="rgb(var(--error))" />
                 <title>{`${formatHistoryTime(item.point.checked_at)} — ошибка проверки: ${item.point.error || 'нет ответивших зондов'}`}</title>
               </g>
             );
@@ -888,7 +899,7 @@ function AvailabilityChart({
               cy={item.y}
               r={item.point === selected ? 6 : 3}
               fill={historyPointColor(item.point)}
-              stroke="rgb(var(--c-surface))"
+              stroke="rgb(var(--surface))"
               strokeWidth="2"
             >
               <title>{`${formatHistoryTime(item.point.checked_at)} — ${item.point.percentage.toFixed(0)}%, ${item.point.success_probes}/${item.point.total_probes} зондов`}</title>
@@ -902,7 +913,7 @@ function AvailabilityChart({
             x2={selectedPlot.x}
             y1={CHART_TOP}
             y2={CHART_TOP + plotHeight}
-            stroke="rgb(var(--c-text-primary))"
+            stroke="rgb(var(--text))"
             strokeWidth="1"
             strokeDasharray="3 4"
             opacity="0.55"
@@ -910,23 +921,23 @@ function AvailabilityChart({
           />
         )}
 
-        <text x={CHART_LEFT} y={CHART_HEIGHT - 9} fill="rgb(var(--c-text-secondary))" fontSize="11">
+        <text x={CHART_LEFT} y={CHART_HEIGHT - 9} fill="rgb(var(--text-muted))" fontSize="11">
           {formatHistoryAxis(points[0].checked_at)}
         </text>
         <text
           x={CHART_WIDTH - CHART_RIGHT}
           y={CHART_HEIGHT - 9}
           textAnchor="end"
-          fill="rgb(var(--c-text-secondary))"
+          fill="rgb(var(--text-muted))"
           fontSize="11"
         >
           {formatHistoryAxis(points[points.length - 1].checked_at)}
         </text>
       </svg>
-      <div className="flex items-center gap-4 flex-wrap text-[11px] text-text-secondary mt-1">
-        <span className="flex items-center gap-1.5"><i className="w-2.5 h-2.5 rounded-full bg-success" />80–100%</span>
-        <span className="flex items-center gap-1.5"><i className="w-2.5 h-2.5 rounded-full bg-warning" />50–79%</span>
-        <span className="flex items-center gap-1.5"><i className="w-2.5 h-2.5 rounded-full bg-danger" />0–49% или ошибка</span>
+      <div className="flex items-center gap-4 flex-wrap text-micro text-text-muted mt-1">
+        <span className="flex items-center gap-1.5"><i className="w-2.5 h-2.5 rounded-full bg-ok" />80–100%</span>
+        <span className="flex items-center gap-1.5"><i className="w-2.5 h-2.5 rounded-full bg-warn" />50–79%</span>
+        <span className="flex items-center gap-1.5"><i className="w-2.5 h-2.5 rounded-full bg-error" />0–49% или ошибка</span>
       </div>
     </div>
   );
@@ -952,9 +963,9 @@ function HistoryPointSummary({ point }: { point: AvailabilityHistoryPoint }) {
 }
 
 function historyPointColor(point: AvailabilityHistoryPoint): string {
-  if (point.error || point.total_probes === 0 || point.percentage < 50) return 'rgb(var(--c-danger))';
-  if (point.percentage < 80) return 'rgb(var(--c-warning))';
-  return 'rgb(var(--c-success))';
+  if (point.error || point.total_probes === 0 || point.percentage < 50) return 'rgb(var(--error))';
+  if (point.percentage < 80) return 'rgb(var(--warn))';
+  return 'rgb(var(--ok))';
 }
 
 function formatHistoryTime(value: string): string {
@@ -983,10 +994,10 @@ function StatCard({
   extra?: React.ReactNode;
 }) {
   return (
-    <div className="bg-surface border border-border rounded-lg p-3 lg:p-4 min-h-[44px] flex flex-col justify-center">
-      <span className="text-xs lg:text-sm text-text-secondary mb-1.5 lg:mb-2">{label}</span>
+    <div className="flex min-h-[96px] min-w-0 flex-col rounded-xl border border-border bg-surface p-3 md:p-3.5">
+      <span className="line-clamp-2 min-h-[26px] break-words text-[10.5px] font-semibold uppercase leading-[1.25] tracking-[0.02em] text-text-muted">{label}</span>
       <div
-        className={cn(small ? 'text-sm truncate' : 'text-xl lg:text-2xl font-bold', valueClass)}
+        className={cn('mt-auto pt-2', small ? 'truncate text-sm font-semibold text-text' : 'truncate font-mono text-[22px] font-bold leading-none tabular-nums md:text-[24px]', valueClass)}
         title={value}
       >
         {value}
@@ -1097,7 +1108,7 @@ function ProbeRow({
               <summary className="cursor-pointer text-text-secondary hover:text-text-primary py-1">
                 Полный ответ
               </summary>
-              <pre className="mt-2 p-3 bg-black/30 rounded-lg overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap break-all">
+              <pre className="mt-2 p-3 bg-surface-sunken rounded-lg overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap break-all">
                 {probe.raw_output}
               </pre>
             </details>

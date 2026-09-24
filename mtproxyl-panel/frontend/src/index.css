@@ -1,69 +1,286 @@
 @import 'tailwindcss';
 
-/*
-  Colors are exposed to Tailwind as `rgb(var(--c-*))` via `@theme inline`, so
-  every utility (including opacity modifiers like `bg-success/10`) keeps a live
-  `var()` reference and follows the runtime theme instead of being baked to a
-  static value by the CSS minifier.
-*/
+/* Токены — RGB-триплеты, чтобы работали модификаторы прозрачности (bg-ok/15).
+   Тёмная тема по умолчанию на :root, остальные — через [data-theme]. */
+:root {
+  --bg: 18 23 29;
+  --surface-sunken: 14 19 25;
+  --surface: 23 30 38;
+  --surface-2: 28 36 46;
+  --surface-3: 35 45 56;
+
+  --border: 31 39 49;
+  --border-strong: 42 53 66;
+
+  --text: 238 243 248;
+  --text-muted: 143 160 176;
+  --text-faint: 128 144 160;
+
+  --accent: 94 166 225;
+  --accent-strong: 43 113 174;
+  --accent-hover: 106 183 238;
+  --accent-text: 255 255 255;
+
+  --ok: 94 201 126;
+  --warn: 224 166 63;
+  --error: 230 131 122;
+  --error-strong: 197 78 67;
+  --error-text: 255 255 255;
+  --muted: 148 162 175;
+
+  --focus-ring: 74 155 221;
+  --scrim: 0 0 0;
+  --control-knob: 255 255 255;
+
+  --brand-from: 46 92 138;
+  --brand-to: 74 155 221;
+  --brand-text: 255 255 255;
+
+  --bar-track: 28 36 46;
+  --bar-fill: 74 155 221;
+  --bar-fill-warn: 224 166 63;
+  --bar-fill-full: 217 86 74;
+
+  --font-family-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-family-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+[data-theme="light"] {
+  --bg: 243 245 248;
+  --surface-sunken: 233 237 242;
+  --surface: 255 255 255;
+  --surface-2: 231 236 241;
+  --surface-3: 219 226 234;
+
+  --border: 219 226 234;
+  --border-strong: 196 206 218;
+
+  --text: 23 34 44;
+  --text-muted: 84 97 111;
+  --text-faint: 93 104 115;
+
+  --accent: 26 93 152;
+  --accent-strong: 30 108 176;
+  --accent-hover: 21 87 150;
+  --accent-text: 255 255 255;
+
+  --ok: 20 104 59;
+  --warn: 124 82 9;
+  --error: 161 52 41;
+  --error-strong: 181 58 46;
+  --error-text: 255 255 255;
+  --muted: 83 92 102;
+
+  --focus-ring: 30 108 176;
+  --scrim: 0 0 0;
+  --control-knob: 255 255 255;
+
+  --brand-from: 36 76 118;
+  --brand-to: 56 128 190;
+  --brand-text: 255 255 255;
+
+  --bar-track: 219 226 234;
+  --bar-fill: 30 108 176;
+  --bar-fill-warn: 138 92 10;
+  --bar-fill-full: 181 58 46;
+}
+
+/* «Системная» — атрибута нет, решает prefers-color-scheme. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg: 243 245 248;
+    --surface-sunken: 233 237 242;
+    --surface: 255 255 255;
+    --surface-2: 231 236 241;
+    --surface-3: 219 226 234;
+
+    --border: 219 226 234;
+    --border-strong: 196 206 218;
+
+    --text: 23 34 44;
+    --text-muted: 84 97 111;
+    --text-faint: 93 104 115;
+
+    --accent: 26 93 152;
+    --accent-strong: 30 108 176;
+    --accent-hover: 21 87 150;
+    --accent-text: 255 255 255;
+
+    --ok: 20 104 59;
+    --warn: 124 82 9;
+    --error: 161 52 41;
+    --error-strong: 181 58 46;
+    --error-text: 255 255 255;
+    --muted: 83 92 102;
+
+    --focus-ring: 30 108 176;
+    --scrim: 0 0 0;
+    --control-knob: 255 255 255;
+
+    --brand-from: 36 76 118;
+    --brand-to: 56 128 190;
+    --brand-text: 255 255 255;
+
+    --bar-track: 219 226 234;
+    --bar-fill: 30 108 176;
+    --bar-fill-warn: 138 92 10;
+    --bar-fill-full: 181 58 46;
+  }
+}
+
+/* «Мокко» — тёплая тёмная. */
+[data-theme="mocha"] {
+  --bg: 33 30 26;
+  --surface-sunken: 26 24 21;
+  --surface: 42 38 34;
+  --surface-2: 50 46 39;
+  --surface-3: 60 54 46;
+
+  --border: 51 46 39;
+  --border-strong: 70 63 54;
+
+  --text: 238 231 221;
+  --text-muted: 170 152 128;
+  --text-faint: 164 149 129;
+
+  --accent: 230 161 23;
+  --accent-strong: 188 130 13;
+  --accent-hover: 235 174 53;
+  --accent-text: 33 30 26;
+
+  --ok: 116 193 78;
+  --warn: 242 153 101;
+  --error: 238 158 169;
+  --error-strong: 218 108 119;
+  --error-text: 33 30 26;
+  --muted: 183 174 163;
+
+  --focus-ring: 230 161 23;
+  --scrim: 20 16 11;
+  --control-knob: 255 251 245;
+
+  --brand-from: 156 105 39;
+  --brand-to: 230 161 23;
+  --brand-text: 33 30 26;
+
+  --bar-track: 60 54 46;
+  --bar-fill: 188 130 13;
+  --bar-fill-warn: 242 153 101;
+  --bar-fill-full: 218 108 119;
+}
+
+/* «Пергамент» — тёплая светлая. */
+[data-theme="parchment"] {
+  --bg: 243 234 217;
+  --surface-sunken: 231 219 194;
+  --surface: 251 246 234;
+  --surface-2: 235 223 199;
+  --surface-3: 224 210 180;
+
+  --border: 221 206 176;
+  --border-strong: 198 180 141;
+
+  --text: 65 53 37;
+  --text-muted: 108 94 78;
+  --text-faint: 108 96 83;
+
+  --accent: 99 76 15;
+  --accent-strong: 115 88 15;
+  --accent-hover: 82 63 12;
+  --accent-text: 255 251 244;
+
+  --ok: 41 96 39;
+  --warn: 124 68 7;
+  --error: 146 53 39;
+  --error-strong: 171 60 43;
+  --error-text: 255 251 244;
+  --muted: 92 83 72;
+
+  --focus-ring: 115 88 15;
+  --scrim: 61 47 30;
+  --control-knob: 255 251 244;
+
+  --brand-from: 111 74 18;
+  --brand-to: 164 118 42;
+  --brand-text: 255 251 244;
+
+  --bar-track: 224 210 180;
+  --bar-fill: 115 88 15;
+  --bar-fill-warn: 174 95 4;
+  --bar-fill-full: 171 60 43;
+}
+
+/* Маппинг в Tailwind. Старые имена (background, text-secondary, success…)
+   оставлены как алиасы — существующие страницы работают без правок. */
 @theme inline {
-  --color-background: rgb(var(--c-background));
-  --color-surface: rgb(var(--c-surface));
-  --color-surface-hover: rgb(var(--c-surface-hover));
-  --color-border: rgb(var(--c-border));
-  --color-border-hi: rgb(var(--c-border-hi));
-  --color-primary: rgb(var(--c-primary));
-  --color-accent: rgb(var(--c-accent));
-  --color-accent-hover: rgb(var(--c-accent-hover));
-  --color-text-primary: rgb(var(--c-text-primary));
-  --color-text-secondary: rgb(var(--c-text-secondary));
-  --color-success: rgb(var(--c-success));
-  --color-warning: rgb(var(--c-warning));
-  --color-danger: rgb(var(--c-danger));
-  --color-status-ok: rgb(var(--c-status-ok));
-  --color-status-warn: rgb(var(--c-status-warn));
-  --color-status-error: rgb(var(--c-status-error));
+  --color-bg: rgb(var(--bg));
+  --color-surface-sunken: rgb(var(--surface-sunken));
+  --color-surface: rgb(var(--surface));
+  --color-surface-2: rgb(var(--surface-2));
+  --color-surface-3: rgb(var(--surface-3));
+  --color-border: rgb(var(--border));
+  --color-border-strong: rgb(var(--border-strong));
+
+  --color-text: rgb(var(--text));
+  --color-text-muted: rgb(var(--text-muted));
+  --color-text-faint: rgb(var(--text-faint));
+
+  --color-accent: rgb(var(--accent));
+  --color-accent-strong: rgb(var(--accent-strong));
+  --color-accent-hover: rgb(var(--accent-hover));
+  --color-accent-text: rgb(var(--accent-text));
+
+  --color-ok: rgb(var(--ok));
+  --color-warn: rgb(var(--warn));
+  --color-error: rgb(var(--error));
+  --color-error-strong: rgb(var(--error-strong));
+  --color-error-text: rgb(var(--error-text));
+  --color-muted: rgb(var(--muted));
+
+  --color-bar-track: rgb(var(--bar-track));
+  --color-bar-fill: rgb(var(--bar-fill));
+  --color-bar-fill-warn: rgb(var(--bar-fill-warn));
+  --color-bar-fill-full: rgb(var(--bar-fill-full));
+
+  --color-focus-ring: rgb(var(--focus-ring));
+  --color-scrim: rgb(var(--scrim));
+  --color-control-knob: rgb(var(--control-knob));
+  --color-brand-text: rgb(var(--brand-text));
+
+  --color-background: rgb(var(--bg));
+  --color-surface-hover: rgb(var(--surface-2));
+  --color-border-hi: rgb(var(--border-strong));
+  --color-primary: rgb(var(--accent));
+  --color-text-primary: rgb(var(--text));
+  --color-text-secondary: rgb(var(--text-muted));
+  --color-success: rgb(var(--ok));
+  --color-warning: rgb(var(--warn));
+  --color-danger: rgb(var(--error));
+  --color-status-ok: rgb(var(--ok));
+  --color-status-warn: rgb(var(--warn));
+  --color-status-error: rgb(var(--error));
+
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+  --radius-2xl: 18px;
+  --radius-3xl: 22px;
+
+  --text-micro: 11.5px;
+  --text-micro--line-height: 1.35;
+  --text-meta: 12.5px;
+  --text-meta--line-height: 1.35;
+  --text-row: 13.5px;
+  --text-row--line-height: 1.35;
+  --text-title: 26px;
+  --text-title--line-height: 1.15;
+
+  --font-sans: var(--font-family-sans);
+  --font-mono: var(--font-family-mono);
 
   --animate-breathe: breathe 3s ease-in-out infinite;
   --animate-led-blink: led-blink 1.5s ease-in-out infinite;
-}
-
-:root, .theme-dark {
-  --c-background: 15 17 23;
-  --c-surface: 22 27 34;
-  --c-surface-hover: 28 35 51;
-  --c-border: 45 51 59;
-  --c-border-hi: 255 255 255;
-  --c-primary: 59 130 246;
-  --c-accent: 59 130 246;
-  --c-accent-hover: 37 99 235;
-  --c-text-primary: 230 237 243;
-  --c-text-secondary: 139 148 158;
-  --c-success: 34 197 94;
-  --c-warning: 234 179 8;
-  --c-danger: 239 68 68;
-  --c-status-ok: 52 211 153;
-  --c-status-warn: 245 158 11;
-  --c-status-error: 239 68 68;
-}
-
-.theme-light {
-  --c-background: 248 249 251;
-  --c-surface: 255 255 255;
-  --c-surface-hover: 240 242 245;
-  --c-border: 216 221 228;
-  --c-border-hi: 216 221 228;
-  --c-primary: 37 99 235;
-  --c-accent: 37 99 235;
-  --c-accent-hover: 29 78 216;
-  --c-text-primary: 26 29 35;
-  --c-text-secondary: 92 99 112;
-  --c-success: 22 163 74;
-  --c-warning: 202 138 4;
-  --c-danger: 220 38 38;
-  --c-status-ok: 34 197 94;
-  --c-status-warn: 245 158 11;
-  --c-status-error: 239 68 68;
 }
 
 @keyframes breathe {
@@ -76,42 +293,72 @@
   50% { opacity: 0.3; }
 }
 
+@utility pt-safe { padding-top: env(safe-area-inset-top); }
+@utility pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+@utility tap-target { min-height: 44px; min-width: 44px; }
+@utility brand-gradient {
+  background-image: linear-gradient(135deg, rgb(var(--brand-from)), rgb(var(--brand-to)));
+}
+@utility no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar { display: none; }
+}
+
 @layer base {
   * {
-    border-color: rgb(var(--c-border));
+    border-color: rgb(var(--border));
+  }
+  :root { color-scheme: dark; }
+  :root[data-theme="light"], :root[data-theme="parchment"] { color-scheme: light; }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme]) { color-scheme: light; }
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
   }
   body {
-    @apply bg-background text-text-primary antialiased;
+    @apply bg-bg text-text antialiased;
+    font-family: var(--font-family-sans);
+    font-variant-numeric: tabular-nums;
   }
-  ::-webkit-scrollbar {
-    @apply w-2;
+  :focus-visible {
+    outline: 2px solid rgb(var(--focus-ring));
+    outline-offset: 2px;
   }
-  ::-webkit-scrollbar-track {
-    @apply bg-background;
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
-  ::-webkit-scrollbar-thumb {
-    @apply bg-border rounded-full;
-  }
-  ::-webkit-scrollbar-thumb:hover {
-    @apply bg-text-secondary;
-  }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: rgb(var(--bg)); }
+  ::-webkit-scrollbar-thumb { background: rgb(var(--border-strong)); border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgb(var(--text-faint)); }
+  * { scrollbar-width: thin; scrollbar-color: rgb(var(--border-strong)) transparent; }
 }
 
 @layer components {
   .input {
-    @apply w-full px-3 py-2 bg-surface border border-border rounded-lg text-text-primary placeholder-text-secondary focus:outline-hidden focus:ring-2 focus:ring-primary/50 transition-colors;
+    @apply w-full px-3 py-2 bg-surface-2 border border-border rounded-lg text-text placeholder-text-faint focus:outline-hidden focus:ring-2 focus:ring-focus-ring/50 transition-colors;
   }
   .checkbox {
-    @apply w-4 h-4 rounded-sm border-border bg-surface text-primary focus:ring-2 focus:ring-primary/50 cursor-pointer;
+    @apply w-4 h-4 rounded-sm border-border bg-surface text-accent focus:ring-2 focus:ring-focus-ring/50 cursor-pointer;
+  }
+  .safe-area-inset-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
   }
 }
 
-/* При включённом фоне внутренние поверхности слегка прозрачны: изображение
-   остаётся видно, но контраст текста не зависит от светлой или тёмной темы. */
+/* При включённом фоне поверхности слегка прозрачны: изображение видно,
+   контраст текста не зависит от темы. */
 .panel-background .bg-surface {
-  background-color: rgb(var(--c-surface) / 0.92);
+  background-color: rgb(var(--surface) / 0.92);
 }
 
+.panel-background .bg-bg,
 .panel-background .bg-background {
-  background-color: rgb(var(--c-background) / 0.88);
+  background-color: rgb(var(--bg) / 0.88);
 }

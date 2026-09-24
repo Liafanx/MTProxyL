@@ -1,7 +1,5 @@
 import { Header } from '@/components/layout/Header';
 import { MetricCard } from '@/components/MetricCard';
-import { StatusDot } from '@/components/StatusDot';
-import { StatusBadge } from '@/components/StatusBadge';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { StartupStatus } from '@/components/StartupStatus';
@@ -9,13 +7,19 @@ import { ProxyControls } from '@/components/ProxyControls';
 import { ConnectionErrors, type ClassCount } from '@/components/ConnectionErrors';
 import { AvailabilityCard } from '@/components/AvailabilityCard';
 import { MtproxylUpdateBanner } from '@/components/MtproxylUpdateCard';
+import { HealthBanner, type HealthFact } from '@/components/HealthBanner';
+import { ProblemsCard, type ProblemItem } from '@/components/ProblemsCard';
+import { StatePill, type PillState } from '@/components/ui/state-pill';
+import { StatusBadge } from '@/components/StatusBadge';
 import { useWsSubscription, useEndpoint } from '@/hooks/useWebSocket';
 import { usePolling } from '@/hooks/usePolling';
-import { telemt, mtproxylSettingsApi } from '@/lib/api';
+import { useSeries } from '@/hooks/useSeries';
+import { useMtproxyl } from '@/hooks/useMtproxyl';
+import { telemt, mtproxylSettingsApi, availabilityApi, type AvailabilityStatusResponse } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { formatUptime, formatNumber, formatBytes } from '@/lib/utils';
-import { Activity, Clock, Users, ArrowUpDown, Globe } from 'lucide-react';
+import { formatUptime, formatNumber, formatBytes, cn } from '@/lib/utils';
+import { Activity, Clock, Users, ArrowUpDown, Globe, ShieldAlert } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 interface HealthData {
@@ -78,10 +82,16 @@ export function DashboardPage() {
   const system = useEndpoint<SystemInfoData>(wsData, '/v1/system/info');
   const gates = useEndpoint<GatesData>(wsData, '/v1/runtime/gates');
   const dcs = useEndpoint<DcsData>(wsData, '/v1/stats/dcs');
+  const { enabled: mtproxylEnabled, mode: mtproxylMode } = useMtproxyl();
 
   const { data: usersData } = usePolling<UserTrafficData[]>(
     () => telemt.get('/v1/users'),
     10000
+  );
+
+  const { data: availability } = usePolling<AvailabilityStatusResponse>(
+    () => availabilityApi.status(),
+    60000,
   );
 
   const totalTraffic = useMemo(() => {
@@ -94,47 +104,137 @@ export function DashboardPage() {
     return usersData.reduce((sum, u) => sum + u.active_unique_ips, 0);
   }, [usersData]);
 
+  const connectionsSeries = useSeries(summary?.connections_total, { cumulative: true });
+  const badSeries = useSeries(summary?.connections_bad_total, { cumulative: true });
+  const trafficSeries = useSeries(usersData ? totalTraffic : undefined, { cumulative: true });
+  const ipsSeries = useSeries(usersData ? totalActiveIPs : undefined);
+
   const isHealthy = health?.status === 'ok';
   const firstError = Object.values(errors)[0];
 
   const dcThreshold = useDcThreshold();
+  const dcSummary = useMemo(() => summarizeDcs(dcs, dcThreshold.value), [dcs, dcThreshold.value]);
+
+  const badRecent = badSeries.slice(-12).reduce((s, v) => s + v, 0);
+  const startupStatus = gates?.startup_status?.toLowerCase();
+  const starting = startupStatus !== undefined && startupStatus !== 'ready' && startupStatus !== 'done';
+
+  const hero = describeHealth({ health, connected, hasData: Boolean(summary), starting, dcOk: dcSummary?.ok ?? true, availability: availability?.status?.level });
+
+  const facts: HealthFact[] = [];
+  if (typeof system?.version === 'string') facts.push({ key: 'version', label: 'Версия', value: system.version });
+  if (summary) facts.push({ key: 'uptime', label: 'Работает', value: formatUptime(summary.uptime_seconds) });
+  if (summary) facts.push({ key: 'users', label: 'Пользователей', value: summary.configured_users });
+  if (mtproxylEnabled && mtproxylMode) {
+    facts.push({ key: 'mode', label: 'Режим', value: mtproxylMode === 'manager' ? 'Manager' : 'Reanimator' });
+  }
+
+  const problems: ProblemItem[] = [];
+  if (!connected) {
+    problems.push({ key: 'ws', severity: 'warn', label: 'Нет живого соединения с панелью', detail: 'Данные обновятся после переподключения WebSocket.' });
+  }
+  if (connected && health && !isHealthy) {
+    problems.push({ key: 'health', severity: 'error', label: 'Telemt не отвечает', detail: `Состояние: ${health.status}`, to: '/logs' });
+  }
+  if (health?.read_only) {
+    problems.push({ key: 'ro', severity: 'warn', label: 'API движка в режиме «только чтение»', detail: 'Изменения конфигурации и пользователей сейчас недоступны.', to: '/config' });
+  }
+  if (starting) {
+    problems.push({ key: 'startup', severity: 'warn', label: 'Движок ещё запускается', detail: gates?.startup_stage ? `Этап: ${gates.startup_stage}` : undefined });
+  }
+  if (dcSummary && !dcSummary.ok) {
+    problems.push({
+      key: 'dc',
+      severity: dcSummary.zero.length > 0 ? 'error' : 'warn',
+      label: `Покрытие дата-центров ${dcSummary.coverage}%`,
+      detail: dcSummary.zero.length > 0
+        ? `Без писателей: ${dcSummary.zero.map((d) => `DC ${d}`).join(', ')}`
+        : `Ниже порога ${dcThreshold.value}%`,
+      to: '/upstreams',
+    });
+  }
+  if (badRecent > 0) {
+    problems.push({ key: 'bad', severity: 'info', label: `Ошибочных соединений за минуту: ${formatNumber(badRecent)}`, detail: 'Разбивка по классам ниже.', to: '/security' });
+  }
+  if (availability?.enabled && availability.status && availability.status.level !== 'green') {
+    problems.push({
+      key: 'availability',
+      severity: availability.status.level === 'red' ? 'error' : 'warn',
+      label: availability.status.level === 'red' ? 'Прокси не виден из России' : 'Прокси виден из России частично',
+      detail: `${availability.status.percentage.toFixed(0)}% зондов дошли (${availability.status.success_probes}/${availability.status.total_probes})`,
+      to: '/availability',
+    });
+  }
 
   return (
     <div>
       <Header title="Дашборд" refreshing={!connected} onRefresh={refresh} />
 
-      <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
+      <div className="p-4 lg:p-6 space-y-4 lg:space-y-5">
         {firstError && <ErrorAlert message={firstError} onRetry={refresh} />}
 
         <MtproxylUpdateBanner />
 
-        {/* Health Banner */}
-        <div
-          className={`rounded-lg border p-3 lg:p-4 flex items-center gap-2 lg:gap-3 text-sm lg:text-base ${
-            isHealthy
-              ? 'bg-success/10 border-success/30'
-              : 'bg-danger/10 border-danger/30'
-          }`}
-        >
-          <StatusDot
-            status={isHealthy ? 'ok' : 'error'}
-            size="md"
-            animated={!connected}
-          />
-          <span className={`font-medium ${isHealthy ? 'text-success' : 'text-danger'}`}>
-            {isHealthy ? 'Telemt работает' : 'Telemt недоступен'}
-          </span>
-          {!connected && (
-            <span className="ml-auto text-xs text-warning bg-warning/15 px-2 py-1 rounded shrink-0">
-              Переподключение WS…
-            </span>
-          )}
-          {health?.read_only && (
-            <span className="ml-auto text-xs text-warning bg-warning/15 px-2 py-1 rounded shrink-0">
-              ТОЛЬКО ЧТЕНИЕ
-            </span>
-          )}
-        </div>
+        <HealthBanner
+          state={hero.state}
+          title={hero.title}
+          detail={hero.detail}
+          facts={facts}
+          aside={
+            <>
+              {!connected && <StatePill state="warn">переподключение</StatePill>}
+              {health?.read_only && <StatePill state="warn">только чтение</StatePill>}
+            </>
+          }
+        />
+
+        {/* Metric Cards */}
+        {summary && (
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6 lg:gap-4">
+            <MetricCard
+              label="Время работы"
+              value={formatUptime(summary.uptime_seconds)}
+              icon={<Clock size={14} />}
+            />
+            <MetricCard
+              label="Всего соединений"
+              value={formatNumber(summary.connections_total)}
+              icon={<Activity size={14} />}
+              variant="success"
+              series={connectionsSeries}
+              caption={connectionsSeries.length >= 2 ? `+${formatNumber(connectionsSeries.slice(-12).reduce((s, v) => s + v, 0))} за минуту` : undefined}
+            />
+            <MetricCard
+              label="Ошибочных соединений"
+              value={formatNumber(summary.connections_bad_total)}
+              icon={<ShieldAlert size={14} />}
+              variant={summary.connections_bad_total > 0 ? 'warning' : 'default'}
+              status={badRecent > 0 ? 'warn' : 'ok'}
+              series={badSeries}
+              caption={badSeries.length >= 2 ? `+${formatNumber(badRecent)} за минуту` : undefined}
+            />
+            <MetricCard
+              label="Пользователей"
+              value={summary.configured_users}
+              icon={<Users size={14} />}
+            />
+            <MetricCard
+              label="Активных IP"
+              value={formatNumber(totalActiveIPs)}
+              icon={<Globe size={14} />}
+              series={ipsSeries}
+            />
+            <MetricCard
+              label="Всего трафика"
+              value={formatBytes(totalTraffic)}
+              icon={<ArrowUpDown size={14} />}
+              series={trafficSeries}
+              caption={trafficSeries.length >= 2 ? `+${formatBytes(trafficSeries.slice(-6).reduce((s, v) => s + v, 0))} за минуту` : undefined}
+            />
+          </div>
+        )}
+
+        <ProblemsCard items={problems} />
 
         <AvailabilityCard />
 
@@ -150,44 +250,6 @@ export function DashboardPage() {
         {/* Запуск/перезапуск/остановка движка — только при включённом мосте
             MTProxyL: он знает, контейнер это или чужая цель. */}
         <ProxyControls />
-
-        {/* Metric Cards */}
-        {summary && (
-          <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 lg:gap-4">
-            <MetricCard
-              label="Время работы"
-              value={formatUptime(summary.uptime_seconds)}
-              icon={<Clock size={14} className="lg:w-4 lg:h-4" />}
-            />
-            <MetricCard
-              label="Всего соединений"
-              value={formatNumber(summary.connections_total)}
-              icon={<Activity size={14} className="lg:w-4 lg:h-4" />}
-              variant="success"
-            />
-            <MetricCard
-              label="Ошибочных соединений"
-              value={formatNumber(summary.connections_bad_total)}
-              variant={summary.connections_bad_total > 0 ? 'warning' : 'default'}
-              status={summary.connections_bad_total > 0 ? 'warn' : 'ok'}
-            />
-            <MetricCard
-              label="Пользователей"
-              value={summary.configured_users}
-              icon={<Users size={14} className="lg:w-4 lg:h-4" />}
-            />
-            <MetricCard
-              label="Активных IP"
-              value={formatNumber(totalActiveIPs)}
-              icon={<Globe size={14} className="lg:w-4 lg:h-4" />}
-            />
-            <MetricCard
-              label="Всего трафика"
-              value={formatBytes(totalTraffic)}
-              icon={<ArrowUpDown size={14} className="lg:w-4 lg:h-4" />}
-            />
-          </div>
-        )}
 
         {/* Connection Errors breakdown */}
         {summary && (
@@ -216,11 +278,11 @@ export function DashboardPage() {
                 const { label, text, hint } = describeSystemField(key, value);
                 return (
                   <div key={key} className="min-w-0">
-                    <div className="text-xs text-text-secondary">{label}</div>
-                    <div className="text-xs lg:text-sm text-text-primary truncate" title={String(value ?? '')}>
+                    <div className="text-micro text-text-muted">{label}</div>
+                    <div className="text-xs lg:text-sm text-text truncate" title={String(value ?? '')}>
                       {typeof value === 'boolean' ? <StatusBadge status={value} /> : text}
                     </div>
-                    {hint && <div className="text-[11px] text-text-secondary/70">{hint}</div>}
+                    {hint && <div className="text-[11px] text-text-faint">{hint}</div>}
                   </div>
                 );
               })}
@@ -230,6 +292,116 @@ export function DashboardPage() {
 
       </div>
     </div>
+  );
+}
+
+function describeHealth(input: {
+  health: HealthData | null;
+  connected: boolean;
+  hasData: boolean;
+  starting: boolean;
+  dcOk: boolean;
+  availability?: 'green' | 'yellow' | 'red';
+}): { state: PillState; title: string; detail?: string } {
+  if (!input.hasData && !input.health) {
+    return { state: 'muted', title: 'Ждём данные движка', detail: 'Панель подключается к API Telemt.' };
+  }
+  if (input.health && input.health.status !== 'ok') {
+    return { state: 'error', title: 'Telemt недоступен', detail: `API ответил состоянием «${input.health.status}».` };
+  }
+  if (input.starting) {
+    return { state: 'warn', title: 'Движок запускается', detail: 'Клиенты подключатся, когда запуск завершится.' };
+  }
+  if (input.availability === 'red') {
+    return { state: 'error', title: 'Работает, но не виден из России', detail: 'Последняя проверка зондами не дошла до прокси.' };
+  }
+  if (!input.dcOk || input.availability === 'yellow' || !input.connected) {
+    return { state: 'warn', title: 'Работает с замечаниями', detail: 'Подробности в списке проблем ниже.' };
+  }
+  return { state: 'ok', title: 'Telemt работает', detail: 'Клиенты принимаются, связь с Telegram в норме.' };
+}
+
+interface DcSummary {
+  ok: boolean;
+  coverage: number;
+  alive: number;
+  required: number;
+  covered: number;
+  zero: number[];
+}
+
+function summarizeDcs(data: DcsData | null, threshold: number): DcSummary | null {
+  if (!data || !data.middle_proxy_enabled || !data.dcs?.length) return null;
+  const rows = data.dcs;
+  const alive = rows.reduce((s, d) => s + (d.alive_writers || 0), 0);
+  const required = rows.reduce((s, d) => s + (d.required_writers || 0), 0);
+  const covered = rows.reduce((sum, dc) => sum + Math.min(dc.alive_writers || 0, dc.required_writers || 0), 0);
+  const coverage = required > 0 ? Math.round((covered * 100) / required) : 0;
+  const zero = rows.filter((dc) => dc.required_writers > 0 && dc.alive_writers === 0).map((dc) => dc.dc);
+  // Нулевой порог выключает процентный приговор, но пустой DC остаётся фактом.
+  const ok = zero.length === 0 && (threshold <= 0 || coverage >= threshold);
+  return { ok, coverage, alive, required, covered, zero };
+}
+
+function DcCard({
+  data,
+  threshold,
+  editable,
+  onSave,
+}: {
+  data: DcsData;
+  threshold: number;
+  editable: boolean;
+  onSave: (next: number) => Promise<void>;
+}) {
+  const rows = data.dcs ?? [];
+  const summary = summarizeDcs(data, threshold);
+  if (!summary) return null;
+  const rowOk = (cov: number) => (threshold <= 0 ? cov > 0 : cov >= threshold);
+  return (
+    <section className="rounded-xl border border-border bg-surface p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-[13px] font-semibold text-text">Дата-центры Telegram</h3>
+        <StatePill state={summary.ok ? 'ok' : summary.zero.length > 0 ? 'error' : 'warn'}>
+          покрытие {summary.coverage}%
+        </StatePill>
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        {rows.map((d) => {
+          const cov = Math.round(d.coverage_pct ?? 0);
+          const ok = rowOk(cov);
+          const empty = d.required_writers > 0 && d.alive_writers === 0;
+          return (
+            <div key={d.dc} className="flex gap-3 rounded-lg bg-bg p-3">
+              <div className="flex h-14 w-2 shrink-0 flex-col justify-end overflow-hidden rounded-full bg-bar-track" aria-hidden="true">
+                <div
+                  className={cn('w-full rounded-full', empty ? 'bg-bar-fill-full' : ok ? 'bg-bar-fill' : 'bg-bar-fill-warn')}
+                  style={{ height: `${Math.max(cov > 0 ? 6 : 0, Math.min(100, cov))}%` }}
+                />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-row font-semibold text-text">DC {d.dc}</span>
+                  <span className={cn('font-mono text-[15px] font-bold tabular-nums', empty ? 'text-error' : ok ? 'text-text' : 'text-warn')}>{cov}%</span>
+                </div>
+                <div className="mt-1 text-micro text-text-muted">
+                  {d.alive_writers} / {d.required_writers} пис.
+                </div>
+                <div className="text-micro text-text-faint">
+                  {d.rtt_ms == null ? 'RTT —' : `RTT ${Math.round(d.rtt_ms)} мс`}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-3 text-micro leading-relaxed text-text-faint">
+        В зачёт покрытия {summary.covered} из {summary.required}; живых всего {summary.alive}.
+        {summary.zero.length > 0 && ` Без писателей: ${summary.zero.map((dc) => `DC ${dc}`).join(', ')}.`}
+        {' '}Это связь движка с Telegram, а не доступность прокси для клиентов.
+      </p>
+      <DcThresholdForm threshold={threshold} editable={editable} onSave={onSave} />
+    </section>
   );
 }
 
@@ -297,78 +469,6 @@ function useDcThreshold() {
   }, []);
 
   return { value, editable, save };
-}
-
-function DcCard({
-  data,
-  threshold,
-  editable,
-  onSave,
-}: {
-  data: DcsData;
-  threshold: number;
-  editable: boolean;
-  onSave: (next: number) => Promise<void>;
-}) {
-  const rows = data.dcs ?? [];
-  const alive = rows.reduce((s, d) => s + (d.alive_writers || 0), 0);
-  const required = rows.reduce((s, d) => s + (d.required_writers || 0), 0);
-  const covered = rows.reduce(
-    (sum, dc) => sum + Math.min(dc.alive_writers || 0, dc.required_writers || 0),
-    0,
-  );
-  const coverage = required > 0 ? Math.round((covered * 100) / required) : 0;
-  const zeroDcs = rows.filter((dc) => dc.required_writers > 0 && dc.alive_writers === 0);
-  // Нулевой порог выключает процентный приговор, но пустой DC остаётся фактом.
-  const ok = zeroDcs.length === 0 && (threshold <= 0 || coverage >= threshold);
-  const rowOk = (cov: number) => (threshold <= 0 ? cov > 0 : cov >= threshold);
-  if (!data.middle_proxy_enabled || rows.length === 0) return null;
-  return (
-    <CollapsibleSection
-      title={`Дата-центры Telegram — покрытие ${coverage}%${ok ? '' : ' (просело)'}`}
-    >
-      <div className="overflow-x-auto -mx-4 px-4">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-text-secondary border-b border-border">
-              <th className="py-2 pr-4 font-medium">DC</th>
-              <th className="py-2 pl-4 font-medium text-right">RTT</th>
-              <th className="py-2 pl-4 font-medium text-right">Писатели</th>
-              <th className="py-2 pl-4 font-medium text-right">Покрытие</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((d) => {
-              const cov = Math.round(d.coverage_pct ?? 0);
-              return (
-                <tr key={d.dc} className="border-b border-border last:border-0">
-                  <td className="py-2 pr-4 text-text-primary">
-                    <StatusDot status={rowOk(cov) ? 'ok' : 'warn'} size="sm" /> DC {d.dc}
-                  </td>
-                  <td className="py-2 pl-4 text-right font-mono text-xs">
-                    {d.rtt_ms == null ? '—' : `${Math.round(d.rtt_ms)} мс`}
-                  </td>
-                  <td className="py-2 pl-4 text-right font-mono text-xs">
-                    {d.alive_writers} / {d.required_writers}
-                  </td>
-                  <td className={`py-2 pl-4 text-right ${rowOk(cov) ? '' : 'text-warning'}`}>
-                    {cov}%
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      <p className="text-xs text-text-secondary/70 mt-2">
-        В зачёт покрытия {covered} из {required}; живых всего {alive}.
-        {zeroDcs.length > 0 && ` Без писателей: ${zeroDcs.map((dc) => `DC ${dc.dc}`).join(', ')}.`}
-        {' '}Это связь движка с Telegram, а не доступность
-        прокси для клиентов.
-      </p>
-      <DcThresholdForm threshold={threshold} editable={editable} onSave={onSave} />
-    </CollapsibleSection>
-  );
 }
 
 /** Порог просадки: тот же, по которому пишет бот. Ноль — не предупреждать. */

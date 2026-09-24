@@ -32,21 +32,22 @@ export function AppLayout() {
     <div
       className={`flex min-h-screen bg-background bg-cover bg-center bg-fixed ${backgroundURL ? 'panel-background' : ''}`}
       style={backgroundURL ? {
-        backgroundImage: `linear-gradient(rgb(var(--c-background) / 0.72), rgb(var(--c-background) / 0.84)), url("${backgroundURL}")`,
+        backgroundImage: `linear-gradient(rgb(var(--bg) / 0.72), rgb(var(--bg) / 0.84)), url("${backgroundURL}")`,
       } : undefined}
     >
       <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
       <main className="flex-1 min-w-0 overflow-x-hidden lg:ml-60 pb-16 lg:pb-0">
         {/* Mobile header with hamburger */}
-        <div className="lg:hidden sticky top-0 z-20 bg-surface border-b border-border px-4 py-3 flex items-center gap-3">
+        <div className="lg:hidden sticky top-0 z-20 bg-surface border-b border-border px-4 py-2 flex items-center gap-2 pt-safe">
           <button
             onClick={() => setSidebarOpen(true)}
-            className="p-2 hover:bg-surface-hover rounded-md"
+            className="tap-target -ml-2 flex items-center justify-center rounded-lg text-text-muted hover:bg-surface-2 hover:text-text"
+            aria-label="Открыть меню"
           >
             <Menu size={20} />
           </button>
-          <h1 className="text-sm font-semibold text-text-primary truncate" title={branding.panel_name}>
+          <h1 className="text-[15px] font-bold text-text truncate" title={branding.panel_name}>
             {branding.panel_name}
           </h1>
         </div>

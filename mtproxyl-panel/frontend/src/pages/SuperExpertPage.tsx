@@ -35,7 +35,7 @@ export function SuperExpertPage() {
   const [toggling, setToggling] = useState(false);
   const [confirmToggle, setConfirmToggle] = useState<boolean | null>(null);
 
-  const { theme } = useTheme();
+  const { scheme } = useTheme();
   const { allowed, loading: modeLoading } = useManagerOnly();
 
   const load = useCallback(async () => {
@@ -193,7 +193,7 @@ export function SuperExpertPage() {
                         language="ini"
                         value={content}
                         onChange={(v) => setContent(v ?? '')}
-                        theme={theme === 'dark' ? 'vs-dark' : 'light'}
+                        theme={scheme === 'dark' ? 'vs-dark' : 'light'}
                         options={{
                           minimap: { enabled: false },
                           fontSize: 13,

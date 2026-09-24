@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp } from 'lucide-react';
+import { Activity, ArrowDown, ArrowUp, ArrowUpDown, Globe, Users } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { StatusBadge } from '@/components/StatusBadge';
 import { Header } from '@/components/layout/Header';
-import { formatBytes } from '@/lib/utils';
+import { formatBytes, formatNumber } from '@/lib/utils';
+import { MetricCard } from '@/components/MetricCard';
 import { mtproxylNetApi, type TrafficReport, type TrafficUser } from '@/lib/api';
 import { StatsResetCard } from '@/components/StatsResetCard';
 
@@ -113,44 +114,36 @@ export function TrafficPage() {
         ) : (
           report && (
             <>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Всего</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {directional ? (
-                      <>
-                        <Metric
-                          label="Скачано"
-                          value={formatBytes(report.totals.in)}
-                          icon={<ArrowDown size={14} className="text-accent" />}
-                        />
-                        <Metric
-                          label="Отправлено"
-                          value={formatBytes(report.totals.out)}
-                          icon={<ArrowUp size={14} className="text-accent" />}
-                        />
-                      </>
-                    ) : (
-                      <Metric label="Передано" value={formatBytes(report.totals.total)} />
-                    )}
-                    <Metric label="Соединений" value={String(report.totals.connections)} />
-                    <Metric label="Уникальных IP" value={String(report.totals.unique_ips ?? 0)} />
-                    <Metric
-                      label="Пользователей"
-                      value={String(report.users.filter((u) => !u.deleted).length)}
-                    />
-                  </div>
-                  {report.persistent && directional && (
-                    <div className="text-xs text-text-secondary">
-                      За текущую сессию: ↓ {formatBytes(report.totals.session_in)} · ↑{' '}
-                      {formatBytes(report.totals.session_out)}
-                    </div>
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5 lg:gap-4">
+                  {directional ? (
+                    <>
+                      <MetricCard
+                        label="Скачано"
+                        value={formatBytes(report.totals.in)}
+                        icon={<ArrowDown size={14} />}
+                        caption={report.persistent ? `за сессию ${formatBytes(report.totals.session_in)}` : undefined}
+                      />
+                      <MetricCard
+                        label="Отправлено"
+                        value={formatBytes(report.totals.out)}
+                        icon={<ArrowUp size={14} />}
+                        caption={report.persistent ? `за сессию ${formatBytes(report.totals.session_out)}` : undefined}
+                      />
+                    </>
+                  ) : (
+                    <MetricCard label="Передано" value={formatBytes(report.totals.total)} icon={<ArrowUpDown size={14} />} />
                   )}
-                  <p className="text-xs text-text-secondary/70">{sourceNote(report)}</p>
-                </CardContent>
-              </Card>
+                  <MetricCard label="Соединений" value={formatNumber(report.totals.connections)} icon={<Activity size={14} />} />
+                  <MetricCard label="Уникальных IP" value={formatNumber(report.totals.unique_ips ?? 0)} icon={<Globe size={14} />} />
+                  <MetricCard
+                    label="Пользователей"
+                    value={report.users.filter((u) => !u.deleted).length}
+                    icon={<Users size={14} />}
+                  />
+                </div>
+                <p className="px-1 text-micro text-text-faint">{sourceNote(report)}</p>
+              </div>
 
               <Card>
                 <CardHeader>
@@ -301,17 +294,5 @@ function SortHeader({ label, k, sortKey, asc, onSort, align = 'left' }: SortHead
         <span className="text-xs">{activeSort ? (asc ? '▲' : '▼') : '↕'}</span>
       </button>
     </th>
-  );
-}
-
-function Metric({ label, value, icon }: { label: string; value: string; icon?: React.ReactNode }) {
-  return (
-    <div>
-      <div className="text-xs text-text-secondary mb-1 flex items-center gap-1">
-        {icon}
-        {label}
-      </div>
-      <div className="text-lg font-semibold text-text-primary">{value}</div>
-    </div>
   );
 }

@@ -357,7 +357,7 @@ function ConfirmModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div className="fixed inset-0 bg-scrim/60 flex items-center justify-center z-50">
       <div className="bg-surface rounded-lg p-6 max-w-md mx-4 border border-border">
         <h3 className="text-lg font-semibold text-text-primary mb-4">Подтверждение</h3>
         {warnings.map((w, i) => (

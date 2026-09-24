@@ -2,11 +2,11 @@ import React from 'react'
 import { cn } from '@/lib/utils'
 
 const variantStyles = {
-  default: 'bg-accent/20 text-accent border-accent/30',
-  success: 'bg-success/20 text-success border-success/30',
-  warning: 'bg-warning/20 text-warning border-warning/30',
-  danger: 'bg-danger/20 text-danger border-danger/30',
-  outline: 'bg-transparent text-text-secondary border-border',
+  default: 'bg-accent/15 text-accent',
+  success: 'bg-ok/15 text-ok',
+  warning: 'bg-warn/15 text-warn',
+  danger: 'bg-error/15 text-error',
+  outline: 'bg-surface-2 text-text-muted',
 }
 
 export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
@@ -19,7 +19,7 @@ const Badge = React.forwardRef<HTMLSpanElement, BadgeProps>(
       <span
         ref={ref}
         className={cn(
-          'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium transition-colors',
+          'inline-flex items-center rounded-full px-2.5 py-0.5 text-micro font-semibold transition-colors',
           variantStyles[variant],
           className,
         )}

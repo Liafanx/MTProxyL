@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Image, RotateCcw, Save, Trash2, Upload } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
+import { Chip } from '@/components/ui/chip';
+import { useTheme, THEMES, THEME_LABELS } from '@/hooks/useTheme';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -37,6 +39,7 @@ interface TextSettings {
 
 export function PanelSettingsPage() {
   const { branding, apply } = useBranding();
+  const { theme, setTheme } = useTheme();
   const [form, setForm] = useState<TextSettings>({
     panel_name: branding.panel_name,
     login_title: branding.login_title,
@@ -208,6 +211,24 @@ export function PanelSettingsPage() {
       <Header title="Настройки панели" />
 
       <div className="p-4 lg:p-6 space-y-4 max-w-4xl">
+        <Card>
+          <CardHeader>
+            <CardTitle>Тема оформления</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              {THEMES.map((value) => (
+                <Chip key={value} active={theme === value} onClick={() => setTheme(value)}>
+                  {THEME_LABELS[value]}
+                </Chip>
+              ))}
+            </div>
+            <p className="text-meta text-text-muted">
+              Выбор сохраняется в этом браузере. «Системная» следует за настройкой устройства.
+            </p>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader><CardTitle>Иконка сайта</CardTitle></CardHeader>
           <CardContent className="space-y-4">
@@ -398,7 +419,7 @@ export function PanelSettingsPage() {
             <div
               className="relative min-h-52 overflow-hidden rounded-lg border border-border bg-background bg-cover bg-center"
               style={panelBackgroundURL ? {
-                backgroundImage: `linear-gradient(rgb(var(--c-background) / 0.68), rgb(var(--c-background) / 0.80)), url("${panelBackgroundURL}")`,
+                backgroundImage: `linear-gradient(rgb(var(--bg) / 0.68), rgb(var(--bg) / 0.80)), url("${panelBackgroundURL}")`,
               } : undefined}
             >
               {panelBackgroundURL ? (
