@@ -170,6 +170,14 @@ show_main_menu() {
         # Только когда включён: на обычной установке строка была бы шумом.
         warp_menu_line 2>/dev/null || true
 
+        local _shaping_summary _shape_calc _shape_applied
+        _shaping_summary=$(shaping_home_summary 2>/dev/null) || _shaping_summary=""
+        if [ -n "$_shaping_summary" ]; then
+            IFS=$'\t' read -r _shape_calc _shape_applied <<< "$_shaping_summary"
+            echo -e "  ${BOLD}Шейпинг:${NC}   ${_shape_calc}"
+            echo -e "  ${DIM}  ${_shape_applied}${NC}"
+        fi
+
         if [ -n "$_UPDATE_AVAILABLE" ]; then
             echo ""
             echo -e "  ${YELLOW}${BOLD}⬆ Доступно обновление: v${VERSION} → v${_UPDATE_AVAILABLE}${NC}"

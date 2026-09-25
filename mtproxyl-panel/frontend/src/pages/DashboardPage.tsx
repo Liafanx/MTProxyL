@@ -9,6 +9,7 @@ import { AvailabilityCard } from '@/components/AvailabilityCard';
 import { MtproxylUpdateBanner } from '@/components/MtproxylUpdateCard';
 import { HealthBanner, type HealthFact } from '@/components/HealthBanner';
 import { ProblemsCard, type ProblemItem } from '@/components/ProblemsCard';
+import { Card, CardContent } from '@/components/ui/card';
 import { StatePill, type PillState } from '@/components/ui/state-pill';
 import { StatusBadge } from '@/components/StatusBadge';
 import { useWsSubscription, useEndpoint } from '@/hooks/useWebSocket';
@@ -17,11 +18,12 @@ import { useHistorySeries } from '@/hooks/useHistorySeries';
 import { gaugeValues, rateValues, windowDelta } from '@/lib/history';
 import { LoadCard } from '@/components/LoadCard';
 import { useMtproxyl } from '@/hooks/useMtproxyl';
-import { telemt, mtproxylSettingsApi, availabilityApi, type AvailabilityStatusResponse } from '@/lib/api';
+import { telemt, mtproxylNetApi, mtproxylSettingsApi, availabilityApi, type AvailabilityStatusResponse, type ShapingStatus } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { formatUptime, formatNumber, formatBytes, cn } from '@/lib/utils';
-import { Activity, Clock, Users, ArrowUpDown, Globe, ShieldAlert } from 'lucide-react';
+import { Activity, Clock, Users, ArrowUpDown, Globe, ShieldAlert, Gauge } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 interface HealthData {
@@ -199,6 +201,8 @@ export function DashboardPage() {
           }
         />
 
+        {mtproxylEnabled && <ShapingSummary />}
+
         {/* Metric Cards */}
         {summary && (
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6 lg:gap-4">
@@ -314,6 +318,42 @@ export function DashboardPage() {
       </div>
     </div>
   );
+}
+
+const formatMbps = (bps: number) => (bps / 1_000_000).toLocaleString('ru-RU', { maximumFractionDigits: 6 });
+
+function ShapingSummary() {
+  const { data, error } = usePolling<ShapingStatus>(mtproxylNetApi.shaping, 30_000);
+  if (error || !data?.config.enabled) return null;
+
+  const { config, rates, state, tc_active: tcActive } = data;
+  const total = formatMbps(rates.total_bps);
+  const divisor = Math.max(1, rates.denominator ?? config.expected_users);
+  const calculated = config.mode === 'manual'
+    ? config.manual_ip_mbps.toLocaleString('ru-RU', { maximumFractionDigits: 6 })
+    : formatMbps(Math.floor(rates.total_bps / divisor));
+  const capacity = config.mode === 'manual'
+    ? `Общий потолок: ${total} Мбит/с (ручной режим)`
+    : `Канал ${config.channel_mbps} Мбит/с − резерв ${config.reserve_percent}% = ${total} Мбит/с`;
+  const split = config.mode === 'manual'
+    ? `На один IPv4 задано ${calculated} Мбит/с; деления по числу IP нет.`
+    : config.mode === 'fixed'
+      ? `${total} Мбит/с ÷ ${divisor} ожидаемых IP = ${calculated} Мбит/с на IP.`
+      : `${total} Мбит/с ÷ max(${config.expected_users} минимум, ${state.active_ips ?? 0} активных по замеру) = ${calculated} Мбит/с на IP (делитель ${divisor}).`;
+
+  return <Card>
+    <CardContent className="flex flex-wrap items-start justify-between gap-3 p-4">
+      <div className="min-w-0 space-y-1">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-text-primary"><Gauge size={16} /> Шейпинг IPv4</h2>
+        <p className="text-sm text-text-secondary">{capacity}</p>
+        <p className="text-sm text-text-secondary">{split}</p>
+        <p className={tcActive ? 'text-sm text-accent' : 'text-sm text-warning'}>
+          {tcActive ? `Сейчас выставлено: ${formatMbps(rates.ip_bps)} Мбит/с на IP.` : 'Правила tc сейчас не активны — лимит не применяется.'}
+        </p>
+      </div>
+      <Link to="/shaping" className="shrink-0 text-sm text-accent hover:underline">Настройки →</Link>
+    </CardContent>
+  </Card>;
 }
 
 function describeHealth(input: {

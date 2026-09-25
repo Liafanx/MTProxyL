@@ -86,4 +86,40 @@ printf '%s\n' '[server]' 'port = 9443' '[server.api]' 'enabled = false' > "$test
 _superexpert_active() { return 0; }
 if shaping_target_ready >/dev/null 2>&1; then echo 'disabled superexpert API accepted' >&2; exit 1; fi
 
+# Главный экран скрывает выключенный шейпинг и различает расчёт и tc.
+(
+    shaping_config() { shaping_default_config; }
+    [ -z "$(shaping_home_summary)" ]
+)
+(
+    fixture_cfg=$(shaping_default_config | jq '.enabled=true | .mode="fixed" | .expected_users=100')
+    fixture_status=$(jq -nc --argjson config "$fixture_cfg" \
+        '{config:$config,state:{active_ips:20},rates:{total_bps:900000000,ip_bps:9000000,denominator:100},tc_active:true}')
+    shaping_config() { printf '%s\n' "$fixture_cfg"; }
+    shaping_status_json() { printf '%s\n' "$fixture_status"; }
+    summary=$(shaping_home_summary)
+    [[ "$summary" == *'900 ÷ 100 ожидаемых IP = 9 Мбит/с/IP'* ]]
+    [[ "$summary" == *'выставлено: 9 Мбит/с/IP'* ]]
+)
+(
+    fixture_cfg=$(shaping_default_config | jq '.enabled=true | .mode="dynamic" | .expected_users=10')
+    fixture_status=$(jq -nc --argjson config "$fixture_cfg" \
+        '{config:$config,state:{active_ips:20},rates:{total_bps:900000000,ip_bps:30000000,denominator:20},tc_active:true}')
+    shaping_config() { printf '%s\n' "$fixture_cfg"; }
+    shaping_status_json() { printf '%s\n' "$fixture_status"; }
+    summary=$(shaping_home_summary)
+    [[ "$summary" == *'900 ÷ max(10 минимум, 20 активных по замеру) = 45 Мбит/с/IP'* ]]
+    [[ "$summary" == *'выставлено: 30 Мбит/с/IP'* ]]
+)
+(
+    fixture_cfg=$(shaping_default_config | jq '.enabled=true')
+    fixture_status=$(jq -nc --argjson config "$fixture_cfg" \
+        '{config:$config,state:{active_ips:0},rates:{total_bps:900000000,ip_bps:90000000,denominator:null},tc_active:false}')
+    shaping_config() { printf '%s\n' "$fixture_cfg"; }
+    shaping_status_json() { printf '%s\n' "$fixture_status"; }
+    summary=$(shaping_home_summary)
+    [[ "$summary" == *'на IP задано 90 Мбит/с'* ]]
+    [[ "$summary" == *'tc не активен'* ]]
+)
+
 echo 'shaping tests: ok'

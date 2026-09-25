@@ -716,6 +716,33 @@ shaping_status_json() {
         '{config:$config,state:$state,rates:$rates,available_profiles:$available_profiles,tc_active:$tc_active,tracked_ips:$tracked_ips,interface:$interface}'
 }
 
+# Главный экран показывает расчёт и фактически применённый лимит раздельно:
+# при росте скорости tc ждёт второго замера, а после перезагрузки может быть неактивен.
+shaping_home_summary() {
+    local cfg status
+    cfg=$(shaping_config) || return 1
+    printf '%s\n' "$cfg" | jq -e '.enabled == true' >/dev/null 2>&1 || return 0
+    status=$(shaping_status_json) || return 1
+    printf '%s\n' "$status" | jq -r '
+        def mbps: (. / 1000000 | tostring);
+        if .config.enabled != true then empty else
+        . as $s |
+        ($s.rates.total_bps | mbps) as $total |
+        ($s.rates.denominator // $s.config.expected_users) as $n |
+        (if $s.config.mode == "manual" then
+            "вручную: общий потолок \($total) Мбит/с; на IP задано \($s.config.manual_ip_mbps) Мбит/с"
+        elif $s.config.mode == "fixed" then
+            "канал \($s.config.channel_mbps) Мбит/с − резерв \($s.config.reserve_percent)% = \($total) Мбит/с; \($total) ÷ \($n) ожидаемых IP = \(($s.rates.total_bps / $n | floor) | mbps) Мбит/с/IP"
+        else
+            "канал \($s.config.channel_mbps) Мбит/с − резерв \($s.config.reserve_percent)% = \($total) Мбит/с; \($total) ÷ max(\($s.config.expected_users) минимум, \($s.state.active_ips // 0) активных по замеру) = \(($s.rates.total_bps / $n | floor) | mbps) Мбит/с/IP"
+        end) as $formula |
+        (if $s.tc_active then "выставлено: \($s.rates.ip_bps | mbps) Мбит/с/IP"
+         else "tc не активен — лимит сейчас не применяется" end) as $applied |
+        "\($formula)\t\($applied)"
+        end
+    '
+}
+
 shaping_menu() {
     local cfg mode channel reserve expected ip_limit total answer profiles ips
     cfg=$(shaping_config)
