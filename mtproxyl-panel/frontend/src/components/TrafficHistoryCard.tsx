@@ -43,7 +43,8 @@ export function TrafficHistoryCard({ username, title = 'Трафик по вре
     () => (username ? trafficHistoryApi.user(username, range) : trafficHistoryApi.summary(range)),
     [username, range],
   );
-  const { data, error, loading } = usePolling(fetcher, 60_000);
+  const { data, error } = usePolling(fetcher, 60_000, `${username ?? ''}:${range}`);
+  const visibleData = data?.range === range && (data.username ?? '') === (username ?? '') ? data : null;
   const disabled = error?.message.includes('history_disabled') || error?.message.includes('выключена');
 
   return (
@@ -62,44 +63,42 @@ export function TrafficHistoryCard({ username, title = 'Трафик по вре
         </div>
       </div>
 
-      {loading && !data ? (
-        <Skeleton className="mt-3 h-40" />
-      ) : disabled ? (
+      {disabled ? (
         <p className="mt-3 text-meta text-text-muted">История трафика выключена в конфиге панели ([history] enabled = false).</p>
-      ) : error && !data ? (
+      ) : error && !visibleData ? (
         <p className="mt-3 text-meta text-warn">Не удалось получить историю: {error.message}</p>
-      ) : data ? (
-        <div className={cn('mt-3 grid gap-3', !username && data.top_users && data.top_users.length > 0 && 'lg:grid-cols-[minmax(0,2fr)_minmax(220px,1fr)]')}>
+      ) : visibleData ? (
+        <div className={cn('mt-3 grid gap-3', !username && visibleData.top_users && visibleData.top_users.length > 0 && 'lg:grid-cols-[minmax(0,2fr)_minmax(220px,1fr)]')}>
           <div className="min-w-0">
             <div className="grid grid-cols-3 gap-2">
-              <Value label="Сегодня" value={formatBytes(data.today_bytes)} />
-              <Value label="За период" value={formatBytes(data.total_bytes)} />
-              <Value label="Предыдущий период" value={data.previous_total_bytes === undefined ? '—' : formatBytes(data.previous_total_bytes)} />
+              <Value label="Сегодня" value={formatBytes(visibleData.today_bytes)} />
+              <Value label="За период" value={formatBytes(visibleData.total_bytes)} />
+              <Value label="Предыдущий период" value={visibleData.previous_total_bytes === undefined ? '—' : formatBytes(visibleData.previous_total_bytes)} />
             </div>
             <div className="mt-3">
               <TimeBars
-                points={data.points}
-                from={data.requested_from_epoch_secs}
-                to={data.requested_to_epoch_secs}
-                emptyLabel={data.state === 'empty' ? 'История накапливается: первые байты появятся через несколько минут' : 'За период трафика не было'}
+                points={visibleData.points}
+                from={visibleData.requested_from_epoch_secs}
+                to={visibleData.requested_to_epoch_secs}
+                emptyLabel={visibleData.state === 'empty' ? 'История накапливается: первые байты появятся через несколько минут' : 'За период трафика не было'}
               />
             </div>
             <div className="mt-1 flex justify-between text-[10px] text-text-faint">
-              <span>{axisLabel(data.requested_from_epoch_secs, range)}</span>
-              <span>{axisLabel(data.requested_to_epoch_secs, range)}</span>
+              <span>{axisLabel(visibleData.requested_from_epoch_secs, range)}</span>
+              <span>{axisLabel(visibleData.requested_to_epoch_secs, range)}</span>
             </div>
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-micro text-text-muted">
-              <span>{comparison(data) ?? 'предыдущий период ещё не накоплен'}</span>
-              {data.state === 'partial' && data.observed_since_epoch_secs && (
-                <span className="text-accent">наблюдение с {new Date(data.observed_since_epoch_secs * 1000).toLocaleDateString('ru-RU')}</span>
+              <span>{comparison(visibleData) ?? 'предыдущий период ещё не накоплен'}</span>
+              {visibleData.state === 'partial' && visibleData.observed_since_epoch_secs && (
+                <span className="text-accent">наблюдение с {new Date(visibleData.observed_since_epoch_secs * 1000).toLocaleDateString('ru-RU')}</span>
               )}
             </div>
           </div>
-          {!username && data.top_users && data.top_users.length > 0 && (
+          {!username && visibleData.top_users && visibleData.top_users.length > 0 && (
             <div className="min-w-0 rounded-lg bg-bg p-3">
               <h4 className="text-micro font-semibold uppercase tracking-[0.06em] text-text-faint">Топ за период</h4>
               <ol className="mt-2 flex flex-col gap-1">
-                {data.top_users.map((u, i) => (
+                {visibleData.top_users.map((u, i) => (
                   <li key={u.username}>
                     <Link
                       to={`/users/${encodeURIComponent(u.username)}`}
@@ -115,7 +114,7 @@ export function TrafficHistoryCard({ username, title = 'Трафик по вре
             </div>
           )}
         </div>
-      ) : null}
+      ) : <Skeleton className="mt-3 h-40" />}
     </section>
   );
 }

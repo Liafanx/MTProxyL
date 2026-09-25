@@ -11,11 +11,13 @@ export function useHistorySeries(metrics: HistoryMetric[], range: HistoryRange =
     () => historyApi.get(key.split(',') as HistoryMetric[], range),
     [key, range],
   );
-  const { data, error, loading, refresh } = usePolling(fetcher, intervalMs);
+  const { data, error, loading, refresh } = usePolling(fetcher, intervalMs, `${key}:${range}`);
   const series = useMemo(() => {
     const map: SeriesMap = {};
-    for (const s of data?.series ?? []) map[s.metric] = s;
+    if (data?.range === range) {
+      for (const s of data.series) map[s.metric] = s;
+    }
     return map;
-  }, [data]);
+  }, [data, range]);
   return { series, error, loading, refresh, disabled: error?.message.includes('history_disabled') ?? false };
 }
