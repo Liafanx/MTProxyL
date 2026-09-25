@@ -516,8 +516,29 @@ mtproxyl uninstall-telemt     # удалить telemt: uninstall или purge (R
 Функция выключена по умолчанию и доступна в Manager, включая «Супер эксперт»,
 а также в Reanimator для обнаруженной цели telemt с работающим локальным API:
 **Безопасность и маршрутизация → Ограничение скорости клиентов** или страница
-**Ограничение скорости** в панели. Из CLI: `mtproxyl shaping menu`,
-`mtproxyl shaping status --json`, `mtproxyl shaping disable`.
+**Ограничение скорости** в панели. Настраивать можно и напрямую из CLI
+(те же команды доступны в Manager, Reanimator и «Супер эксперте»):
+
+```bash
+mtproxyl shaping status                 # состояние и рассчитанные лимиты
+mtproxyl shaping status --json          # то же в JSON для автоматизации
+mtproxyl shaping set manual --total 900 --ip 9
+mtproxyl shaping set fixed --channel 1000 --reserve 10 --users 100
+mtproxyl shaping set dynamic --channel 1000 --reserve 10 --users 100
+mtproxyl shaping exempt add profile admin
+mtproxyl shaping exempt add ip 203.0.113.5
+mtproxyl shaping exempt remove profile admin
+mtproxyl shaping set manual --exempt-profile admin --exempt-profile trusted
+mtproxyl shaping set manual --clear-profiles --clear-ips
+mtproxyl shaping off                    # выключить, настройки сохраняются
+mtproxyl shaping help                   # все параметры CLI
+```
+
+`set` включает ограничение; неуказанные значения сохраняются. Повторяющиеся
+`--exempt-profile` или `--exempt-ip` заменяют соответствующий список целиком;
+`exempt add/remove` меняют одну запись, не включая выключенный шейпинг.
+`--users` в динамическом режиме задаёт минимальный делитель, а не жёсткое
+количество клиентов. Интерактивное меню: `mtproxyl shaping menu`.
 
 - Вручную задаются общий потолок и лимит одного IPv4 (Мбит/с).
 - Фиксированная формула: ширина канала × (1 − резерв %) / ожидаемое число пользователей.

@@ -777,14 +777,167 @@ shaping_menu() {
     printf '%s\n' "$cfg" | shaping_apply
 }
 
+shaping_cli_help() {
+    cat <<'EOF'
+Использование:
+  mtproxyl shaping status [--json]
+  mtproxyl shaping set [manual|fixed|dynamic] [параметры]
+  mtproxyl shaping off
+  mtproxyl shaping exempt add|remove profile|ip ЗНАЧЕНИЕ
+  mtproxyl shaping menu
+
+Параметры set (включает шейпинг; неуказанные значения сохраняются):
+  --total N       общий потолок, Мбит/с (manual)
+  --ip N          лимит одного IPv4, Мбит/с (manual)
+  --channel N     ширина канала, Мбит/с (fixed/dynamic)
+  --reserve N     резерв 0..90% (fixed/dynamic)
+  --users N       ожидаемое/минимальное число IP, от 2 (fixed/dynamic)
+  --exempt-profile ИМЯ   повторять для замены списка профилей
+  --exempt-ip IPv4/CIDR  повторять для замены списка адресов
+  --clear-profiles       очистить список профилей
+  --clear-ips            очистить список адресов
+
+Примеры:
+  mtproxyl shaping set manual --total 900 --ip 9
+  mtproxyl shaping set dynamic --channel 1000 --reserve 10 --users 100
+  mtproxyl shaping exempt add profile admin
+  mtproxyl shaping exempt remove ip 203.0.113.5
+
+Для автоматизации также доступен: mtproxyl shaping apply < конфиг.json
+EOF
+}
+
+shaping_cli_check_number() {
+    local flag="$1" value="$2" min max
+    case "$flag" in
+        --total|--channel) min=1; max=100000 ;;
+        --users) min=2; max=100000 ;;
+        --reserve) min=0; max=90 ;;
+        --ip)
+            [[ "$value" =~ ^(0\.[0-9]{1,6}|[1-9][0-9]{0,5}(\.[0-9]{1,6})?)$ ]] \
+                && awk -v v="$value" 'BEGIN { exit !(v >= 0.1 && v <= 100000) }' && return 0
+            log_error '--ip: ожидается число от 0.1 до 100000 Мбит/с'
+            return 1 ;;
+    esac
+    [[ "$value" =~ ^(0|[1-9][0-9]{0,5})$ ]] && (( value >= min && value <= max )) && return 0
+    log_error "$flag: ожидается целое число ${min}..${max}"
+    return 1
+}
+
+shaping_cli_apply_config() {
+    local cfg="$1" ensure="${2:-false}" current
+    shaping_validate_config "$cfg" || {
+        log_error 'Неверные параметры шейпинга: проверьте лимиты и исключения'
+        return 1
+    }
+    cfg=$(printf '%s\n' "$cfg" | shaping_normalize_config) || return 1
+    current=$(shaping_config | shaping_normalize_config) || return 1
+    if [ "$cfg" = "$current" ]; then
+        if [ "$ensure" = true ] && [ "$(printf '%s\n' "$cfg" | jq -r '.enabled')" = true ]; then
+            shaping_restore
+        elif [ -f "$SHAPING_TC_FILE" ] && [ "$(printf '%s\n' "$cfg" | jq -r '.enabled')" = false ]; then
+            printf '%s\n' "$cfg" | shaping_apply
+        else
+            log_info 'Настройки шейпинга не изменились'
+        fi
+        return
+    fi
+    printf '%s\n' "$cfg" | shaping_apply
+}
+
+shaping_cli_set() {
+    local cfg mode flag value field profiles_changed=false ips_changed=false manual_arg=false formula_arg=false
+    local profiles_json ips_json
+    local -a profiles=() ips=()
+    cfg=$(shaping_config) || return 1
+    mode=$(printf '%s\n' "$cfg" | jq -r '.mode') || return 1
+    if [ "$#" -gt 0 ] && [[ "$1" != --* ]]; then mode="$1"; shift; fi
+    while [ "$#" -gt 0 ]; do
+        flag="$1"
+        case "$flag" in
+            --help|-h) shaping_cli_help; return 0 ;;
+            --clear-profiles) profiles_changed=true; profiles=(); shift; continue ;;
+            --clear-ips) ips_changed=true; ips=(); shift; continue ;;
+            --mode|--total|--ip|--channel|--reserve|--users|--exempt-profile|--exempt-ip)
+                [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != --* ]] || {
+                    log_error "$flag: укажите значение"; return 1; }
+                value="$2"; shift 2 ;;
+            *) log_error "Неизвестный параметр шейпинга: $flag"; return 1 ;;
+        esac
+        case "$flag" in
+            --mode) mode="$value" ;;
+            --total|--ip|--channel|--reserve|--users)
+                shaping_cli_check_number "$flag" "$value" || return 1
+                case "$flag" in
+                    --total) field=manual_total_mbps; manual_arg=true ;;
+                    --ip) field=manual_ip_mbps; manual_arg=true ;;
+                    --channel) field=channel_mbps; formula_arg=true ;;
+                    --reserve) field=reserve_percent; formula_arg=true ;;
+                    --users) field=expected_users; formula_arg=true ;;
+                esac
+                cfg=$(printf '%s\n' "$cfg" | jq -c --arg value "$value" ".${field} = (\$value | tonumber)") || return 1 ;;
+            --exempt-profile)
+                [[ "$value" =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || {
+                    log_error "Недопустимое имя профиля: $value"; return 1; }
+                profiles_changed=true; profiles+=("$value") ;;
+            --exempt-ip)
+                shaping_valid_ipv4_cidr "$value" || {
+                    log_error "Недопустимый IPv4/CIDR: $value"; return 1; }
+                ips_changed=true; ips+=("$value") ;;
+        esac
+    done
+    case "$mode" in
+        manual) [ "$formula_arg" = false ] || {
+            log_error 'В manual используйте --total и --ip, не параметры формулы'; return 1; } ;;
+        fixed|dynamic) [ "$manual_arg" = false ] || {
+            log_error 'В fixed/dynamic используйте --channel, --reserve и --users'; return 1; } ;;
+        *) log_error 'Режим шейпинга: manual, fixed или dynamic'; return 1 ;;
+    esac
+    if [ "$profiles_changed" = true ]; then
+        profiles_json=$(printf '%s\n' "${profiles[@]}" | jq -Rsc '[split("\n")[] | select(length > 0)] | unique') || return 1
+        cfg=$(printf '%s\n' "$cfg" | jq -c --argjson list "$profiles_json" '.profile_exempt=$list') || return 1
+    fi
+    if [ "$ips_changed" = true ]; then
+        ips_json=$(printf '%s\n' "${ips[@]}" | jq -Rsc '[split("\n")[] | select(length > 0)] | unique') || return 1
+        cfg=$(printf '%s\n' "$cfg" | jq -c --argjson list "$ips_json" '.ip_exempt=$list') || return 1
+    fi
+    cfg=$(printf '%s\n' "$cfg" | jq -c --arg mode "$mode" '.enabled=true | .mode=$mode') || return 1
+    shaping_cli_apply_config "$cfg" true
+}
+
+shaping_cli_exempt() {
+    [ "$#" -eq 3 ] || { log_error 'Использование: shaping exempt add|remove profile|ip ЗНАЧЕНИЕ'; return 1; }
+    local action="$1" kind="$2" value="$3" field cfg
+    case "$action" in add|remove) ;; *) log_error 'Исключение: add или remove'; return 1 ;; esac
+    case "$kind" in
+        profile)
+            [[ "$value" =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || { log_error "Недопустимое имя профиля: $value"; return 1; }
+            field=profile_exempt ;;
+        ip)
+            shaping_valid_ipv4_cidr "$value" || { log_error "Недопустимый IPv4/CIDR: $value"; return 1; }
+            field=ip_exempt ;;
+        *) log_error 'Тип исключения: profile или ip'; return 1 ;;
+    esac
+    cfg=$(shaping_config) || return 1
+    if [ "$action" = add ]; then
+        cfg=$(printf '%s\n' "$cfg" | jq -c --arg value "$value" ".${field} |= (. + [\$value] | unique)") || return 1
+    else
+        cfg=$(printf '%s\n' "$cfg" | jq -c --arg value "$value" ".${field} |= map(select(. != \$value))") || return 1
+    fi
+    shaping_cli_apply_config "$cfg"
+}
+
 handle_shaping_command() {
     case "${1:-status}" in
         status) if [ "${2:-}" = --json ]; then shaping_status_json; else shaping_status_json | jq .; fi ;;
         apply) shaping_apply ;;
-        disable) shaping_config | jq '.enabled=false' | shaping_apply ;;
+        set|on) shift; shaping_cli_set "$@" ;;
+        exempt) shift; shaping_cli_exempt "$@" ;;
+        off|disable) shaping_cli_apply_config "$(shaping_config | jq -c '.enabled=false')" ;;
         tick) shaping_tick ;;
         restore) shaping_restore ;;
         menu) shaping_menu ;;
-        *) log_error 'Использование: mtproxyl shaping [status --json|apply|disable|tick|restore|menu]'; return 1 ;;
+        help|-h|--help) shaping_cli_help ;;
+        *) shaping_cli_help >&2; return 1 ;;
     esac
 }
