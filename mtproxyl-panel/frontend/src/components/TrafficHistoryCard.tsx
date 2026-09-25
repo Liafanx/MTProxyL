@@ -25,7 +25,7 @@ const RANGES: Array<{ key: TrafficHistoryRange; label: string }> = [
 function axisLabel(ts: number, range: TrafficHistoryRange): string {
   const d = new Date(ts * 1000);
   return range === '24h'
-    ? d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
+    ? d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' })
     : d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', timeZone: 'UTC' });
 }
 
@@ -71,7 +71,7 @@ export function TrafficHistoryCard({ username, title = 'Трафик по вре
         <div className={cn('mt-3 grid gap-3', !username && visibleData.top_users && visibleData.top_users.length > 0 && 'lg:grid-cols-[minmax(0,2fr)_minmax(220px,1fr)]')}>
           <div className="min-w-0">
             <div className="grid grid-cols-3 gap-2">
-              <Value label="Сегодня" value={formatBytes(visibleData.today_bytes)} />
+              <Value label="Сегодня (UTC)" value={formatBytes(visibleData.today_bytes)} />
               <Value label="За период" value={formatBytes(visibleData.total_bytes)} />
               <Value label="Предыдущий период" value={visibleData.previous_total_bytes === undefined ? '—' : formatBytes(visibleData.previous_total_bytes)} />
             </div>
