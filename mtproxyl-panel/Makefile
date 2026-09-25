@@ -21,7 +21,7 @@ release-binaries:
 	@mkdir -p release
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -o release/mtproxyl-panel-x86_64-linux .
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -o release/mtproxyl-panel-aarch64-linux .
-	cd release && for bin in mtproxyl-panel-*; do sha256sum "$$bin" > "$${bin}.sha256"; done
+	cd release && for bin in mtproxyl-panel-x86_64-linux mtproxyl-panel-aarch64-linux; do sha256sum "$$bin" > "$${bin}.sha256"; done
 	@echo "Binaries in ./release/"
 
 clean:
