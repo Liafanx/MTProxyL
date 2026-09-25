@@ -11,7 +11,17 @@ func TestValidateShapingConfig(t *testing.T) {
 	if err := ValidateShapingConfig(base); err != nil {
 		t.Fatalf("valid config: %v", err)
 	}
+	withDot := base
+	withDot.ProfileExempt = []string{"team.alpha"}
+	if err := ValidateShapingConfig(withDot); err != nil {
+		t.Fatalf("valid profile name: %v", err)
+	}
 	bad := base
+	bad.ManualIPMbps = 0
+	if err := ValidateShapingConfig(bad); err == nil {
+		t.Fatal("zero IP limit accepted")
+	}
+	bad = base
 	bad.ExpectedUsers = 1
 	if err := ValidateShapingConfig(bad); err == nil {
 		t.Fatal("expected users below safe floor accepted")

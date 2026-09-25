@@ -23,6 +23,7 @@ _AG_ITEMS=(
     "meko|Оптимизация By-MEKO|no"
     "selfmask|Selfmask|yes"
     "web|WEB Proxy|yes"
+    "shaping|Шейпинг по IPv4|no"
     "geoip|База GeoIP|no"
     "block|Список блокировок|no"
     "force|Ставить поверх существующей|no"
@@ -85,6 +86,17 @@ _argsgen_defaults() {
         _AG_VAL[web]="$(web_domain 2>/dev/null) (${WEB_FRONTEND:-nginx}, ${WEB_LAYOUT:-shared}, ${WEB_CARRIER:-websocket}, ${WEB_DECOY_MODE:-empty})"
     else
         _AG_ON[web]="no"; _AG_VAL[web]="выключен"
+    fi
+
+    local _shaping_cfg
+    _shaping_cfg=$(shaping_config 2>/dev/null) || _shaping_cfg='{}'
+    if [ "$(printf '%s\n' "$_shaping_cfg" | jq -r '.enabled // false')" = true ]; then
+        _AG_ON[shaping]="yes"
+        _AG_VAL[shaping]=$(printf '%s\n' "$_shaping_cfg" | jq -r '
+            if .mode == "manual" then "вручную, \(.manual_ip_mbps) Мбит/с на IP"
+            else "\(.mode), \(.channel_mbps) Мбит/с, резерв \(.reserve_percent)%" end')
+    else
+        _AG_ON[shaping]="no"; _AG_VAL[shaping]="выключен"
     fi
 
     _AG_ON[geoip]="$(geoip_installed 2>/dev/null && echo yes || echo no)"
@@ -190,6 +202,27 @@ _argsgen_build() {
             [ -n "${SELFMASK_CERT_EMAIL:-}" ] && _a+=(--selfmask-email "$SELFMASK_CERT_EMAIL")
             [ -n "${SELFMASK_SITE_SOURCE:-}" ] && _a+=(--selfmask-template "$SELFMASK_SITE_SOURCE")
         fi
+    fi
+
+    if [ "${_AG_ON[shaping]}" = "yes" ]; then
+        local _shaping_cfg _mode _item
+        _shaping_cfg=$(shaping_config)
+        _mode=$(printf '%s\n' "$_shaping_cfg" | jq -r '.mode')
+        _a+=(--shaping "$_mode")
+        if [ "$_mode" = manual ]; then
+            _a+=(--shaping-total "$(printf '%s\n' "$_shaping_cfg" | jq -r '.manual_total_mbps')")
+            _a+=(--shaping-ip "$(printf '%s\n' "$_shaping_cfg" | jq -r '.manual_ip_mbps')")
+        else
+            _a+=(--shaping-channel "$(printf '%s\n' "$_shaping_cfg" | jq -r '.channel_mbps')")
+            _a+=(--shaping-reserve "$(printf '%s\n' "$_shaping_cfg" | jq -r '.reserve_percent')")
+            _a+=(--shaping-users "$(printf '%s\n' "$_shaping_cfg" | jq -r '.expected_users')")
+        fi
+        while IFS= read -r _item; do
+            [ -n "$_item" ] && _a+=(--shaping-exempt-profile "$_item")
+        done < <(printf '%s\n' "$_shaping_cfg" | jq -r '.profile_exempt[]')
+        while IFS= read -r _item; do
+            [ -n "$_item" ] && _a+=(--shaping-exempt-ip "$_item")
+        done < <(printf '%s\n' "$_shaping_cfg" | jq -r '.ip_exempt[]')
     fi
 
     [ "${_AG_ON[geoip]}" = "yes" ] && _a+=(--geoip yes)

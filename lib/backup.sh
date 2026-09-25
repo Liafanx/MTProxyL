@@ -85,16 +85,15 @@ restore_backup() {
 
     # Перезагрузка настроек в память
     load_settings
+    load_detect_settings
     availability_history_compact 2>/dev/null || true
     load_secrets
     load_nft_settings 2>/dev/null
-    if [ "${MTPROXYL_MODE:-manager}" = manager ] && ! _superexpert_active \
-        && [ "$(shaping_config | jq -r '.enabled' 2>/dev/null)" = true ]; then
+    if [ "$(shaping_config | jq -r '.enabled' 2>/dev/null)" = true ] && shaping_target_ready; then
         shaping_write_units && shaping_restore && shaping_sync_timer "$(shaping_config)" \
             || log_warn 'Не удалось восстановить ограничение скорости; проверьте mtproxyl shaping status'
     else
-        shaping_tc_disable 2>/dev/null || true
-        systemctl disable --now mtproxyl-shaping-update.timer mtproxyl-shaping.service >/dev/null 2>&1 || true
+        shaping_stop_runtime || log_warn 'Не удалось снять прежние правила шейпинга после восстановления'
     fi
     if [ -n "${BLOCKLIST_COUNTRIES:-}" ]; then
         geoblock_remove_all >/dev/null 2>&1 || true

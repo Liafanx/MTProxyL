@@ -794,6 +794,10 @@ uninstall() {
         fi
     fi
 
+    # Сначала останавливаем обновления и снимаем tc. Если это не удалось,
+    # оставляем конфиг и состояние на месте для безопасного повторного удаления.
+    shaping_uninstall || return 1
+
     # Веб-панель спрашиваем первой: если её оставить, нужно снять права sudo —
     # они разрешают запуск файла, который сейчас исчезнет.
     if panel_installed 2>/dev/null; then
@@ -893,10 +897,6 @@ uninstall() {
 
     # Файлы
     log_info "Удаление файлов..."
-    shaping_tc_disable 2>/dev/null || true
-    systemctl disable --now mtproxyl-shaping-update.timer mtproxyl-shaping.service >/dev/null 2>&1 || true
-    rm -f "$SHAPING_BOOT_UNIT" "$SHAPING_TICK_UNIT" "$SHAPING_TIMER_UNIT"
-    systemctl daemon-reload 2>/dev/null || true
     rm -rf "$INSTALL_DIR"
     rm -f /usr/local/bin/mtproxyl
     # Алиас 'mtproxyl → sudo mtproxyl' от установщика. Строки в ~/.bashrc

@@ -30,6 +30,9 @@ _IA_BLOCK_LIST=""
 _IA_BLOCK_ACTION=""
 _IA_ENGINE=""; _IA_ENGINE_VERSION=""
 _IA_TGBOT_TOKEN=""; _IA_TGBOT_ADMIN=""
+_IA_SHAPING_MODE=""; _IA_SHAPING_CHANNEL=""; _IA_SHAPING_RESERVE=""
+_IA_SHAPING_USERS=""; _IA_SHAPING_TOTAL=""; _IA_SHAPING_IP=""
+_IA_SHAPING_PROFILES=(); _IA_SHAPING_IPS=()
 _IA_FORCE="false"
 
 install_args_help() {
@@ -66,6 +69,19 @@ install_args_help() {
     --limiter-action icmp|reject|drop
                                действие для не-iOS в режиме meko
     --meko yes|no              оптимизация системы By-MEKO (по умолчанию yes)
+
+  Шейпинг отдачи по IPv4 (необязателен)
+    --shaping manual|fixed|dynamic|off
+                               off — явно выключить при --force
+    --shaping-total N          общий потолок Мбит/с для manual
+    --shaping-ip N             Мбит/с на один IPv4 для manual
+    --shaping-channel N        ширина канала Мбит/с для fixed/dynamic
+    --shaping-reserve N        резерв 0..90% (по умолчанию 10)
+    --shaping-users N          ожидаемое/минимальное число IP, от 2
+    --shaping-exempt-profile ИМЯ
+                               профиль без персонального лимита; повторяется
+    --shaping-exempt-ip IPv4/CIDR
+                               адрес вне общего потолка; повторяется
 
   Selfmask
     --selfmask <домен>         включить Selfmask на этом домене
@@ -226,6 +242,14 @@ _install_args_parse() {
                 esac ;;
             --tgbot-token|--bot-token) _IA_TGBOT_TOKEN="$_v" ;;
             --tgbot-admin|--bot-admin) _IA_TGBOT_ADMIN="$_v" ;;
+            --shaping|--shaping-mode) _IA_SHAPING_MODE="${_v,,}" ;;
+            --shaping-total) _IA_SHAPING_TOTAL="$_v" ;;
+            --shaping-ip) _IA_SHAPING_IP="$_v" ;;
+            --shaping-channel) _IA_SHAPING_CHANNEL="$_v" ;;
+            --shaping-reserve) _IA_SHAPING_RESERVE="$_v" ;;
+            --shaping-users) _IA_SHAPING_USERS="$_v" ;;
+            --shaping-exempt-profile) _IA_SHAPING_PROFILES+=("$_v") ;;
+            --shaping-exempt-ip) _IA_SHAPING_IPS+=("$_v") ;;
             --force|--yes|-y)        _IA_FORCE="true" ;;
             -h|--help)               install_args_help; return 2 ;;
             *) log_error "Неизвестный аргумент: ${_k}"; return 1 ;;
@@ -233,6 +257,75 @@ _install_args_parse() {
         _i=$((_i + 1))
     done
     return 0
+}
+
+_ia_shaping_validate() {
+    local mode="$_IA_SHAPING_MODE" value name secret known
+    if [ -z "$mode" ] || [ "$mode" = off ]; then
+        if [ -n "$_IA_SHAPING_CHANNEL$_IA_SHAPING_RESERVE$_IA_SHAPING_USERS$_IA_SHAPING_TOTAL$_IA_SHAPING_IP" ] \
+           || [ "${#_IA_SHAPING_PROFILES[@]}" -gt 0 ] || [ "${#_IA_SHAPING_IPS[@]}" -gt 0 ]; then
+            log_error 'Параметры шейпера требуют --shaping manual|fixed|dynamic'
+            return 1
+        fi
+        return 0
+    fi
+    case "$mode" in
+        manual)
+            if [ -z "$_IA_SHAPING_TOTAL" ] || [ -z "$_IA_SHAPING_IP" ] \
+               || [ -n "$_IA_SHAPING_CHANNEL$_IA_SHAPING_RESERVE$_IA_SHAPING_USERS" ]; then
+                log_error 'manual требует --shaping-total и --shaping-ip; параметры формулы здесь не нужны'
+                return 1
+            fi ;;
+        fixed|dynamic)
+            if [ -z "$_IA_SHAPING_CHANNEL" ] || [ -z "$_IA_SHAPING_USERS" ] \
+               || [ -n "$_IA_SHAPING_TOTAL$_IA_SHAPING_IP" ]; then
+                log_error 'fixed/dynamic требуют --shaping-channel и --shaping-users; ручные лимиты здесь не нужны'
+                return 1
+            fi ;;
+        *) log_error '--shaping: manual, fixed, dynamic или off'; return 1 ;;
+    esac
+    for value in "$_IA_SHAPING_CHANNEL" "$_IA_SHAPING_TOTAL"; do
+        [ -n "$value" ] || continue
+        [[ "$value" =~ ^[1-9][0-9]{0,5}$ ]] && (( value <= 100000 )) || {
+            log_error 'Ширина канала и общий потолок: целое число 1..100000 Мбит/с'; return 1; }
+    done
+    if [ -n "$_IA_SHAPING_USERS" ]; then
+        value="$_IA_SHAPING_USERS"
+        [[ "$value" =~ ^[1-9][0-9]{0,5}$ ]] && (( value >= 2 && value <= 100000 )) || {
+            log_error '--shaping-users: целое число 2..100000'; return 1; }
+    fi
+    if [ -n "$_IA_SHAPING_RESERVE" ]; then
+        value="$_IA_SHAPING_RESERVE"
+        [[ "$value" =~ ^(0|[1-9][0-9]?)$ ]] && (( value <= 90 )) || {
+            log_error '--shaping-reserve: целое число 0..90'; return 1; }
+    fi
+    if [ -n "$_IA_SHAPING_IP" ]; then
+        value="$_IA_SHAPING_IP"
+        [[ "$value" =~ ^(0\.[0-9]{1,6}|[1-9][0-9]{0,5}(\.[0-9]{1,6})?)$ ]] \
+            && awk -v ip="$value" -v total="$_IA_SHAPING_TOTAL" \
+                'BEGIN { exit !(ip >= 0.1 && ip <= total) }' || {
+            log_error '--shaping-ip: от 0.1 Мбит/с до общего потолка'; return 1; }
+    fi
+    [ "${#_IA_SHAPING_PROFILES[@]}" -le 1000 ] && [ "${#_IA_SHAPING_IPS[@]}" -le 100 ] || {
+        log_error 'Слишком много исключений шейпера'; return 1; }
+    for name in "${_IA_SHAPING_PROFILES[@]}"; do
+        [[ "$name" =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || {
+            log_error "Недопустимое имя профиля шейпера: $name"; return 1; }
+        known=false
+        if [ "${#_IA_SECRETS[@]}" -eq 0 ]; then
+            [ "$name" = default ] && known=true
+        else
+            for secret in "${_IA_SECRETS[@]}"; do
+                [ "${secret%:*}" = "$secret" ] && value=default || value="${secret%:*}"
+                [ "$name" = "$value" ] && known=true
+            done
+        fi
+        [ "$known" = true ] || { log_error "Профиля $name нет среди --secret"; return 1; }
+    done
+    for value in "${_IA_SHAPING_IPS[@]}"; do
+        shaping_valid_ipv4_cidr "$value" || {
+            log_error "--shaping-exempt-ip: некорректный IPv4/CIDR $value"; return 1; }
+    done
 }
 
 # Проверка всего разом до первого изменения на сервере: половину установки
@@ -278,6 +371,7 @@ _install_args_validate() {
             _ok=false
         fi
     fi
+    _ia_shaping_validate || _ok=false
     if [ -n "$_IA_MASK" ]; then
         case "${_IA_MASK,,}" in on|off|yes|no|true|false) ;; *) log_error "--mask: on или off"; _ok=false ;; esac
     fi
@@ -608,6 +702,12 @@ run_installer_args() {
         rm -f "$_bl_tmp"
     fi
 
+    local _shaping_failed=false
+    if ! _install_args_shaping; then
+        log_warn 'Шейпинг не применён; проверьте mtproxyl shaping status --json'
+        _shaping_failed=true
+    fi
+
     if [ -n "$_IA_TGBOT_TOKEN" ]; then
         echo ""
         draw_header "TELEGRAM-БОТ"
@@ -619,6 +719,45 @@ run_installer_args() {
 
     load_settings; load_secrets
     show_install_summary
+    [ "$_shaping_failed" = false ]
+}
+
+_install_args_shaping_config() {
+    local cfg profiles ips
+    if [ "$_IA_SHAPING_MODE" = off ]; then
+        shaping_config | jq -c '.enabled=false'
+        return
+    fi
+    profiles=$(printf '%s\n' "${_IA_SHAPING_PROFILES[@]}" | jq -Rsc '[split("\n")[] | select(length > 0)] | unique') || return 1
+    ips=$(printf '%s\n' "${_IA_SHAPING_IPS[@]}" | jq -Rsc '[split("\n")[] | select(length > 0)] | unique') || return 1
+    cfg=$(shaping_default_config) || return 1
+    cfg=$(printf '%s\n' "$cfg" | jq -c --arg mode "$_IA_SHAPING_MODE" \
+        --arg channel "${_IA_SHAPING_CHANNEL:-1000}" --arg reserve "${_IA_SHAPING_RESERVE:-10}" \
+        --arg users "${_IA_SHAPING_USERS:-10}" --arg total "${_IA_SHAPING_TOTAL:-900}" \
+        --arg ip "${_IA_SHAPING_IP:-90}" --argjson profiles "$profiles" --argjson ips "$ips" \
+        '.enabled=true | .mode=$mode | .channel_mbps=($channel|tonumber) |
+         .reserve_percent=($reserve|tonumber) | .expected_users=($users|tonumber) |
+         .manual_total_mbps=($total|tonumber) | .manual_ip_mbps=($ip|tonumber) |
+         .profile_exempt=$profiles | .ip_exempt=$ips') || return 1
+    shaping_validate_config "$cfg" || return 1
+    printf '%s\n' "$cfg"
+}
+
+_install_args_shaping() {
+    local cfg
+    if [ -z "$_IA_SHAPING_MODE" ]; then
+        if [ "$(shaping_config | jq -r '.enabled' 2>/dev/null)" = true ]; then
+            shaping_restore
+        fi
+        return
+    fi
+    if [ "$_IA_SHAPING_MODE" = off ] \
+       && [ "$(shaping_config | jq -r '.enabled' 2>/dev/null)" != true ] \
+       && [ ! -f "$SHAPING_TC_FILE" ]; then
+        return 0
+    fi
+    cfg=$(_install_args_shaping_config) || return 1
+    printf '%s\n' "$cfg" | shaping_apply
 }
 
 # Пакеты те же, что у интерактивной установки: без них не соберётся ни ссылка,
@@ -631,6 +770,12 @@ _install_args_deps() {
     command -v openssl &>/dev/null || missing+=("openssl")
     command -v jq &>/dev/null || missing+=("jq")
     command -v nano &>/dev/null || command -v vim &>/dev/null || missing+=("nano")
+    if [ -n "$_IA_SHAPING_MODE" ] && [ "$_IA_SHAPING_MODE" != off ]; then
+        local os; os=$(detect_os)
+        command -v ip >/dev/null && command -v tc >/dev/null || {
+            [ "$os" = rhel ] && missing+=("iproute") || missing+=("iproute2"); }
+        command -v flock >/dev/null || missing+=("util-linux")
+    fi
     if [ ${#missing[@]} -gt 0 ]; then
         log_info "Установка: ${missing[*]}"
         _wait_apt

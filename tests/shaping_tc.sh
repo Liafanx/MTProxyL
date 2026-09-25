@@ -58,7 +58,7 @@ SHAPING_TIMER_UNIT="$test_dir/tick.timer"
 _superexpert_active() { return 1; }
 engine_config_path() { echo "$test_dir/config.toml"; }
 shaping_reload_telemt() { :; }
-systemctl() { :; }
+systemctl() { [ "${1:-}" != is-active ]; }
 log_success() { :; }
 log_error() { echo "$*" >&2; }
 log_warn() { echo "$*" >&2; }
@@ -69,6 +69,28 @@ printf '%s\n' "$cfg" | jq '.enabled=false' | shaping_apply
 [ "$(shaping_root_kind test0)" = fq ]
 [ "$(jq -r '.enabled' "$SHAPING_FILE")" = false ]
 
+# Reanimator ограничивает публичный порт цели, не меняя чужой telemt-конфиг.
+MTPROXYL_MODE=reanimator
+DETECTED_MODE=binary
+DETECTED_CONFIG_PATH="$test_dir/config.toml"
+DETECTED_PORT=9443
+DETECTED_NETWORK_MODE=host
+printf '%s\n' '[access]' 'foreign = true' > "$DETECTED_CONFIG_PATH"
+shaping_reload_telemt() { echo 'unexpected telemt reload' >&2; return 1; }
+[ "$(shaping_public_ports)" = 9443 ]
+DETECTED_NETWORK_MODE=bridge
+DETECTED_CONTAINER=foreign-telemt
+docker() { printf '%s\n' '[{"HostConfig":{"PortBindings":{"9443/tcp":[{"HostPort":"443"}]}}}]'; }
+[ "$(shaping_public_ports)" = 443 ]
+DETECTED_NETWORK_MODE=host
+printf '%s\n' "$cfg" | shaping_apply
+shaping_tc_owned test0
+grep -q '^foreign = true$' "$DETECTED_CONFIG_PATH"
+printf '%s\n' "$cfg" | jq '.enabled=false' | shaping_apply
+[ "$(shaping_root_kind test0)" = fq ]
+grep -q '^foreign = true$' "$DETECTED_CONFIG_PATH"
+MTPROXYL_MODE=manager
+
 # Ошибка применения конфигурации движка возвращает прежний файл и qdisc.
 printf '%s\n' '[access]' 'legacy = true' > "$test_dir/config.toml"
 shaping_reload_telemt() { printf '%s\n' '[access]' 'new = true' > "$test_dir/config.toml"; return 1; }
@@ -77,6 +99,18 @@ if printf '%s\n' "$cfg" | shaping_apply >/dev/null 2>&1; then echo 'failed reloa
 grep -q '^legacy = true$' "$test_dir/config.toml"
 [ "$(shaping_root_kind test0)" = fq ]
 [ "$(jq -r '.enabled' "$SHAPING_FILE")" = false ]
+
+# Uninstall должен снять tc и удалить все три unit; при ошибке сохранить state.
+shaping_tc_apply "$cfg" "$active"
+touch "$SHAPING_BOOT_UNIT" "$SHAPING_TICK_UNIT" "$SHAPING_TIMER_UNIT"
+old_disable=$(declare -f shaping_tc_disable)
+shaping_tc_disable() { return 1; }
+if shaping_uninstall >/dev/null 2>&1; then echo 'failed tc removal accepted' >&2; exit 1; fi
+[ -f "$SHAPING_TC_FILE" ] && [ -f "$SHAPING_BOOT_UNIT" ]
+eval "$old_disable"
+shaping_uninstall
+[ "$(shaping_root_kind test0)" = fq ]
+[ ! -e "$SHAPING_TC_FILE" ] && [ ! -e "$SHAPING_BOOT_UNIT" ] && [ ! -e "$SHAPING_TICK_UNIT" ] && [ ! -e "$SHAPING_TIMER_UNIT" ]
 
 # Чужой нестандартный qdisc не заменяем.
 tc qdisc replace dev test0 root tbf rate 10mbit burst 16kbit latency 50ms

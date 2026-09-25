@@ -12,6 +12,7 @@ bad=$(printf '%s\n' "$cfg" | jq '.ip_exempt=["256.1.1.1"]')
 if shaping_validate_config "$bad"; then echo 'invalid IPv4 accepted' >&2; exit 1; fi
 bad=$(printf '%s\n' "$cfg" | jq '.expected_users=1')
 if shaping_validate_config "$bad"; then echo 'unsafe minimum accepted' >&2; exit 1; fi
+shaping_validate_config "$(printf '%s\n' "$cfg" | jq '.profile_exempt=["team.alpha"]')"
 
 fixed=$(printf '%s\n' "$cfg" | jq '.enabled=true | .mode="fixed" | .expected_users=20')
 [ "$(shaping_rates "$fixed" 2 | jq -r '.ip_bps')" = 45000000 ]

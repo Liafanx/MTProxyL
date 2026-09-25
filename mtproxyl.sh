@@ -208,7 +208,7 @@ cli_main() {
             fi
             ;;
         shaping)
-            load_settings; load_secrets; load_upstreams
+            load_settings; load_secrets; load_upstreams; load_detect_settings
             handle_shaping_command "$@"
             ;;
 

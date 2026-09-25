@@ -1321,6 +1321,18 @@ _own_install_exists() {
     [ -f "$(engine_config_path)" ]
 }
 
+# При смене цели прежние IP/порт больше не относятся к новому движку.
+# Значения сохраняем, но включить шейпинг для новой цели нужно явно.
+_shaping_reset_on_mode_switch() {
+    local cfg
+    cfg=$(shaping_config) || return 1
+    shaping_stop_runtime || { log_error 'Не удалось снять правила шейпинга со старой цели'; return 1; }
+    if [ "$(printf '%s\n' "$cfg" | jq -r '.enabled')" = true ]; then
+        shaping_atomic_json "$SHAPING_FILE" "$(printf '%s\n' "$cfg" | jq -c '.enabled=false')" || return 1
+        log_info 'Шейпинг выключен при смене цели; включите его для нового режима отдельно'
+    fi
+}
+
 switch_to_manager_mode() {
     if [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
         log_info "Уже в режиме manager"
@@ -1330,15 +1342,12 @@ switch_to_manager_mode() {
     log_warn "Переход в режим Manager. MTProxyL начнёт устанавливать/владеть СВОИМ telemt."
     local _c; read_line _c "  ${BOLD}Введите 'yes' для подтверждения:${NC} "
     [ "$_c" != "yes" ] && { log_info "Отменено"; return 1; }
+    _shaping_reset_on_mode_switch || return 1
     local _port_before="${PROXY_PORT:-}"
     local _port_changed="false"
     switch_port_profile "manager" && _port_changed="true"
     switch_selfmask_profile "manager"
     save_settings
-    if [ "$(shaping_config | jq -r '.enabled' 2>/dev/null)" = true ] && ! _superexpert_active; then
-        shaping_write_units && shaping_restore && shaping_sync_timer "$(shaping_config)" \
-            || log_warn 'Не удалось восстановить ограничение скорости в Manager'
-    fi
     log_success "Режим: manager"
     if [ "$_port_changed" = "true" ]; then
         log_success "Порт режима manager восстановлен: ${_port_before} → ${PROXY_PORT}"
@@ -1429,6 +1438,7 @@ switch_to_reanimator_mode() {
     log_warn "Переход в режим Reanimator. Свой контейнер/конфиг MTProxyL больше не будет управляться из меню."
     local _c; read_line _c "  ${BOLD}Введите 'yes' для подтверждения:${NC} "
     [ "$_c" != "yes" ] && { log_info "Отменено"; return 1; }
+    _shaping_reset_on_mode_switch || return 1
 
     # Свой контейнер держит порт — а он же нужен цели реаниматора.
     # Предлагаем убрать его сразу, чтобы не делать это вручную.
@@ -1456,8 +1466,6 @@ switch_to_reanimator_mode() {
         _dispose_own_container "$_container_choice"
     fi
 
-    shaping_tc_disable 2>/dev/null || true
-    systemctl disable --now mtproxyl-shaping-update.timer mtproxyl-shaping.service >/dev/null 2>&1 || true
     switch_port_profile "reanimator" || true
     switch_selfmask_profile "reanimator"
     save_settings

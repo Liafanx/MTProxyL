@@ -1,6 +1,6 @@
 #!/bin/bash
 # Ограничение отдачи клиентам по IPv4: отдельный класс tc на каждый IP.
-# Файлы принадлежат менеджеру; чужой конфиг в режиме reanimator не меняем.
+# Собственные файлы MTProxyL; конфиг чужого telemt в reanimator не меняем.
 
 SHAPING_FILE="${INSTALL_DIR}/shaping.json"
 SHAPING_STATE_FILE="${INSTALL_DIR}/shaping-state.json"
@@ -64,7 +64,7 @@ shaping_validate_config() {
         (.manual_total_mbps | type == "number" and . >= 1 and . <= 100000 and . == floor) and
         (.manual_ip_mbps | type == "number" and . >= 0.1) and
         (.manual_ip_mbps <= .manual_total_mbps) and
-        (.profile_exempt | type == "array" and length <= 1000 and all(.[]; type == "string" and test("^[A-Za-z0-9_-]{1,32}$"))) and
+        (.profile_exempt | type == "array" and length <= 1000 and all(.[]; type == "string" and test("^[A-Za-z0-9_.-]{1,64}$"))) and
         (.ip_exempt | type == "array" and length <= 100 and all(.[]; type == "string"))
     ' >/dev/null 2>&1 || return 1
     while IFS= read -r entry; do
@@ -91,7 +91,38 @@ shaping_rates() {
         end'
 }
 
+shaping_target_ready() {
+    if [ "${MTPROXYL_MODE:-manager}" = reanimator ]; then
+        [ -n "${DETECTED_CONFIG_PATH:-}" ] && [ -f "$DETECTED_CONFIG_PATH" ] || {
+            log_error 'Конфиг telemt не найден: сначала выполните mtproxyl detect'; return 1; }
+        [ "${DETECTED_MODE:-unknown}" != unknown ] || {
+            log_error 'Цель telemt не обнаружена: сначала выполните mtproxyl detect'; return 1; }
+    elif [ "${MTPROXYL_MODE:-manager}" = manager ]; then
+        ! _superexpert_active || {
+            log_error 'Шейпинг недоступен в режиме супер эксперта'; return 1; }
+    else
+        log_error 'Неизвестный режим MTProxyL'
+        return 1
+    fi
+}
+
 shaping_public_ports() {
+    if [ "${MTPROXYL_MODE:-manager}" = reanimator ]; then
+        local internal="${DETECTED_PORT:-${PROXY_PORT:-}}" ports
+        [[ "$internal" =~ ^[0-9]+$ ]] && (( internal >= 1 && internal <= 65535 )) || {
+            log_error 'Публичный порт цели не определён: выполните mtproxyl detect'; return 1; }
+        if [ "${DETECTED_NETWORK_MODE:-host}" = bridge ]; then
+            [ -n "${DETECTED_CONTAINER:-}" ] && command -v docker >/dev/null || return 1
+            ports=$(docker inspect "$DETECTED_CONTAINER" 2>/dev/null | jq -r --arg key "${internal}/tcp" \
+                '.[0].HostConfig.PortBindings[$key][]?.HostPort // empty') || return 1
+            [ -n "$ports" ] || {
+                log_error "У цели в Docker bridge нет опубликованного TCP-порта ${internal}"; return 1; }
+            printf '%s\n' "$ports"
+        else
+            printf '%s\n' "$internal"
+        fi
+        return
+    fi
     printf '%s\n' "${PROXY_PORT:-443}"
     if web_is_enabled 2>/dev/null; then web_public_port; fi
 }
@@ -172,7 +203,7 @@ shaping_tc_del_entry() {
 
 shaping_tc_apply() {
     local cfg="$1" map="${2:-[]}" override_rate="${3:-}" iface kind previous original total rate port cidr priority=10 max_rate=100000000000
-    local entries ports_json ip minor exempt new_state
+    local entries ports_json ports_raw ip minor exempt new_state
     local -a ports=()
     iface=$(shaping_interface)
     [ -n "$iface" ] && [ "$iface" != lo ] || { log_error 'Не найден внешний IPv4-интерфейс'; return 1; }
@@ -183,7 +214,8 @@ shaping_tc_apply() {
     rate=$(shaping_rates "$cfg" "$(printf '%s\n' "$map" | jq 'length')" | jq -r '.ip_bps') || return 1
     [ -n "$override_rate" ] && rate="$override_rate"
     [ "$rate" -ge 1 ] || return 1
-    mapfile -t ports < <(shaping_public_ports | sort -un)
+    ports_raw=$(shaping_public_ports) || return 1
+    mapfile -t ports < <(printf '%s\n' "$ports_raw" | sort -un)
     [ "${#ports[@]}" -gt 0 ] && [ "${#ports[@]}" -le 8 ] || return 1
     for port in "${ports[@]}"; do
         [[ "$port" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 )) || return 1
@@ -261,13 +293,14 @@ shaping_tc_apply() {
 # Новые IP и изменение лимита обновляем без пересоздания корневого qdisc:
 # открытые соединения сохраняют очередь. При ошибке caller восстановит снимок.
 shaping_tc_sync() {
-    local cfg="$1" map="$2" rate="$3" old iface total old_rate ports_json entries ip minor exempt old_minor old_exempt port new_state
+    local cfg="$1" map="$2" rate="$3" old iface total old_rate ports_json ports_raw entries ip minor exempt old_minor old_exempt port new_state
     local -a ports=()
     local -A seen=() prior_minor=() prior_exempt=()
     [ "$(printf '%s\n' "$map" | jq 'length')" -le 4096 ] || return 1
     old='{}'; [ -f "$SHAPING_TC_FILE" ] && old=$(cat "$SHAPING_TC_FILE")
     iface=$(shaping_interface)
-    mapfile -t ports < <(shaping_public_ports | sort -un)
+    ports_raw=$(shaping_public_ports) || return 1
+    mapfile -t ports < <(printf '%s\n' "$ports_raw" | sort -un)
     [ "${#ports[@]}" -gt 0 ] && [ "${#ports[@]}" -le 8 ] || return 1
     for port in "${ports[@]}"; do
         [[ "$port" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 )) || return 1
@@ -331,6 +364,33 @@ shaping_tc_disable() {
         log_warn "qdisc на $iface изменён извне; оставляем его нетронутым"
     fi
     rm -f "$SHAPING_TC_FILE"
+}
+
+shaping_stop_runtime() {
+    local unit shaping_fd
+    systemctl disable --now mtproxyl-shaping-update.timer mtproxyl-shaping-update.service \
+        mtproxyl-shaping.service >/dev/null 2>&1 || true
+    for unit in mtproxyl-shaping-update.timer mtproxyl-shaping-update.service mtproxyl-shaping.service; do
+        if systemctl is-active --quiet "$unit"; then
+            log_error "Не удалось остановить $unit; операция остановлена"
+            return 1
+        fi
+    done
+    if [ -f "$SHAPING_TC_FILE" ]; then
+        exec {shaping_fd}>"$SHAPING_LOCK_FILE" || return 1
+        if ! flock -w 30 "$shaping_fd" || ! shaping_tc_disable; then
+            exec {shaping_fd}>&-
+            log_error 'Не удалось снять ограничения tc; операция остановлена'
+            return 1
+        fi
+        exec {shaping_fd}>&-
+    fi
+}
+
+shaping_uninstall() {
+    shaping_stop_runtime || return 1
+    rm -f "$SHAPING_BOOT_UNIT" "$SHAPING_TICK_UNIT" "$SHAPING_TIMER_UNIT" || return 1
+    systemctl daemon-reload >/dev/null 2>&1 || true
 }
 
 shaping_write_units() {
@@ -399,8 +459,6 @@ shaping_reload_telemt() {
 
 shaping_apply() (
     local input cfg old old_state old_tc old_map map now config_path config_snapshot='' tc_ok=false telemt_ok=false rollback_ok=true
-    [ "${MTPROXYL_MODE:-manager}" = manager ] && ! _superexpert_active || {
-        log_error 'Ограничение скорости доступно только менеджеру без режима супер эксперта'; return 1; }
     command -v jq >/dev/null && command -v tc >/dev/null && command -v ip >/dev/null \
         && command -v flock >/dev/null && command -v systemctl >/dev/null || {
         log_error 'Нужны jq, iproute2 (ip/tc), flock и systemd'; return 1; }
@@ -408,6 +466,8 @@ shaping_apply() (
     shaping_validate_config "$input" || { log_error 'Неверные параметры ограничения скорости'; return 1; }
     cfg=$(printf '%s\n' "$input" | shaping_normalize_config) || return 1
     if printf '%s\n' "$cfg" | jq -e '.enabled' >/dev/null; then
+        shaping_target_ready || return 1
+        shaping_public_ports >/dev/null || return 1
         map=$(shaping_fetch_active_map "$cfg") || {
             log_error 'API telemt недоступен: нельзя включить персональный лимит IP без списка клиентов'; return 1; }
         [ "$(printf '%s\n' "$map" | jq 'length')" -le 4096 ] || {
@@ -420,8 +480,9 @@ shaping_apply() (
     old_state='{}'; [ -f "$SHAPING_STATE_FILE" ] && old_state=$(cat "$SHAPING_STATE_FILE")
     old_tc=''; [ -f "$SHAPING_TC_FILE" ] && old_tc=$(cat "$SHAPING_TC_FILE")
     old_map='[]'; [ -n "$old_tc" ] && old_map=$(printf '%s\n' "$old_tc" | jq -c '[.ips[]? | {ip,exempt}]')
-    config_path=$(engine_config_path)
-    if [ -f "$config_path" ]; then
+    config_path=''
+    [ "${MTPROXYL_MODE:-manager}" = manager ] && config_path=$(engine_config_path)
+    if [ -n "$config_path" ] && [ -f "$config_path" ]; then
         config_snapshot=$(mktemp "${INSTALL_DIR}/.shaping-config.XXXXXX") || return 1
         trap '[ -z "$config_snapshot" ] || rm -f "$config_snapshot"' EXIT
         cp -p "$config_path" "$config_snapshot" || return 1
@@ -429,7 +490,9 @@ shaping_apply() (
     shaping_atomic_json "$SHAPING_FILE" "$cfg" || return 1
     if printf '%s\n' "$cfg" | jq -e '.enabled' >/dev/null; then
         if shaping_tc_apply "$cfg" "$map"; then tc_ok=true; fi
-        if [ "$tc_ok" = true ] && shaping_reload_telemt; then telemt_ok=true; fi
+        if [ "$tc_ok" = true ]; then
+            if [ "${MTPROXYL_MODE:-manager}" = reanimator ] || shaping_reload_telemt; then telemt_ok=true; fi
+        fi
         if [ "$telemt_ok" != true ]; then
             shaping_atomic_json "$SHAPING_FILE" "$old" || rollback_ok=false
             if [ -n "$old_tc" ]; then
@@ -462,7 +525,9 @@ shaping_apply() (
     else
         shaping_sync_timer "$cfg"
         if shaping_tc_disable; then tc_ok=true; fi
-        if [ "$tc_ok" = true ] && shaping_reload_telemt; then telemt_ok=true; fi
+        if [ "$tc_ok" = true ]; then
+            if [ "${MTPROXYL_MODE:-manager}" = reanimator ] || shaping_reload_telemt; then telemt_ok=true; fi
+        fi
         if [ "$telemt_ok" != true ]; then
             shaping_atomic_json "$SHAPING_FILE" "$old" || rollback_ok=false
             if [ -n "$old_tc" ]; then
@@ -490,12 +555,20 @@ shaping_apply() (
 )
 
 shaping_fetch_active_map() {
-    local cfg="$1" auth response port="${PROXY_API_PORT:-9091}" exempt
-    auth=$(_get_telemt_auth_header "$(engine_config_path)" 2>/dev/null)
+    local cfg="$1" auth response port="${PROXY_API_PORT:-9091}" host=127.0.0.1 exempt config_path
+    if [ "${MTPROXYL_MODE:-manager}" = reanimator ]; then
+        config_path="${DETECTED_CONFIG_PATH:-}"
+        _telemt_api_enabled "$config_path" || return 1
+        port=$(_get_telemt_api_port "$config_path")
+        host=$(_telemt_api_host "$config_path")
+    else
+        config_path=$(engine_config_path)
+    fi
+    auth=$(_get_telemt_auth_header "$config_path" 2>/dev/null)
     local -a headers=()
     [ -n "$auth" ] && headers=(-H "Authorization: $auth")
     response=$(curl -fsS --max-time 5 --connect-timeout 2 "${headers[@]}" \
-        "http://127.0.0.1:${port}/v1/stats/users/active-ips") || return 1
+        "http://${host}:${port}/v1/stats/users/active-ips") || return 1
     exempt=$(printf '%s\n' "$cfg" | jq -c '.profile_exempt') || return 1
     printf '%s\n' "$response" | jq -ce --argjson exempt "$exempt" '
         if .ok == true and (.data | type == "array") then
@@ -559,9 +632,9 @@ shaping_tick() (
 
 shaping_restore() (
     local cfg map state rate
-    [ "${MTPROXYL_MODE:-manager}" = manager ] && ! _superexpert_active || return 0
     cfg=$(shaping_config)
     printf '%s\n' "$cfg" | jq -e '.enabled' >/dev/null 2>&1 || return 0
+    shaping_target_ready || return 1
     exec {shaping_fd}>"$SHAPING_LOCK_FILE"
     flock -w 30 "$shaping_fd" || return 1
     state='{}'; [ -f "$SHAPING_TC_FILE" ] && state=$(cat "$SHAPING_TC_FILE")

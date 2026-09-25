@@ -11,15 +11,15 @@ import (
 
 // ShapingConfig is owned by MTProxyL, not telemt's read-only API mount.
 type ShapingConfig struct {
-	Enabled           bool     `json:"enabled"`
-	Mode              string   `json:"mode"`
-	ChannelMbps       int      `json:"channel_mbps"`
-	ReservePercent    int      `json:"reserve_percent"`
-	ExpectedUsers     int      `json:"expected_users"`
-	ManualTotalMbps   int      `json:"manual_total_mbps"`
-	ManualIPMbps      float64  `json:"manual_ip_mbps"`
-	ProfileExempt     []string `json:"profile_exempt"`
-	IPExempt          []string `json:"ip_exempt"`
+	Enabled         bool     `json:"enabled"`
+	Mode            string   `json:"mode"`
+	ChannelMbps     int      `json:"channel_mbps"`
+	ReservePercent  int      `json:"reserve_percent"`
+	ExpectedUsers   int      `json:"expected_users"`
+	ManualTotalMbps int      `json:"manual_total_mbps"`
+	ManualIPMbps    float64  `json:"manual_ip_mbps"`
+	ProfileExempt   []string `json:"profile_exempt"`
+	IPExempt        []string `json:"ip_exempt"`
 }
 
 type ShapingStatus struct {
@@ -40,7 +40,7 @@ type ShapingStatus struct {
 	Interface  string `json:"interface"`
 }
 
-var shapingProfileName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
+var shapingProfileName = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 
 func ValidateShapingConfig(c ShapingConfig) error {
 	if c.Mode != "manual" && c.Mode != "fixed" && c.Mode != "dynamic" {
