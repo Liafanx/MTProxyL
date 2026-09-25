@@ -1,5 +1,5 @@
 #!/bin/bash
-# Ограничение отдачи клиентам: telemt ограничивает профиль, tc — общий канал.
+# Ограничение отдачи клиентам по IPv4: отдельный класс tc на каждый IP.
 # Файлы принадлежат менеджеру; чужой конфиг в режиме reanimator не меняем.
 
 SHAPING_FILE="${INSTALL_DIR}/shaping.json"
@@ -11,11 +11,16 @@ SHAPING_TICK_UNIT=/etc/systemd/system/mtproxyl-shaping-update.service
 SHAPING_TIMER_UNIT=/etc/systemd/system/mtproxyl-shaping-update.timer
 
 shaping_default_config() {
-    printf '%s\n' '{"enabled":false,"mode":"manual","channel_mbps":1000,"reserve_percent":10,"expected_users":10,"manual_total_mbps":900,"manual_profile_mbps":90,"profile_exempt":[],"ip_exempt":[]}'
+    printf '%s\n' '{"enabled":false,"mode":"manual","channel_mbps":1000,"reserve_percent":10,"expected_users":10,"manual_total_mbps":900,"manual_ip_mbps":90,"profile_exempt":[],"ip_exempt":[]}'
 }
 
 shaping_config() {
-    if [ -f "$SHAPING_FILE" ]; then cat "$SHAPING_FILE"; else shaping_default_config; fi
+    if [ -f "$SHAPING_FILE" ]; then
+        # Настройки до перехода с лимита профиля на лимит IP сохраняют значение.
+        jq -c '.manual_ip_mbps = (.manual_ip_mbps // .manual_profile_mbps) | del(.manual_profile_mbps)' "$SHAPING_FILE"
+    else
+        shaping_default_config
+    fi
 }
 
 shaping_atomic_json() {
@@ -57,8 +62,8 @@ shaping_validate_config() {
         (.reserve_percent | type == "number" and . >= 0 and . <= 90 and . == floor) and
         (.expected_users | type == "number" and . >= 2 and . <= 100000 and . == floor) and
         (.manual_total_mbps | type == "number" and . >= 1 and . <= 100000 and . == floor) and
-        (.manual_profile_mbps | type == "number" and . >= 0.1) and
-        (.manual_profile_mbps <= .manual_total_mbps) and
+        (.manual_ip_mbps | type == "number" and . >= 0.1) and
+        (.manual_ip_mbps <= .manual_total_mbps) and
         (.profile_exempt | type == "array" and length <= 1000 and all(.[]; type == "string" and test("^[A-Za-z0-9_-]{1,32}$"))) and
         (.ip_exempt | type == "array" and length <= 100 and all(.[]; type == "string"))
     ' >/dev/null 2>&1 || return 1
@@ -68,7 +73,7 @@ shaping_validate_config() {
 }
 
 shaping_normalize_config() {
-    jq -c '{enabled,mode,channel_mbps,reserve_percent,expected_users,manual_total_mbps,manual_profile_mbps,profile_exempt:(.profile_exempt|unique),ip_exempt:(.ip_exempt|unique)}'
+    jq -c '{enabled,mode,channel_mbps,reserve_percent,expected_users,manual_total_mbps,manual_ip_mbps,profile_exempt:(.profile_exempt|unique),ip_exempt:(.ip_exempt|unique)}'
 }
 
 # Все значения в бит/с. Никакой коэффициент 1024 к сетевым Мбит/с не применяется.
@@ -78,34 +83,12 @@ shaping_rates() {
     printf '%s\n' "$cfg" | jq -c --argjson active "$active" '
         if .mode == "manual" then
             {total_bps:(.manual_total_mbps * 1000000 | floor),
-             profile_bps:(.manual_profile_mbps * 1000000 | floor), denominator:null}
+             ip_bps:(.manual_ip_mbps * 1000000 | floor), denominator:null}
         else
             (.channel_mbps * (100 - .reserve_percent) * 10000 | floor) as $total |
             (if .mode == "dynamic" then ([.expected_users, $active] | max) else .expected_users end) as $n |
-            {total_bps:$total, profile_bps:($total / $n | floor), denominator:$n}
+            {total_bps:$total, ip_bps:($total / $n | floor), denominator:$n}
         end'
-}
-
-# Вызывается из единственного генератора config.toml, включая при изменении
-# других настроек. Состояние IP сохраняется отдельно, поэтому регенерация его
-# не сбрасывает. При выключении секция telemt полностью отсутствует.
-shaping_emit_user_limits() {
-    local output="$1" cfg state active rate i name
-    cfg=$(shaping_config) || return 1
-    printf '%s\n' "$cfg" | jq -e '.enabled == true' >/dev/null 2>&1 || return 0
-    state='{}'
-    [ -f "$SHAPING_STATE_FILE" ] && state=$(cat "$SHAPING_STATE_FILE")
-    active=$(printf '%s\n' "$state" | jq -r '.active_ips // 0' 2>/dev/null)
-    rate=$(shaping_rates "$cfg" "$active" | jq -r '.profile_bps') || return 1
-    [ "$rate" -ge 1 ] || return 1
-    echo '' >> "$output"
-    echo '[access.user_rate_limits]' >> "$output"
-    for i in "${!SECRETS_LABELS[@]}"; do
-        [ "${SECRETS_ENABLED[$i]}" = "true" ] || continue
-        name="${SECRETS_LABELS[$i]}"
-        printf '%s\n' "$cfg" | jq -e --arg user "$name" '.profile_exempt | index($user) == null' >/dev/null 2>&1 || continue
-        printf '%s = { up_bps = 0, down_bps = %s }\n' "$name" "$rate" >> "$output"
-    done
 }
 
 shaping_public_ports() {
@@ -135,12 +118,77 @@ shaping_restore_original_qdisc() {
     esac
 }
 
+shaping_assign_ips() {
+    local map="$1" previous="$2" ip minor exempt next=256
+    local -A old_ids=() used_ids=()
+    while IFS=$'\t' read -r ip minor; do
+        [ -n "$ip" ] || continue
+        old_ids["$ip"]="$minor"
+        used_ids["$minor"]=1
+    done < <(printf '%s\n' "$previous" | jq -r '.ips[]? | [.ip, .minor] | @tsv')
+    while IFS=$'\t' read -r ip exempt; do
+        [ -n "$ip" ] || continue
+        minor="${old_ids[$ip]:-}"
+        if [ -z "$minor" ]; then
+            while [ "${used_ids[$next]:-}" = 1 ]; do next=$((next + 1)); done
+            [ "$next" -le 65534 ] || return 1
+            minor="$next"
+            used_ids["$minor"]=1
+        fi
+        printf '{"ip":"%s","minor":%s,"exempt":%s}\n' "$ip" "$minor" "$exempt"
+    done < <(printf '%s\n' "$map" | jq -r '.[] | [.ip, .exempt] | @tsv')
+}
+
+shaping_tc_add_entry() {
+    local iface="$1" ip="$2" minor="$3" exempt="$4" rate="$5" idx=0 port classid handle
+    shift 5
+    classid="a11:$(printf '%x' "$minor")"
+    if [ "$exempt" != true ]; then
+        tc class add dev "$iface" parent a11:10 classid "$classid" htb rate "${rate}bit" ceil "${rate}bit" quantum 15140 || return 1
+        tc qdisc add dev "$iface" parent "$classid" fq_codel || return 1
+    else
+        classid=a11:30
+    fi
+    for port in "$@"; do
+        handle=$(printf '0x%x' "$((minor * 8 + idx))")
+        tc filter add dev "$iface" parent a11: protocol ip pref 1000 handle "$handle" flower \
+            ip_proto tcp src_port "$port" dst_ip "$ip" classid "$classid" || return 1
+        idx=$((idx + 1))
+    done
+}
+
+shaping_tc_del_entry() {
+    local iface="$1" minor="$2" exempt="$3" idx=0 port handle
+    shift 3
+    for port in "$@"; do
+        handle=$(printf '0x%x' "$((minor * 8 + idx))")
+        tc filter del dev "$iface" parent a11: protocol ip pref 1000 handle "$handle" flower || return 1
+        idx=$((idx + 1))
+    done
+    if [ "$exempt" != true ]; then
+        tc class del dev "$iface" parent a11:10 classid "a11:$(printf '%x' "$minor")" || return 1
+    fi
+}
+
 shaping_tc_apply() {
-    local cfg="$1" iface kind previous original total port cidr priority=10 max_rate=100000000000
+    local cfg="$1" map="${2:-[]}" override_rate="${3:-}" iface kind previous original total rate port cidr priority=10 max_rate=100000000000
+    local entries ports_json ip minor exempt new_state
+    local -a ports=()
     iface=$(shaping_interface)
     [ -n "$iface" ] && [ "$iface" != lo ] || { log_error 'Не найден внешний IPv4-интерфейс'; return 1; }
     previous='{}'
     [ -f "$SHAPING_TC_FILE" ] && previous=$(cat "$SHAPING_TC_FILE")
+    [ "$(printf '%s\n' "$map" | jq 'length')" -le 4096 ] || { log_error 'Более 4096 активных IPv4: безопасное применение невозможно'; return 1; }
+    entries=$(shaping_assign_ips "$map" "$previous" | jq -sc '.') || return 1
+    rate=$(shaping_rates "$cfg" "$(printf '%s\n' "$map" | jq 'length')" | jq -r '.ip_bps') || return 1
+    [ -n "$override_rate" ] && rate="$override_rate"
+    [ "$rate" -ge 1 ] || return 1
+    mapfile -t ports < <(shaping_public_ports | sort -un)
+    [ "${#ports[@]}" -gt 0 ] && [ "${#ports[@]}" -le 8 ] || return 1
+    for port in "${ports[@]}"; do
+        [[ "$port" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 )) || return 1
+    done
+    ports_json=$(printf '%s\n' "${ports[@]}" | jq -Rsc '[split("\n")[] | select(length > 0) | tonumber]') || return 1
     local old_iface old_kind
     old_iface=$(printf '%s\n' "$previous" | jq -r '.interface // empty')
     old_kind=$(printf '%s\n' "$previous" | jq -r '.original_kind // empty')
@@ -170,13 +218,16 @@ shaping_tc_apply() {
     fi
     if ! tc class add dev "$iface" parent a11: classid a11:1 htb rate "${max_rate}bit" ceil "${max_rate}bit" quantum 15140 \
        || ! tc class add dev "$iface" parent a11:1 classid a11:10 htb rate "${total}bit" ceil "${total}bit" quantum 15140 \
-       || ! tc class add dev "$iface" parent a11:1 classid a11:20 htb rate "${max_rate}bit" ceil "${max_rate}bit" quantum 15140; then
+       || ! tc class add dev "$iface" parent a11:1 classid a11:20 htb rate "${max_rate}bit" ceil "${max_rate}bit" quantum 15140 \
+       || ! tc class add dev "$iface" parent a11:10 classid a11:30 htb rate "${total}bit" ceil "${total}bit" quantum 15140 \
+       || ! tc class add dev "$iface" parent a11:10 classid a11:40 htb rate "${rate}bit" ceil "${rate}bit" quantum 15140; then
         shaping_restore_original_qdisc "$iface" "$original"; return 1
     fi
-    tc qdisc add dev "$iface" parent a11:10 fq_codel >/dev/null 2>&1 || true
-    tc qdisc add dev "$iface" parent a11:20 fq_codel >/dev/null 2>&1 || true
-    while IFS= read -r port; do
-        [[ "$port" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 )) || continue
+    for port in a11:20 a11:30 a11:40; do
+        tc qdisc add dev "$iface" parent "$port" fq_codel >/dev/null 2>&1 || {
+            shaping_restore_original_qdisc "$iface" "$original"; return 1; }
+    done
+    for port in "${ports[@]}"; do
         while IFS= read -r cidr; do
             if ! tc filter add dev "$iface" parent a11: protocol ip pref "$priority" flower \
                     ip_proto tcp src_port "$port" dst_ip "$cidr" classid a11:20; then
@@ -184,15 +235,87 @@ shaping_tc_apply() {
             fi
             priority=$((priority + 1))
         done < <(printf '%s\n' "$cfg" | jq -r '.ip_exempt[]')
-        if ! tc filter add dev "$iface" parent a11: protocol ip pref 10000 flower \
-                ip_proto tcp src_port "$port" classid a11:10; then
+    done
+    while IFS=$'\t' read -r ip minor exempt; do
+        [ -n "$ip" ] || continue
+        if ! shaping_tc_add_entry "$iface" "$ip" "$minor" "$exempt" "$rate" "${ports[@]}"; then
             shaping_restore_original_qdisc "$iface" "$original"; return 1
         fi
-    done < <(shaping_public_ports | sort -u)
-    if ! shaping_atomic_json "$SHAPING_TC_FILE" "$(jq -nc --arg interface "$iface" --arg original_kind "$original" '{interface:$interface,original_kind:$original_kind}')"; then
+    done < <(printf '%s\n' "$entries" | jq -r '.[] | [.ip, .minor, .exempt] | @tsv')
+    for port in "${ports[@]}"; do
+        if ! tc filter add dev "$iface" parent a11: protocol ip pref 10000 flower \
+                ip_proto tcp src_port "$port" classid a11:40; then
+            shaping_restore_original_qdisc "$iface" "$original"; return 1
+        fi
+    done
+    new_state=$(printf '%s\n' "$entries" | jq -c --arg interface "$iface" --arg original_kind "$original" \
+        --argjson rate_bps "$rate" --argjson total_bps "$total" --argjson ports "$ports_json" \
+        '{interface:$interface,original_kind:$original_kind,ips:.,rate_bps:$rate_bps,total_bps:$total_bps,ports:$ports}') || {
+        shaping_restore_original_qdisc "$iface" "$original"; return 1; }
+    if ! shaping_atomic_json "$SHAPING_TC_FILE" "$new_state"; then
         shaping_restore_original_qdisc "$iface" "$original"
         return 1
     fi
+}
+
+# Новые IP и изменение лимита обновляем без пересоздания корневого qdisc:
+# открытые соединения сохраняют очередь. При ошибке caller восстановит снимок.
+shaping_tc_sync() {
+    local cfg="$1" map="$2" rate="$3" old iface total old_rate ports_json entries ip minor exempt old_minor old_exempt port new_state
+    local -a ports=()
+    local -A seen=() prior_minor=() prior_exempt=()
+    [ "$(printf '%s\n' "$map" | jq 'length')" -le 4096 ] || return 1
+    old='{}'; [ -f "$SHAPING_TC_FILE" ] && old=$(cat "$SHAPING_TC_FILE")
+    iface=$(shaping_interface)
+    mapfile -t ports < <(shaping_public_ports | sort -un)
+    [ "${#ports[@]}" -gt 0 ] && [ "${#ports[@]}" -le 8 ] || return 1
+    for port in "${ports[@]}"; do
+        [[ "$port" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 )) || return 1
+    done
+    ports_json=$(printf '%s\n' "${ports[@]}" | jq -Rsc '[split("\n")[] | select(length > 0) | tonumber]') || return 1
+    total=$(shaping_rates "$cfg" 0 | jq -r '.total_bps') || return 1
+    if ! shaping_tc_owned "$iface" || [ "$(printf '%s\n' "$old" | jq -r '.interface // empty')" != "$iface" ] \
+       || [ "$(printf '%s\n' "$old" | jq -c '.ports // []')" != "$ports_json" ] \
+       || [ "$(printf '%s\n' "$old" | jq -r '.total_bps // 0')" != "$total" ]; then
+        shaping_tc_apply "$cfg" "$map" "$rate"
+        return
+    fi
+    entries=$(shaping_assign_ips "$map" "$old" | jq -sc '.') || return 1
+    old_rate=$(printf '%s\n' "$old" | jq -r '.rate_bps // 0')
+    if [ "$rate" = "$old_rate" ] && [ "$entries" = "$(printf '%s\n' "$old" | jq -c '.ips // []')" ]; then
+        return 0
+    fi
+    while IFS=$'\t' read -r ip minor exempt; do
+        [ -n "$ip" ] || continue
+        prior_minor["$ip"]="$minor"
+        prior_exempt["$ip"]="$exempt"
+    done < <(printf '%s\n' "$old" | jq -r '.ips[]? | [.ip, .minor, .exempt] | @tsv')
+    if [ "$rate" != "$old_rate" ]; then
+        tc class change dev "$iface" parent a11:10 classid a11:40 htb rate "${rate}bit" ceil "${rate}bit" quantum 15140 || return 1
+        for ip in "${!prior_minor[@]}"; do
+            [ "${prior_exempt[$ip]}" = true ] && continue
+            tc class change dev "$iface" parent a11:10 classid "a11:$(printf '%x' "${prior_minor[$ip]}")" \
+                htb rate "${rate}bit" ceil "${rate}bit" quantum 15140 || return 1
+        done
+    fi
+    while IFS=$'\t' read -r ip minor exempt; do
+        [ -n "$ip" ] || continue
+        seen["$ip"]=1
+        old_minor="${prior_minor[$ip]:-}"
+        old_exempt="${prior_exempt[$ip]:-}"
+        if [ -n "$old_minor" ] && [ "$old_exempt" = "$exempt" ]; then continue; fi
+        if [ -n "$old_minor" ]; then
+            shaping_tc_del_entry "$iface" "$old_minor" "$old_exempt" "${ports[@]}" || return 1
+        fi
+        shaping_tc_add_entry "$iface" "$ip" "$minor" "$exempt" "$rate" "${ports[@]}" || return 1
+    done < <(printf '%s\n' "$entries" | jq -r '.[] | [.ip, .minor, .exempt] | @tsv')
+    for ip in "${!prior_minor[@]}"; do
+        [ "${seen[$ip]:-}" = 1 ] && continue
+        shaping_tc_del_entry "$iface" "${prior_minor[$ip]}" "${prior_exempt[$ip]}" "${ports[@]}" || return 1
+    done
+    new_state=$(printf '%s\n' "$old" | jq -c --slurpfile ips <(printf '%s\n' "$entries") \
+        --argjson rate "$rate" '.ips=$ips[0] | .rate_bps=$rate') || return 1
+    shaping_atomic_json "$SHAPING_TC_FILE" "$new_state"
 }
 
 shaping_tc_disable() {
@@ -227,7 +350,7 @@ WantedBy=multi-user.target
 UNIT
     cat > "$SHAPING_TICK_UNIT" <<'UNIT' || return 1
 [Unit]
-Description=MTProxyL dynamic traffic shaping update
+Description=MTProxyL per-IP traffic shaping update
 After=mtproxyl-shaping.service
 
 [Service]
@@ -236,7 +359,7 @@ ExecStart=/usr/local/bin/mtproxyl shaping tick
 UNIT
     cat > "$SHAPING_TIMER_UNIT" <<'UNIT' || return 1
 [Unit]
-Description=Update MTProxyL per-profile speed limits
+Description=Update MTProxyL per-IP speed limits
 
 [Timer]
 OnBootSec=45s
@@ -252,15 +375,14 @@ UNIT
 
 shaping_sync_timer() {
     local cfg="$1"
-    if printf '%s\n' "$cfg" | jq -e '.enabled and .mode == "dynamic"' >/dev/null; then
+    if printf '%s\n' "$cfg" | jq -e '.enabled' >/dev/null; then
         systemctl enable --now mtproxyl-shaping-update.timer >/dev/null 2>&1
     else
         systemctl disable --now mtproxyl-shaping-update.timer >/dev/null 2>&1 || true
     fi
 }
 
-shaping_reload_telemt() {
-    generate_telemt_config || return 1
+shaping_signal_telemt() {
     if engine_is_binary; then
         if binengine_running; then
             systemctl kill -s HUP "$ENGINE_SERVICE"
@@ -270,8 +392,13 @@ shaping_reload_telemt() {
     fi
 }
 
+shaping_reload_telemt() {
+    generate_telemt_config || return 1
+    shaping_signal_telemt
+}
+
 shaping_apply() (
-    local input cfg old old_state old_tc
+    local input cfg old old_state old_tc old_map map now config_path config_snapshot='' tc_ok=false telemt_ok=false rollback_ok=true
     [ "${MTPROXYL_MODE:-manager}" = manager ] && ! _superexpert_active || {
         log_error 'Ограничение скорости доступно только менеджеру без режима супер эксперта'; return 1; }
     command -v jq >/dev/null && command -v tc >/dev/null && command -v ip >/dev/null \
@@ -280,41 +407,81 @@ shaping_apply() (
     input=$(head -c 65536) || return 1
     shaping_validate_config "$input" || { log_error 'Неверные параметры ограничения скорости'; return 1; }
     cfg=$(printf '%s\n' "$input" | shaping_normalize_config) || return 1
+    if printf '%s\n' "$cfg" | jq -e '.enabled' >/dev/null; then
+        map=$(shaping_fetch_active_map "$cfg") || {
+            log_error 'API telemt недоступен: нельзя включить персональный лимит IP без списка клиентов'; return 1; }
+        [ "$(printf '%s\n' "$map" | jq 'length')" -le 4096 ] || {
+            log_error 'Более 4096 активных IPv4: нельзя включить шейпинг'; return 1; }
+    fi
     mkdir -p "$INSTALL_DIR" || return 1
     exec {shaping_fd}>"$SHAPING_LOCK_FILE"
     flock -w 30 "$shaping_fd" || { log_error 'Настройка ограничения скорости занята'; return 1; }
     old=$(shaping_config)
     old_state='{}'; [ -f "$SHAPING_STATE_FILE" ] && old_state=$(cat "$SHAPING_STATE_FILE")
     old_tc=''; [ -f "$SHAPING_TC_FILE" ] && old_tc=$(cat "$SHAPING_TC_FILE")
+    old_map='[]'; [ -n "$old_tc" ] && old_map=$(printf '%s\n' "$old_tc" | jq -c '[.ips[]? | {ip,exempt}]')
+    config_path=$(engine_config_path)
+    if [ -f "$config_path" ]; then
+        config_snapshot=$(mktemp "${INSTALL_DIR}/.shaping-config.XXXXXX") || return 1
+        trap '[ -z "$config_snapshot" ] || rm -f "$config_snapshot"' EXIT
+        cp -p "$config_path" "$config_snapshot" || return 1
+    fi
     shaping_atomic_json "$SHAPING_FILE" "$cfg" || return 1
     if printf '%s\n' "$cfg" | jq -e '.enabled' >/dev/null; then
-        if ! shaping_tc_apply "$cfg" || ! shaping_reload_telemt; then
-            shaping_atomic_json "$SHAPING_FILE" "$old"
+        if shaping_tc_apply "$cfg" "$map"; then tc_ok=true; fi
+        if [ "$tc_ok" = true ] && shaping_reload_telemt; then telemt_ok=true; fi
+        if [ "$telemt_ok" != true ]; then
+            shaping_atomic_json "$SHAPING_FILE" "$old" || rollback_ok=false
             if [ -n "$old_tc" ]; then
-                shaping_atomic_json "$SHAPING_TC_FILE" "$old_tc"
-                if printf '%s\n' "$old" | jq -e '.enabled' >/dev/null; then shaping_tc_apply "$old" || true; fi
+                shaping_atomic_json "$SHAPING_TC_FILE" "$old_tc" || rollback_ok=false
+                if printf '%s\n' "$old" | jq -e '.enabled' >/dev/null; then
+                    shaping_tc_apply "$old" "$old_map" || rollback_ok=false
+                else
+                    shaping_tc_disable || rollback_ok=false
+                fi
             else
-                shaping_tc_disable || true
+                shaping_tc_disable || rollback_ok=false
             fi
-            shaping_reload_telemt || true
-            log_error 'Не удалось применить ограничение; прежние настройки восстановлены'
+            if [ "$tc_ok" = true ] && [ -n "$config_snapshot" ]; then
+                cp -p "$config_snapshot" "$config_path" && shaping_signal_telemt || rollback_ok=false
+            fi
+            if [ "$rollback_ok" = true ]; then
+                log_error 'Не удалось применить ограничение; прежние настройки восстановлены'
+            else
+                log_error 'Не удалось применить или полностью восстановить ограничение; проверьте tc и config.toml'
+            fi
             return 1
         fi
-        shaping_atomic_json "$SHAPING_STATE_FILE" "$(printf '%s\n' "$old_state" | jq -c --argjson now "$(date +%s)" '. + {last_update_epoch:$now,last_error:null}')"
+        now=$(date +%s)
+        shaping_atomic_json "$SHAPING_STATE_FILE" "$(printf '%s\n' "$old_state" | jq -c \
+            --argjson n "$(printf '%s\n' "$map" | jq 'length')" --argjson now "$now" \
+            '. + {active_ips:$n,pending_ips:null,last_sample_epoch:$now,last_update_epoch:$now,last_error:null}')"
         if ! shaping_write_units || ! shaping_sync_timer "$cfg"; then
             log_warn 'Ограничение действует сейчас, но не удалось настроить автозапуск; проверьте systemd'
         fi
     else
         shaping_sync_timer "$cfg"
-        if ! shaping_tc_disable || ! shaping_reload_telemt; then
-            shaping_atomic_json "$SHAPING_FILE" "$old"
+        if shaping_tc_disable; then tc_ok=true; fi
+        if [ "$tc_ok" = true ] && shaping_reload_telemt; then telemt_ok=true; fi
+        if [ "$telemt_ok" != true ]; then
+            shaping_atomic_json "$SHAPING_FILE" "$old" || rollback_ok=false
             if [ -n "$old_tc" ]; then
-                shaping_atomic_json "$SHAPING_TC_FILE" "$old_tc"
-                shaping_tc_apply "$old" || true
+                shaping_atomic_json "$SHAPING_TC_FILE" "$old_tc" || rollback_ok=false
+                if printf '%s\n' "$old" | jq -e '.enabled' >/dev/null; then
+                    shaping_tc_apply "$old" "$old_map" || rollback_ok=false
+                else
+                    shaping_tc_disable || rollback_ok=false
+                fi
             fi
-            shaping_reload_telemt || true
-            shaping_sync_timer "$old"
-            log_error 'Не удалось выключить ограничение; прежние настройки восстановлены'
+            if [ "$tc_ok" = true ] && [ -n "$config_snapshot" ]; then
+                cp -p "$config_snapshot" "$config_path" && shaping_signal_telemt || rollback_ok=false
+            fi
+            shaping_sync_timer "$old" || rollback_ok=false
+            if [ "$rollback_ok" = true ]; then
+                log_error 'Не удалось выключить ограничение; прежние настройки восстановлены'
+            else
+                log_error 'Не удалось выключить или полностью восстановить ограничение; проверьте tc и config.toml'
+            fi
             return 1
         fi
         systemctl disable --now mtproxyl-shaping.service >/dev/null 2>&1 || true
@@ -322,80 +489,114 @@ shaping_apply() (
     log_success "Ограничение скорости $([ "$(printf '%s\n' "$cfg" | jq -r '.enabled')" = true ] && echo включено || echo выключено)"
 )
 
-shaping_fetch_active_ips() {
-    local auth response port="${PROXY_API_PORT:-9091}"
+shaping_fetch_active_map() {
+    local cfg="$1" auth response port="${PROXY_API_PORT:-9091}" exempt
     auth=$(_get_telemt_auth_header "$(engine_config_path)" 2>/dev/null)
     local -a headers=()
     [ -n "$auth" ] && headers=(-H "Authorization: $auth")
     response=$(curl -fsS --max-time 5 --connect-timeout 2 "${headers[@]}" \
         "http://127.0.0.1:${port}/v1/stats/users/active-ips") || return 1
-    printf '%s\n' "$response" | jq -e '
+    exempt=$(printf '%s\n' "$cfg" | jq -c '.profile_exempt') || return 1
+    printf '%s\n' "$response" | jq -ce --argjson exempt "$exempt" '
         if .ok == true and (.data | type == "array") then
-            [.data[].active_ips[]? | select(type == "string" and (contains(":") | not))] | unique | length
+            [.data[] | select(.username | type == "string") | .username as $user | .active_ips[]? |
+                select(type == "string") |
+                select(test("^((0|[1-9][0-9]{0,2})\\.){3}(0|[1-9][0-9]{0,2})$") and
+                    (split(".") | all(.[]; tonumber <= 255))) |
+                {ip:., exempt: ($exempt | index($user) != null)}] |
+            group_by(.ip) | map({ip:.[0].ip, exempt:all(.[]; .exempt)})
         else error("invalid telemt response") end
     ' 2>/dev/null
 }
 
 shaping_tick() (
-    local cfg active old old_rate new_rate pending now state
+    local cfg map active old_rate new_rate target_rate pending now state tc_state old_map last_update
     cfg=$(shaping_config)
-    printf '%s\n' "$cfg" | jq -e '.enabled and .mode == "dynamic"' >/dev/null 2>&1 || return 0
+    printf '%s\n' "$cfg" | jq -e '.enabled' >/dev/null 2>&1 || return 0
     exec {shaping_fd}>"$SHAPING_LOCK_FILE"
     flock -n "$shaping_fd" || return 0
     state='{}'; [ -f "$SHAPING_STATE_FILE" ] && state=$(cat "$SHAPING_STATE_FILE")
-    if ! active=$(shaping_fetch_active_ips); then
+    tc_state='{}'; [ -f "$SHAPING_TC_FILE" ] && tc_state=$(cat "$SHAPING_TC_FILE")
+    if ! map=$(shaping_fetch_active_map "$cfg"); then
         shaping_atomic_json "$SHAPING_STATE_FILE" "$(printf '%s\n' "$state" | jq -c '.last_error = "API telemt недоступен; сохранён предыдущий лимит"')"
         return 1
     fi
+    active=$(printf '%s\n' "$map" | jq 'length')
+    if [ "$active" -gt 4096 ]; then
+        shaping_atomic_json "$SHAPING_STATE_FILE" "$(printf '%s\n' "$state" | jq -c '.last_error = "Более 4096 активных IPv4; сохранены предыдущие правила tc"')"
+        return 1
+    fi
     now=$(date +%s)
-    old=$(printf '%s\n' "$state" | jq -r '.active_ips // 0')
-    old_rate=$(shaping_rates "$cfg" "$old" | jq -r '.profile_bps')
-    new_rate=$(shaping_rates "$cfg" "$active" | jq -r '.profile_bps')
+    old_rate=$(printf '%s\n' "$tc_state" | jq -r '.rate_bps // 0')
+    new_rate=$(shaping_rates "$cfg" "$active" | jq -r '.ip_bps')
+    [ "$old_rate" -ge 1 ] || old_rate="$new_rate"
+    target_rate="$new_rate"
     pending=$(printf '%s\n' "$state" | jq -r '.pending_ips // -1')
+    last_update=$(printf '%s\n' "$state" | jq -r '.last_update_epoch // 0')
     # Рост лимита подтверждаем двумя замерами; уменьшение применяем сразу.
     if (( new_rate > old_rate )) && [ "$pending" != "$active" ]; then
-        shaping_atomic_json "$SHAPING_STATE_FILE" "$(printf '%s\n' "$state" | jq -c --argjson n "$active" --argjson now "$now" '. + {pending_ips:$n,last_sample_epoch:$now,last_error:null}')"
-        return 0
+        target_rate="$old_rate"
+        pending="$active"
     fi
-    if [ "$new_rate" != "$old_rate" ] && (( now - $(printf '%s\n' "$state" | jq -r '.last_update_epoch // 0') < 60 )); then
-        return 0
+    if (( new_rate > old_rate && now - last_update < 60 )); then
+        target_rate="$old_rate"
     fi
-    shaping_atomic_json "$SHAPING_STATE_FILE" "$(printf '%s\n' "$state" | jq -c --argjson n "$active" --argjson now "$now" '. + {active_ips:$n,pending_ips:null,last_sample_epoch:$now,last_update_epoch:$now,last_error:null}')" || return 1
-    if [ "$new_rate" != "$old_rate" ]; then
-        if ! shaping_reload_telemt; then
-            shaping_atomic_json "$SHAPING_STATE_FILE" "$state"
-            return 1
+    old_map=$(printf '%s\n' "$tc_state" | jq -c '[.ips[]? | {ip,exempt}]')
+    if ! shaping_tc_sync "$cfg" "$map" "$target_rate"; then
+        if shaping_tc_apply "$cfg" "$old_map" "$old_rate" >/dev/null 2>&1; then
+            shaping_atomic_json "$SHAPING_STATE_FILE" "$(printf '%s\n' "$state" | jq -c '.last_error = "Не удалось обновить классы tc; предыдущие правила восстановлены"')"
+        else
+            shaping_atomic_json "$SHAPING_STATE_FILE" "$(printf '%s\n' "$state" | jq -c '.last_error = "Не удалось обновить или восстановить классы tc; проверьте journalctl -u mtproxyl-shaping-update.service"')"
         fi
+        return 1
     fi
+    if [ "$target_rate" != "$old_rate" ]; then last_update="$now"; fi
+    [ "$target_rate" = "$new_rate" ] && pending=-1
+    shaping_atomic_json "$SHAPING_STATE_FILE" "$(printf '%s\n' "$state" | jq -c \
+        --argjson n "$active" --argjson pending "$pending" --argjson now "$now" --argjson updated "$last_update" \
+        '. + {active_ips:$n,pending_ips:(if $pending == -1 then null else $pending end),last_sample_epoch:$now,last_update_epoch:$updated,last_error:null}')"
 )
 
-shaping_restore() {
-    local cfg
+shaping_restore() (
+    local cfg map state rate
     [ "${MTPROXYL_MODE:-manager}" = manager ] && ! _superexpert_active || return 0
     cfg=$(shaping_config)
     printf '%s\n' "$cfg" | jq -e '.enabled' >/dev/null 2>&1 || return 0
-    shaping_tc_apply "$cfg"
-}
+    exec {shaping_fd}>"$SHAPING_LOCK_FILE"
+    flock -w 30 "$shaping_fd" || return 1
+    state='{}'; [ -f "$SHAPING_TC_FILE" ] && state=$(cat "$SHAPING_TC_FILE")
+    map=$(shaping_fetch_active_map "$cfg" 2>/dev/null) || map=$(printf '%s\n' "$state" | jq -c '[.ips[]? | {ip,exempt}]')
+    rate=$(printf '%s\n' "$state" | jq -r '.rate_bps // 0')
+    [ "$rate" -ge 1 ] || rate=$(shaping_rates "$cfg" "$(printf '%s\n' "$map" | jq 'length')" | jq -r '.ip_bps')
+    shaping_tc_sync "$cfg" "$map" "$rate" || return 1
+    shaping_sync_timer "$cfg" || log_warn 'Не удалось запустить обновление списка IP'
+)
 
 shaping_status_json() {
-    local cfg state tc_state rates active iface root
+    local cfg state tc_state rates active iface root applied tracked
     cfg=$(shaping_config)
     state='{}'; [ -f "$SHAPING_STATE_FILE" ] && state=$(cat "$SHAPING_STATE_FILE")
     tc_state='{}'; [ -f "$SHAPING_TC_FILE" ] && tc_state=$(cat "$SHAPING_TC_FILE")
     active=$(printf '%s\n' "$state" | jq -r '.active_ips // 0')
     rates=$(shaping_rates "$cfg" "$active")
+    applied=$(printf '%s\n' "$tc_state" | jq -r '.rate_bps // 0')
+    tracked=$(printf '%s\n' "$tc_state" | jq -r '.ips // [] | length')
+    if [ "$applied" -ge 1 ] && [ "$(printf '%s\n' "$cfg" | jq -r '.enabled')" = true ]; then
+        rates=$(printf '%s\n' "$rates" | jq -c --argjson applied "$applied" '.ip_bps=$applied')
+    fi
     iface=$(printf '%s\n' "$tc_state" | jq -r '.interface // empty')
-    root=false; [ -n "$iface" ] && shaping_tc_owned "$iface" && root=true
+    root=false
+    if [ -n "$iface" ] && [ "$applied" -ge 1 ] && shaping_tc_owned "$iface"; then root=true; fi
     jq -nc --argjson config "$cfg" --argjson state "$state" --argjson rates "$rates" \
-        --argjson tc_active "$root" --arg interface "$iface" \
-        '{config:$config,state:$state,rates:$rates,tc_active:$tc_active,interface:$interface}'
+        --argjson tc_active "$root" --argjson tracked_ips "$tracked" --arg interface "$iface" \
+        '{config:$config,state:$state,rates:$rates,tc_active:$tc_active,tracked_ips:$tracked_ips,interface:$interface}'
 }
 
 shaping_menu() {
-    local cfg mode channel reserve expected profile total answer profiles ips
+    local cfg mode channel reserve expected ip_limit total answer profiles ips
     cfg=$(shaping_config)
     echo '  Ограничение скорости: отключено по умолчанию; только отдача IPv4 клиентам.'
-    shaping_status_json | jq -r '"  Режим: \(.config.mode), активных IP: \(.state.active_ips // 0), лимит профиля: \(.rates.profile_bps / 1000000) Мбит/с"'
+    shaping_status_json | jq -r '"  Режим: \(.config.mode), активных IP: \(.state.active_ips // 0), лимит одного IP: \(.rates.ip_bps / 1000000) Мбит/с"'
     echo '  [1] Ручной лимит'
     echo '  [2] Формула по ожидаемому числу пользователей'
     echo '  [3] Динамический расчёт по активным IP'
@@ -410,8 +611,8 @@ shaping_menu() {
     esac
     if [ "$mode" = manual ]; then
         read -r -p 'Общий потолок, Мбит/с: ' total
-        read -r -p 'Лимит на профиль, Мбит/с: ' profile
-        cfg=$(printf '%s\n' "$cfg" | jq --argjson total "$total" --argjson profile "$profile" '.manual_total_mbps=$total | .manual_profile_mbps=$profile') || return 1
+        read -r -p 'Лимит одного IPv4, Мбит/с: ' ip_limit
+        cfg=$(printf '%s\n' "$cfg" | jq --argjson total "$total" --argjson ip_limit "$ip_limit" '.manual_total_mbps=$total | .manual_ip_mbps=$ip_limit') || return 1
     else
         read -r -p 'Ширина канала, Мбит/с (1 Гбит/с = 1000): ' channel
         read -r -p 'Резерв канала, % [10]: ' reserve

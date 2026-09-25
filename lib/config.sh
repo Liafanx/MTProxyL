@@ -556,7 +556,6 @@ TOML_EOF
                 echo "${SECRETS_LABELS[$i]} = \"${SECRETS_EXPIRES[$i]}\"" >> "$tmp"
         done
     fi
-    shaping_emit_user_limits "$tmp" || { log_error "Ошибка лимитов скорости"; return 1; }
     # Своя рекламная метка пользователя. Общая из [general] остаётся в силе
     # для всех остальных — секция её не отменяет, а перекрывает поимённо.
     local has_adtag=false

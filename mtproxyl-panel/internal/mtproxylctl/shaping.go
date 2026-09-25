@@ -17,7 +17,7 @@ type ShapingConfig struct {
 	ReservePercent    int      `json:"reserve_percent"`
 	ExpectedUsers     int      `json:"expected_users"`
 	ManualTotalMbps   int      `json:"manual_total_mbps"`
-	ManualProfileMbps float64  `json:"manual_profile_mbps"`
+	ManualIPMbps      float64  `json:"manual_ip_mbps"`
 	ProfileExempt     []string `json:"profile_exempt"`
 	IPExempt          []string `json:"ip_exempt"`
 }
@@ -32,11 +32,12 @@ type ShapingStatus struct {
 	} `json:"state"`
 	Rates struct {
 		TotalBps    int64 `json:"total_bps"`
-		ProfileBps  int64 `json:"profile_bps"`
+		IPBps       int64 `json:"ip_bps"`
 		Denominator *int  `json:"denominator"`
 	} `json:"rates"`
-	TCActive  bool   `json:"tc_active"`
-	Interface string `json:"interface"`
+	TCActive   bool   `json:"tc_active"`
+	TrackedIPs int    `json:"tracked_ips"`
+	Interface  string `json:"interface"`
 }
 
 var shapingProfileName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
@@ -48,7 +49,7 @@ func ValidateShapingConfig(c ShapingConfig) error {
 	if c.ChannelMbps < 1 || c.ChannelMbps > 100000 || c.ReservePercent < 0 || c.ReservePercent > 90 || c.ExpectedUsers < 2 || c.ExpectedUsers > 100000 {
 		return errors.New("ширина канала, резерв или число пользователей вне диапазона")
 	}
-	if c.ManualTotalMbps < 1 || c.ManualTotalMbps > 100000 || c.ManualProfileMbps < 0.1 || c.ManualProfileMbps > float64(c.ManualTotalMbps) {
+	if c.ManualTotalMbps < 1 || c.ManualTotalMbps > 100000 || c.ManualIPMbps < 0.1 || c.ManualIPMbps > float64(c.ManualTotalMbps) {
 		return errors.New("ручной лимит вне диапазона")
 	}
 	if len(c.ProfileExempt) > 1000 || len(c.IPExempt) > 100 {

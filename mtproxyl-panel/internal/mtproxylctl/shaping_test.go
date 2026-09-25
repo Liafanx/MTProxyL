@@ -5,7 +5,7 @@ import "testing"
 func TestValidateShapingConfig(t *testing.T) {
 	base := ShapingConfig{
 		Mode: "dynamic", ChannelMbps: 1000, ReservePercent: 10, ExpectedUsers: 10,
-		ManualTotalMbps: 900, ManualProfileMbps: 90,
+		ManualTotalMbps: 900, ManualIPMbps: 90,
 		ProfileExempt: []string{"trusted"}, IPExempt: []string{"203.0.113.1", "198.51.100.0/24"},
 	}
 	if err := ValidateShapingConfig(base); err != nil {

@@ -665,7 +665,7 @@ export interface ShapingConfig {
   reserve_percent: number;
   expected_users: number;
   manual_total_mbps: number;
-  manual_profile_mbps: number;
+  manual_ip_mbps: number;
   profile_exempt: string[];
   ip_exempt: string[];
 }
@@ -673,8 +673,9 @@ export interface ShapingConfig {
 export interface ShapingStatus {
   config: ShapingConfig;
   state: { active_ips?: number; last_update_epoch?: number; last_sample_epoch?: number; last_error?: string | null };
-  rates: { total_bps: number; profile_bps: number; denominator: number | null };
+  rates: { total_bps: number; ip_bps: number; denominator: number | null };
   tc_active: boolean;
+  tracked_ips: number;
   interface: string;
 }
 
