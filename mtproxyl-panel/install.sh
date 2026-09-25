@@ -1127,7 +1127,7 @@ do_install() {
           ;;
       esac
       if [ "$PANEL_WEB_PATH_SUPPORTED" = "true" ]; then
-        _web_json=$($SUDO "$MTPROXYL_SCRIPT" web status --json 2>/dev/null || true)
+        _web_json=$($SUDO "$MTPROXYL_SCRIPT" web json 2>/dev/null || true)
         case "$_web_json" in
           *'"enabled":true'*'"frontend":"nginx"'*|*'"enabled":true'*'"frontend":"haproxy-nginx"'*)
             WEB_DOMAIN_DETECTED=$(printf '%s' "$_web_json" \
