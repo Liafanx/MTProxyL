@@ -91,6 +91,10 @@ shaping_rates() {
         end'
 }
 
+shaping_superexpert_mode() {
+    [ "${MTPROXYL_MODE:-manager}" = manager ] && [ "${SUPEREXPERT_ENABLED:-false}" = true ]
+}
+
 shaping_target_ready() {
     if [ "${MTPROXYL_MODE:-manager}" = reanimator ]; then
         [ -n "${DETECTED_CONFIG_PATH:-}" ] && [ -f "$DETECTED_CONFIG_PATH" ] || {
@@ -98,8 +102,22 @@ shaping_target_ready() {
         [ "${DETECTED_MODE:-unknown}" != unknown ] || {
             log_error 'Цель telemt не обнаружена: сначала выполните mtproxyl detect'; return 1; }
     elif [ "${MTPROXYL_MODE:-manager}" = manager ]; then
-        ! _superexpert_active || {
-            log_error 'Шейпинг недоступен в режиме супер эксперта'; return 1; }
+        if [ "${SUPEREXPERT_ENABLED:-false}" = true ]; then
+            _superexpert_active || {
+                log_error 'Файл конфига Супер эксперта не найден'; return 1; }
+            local config_path api_listen api_port
+            config_path=$(engine_config_path)
+            _telemt_api_enabled "$config_path" || {
+                log_error 'В конфиге Супер эксперта нужен включённый локальный API telemt'; return 1; }
+            api_listen=$(_toml_get_string_in_section server.api listen "$config_path")
+            if [ -n "$api_listen" ] && [[ ! "$api_listen" =~ :[0-9]+$ ]]; then
+                log_error 'В конфиге Супер эксперта нужен TCP-порт API telemt'
+                return 1
+            fi
+            api_port=$(_get_telemt_api_port "$config_path")
+            [[ "$api_port" =~ ^[1-9][0-9]{0,4}$ ]] && (( api_port <= 65535 )) || {
+                log_error 'Некорректный порт API telemt в конфиге Супер эксперта'; return 1; }
+        fi
     else
         log_error 'Неизвестный режим MTProxyL'
         return 1
@@ -123,7 +141,16 @@ shaping_public_ports() {
         fi
         return
     fi
-    printf '%s\n' "${PROXY_PORT:-443}"
+    if shaping_superexpert_mode; then
+        local config_path port
+        config_path=$(engine_config_path)
+        port=$(_toml_get_string_in_section server port "$config_path")
+        [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] && (( port <= 65535 )) || {
+            log_error 'Порт прокси не найден в рабочем конфиге Супер эксперта'; return 1; }
+        printf '%s\n' "$port"
+    else
+        printf '%s\n' "${PROXY_PORT:-443}"
+    fi
     if web_is_enabled 2>/dev/null; then web_public_port; fi
 }
 
@@ -458,7 +485,7 @@ shaping_reload_telemt() {
 }
 
 shaping_apply() (
-    local input cfg old old_state old_tc old_map map now config_path config_snapshot='' tc_ok=false telemt_ok=false rollback_ok=true
+    local input cfg old old_state old_tc old_map map now config_path config_snapshot='' tc_ok=false telemt_ok=false rollback_ok=true manage_config=true
     command -v jq >/dev/null && command -v tc >/dev/null && command -v ip >/dev/null \
         && command -v flock >/dev/null && command -v systemctl >/dev/null || {
         log_error 'Нужны jq, iproute2 (ip/tc), flock и systemd'; return 1; }
@@ -481,7 +508,11 @@ shaping_apply() (
     old_tc=''; [ -f "$SHAPING_TC_FILE" ] && old_tc=$(cat "$SHAPING_TC_FILE")
     old_map='[]'; [ -n "$old_tc" ] && old_map=$(printf '%s\n' "$old_tc" | jq -c '[.ips[]? | {ip,exempt}]')
     config_path=''
-    [ "${MTPROXYL_MODE:-manager}" = manager ] && config_path=$(engine_config_path)
+    if [ "${MTPROXYL_MODE:-manager}" = reanimator ] || shaping_superexpert_mode; then
+        manage_config=false
+    else
+        config_path=$(engine_config_path)
+    fi
     if [ -n "$config_path" ] && [ -f "$config_path" ]; then
         config_snapshot=$(mktemp "${INSTALL_DIR}/.shaping-config.XXXXXX") || return 1
         trap '[ -z "$config_snapshot" ] || rm -f "$config_snapshot"' EXIT
@@ -491,7 +522,7 @@ shaping_apply() (
     if printf '%s\n' "$cfg" | jq -e '.enabled' >/dev/null; then
         if shaping_tc_apply "$cfg" "$map"; then tc_ok=true; fi
         if [ "$tc_ok" = true ]; then
-            if [ "${MTPROXYL_MODE:-manager}" = reanimator ] || shaping_reload_telemt; then telemt_ok=true; fi
+            if [ "$manage_config" = false ] || shaping_reload_telemt; then telemt_ok=true; fi
         fi
         if [ "$telemt_ok" != true ]; then
             shaping_atomic_json "$SHAPING_FILE" "$old" || rollback_ok=false
@@ -526,7 +557,7 @@ shaping_apply() (
         shaping_sync_timer "$cfg"
         if shaping_tc_disable; then tc_ok=true; fi
         if [ "$tc_ok" = true ]; then
-            if [ "${MTPROXYL_MODE:-manager}" = reanimator ] || shaping_reload_telemt; then telemt_ok=true; fi
+            if [ "$manage_config" = false ] || shaping_reload_telemt; then telemt_ok=true; fi
         fi
         if [ "$telemt_ok" != true ]; then
             shaping_atomic_json "$SHAPING_FILE" "$old" || rollback_ok=false
@@ -563,6 +594,10 @@ shaping_fetch_active_map() {
         host=$(_telemt_api_host "$config_path")
     else
         config_path=$(engine_config_path)
+        if shaping_superexpert_mode; then
+            _telemt_api_enabled "$config_path" || return 1
+            port=$(_get_telemt_api_port "$config_path")
+        fi
     fi
     auth=$(_get_telemt_auth_header "$config_path" 2>/dev/null)
     local -a headers=()
@@ -645,8 +680,22 @@ shaping_restore() (
     shaping_sync_timer "$cfg" || log_warn 'Не удалось запустить обновление списка IP'
 )
 
+shaping_available_profiles() {
+    local config_path
+    if [ "${MTPROXYL_MODE:-manager}" = reanimator ]; then
+        config_path="${DETECTED_CONFIG_PATH:-}"
+    else
+        config_path=$(engine_config_path)
+    fi
+    [ -n "$config_path" ] && [ -f "$config_path" ] || { printf '[]\n'; return 0; }
+    _target_section_pairs access.users "$config_path" \
+        | awk -F'|' '$1 == "on" && $2 ~ /^[A-Za-z0-9_.-]+$/ {print $2}' \
+        | LC_ALL=C sort -u \
+        | jq -Rsc '[split("\n")[] | select(length > 0)]'
+}
+
 shaping_status_json() {
-    local cfg state tc_state rates active iface root applied tracked
+    local cfg state tc_state rates active iface root applied tracked profiles
     cfg=$(shaping_config)
     state='{}'; [ -f "$SHAPING_STATE_FILE" ] && state=$(cat "$SHAPING_STATE_FILE")
     tc_state='{}'; [ -f "$SHAPING_TC_FILE" ] && tc_state=$(cat "$SHAPING_TC_FILE")
@@ -658,11 +707,13 @@ shaping_status_json() {
         rates=$(printf '%s\n' "$rates" | jq -c --argjson applied "$applied" '.ip_bps=$applied')
     fi
     iface=$(printf '%s\n' "$tc_state" | jq -r '.interface // empty')
+    profiles=$(shaping_available_profiles) || return 1
     root=false
     if [ -n "$iface" ] && [ "$applied" -ge 1 ] && shaping_tc_owned "$iface"; then root=true; fi
     jq -nc --argjson config "$cfg" --argjson state "$state" --argjson rates "$rates" \
+        --argjson available_profiles "$profiles" \
         --argjson tc_active "$root" --argjson tracked_ips "$tracked" --arg interface "$iface" \
-        '{config:$config,state:$state,rates:$rates,tc_active:$tc_active,tracked_ips:$tracked_ips,interface:$interface}'
+        '{config:$config,state:$state,rates:$rates,available_profiles:$available_profiles,tc_active:$tc_active,tracked_ips:$tracked_ips,interface:$interface}'
 }
 
 shaping_menu() {

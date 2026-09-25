@@ -20,6 +20,7 @@ ip netns exec "$namespace" tc qdisc replace dev test0 root fq
 INSTALL_DIR="$test_dir"
 PROXY_PORT=443
 source lib/shaping.sh
+source lib/detect.sh
 tc() { ip netns exec "$namespace" /usr/sbin/tc "$@"; }
 shaping_interface() { echo test0; }
 web_is_enabled() { return 1; }
@@ -90,6 +91,30 @@ printf '%s\n' "$cfg" | jq '.enabled=false' | shaping_apply
 [ "$(shaping_root_kind test0)" = fq ]
 grep -q '^foreign = true$' "$DETECTED_CONFIG_PATH"
 MTPROXYL_MODE=manager
+
+# Супер эксперт использует свой порт и API, но шейпинг не переписывает конфиг.
+SUPEREXPERT_ENABLED=true
+SUPEREXPERT_FILE="$test_dir/superexpert.toml"
+printf '%s\n' '[server]' 'port = 9443' '[server.api]' 'enabled = true' \
+    'listen = "127.0.0.1:9199"' '[access.users]' 'team.alpha = "secret"' > "$test_dir/config.toml"
+cp "$test_dir/config.toml" "$SUPEREXPERT_FILE"
+_superexpert_active() { [ -f "$SUPEREXPERT_FILE" ]; }
+web_is_enabled() { return 1; }
+shaping_reload_telemt() { echo 'unexpected telemt reload' >&2; return 1; }
+[ "$(shaping_public_ports)" = 9443 ]
+printf '%s\n' "$cfg" | shaping_apply
+shaping_tc_owned test0
+cmp -s "$test_dir/config.toml" "$SUPEREXPERT_FILE"
+printf '%s\n' "$cfg" | jq '.enabled=false' | shaping_apply
+[ "$(shaping_root_kind test0)" = fq ]
+cmp -s "$test_dir/config.toml" "$SUPEREXPERT_FILE"
+printf '%s\n' '[server]' 'port = 9443' '[server.api]' 'enabled = false' > "$test_dir/config.toml"
+if printf '%s\n' "$cfg" | shaping_apply >/dev/null 2>&1; then
+    echo 'superexpert shaping accepted disabled API' >&2; exit 1
+fi
+[ "$(shaping_root_kind test0)" = fq ]
+SUPEREXPERT_ENABLED=false
+_superexpert_active() { return 1; }
 
 # Ошибка применения конфигурации движка возвращает прежний файл и qdisc.
 printf '%s\n' '[access]' 'legacy = true' > "$test_dir/config.toml"

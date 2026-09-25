@@ -23,8 +23,9 @@ type ShapingConfig struct {
 }
 
 type ShapingStatus struct {
-	Config ShapingConfig `json:"config"`
-	State  struct {
+	Config            ShapingConfig `json:"config"`
+	AvailableProfiles []string      `json:"available_profiles"`
+	State             struct {
 		ActiveIPs       int    `json:"active_ips"`
 		LastUpdateEpoch int64  `json:"last_update_epoch"`
 		LastSampleEpoch int64  `json:"last_sample_epoch"`

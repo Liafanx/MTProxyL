@@ -830,7 +830,10 @@ _target_section_pairs() {
         BEGIN { insect = 0 }
         {
             t = $0; sub(/^[[:space:]]+/, "", t)
-            if (t ~ /^\[/) { insect = (t == sect) ? 1 : 0; next }
+            header = t
+            sub(/[[:space:]]*#.*$/, "", header)
+            sub(/[[:space:]]+$/, "", header)
+            if (header ~ /^\[/) { insect = (header == sect) ? 1 : 0; next }
             if (!insect) next
             off = 0
             if (substr(t, 1, length(mark)) == mark) {

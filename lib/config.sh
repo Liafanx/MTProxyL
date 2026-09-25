@@ -194,7 +194,7 @@ superexpert_show_rules() {
     echo -e "  ${DIM}• Меню «Управление секретами», «Настройки», «Режим эксперта» и${NC}"
     echo -e "  ${DIM}  команды tune/expert set становятся недоступны${NC}"
     echo -e "  ${DIM}• Изменения применяются перезапуском прокси${NC}"
-    echo -e "  ${DIM}• NFT/Zapret2, selfmask, гео-блокировка и бэкапы работают как обычно${NC}"
+    echo -e "  ${DIM}• NFT/Zapret2, selfmask, гео-блокировка, шейпинг и бэкапы работают как обычно${NC}"
 }
 
 superexpert_enable() {
@@ -222,7 +222,7 @@ superexpert_enable() {
     local _yn; read_line _yn "  ${BOLD}Включить режим супер эксперта? [y/N]:${NC} "
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
     if [ "$(shaping_config | jq -r '.enabled' 2>/dev/null)" = true ]; then
-        log_warn 'Ограничение скорости выключается перед переходом в Супер эксперт'
+        log_warn 'Шейпинг выключается при смене конфига; после запуска Супер эксперта его можно включить снова'
         shaping_config | jq '.enabled=false' | shaping_apply || return 1
     fi
 

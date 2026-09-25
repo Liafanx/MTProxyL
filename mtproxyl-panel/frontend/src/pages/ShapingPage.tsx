@@ -34,20 +34,6 @@ export function ShapingPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
-  const load = useCallback(async (replaceForm = true) => {
-    try {
-      const next = await mtproxylNetApi.shaping();
-      setStatus(next);
-      if (replaceForm) {
-        setForm(next.config);
-        setDrafts(numberDrafts(next.config));
-        setProfiles(next.config.profile_exempt);
-        setIps(next.config.ip_exempt.join(', '));
-      }
-      setError('');
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  }, []);
-
   const loadProfiles = useCallback(async () => {
     try {
       const users = await mtproxylUsersApi.list();
@@ -56,8 +42,27 @@ export function ShapingPage() {
     } catch (e) { setProfileError(e instanceof Error ? e.message : String(e)); }
   }, []);
 
+  const load = useCallback(async (replaceForm = true) => {
+    try {
+      const next = await mtproxylNetApi.shaping();
+      setStatus(next);
+      if (Array.isArray(next.available_profiles)) {
+        setAvailableProfiles(next.available_profiles);
+        setProfileError('');
+      } else {
+        void loadProfiles();
+      }
+      if (replaceForm) {
+        setForm(next.config);
+        setDrafts(numberDrafts(next.config));
+        setProfiles(next.config.profile_exempt);
+        setIps(next.config.ip_exempt.join(', '));
+      }
+      setError('');
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  }, [loadProfiles]);
+
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { void loadProfiles(); }, [loadProfiles]);
   useEffect(() => {
     if (!status?.config.enabled) return;
     const timer = window.setInterval(() => { void load(false); }, 30000);

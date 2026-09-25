@@ -672,6 +672,7 @@ export interface ShapingConfig {
 
 export interface ShapingStatus {
   config: ShapingConfig;
+  available_profiles?: string[];
   state: { active_ips?: number; last_update_epoch?: number; last_sample_epoch?: number; last_error?: string | null };
   rates: { total_bps: number; ip_bps: number; denominator: number | null };
   tc_active: boolean;

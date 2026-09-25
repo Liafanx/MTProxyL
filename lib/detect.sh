@@ -117,9 +117,14 @@ _toml_get_string_in_section() {
     local _section="$1" _key="$2" _file="$3"
     [ -f "$_file" ] || return 0
     awk -v sect="[${_section}]" -v k="$_key" '
-        $0 == sect { insect=1; next }
-        /^\[/ { insect=0 }
-        insect {
+        {
+            header = $0
+            sub(/^[[:space:]]+/, "", header)
+            sub(/[[:space:]]*#.*$/, "", header)
+            sub(/[[:space:]]+$/, "", header)
+            if (header == sect) { insect=1; next }
+            if (header ~ /^\[/) insect=0
+            if (!insect) next
             line = $0
             sub(/^[[:space:]]+/, "", line)
             if (line ~ ("^" k "[[:space:]]*=")) {

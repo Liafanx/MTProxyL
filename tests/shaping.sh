@@ -5,6 +5,8 @@ test_dir=$(mktemp -d)
 trap 'rm -rf "$test_dir"' EXIT
 INSTALL_DIR="$test_dir"
 source lib/shaping.sh
+source lib/detect.sh
+source lib/secrets.sh
 
 cfg=$(shaping_default_config)
 shaping_validate_config "$cfg"
@@ -63,5 +65,25 @@ if shaping_tick; then echo 'API outage accepted as a fresh sample' >&2; exit 1; 
 shaping_atomic_json "$SHAPING_FILE" "$(printf '%s\n' "$fixed" | jq '.profile_exempt=["bob"]')"
 shaping_rename_profile bob robert
 [ "$(jq -r '.profile_exempt[0]' "$SHAPING_FILE")" = robert ]
+
+# Список исключений в панели берётся из рабочего конфига, а не secrets.conf.
+CONFIG_DIR="$test_dir"
+engine_config_path() { echo "$test_dir/config.toml"; }
+printf '%s\n' '[server]   # proxy' 'port = 9443' '  [server.api]  ' 'enabled = true' \
+    'listen = "127.0.0.1:9199"' '[access.users] # profiles' 'team.alpha = "secret"' \
+    '# old = "secret"' > "$test_dir/config.toml"
+MTPROXYL_MODE=manager
+SUPEREXPERT_ENABLED=true
+SUPEREXPERT_FILE="$test_dir/config.toml"
+[ "$(shaping_available_profiles)" = '["team.alpha"]' ]
+[ "$(shaping_status_json | jq -r '.available_profiles[0]')" = team.alpha ]
+curl() {
+    [ "${*: -1}" = 'http://127.0.0.1:9199/v1/stats/users/active-ips' ] || return 7
+    printf '%s\n' '{"ok":true,"data":[]}'
+}
+[ "$(shaping_fetch_active_map "$cfg")" = '[]' ]
+printf '%s\n' '[server]' 'port = 9443' '[server.api]' 'enabled = false' > "$test_dir/config.toml"
+_superexpert_active() { return 0; }
+if shaping_target_ready >/dev/null 2>&1; then echo 'disabled superexpert API accepted' >&2; exit 1; fi
 
 echo 'shaping tests: ok'
