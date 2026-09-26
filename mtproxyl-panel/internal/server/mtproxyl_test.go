@@ -44,6 +44,22 @@ func authedRequest(t *testing.T, method, target string, body string) *http.Reque
 	return r
 }
 
+func TestIPBlockDeleteCIDRQuery(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "mtproxyl.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s|%s|%s\\n' \"$1\" \"$2\" \"$3\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mux := newMtproxylMux(t, config.MtproxylConfig{Enabled: true, ScriptPath: script})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, authedRequest(t, http.MethodDelete, "/api/mtproxyl/ipblock?entry=188.130.209.0%2F24", ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete CIDR: got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "block|del|188.130.209.0/24") {
+		t.Fatalf("CIDR not passed to CLI: %s", rec.Body.String())
+	}
+}
+
 func TestMtproxylRoutesRequireAuth(t *testing.T) {
 	mux := newMtproxylMux(t, config.MtproxylConfig{Enabled: true, InstallDir: t.TempDir()})
 

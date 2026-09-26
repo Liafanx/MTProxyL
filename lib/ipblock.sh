@@ -152,10 +152,14 @@ ipblock_add() {
 ipblock_del() {
     local e="$1"
     ipblock_has "$e" || { log_error "${e} в списке не найден"; return 1; }
-    local tmp; tmp=$(mktemp)
-    gawk -v t="$e" '{ l=$0; sub(/#.*/,"",l); gsub(/[[:space:]]/,"",l); if (l != t) print }' \
-        "$IPBLOCK_FILE" > "$tmp" && mv "$tmp" "$IPBLOCK_FILE"
-    chmod 600 "$IPBLOCK_FILE"
+    local tmp; tmp=$(mktemp "${INSTALL_DIR}/.ipblock.XXXXXX") || return 1
+    if ! awk -v t="$e" '{ l=$0; sub(/#.*/,"",l); gsub(/[[:space:]]/,"",l); if (l != t) print }' \
+        "$IPBLOCK_FILE" > "$tmp"; then
+        rm -f "$tmp"
+        log_error "Не удалось изменить список блокировки"
+        return 1
+    fi
+    chmod 600 "$tmp" && mv "$tmp" "$IPBLOCK_FILE" || { rm -f "$tmp"; return 1; }
     ipblock_apply || return 1
     log_success "${e} разблокирован"
 }
@@ -288,10 +292,12 @@ ipblock_set_action() {
 
 _ipblock_set_counters() {
     nft list set inet "$IPBLOCK_TABLE" "$1" 2>/dev/null | tr '\n' ' ' \
-    | gawk '{
+    | awk '{
         s=$0
-        while (match(s, /([0-9a-fA-F:.]+(\/[0-9]+)?)[ \t]+counter packets ([0-9]+) bytes ([0-9]+)/, m)) {
-            print m[1] "\t" m[3] "\t" m[4]
+        while (match(s, /[0-9a-fA-F:.]+(\/[0-9]+)?[ \t]+counter packets [0-9]+ bytes [0-9]+/)) {
+            part=substr(s, RSTART, RLENGTH)
+            split(part, fields, /[ \t]+/)
+            print fields[1] "\t" fields[4] "\t" fields[6]
             s = substr(s, RSTART+RLENGTH)
         }
       }'
@@ -303,16 +309,18 @@ _ipblock_set_counters() {
 ipblock_hits_sample() {
     ipblock_rules_active || return 0
     mkdir -p "$INSTALL_DIR"; touch "$IPBLOCK_HITS" "$IPBLOCK_SNAP"
-    local now; now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-    { _ipblock_set_counters v4; _ipblock_set_counters v6; } \
-    | gawk -F'\t' -v hits="$IPBLOCK_HITS" -v snap="$IPBLOCK_SNAP" -v now="$now" '
+    local now counters
+    now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+    counters=$({ _ipblock_set_counters v4; _ipblock_set_counters v6; }) || return 1
+    printf '%s\n' "$counters" \
+    | awk -F'\t' -v hits="$IPBLOCK_HITS" -v snap="$IPBLOCK_SNAP" -v now="$now" '
     BEGIN {
         while ((getline l < hits) > 0) { split(l,a,"\t"); hp[a[1]]=a[2]+0; hb[a[1]]=a[3]+0; hf[a[1]]=a[4]; hl[a[1]]=a[5] }
         close(hits)
         while ((getline l < snap) > 0) { split(l,a,"\t"); sp[a[1]]=a[2]+0; sb[a[1]]=a[3]+0 }
         close(snap)
     }
-    { ip=$1; p=$2+0; b=$3+0; cp[ip]=p; cb[ip]=b
+    NF >= 3 { ip=$1; p=$2+0; b=$3+0; cp[ip]=p; cb[ip]=b
       dp = (ip in sp && p >= sp[ip]) ? p - sp[ip] : p
       db = (ip in sb && b >= sb[ip]) ? b - sb[ip] : b
       if (dp > 0) { hp[ip]+=dp; hb[ip]+=db; if (hf[ip]=="") hf[ip]=now; hl[ip]=now }
@@ -321,7 +329,7 @@ ipblock_hits_sample() {
     END {
         for (i in hp) printf "%s\t%d\t%d\t%s\t%s\n", i, hp[i], hb[i], (hf[i]==""?now:hf[i]), (hl[i]==""?"-":hl[i]) > (hits ".tmp")
         for (i in cp) printf "%s\t%d\t%d\n", i, cp[i], cb[i] > (snap ".tmp")
-    }'
+    }' || return 1
     [ -f "${IPBLOCK_HITS}.tmp" ] && mv "${IPBLOCK_HITS}.tmp" "$IPBLOCK_HITS"
     [ -f "${IPBLOCK_SNAP}.tmp" ] && mv "${IPBLOCK_SNAP}.tmp" "$IPBLOCK_SNAP"
     return 0
@@ -329,7 +337,7 @@ ipblock_hits_sample() {
 
 ipblock_hits_total() {
     [ -s "$IPBLOCK_HITS" ] || { echo 0; return 0; }
-    gawk -F'\t' '{s+=$2} END {print s+0}' "$IPBLOCK_HITS"
+    awk -F'\t' '{s+=$2} END {print s+0}' "$IPBLOCK_HITS"
 }
 
 # printf в bash считает байты, а не символы — кириллицу дополняем сами.
@@ -353,27 +361,47 @@ ipblock_hits_show() {
 }
 
 ipblock_hits_tsv() {
-    ipblock_hits_sample
+    ipblock_hits_sample || return 1
     [ -s "$IPBLOCK_HITS" ] || return 0
     sort -t$'\t' -k2,2nr "$IPBLOCK_HITS"
 }
 
 ipblock_hits_reset() { : > "$IPBLOCK_HITS"; : > "$IPBLOCK_SNAP"; log_success "Счётчики обнулены"; }
 
+ipblock_comments_json() {
+    ipblock_ensure_file
+    local line entry comment items="" sep=""
+    while IFS= read -r line || [ -n "$line" ]; do
+        [[ "$line" == *#* ]] || continue
+        entry="${line%%#*}"
+        entry="${entry//[[:space:]]/}"
+        ipblock_family "$entry" >/dev/null || continue
+        comment="${line#*#}"
+        comment="${comment#"${comment%%[![:space:]]*}"}"
+        comment="${comment%"${comment##*[![:space:]]}"}"
+        [ -n "$comment" ] || continue
+        items+="${sep}\"$(json_escape "$entry")\":\"$(json_escape "$comment")\""
+        sep=","
+    done < "$IPBLOCK_FILE"
+    printf '{%s}' "$items"
+}
+
 ipblock_status_json() {
     local items="" x first=1
+    ipblock_hits_sample >/dev/null 2>&1 || true
     while read -r x; do
         [ "$first" = "1" ] || items="${items},"
         items="${items}\"${x}\""; first=0
     done < <(ipblock_entries)
-    printf '{"enabled":%s,"action":"%s","rules_active":%s,"count":%s,"hits_total":%s,"entries":[%s]}\n' \
+    printf '{"enabled":%s,"action":"%s","rules_active":%s,"count":%s,"hits_total":%s,"entries":[%s],"comments":%s}\n' \
         "$([ "${IPBLOCK_ENABLED}" = "true" ] && echo true || echo false)" \
         "${IPBLOCK_ACTION}" \
         "$(ipblock_rules_active && echo true || echo false)" \
-        "$(ipblock_count)" "$(ipblock_hits_total)" "$items"
+        "$(ipblock_count)" "$(ipblock_hits_total)" "$items" "$(ipblock_comments_json)"
 }
 
 ipblock_status() {
+    ipblock_hits_sample >/dev/null 2>&1 || true
     echo ""
     echo "  Блокировка IP адресов"
     echo "  ─────────────────────"

@@ -53,10 +53,10 @@ export function IpBlockPage() {
       try {
         const h = await mtproxylNetApi.ipblockHits();
         setHits(h.hits ?? []);
-      } catch {
-        setHits([]);
+        setError(null);
+      } catch (e) {
+        setError(`Не удалось получить счётчики: ${e instanceof Error ? e.message : String(e)}`);
       }
-      setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось получить состояние');
     } finally {
@@ -67,6 +67,17 @@ export function IpBlockPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      if (!document.hidden && !busy) await load();
+      if (!cancelled) timer = setTimeout(poll, 30_000);
+    };
+    timer = setTimeout(poll, 30_000);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [load, busy]);
 
   const wrap = async (fn: () => Promise<unknown>, fallback: string) => {
     setBusy(true);
@@ -278,7 +289,10 @@ export function IpBlockPage() {
                     const h = hitFor(e);
                     return (
                       <tr key={e} className="border-b border-border/50">
-                        <td className="py-2 pr-4 font-mono text-text-primary">{e}</td>
+                        <td className="py-2 pr-4">
+                          <span className="font-mono text-text-primary">{e}</span>
+                          {status.comments?.[e] && <span className="mt-0.5 block max-w-72 break-words text-xs text-text-secondary">{status.comments[e]}</span>}
+                        </td>
                         <td className="py-2 pr-4 text-right text-text-primary">{h?.packets ?? 0}</td>
                         <td className="py-2 pr-4 text-right text-text-secondary">
                           {human(h?.bytes ?? 0)}
@@ -291,6 +305,7 @@ export function IpBlockPage() {
                             onClick={() => void remove(e)}
                             disabled={removing === e || busy}
                             title="Разблокировать"
+                            aria-label={`Разблокировать ${e}`}
                             className="p-1 rounded-full hover:bg-danger/15 hover:text-danger disabled:opacity-40"
                           >
                             <X size={14} />

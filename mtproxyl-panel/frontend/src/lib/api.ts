@@ -305,6 +305,7 @@ export interface IpBlockStatus {
   count: number;
   hits_total: number;
   entries: string[];
+  comments?: Record<string, string>;
 }
 
 export interface IpBlockHit {
@@ -711,7 +712,7 @@ export const mtproxylNetApi = {
       body: JSON.stringify({ entry, comment }),
     }),
   ipblockRemove: (entry: string) =>
-    request<{ output: string }>(MTPROXYL_BASE, `/ipblock/${encodeURIComponent(entry)}`, {
+    request<{ output: string }>(MTPROXYL_BASE, `/ipblock?entry=${encodeURIComponent(entry)}`, {
       method: 'DELETE',
     }),
   ipblockState: (body: { enabled?: boolean; action?: string }) =>

@@ -923,11 +923,14 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 
-	mux.Handle("DELETE /api/mtproxyl/ipblock/{entry}", protected(func(w http.ResponseWriter, r *http.Request) {
+	removeBlock := protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) || busy(w) {
 			return
 		}
 		entry := r.PathValue("entry")
+		if entry == "" {
+			entry = r.URL.Query().Get("entry")
+		}
 		if err := mtproxylctl.ValidateBlockEntry(entry); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_entry", err.Error())
 			return
@@ -938,7 +941,9 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 			return
 		}
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
-	}))
+	})
+	mux.Handle("DELETE /api/mtproxyl/ipblock", removeBlock)
+	mux.Handle("DELETE /api/mtproxyl/ipblock/{entry}", removeBlock)
 
 	mux.Handle("POST /api/mtproxyl/ipblock/state", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) || busy(w) {

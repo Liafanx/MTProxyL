@@ -11,12 +11,13 @@ import (
 
 // IPBlockStatus is the output of `mtproxyl block status --json`.
 type IPBlockStatus struct {
-	Enabled     bool     `json:"enabled"`
-	Action      string   `json:"action"`
-	RulesActive bool     `json:"rules_active"`
-	Count       int      `json:"count"`
-	HitsTotal   int64    `json:"hits_total"`
-	Entries     []string `json:"entries"`
+	Enabled     bool              `json:"enabled"`
+	Action      string            `json:"action"`
+	RulesActive bool              `json:"rules_active"`
+	Count       int               `json:"count"`
+	HitsTotal   int64             `json:"hits_total"`
+	Entries     []string          `json:"entries"`
+	Comments    map[string]string `json:"comments"`
 }
 
 // IPBlockHit is one accumulated per-address counter.
@@ -95,6 +96,9 @@ func (c *Client) IPBlockStatus(ctx context.Context) (*IPBlockStatus, error) {
 	}
 	if st.Entries == nil {
 		st.Entries = []string{}
+	}
+	if st.Comments == nil {
+		st.Comments = map[string]string{}
 	}
 	return &st, nil
 }
