@@ -69,6 +69,7 @@ export function LoadCard({ connections, activeUsers, telemetryOff, loading, mana
             <span>15 мин</span>
             <span>сейчас</span>
           </div>
+          <p className="mt-1 text-[10px] text-text-faint">Наведите курсор или коснитесь графика, чтобы увидеть время и значения.</p>
         </>
       )}
     </section>
