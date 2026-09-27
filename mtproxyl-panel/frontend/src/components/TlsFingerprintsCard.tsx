@@ -1,15 +1,18 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { GatedNotice } from '@/components/GatedNotice';
 import { KV } from '@/components/KeyValue';
+import { Button } from '@/components/ui/button';
 import { Chip } from '@/components/ui/chip';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatePill } from '@/components/ui/state-pill';
 import { usePolling } from '@/hooks/usePolling';
-import { fingerprintsApi, type FingerprintRow, type FingerprintScope, type FingerprintSort, type FingerprintsPage } from '@/lib/api';
+import { fingerprintsApi, mtproxylNetApi, type FingerprintRow, type FingerprintScope, type FingerprintSort, type FingerprintsPage, type IpBlockStatus } from '@/lib/api';
 import { formatEpoch } from '@/lib/gated';
 import { countryFlag } from '@/lib/flag';
+import { findBlockingEntry } from '@/lib/ipblock-match';
 import { cn, formatNumber, plural } from '@/lib/utils';
 
 const SCOPES: Array<{ key: FingerprintScope; label: string; column: string }> = [
@@ -75,6 +78,61 @@ export function TlsFingerprintsCard() {
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(0);
+  const [blockStatus, setBlockStatus] = useState<IpBlockStatus | null>(null);
+  const [blockError, setBlockError] = useState<string | null>(null);
+  const [blockActionError, setBlockActionError] = useState<string | null>(null);
+  const [confirmIp, setConfirmIp] = useState<string | null>(null);
+  const [blocking, setBlocking] = useState(false);
+  const blockRequestId = useRef(0);
+  const loadBlockStatus = useCallback(async () => {
+    const id = ++blockRequestId.current;
+    try {
+      const status = await mtproxylNetApi.ipblock();
+      if (id === blockRequestId.current) {
+        setBlockStatus(status);
+        setBlockError(null);
+      }
+    } catch (e) {
+      if (id === blockRequestId.current) {
+        setBlockStatus(null);
+        setBlockError(e instanceof Error ? e.message : String(e));
+      }
+    }
+  }, []);
+  useEffect(() => {
+    if (scope !== 'by_ip') return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      if (!document.hidden) await loadBlockStatus();
+      if (!stopped) timer = setTimeout(tick, 60_000);
+    };
+    const onVisible = () => { if (!document.hidden) void loadBlockStatus(); };
+    document.addEventListener('visibilitychange', onVisible);
+    void tick();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [scope, loadBlockStatus]);
+  const confirmBlock = async () => {
+    if (!confirmIp || blocking) return;
+    setBlocking(true);
+    setBlockActionError(null);
+    try {
+      const current = await mtproxylNetApi.ipblock();
+      if (!findBlockingEntry(confirmIp, current.entries ?? [])) {
+        await mtproxylNetApi.ipblockAdd(confirmIp, 'TLS-отпечатки: добавлено из панели');
+      }
+      setConfirmIp(null);
+      await loadBlockStatus();
+    } catch (e) {
+      setBlockActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBlocking(false);
+    }
+  };
 
   useEffect(() => {
     const id = window.setTimeout(() => setSearch(query.trim()), 300);
@@ -111,6 +169,10 @@ export function TlsFingerprintsCard() {
   const pages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
   const gateClosed = data && data.gate.seen && !data.gate.enabled;
   const empty = data && data.total === 0;
+  const blockedRows = useMemo(() => {
+    if (scope !== 'by_ip' || !data || !blockStatus) return new Map<string, string | null>();
+    return new Map(data.rows.map((row) => [row.key, findBlockingEntry(row.key, blockStatus.entries ?? [])]));
+  }, [scope, data, blockStatus]);
 
   return (
     <section className="rounded-xl border border-border bg-surface p-4">
@@ -156,6 +218,18 @@ export function TlsFingerprintsCard() {
               </div>
             </div>
 
+            {scope === 'by_ip' && (
+              <p className="text-micro text-text-muted">
+                {blockError ? `Не удалось проверить список блокировки: ${blockError}`
+                  : !blockStatus ? 'Проверяем список блокировки IP…'
+                    : !blockStatus.enabled || !blockStatus.rules_active ? 'Блокировка IP выключена: адреса можно добавить в список, но правила пока не действуют.'
+                      : 'Адреса из списка блокировки и охваченные подсетями отмечены в таблице.'}
+              </p>
+            )}
+            {blockActionError && scope === 'by_ip' && (
+              <p role="alert" className="text-micro text-error">Не удалось добавить IP: {blockActionError}</p>
+            )}
+
             {empty ? (
               <p className="py-3 text-center text-meta text-text-muted">Записей нет</p>
             ) : (
@@ -170,9 +244,30 @@ export function TlsFingerprintsCard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.rows.map((r) => (
+                    {data.rows.map((r) => {
+                      const blockedBy = blockedRows.get(r.key) ?? null;
+                      return (
                       <tr key={r.key} className="border-b border-border/50 last:border-0">
-                        <td className="py-1.5 pr-2 font-mono text-text" title={r.ja4_raw || r.ja4}>{r.key}</td>
+                        <td className="py-1.5 pr-2 font-mono text-text" title={r.ja4_raw || r.ja4}>
+                          <span>{r.key}</span>
+                          {scope === 'by_ip' && blockStatus && (
+                            <span className="mt-1 block font-sans">
+                              {blockedBy ? (
+                                <StatePill
+                                  state={blockStatus.enabled && blockStatus.rules_active ? 'error' : 'muted'}
+                                  title={`Правило: ${blockedBy}`}
+                                  className="px-2 py-0.5"
+                                >
+                                  {blockStatus.enabled && blockStatus.rules_active ? 'Заблокирован' : 'В списке'}
+                                </StatePill>
+                              ) : (
+                                <Button variant="danger" size="sm" className="px-2" disabled={blocking} onClick={() => { setBlockActionError(null); setConfirmIp(r.key); }}>
+                                  В блок
+                                </Button>
+                              )}
+                            </span>
+                          )}
+                        </td>
                         {showGeo && <td className="py-1.5 px-2"><GeoCell row={r} /></td>}
                         <td className="py-1.5 px-2 text-right tabular-nums text-text">{formatNumber(r.total)}</td>
                         <td className="py-1.5 px-2 text-right tabular-nums text-ok">{formatNumber(r.auth_success)}</td>
@@ -181,7 +276,8 @@ export function TlsFingerprintsCard() {
                         <td className="py-1.5 px-2 text-right tabular-nums text-text-muted whitespace-nowrap">{formatEpoch(r.last_seen_epoch_secs)}</td>
                         <td className="py-1.5 pl-2 font-mono text-text-muted" title={r.ja3_raw || r.ja3}>{r.ja3.slice(0, 12)}{r.ja3.length > 12 ? '…' : ''}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -212,6 +308,16 @@ export function TlsFingerprintsCard() {
           </div>
         )}
       </div>
+      <ConfirmDialog
+        open={confirmIp !== null}
+        onClose={() => setConfirmIp(null)}
+        onConfirm={() => void confirmBlock()}
+        title="Заблокировать IP"
+        message={`Добавить ${confirmIp ?? ''} в список блокировки IP? ${blockStatus?.enabled && blockStatus.rules_active ? 'Новые соединения с этого адреса будут отклоняться.' : 'Сейчас блокировка выключена: правило начнёт действовать после её включения.'}`}
+        confirmLabel="Добавить в блок"
+        loadingLabel="Добавление…"
+        loading={blocking}
+      />
     </section>
   );
 }

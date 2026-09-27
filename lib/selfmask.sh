@@ -2262,6 +2262,14 @@ selfmask_verify() {
     selfmask_show_requirements
 }
 
+_selfmask_web_decoy_notice() {
+    web_is_enabled 2>/dev/null || return 0
+    [ "${WEB_DECOY_MODE:-empty}" = "empty" ] || return 0
+    log_warn "WEB-домен $(web_domain 2>/dev/null) сейчас отдаёт пустую заглушку — это отдельный режим, сайт Selfmask на него не переносится"
+    log_info "Порт ${WEB_TLS_PORT:-15444} должен передавать WEB-запросы движку, а статика Selfmask обслуживается на ${SELFMASK_NGINX_BACKEND_PORT:-8444}"
+    log_info "Чтобы показать тот же сайт и на WEB: mtproxyl web set WEB_DECOY_MODE static_directory; mtproxyl web set WEB_DECOY_DIR '${SELFMASK_SITE_DIR}'; mtproxyl web enable"
+}
+
 selfmask_setup() {
     check_root
 
@@ -2326,6 +2334,7 @@ selfmask_setup() {
 
     echo ""
     log_success "Selfmask настроен"
+    _selfmask_web_decoy_notice
     if [ "$SELFMASK_CERT_MODE" = "selfsigned" ]; then
         echo -e "  ${BOLD}Домен(SNI):${NC} ${SELFMASK_DOMAIN} ${DIM}(самоподписанный, A-запись не нужна)${NC}"
         echo -e "  ${DIM}Снаружи домен не открывается — заглушка отдаётся только по SNI${NC}"
@@ -2946,6 +2955,7 @@ selfmask_apply() {
 
     echo ""
     log_success "Selfmask настроен"
+    _selfmask_web_decoy_notice
 }
 
 # Поставить только инструменты PQ, без настройки заглушки: проверке домена

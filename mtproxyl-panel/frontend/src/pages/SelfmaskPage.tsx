@@ -9,7 +9,7 @@ import { ParamField } from '@/components/ParamField';
 import { NginxCustomConfigCard } from '@/components/NginxCustomConfigCard';
 import { HttpsHeadersCard } from '@/components/HttpsHeadersCard';
 import { SiteSourcePicker, siteSourceLabel } from '@/components/SiteSourcePicker';
-import { mtproxylApi, type SelfmaskParam, type SelfmaskStatus } from '@/lib/api';
+import { mtproxylApi, type SelfmaskParam, type SelfmaskStatus, type WebStatus } from '@/lib/api';
 import { useMtproxylOperation } from '@/hooks/useMtproxyl';
 
 const CERT_MODE_LABELS: Record<string, string> = {
@@ -19,6 +19,7 @@ const CERT_MODE_LABELS: Record<string, string> = {
 
 export function SelfmaskPage() {
   const [status, setStatus] = useState<SelfmaskStatus | null>(null);
+  const [webStatus, setWebStatus] = useState<WebStatus | null>(null);
   const [params, setParams] = useState<SelfmaskParam[]>([]);
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -29,12 +30,19 @@ export function SelfmaskPage() {
   const [verifying, setVerifying] = useState(false);
   const [disabling, setDisabling] = useState(false);
   const [confirmDisable, setConfirmDisable] = useState(false);
+  const [confirmUseWebSite, setConfirmUseWebSite] = useState(false);
+  const [usingWebSite, setUsingWebSite] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [st, ps] = await Promise.all([mtproxylApi.selfmask(), mtproxylApi.selfmaskParams()]);
+      const [st, ps, web] = await Promise.all([
+        mtproxylApi.selfmask(),
+        mtproxylApi.selfmaskParams(),
+        mtproxylApi.web().catch(() => null),
+      ]);
       setStatus(st);
+      setWebStatus(web);
       setParams(ps);
       setEdits({});
       setError(null);
@@ -137,6 +145,25 @@ export function SelfmaskPage() {
       setDisabling(false);
     }
   };
+  const useSiteForWeb = async () => {
+    if (!status || usingWebSite) return;
+    setUsingWebSite(true);
+    try {
+      // Save the directory first: if the second write fails, WEB keeps its
+      // previous decoy mode instead of switching to the wrong site.
+      await mtproxylApi.setWebParam('WEB_DECOY_DIR', status.site_dir);
+      await mtproxylApi.setWebParam('WEB_DECOY_MODE', 'static_directory');
+      setConfirmUseWebSite(false);
+      start(await mtproxylApi.webEnable());
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось настроить WEB-заглушку');
+    } finally {
+      setUsingWebSite(false);
+    }
+  };
+  const webUsesSameSite = webStatus?.decoy_mode === 'static_directory'
+    && webStatus.decoy_dir.replace(/\/+$/, '') === status?.site_dir.replace(/\/+$/, '');
 
   return (
     <div className="p-4 lg:p-6 space-y-4">
@@ -190,6 +217,19 @@ export function SelfmaskPage() {
                 <Row label="PQ nginx" value={status.pq_nginx_active ? 'активен' : 'не запущен'} />
               </CardContent>
             </Card>
+            {status.enabled && webStatus?.enabled && !webUsesSameSite && (
+              <div className="rounded-lg border border-warn/30 bg-warn/10 p-3 text-sm text-text-secondary space-y-2">
+                <p>
+                  WEB-домен {webStatus.domain} использует отдельную заглушку
+                  {webStatus.decoy_mode === 'empty' ? ' — сейчас это пустой ответ 200.' : '.'}
+                  {' '}Порт {webStatus.tls_port} должен передавать WEB-запросы движку; сайт Selfmask обслуживается на порту {status.backend_port}.
+                </p>
+                <Button variant="outline" size="sm" disabled={running || usingWebSite || dirty.length > 0} onClick={() => setConfirmUseWebSite(true)}>
+                  Показывать сайт Selfmask и на WEB
+                </Button>
+                {dirty.length > 0 && <p className="text-xs">Сначала сохраните и примените изменения Selfmask.</p>}
+              </div>
+            )}
 
             <Card>
               <CardHeader>
@@ -301,6 +341,16 @@ export function SelfmaskPage() {
         confirmLabel="Отключить"
         loadingLabel="Отключение…"
         loading={disabling}
+      />
+      <ConfirmDialog
+        open={confirmUseWebSite}
+        onClose={() => setConfirmUseWebSite(false)}
+        onConfirm={() => void useSiteForWeb()}
+        title="Показывать сайт Selfmask на WEB"
+        message={`WEB-домен ${webStatus?.domain ?? ''} будет отдавать файлы из ${status?.site_dir ?? ''} через движок. WEB-транспорт сохранится, прокси перезапустится.`}
+        confirmLabel="Настроить WEB"
+        loadingLabel="Настройка…"
+        loading={usingWebSite}
       />
     </div>
   );
