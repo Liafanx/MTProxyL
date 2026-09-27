@@ -35,6 +35,13 @@ type WebStatus struct {
 	DecoySource string `json:"decoy_source"`
 	DecoyDir    string `json:"decoy_dir"`
 	Debug       bool   `json:"debug"`
+	// Sideband is true when bridge pages report lifecycle events to /web-status.
+	Sideband bool `json:"sideband"`
+	// BasePath is the path actually written to the engine config; the saved
+	// value stays in BasePathSaved while the engine is older than 3.5.8.
+	BasePath      string `json:"base_path"`
+	BasePathSaved string `json:"base_path_saved"`
+	PathSupported bool   `json:"path_supported"`
 	// Problems is a semicolon-separated list of preflight blockers. Empty means
 	// the mode can be switched on.
 	Problems string `json:"problems"`

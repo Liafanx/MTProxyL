@@ -417,7 +417,10 @@ web_sections_toml() {
 
     printf '\n[web]\nenabled = true\ncarrier = "%s"\n' "${WEB_CARRIER:-websocket}"
     printf '\n[web.debug]\nenabled = %s\n' "$([ "${WEB_DEBUG:-false}" = "true" ] && echo true || echo false)"
+    web_engine_supports_path && printf 'sideband = %s\n' "$(web_sideband_enabled && echo true || echo false)"
     printf '\n[[web.vhosts]]\nhost = "%s"\npublic_addr = "%s"\n' "$_domain" "$_addr"
+    local _base; _base=$(web_base_path)
+    [ -z "$_base" ] || printf 'base_path = "%s"\n' "$_base"
     printf '\n[web.vhosts.decoy]\n'
     _web_decoy_toml
     # vhost без профилей движок не примет, и он не стартует вовсе — сказать
@@ -863,15 +866,59 @@ web_haproxy_port_owned() {
 
 # ── Ссылки ────────────────────────────────────────────────────
 
+# base_path и sideband появились в telemt 3.5.8. Старый движок этих ключей не
+# знает, поэтому на нём WEB остаётся в корне и ссылки прежние.
+WEB_PATH_MIN_ENGINE_VERSION="3.5.8"
+
+web_engine_supports_path() {
+    local _v; _v=$(engine_current_version 2>/dev/null | tr -d ' \t\r\n')
+    _v="${_v#v}"; _v="${_v%%-*}"
+    [ -n "$_v" ] && _version_ge "$_v" "$WEB_PATH_MIN_ENGINE_VERSION"
+}
+
+# Путь, который действительно уходит в конфиг движка.
+web_base_path() {
+    [ -n "${WEB_BASE_PATH:-}" ] && web_engine_supports_path || return 0
+    printf '%s' "$WEB_BASE_PATH"
+}
+
+# Движок включает отчёты bridge только при enabled + sideband + capture_lifecycle.
+web_sideband_enabled() {
+    [ "${WEB_DEBUG:-false}" = "true" ] && [ "${WEB_DEBUG_SIDEBAND:-false}" = "true" ]
+}
+
+_web_base_path_valid() {
+    local _v="$1"
+    [ -z "$_v" ] && return 0
+    [ "${#_v}" -le 128 ] && [[ "$_v" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*(/[A-Za-z0-9][A-Za-z0-9_-]*)*$ ]]
+}
+
+# Ссылка в формате движка. В корне — hex-секрет с префиксом dd. Под путём
+# Telegram Desktop ждёт server=host%2Fpath и секрет base64url от 0x70
+# (плюс 0xdd для dd) и сырых байтов секрета.
+web_format_link() {
+    local _host="$1" _base="$2" _mode="$3" _raw="$4"
+    [ -n "$_host" ] && [[ "$_raw" =~ ^[0-9a-fA-F]{32}$ ]] || return 1
+    if [ -z "$_base" ]; then
+        printf 'tg://webproxy?server=%s&secret=%s%s\n' "$_host" "$([ "$_mode" = "dd" ] && echo dd)" "$_raw"
+        return 0
+    fi
+    local _hex="70" _b64
+    [ "$_mode" = "dd" ] && _hex+="dd"
+    _hex+="$_raw"
+    # shellcheck disable=SC2059
+    _b64=$(printf "$(sed 's/../\\x&/g' <<< "$_hex")" | base64 -w0 | tr '+/' '-_' | tr -d '=')
+    [ -n "$_b64" ] || return 1
+    printf 'tg://webproxy?server=%s&secret=%s\n' "${_host}%2F${_base//\//%2F}" "$_b64"
+}
+
 # API движка WEB-ссылки не отдаёт: в /v1/users есть только classic, secure,
 # tls и tls_domains. Поэтому собираем сами.
 web_link_for_secret() {
     local _raw="$1" _domain
     _domain=$(web_domain) || return 1
     [ -n "$_domain" ] && [ -n "$_raw" ] || return 1
-    local _prefix=""
-    [ "${WEB_SECRET_MODE:-dd}" = "dd" ] && _prefix="dd"
-    printf 'tg://webproxy?server=%s&secret=%s%s\n' "$_domain" "$_prefix" "$_raw"
+    web_format_link "$_domain" "$(web_base_path)" "${WEB_SECRET_MODE:-dd}" "$_raw"
 }
 
 web_link_for_label() {
@@ -1301,8 +1348,9 @@ _web_status_json_target() {
         _host=$(web_target_host 2>/dev/null)
         _mode=$(_web_target_secret_mode 2>/dev/null)
     fi
-    printf '{"enabled":%s,"proxy_mode":"target","mtproto_enabled":true,"frontend":"target","haproxy_ready":false,"haproxy_cert":"","layout":"target","public_port":%s,"proxy_port":%s,"domain":"%s","carrier":"","secret_mode":"%s","public_addr":"","listen_port":0,"tls_port":0,"mtproxy_port":0,"decoy_mode":"","decoy_dir":"","debug":false,"problems":"","owner":"target"}\n' \
-        "$_en" "${DETECTED_PORT:-443}" "${DETECTED_PORT:-443}" "$(json_escape "$_host")" "$(json_escape "$_mode")"
+    printf '{"enabled":%s,"proxy_mode":"target","mtproto_enabled":true,"frontend":"target","haproxy_ready":false,"haproxy_cert":"","layout":"target","public_port":%s,"proxy_port":%s,"domain":"%s","carrier":"","secret_mode":"%s","public_addr":"","listen_port":0,"tls_port":0,"mtproxy_port":0,"decoy_mode":"","decoy_dir":"","debug":false,"sideband":false,"base_path":"%s","base_path_saved":"","path_supported":false,"problems":"","owner":"target"}\n' \
+        "$_en" "${DETECTED_PORT:-443}" "${DETECTED_PORT:-443}" "$(json_escape "$_host")" "$(json_escape "$_mode")" \
+        "$(json_escape "$(web_target_base_path 2>/dev/null)")"
 }
 
 # В менеджере профили пересобираются вместе со всем конфигом, у цели правим
@@ -1331,7 +1379,7 @@ web_status_json() {
     _d=$(web_domain 2>/dev/null)
     _addr=$(web_public_addr 2>/dev/null)
     _problems=$(web_preflight_problems 2>/dev/null | tr '\n' ';')
-    printf '{"enabled":%s,"proxy_mode":"%s","mtproto_enabled":%s,"frontend":"%s","haproxy_ready":%s,"haproxy_cert":"%s","layout":"%s","public_port":%s,"proxy_port":%s,"domain":"%s","carrier":"%s","secret_mode":"%s","public_addr":"%s","listen_port":%s,"tls_port":%s,"mtproxy_port":%s,"decoy_mode":"%s","decoy_source":"%s","decoy_dir":"%s","debug":%s,"problems":"%s"}\n' \
+    printf '{"enabled":%s,"proxy_mode":"%s","mtproto_enabled":%s,"frontend":"%s","haproxy_ready":%s,"haproxy_cert":"%s","layout":"%s","public_port":%s,"proxy_port":%s,"domain":"%s","carrier":"%s","secret_mode":"%s","public_addr":"%s","listen_port":%s,"tls_port":%s,"mtproxy_port":%s,"decoy_mode":"%s","decoy_source":"%s","decoy_dir":"%s","debug":%s,"sideband":%s,"base_path":"%s","base_path_saved":"%s","path_supported":%s,"problems":"%s"}\n' \
         "$(web_is_enabled && echo true || echo false)" \
         "$(json_escape "${PROXY_MODE:-mtproto}")" "$(mtproto_is_enabled && echo true || echo false)" \
         "$(json_escape "${WEB_FRONTEND:-nginx}")" "$(web_haproxy_ready && echo true || echo false)" \
@@ -1343,10 +1391,23 @@ web_status_json() {
         "$(json_escape "${WEB_DECOY_MODE:-empty}")" "$(json_escape "${SELFMASK_SITE_SOURCE:-stub}")" \
         "$(json_escape "$(web_effective_decoy_dir)")" \
         "$([ "${WEB_DEBUG:-false}" = "true" ] && echo true || echo false)" \
+        "$(web_sideband_enabled && echo true || echo false)" \
+        "$(json_escape "$(web_base_path)")" "$(json_escape "${WEB_BASE_PATH:-}")" \
+        "$(web_engine_supports_path && echo true || echo false)" \
         "$(json_escape "$_problems")"
 }
 
 # ── Проверка предусловий ──────────────────────────────────────
+
+# Первая символическая ссылка в цепочке каталогов пути.
+_web_path_symlink() {
+    local _p="$1"
+    while [ -n "$_p" ] && [ "$_p" != "/" ] && [ "$_p" != "." ]; do
+        [ -L "$_p" ] && { printf '%s' "$_p"; return 0; }
+        _p=$(dirname "$_p")
+    done
+    return 1
+}
 
 # Возвращает список причин, по которым WEB включать нельзя. Пусто — можно.
 web_preflight_problems() {
@@ -1392,6 +1453,17 @@ web_preflight_problems() {
         static_directory)
             [ -d "$(web_decoy_dir)" ] || _p+="каталог сайта-заглушки не найден: $(web_decoy_dir)"$'\n' ;;
     esac
+    # С 3.5.8 движок открывает корень заглушки и её файлы без перехода по
+    # символическим ссылкам — с ними он не стартует.
+    if [ "${WEB_DECOY_MODE:-empty}" != "http_upstream" ] && web_engine_supports_path; then
+        local _root _link
+        _root=$(web_effective_decoy_dir 2>/dev/null)
+        if _link=$(_web_path_symlink "$_root"); then
+            _p+="в пути к заглушке есть символическая ссылка ${_link} — telemt ${WEB_PATH_MIN_ENGINE_VERSION}+ её не примет; укажите реальный каталог: mtproxyl web set WEB_DECOY_DIR $(readlink -f "$_root" 2>/dev/null)"$'\n'
+        elif [ -d "$_root" ] && _link=$(find "$_root" -type l -print -quit 2>/dev/null) && [ -n "$_link" ]; then
+            _p+="в заглушке есть символическая ссылка ${_link} — telemt ${WEB_PATH_MIN_ENGINE_VERSION}+ её не примет; замените ссылку файлом"$'\n'
+        fi
+    fi
     web_port_is_443 || _p+="публичный порт WEB $(web_public_port), а клиент ходит туда только на 443"$'\n'
     web_public_addr >/dev/null 2>&1 || _p+="не определён публичный IP"$'\n'
     if web_uses_managed_nginx && [ "$_already" = "true" ] \
@@ -1572,6 +1644,16 @@ web_status_print() {
     echo -e "   🚚 Carrier          ${WEB_CARRIER:-—}"
     echo -e "   🔑 Режим секрета    ${WEB_SECRET_MODE:-—}"
     echo -e "   📍 public_addr      $(web_public_addr 2>/dev/null || echo '—')"
+    if [ -n "${WEB_BASE_PATH:-}" ]; then
+        if web_engine_supports_path; then
+            echo -e "   🛣  Путь WEB         /${WEB_BASE_PATH}/"
+        else
+            echo -e "   🛣  Путь WEB         ${YELLOW}/${WEB_BASE_PATH}/ не действует${NC} — нужен telemt ${WEB_PATH_MIN_ENGINE_VERSION}+"
+        fi
+    fi
+    if [ "${WEB_DEBUG:-false}" = "true" ]; then
+        echo -e "   🩺 Диагностика      /web-status$(web_sideband_enabled && web_engine_supports_path && echo ', отчёты bridge включены')"
+    fi
     if web_frontend_is_haproxy_nginx && web_is_only_mode; then
         echo -e "   🧭 Раскладка        ${BOLD}WEB-only${NC} — без обычного MTProto"
         echo -e "   🪟 Порты            HAProxy :443 → nginx :${WEB_TLS_PORT:-15444} → WEB :${WEB_LISTEN_PORT:-15080}"
@@ -1715,7 +1797,21 @@ _WEB_SETTABLE=(
     "WEB_DECOY_DIR|custom:_validate_web_decoy_dir|Каталог сайта-заглушки"
     "WEB_DECOY_UPSTREAM|custom:_validate_web_upstream|HTTP-origin заглушки"
     "WEB_DEBUG|enum:true,false|Страница диагностики /web-status"
+    "WEB_DEBUG_SIDEBAND|enum:true,false|Отчёты bridge-страницы в /web-status (telemt 3.5.8+, вместе с WEB_DEBUG)"
+    "WEB_BASE_PATH|custom:_validate_web_base_path|Путь WEB внутри домена, например app/sync; пусто — корень (telemt 3.5.8+)"
 )
+
+_validate_web_base_path() {
+    local _v="$1" _panel="${PANEL_SELFMASK_PATH:-}"
+    _web_base_path_valid "$_v" || {
+        echo "до 128 символов: сегменты из латиницы, цифр, - и _ через /, без / в начале и конце" >&2
+        return 1
+    }
+    [ -z "$_v" ] || [ -z "$_panel" ] || [ "${_v%%/*}" != "${_panel#/}" ] || {
+        echo "совпадает с путём панели ${_panel} на WEB-домене" >&2
+        return 1
+    }
+}
 
 _validate_web_listen_addr() {
     _validate_ipv4 "$1" >/dev/null 2>&1 || {
@@ -1841,6 +1937,14 @@ web_set_param() {
     fi
     save_settings
     log_success "${_key} = ${_val}"
+    if [ "$_key" = "WEB_BASE_PATH" ]; then
+        web_engine_supports_path \
+            || log_warn "Движок $(engine_current_version 2>/dev/null) не знает base_path — WEB останется в корне до обновления до ${WEB_PATH_MIN_ENGINE_VERSION}"
+        log_warn "Ссылки tg://webproxy изменятся: после применения раздайте новые (mtproxyl web links)"
+    fi
+    if [ "$_key" = "WEB_DEBUG_SIDEBAND" ] && [ "$_val" = "true" ] && [ "${WEB_DEBUG:-false}" != "true" ]; then
+        log_info "Отчёты заработают вместе с диагностикой: mtproxyl web set WEB_DEBUG true"
+    fi
     web_is_enabled && log_info "Примените заново: mtproxyl web enable"
     return 0
 }
@@ -1900,6 +2004,19 @@ web_target_profiles() {
 # профиль без пользователя делает конфиг невалидным: держим их в паре.
 
 # secret_mode берём у уже заведённых профилей, чтобы не смешивать представления.
+# base_path первого vhost цели: ссылка под путём кодируется иначе.
+web_target_base_path() {
+    local _f="${DETECTED_CONFIG_PATH:-}"
+    [ -f "$_f" ] || return 0
+    awk '
+        /^[[:space:]]*\[\[web\.vhosts\]\][[:space:]]*$/ { n++; inv=(n==1); next }
+        /^[[:space:]]*\[/ { inv=0 }
+        inv && /^[[:space:]]*base_path[[:space:]]*=/ {
+            line=$0; sub(/^[^=]*=[[:space:]]*/, "", line); sub(/[[:space:]]*#.*$/, "", line)
+            gsub(/^["\047]|["\047][[:space:]]*$/, "", line); print line; exit
+        }' "$_f"
+}
+
 _web_target_secret_mode() {
     local _u _m
     while IFS='|' read -r _u _m; do
@@ -2062,9 +2179,8 @@ web_target_link() {
         [ "$_u" = "$_label" ] || continue
         _raw=$(_target_user_secret "$_label" 2>/dev/null)
         [ -n "$_raw" ] || return 1
-        printf 'tg://webproxy?server=%s&secret=%s%s\n' \
-            "$_host" "$([ "$_m" = "dd" ] && echo dd)" "$_raw"
-        return 0
+        web_format_link "$_host" "$(web_target_base_path)" "$_m" "$_raw"
+        return $?
     done <<< "$(web_target_profiles)"
     return 1
 }

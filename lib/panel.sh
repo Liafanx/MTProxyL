@@ -1057,6 +1057,10 @@ panel_selfmask_enable() {
         log_error "Путь должен содержать 1–64 латинских букв, цифр, _ или -"
         return 1
     }
+    [ -z "${WEB_BASE_PATH:-}" ] || [ "${_path#/}" != "${WEB_BASE_PATH%%/*}" ] || {
+        log_error "Путь ${_path} занят WEB (WEB_BASE_PATH = ${WEB_BASE_PATH}) — выберите другой"
+        return 1
+    }
 
     _old_listen=$(_panel_config_value listen)
     _old_base=$(_panel_config_value base_path)

@@ -388,6 +388,7 @@ _mig_build_args() {
         _a+=(--web-carrier "${WEB_CARRIER:-websocket}")
         _a+=(--web-secret-mode "${WEB_SECRET_MODE:-dd}")
         [ -n "${WEB_DOMAIN:-}" ] && _a+=(--web-domain "$WEB_DOMAIN")
+        [ -n "${WEB_BASE_PATH:-}" ] && _a+=(--web-path "$WEB_BASE_PATH")
         { web_is_only_mode || [ "${WEB_LAYOUT:-shared}" = "split" ]; } \
             && _a+=(--web-port "${WEB_PUBLIC_PORT:-443}")
         if [ "${SELFMASK_ENABLED:-false}" != "true" ]; then

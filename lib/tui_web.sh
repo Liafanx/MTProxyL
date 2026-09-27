@@ -119,6 +119,21 @@ _tui_web_decoy_menu() {
     esac
 }
 
+_tui_web_base_path_menu() {
+    echo ""
+    echo -e "  ${DIM}Путь прячет WEB-эндпоинты: корень домена отдаёт заглушку, а WEB работает${NC}"
+    echo -e "  ${DIM}только под /путь/. Нужен telemt ${WEB_PATH_MIN_ENGINE_VERSION}+. После смены все ссылки tg://webproxy${NC}"
+    echo -e "  ${DIM}меняются — их нужно раздать заново. «-» — вернуть WEB в корень.${NC}"
+    echo ""
+    local _p; read_line _p "  ${BOLD}Путь, например app/sync [${WEB_BASE_PATH:-корень}]:${NC} "
+    _p="${_p#/}"; _p="${_p%/}"
+    case "$_p" in
+        "") return 0 ;;
+        -) _p="" ;;
+    esac
+    web_set_param WEB_BASE_PATH "$_p"
+}
+
 tui_web_menu() {
     while true; do
         clear_screen
@@ -150,6 +165,8 @@ tui_web_menu() {
         esac
         echo -e "  ${CYAN}[10]${NC} Заглушка  ${DIM}${_decoy_label}${NC}"
         echo -e "  ${CYAN}[11]${NC} HTTPS-заголовки Selfmask и WEB"
+        echo -e "  ${CYAN}[12]${NC} Путь WEB  ${DIM}$([ -n "${WEB_BASE_PATH:-}" ] && echo "/${WEB_BASE_PATH}/" || echo "корень /")${NC}"
+        echo -e "  ${CYAN}[13]${NC} Отчёты bridge в /web-status  ${DIM}$([ "${WEB_DEBUG_SIDEBAND:-false}" = "true" ] && echo "включены" || echo "выключены")${NC}"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -157,6 +174,14 @@ tui_web_menu() {
 
         case "$_c" in
             11) tui_https_headers_menu ;;
+            12) _tui_web_base_path_menu; press_any_key ;;
+            13)
+                if [ "${WEB_DEBUG_SIDEBAND:-false}" = "true" ]; then
+                    web_set_param WEB_DEBUG_SIDEBAND false
+                else
+                    web_set_param WEB_DEBUG_SIDEBAND true
+                fi
+                press_any_key ;;
             1)
                 if web_is_enabled && ! web_can_disable; then web_enable
                 elif web_is_enabled; then web_disable

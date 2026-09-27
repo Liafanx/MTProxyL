@@ -22,7 +22,7 @@ _IA_SELFMASK_DOMAIN=""; _IA_SELFMASK_CERT=""; _IA_SELFMASK_EMAIL=""
 _IA_SELFMASK_TEMPLATE=""; _IA_SELFMASK_BACKEND_PORT=""
 _IA_WEB=""; _IA_WEB_DOMAIN=""; _IA_WEB_CARRIER=""; _IA_WEB_LAYOUT=""; _IA_WEB_FRONTEND=""
 _IA_WEB_HAPROXY_CERT=""
-_IA_WEB_PORT=""; _IA_WEB_SECRET_MODE=""
+_IA_WEB_PORT=""; _IA_WEB_SECRET_MODE=""; _IA_WEB_PATH=""
 _IA_WEB_DECOY=""; _IA_WEB_DECOY_UPSTREAM=""
 _IA_GEOIP=""
 _IA_BLOCK_FILE=""
@@ -101,6 +101,7 @@ install_args_help() {
     --web-carrier https|https-lanes|websocket|websocket-lanes
     --web-port N               публичный порт WEB для WEB-only и split
     --web-secret-mode plain|dd
+    --web-path <путь>          WEB под путём, например app/sync (telemt 3.5.8+)
     --web-decoy empty|site|upstream
                                пустой ответ, каталог сайта либо HTTP-origin
     --web-decoy-upstream URL   приватный HTTP-origin для режима upstream
@@ -220,6 +221,7 @@ _install_args_parse() {
             --web-haproxy-cert) _IA_WEB_HAPROXY_CERT="$_v" ;;
             --web-port)        _IA_WEB_PORT="$_v" ;;
             --web-secret-mode) _IA_WEB_SECRET_MODE="$_v" ;;
+            --web-path)        _IA_WEB_PATH="${_v#/}"; _IA_WEB_PATH="${_IA_WEB_PATH%/}" ;;
             --web-decoy)       _IA_WEB_DECOY="${_v,,}" ;;
             --web-decoy-upstream) _IA_WEB_DECOY_UPSTREAM="$_v" ;;
             --selfmask)              _IA_SELFMASK_DOMAIN="$_v" ;;
@@ -440,6 +442,9 @@ _install_args_validate() {
     if [ -n "$_IA_WEB_DOMAIN" ] && ! validate_domain "$_IA_WEB_DOMAIN"; then
         log_error "--web-domain: домен, получили '${_IA_WEB_DOMAIN}'"; _ok=false
     fi
+    if [ -n "$_IA_WEB_PATH" ] && ! _web_base_path_valid "$_IA_WEB_PATH"; then
+        log_error "--web-path: до 128 символов, сегменты из латиницы, цифр, - и _ через /"; _ok=false
+    fi
     if [ -n "$_IA_WEB_CARRIER" ]; then
         case "$_IA_WEB_CARRIER" in
             https|https-lanes|websocket|websocket-lanes) ;;
@@ -502,7 +507,7 @@ _install_args_validate() {
     if [ "$_IA_WEB" != "yes" ] && { [ -n "$_IA_WEB_DOMAIN" ] || [ -n "$_IA_WEB_CARRIER" ] || \
        [ -n "$_IA_WEB_LAYOUT" ] || [ -n "$_IA_WEB_PORT" ] || [ -n "$_IA_WEB_SECRET_MODE" ] || \
        [ -n "$_IA_WEB_FRONTEND" ] || [ -n "$_IA_WEB_HAPROXY_CERT" ] || \
-       [ -n "$_IA_WEB_DECOY" ] || [ -n "$_IA_WEB_DECOY_UPSTREAM" ]; }; then
+       [ -n "$_IA_WEB_DECOY" ] || [ -n "$_IA_WEB_DECOY_UPSTREAM" ] || [ -n "$_IA_WEB_PATH" ]; }; then
         log_error "Параметры WEB заданы без --web yes"; _ok=false
     fi
 
@@ -865,6 +870,7 @@ _install_args_web() {
     [ -n "$_IA_WEB_DOMAIN" ]      && WEB_DOMAIN="$_IA_WEB_DOMAIN"
     [ -n "$_IA_WEB_CARRIER" ]     && WEB_CARRIER="$_IA_WEB_CARRIER"
     [ -n "$_IA_WEB_SECRET_MODE" ] && WEB_SECRET_MODE="$_IA_WEB_SECRET_MODE"
+    [ -n "$_IA_WEB_PATH" ]        && WEB_BASE_PATH="$_IA_WEB_PATH"
     if [ -n "$_IA_WEB_PORT" ]; then
         # В shared совместного режима WEB делит публичный порт с MTProto.
         if web_is_only_mode || [ "$WEB_LAYOUT" = "split" ]; then

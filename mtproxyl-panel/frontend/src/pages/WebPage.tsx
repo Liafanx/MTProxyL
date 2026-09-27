@@ -92,6 +92,7 @@ export function WebPage() {
     if (layout === 'split' && ['WEB_TLS_PORT', 'WEB_MTPROXY_PORT'].includes(p.key)) return false;
     if (frontend.startsWith('haproxy') && p.key === 'WEB_PUBLIC_PORT') return false;
     if (frontend !== 'haproxy' && p.key === 'WEB_HAPROXY_CERT') return false;
+    if (p.key === 'WEB_DEBUG_SIDEBAND' && status?.path_supported === false) return false;
     if (decoyMode === 'empty') {
       if (['WEB_DECOY_SOURCE', 'WEB_DECOY_DIR', 'WEB_DECOY_UPSTREAM'].includes(p.key)) return false;
     } else if (decoyMode === 'http_upstream') {
@@ -220,6 +221,13 @@ export function WebPage() {
                     <Row label="Транспорт" value={CARRIER_LABELS[status.carrier] ?? status.carrier} />
                     <Row label="Секрет в ссылке" value={status.secret_mode} />
                     <Row label="public_addr" value={status.public_addr || 'не определён'} mono />
+                    {(status.base_path_saved || status.base_path) && (
+                      <Row
+                        label="Путь WEB"
+                        value={status.path_supported ? `/${status.base_path}/` : `/${status.base_path_saved}/ — не действует, нужен telemt 3.5.8+`}
+                        mono
+                      />
+                    )}
                     <Row
                       label="Порты"
                       value={
