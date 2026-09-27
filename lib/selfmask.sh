@@ -1019,34 +1019,96 @@ _selfmask_deploy_site() {
 # Обычный сайт отвечает своей страницей на неизвестный путь и держит
 # robots.txt с favicon. Пустой 404 и голый nginx на этих путях выдавали
 # заглушку не хуже уникального CSP.
+# Суммы 404, которые MTProxyL писал сам: такую страницу пересобираем под
+# текущий шаблон, а исправленную пользователем не трогаем.
+SELFMASK_404_SUMS="${INSTALL_DIR}/.site-404.sums"
+# До 1.6.26 страница брала оформление из /style.css сайта, а у шаблонов-игр
+# там стили только для игры: текст выходил чёрным на тёмном фоне.
+SELFMASK_404_LEGACY_SHA="d15c6399d1a9bc15960374236aaf630f6b42c6cea95142cd4920b6888322c863"
+
+_selfmask_404_is_ours() {
+    local _f="$1" _sum
+    [ -s "$_f" ] || return 0
+    _sum=$(sha256sum "$_f" 2>/dev/null | cut -d' ' -f1)
+    [ "$_sum" = "$SELFMASK_404_LEGACY_SHA" ] && return 0
+    awk -v f="$_f" -v s="$_sum" '$1 == f && $2 == s { found = 1 } END { exit !found }' \
+        "$SELFMASK_404_SUMS" 2>/dev/null
+}
+
+# Фон сайта: правило body в style.css или index.html, либо bg-[#…] у Tailwind.
+_selfmask_site_bg() {
+    local _dir="$1" _bg
+    _bg=$(cat "${_dir}/style.css" "${_dir}/index.html" 2>/dev/null | tr -d '\n' \
+        | grep -oE '(^|[^-a-zA-Z0-9_])body[^{]*\{[^}]*background(-color)?:[[:space:]]*#[0-9a-fA-F]{3,6}' \
+        | grep -oE '#[0-9a-fA-F]{3,6}$' | head -1)
+    [ -n "$_bg" ] || _bg=$(grep -oE '<body[^>]*bg-\[#[0-9a-fA-F]{3,6}\]' "${_dir}/index.html" 2>/dev/null \
+        | grep -oE '#[0-9a-fA-F]{3,6}' | head -1)
+    printf '%s' "$_bg"
+}
+
+# Страница 404 со своими стилями: у сайта может не быть общих стилей для
+# обычного текста. Фон берём у сайта, цвет текста — по его яркости.
+_selfmask_write_404() {
+    local _dir="$1" _n="${2:-0}" _f="${1}/404.html" _bg _hex _fg _muted _accent _title _text _sum
+    _selfmask_404_is_ours "$_f" || return 0
+    _bg=$(_selfmask_site_bg "$_dir"); _hex="${_bg#\#}"
+    [ "${#_hex}" -eq 3 ] && _hex="${_hex:0:1}${_hex:0:1}${_hex:1:1}${_hex:1:1}${_hex:2:1}${_hex:2:1}"
+    [ "${#_hex}" -eq 6 ] || _hex="f5f6f8"
+    local -a _accents=("#4f8cff" "#22a06b" "#e08a00" "#e5484d" "#8b5cf6" "#0e9f9a")
+    _accent="${_accents[$(( _n % 6 ))]}"
+    if (( (16#${_hex:0:2} * 299 + 16#${_hex:2:2} * 587 + 16#${_hex:4:2} * 114) / 1000 < 128 )); then
+        _fg="#e6e8ee"; _muted="#9aa3b5"
+    else
+        _fg="#1f2330"; _muted="#5b6272"
+    fi
+    case $(( _n % 3 )) in
+        0) _title="Страница не найдена"; _text="Такой страницы здесь нет. Проверьте адрес или вернитесь на главную." ;;
+        1) _title="Ничего не нашлось"; _text="Возможно, страница переехала или адрес набран с ошибкой." ;;
+        *) _title="Страница не найдена"; _text="Ссылка устарела или адрес введён неверно." ;;
+    esac
+    cat > "$_f" << HTML_EOF
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${_title}</title>
+<style>
+html,body{margin:0;min-height:100%}
+body{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px;box-sizing:border-box;background:#${_hex};color:${_fg};font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;text-align:center}
+main{max-width:460px}
+.code{font-size:72px;font-weight:800;line-height:1;letter-spacing:4px;color:${_accent}}
+h1{font-size:22px;margin:16px 0 8px}
+p{margin:0 0 24px;line-height:1.5;color:${_muted}}
+a{display:inline-block;padding:10px 22px;border-radius:10px;background:${_accent};color:#fff;text-decoration:none;font-weight:600}
+footer{margin-top:40px;font-size:12px;color:${_muted}}
+</style>
+</head>
+<body>
+<main>
+<div class="code">404</div>
+<h1>${_title}</h1>
+<p>${_text}</p>
+<a href="/">На главную</a>
+<footer>&copy; 2026</footer>
+</main>
+</body>
+</html>
+HTML_EOF
+    chmod 644 "$_f" 2>/dev/null || true
+    _sum=$(sha256sum "$_f" 2>/dev/null | cut -d' ' -f1)
+    [ -n "$_sum" ] || return 0
+    { awk -v f="$_f" '$1 != f' "$SELFMASK_404_SUMS" 2>/dev/null; printf '%s %s\n' "$_f" "$_sum"; } \
+        > "${SELFMASK_404_SUMS}.tmp" && mv -f "${SELFMASK_404_SUMS}.tmp" "$SELFMASK_404_SUMS"
+}
+
 _selfmask_deploy_site_extras() {
     local _dir="${1:-$SELFMASK_SITE_DIR}" _seed _d1 _d2
     [ -d "$_dir" ] || return 0
     _seed=$(printf 'site%s' "$(web_fp_seed 2>/dev/null)" | md5sum 2>/dev/null | cut -c1-2)
     _d1=$(( 16#${_seed:0:1} )); _d2=$(( 16#${_seed:1:1} ))
 
-    if [ ! -s "${_dir}/404.html" ]; then
-        if [ -s "${_dir}/style.css" ]; then
-            cat > "${_dir}/404.html" << 'HTML_EOF'
-<!doctype html>
-<html lang="ru">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Страница не найдена</title>
-<link rel="stylesheet" href="/style.css">
-</head>
-<body>
-  <h1>Страница не найдена</h1>
-  <p>Такой страницы здесь нет. Проверьте адрес или вернитесь на <a href="/">главную</a>.</p>
-  <p class="footer">&copy; 2026</p>
-</body>
-</html>
-HTML_EOF
-        elif [ -s "${_dir}/index.html" ]; then
-            cp -f "${_dir}/index.html" "${_dir}/404.html"
-        fi
-    fi
+    _selfmask_write_404 "$_dir" "$_d2"
 
     if [ ! -e "${_dir}/robots.txt" ]; then
         case $(( _d1 % 3 )) in
@@ -1689,6 +1751,8 @@ EOF
 
         root ${SELFMASK_SITE_DIR};
         index index.html index.htm;
+        # Своя 404 сайта вместо стандартной страницы nginx с его подписью.
+        error_page 404 /404.html;
 
         add_header X-Content-Type-Options nosniff always;
         add_header X-Frame-Options SAMEORIGIN always;
