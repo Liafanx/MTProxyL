@@ -2937,6 +2937,7 @@ Docker, сертификаты Let's Encrypt и Zapret2 NFT-таблица оч�
 ## Поддержать автора
 
 - [Cloudtips](https://pay.cloudtips.ru/p/ad2f7e4d)
+- [Cryptobot (USDT, TON, BTC, SOL, TRX, ETH)](http://t.me/send?start=IV1vdRpwXI0S)
 - USDT (TON) ```UQD1ExjBKk9o1w0IoZtTW6435Nn7XKSqKEz0PFR8jJ-Obv2k```
 - GRAM (TON) ```UQD1ExjBKk9o1w0IoZtTW6435Nn7XKSqKEz0PFR8jJ-Obv2k```
 - USDT (TRC20) ```TV4dKp3wDd4CiiZ6xd16oGyTaHvBSaZo5j```
