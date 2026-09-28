@@ -360,11 +360,14 @@ _binengine_memory_max() {
 
 # telemt 3.5.8 канонизирует путь helper'а iptables и запускает xtables-*-multi
 # под его собственным именем: тот печатает справку, сверка conntrack падает и
-# повторяется бесконечно (telemt issue #932). iptables движку не нужен — nft он
-# найдёт сам, поэтому multi-бинарники от процесса прячем. Без mount namespace
-# (часть LXC) такой юнит не стартует, поэтому сначала пробуем systemd-run.
+# повторяется бесконечно (telemt issue #932, исправлено в 3.5.9). iptables
+# движку не нужен — nft он найдёт сам, поэтому multi-бинарники от процесса
+# прячем. Без mount namespace (часть LXC) такой юнит не стартует, поэтому
+# сначала пробуем systemd-run.
 _binengine_hidden_helpers() {
-    local _b _t _seen=" " _lines=""
+    local _b _t _seen=" " _lines="" _v
+    _v=$(binengine_version 2>/dev/null); _v="${_v#v}"; _v="${_v%%-*}"
+    [ "$_v" = "3.5.8" ] || return 1
     for _b in iptables ip6tables iptables-restore ip6tables-restore; do
         _t=$(readlink -f "/usr/sbin/${_b}" 2>/dev/null) || continue
         [ -f "$_t" ] || continue
