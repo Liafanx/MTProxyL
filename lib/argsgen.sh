@@ -187,6 +187,7 @@ _argsgen_build() {
         _a+=(--web-carrier "${WEB_CARRIER:-websocket}")
         _a+=(--web-secret-mode "${WEB_SECRET_MODE:-dd}")
         [ -n "${WEB_DOMAIN:-}" ] && _a+=(--web-domain "$WEB_DOMAIN")
+        [ -n "${WEB_BASE_PATH:-}" ] && _a+=(--web-path "$WEB_BASE_PATH")
         case "${WEB_DECOY_MODE:-empty}" in
             static_directory) _a+=(--web-decoy site) ;;
             http_upstream)

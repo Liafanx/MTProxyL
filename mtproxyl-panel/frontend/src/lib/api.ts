@@ -237,6 +237,13 @@ export interface WebStatus {
   decoy_source: string;
   decoy_dir: string;
   debug: boolean;
+  /** Отчёты bridge-страницы в /web-status (telemt 3.5.8+). */
+  sideband?: boolean;
+  /** Путь WEB, действующий в конфиге движка; пусто — корень. */
+  base_path?: string;
+  /** Сохранённый путь: на движке старше 3.5.8 он ещё не действует. */
+  base_path_saved?: string;
+  path_supported?: boolean;
   /** Что мешает включению, через точку с запятой. Пусто — можно включать. */
   problems: string;
 }

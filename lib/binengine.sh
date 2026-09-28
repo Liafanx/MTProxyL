@@ -233,14 +233,40 @@ _binengine_memory_max() {
     return 1
 }
 
+# telemt 3.5.8 канонизирует путь helper'а iptables и запускает xtables-*-multi
+# под его собственным именем: тот печатает справку, сверка conntrack падает и
+# повторяется бесконечно (telemt issue #932). iptables движку не нужен — nft он
+# найдёт сам, поэтому multi-бинарники от процесса прячем. Без mount namespace
+# (часть LXC) такой юнит не стартует, поэтому сначала пробуем systemd-run.
+_binengine_hidden_helpers() {
+    local _b _t _seen=" " _lines=""
+    for _b in iptables ip6tables iptables-restore ip6tables-restore; do
+        _t=$(readlink -f "/usr/sbin/${_b}" 2>/dev/null) || continue
+        [ -f "$_t" ] || continue
+        case "${_t##*/}" in xtables-*-multi) ;; *) continue ;; esac
+        case "$_seen" in *" ${_t} "*) continue ;; esac
+        _seen+="${_t} "
+        _lines+="InaccessiblePaths=-${_t}"$'\n'
+    done
+    [ -n "$_lines" ] || return 1
+    command -v systemd-run >/dev/null 2>&1 || return 1
+    local _probe=(systemd-run --quiet --wait --collect)
+    while IFS= read -r _b; do
+        [ -n "$_b" ] && _probe+=(-p "$_b")
+    done <<< "$_lines"
+    timeout 20 "${_probe[@]}" /bin/true >/dev/null 2>&1 || return 1
+    printf '%s' "$_lines"
+}
+
 binengine_write_unit() {
     command -v systemctl &>/dev/null || {
         log_error "Нет systemd — бинарным движком некому управлять"
         return 1
     }
-    local _limits="" _q _mm
+    local _limits="" _q _mm _hide
     _q=$(_binengine_cpu_quota) && _limits+="CPUQuota=${_q}"$'\n'
     _mm=$(_binengine_memory_max) && _limits+="MemoryMax=${_mm}"$'\n'
+    _hide=$(_binengine_hidden_helpers) && _limits+="${_hide}"
     cat > "$ENGINE_UNIT_FILE" << UNIT_EOF
 [Unit]
 Description=MTProxyL-Telemt proxy engine

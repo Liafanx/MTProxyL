@@ -31,20 +31,26 @@ function parseAddress(address: string): ParsedAddress | null {
   return address.includes(':') ? parseIPv6(address) : parseIPv4(address);
 }
 
-/** Returns the exact address or CIDR rule covering an IP, if any. */
-export function findBlockingEntry(ip: string, entries: string[]): string | null {
-  const target = parseAddress(ip);
-  if (!target) return null;
+function parseNetwork(text: string): (ParsedAddress & { prefix: number }) | null {
+  const slash = text.indexOf('/');
+  const address = parseAddress(slash < 0 ? text : text.slice(0, slash));
+  if (!address) return null;
+  const prefixText = slash < 0 ? String(address.width) : text.slice(slash + 1);
+  if (!/^\d+$/.test(prefixText)) return null;
+  const prefix = Number(prefixText);
+  if (prefix > address.width) return null;
+  return { ...address, prefix };
+}
+
+/** Returns the exact address or CIDR rule covering an IP or a whole subnet, if any. */
+export function findBlockingEntry(target: string, entries: string[]): string | null {
+  const wanted = parseNetwork(target);
+  if (!wanted) return null;
   for (const entry of entries) {
-    const slash = entry.indexOf('/');
-    const network = parseAddress(slash < 0 ? entry : entry.slice(0, slash));
-    if (!network || network.family !== target.family) continue;
-    const prefixText = slash < 0 ? String(network.width) : entry.slice(slash + 1);
-    if (!/^\d+$/.test(prefixText)) continue;
-    const prefix = Number(prefixText);
-    if (prefix < 0 || prefix > network.width) continue;
-    const shift = BigInt(network.width - prefix);
-    if ((target.value >> shift) === (network.value >> shift)) return entry;
+    const network = parseNetwork(entry);
+    if (!network || network.family !== wanted.family || network.prefix > wanted.prefix) continue;
+    const shift = BigInt(network.width - network.prefix);
+    if ((wanted.value >> shift) === (network.value >> shift)) return entry;
   }
   return null;
 }

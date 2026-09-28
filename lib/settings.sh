@@ -125,6 +125,8 @@ WEB_DECOY_MODE="empty"              # empty|static_directory|http_upstream
 WEB_DECOY_DIR=""
 WEB_DECOY_UPSTREAM=""
 WEB_DEBUG="false"           # [web.debug].enabled, страница /web-status
+WEB_DEBUG_SIDEBAND="false"  # [web.debug].sideband: отчёты bridge-страницы (telemt 3.5.8+)
+WEB_BASE_PATH=""            # [[web.vhosts]].base_path: WEB под путём (telemt 3.5.8+)
 WEB_FP_SEED=""              # своя строка на установку: из неё берётся CSP заглушки
 WEB_ONLY_PREV_NFT="false"
 WEB_ONLY_PREV_ZAPRET2="false"
@@ -267,6 +269,8 @@ WEB_DECOY_MODE='${WEB_DECOY_MODE}'
 WEB_DECOY_DIR='${WEB_DECOY_DIR}'
 WEB_DECOY_UPSTREAM='${WEB_DECOY_UPSTREAM}'
 WEB_DEBUG='${WEB_DEBUG}'
+WEB_DEBUG_SIDEBAND='${WEB_DEBUG_SIDEBAND}'
+WEB_BASE_PATH='${WEB_BASE_PATH}'
 WEB_FP_SEED='${WEB_FP_SEED}'
 WEB_ONLY_PREV_NFT='${WEB_ONLY_PREV_NFT}'
 WEB_ONLY_PREV_ZAPRET2='${WEB_ONLY_PREV_ZAPRET2}'
@@ -515,6 +519,7 @@ load_settings() {
                 WEB_TLS_PORT|WEB_MTPROXY_PORT|\
                 WEB_HAPROXY_CERT|\
                 WEB_DECOY_MODE|WEB_DECOY_DIR|WEB_DECOY_UPSTREAM|WEB_DEBUG|WEB_FP_SEED|\
+                WEB_DEBUG_SIDEBAND|WEB_BASE_PATH|\
                 WEB_ONLY_PREV_NFT|WEB_ONLY_PREV_ZAPRET2|\
                 SUPEREXPERT_ENABLED|NGINX_CUSTOM_ENABLED|HTTPS_HSTS_ENABLED|HTTPS_PERMISSIONS_ENABLED|\
                 IPBLOCK_ENABLED|IPBLOCK_ACTION|IPBLOCK_LIST|IPBLOCK_LIST6|\
@@ -597,6 +602,9 @@ load_settings() {
     esac
     [[ "$WEB_PUBLIC_PORT" =~ ^[0-9]+$ ]] && [ "$WEB_PUBLIC_PORT" -ge 1 ] && [ "$WEB_PUBLIC_PORT" -le 65535 ] || WEB_PUBLIC_PORT="443"
     [ "$WEB_DEBUG" = "true" ] || WEB_DEBUG="false"
+    [ "$WEB_DEBUG_SIDEBAND" = "true" ] || WEB_DEBUG_SIDEBAND="false"
+    [ -z "$WEB_BASE_PATH" ] || { [ "${#WEB_BASE_PATH}" -le 128 ] \
+        && [[ "$WEB_BASE_PATH" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*(/[A-Za-z0-9][A-Za-z0-9_-]*)*$ ]]; } || WEB_BASE_PATH=""
     case "$WEB_CARRIER" in
         https|https-lanes|websocket|websocket-lanes) ;;
         *) WEB_CARRIER="websocket" ;;

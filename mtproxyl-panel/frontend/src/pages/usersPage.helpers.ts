@@ -101,11 +101,20 @@ export interface WebLinkConfig {
   domain: string;
   secret_mode: string;
   mtproto_enabled?: boolean;
+  base_path?: string;
+}
+
+function base64Url(bytes: number[]): string {
+  let binary = '';
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 /**
  * tg://webproxy для пользователя. Порта в ней нет — клиент ходит
- * только на 443, а секрет идёт голым либо с префиксом dd: ee в WEB не бывает.
+ * только на 443. В корне секрет идёт голым либо с префиксом dd: ee в WEB не
+ * бывает. Под путём (telemt 3.5.8+) Telegram Desktop ждёт server=host%2Fpath
+ * и base64url от 0x70, 0xdd для dd и байтов секрета — как печатает движок.
  */
 export function buildWebLink(
   links: UserLinks | undefined,
@@ -114,6 +123,13 @@ export function buildWebLink(
   if (!web?.enabled || !web.domain) return undefined;
   const raw = extractSecret(links);
   if (!raw) return undefined;
+  if (web.base_path) {
+    if (!/^[0-9a-f]{32}$/i.test(raw)) return undefined;
+    const bytes = [0x70];
+    if (web.secret_mode === 'dd') bytes.push(0xdd);
+    for (let i = 0; i < raw.length; i += 2) bytes.push(parseInt(raw.slice(i, i + 2), 16));
+    return `tg://webproxy?server=${web.domain}%2F${web.base_path.split('/').join('%2F')}&secret=${base64Url(bytes)}`;
+  }
   const prefix = web.secret_mode === 'dd' ? 'dd' : '';
   return `tg://webproxy?server=${web.domain}&secret=${prefix}${raw}`;
 }

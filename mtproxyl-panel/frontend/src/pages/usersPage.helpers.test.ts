@@ -139,6 +139,21 @@ assertDeepEqual(
   buildWebLink({ classic: [`tg://proxy?server=a.ru&port=443&secret=${SECRET}`] }, { ...web, secret_mode: 'plain' }),
   `tg://webproxy?server=web.example.com&secret=${SECRET}`,
 );
+// Под путём — формат telemt 3.5.8: host%2Fpath и base64url(0x70 [0xdd] + секрет).
+assertDeepEqual(
+  buildWebLink(
+    { classic: ['tg://proxy?server=a.ru&port=443&secret=000102030405060708090a0b0c0d0e0f'] },
+    { ...web, domain: 'proxy.example.com', secret_mode: 'plain', base_path: 'telegram/web' },
+  ),
+  'tg://webproxy?server=proxy.example.com%2Ftelegram%2Fweb&secret=cAABAgMEBQYHCAkKCwwNDg8',
+);
+assertDeepEqual(
+  buildWebLink(
+    { classic: ['tg://proxy?server=a.ru&port=443&secret=000102030405060708090a0b0c0d0e0f'] },
+    { ...web, domain: 'proxy.example.com', secret_mode: 'dd', base_path: 'telegram/web' },
+  ),
+  'tg://webproxy?server=proxy.example.com%2Ftelegram%2Fweb&secret=cN0AAQIDBAUGBwgJCgsMDQ4P',
+);
 // Выключенный WEB и отсутствие статуса ссылку не дают.
 assertDeepEqual(buildWebLink({ classic: [`tg://proxy?secret=${SECRET}`] }, { ...web, enabled: false }), undefined);
 assertDeepEqual(buildWebLink({ classic: [`tg://proxy?secret=${SECRET}`] }, undefined), undefined);
