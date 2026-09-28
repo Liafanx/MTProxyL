@@ -1,0 +1,152 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ops <ops@local>
+Date: Mon, 28 Sep 2026 16:14:22 +0000
+Subject: [PATCH 3/4] patch: per-DC Active-writer cap (floor_max) on admission
+
+Ported to 3.5.7: the admission logic moved from pool.rs to
+pool/writer_admission.rs; the change itself is unchanged.
+---
+ .../middle_proxy/pool/writer_admission.rs     | 58 +++++++++++++++++++
+ .../tests/pool_writer_security_tests.rs       | 56 ++++++++++++++++++
+ 2 files changed, 114 insertions(+)
+
+diff --git a/src/transport/middle_proxy/pool/writer_admission.rs b/src/transport/middle_proxy/pool/writer_admission.rs
+index 49b8c01..eec419e 100644
+--- a/src/transport/middle_proxy/pool/writer_admission.rs
++++ b/src/transport/middle_proxy/pool/writer_admission.rs
+@@ -31,6 +31,51 @@ impl MePool {
+             .sum()
+     }
+ 
++    /// Number of non-draining `Active`-contour writers currently held by `dc`.
++    async fn active_writer_count_for_dc(&self, dc: i32) -> usize {
++        let ws = self.writers.read().await;
++        ws.iter()
++            .filter(|w| {
++                !w.draining.load(std::sync::atomic::Ordering::Relaxed)
++                    && w.writer_dc == dc
++                    && matches!(
++                        WriterContour::from_u8(
++                            w.contour.load(std::sync::atomic::Ordering::Relaxed),
++                        ),
++                        WriterContour::Active
++                    )
++            })
++            .count()
++    }
++
++    /// Per-DC ceiling on `Active` writers, equal to the class maximum
++    /// (`floor_max = base_required + cpu_cores * extra_per_core`, the same value
++    /// surfaced as `floor_max` in the pool status API). Returns `0` (meaning "no
++    /// ceiling") when the DC has no known endpoints, so an unknown DC is never
++    /// blocked. Enforcing this in the admission path turns `floor_max` into an
++    /// actual cap and prevents a single hot DC from monopolizing the global
++    /// writer budget.
++    async fn active_writer_class_max_for_dc(&self, dc: i32) -> usize {
++        let mut endpoints_len = 0usize;
++        if let Some(addrs) = self.proxy_map_v4.read().await.get(&dc) {
++            endpoints_len += addrs.len();
++        }
++        if let Some(addrs) = self.proxy_map_v6.read().await.get(&dc) {
++            endpoints_len += addrs.len();
++        }
++        if endpoints_len == 0 {
++            return 0;
++        }
++        let base_required = self.required_writers_for_dc(endpoints_len);
++        let cores = self.adaptive_floor_effective_cpu_cores();
++        let extra_per_core = if endpoints_len <= 1 {
++            self.adaptive_floor_max_extra_single_per_core()
++        } else {
++            self.adaptive_floor_max_extra_multi_per_core()
++        };
++        base_required.saturating_add(cores.saturating_mul(extra_per_core))
++    }
++
+     pub(in crate::transport::middle_proxy) async fn can_open_writer_for_contour(
+         &self,
+         contour: WriterContour,
+@@ -40,6 +85,19 @@ impl MePool {
+         let (active_writers, warm_writers, _) = self.non_draining_writer_counts_by_contour().await;
+         match contour {
+             WriterContour::Active => {
++                // Per-DC ceiling: a single DC must never hold more than its class
++                // maximum (`floor_max`) of Active writers. Without this, a hot DC's
++                // demand-driven refills grow unbounded up to the *global* budget and
++                // lock other DCs out of their floor. A DC below its floor always
++                // passes this check because its count is `< base_required <=
++                // floor_max`, so floor coverage is never blocked here.
++                let dc_class_max = self.active_writer_class_max_for_dc(writer_dc).await;
++                if dc_class_max > 0
++                    && self.active_writer_count_for_dc(writer_dc).await >= dc_class_max
++                {
++                    return false;
++                }
++
+                 let active_cap = self.adaptive_floor_active_cap_configured_total();
+                 if active_writers < active_cap {
+                     return true;
+diff --git a/src/transport/middle_proxy/tests/pool_writer_security_tests.rs b/src/transport/middle_proxy/tests/pool_writer_security_tests.rs
+index 1d57257..f36cb4a 100644
+--- a/src/transport/middle_proxy/tests/pool_writer_security_tests.rs
++++ b/src/transport/middle_proxy/tests/pool_writer_security_tests.rs
+@@ -473,3 +473,59 @@ async fn stress_parallel_duplicate_removals_are_idempotent() {
+     assert!(pool.writers.read().await.is_empty());
+     assert_eq!(pool.conn_count.load(Ordering::Relaxed), 0);
+ }
++
++// A single DC must not be able to open Active writers beyond its class
++// maximum (`floor_max`), so a hot DC cannot monopolize the global writer
++// budget and starve other DCs of their floor. floor_max is derived from the
++// pool's own accessors so the assertion is independent of the host CPU count.
++#[tokio::test]
++async fn active_writer_admission_is_capped_per_dc_at_floor_max() {
++    let pool = make_pool().await;
++    let dc = 2i32;
++    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(149, 154, 161, 144)), 8888);
++
++    // Single-endpoint DC.
++    {
++        let mut map = pool.proxy_map_v4.write().await;
++        map.insert(dc, vec![(addr.ip(), addr.port())]);
++    }
++
++    // Compute the DC ceiling exactly as the admission path does.
++    let base_required = pool.required_writers_for_dc(1);
++    let cores = pool.adaptive_floor_effective_cpu_cores();
++    let extra_per_core = pool.adaptive_floor_max_extra_single_per_core();
++    let floor_max = base_required + cores * extra_per_core;
++    assert!(floor_max >= 1, "floor_max must be positive");
++
++    // Fill the DC to one writer below its ceiling: opening is still allowed.
++    for i in 0..(floor_max as u64 - 1) {
++        insert_writer(&pool, 1_000 + i, dc, addr, false, Instant::now()).await;
++    }
++    assert!(
++        pool.can_open_writer_for_contour(WriterContour::Active, false, dc)
++            .await,
++        "a DC below its floor_max must still be admitted"
++    );
++
++    // Reaching the ceiling refuses further opens, even though the *global*
++    // budget is nowhere near full.
++    insert_writer(&pool, 2_000, dc, addr, false, Instant::now()).await;
++    assert!(
++        !pool
++            .can_open_writer_for_contour(WriterContour::Active, false, dc)
++            .await,
++        "a DC at its floor_max ceiling must be refused so it cannot monopolize the budget"
++    );
++
++    // A DC that is below its own floor is never blocked by this ceiling.
++    let cold_dc = 3i32;
++    {
++        let mut map = pool.proxy_map_v4.write().await;
++        map.insert(cold_dc, vec![(addr.ip(), addr.port())]);
++    }
++    assert!(
++        pool.can_open_writer_for_contour(WriterContour::Active, false, cold_dc)
++            .await,
++        "a starved DC (0 writers) must always be admitted up to its floor"
++    );
++}

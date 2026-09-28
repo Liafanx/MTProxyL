@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ops <ops@local>
+Date: Wed, 9 Sep 2026 12:28:41 +0000
+Subject: [PATCH 2/4] perf: return freed pages to the OS with periodic
+ malloc_trim
+
+RSS was pinned at the historical maximum (2.0-2.8 GB of a 3.9 GB box, three
+nodes in swap) while the connection count varied fivefold. Not a leak: every
+buffer is released through Drop. Memory went back to glibc but never to the
+kernel - MALLOC_ARENA_MAX caps the number of arenas, not the 64 MiB heaps
+chained inside each one (44 of them, 2.4 GB dirty). Client-side allocations are
+mostly below the mmap threshold, so MALLOC_MMAP_THRESHOLD_ could not help.
+malloc_trim walks every arena and madvises free pages back, once a minute.
+---
+ src/proxy/direct_buffer_budget.rs | 52 +++++++++++++++++++++++++++++++
+ 1 file changed, 52 insertions(+)
+
+diff --git a/src/proxy/direct_buffer_budget.rs b/src/proxy/direct_buffer_budget.rs
+index 0242294..27429d6 100644
+--- a/src/proxy/direct_buffer_budget.rs
++++ b/src/proxy/direct_buffer_budget.rs
+@@ -22,6 +22,10 @@ const AUTO_HARD_FALLBACK_BYTES: usize = 512 * 1024 * 1024;
+ const TARGET_FLOOR_MIN_BYTES: usize = 16 * 1024 * 1024;
+ const CONTROL_INTERVAL: Duration = Duration::from_secs(1);
+ const HEALTHY_RECOVERY_SAMPLES: u8 = 30;
++// Как часто звать malloc_trim: раз в TRIM_EVERY_TICKS проходов контроллера.
++// CONTROL_INTERVAL = 1 с, значит раз в минуту (см. пояснение у вызова).
++#[cfg(all(target_os = "linux", target_env = "gnu"))]
++const TRIM_EVERY_TICKS: u32 = 60;
+ const BUFFER_POOL_TRIM_LOW_WATERMARK: usize = 64;
+ const BUFFER_POOL_TRIM_HIGH_WATERMARK: usize = 128;
+ 
+@@ -358,6 +362,8 @@ pub(crate) async fn run_direct_buffer_budget_controller(
+         .max_buffers()
+         .min(BUFFER_POOL_TRIM_HIGH_WATERMARK);
+     let mut pool_trim_armed = true;
++    #[cfg(all(target_os = "linux", target_env = "gnu"))]
++    let mut trim_ticks: u32 = 0;
+ 
+     loop {
+         interval.tick().await;
+@@ -396,6 +402,52 @@ pub(crate) async fn run_direct_buffer_budget_controller(
+             pool_trim_armed = false;
+         }
+ 
++        // ── Возврат свободных страниц системе (добавлено 09.09.2026) ──────────
++        //
++        // ЗАЧЕМ. На боевых нодах RSS telemt застывал на историческом максимуме:
++        // 2.0-2.8 ГБ из 3.9 ГБ машины, три ноды из семи уходили в своп. Ночью
++        // соединений впятеро меньше (5 тыс. против 20 тыс.), а RSS тот же.
++        // VmHWM совпадал с текущим RSS — память не возвращалась НИКОГДА, только
++        // перезапуск процесса освобождал её разом (~0.5 ГБ на ноду).
++        //
++        // ПРИЧИНА НЕ В УТЕЧКЕ. Все буферы освобождаются через Drop (проверено
++        // по коду: PooledBuffer, DirectBufferLease, Box<[u8]> в AdaptiveBufReader;
++        // mem::forget/Box::leak отсутствуют). Память освобождается в glibc malloc,
++        // но НЕ в ядро: MALLOC_ARENA_MAX=4 ограничивает число арен, а каждая
++        // арена доращивается цепочкой куч по 64 МиБ, и число этих куч не
++        // ограничено ничем. В /proc/<pid>/smaps их было 44 штуки — 2.4 ГБ грязных
++        // страниц. Основная память клиентская и мелкая (шифр-буферы до 32 КиБ,
++        // чтение 8 КиБ, запись FakeTLS до 33 КиБ) — куски разной живучести лежат
++        // вперемешку с долгоживущими соединениями, glibc отдаёт только верх кучи.
++        //
++        // ⚠ ОПЫТ С MALLOC_MMAP_THRESHOLD_=32768 НИЧЕГО НЕ ДАЛ и не мог: почти все
++        // эти аллокации МЕЛЬЧЕ порога, они в любом случае берутся из арен.
++        //
++        // malloc_trim обходит ВСЕ арены и возвращает свободные страницы через
++        // madvise — ровно то, чего не делает обычный free. Раз в минуту: чаще
++        // бессмысленно (страницы не успевают освободиться), реже — память стоит
++        // дольше. Проход стоит десятки миллисекунд и идёт в отдельной задаче
++        // контроллера, клиентские соединения он не задерживает.
++        //
++        // От режима не зависит: работает одинаково на Direct и на ME.
++        // Только glibc: у musl malloc_trim нет, а его mallocng и так отдаёт
++        // освобождённые группы страниц ядру.
++        // ⚠ ЛОКАЛЬНОЕ РАЗРЕШЕНИЕ unsafe. Крейт запрещает unsafe целиком
++        // (src/proxy/mod.rs:22, `unsafe_code`), и это правильно. Здесь оно нужно
++        // ровно на один вызов libc без указателей и без разделяемого состояния —
++        // разрешаем точечно, а не снимаем запрет с модуля.
++        #[cfg(all(target_os = "linux", target_env = "gnu"))]
++        #[allow(unsafe_code)]
++        {
++            trim_ticks = trim_ticks.saturating_add(1);
++            if trim_ticks >= TRIM_EVERY_TICKS {
++                trim_ticks = 0;
++                // SAFETY: malloc_trim не принимает и не возвращает указателей,
++                // потокобезопасна и при нуле просто освобождает всё, что может.
++                unsafe { libc::malloc_trim(0) };
++            }
++        }
++
+         let pool_snapshot = buffer_pool.stats();
+         stats.set_buffer_pool_gauges(
+             pool_snapshot.pooled,

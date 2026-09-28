@@ -1,0 +1,149 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ops <ops@local>
+Date: Mon, 28 Sep 2026 16:12:43 +0000
+Subject: [PATCH 1/4] fix: back off between failed ME refill attempts
+
+---
+ src/transport/middle_proxy/pool_refill.rs | 104 ++++++++++++++++++++++
+ 1 file changed, 104 insertions(+)
+
+diff --git a/src/transport/middle_proxy/pool_refill.rs b/src/transport/middle_proxy/pool_refill.rs
+index 30a7809..3cc829c 100644
+--- a/src/transport/middle_proxy/pool_refill.rs
++++ b/src/transport/middle_proxy/pool_refill.rs
+@@ -4,6 +4,7 @@ use std::sync::Arc;
+ use std::sync::atomic::Ordering;
+ use std::time::{Duration, Instant};
+ 
++use rand::RngExt;
+ use tracing::{debug, info, warn};
+ 
+ use crate::crypto::SecureRandom;
+@@ -51,6 +52,44 @@ impl Drop for RefillRunGuard {
+     }
+ }
+ 
++// Пауза между НЕУДАЧНЫМИ попытками восполнения writer'а.
++//
++// Зачем. Циклы в `refill_writer_after_loss` крутились без единой задержки: при
++// мёртвом эндпоинте это до 32 идущих подряд connect'ов, каждый из которых
++// отбивается за один RTT. У одноэндпоинтных DC (1/2/3 — там ровно один
++// middle-proxy) это означает, что после сброса со стороны Telegram мы долбим
++// один и тот же адрес десятки раз в секунду, ничего этим не добиваясь.
++//
++// Почему только после НЕУДАЧИ. Успешная попытка выходит из цикла через
++// `return true`, поэтому на живом эндпоинте задержки не возникает вовсе: первый
++// же connect проходит, и восстановление остаётся мгновенным. Платит только тот
++// сценарий, где платить не жалко, — эндпоинт всё равно не отвечает.
++//
++// Почему с джиттером. Восполнения РАЗНЫХ эндпоинтов между собой не
++// дедуплицируются (ключ — пара dc+addr), и без разброса их попытки сходятся в
++// такт. Джиттер до 50% разводит их во времени; та же схема уже применяется в
++// health-пути (`health.rs`, JITTER_FRAC_NUM).
++//
++// Величины подобраны так, чтобы 16 попыток укладывались примерно в 12 секунд:
++// заметно спокойнее прежнего, но всё ещё быстрее health-пути с его базой 500 мс
++// и потолком 30 с, рассчитанного на долгую недоступность.
++const ME_REFILL_RETRY_DELAY_BASE_MS: u64 = 50;
++const ME_REFILL_RETRY_DELAY_CAP_MS: u64 = 1_500;
++const ME_REFILL_RETRY_JITTER_FRAC: u64 = 2; // джиттер до 50% от задержки
++
++// Задержка перед следующей попыткой: экспоненциальный рост с потолком плюс
++// джиттер. `failed_attempts` — сколько попыток уже провалилось (1 после первой).
++fn refill_retry_delay(failed_attempts: u32) -> Duration {
++    let shift = failed_attempts.saturating_sub(1).min(16);
++    let grown = ME_REFILL_RETRY_DELAY_BASE_MS
++        .checked_shl(shift)
++        .unwrap_or(ME_REFILL_RETRY_DELAY_CAP_MS);
++    let capped = grown.min(ME_REFILL_RETRY_DELAY_CAP_MS);
++    let jitter_span = (capped / ME_REFILL_RETRY_JITTER_FRAC).max(1);
++    let jitter = rand::rng().random_range(0..=jitter_span);
++    Duration::from_millis(capped.saturating_add(jitter))
++}
++
+ impl MePool {
+     pub(super) async fn sweep_endpoint_quarantine(&self) {
+         let configured = self
+@@ -316,6 +355,13 @@ impl MePool {
+                             error = %e,
+                             "ME immediate same-endpoint reconnect failed"
+                         );
++                        // Пауза только между неудачами и только если попытки ещё
++                        // остались: перед выходом из цикла ждать незачем.
++                        if attempt + 1 < fast_retries
++                            && total_attempts < ME_REFILL_TOTAL_ATTEMPT_CAP
++                        {
++                            tokio::time::sleep(refill_retry_delay(total_attempts)).await;
++                        }
+                     }
+                 }
+             }
+@@ -350,6 +396,11 @@ impl MePool {
+                 );
+                 return true;
+             }
++            // Тот же приём, что и в цикле выше: ждём только после неудачи и
++            // только если впереди есть ещё попытки.
++            if attempt + 1 < fast_retries && total_attempts < ME_REFILL_TOTAL_ATTEMPT_CAP {
++                tokio::time::sleep(refill_retry_delay(total_attempts)).await;
++            }
+         }
+ 
+         self.stats.increment_me_refill_failed_total();
+@@ -410,3 +461,56 @@ impl MePool {
+             });
+     }
+ }
++
++#[cfg(test)]
++mod refill_backoff_tests {
++    use super::*;
++
++    #[test]
++    fn delay_grows_and_is_capped() {
++        // Первая неудача — около базы, дальше удвоение до потолка.
++        let d1 = refill_retry_delay(1).as_millis() as u64;
++        let d2 = refill_retry_delay(2).as_millis() as u64;
++        let d9 = refill_retry_delay(9).as_millis() as u64;
++        assert!(
++            (ME_REFILL_RETRY_DELAY_BASE_MS..=ME_REFILL_RETRY_DELAY_BASE_MS * 3 / 2).contains(&d1),
++            "первая задержка вне ожидаемого окна: {d1}"
++        );
++        assert!(d2 >= ME_REFILL_RETRY_DELAY_BASE_MS * 2, "рост не идёт: {d2}");
++        let cap_with_jitter =
++            ME_REFILL_RETRY_DELAY_CAP_MS + ME_REFILL_RETRY_DELAY_CAP_MS / ME_REFILL_RETRY_JITTER_FRAC;
++        assert!(d9 <= cap_with_jitter, "потолок не держится: {d9}");
++    }
++
++    #[test]
++    fn delay_never_overflows_on_large_attempt_counts() {
++        // saturating/checked-арифметика: большой счётчик не должен паниковать.
++        for n in [16u32, 32, 1_000, u32::MAX] {
++            let d = refill_retry_delay(n).as_millis() as u64;
++            let cap_with_jitter = ME_REFILL_RETRY_DELAY_CAP_MS
++                + ME_REFILL_RETRY_DELAY_CAP_MS / ME_REFILL_RETRY_JITTER_FRAC;
++            assert!(d <= cap_with_jitter, "переполнение при n={n}: {d}");
++        }
++    }
++
++    #[test]
++    fn jitter_actually_varies() {
++        // Без разброса восполнения разных эндпоинтов сойдутся в такт — ради
++        // этого джиттер и добавлен, так что проверяем, что он не константа.
++        let seen: std::collections::HashSet<u64> = (0..64)
++            .map(|_| refill_retry_delay(4).as_millis() as u64)
++            .collect();
++        assert!(seen.len() > 1, "джиттер не работает: все значения одинаковы");
++    }
++
++    #[test]
++    fn sixteen_attempts_fit_in_reasonable_window() {
++        // Проектное ограничение: 16 попыток должны укладываться примерно в
++        // 12-20 секунд — быстрее health-пути, но не долбёжка.
++        let total: u64 = (1..=16).map(|n| refill_retry_delay(n).as_millis() as u64).sum();
++        assert!(
++            (8_000..=25_000).contains(&total),
++            "суммарное ожидание вне проектных рамок: {total} мс"
++        );
++    }
++}
