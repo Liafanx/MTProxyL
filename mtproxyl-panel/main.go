@@ -15,7 +15,7 @@ import (
 	"github.com/Liafanx/mtproxyl-panel/internal/server"
 )
 
-var version = "1.2.9"
+var version = "1.2.10"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "version" {
