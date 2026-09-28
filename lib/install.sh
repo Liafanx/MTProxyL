@@ -70,7 +70,9 @@ run_installer() {
     # Подкачка до движка: без неё установка на маленькой машине упирается в OOM.
     offer_swap_if_low_ram
 
-    if [ "${ENGINE_BACKEND:-docker}" = "binary" ]; then
+    if [ "${ENGINE_BACKEND:-docker}" = "binary" ] && [ -n "${ENGINE_CUSTOM_URL:-}" ]; then
+        binengine_install_custom "$ENGINE_CUSTOM_URL" "${ENGINE_CUSTOM_SHA256:-}" || exit 1
+    elif [ "${ENGINE_BACKEND:-docker}" = "binary" ]; then
         binengine_fetch "${ENGINE_VERSION:-latest}" || exit 1
         ENGINE_VERSION=$(binengine_version)
     else
@@ -430,7 +432,7 @@ installer_pick_web_site() {
 # Чем менеджер будет держать движок. Docker привычнее, бинарник экономит
 # время установки и память: сам Docker тогда не ставится вовсе.
 installer_pick_engine_backend() {
-    ENGINE_VERSION=""
+    ENGINE_VERSION=""; ENGINE_CUSTOM_URL=""; ENGINE_CUSTOM_SHA256=""
     # Бинарник живёт службой systemd. Без него (Alpine с OpenRC) выбирать не из
     # чего — молча предложить и упасть на запуске было бы хуже.
     if ! command -v systemctl &>/dev/null; then
@@ -443,6 +445,7 @@ installer_pick_engine_backend() {
     echo ""
     echo -e "  ${BOLD}[1]${NC} Docker-образ ${DIM}— контейнер mtproxyl (по умолчанию)${NC}"
     echo -e "  ${BOLD}[2]${NC} Бинарник MTProxyL-Telemt ${DIM}— служба systemd, без Docker${NC}"
+    echo -e "  ${BOLD}[3]${NC} Свой бинарник telemt по ссылке ${DIM}— тоже служба systemd${NC}"
     echo ""
     echo -e "  ${DIM}Бинарник ставится за секунды и не тянет за собой Docker: на${NC}"
     echo -e "  ${DIM}свежей машине это минус несколько минут и сотни мегабайт.${NC}"
@@ -451,7 +454,23 @@ installer_pick_engine_backend() {
     echo -e "  ${DIM}главное меню → Движок.${NC}"
     echo ""
     local _ec; _ec=$(_fix_read_choice "выбор" "1" "${_FIX_ANS_ENGINE-}")
-    if [ "$_ec" = "2" ]; then
+    if [ "$_ec" = "3" ]; then
+        ENGINE_BACKEND="binary"
+        echo ""
+        echo -e "  ${DIM}Ссылка https на бинарник telemt или архив .tar.gz с ним, например:${NC}"
+        echo -e "  ${DIM}https://github.com/telemt/telemt/releases/download/3.5.7/telemt-x86_64-linux-musl.tar.gz${NC}"
+        local _cu _cs
+        while true; do
+            read_line _cu "  ${BOLD}Ссылка:${NC} "
+            _binengine_url_valid "$_cu" && break
+            log_error "Нужна ссылка https://…"
+        done
+        read_line _cs "  ${BOLD}sha256 [Enter — взять <ссылка>.sha256, если есть]:${NC} "
+        [ -z "$_cs" ] || [[ "$_cs" =~ ^[0-9a-fA-F]{64}$ ]] || { log_warn "sha256 не похож на хеш — проверка по нему пропущена"; _cs=""; }
+        ENGINE_CUSTOM_URL="$_cu"; ENGINE_CUSTOM_SHA256="${_cs,,}"
+        log_success "Движок: свой бинарник telemt"
+        return 0
+    elif [ "$_ec" = "2" ]; then
         ENGINE_BACKEND="binary"
         log_success "Движок: бинарник MTProxyL-Telemt"
     else
@@ -714,10 +733,10 @@ show_install_summary() {
         for i in "${!SECRETS_LABELS[@]}"; do
             [ "${SECRETS_ENABLED[$i]}" = "true" ] || continue
             echo -e "  ${BRIGHT_GREEN}${SECRETS_LABELS[$i]}:${NC}"
-            local _kind _fs
-            while mtproto_is_enabled && IFS='|' read -r _kind _fs; do
+            local _kind _fs _dom
+            while mtproto_is_enabled && IFS='|' read -r _kind _fs _dom; do
                 [ -n "$_fs" ] || continue
-                echo -e "  ${DIM}$(link_kind_title "$_kind"):${NC} ${CYAN}tg://proxy?server=${server_ip}&port=${PROXY_PORT}&secret=${_fs}${NC}"
+                echo -e "  ${DIM}$(link_kind_title "$_kind" "$_dom"):${NC} ${CYAN}tg://proxy?server=${server_ip}&port=${PROXY_PORT}&secret=${_fs}${NC}"
             done <<< "$(build_link_secrets "${SECRETS_KEYS[$i]}")"
             if web_is_enabled; then
                 local _wl; _wl=$(web_link_for_secret "${SECRETS_KEYS[$i]}" 2>/dev/null)

@@ -321,7 +321,10 @@ _mig_build_args() {
     _a+=(--proxy-mode "${PROXY_MODE:-mtproto}")
     # Движок переезжает тем же носителем: у кого бинарник — тому и версию,
     # чтобы на новой машине встало ровно то же, что работало на старой.
-    if [ "$(engine_backend)" = "binary" ]; then
+    if [ "$(engine_backend)" = "binary" ] && binengine_is_custom; then
+        _a+=(--engine binary --engine-url "$(binengine_source)")
+        [ -n "${ENGINE_CUSTOM_SHA256:-}" ] && _a+=(--engine-sha256 "$ENGINE_CUSTOM_SHA256")
+    elif [ "$(engine_backend)" = "binary" ]; then
         _a+=(--engine binary)
         local _ev; _ev=$(binengine_version)
         [ -n "$_ev" ] && [ "$_ev" != "unknown" ] && _a+=(--engine-version "$_ev")

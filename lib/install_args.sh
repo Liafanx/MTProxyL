@@ -28,7 +28,7 @@ _IA_GEOIP=""
 _IA_BLOCK_FILE=""
 _IA_BLOCK_LIST=""
 _IA_BLOCK_ACTION=""
-_IA_ENGINE=""; _IA_ENGINE_VERSION=""
+_IA_ENGINE=""; _IA_ENGINE_VERSION=""; _IA_ENGINE_URL=""; _IA_ENGINE_SHA256=""
 _IA_TGBOT_TOKEN=""; _IA_TGBOT_ADMIN=""
 _IA_SHAPING_MODE=""; _IA_SHAPING_CHANNEL=""; _IA_SHAPING_RESERVE=""
 _IA_SHAPING_USERS=""; _IA_SHAPING_TOTAL=""; _IA_SHAPING_IP=""
@@ -46,6 +46,9 @@ install_args_help() {
                                или бинарник MTProxyL-Telemt под systemd
     --engine-version <тег>     версия telemt для бинарника (по умолчанию
                                последняя), например 3.5.5
+    --engine-url <ссылка>      свой бинарник telemt или архив .tar.gz по https,
+                               ставится бинарным движком
+    --engine-sha256 <хеш>      sha256 файла по ссылке (иначе <ссылка>.sha256)
 
   Прокси
     --proxy-mode mtproto|web|combined
@@ -170,6 +173,8 @@ _install_args_parse() {
                     *) log_error "--engine: docker или binary"; return 1 ;;
                 esac ;;
             --engine-version) _IA_ENGINE_VERSION="$_v" ;;
+            --engine-url)    _IA_ENGINE_URL="$_v" ;;
+            --engine-sha256) _IA_ENGINE_SHA256="${_v,,}" ;;
             --port)          _IA_PORT="$_v" ;;
             --proxy-mode)    _IA_PROXY_MODE="${_v,,}" ;;
             --metrics-port)  _IA_METRICS_PORT="$_v" ;;
@@ -383,6 +388,17 @@ _install_args_validate() {
             *) log_error "--sni-policy: mask, drop, accept или reject_handshake"; _ok=false ;;
         esac
     fi
+    if [ -n "$_IA_ENGINE_URL" ]; then
+        _binengine_url_valid "$_IA_ENGINE_URL" || {
+            log_error "--engine-url: нужна ссылка https://… на бинарник telemt или архив .tar.gz"; _ok=false; }
+        [ "$_IA_ENGINE" != "docker" ] || { log_error "--engine-url ставит бинарный движок, а задан --engine docker"; _ok=false; }
+        [ -z "$_IA_ENGINE_VERSION" ] || { log_error "--engine-url и --engine-version вместе не имеют смысла"; _ok=false; }
+        _IA_ENGINE="binary"
+    fi
+    if [ -n "$_IA_ENGINE_SHA256" ]; then
+        [[ "$_IA_ENGINE_SHA256" =~ ^[0-9a-f]{64}$ ]] || { log_error "--engine-sha256: 64 шестнадцатеричных символа"; _ok=false; }
+        [ -n "$_IA_ENGINE_URL" ] || { log_error "--engine-sha256 без --engine-url"; _ok=false; }
+    fi
     if [ -n "$_IA_ENGINE_VERSION" ] && [ "$_IA_ENGINE" = "docker" ]; then
         log_error "--engine-version имеет смысл только с --engine binary"
         _ok=false
@@ -576,7 +592,10 @@ run_installer_args() {
     fi
     ENGINE_BACKEND="${ENGINE_BACKEND:-docker}"
     ENGINE_VERSION=""
-    if [ "$ENGINE_BACKEND" = "binary" ]; then
+    if [ "$ENGINE_BACKEND" = "binary" ] && [ -n "$_IA_ENGINE_URL" ]; then
+        log_info "Движок: свой бинарник telemt"
+        binengine_install_custom "$_IA_ENGINE_URL" "$_IA_ENGINE_SHA256" || return 1
+    elif [ "$ENGINE_BACKEND" = "binary" ]; then
         log_info "Движок: бинарник MTProxyL-Telemt, без Docker"
         binengine_fetch "${_IA_ENGINE_VERSION:-latest}" || return 1
         ENGINE_VERSION=$(binengine_version)

@@ -56,10 +56,13 @@ engine_local_versions() {
 # что лежит на диске и что есть в релизах.
 engine_versions_json() {
     local _cur; _cur=$(engine_current_version)
-    printf '{"backend":"%s","current":"%s","binary":%s,"docker_available":%s,' \
+    local _src=""
+    engine_is_binary && _src=$(binengine_source 2>/dev/null)
+    printf '{"backend":"%s","current":"%s","binary":%s,"docker_available":%s,"custom":%s,"custom_url":"%s",' \
         "$(json_escape "$(engine_backend)")" "$(json_escape "$_cur")" \
         "$(engine_is_binary && echo true || echo false)" \
-        "$(command -v docker >/dev/null && echo true || echo false)"
+        "$(command -v docker >/dev/null && echo true || echo false)" \
+        "$([ -n "$_src" ] && echo true || echo false)" "$(json_escape "$_src")"
 
     printf '"local":['
     local _v _first=1
@@ -326,12 +329,16 @@ handle_engine_command() {
             if engine_is_binary; then
                 echo -e "  ${DIM}Бинарник:${NC}    ${ENGINE_BIN_PATH}"
                 echo -e "  ${DIM}Служба:${NC}      ${ENGINE_SERVICE}.service"
+                binengine_is_custom && echo -e "  ${DIM}Источник:${NC}    свой бинарник — $(binengine_source)"
             else
                 echo -e "  ${DIM}Закреплён:${NC}   commit ${TELEMT_COMMIT}"
             fi
             ;;
         backend)
             engine_switch_backend "${1:-}"
+            ;;
+        custom)
+            engine_install_custom "$@"
             ;;
         list)
             echo ""
@@ -394,8 +401,13 @@ handle_engine_command() {
         rebuild)
             check_root
             if engine_is_binary; then
-                log_info "Бинарный движок не собирается — перекачиваем текущую версию"
-                binengine_fetch "$(binengine_version)" || return 1
+                if binengine_is_custom; then
+                    log_info "Перекачиваем свой бинарник по той же ссылке"
+                    binengine_install_custom "$(binengine_source)" || return 1
+                else
+                    log_info "Бинарный движок не собирается — перекачиваем текущую версию"
+                    binengine_fetch "$(binengine_version)" || return 1
+                fi
                 is_proxy_running && { load_secrets; restart_proxy_container; }
                 return 0
             fi
@@ -416,6 +428,8 @@ handle_engine_command() {
             echo -e "  ${DIM}cleanup${NC}         Очистить неиспользуемые Docker-образы (с просмотром списка)"
             echo -e "  ${DIM}rebuild${NC}         Пересобрать образ / перекачать бинарник"
             echo -e "  ${DIM}backend <тип>${NC}   Сменить носитель движка: docker | binary"
+            echo -e "  ${DIM}custom <ссылка> [--sha256 <хеш>] [--yes]${NC}"
+            echo -e "                  Поставить свой бинарник telemt по ссылке https"
             ;;
     esac
 }

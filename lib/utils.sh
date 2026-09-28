@@ -464,9 +464,32 @@ engine_link_modes() {
 # вид ссылки. Пока маскировка была единственным переключателем, хватало
 # одного секрета; с выключенной маскировкой движок принимает и dd, и ee, и
 # показывать только один из них значило бы прятать половину рабочих ссылок.
+# Дополнительные FakeTLS-домены из [censorship] tls_domains конфига движка.
+# Движок принимает ee-ссылку с любым из них и печатает по ссылке на каждый.
+engine_tls_extra_domains() {
+    local _cfg="${1:-}"
+    [ -n "$_cfg" ] || _cfg=$(_engine_config_path 2>/dev/null)
+    [ -n "$_cfg" ] && [ -f "$_cfg" ] || return 0
+    awk '
+        /^[[:space:]]*\[/ {
+            h = $0; gsub(/[[:space:]]/, "", h); sub(/#.*/, "", h)
+            insec = (h == "[censorship]"); inarr = 0; next
+        }
+        insec && !inarr && /^[[:space:]]*tls_domains[[:space:]]*=/ {
+            buf = $0; sub(/^[^=]*=/, "", buf); sub(/#.*/, "", buf)
+            if (buf ~ /\]/) { print buf } else { inarr = 1 }
+            next
+        }
+        inarr { line = $0; sub(/#.*/, "", line); buf = buf " " line; if (line ~ /\]/) { inarr = 0; print buf } }
+    ' "$_cfg" | grep -oE "\"[^\"]+\"|'[^']+'" | tr -d "\"'"
+}
+
+# Строки «вид|секрет|домен». Домен пишется у ee-ссылок, только если доменов
+# несколько: тогда по нему их и различают.
 build_link_secrets() {
     local _raw="$1" _domain="${2:-$PROXY_DOMAIN}" _cfg="${3:-}"
-    local _mode _hex="" _has_dd=""
+    local _mode _has_dd="" _d _seen
+    local -a _domains=()
     while read -r _mode; do
         case "$_mode" in
             classic) printf 'classic|%s\n' "$_raw" ;;
@@ -478,18 +501,29 @@ build_link_secrets() {
                     [ -n "$_has_dd" ] || printf 'secure|dd%s\n' "$_raw"
                     continue
                 fi
-                [ -n "$_hex" ] || _hex=$(domain_to_hex "$_domain")
-                printf 'tls|ee%s%s\n' "$_raw" "$_hex" ;;
+                _domains=("$_domain"); _seen=" ${_domain,,} "
+                while IFS= read -r _d; do
+                    [ -n "$_d" ] || continue
+                    case "$_seen" in *" ${_d,,} "*) continue ;; esac
+                    _seen+="${_d,,} "; _domains+=("$_d")
+                done < <(engine_tls_extra_domains "$_cfg")
+                for _d in "${_domains[@]}"; do
+                    if [ "${#_domains[@]}" -gt 1 ]; then
+                        printf 'tls|ee%s%s|%s\n' "$_raw" "$(domain_to_hex "$_d")" "$_d"
+                    else
+                        printf 'tls|ee%s%s\n' "$_raw" "$(domain_to_hex "$_d")"
+                    fi
+                done ;;
         esac
     done < <(engine_link_modes "$_cfg")
 }
 
-# Как называть вид ссылки в меню.
+# Как называть вид ссылки в меню. Второй аргумент — домен ee-ссылки.
 link_kind_title() {
     case "$1" in
         classic) echo "classic" ;;
         secure)  echo "dd · secure" ;;
-        tls)     echo "ee · TLS" ;;
+        tls)     echo "ee · TLS${2:+ · $2}" ;;
         *)       echo "$1" ;;
     esac
 }
