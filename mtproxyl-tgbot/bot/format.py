@@ -371,7 +371,7 @@ HELP_TEXT = """<b>MTProxyL — команды</b>
 /link — ссылка и QR-код
 /traffic — трафик по пользователям
 /availability — доступность из России
-/dc — дата-центры Telegram: RTT, писатели, покрытие
+/dc — дата-центры Telegram: RTT, писатели, покрытие и перезапуск движка при падении DC
 /check — проверить доступность прямо сейчас
 /start_proxy, /stop_proxy, /restart_proxy — управление прокси
 /backup — сделать бэкап и прислать сюда (только Manager)
@@ -381,11 +381,29 @@ HELP_TEXT = """<b>MTProxyL — команды</b>
 Всё то же самое есть кнопками — /menu."""
 
 
+def dc_restart_text(auto: dict) -> str:
+    """Строка о перезапуске движка при падении DC."""
+    if not auto:
+        return ""
+    if not auto.get("enabled"):
+        return "♻️ Перезапуск при падении DC: <b>выключен</b>"
+    line = (f"♻️ Перезапуск при падении DC: <b>включён</b> — ниже {auto.get('threshold', 50)}%, "
+            f"охлаждение {auto.get('cooldown_min', 5)} мин")
+    last = int(auto.get("last_restart_at") or 0)
+    if last:
+        moment = datetime.fromtimestamp(last, timezone.utc).isoformat()
+        line += (f"\nПоследний: {age_since(moment)} при покрытии "
+                 f"{auto.get('last_restart_coverage', '?')}%, всего {auto.get('restarts', 0)}")
+    return line
+
+
 def dc_text(report: dict) -> str:
     """Таблица дата-центров: RTT, писатели, покрытие."""
+    restart = dc_restart_text(report.get("auto_restart") or {})
+    tail = f"\n\n{restart}" if restart else ""
     if not report.get("available"):
         why = report.get("error") or "данных нет"
-        return f"<b>Дата-центры Telegram</b>\n\n{esc(why)}"
+        return f"<b>Дата-центры Telegram</b>\n\n{esc(why)}{tail}"
     rows = report.get("dcs") or []
     threshold = int(report.get("threshold") or 0)
     table = _table(
@@ -412,4 +430,5 @@ def dc_text(report: dict) -> str:
         f"{covered} из {report.get('required_writers', 0)}, живых всего "
         f"{report.get('alive_writers', 0)}\n{table}\n"
         "<i>Писатели: живых / нужно. Это связь движка с Telegram, не доступность прокси.</i>"
+        f"{tail}"
     )

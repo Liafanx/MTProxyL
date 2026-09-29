@@ -238,7 +238,8 @@ cli_main() {
             ;;
 
         engine)
-            load_settings
+            # У реаниматора команда меняет версию цели — нужен её детект.
+            load_settings; load_detect_settings
             handle_engine_command "$@"
             ;;
 

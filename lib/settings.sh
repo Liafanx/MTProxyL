@@ -44,6 +44,11 @@ PROXY_CONFIG_V6_URL=""
 TOOLS_ONLY="false"
 # Порог покрытия дата-центров Telegram, ниже которого бот шлёт уведомление.
 DC_THRESHOLD="80"
+# Перезапуск движка, если покрытие DC ниже порога. Охлаждение — пауза между
+# перезапусками, минут: после старта DC поднимаются не сразу.
+DC_RESTART_ENABLED="false"
+DC_RESTART_THRESHOLD="50"
+DC_RESTART_COOLDOWN="5"
 IP_HISTORY_LIMIT="200"
 # Как часто снимать адреса в историю, минут. 0 — только при открытой панели.
 IP_HISTORY_INTERVAL="5"
@@ -217,6 +222,9 @@ PROXY_CONFIG_V6_URL='${PROXY_CONFIG_V6_URL}'
 # Автоматическая ротация секретов
 TOOLS_ONLY='${TOOLS_ONLY}'
 DC_THRESHOLD='${DC_THRESHOLD}'
+DC_RESTART_ENABLED='${DC_RESTART_ENABLED}'
+DC_RESTART_THRESHOLD='${DC_RESTART_THRESHOLD}'
+DC_RESTART_COOLDOWN='${DC_RESTART_COOLDOWN}'
 IP_HISTORY_LIMIT='${IP_HISTORY_LIMIT}'
 IP_HISTORY_INTERVAL='${IP_HISTORY_INTERVAL}'
 BACKUP_RETENTION_DAYS='${BACKUP_RETENTION_DAYS}'
@@ -509,6 +517,7 @@ load_settings() {
                 UNKNOWN_SNI_ACTION|\
                 PROXY_SECRET_URL|PROXY_CONFIG_V4_URL|PROXY_CONFIG_V6_URL|\
                 BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT|IP_HISTORY_INTERVAL|TOOLS_ONLY|DC_THRESHOLD|\
+                DC_RESTART_ENABLED|DC_RESTART_THRESHOLD|DC_RESTART_COOLDOWN|\
                 AVAILABILITY_ENABLED|AVAILABILITY_INTERVAL|AVAILABILITY_PROBES|\
                 AVAILABILITY_THRESHOLD|AVAILABILITY_HISTORY_LIMIT|AVAILABILITY_HOST|AVAILABILITY_PORT|AVAILABILITY_SNI|\
                 WARP_ENABLED|WARP_WATCHDOG_ENABLED|WARP_MODE|WARP_PROTO|WARP_LOCATION|WARP_ENDPOINT|\
@@ -640,9 +649,13 @@ load_settings() {
     [[ "$AVAILABILITY_INTERVAL" =~ ^[0-9]+$ ]] && [ "$AVAILABILITY_INTERVAL" -ge 1 ] || AVAILABILITY_INTERVAL="15"
     [[ "$AVAILABILITY_PROBES" =~ ^[0-9]+$ ]] && [ "$AVAILABILITY_PROBES" -ge 1 ] && [ "$AVAILABILITY_PROBES" -le 50 ] || AVAILABILITY_PROBES="20"
     [[ "$AVAILABILITY_THRESHOLD" =~ ^[0-9]+$ ]] && [ "$AVAILABILITY_THRESHOLD" -le 100 ] || AVAILABILITY_THRESHOLD="50"
+    [ "$DC_RESTART_ENABLED" = "true" ] || DC_RESTART_ENABLED="false"
+    [[ "$DC_RESTART_THRESHOLD" =~ ^[0-9]+$ ]] && [ "$DC_RESTART_THRESHOLD" -ge 1 ] && [ "$DC_RESTART_THRESHOLD" -le 100 ] || DC_RESTART_THRESHOLD="50"
+    [[ "$DC_RESTART_COOLDOWN" =~ ^[0-9]+$ ]] && [ "$DC_RESTART_COOLDOWN" -ge 1 ] && [ "$DC_RESTART_COOLDOWN" -le 1440 ] || DC_RESTART_COOLDOWN="5"
     [[ "$AVAILABILITY_HISTORY_LIMIT" =~ ^[0-9]+$ ]] && [ "$AVAILABILITY_HISTORY_LIMIT" -ge 1 ] && [ "$AVAILABILITY_HISTORY_LIMIT" -le 100000 ] || AVAILABILITY_HISTORY_LIMIT="1000"
 
     _fix_settings_perms
     _ensure_ip_history_timer
     _ensure_availability_timer
+    if declare -F _ensure_dc_watch_timer >/dev/null; then _ensure_dc_watch_timer; fi
 }

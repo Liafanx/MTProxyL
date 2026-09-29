@@ -38,11 +38,25 @@ export function MtproxylEngineCard() {
     void load();
   }, [load]);
 
-  // Движком владеет только менеджер: в реаниматоре цель чужая, и её версию
-  // меняет тот, кто её ставил.
-  if (!enabled || mode === 'reanimator') return null;
+  if (!enabled) return null;
+  // В реаниматоре меняется только бинарник цели под telemt.service; цель в
+  // Docker обновляет её образ, и здесь ей предложить нечего.
+  const isTarget = mode === 'reanimator';
+  if (isTarget && info && info.supported === false) {
+    return (
+      <div className="bg-surface rounded-lg p-4 lg:p-5 border border-border">
+        <h2 className="text-xs lg:text-sm font-semibold text-text-primary mb-2">Версия движка</h2>
+        <p className="text-sm text-text-secondary">
+          {info.reason || 'Версию этой цели из панели не сменить.'}
+        </p>
+      </div>
+    );
+  }
 
   const update = async (t: string) => {
+    if (isTarget && !window.confirm(
+      `Поставить telemt ${t} на цель? Движок перезапустится, конфиг цели не изменится.`,
+    )) return;
     try {
       setActionError(null);
       start(await mtproxylApi.engineUpdate(t));
@@ -52,6 +66,7 @@ export function MtproxylEngineCard() {
   };
 
   const rollback = async (t = '') => {
+    if (isTarget && !window.confirm('Вернуть предыдущую версию telemt? Движок перезапустится.')) return;
     try {
       setActionError(null);
       start(await mtproxylApi.engineRollback(t));
@@ -98,17 +113,35 @@ export function MtproxylEngineCard() {
         </button>
       </div>
 
-      {error && <ErrorAlert message={error} />}
+      {error && (
+        <ErrorAlert
+          message={isTarget && !info
+            ? `${error}. Смена версии цели из панели появилась в MTProxyL 1.6.29 — обновите скрипт.`
+            : error}
+        />
+      )}
       {actionError && <ErrorAlert message={actionError} />}
 
       <div className="space-y-3 lg:space-y-4">
         <div className="grid grid-cols-2 gap-2 lg:gap-3">
           <MetricCard label="Установлена" value={current || '—'} />
-          <MetricCard
-            label="Носитель"
-            value={info?.binary ? 'бинарник' : info ? 'docker' : '—'}
-          />
+          {isTarget ? (
+            <MetricCard label="Бинарник цели" value={info?.bin_path || '—'} />
+          ) : (
+            <MetricCard
+              label="Носитель"
+              value={info?.binary ? 'бинарник' : info ? 'docker' : '—'}
+            />
+          )}
         </div>
+
+        {isTarget && info && (
+          <p className="text-xs text-text-secondary">
+            Меняется только бинарник цели, конфиг{' '}
+            {info.config_path && <code className="font-mono text-text-primary">{info.config_path}</code>}{' '}
+            не трогается. Если новая версия не поднимется с этим конфигом, прежняя вернётся сама.
+          </p>
+        )}
 
         {info && isLatest && (
           <div className="flex items-center gap-2 text-xs lg:text-sm text-success">
@@ -181,9 +214,11 @@ export function MtproxylEngineCard() {
         <div className="rounded-md border border-border p-3">
           <p className="text-xs lg:text-sm font-medium text-text-primary mb-1">Откат</p>
           <p className="text-xs text-text-secondary mb-2">
-            {info?.binary
-              ? 'Предыдущий бинарник лежит рядом с текущим — откат идёт без сети.'
-              : 'Откат переключает на образ, который уже лежит на диске.'}
+            {isTarget
+              ? 'Предыдущий бинарник цели MTProxyL хранит у себя — откат идёт без сети. На любую другую версию — кнопкой «Поставить» в списке.'
+              : info?.binary
+                ? 'Предыдущий бинарник лежит рядом с текущим — откат идёт без сети.'
+                : 'Откат переключает на образ, который уже лежит на диске.'}
           </p>
           {rollbackTargets.length === 0 ? (
             <p className="text-xs text-text-secondary">Откатываться не к чему: на диске только текущая версия.</p>

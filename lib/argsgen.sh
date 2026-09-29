@@ -26,6 +26,7 @@ _AG_ITEMS=(
     "shaping|Шейпинг по IPv4|no"
     "geoip|База GeoIP|no"
     "block|Список блокировок|no"
+    "dcrestart|Перезапуск при падении DC|no"
     "force|Ставить поверх существующей|no"
 )
 
@@ -109,6 +110,12 @@ _argsgen_defaults() {
         _AG_ON[block]="yes"; _AG_VAL[block]="${_bn} записей, ${IPBLOCK_ACTION}"
     else
         _AG_ON[block]="no"; _AG_VAL[block]="$([ "$_bn" -gt 0 ] && echo "${_bn} записей, выключен" || echo "пусто")"
+    fi
+
+    if [ "${DC_RESTART_ENABLED:-false}" = "true" ]; then
+        _AG_ON[dcrestart]="yes"; _AG_VAL[dcrestart]="ниже ${DC_RESTART_THRESHOLD:-50}%, охлаждение ${DC_RESTART_COOLDOWN:-5} мин"
+    else
+        _AG_ON[dcrestart]="no"; _AG_VAL[dcrestart]="выключен"
     fi
 
     _AG_ON[force]="no"; _AG_VAL[force]="--force"
@@ -239,6 +246,11 @@ _argsgen_build() {
             _a+=(--block "$_bl")
             [ "${IPBLOCK_ACTION:-drop}" = "reject" ] && _a+=(--block-action reject)
         fi
+    fi
+
+    if [ "${_AG_ON[dcrestart]:-no}" = "yes" ]; then
+        _a+=(--dc-restart "${DC_RESTART_THRESHOLD:-50}")
+        [ "${DC_RESTART_COOLDOWN:-5}" = "5" ] || _a+=(--dc-restart-cooldown "$DC_RESTART_COOLDOWN")
     fi
 
     local _s

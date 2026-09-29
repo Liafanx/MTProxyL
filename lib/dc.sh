@@ -118,8 +118,8 @@ dc_status_json() {
     _json=$(_engine_api_get "/v1/stats/dcs"); _rc=$?
     local _thr; _thr=$(_dc_threshold)
     if [ $_rc -ne 0 ]; then
-        printf '{"available":false,"threshold":%d,"verdict":"unknown","error":"%s","dcs":[]}\n' \
-            "$_thr" "$(json_escape "$(_telemt_api_unavailable_reason 2>/dev/null)")"
+        printf '{"available":false,"threshold":%d,"verdict":"unknown","auto_restart":%s,"error":"%s","dcs":[]}\n' \
+            "$_thr" "$(dc_restart_json)" "$(json_escape "$(_telemt_api_unavailable_reason 2>/dev/null)")"
         return 0
     fi
 
@@ -140,7 +140,8 @@ dc_status_json() {
         else
             _err="middle proxy выключен — писателей к DC нет"
         fi
-        printf '{"available":false,"middle_proxy":%s,"threshold":%d,"verdict":"%s",' "$_me" "$_thr" "$_verdict_off"
+        printf '{"available":false,"middle_proxy":%s,"threshold":%d,"verdict":"%s","auto_restart":%s,' \
+            "$_me" "$_thr" "$_verdict_off" "$(dc_restart_json)"
         printf '"error":"%s","dcs":[]}\n' "$_err"
         return 0
     fi
@@ -169,7 +170,8 @@ dc_status_json() {
             "$_d" "${_rtt:-0}" "${_aw:-0}" "${_rw:-0}" "${_cov:-0}" "${_avl:-0}" "$_ok")
     done <<< "$_rows"
 
-    printf '{"available":true,"middle_proxy":%s,"threshold":%d,"verdict":"%s",' "$_me" "$_thr" "$_verdict"
+    printf '{"available":true,"middle_proxy":%s,"threshold":%d,"verdict":"%s","auto_restart":%s,' \
+        "$_me" "$_thr" "$_verdict" "$(dc_restart_json)"
     printf '"zero_writer_dcs":%d,' "$_zero"
     printf '"coverage_pct":%d,"dc_total":%d,"alive_writers":%d,"covered_writers":%d,"required_writers":%d,"dcs":[%s]}\n' \
         "$_pct" "$_n" "$_alive" "$_covered" "$_req" "$_out"
@@ -250,16 +252,247 @@ dc_set_threshold() {
     fi
 }
 
+# ── Перезапуск движка при падении DC ──────────────────────────
+# Таймер раз в минуту сверяет общее покрытие с порогом. Два замера подряд
+# ниже порога — перезапуск. После старта движка DC поднимаются не сразу,
+# поэтому в охлаждение (по умолчанию 5 минут) не перезапускаем. Если DC так и
+# не поднялись, пауза до следующего перезапуска удваивается, до часа.
+DC_WATCH_UNIT="mtproxyl-dc-watch"
+DC_WATCH_STATE="${INSTALL_DIR:-/opt/mtproxyl}/dc-watch.state"
+DC_RESTART_CONFIRM=2
+DC_RESTART_MAX_PAUSE=60
+
+_dc_restart_threshold() {
+    local _v="${DC_RESTART_THRESHOLD:-50}"
+    [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 1 ] && [ "$_v" -le 100 ] || _v=50
+    echo "$_v"
+}
+
+_dc_restart_cooldown() {
+    local _v="${DC_RESTART_COOLDOWN:-5}"
+    [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 1 ] && [ "$_v" -le 1440 ] || _v=5
+    echo "$_v"
+}
+
+_dc_watch_load() {
+    DCW_LOW=0; DCW_LAST=0; DCW_STREAK=0; DCW_RESTARTS=0; DCW_CHECKED=0
+    DCW_COV=""; DCW_LAST_COV=""; DCW_RESULT=""
+    [ -r "$DC_WATCH_STATE" ] || return 0
+    local _k _v
+    while IFS='=' read -r _k _v; do
+        case "$_k" in
+            low|last|streak|restarts|checked) [[ "$_v" =~ ^[0-9]+$ ]] || _v=0 ;;
+            cov|last_cov) [[ "$_v" =~ ^[0-9]*$ ]] || _v="" ;;
+            result) [[ "$_v" =~ ^[a-z_]*$ ]] || _v="" ;;
+            *) continue ;;
+        esac
+        case "$_k" in
+            low) DCW_LOW=$_v ;;
+            last) DCW_LAST=$_v ;;
+            streak) DCW_STREAK=$_v ;;
+            restarts) DCW_RESTARTS=$_v ;;
+            checked) DCW_CHECKED=$_v ;;
+            cov) DCW_COV=$_v ;;
+            last_cov) DCW_LAST_COV=$_v ;;
+            result) DCW_RESULT=$_v ;;
+        esac
+    done < "$DC_WATCH_STATE"
+}
+
+_dc_watch_save() {
+    local _tmp; _tmp=$(_mktemp "$INSTALL_DIR") || return 1
+    printf 'low=%s\nlast=%s\nstreak=%s\nrestarts=%s\nchecked=%s\ncov=%s\nlast_cov=%s\nresult=%s\n' \
+        "$DCW_LOW" "$DCW_LAST" "$DCW_STREAK" "$DCW_RESTARTS" "$DCW_CHECKED" \
+        "$DCW_COV" "$DCW_LAST_COV" "$DCW_RESULT" > "$_tmp"
+    chmod 600 "$_tmp"
+    mv -f "$_tmp" "$DC_WATCH_STATE"
+}
+
+# Пауза до следующего перезапуска, минут: охлаждение, удвоенное за каждый
+# перезапуск, после которого DC так и не поднялись.
+_dc_restart_pause() {
+    local _c _p _s="${DCW_STREAK:-0}"
+    _c=$(_dc_restart_cooldown); _p=$_c
+    while [ "$_s" -gt 1 ] && [ "$_p" -lt "$DC_RESTART_MAX_PAUSE" ]; do
+        _p=$((_p * 2)); _s=$((_s - 1))
+    done
+    [ "$_p" -gt "$DC_RESTART_MAX_PAUSE" ] && _p=$DC_RESTART_MAX_PAUSE
+    [ "$_p" -lt "$_c" ] && _p=$_c
+    echo "$_p"
+}
+
+dc_restart_json() {
+    _dc_watch_load
+    printf '{"enabled":%s,"threshold":%d,"cooldown_min":%d,"pause_min":%d,"restarts":%d,"last_restart_at":%d,"last_restart_coverage":%s,"checked_at":%d,"result":"%s"}' \
+        "$([ "${DC_RESTART_ENABLED:-false}" = "true" ] && echo true || echo false)" \
+        "$(_dc_restart_threshold)" "$(_dc_restart_cooldown)" "$(_dc_restart_pause)" \
+        "$DCW_RESTARTS" "$DCW_LAST" "${DCW_LAST_COV:-null}" "$DCW_CHECKED" "$DCW_RESULT"
+}
+
+dc_install_watch() {
+    command -v systemctl &>/dev/null || return 0
+    if [ "${DC_RESTART_ENABLED:-false}" != "true" ]; then
+        remove_dc_watch_timer
+        return 0
+    fi
+    cat > "/etc/systemd/system/${DC_WATCH_UNIT}.service" <<UNIT
+[Unit]
+Description=MTProxyL: перезапуск движка при падении DC
+
+[Service]
+Type=oneshot
+ExecStart=${INSTALL_DIR}/mtproxyl.sh dc watch
+TimeoutStartSec=5min
+UMask=0077
+UNIT
+    cat > "/etc/systemd/system/${DC_WATCH_UNIT}.timer" <<UNIT
+[Unit]
+Description=MTProxyL: проверка покрытия DC
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
+UNIT
+    systemctl daemon-reload || return 1
+    systemctl enable --now "${DC_WATCH_UNIT}.timer" >/dev/null 2>&1
+}
+
+remove_dc_watch_timer() {
+    command -v systemctl &>/dev/null || return 0
+    [ -f "/etc/systemd/system/${DC_WATCH_UNIT}.timer" ] || [ -f "/etc/systemd/system/${DC_WATCH_UNIT}.service" ] || return 0
+    systemctl disable --now "${DC_WATCH_UNIT}.timer" >/dev/null 2>&1 || true
+    systemctl stop "${DC_WATCH_UNIT}.service" >/dev/null 2>&1 || true
+    rm -f "/etc/systemd/system/${DC_WATCH_UNIT}.timer" "/etc/systemd/system/${DC_WATCH_UNIT}.service"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
+# Из load_settings: перезапуск включён, а таймера нет (переезд, бэкап) — ставим.
+_ensure_dc_watch_timer() {
+    [ "${DC_RESTART_ENABLED:-false}" = "true" ] || return 0
+    [ "${EUID:-$(id -u)}" -eq 0 ] || return 0
+    [ -f "/etc/systemd/system/${DC_WATCH_UNIT}.timer" ] && return 0
+    dc_install_watch >/dev/null 2>&1 || true
+}
+
+# Запуск таймером. Остановленный прокси не поднимаем: его остановили
+# намеренно. Без данных о DC (API выключен, ME выключен или ещё поднимается)
+# не перезапускаем — судить не по чему.
+dc_watch() {
+    [ "${DC_RESTART_ENABLED:-false}" = "true" ] || return 0
+    [ "${TOOLS_ONLY:-false}" = "true" ] && return 0
+    exec 9>"${DC_WATCH_STATE}.lock"
+    if command -v flock &>/dev/null; then flock -n 9 || return 0; fi
+    _dc_watch_load
+    local _now; _now=$(date +%s)
+    DCW_CHECKED=$_now; DCW_COV=""
+    if ! is_proxy_running; then
+        DCW_LOW=0; DCW_RESULT="stopped"; _dc_watch_save; return 0
+    fi
+    local _json _rows=""
+    _json=$(_engine_api_get "/v1/stats/dcs") && _rows=$(_dc_rows "$_json")
+    if [ -z "$_rows" ]; then
+        DCW_LOW=0; DCW_RESULT="no_data"; _dc_watch_save; return 0
+    fi
+    local _n _pct _rest _thr
+    IFS='|' read -r _n _pct _rest <<< "$(_dc_summary "$_rows")"
+    DCW_COV=$_pct
+    _thr=$(_dc_restart_threshold)
+    if [ "$_pct" -ge "$_thr" ]; then
+        DCW_LOW=0; DCW_STREAK=0; DCW_RESULT="ok"; _dc_watch_save; return 0
+    fi
+    DCW_LOW=$((DCW_LOW + 1))
+
+    local _up _cool _pause
+    _cool=$(( $(_dc_restart_cooldown) * 60 ))
+    _pause=$(( $(_dc_restart_pause) * 60 ))
+    _up=$(get_proxy_uptime 2>/dev/null)
+    if [[ "$_up" =~ ^[0-9]+$ ]] && [ "$_up" -gt 0 ] && [ "$_up" -lt "$_cool" ]; then
+        DCW_RESULT="warmup"; _dc_watch_save; return 0
+    fi
+    if [ "$DCW_LAST" -gt 0 ] && [ $((_now - DCW_LAST)) -lt "$_pause" ]; then
+        DCW_RESULT="cooldown"; _dc_watch_save; return 0
+    fi
+    if [ "$DCW_LOW" -lt "$DC_RESTART_CONFIRM" ]; then
+        DCW_RESULT="low"; _dc_watch_save; return 0
+    fi
+
+    # Состояние пишем до перезапуска: оборвись он — охлаждение уже идёт.
+    DCW_LAST=$_now; DCW_LAST_COV=$_pct; DCW_LOW=0
+    DCW_RESTARTS=$((DCW_RESTARTS + 1)); DCW_STREAK=$((DCW_STREAK + 1))
+    DCW_RESULT="restarted"
+    _dc_watch_save
+    log_warn "Покрытие DC ${_pct}% ниже порога ${_thr}% — перезапуск движка"
+    load_secrets 2>/dev/null || true
+    load_upstreams 2>/dev/null || true
+    restart_target
+}
+
+dc_restart_show() {
+    _dc_watch_load
+    local _state="${DIM}выключен${NC}"
+    [ "${DC_RESTART_ENABLED:-false}" = "true" ] && _state="${GREEN}включён${NC}"
+    echo -e "  ${BOLD}Перезапуск движка в случае падения DC:${NC} ${_state}"
+    echo -e "  ${DIM}Порог: покрытие ниже $(_dc_restart_threshold)%, охлаждение $(_dc_restart_cooldown) мин${NC}"
+    if [ "$DCW_LAST" -gt 0 ]; then
+        echo -e "  ${DIM}Последний перезапуск: $(date -d "@${DCW_LAST}" '+%d.%m %H:%M' 2>/dev/null) при покрытии ${DCW_LAST_COV:-?}%, всего ${DCW_RESTARTS}${NC}"
+    fi
+    if [ "${DCW_STREAK:-0}" -gt 1 ]; then
+        echo -e "  ${DIM}DC не поднялись после ${DCW_STREAK} перезапусков подряд — пауза $(_dc_restart_pause) мин${NC}"
+    fi
+}
+
+# dc autorestart [on|off | threshold <1-100> | cooldown <мин>]
+dc_restart_set() {
+    local _what="${1:-}" _v="${2:-}"
+    case "$_what" in
+        ""|status) dc_restart_show; return 0 ;;
+        on|off)
+            check_root
+            DC_RESTART_ENABLED=false; [ "$_what" = on ] && DC_RESTART_ENABLED=true
+            save_settings || return 1
+            dc_install_watch || { log_error "Не удалось поставить таймер ${DC_WATCH_UNIT}"; return 1; }
+            if [ "$_what" = on ]; then
+                log_success "Перезапуск движка при падении DC включён: ниже $(_dc_restart_threshold)%, охлаждение $(_dc_restart_cooldown) мин"
+            else
+                log_success "Перезапуск движка при падении DC выключен"
+            fi ;;
+        threshold)
+            [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 1 ] && [ "$_v" -le 100 ] || {
+                log_error "Порог перезапуска: число 1..100 — процент покрытия DC"; return 1; }
+            check_root
+            DC_RESTART_THRESHOLD="$_v"; save_settings || return 1
+            log_success "Порог перезапуска: покрытие DC ниже ${_v}%" ;;
+        cooldown)
+            [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 1 ] && [ "$_v" -le 1440 ] || {
+                log_error "Охлаждение: число минут 1..1440"; return 1; }
+            check_root
+            DC_RESTART_COOLDOWN="$_v"; save_settings || return 1
+            log_success "Охлаждение после перезапуска: ${_v} мин" ;;
+        *)
+            log_error "dc autorestart [on|off | threshold <1-100> | cooldown <мин>]"
+            return 1 ;;
+    esac
+}
+
 handle_dc_command() {
     case "${1:-status}" in
         status|"")
             if [ "${2:-}" = "--json" ]; then dc_status_json; else dc_show; fi ;;
         threshold) check_root; dc_set_threshold "${2:-}" ;;
+        autorestart) dc_restart_set "${2:-}" "${3:-}" ;;
+        watch) dc_watch ;;
         *)
             echo -e "  ${BOLD}Доступность дата-центров Telegram:${NC}"
             echo -e "    ${GREEN}dc status${NC}          Таблица DC: RTT, писатели, покрытие"
             echo -e "    ${GREEN}dc status --json${NC}   То же машинным форматом"
             echo -e "    ${GREEN}dc threshold${NC} <N>   Порог покрытия, % — 0 или off без предупреждений (сейчас $(_dc_threshold))"
+            echo -e "    ${GREEN}dc autorestart${NC} on|off         Перезапуск движка в случае падения DC"
+            echo -e "    ${GREEN}dc autorestart threshold${NC} <N>  Перезапуск, если покрытие ниже N% (сейчас $(_dc_restart_threshold))"
+            echo -e "    ${GREEN}dc autorestart cooldown${NC} <мин> Охлаждение после перезапуска (сейчас $(_dc_restart_cooldown))"
             ;;
     esac
 }

@@ -30,6 +30,7 @@ _IA_BLOCK_LIST=""
 _IA_BLOCK_ACTION=""
 _IA_ENGINE=""; _IA_ENGINE_VERSION=""; _IA_ENGINE_URL=""; _IA_ENGINE_SHA256=""
 _IA_TGBOT_TOKEN=""; _IA_TGBOT_ADMIN=""
+_IA_DC_RESTART=""; _IA_DC_RESTART_COOLDOWN=""
 _IA_SHAPING_MODE=""; _IA_SHAPING_CHANNEL=""; _IA_SHAPING_RESERVE=""
 _IA_SHAPING_USERS=""; _IA_SHAPING_TOTAL=""; _IA_SHAPING_IP=""
 _IA_SHAPING_PROFILES=(); _IA_SHAPING_IPS=()
@@ -64,6 +65,9 @@ install_args_help() {
     --sni-policy <политика>    mask, drop, accept или reject_handshake
     --cpus N                   лимит CPU: ядра контейнера либо CPUQuota службы
     --memory 512m              лимит памяти: контейнера либо MemoryMax службы
+    --dc-restart on|off|N      перезапуск движка в случае падения DC: при
+                               покрытии ниже N% (on — 50%), по умолчанию off
+    --dc-restart-cooldown N    охлаждение после перезапуска, минут (по умолчанию 5)
 
   Обход блокировок
     --zapret2 yes|no           Zapret2 MTProto fix (по умолчанию yes)
@@ -247,6 +251,8 @@ _install_args_parse() {
                     no|n|нет|false|off) _IA_GEOIP="no" ;;
                     *) log_error "--geoip: yes или no"; return 1 ;;
                 esac ;;
+            --dc-restart) _IA_DC_RESTART="${_v,,}" ;;
+            --dc-restart-cooldown) _IA_DC_RESTART_COOLDOWN="$_v" ;;
             --tgbot-token|--bot-token) _IA_TGBOT_TOKEN="$_v" ;;
             --tgbot-admin|--bot-admin) _IA_TGBOT_ADMIN="$_v" ;;
             --shaping|--shaping-mode) _IA_SHAPING_MODE="${_v,,}" ;;
@@ -337,6 +343,20 @@ _ia_shaping_validate() {
 
 # Проверка всего разом до первого изменения на сервере: половину установки
 # откатывать некому, а ошибка в аргументе — обычное дело.
+_ia_dc_restart_validate() {
+    local _ok=0
+    case "$_IA_DC_RESTART" in
+        ""|on|off|yes|no|true|false) ;;
+        *) [[ "$_IA_DC_RESTART" =~ ^[0-9]+$ ]] && [ "$_IA_DC_RESTART" -ge 1 ] && [ "$_IA_DC_RESTART" -le 100 ] || {
+               log_error "--dc-restart: on, off или порог покрытия 1..100"; _ok=1; } ;;
+    esac
+    if [ -n "$_IA_DC_RESTART_COOLDOWN" ]; then
+        [[ "$_IA_DC_RESTART_COOLDOWN" =~ ^[0-9]+$ ]] && [ "$_IA_DC_RESTART_COOLDOWN" -ge 1 ] && [ "$_IA_DC_RESTART_COOLDOWN" -le 1440 ] || {
+            log_error "--dc-restart-cooldown: число минут 1..1440"; _ok=1; }
+    fi
+    return $_ok
+}
+
 _install_args_validate() {
     local _ok=true
 
@@ -395,6 +415,7 @@ _install_args_validate() {
         [ -z "$_IA_ENGINE_VERSION" ] || { log_error "--engine-url и --engine-version вместе не имеют смысла"; _ok=false; }
         _IA_ENGINE="binary"
     fi
+    _ia_dc_restart_validate || _ok=false
     if [ -n "$_IA_ENGINE_SHA256" ]; then
         [[ "$_IA_ENGINE_SHA256" =~ ^[0-9a-f]{64}$ ]] || { log_error "--engine-sha256: 64 шестнадцатеричных символа"; _ok=false; }
         [ -n "$_IA_ENGINE_URL" ] || { log_error "--engine-sha256 без --engine-url"; _ok=false; }
@@ -649,6 +670,13 @@ run_installer_args() {
     # docker на этой машине запустить откажется.
     PROXY_CPUS="$_IA_CPUS"
     PROXY_MEMORY="$_IA_MEMORY"
+    case "$_IA_DC_RESTART" in
+        on|yes|true) DC_RESTART_ENABLED="true" ;;
+        off|no|false) DC_RESTART_ENABLED="false" ;;
+        "") ;;
+        *) DC_RESTART_ENABLED="true"; DC_RESTART_THRESHOLD="$_IA_DC_RESTART" ;;
+    esac
+    [ -n "$_IA_DC_RESTART_COOLDOWN" ] && DC_RESTART_COOLDOWN="$_IA_DC_RESTART_COOLDOWN"
 
     _install_args_secrets
 
@@ -838,6 +866,7 @@ _install_args_secrets() {
 _install_args_autostart() {
     command -v systemctl &>/dev/null && install_ip_history_timer
     install_availability_timer
+    dc_install_watch || log_warn "Таймер перезапуска при падении DC не поставлен"
 }
 
 # Selfmask с готовыми параметрами: мастер опроса пропускается, всё остальное

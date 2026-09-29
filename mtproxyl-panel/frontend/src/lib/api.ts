@@ -354,6 +354,35 @@ export interface MtproxylEngineVersions {
   /** Версии на диске — к ним откатываются без сети. */
   local: string[];
   releases: MtproxylEngineRelease[];
+  /** Цель реаниматора: меняется только её бинарник, конфиг цели не трогается. */
+  target?: boolean;
+  /** false — цель в Docker или без telemt.service; причина в reason. */
+  supported?: boolean;
+  reason?: string;
+  bin_path?: string;
+  config_path?: string;
+}
+
+/** Перезапуск движка при падении DC: настройки и что уже случилось. */
+export interface MtproxylDCAutoRestart {
+  enabled: boolean;
+  threshold: number;
+  cooldown_min: number;
+  /** Текущая пауза: охлаждение, удвоенное за перезапуски без толку. */
+  pause_min: number;
+  restarts: number;
+  /** Unix-время, 0 — перезапусков не было. */
+  last_restart_at: number;
+  last_restart_coverage: number | null;
+  checked_at: number;
+  result: string;
+}
+
+/** Ответ `mtproxyl dc status --json`; панели нужна только часть. */
+export interface MtproxylDCStatus {
+  available: boolean;
+  coverage_pct?: number;
+  auto_restart?: MtproxylDCAutoRestart;
 }
 
 export interface MtproxylEngineCleanup {
@@ -396,6 +425,8 @@ export const mtproxylApi = {
       method: 'POST',
       body: JSON.stringify({ tag }),
     }),
+
+  dcStatus: () => request<MtproxylDCStatus>(MTPROXYL_BASE, '/dc'),
 
   stats: () => request<MtproxylStats>(MTPROXYL_BASE, '/stats'),
   statsReset: (scope: MtproxylStatsScope, label = '') =>

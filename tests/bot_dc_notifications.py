@@ -42,6 +42,35 @@ class DCNotifications(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(broadcast.await_count, 1)
             self.assertNotIn("dc_bad", state)
 
+    async def test_engine_restart_is_reported_once(self):
+        cfg = config.Config()
+        auto = {"enabled": True, "threshold": 50, "cooldown_min": 5, "pause_min": 5,
+                "restarts": 1, "last_restart_at": 1000, "last_restart_coverage": 30}
+        report = {"available": False, "auto_restart": auto, "dcs": []}
+        state = {}
+        with patch.object(notify.cli, "dc_status", AsyncMock(return_value=report)), \
+             patch.object(notify.config, "load", return_value=cfg), \
+             patch.object(notify, "broadcast", AsyncMock()) as broadcast:
+            # Перезапуск до запуска бота — не новость.
+            await notify.check_dc(None, state)
+            self.assertEqual(broadcast.await_count, 0)
+            auto["last_restart_at"] = 2000
+            await notify.check_dc(None, state)
+            await notify.check_dc(None, state)
+            self.assertEqual(broadcast.await_count, 1)
+            self.assertIn("30%", broadcast.await_args.args[1])
+
+    def test_dc_menu_and_text(self):
+        from bot import format as fmt
+        buttons = [b.callback_data for row in keyboards.dc_menu(False).inline_keyboard for b in row]
+        self.assertEqual(buttons, ["dc:show", "dc:ar", "dc:thr", "dc:cool", "m:root"])
+        self.assertIn("выключен", fmt.dc_restart_text({"enabled": False}))
+        text = fmt.dc_restart_text({"enabled": True, "threshold": 40, "cooldown_min": 7,
+                                    "last_restart_at": 1000, "last_restart_coverage": 20, "restarts": 2})
+        self.assertIn("ниже 40%", text)
+        self.assertIn("при покрытии 20%", text)
+        self.assertEqual(fmt.dc_restart_text({}), "")
+
     def test_settings_controls(self):
         cfg = config.Config()
         buttons = [b.callback_data for row in keyboards.settings_menu(cfg, False).inline_keyboard for b in row]

@@ -113,8 +113,15 @@ tui_dc_menu() {
     while true; do
         clear_screen
         dc_show || true
+        dc_restart_show
+        echo ""
+        local _ar="${DIM}выключен${NC}"
+        [ "${DC_RESTART_ENABLED:-false}" = "true" ] && _ar="${GREEN}включён${NC}"
         echo -e "  ${CYAN}[1]${NC}  Проверить заново"
         echo -e "  ${CYAN}[2]${NC}  Порог покрытия ${DIM}($(_dc_threshold)%, 0 — без предупреждений)${NC}"
+        echo -e "  ${CYAN}[3]${NC}  Перезапуск движка в случае падения DC: ${_ar}"
+        echo -e "  ${CYAN}[4]${NC}  Порог перезапуска ${DIM}(покрытие ниже $(_dc_restart_threshold)%)${NC}"
+        echo -e "  ${CYAN}[5]${NC}  Охлаждение после перезапуска ${DIM}($(_dc_restart_cooldown) мин)${NC}"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -124,6 +131,24 @@ tui_dc_menu() {
             2)
                 local _v; read_line _v "  ${BOLD}Порог в процентах${NC} ${DIM}(0..100, 0 или off — без предупреждений)${NC}: "
                 [ -n "$_v" ] && { dc_set_threshold "$_v"; press_any_key; }
+                ;;
+            3)
+                if [ "${DC_RESTART_ENABLED:-false}" = "true" ]; then
+                    dc_restart_set off
+                else
+                    echo -e "  ${DIM}Если покрытие DC два замера подряд (минута) ниже порога, движок${NC}"
+                    echo -e "  ${DIM}перезапускается. Следующий перезапуск — не раньше охлаждения.${NC}"
+                    dc_restart_set on
+                fi
+                press_any_key
+                ;;
+            4)
+                local _t; read_line _t "  ${BOLD}Перезапускать, если покрытие ниже, %${NC} ${DIM}(1..100)${NC}: "
+                [ -n "$_t" ] && { dc_restart_set threshold "$_t"; press_any_key; }
+                ;;
+            5)
+                local _c; read_line _c "  ${BOLD}Охлаждение после перезапуска, минут${NC} ${DIM}(1..1440)${NC}: "
+                [ -n "$_c" ] && { dc_restart_set cooldown "$_c"; press_any_key; }
                 ;;
             0|"") return ;;
         esac

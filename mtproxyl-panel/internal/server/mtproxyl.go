@@ -1121,6 +1121,19 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
 	}))
 
+	// ── Дата-центры и перезапуск движка при их падении ─────────────────────
+	mux.Handle("GET /api/mtproxyl/dc", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		st, err := client.DCStatus(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: st})
+	}))
+
 	// ── Накопленная статистика ──────────────────────────────────────────────
 	mux.Handle("GET /api/mtproxyl/stats", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {

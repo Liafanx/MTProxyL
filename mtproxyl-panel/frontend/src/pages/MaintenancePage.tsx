@@ -4,7 +4,12 @@ import { Button } from '@/components/ui/button';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { ParamField } from '@/components/ParamField';
 import { useManagerOnly } from '@/hooks/useMtproxyl';
-import { mtproxylSettingsApi, type MtproxylSetting } from '@/lib/api';
+import {
+  mtproxylApi,
+  mtproxylSettingsApi,
+  type MtproxylDCAutoRestart,
+  type MtproxylSetting,
+} from '@/lib/api';
 
 /**
  * Настройки самого MTProxyL: в конфиг движка не попадают, поэтому им не место
@@ -19,6 +24,24 @@ export const MAINTENANCE_KEYS = [
 /** Бэкапы — только у менеджера, у чужой цели их делать нечем. */
 const MANAGER_ONLY_KEYS = new Set(['BACKUP_RETENTION_DAYS']);
 
+/** Перезапуск движка в случае падения DC — в обоих режимах. */
+export const DC_RESTART_KEYS = ['DC_RESTART_ENABLED', 'DC_RESTART_THRESHOLD', 'DC_RESTART_COOLDOWN'];
+
+function restartSummary(a: MtproxylDCAutoRestart): string[] {
+  const lines: string[] = [];
+  if (a.last_restart_at > 0) {
+    const when = new Date(a.last_restart_at * 1000).toLocaleString('ru-RU');
+    const cov = a.last_restart_coverage ?? '?';
+    lines.push(`Последний перезапуск: ${when} при покрытии ${cov}%, всего ${a.restarts}.`);
+  } else if (a.enabled) {
+    lines.push('Перезапусков ещё не было.');
+  }
+  if (a.enabled && a.pause_min > a.cooldown_min) {
+    lines.push(`DC не поднялись после перезапусков подряд — следующий не раньше чем через ${a.pause_min} мин.`);
+  }
+  return lines;
+}
+
 export function MaintenancePage() {
   const [params, setParams] = useState<MtproxylSetting[]>([]);
   const [edits, setEdits] = useState<Record<string, string>>({});
@@ -27,6 +50,7 @@ export function MaintenancePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const { allowed: isManager } = useManagerOnly();
+  const [autoRestart, setAutoRestart] = useState<MtproxylDCAutoRestart | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -34,6 +58,11 @@ export function MaintenancePage() {
       setParams(await mtproxylSettingsApi.list());
       setEdits({});
       setError(null);
+      // Сводка перезапусков — не главное на странице: без неё настройки
+      // остаются рабочими.
+      mtproxylApi.dcStatus()
+        .then((st) => setAutoRestart(st.auto_restart ?? null))
+        .catch(() => setAutoRestart(null));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось загрузить настройки');
     } finally {
@@ -53,6 +82,10 @@ export function MaintenancePage() {
     [params, isManager],
   );
   const byKey = useMemo(() => new Map(params.map((p) => [p.key, p])), [params]);
+  const restartParams = useMemo(
+    () => DC_RESTART_KEYS.map((k) => byKey.get(k)).filter(Boolean) as MtproxylSetting[],
+    [byKey],
+  );
   const valueOf = (key: string) => edits[key] ?? byKey.get(key)?.value ?? '';
 
   const dirty = useMemo(
@@ -85,8 +118,8 @@ export function MaintenancePage() {
         <h1 className="text-xl font-semibold text-text-primary">Обслуживание</h1>
         <p className="text-sm text-text-secondary mt-1">
           Настройки самого MTProxyL: в конфиг движка они не попадают. Глубина истории IP
-          работает в обоих режимах, хранение бэкапов — только в Manager, потому что
-          бэкапить чужую цель нечем.
+          и перезапуск при падении DC работают в обоих режимах, хранение бэкапов — только
+          в Manager, потому что бэкапить чужую цель нечем.
         </p>
       </div>
 
@@ -119,6 +152,38 @@ export function MaintenancePage() {
                   onChange={(v) => setEdits((prev) => ({ ...prev, [p.key]: v }))}
                 />
               </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {restartParams.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Перезапуск движка в случае падения DC</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-text-secondary">
+              Если общее покрытие DC два замера подряд (раз в минуту) ниже порога, движок
+              перезапускается. После перезапуска DC поднимаются не сразу, поэтому до конца
+              охлаждения следующего не будет. Если DC так и не поднялись, пауза удваивается,
+              до часа. Остановленный прокси не запускается.
+            </p>
+            {restartParams.map((p) => (
+              <div key={p.key} className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-4">
+                <div className="sm:w-1/2 min-w-0">
+                  <div className="text-sm text-text-primary">{p.description}</div>
+                  <div className="text-xs text-text-secondary font-mono truncate">{p.key}</div>
+                </div>
+                <ParamField
+                  param={p}
+                  value={valueOf(p.key)}
+                  onChange={(v) => setEdits((prev) => ({ ...prev, [p.key]: v }))}
+                />
+              </div>
+            ))}
+            {autoRestart && restartSummary(autoRestart).map((line) => (
+              <p key={line} className="text-xs text-text-secondary">{line}</p>
             ))}
           </CardContent>
         </Card>
