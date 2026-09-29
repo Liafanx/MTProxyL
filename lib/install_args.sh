@@ -48,7 +48,7 @@ install_args_help() {
                                последняя), например 3.5.5
     --engine-url <ссылка>      свой бинарник telemt или архив .tar.gz по https,
                                ставится бинарным движком
-    --engine-sha256 <хеш>      sha256 файла по ссылке (иначе <ссылка>.sha256)
+    --engine-sha256 <хеш>      sha256 файла по ссылке (без него — без проверки)
 
   Прокси
     --proxy-mode mtproto|web|combined
