@@ -33,6 +33,8 @@ TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 class Ask(StatesGroup):
     interval = State()
     threshold = State()
+    dc_threshold = State()
+    dc_cooldown = State()
     notify_interval = State()
     backup_time = State()
 
@@ -393,7 +395,10 @@ async def show_dc(event: Message | CallbackQuery, note: str = "") -> None:
         await report_error(event, exc)
         return
     head = f"{note}\n\n" if note else ""
-    await render(event, head + dc_text(report), kb.back_only())
+    auto = report.get("auto_restart")
+    # Старый MTProxyL перезапуск не знает — оставляем только «Меню».
+    markup = kb.dc_menu(bool(auto.get("enabled"))) if isinstance(auto, dict) else kb.back_only()
+    await render(event, head + dc_text(report), markup)
 
 
 @router.message(Command("dc"))
@@ -406,6 +411,71 @@ async def cb_dc(call: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await ack(call)
     await show_dc(call)
+
+
+@router.callback_query(F.data == "dc:ar")
+async def cb_dc_autorestart(call: CallbackQuery) -> None:
+    await ack(call)
+    await render(call, "⏳ Меняю перезапуск движка…")
+    try:
+        report = await cli.dc_status()
+        on = not (report.get("auto_restart") or {}).get("enabled")
+        await cli.settings_set("DC_RESTART_ENABLED", "true" if on else "false")
+    except Exception as exc:
+        await report_error(call, exc)
+        await show_dc(call)
+        return
+    await show_dc(call, "✅ Перезапуск при падении DC включён" if on
+                  else "⏸ Перезапуск при падении DC выключен")
+
+
+@router.callback_query(F.data == "dc:thr")
+async def cb_dc_threshold(call: CallbackQuery, state: FSMContext) -> None:
+    await ack(call)
+    await state.set_state(Ask.dc_threshold)
+    await render(call, "<b>Порог перезапуска</b>\n\nПри каком покрытии DC ниже этого процента "
+                       "перезапускать движок? Пришлите число от 1 до 100.", kb.cancel("dc:show"))
+
+
+@router.message(Ask.dc_threshold, ~F.text.startswith("/"))
+async def set_dc_threshold(message: Message, state: FSMContext) -> None:
+    value = (message.text or "").strip()
+    if not value.isdigit() or not 1 <= int(value) <= 100:
+        await render(message, "⚠️ Нужно целое число от 1 до 100.\n\nПришлите другое.",
+                     kb.cancel("dc:show"))
+        return
+    await state.clear()
+    try:
+        await cli.settings_set("DC_RESTART_THRESHOLD", value)
+    except Exception as exc:
+        await report_error(message, exc)
+        return
+    await show_dc(message, f"✅ Порог перезапуска: ниже {value}%")
+
+
+@router.callback_query(F.data == "dc:cool")
+async def cb_dc_cooldown(call: CallbackQuery, state: FSMContext) -> None:
+    await ack(call)
+    await state.set_state(Ask.dc_cooldown)
+    await render(call, "<b>Охлаждение после перезапуска</b>\n\nСколько минут ждать, пока DC "
+                       "поднимутся, прежде чем перезапускать снова? Пришлите число от 1 до 1440.",
+                 kb.cancel("dc:show"))
+
+
+@router.message(Ask.dc_cooldown, ~F.text.startswith("/"))
+async def set_dc_cooldown(message: Message, state: FSMContext) -> None:
+    value = (message.text or "").strip()
+    if not value.isdigit() or not 1 <= int(value) <= 1440:
+        await render(message, "⚠️ Нужно целое число от 1 до 1440.\n\nПришлите другое.",
+                     kb.cancel("dc:show"))
+        return
+    await state.clear()
+    try:
+        await cli.settings_set("DC_RESTART_COOLDOWN", value)
+    except Exception as exc:
+        await report_error(message, exc)
+        return
+    await show_dc(message, f"✅ Охлаждение: {value} мин")
 
 
 @router.message(Command("backup"))

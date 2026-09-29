@@ -25,6 +25,9 @@ _SETTINGS_SETTABLE=(
     "IP_HISTORY_LIMIT|range:1:100000|Сколько IP хранить в истории на пользователя"
     "IP_HISTORY_INTERVAL|range:0:1440|Как часто снимать адреса в историю, минут (0 — выключить)"
     "DC_THRESHOLD|range:0:100|Порог покрытия дата-центров Telegram, % (0 — без предупреждений)"
+    "DC_RESTART_ENABLED|bool|Перезапуск движка в случае падения DC"
+    "DC_RESTART_THRESHOLD|range:1:100|Перезапускать, если покрытие DC ниже, %"
+    "DC_RESTART_COOLDOWN|range:1:1440|Охлаждение после перезапуска, минут"
     "AVAILABILITY_ENABLED|bool|Проверять доступность из России по расписанию"
     "AVAILABILITY_INTERVAL|range:1:1440|Как часто проверять доступность, минут"
     "AVAILABILITY_PROBES|range:1:50|Сколько российских зондов опрашивать (кредит за зонд)"
@@ -194,7 +197,7 @@ settings_set_param() {
     # и в реаниматоре, и при супер эксперте: чужой конфиг они не трогают.
     local _own_setting="false"
     case "$_key" in
-        BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT|IP_HISTORY_INTERVAL|AVAILABILITY_*|DC_THRESHOLD)
+        BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT|IP_HISTORY_INTERVAL|AVAILABILITY_*|DC_THRESHOLD|DC_RESTART_*)
             _own_setting="true" ;;
     esac
     if [ "$_own_setting" != "true" ]; then
@@ -215,7 +218,7 @@ settings_set_param() {
             [ "$_key" = "PROXY_API_PORT" ] && \
                 log_warn "Поправьте url в конфиге панели: /etc/mtproxyl-panel/config.toml"
             ;;
-        BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT|DC_THRESHOLD|\
+        BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT|DC_THRESHOLD|DC_RESTART_THRESHOLD|DC_RESTART_COOLDOWN|\
         AVAILABILITY_THRESHOLD|AVAILABILITY_HOST|AVAILABILITY_PORT|AVAILABILITY_SNI|AVAILABILITY_PROBES)
             # Настройки самого MTProxyL — в конфиг движка не попадают.
             ;;
@@ -229,6 +232,9 @@ settings_set_param() {
             install_availability_timer
             [ "$_key" = "AVAILABILITY_ENABLED" ] && [ "$_val" = "false" ] && \
                 log_info "Проверка по расписанию выключена: остаётся ручная, mtproxyl availability check"
+            ;;
+        DC_RESTART_ENABLED)
+            dc_install_watch || { log_error "Не удалось поставить таймер ${DC_WATCH_UNIT}"; return 1; }
             ;;
         IP_HISTORY_INTERVAL)
             # Интервал зашит в юнит таймера, его надо переписать.

@@ -56,12 +56,29 @@ async def check_dc(bot: Bot, state: dict) -> None:
     except CliError as exc:
         log.debug("состояние DC недоступно: %s", exc)
         return
+    cfg = config.load()
+    # Перезапуск движка сторожем MTProxyL — один раз на перезапуск. Прошлые,
+    # случившиеся до запуска бота, новостью не считаем.
+    auto = report.get("auto_restart") or {}
+    last = int(auto.get("last_restart_at") or 0)
+    if "dc_restart_at" not in state:
+        state["dc_restart_at"] = last
+    elif last > int(state.get("dc_restart_at") or 0):
+        state["dc_restart_at"] = last
+        if cfg.notify_on("dc"):
+            await broadcast(
+                bot,
+                f"♻️ <b>Движок перезапущен</b>\n\nПокрытие DC "
+                f"{auto.get('last_restart_coverage', '?')}% было ниже порога "
+                f"{auto.get('threshold', '?')}%. Следующий перезапуск — не раньше чем "
+                f"через {auto.get('pause_min', auto.get('cooldown_min', 5))} мин.\n\nПодробнее — /dc",
+            )
+
     # Нет данных или middle proxy выключен — сказать нечего: писателей к DC
     # в прямом режиме не бывает, и это не поломка.
     if not report.get("available"):
         return
 
-    cfg = config.load()
     zeros = sorted(str(d.get("dc")) for d in report.get("dcs", [])
                    if int(d.get("required_writers") or 0) > 0
                    and int(d.get("alive_writers") or 0) == 0)

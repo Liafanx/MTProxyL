@@ -1,6 +1,30 @@
 #!/bin/bash
 # MTProxyL — подменю: цель / режим (Manager ⇄ Reanimator)
 
+# Версия telemt цели: меняется только бинарник, конфиг цели остаётся.
+_tui_target_engine() {
+    clear_screen
+    draw_header "ВЕРСИЯ TELEMT ЦЕЛИ"
+    echo ""
+    target_engine_status
+    echo ""
+    if [ -n "$(target_engine_unsupported_reason)" ]; then
+        press_any_key
+        return
+    fi
+    echo -e "  ${DIM}Меняется только бинарник, конфиг цели не трогается. Если новая версия${NC}"
+    echo -e "  ${DIM}не поднимется с этим конфигом, прежняя вернётся сама.${NC}"
+    echo ""
+    echo -e "  ${DIM}[1]${NC} Поставить версию из списка"
+    echo -e "  ${DIM}[2]${NC} Откатить на предыдущую"
+    echo -e "  ${DIM}[0]${NC} Назад"
+    local _c; _c=$(read_choice "выбор" "0")
+    case "$_c" in
+        1) handle_engine_command update || true; press_any_key ;;
+        2) handle_engine_command rollback || true; press_any_key ;;
+    esac
+}
+
 tui_target_menu() {
     while true; do
         clear_screen
@@ -32,6 +56,7 @@ tui_target_menu() {
             else
                 echo -e "  ${DIM}[5]${NC} Только оптимизация ${DIM}(без движка: фиксы, лимитер, оптимизация)${NC}"
             fi
+            echo -e "  ${DIM}[6]${NC} Версия telemt: обновить или откатить ${DIM}(только бинарник)${NC}"
         fi
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
@@ -70,6 +95,9 @@ tui_target_menu() {
                 [ "$_telemt_item" = "true" ] || continue
                 uninstall_original_telemt || true
                 press_any_key ;;
+            6)
+                [ "$_telemt_item" = "true" ] || continue
+                _tui_target_engine ;;
             0|"") return ;;
         esac
     done

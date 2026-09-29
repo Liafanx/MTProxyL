@@ -155,6 +155,18 @@ def availability_menu(auto_on: bool) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
+def dc_menu(auto_on: bool) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔃 Обновить", callback_data="dc:show")
+    kb.button(text="⏸ Выключить перезапуск" if auto_on else "♻️ Включить перезапуск",
+              callback_data="dc:ar")
+    kb.button(text="📉 Порог перезапуска", callback_data="dc:thr")
+    kb.button(text="⏳ Охлаждение", callback_data="dc:cool")
+    kb.button(text="⬅️ Меню", callback_data="m:root")
+    kb.adjust(1, 1, 2, 1)
+    return kb.as_markup()
+
+
 def backups_menu() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="💾 Создать и прислать", callback_data="b:make")

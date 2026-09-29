@@ -338,6 +338,9 @@ _mig_build_args() {
     _a+=(--sni-policy "${UNKNOWN_SNI_ACTION:-mask}")
     [ "${MASKING_ENABLED:-true}" = "false" ] && _a+=(--mask off) || _a+=(--mask on)
     [ -n "${AD_TAG:-}" ] && _a+=(--ad-tag "$AD_TAG")
+    if [ "${DC_RESTART_ENABLED:-false}" = "true" ]; then
+        _a+=(--dc-restart "${DC_RESTART_THRESHOLD:-50}" --dc-restart-cooldown "${DC_RESTART_COOLDOWN:-5}")
+    fi
     # Лимиты CPU и памяти не переносим: их подбирали под старую машину, а docker
     # на новой откажется запускать контейнер, если ядер там меньше. У бинарника
     # таких лимитов нет вовсе.

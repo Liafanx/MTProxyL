@@ -30,6 +30,13 @@ type EngineVersions struct {
 	// Local lists versions already on disk: those roll back without network.
 	Local    []string        `json:"local"`
 	Releases []EngineRelease `json:"releases"`
+	// Target is the Reanimator target: only its telemt binary is swapped, the
+	// target config stays untouched. Supported is false for a Docker target.
+	Target     bool   `json:"target"`
+	Supported  bool   `json:"supported"`
+	Reason     string `json:"reason,omitempty"`
+	BinPath    string `json:"bin_path,omitempty"`
+	ConfigPath string `json:"config_path,omitempty"`
 }
 
 type EngineCleanupCandidate struct {
