@@ -611,10 +611,10 @@ run_proxy_container() {
             local i
             for i in "${!SECRETS_LABELS[@]}"; do
                 [ "${SECRETS_ENABLED[$i]}" = "true" ] || continue
-                local _kind _fs
-                while mtproto_is_enabled 2>/dev/null && IFS='|' read -r _kind _fs; do
+                local _kind _fs _dom
+                while mtproto_is_enabled 2>/dev/null && IFS='|' read -r _kind _fs _dom; do
                     [ -n "$_fs" ] || continue
-                    echo -e "  ${BOLD}${SECRETS_LABELS[$i]}${NC} ${DIM}($(link_kind_title "$_kind")):${NC} ${CYAN}tg://proxy?server=${server_ip}&port=${PROXY_PORT}&secret=${_fs}${NC}"
+                    echo -e "  ${BOLD}${SECRETS_LABELS[$i]}${NC} ${DIM}($(link_kind_title "$_kind" "$_dom")):${NC} ${CYAN}tg://proxy?server=${server_ip}&port=${PROXY_PORT}&secret=${_fs}${NC}"
                 done <<< "$(build_link_secrets "${SECRETS_KEYS[$i]}")"
                 if web_is_enabled 2>/dev/null; then
                     local _wl; _wl=$(web_link_for_secret "${SECRETS_KEYS[$i]}" 2>/dev/null)

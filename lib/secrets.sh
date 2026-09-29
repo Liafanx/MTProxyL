@@ -202,10 +202,10 @@ secret_add() {
 # в узком окне он рассыпается, а ссылку всё равно копируют текстом.
 _print_secret_links() {
     local _ip="$1" _port="$2" _raw="$3"
-    local _kind _sec _title
-    while mtproto_is_enabled 2>/dev/null && IFS='|' read -r _kind _sec; do
+    local _kind _sec _dom _title
+    while mtproto_is_enabled 2>/dev/null && IFS='|' read -r _kind _sec _dom; do
         [ -n "$_sec" ] || continue
-        _title="$(link_kind_title "$_kind")"
+        _title="$(link_kind_title "$_kind" "$_dom")"
         echo -e "  ${BOLD}Ссылка для Telegram${NC} ${DIM}(${_title})${NC}"
         echo -e "  ${CYAN}tg://proxy?server=${_ip}&port=${_port}&secret=${_sec}${NC}"
         echo -e "  ${BOLD}Веб-ссылка${NC} ${DIM}(${_title})${NC}"
@@ -662,8 +662,8 @@ get_proxy_links() {
     done
     [ $idx -eq -1 ] && { log_error "Секрет '${label}' не найден"; return 1; }
 
-    local _kind _sec
-    while mtproto_is_enabled 2>/dev/null && IFS='|' read -r _kind _sec; do
+    local _kind _sec _dom
+    while mtproto_is_enabled 2>/dev/null && IFS='|' read -r _kind _sec _dom; do
         [ -n "$_sec" ] || continue
         echo "tg://proxy?server=${server_ip}&port=${server_port}&secret=${_sec}"
     done <<< "$(build_link_secrets "${SECRETS_KEYS[$idx]}")"
@@ -1010,10 +1010,15 @@ target_user_link() {
     [ -n "$_raw" ] || return 1
     _domain=$(_toml_get_string_in_section "censorship" "tls_domain" "$DETECTED_CONFIG_PATH")
     _mask=$(_toml_get_string_in_section "censorship" "mask" "$DETECTED_CONFIG_PATH")
+    local -a _secrets=()
     if [ "$_mask" = "false" ] || [ -z "$_domain" ]; then
-        _full="dd${_raw}"
+        _secrets=("dd${_raw}")
     else
-        _full="ee${_raw}$(domain_to_hex "$_domain")"
+        _secrets=("ee${_raw}$(domain_to_hex "$_domain")")
+        while IFS= read -r _full; do
+            [ -n "$_full" ] && [ "${_full,,}" != "${_domain,,}" ] || continue
+            _secrets+=("ee${_raw}$(domain_to_hex "$_full")")
+        done < <(engine_tls_extra_domains "$DETECTED_CONFIG_PATH")
     fi
     # [general.links] public_host/public_port у цели — та же логика, что и
     # для superexpert: заданы явно — используем их, а не наш определённый
@@ -1022,7 +1027,9 @@ target_user_link() {
     [ -n "$_ip" ] || _ip=$(get_public_ip)
     _port=$(_toml_get_string_in_section "general.links" "public_port" "$DETECTED_CONFIG_PATH")
     [ -n "$_port" ] || _port="${DETECTED_PORT:-443}"
-    printf 'tg://proxy?server=%s&port=%s&secret=%s\n' "$_ip" "$_port" "$_full"
+    for _full in "${_secrets[@]}"; do
+        printf 'tg://proxy?server=%s&port=%s&secret=%s\n' "$_ip" "$_port" "$_full"
+    done
     _target_web_link "$_label"
 }
 

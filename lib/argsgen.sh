@@ -36,7 +36,9 @@ _argsgen_defaults() {
     _AG_ON=(); _AG_VAL=()
 
     _AG_ON[engine]="yes"
-    if [ "$(engine_backend)" = "binary" ]; then
+    if [ "$(engine_backend)" = "binary" ] && binengine_is_custom; then
+        _AG_VAL[engine]="custom"
+    elif [ "$(engine_backend)" = "binary" ]; then
         local _ev; _ev=$(binengine_version)
         [ -n "$_ev" ] && [ "$_ev" != "unknown" ] && _AG_VAL[engine]="binary:${_ev}" || _AG_VAL[engine]="binary"
     else
@@ -118,6 +120,9 @@ _argsgen_build() {
     [ "${_AG_ON[force]}" = "yes" ] && _a+=(--force)
     if [ "${_AG_ON[engine]}" = "yes" ]; then
         case "${_AG_VAL[engine]}" in
+            custom)
+                _a+=(--engine binary --engine-url "$(binengine_source)")
+                [ -n "${ENGINE_CUSTOM_SHA256:-}" ] && _a+=(--engine-sha256 "$ENGINE_CUSTOM_SHA256") ;;
             binary:*) _a+=(--engine binary --engine-version "${_AG_VAL[engine]#binary:}") ;;
             binary)   _a+=(--engine binary) ;;
             *)        _a+=(--engine docker) ;;
@@ -243,6 +248,7 @@ _argsgen_build() {
 # В значениях храним то, что уйдёт в аргументы; человеку показываем словами.
 _ag_engine_label() {
     case "$1" in
+        custom)   echo "свой бинарник по той же ссылке" ;;
         binary:*) echo "бинарник ${1#binary:}" ;;
         binary)   echo "бинарник, последняя версия" ;;
         *)        echo "Docker-образ" ;;
@@ -285,7 +291,9 @@ _argsgen_edit() {
             case "$_ec" in
                 2)
                     local _ev; _ev=$(binengine_version)
-                    if [ -z "$_ev" ] || [ "$_ev" = "unknown" ]; then
+                    if binengine_is_custom; then
+                        _AG_VAL[engine]="custom"
+                    elif [ -z "$_ev" ] || [ "$_ev" = "unknown" ]; then
                         log_warn "Версия здешнего бинарника неизвестна — возьмём последнюю"
                         _AG_VAL[engine]="binary"
                     else

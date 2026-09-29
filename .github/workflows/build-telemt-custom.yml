@@ -1,0 +1,323 @@
+name: Build Telemt Custom
+
+# Сборка telemt с серией патчей из engine/telemt/<набор>. Ставится как свой
+# бинарник: mtproxyl engine custom <ссылка на архив из релиза>.
+#
+# Запуск: вручную (Run workflow), тегом telemt-<версия>-mtproxyl-<ревизия>
+# (сборка и публикация) или пушем в ветку engine-build (проверка без публикации).
+
+on:
+  workflow_dispatch:
+    inputs:
+      patch_set:
+        description: 'Набор патчей: каталог в engine/telemt'
+        required: true
+        default: '3.5.7'
+      telemt_ref:
+        description: 'Тег или коммит telemt (пусто — из файла base набора)'
+        required: false
+        default: ''
+      build_rev:
+        description: 'Ревизия сборки для тега релиза'
+        required: true
+        default: 'r1'
+      publish:
+        description: 'Опубликовать как prerelease?'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+  push:
+    branches: [engine-build]
+    tags: ['telemt-*-mtproxyl-*']
+
+env:
+  BINARY_NAME: telemt
+  CARGO_TERM_COLOR: never
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      patch_set: ${{ steps.p.outputs.patch_set }}
+      telemt_ref: ${{ steps.p.outputs.telemt_ref }}
+      tag: ${{ steps.p.outputs.tag }}
+      publish: ${{ steps.p.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: p
+        shell: bash
+        run: |
+          set -euo pipefail
+          publish=false
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            set_name="${{ github.event.inputs.patch_set }}"
+            ref="${{ github.event.inputs.telemt_ref }}"
+            rev="${{ github.event.inputs.build_rev }}"
+            publish="${{ github.event.inputs.publish }}"
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            # telemt-3.5.7-mtproxyl-r1 → набор 3.5.7, ревизия r1
+            t="${GITHUB_REF_NAME#telemt-}"
+            set_name="${t%%-mtproxyl-*}"
+            rev="${t##*-mtproxyl-}"
+            ref=""
+            publish=true
+          else
+            set_name="$(cat engine/telemt/DEFAULT)"
+            ref=""
+            rev="check"
+          fi
+          dir="engine/telemt/${set_name}"
+          [ -f "${dir}/series" ] || { echo "::error::Нет набора ${dir}"; exit 1; }
+          [ -n "$ref" ] || ref="$(tr -d ' \n' < "${dir}/base")"
+          echo "patch_set=${set_name}" >> "$GITHUB_OUTPUT"
+          echo "telemt_ref=${ref}" >> "$GITHUB_OUTPUT"
+          echo "tag=telemt-${set_name}-mtproxyl-${rev}" >> "$GITHUB_OUTPUT"
+          echo "publish=${publish}" >> "$GITHUB_OUTPUT"
+          echo "Набор ${set_name}, telemt ${ref}, публикация ${publish}"
+
+  test:
+    name: Tests
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: mtproxyl
+
+      - name: Source with patches
+        shell: bash
+        run: bash mtproxyl/engine/telemt/apply.sh "${{ needs.prepare.outputs.telemt_ref }}" "mtproxyl/engine/telemt/${{ needs.prepare.outputs.patch_set }}" src
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src/target
+          key: test-${{ needs.prepare.outputs.telemt_ref }}-${{ hashFiles('src/Cargo.lock') }}
+          restore-keys: test-${{ needs.prepare.outputs.telemt_ref }}-
+
+      - name: Build tests
+        working-directory: src
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --no-run --message-format=short -j "$(nproc)" 2>&1 | tee ../build.log
+
+      - name: Run tests
+        working-directory: src
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -j "$(nproc)" 2>&1 | tee ../test.log
+
+      - name: Annotate failures
+        if: failure()
+        shell: bash
+        run: bash mtproxyl/engine/telemt/annotate.sh build.log test.log
+
+  build-gnu:
+    name: GNU ${{ matrix.asset }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    container:
+      image: rust:slim-bookworm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            asset: telemt-x86_64-linux-gnu
+            cpu: baseline
+          - target: x86_64-unknown-linux-gnu
+            asset: telemt-x86_64-v3-linux-gnu
+            cpu: v3
+          - target: aarch64-unknown-linux-gnu
+            asset: telemt-aarch64-linux-gnu
+            cpu: generic
+    steps:
+      - name: Install deps
+        run: |
+          apt-get update
+          apt-get install -y build-essential clang lld pkg-config git \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - uses: actions/checkout@v4
+        with:
+          path: mtproxyl
+
+      - name: Source with patches
+        shell: bash
+        run: bash mtproxyl/engine/telemt/apply.sh "${{ needs.prepare.outputs.telemt_ref }}" "mtproxyl/engine/telemt/${{ needs.prepare.outputs.patch_set }}" src
+
+      - name: Add rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            export CC=aarch64-linux-gnu-gcc
+            export CXX=aarch64-linux-gnu-g++
+            export RUSTFLAGS="-C linker=aarch64-linux-gnu-gcc -C lto=fat -C panic=abort"
+          else
+            export CC=clang
+            export CXX=clang++
+            if [ "${{ matrix.cpu }}" = "v3" ]; then
+              CPU_FLAGS="-C target-cpu=x86-64-v3"
+            else
+              CPU_FLAGS="-C target-cpu=x86-64"
+            fi
+            export RUSTFLAGS="-C linker=clang -C link-arg=-fuse-ld=lld -C lto=fat -C panic=abort ${CPU_FLAGS}"
+          fi
+          cargo build --release --locked --target ${{ matrix.target }} -j "$(nproc)" 2>&1 | tee ../build.log
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash mtproxyl/engine/telemt/package.sh "src/target/${{ matrix.target }}/release/${BINARY_NAME}" \
+            "${{ matrix.asset }}" "${{ matrix.target }}"
+
+      - name: Annotate failures
+        if: failure()
+        shell: bash
+        run: bash mtproxyl/engine/telemt/annotate.sh build.log
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/*
+
+  build-musl:
+    name: MUSL ${{ matrix.asset }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    container:
+      image: rust:slim-bookworm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            asset: telemt-x86_64-linux-musl
+            cpu: baseline
+          - target: x86_64-unknown-linux-musl
+            asset: telemt-x86_64-v3-linux-musl
+            cpu: v3
+          - target: aarch64-unknown-linux-musl
+            asset: telemt-aarch64-linux-musl
+            cpu: generic
+    steps:
+      - name: Install deps
+        run: |
+          apt-get update
+          apt-get install -y musl-tools pkg-config curl git
+
+      - uses: actions/checkout@v4
+        with:
+          path: mtproxyl
+
+      - name: Install aarch64 musl toolchain
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLCHAIN_DIR="$HOME/.musl-aarch64"
+          ARCHIVE="aarch64-linux-musl-cross.tgz"
+          curl -fL --retry 5 --retry-delay 3 --connect-timeout 10 --max-time 120 \
+            -o "${ARCHIVE}" "https://github.com/telemt/telemt/releases/download/toolchains/${ARCHIVE}"
+          mkdir -p "${TOOLCHAIN_DIR}"
+          tar -xzf "${ARCHIVE}" --strip-components=1 -C "${TOOLCHAIN_DIR}"
+          echo "${TOOLCHAIN_DIR}/bin" >> "${GITHUB_PATH}"
+
+      - name: Source with patches
+        shell: bash
+        run: bash mtproxyl/engine/telemt/apply.sh "${{ needs.prepare.outputs.telemt_ref }}" "mtproxyl/engine/telemt/${{ needs.prepare.outputs.patch_set }}" src
+
+      - name: Add rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Build
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
+            export CC=aarch64-linux-musl-gcc
+            export CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc
+            export RUSTFLAGS="-C target-feature=+crt-static -C linker=aarch64-linux-musl-gcc -C lto=fat -C panic=abort"
+          else
+            export CC=musl-gcc
+            export CC_x86_64_unknown_linux_musl=musl-gcc
+            if [ "${{ matrix.cpu }}" = "v3" ]; then
+              CPU_FLAGS="-C target-cpu=x86-64-v3"
+            else
+              CPU_FLAGS="-C target-cpu=x86-64"
+            fi
+            export RUSTFLAGS="-C target-feature=+crt-static -C lto=fat -C panic=abort ${CPU_FLAGS}"
+          fi
+          cargo build --release --locked --target ${{ matrix.target }} -j "$(nproc)" 2>&1 | tee ../build.log
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash mtproxyl/engine/telemt/package.sh "src/target/${{ matrix.target }}/release/${BINARY_NAME}" \
+            "${{ matrix.asset }}" "${{ matrix.target }}"
+
+      - name: Annotate failures
+        if: failure()
+        shell: bash
+        run: bash mtproxyl/engine/telemt/annotate.sh build.log
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/*
+
+  release:
+    needs: [prepare, test, build-gnu, build-musl]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          find artifacts -type f -exec cp {} out/ \;
+          (cd out && sha256sum *.tar.gz > checksums.txt)
+          ls -la out
+          {
+            echo "telemt ${{ needs.prepare.outputs.telemt_ref }} с патчами из \`engine/telemt/${{ needs.prepare.outputs.patch_set }}\`."
+            echo ""
+            echo "Установка: \`mtproxyl engine custom <ссылка на архив>\`."
+            echo ""
+            echo "Патчи:"
+            sed 's/^/- /' "engine/telemt/${{ needs.prepare.outputs.patch_set }}/series"
+          } > notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: ${{ needs.prepare.outputs.tag }}
+          body_path: notes.md
+          prerelease: true
+          make_latest: 'false'
+          files: out/*

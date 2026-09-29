@@ -56,10 +56,10 @@ tui_links_menu() {
 # текстом. Четвёртый аргумент остался ради совместимости вызовов.
 _tui_print_links() {
     local _ip="$1" _port="$2" _pairs="$3" _raw="${5:-}"
-    local _kind _sec _label
-    while mtproto_is_enabled 2>/dev/null && IFS='|' read -r _kind _sec; do
+    local _kind _sec _dom _label
+    while mtproto_is_enabled 2>/dev/null && IFS='|' read -r _kind _sec _dom; do
         [ -z "$_sec" ] && continue
-        _label="$(link_kind_title "$_kind")"
+        _label="$(link_kind_title "$_kind" "$_dom")"
         echo -e "  ${BOLD}TG${NC} ${DIM}(${_label})${NC}  ${CYAN}tg://proxy?server=${_ip}&port=${_port}&secret=${_sec}${NC}"
         echo -e "  ${BOLD}Веб${NC} ${DIM}(${_label})${NC} ${CYAN}https://t.me/proxy?server=${_ip}&port=${_port}&secret=${_sec}${NC}"
     done <<< "$_pairs"

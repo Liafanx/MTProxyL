@@ -7,6 +7,9 @@ MTPROXYL_MODE="manager"
 # MTProxyL-Telemt под systemd. ENGINE_VERSION пуст = последняя версия telemt.
 ENGINE_BACKEND="docker"
 ENGINE_VERSION=""
+# Свой бинарник telemt: ссылка https и sha256 скачанного файла. Пусто — релиз.
+ENGINE_CUSTOM_URL=""
+ENGINE_CUSTOM_SHA256=""
 PROXY_PORT=443
 # Какие клиентские транспорты поднимает менеджер: обычный MTProto, WEB или оба.
 # Для старых settings.conf значение выводится из WEB_ENABLED при загрузке.
@@ -173,6 +176,8 @@ MTPROXYL_MODE='${MTPROXYL_MODE}'
 # Движок менеджера: docker | binary
 ENGINE_BACKEND='${ENGINE_BACKEND}'
 ENGINE_VERSION='${ENGINE_VERSION}'
+ENGINE_CUSTOM_URL='${ENGINE_CUSTOM_URL}'
+ENGINE_CUSTOM_SHA256='${ENGINE_CUSTOM_SHA256}'
 
 # Конфигурация прокси
 PROXY_MODE='${PROXY_MODE}'
@@ -495,7 +500,7 @@ load_settings() {
             fi
 
             case "$key" in
-                MTPROXYL_MODE|ENGINE_BACKEND|ENGINE_VERSION|\
+                MTPROXYL_MODE|ENGINE_BACKEND|ENGINE_VERSION|ENGINE_CUSTOM_URL|ENGINE_CUSTOM_SHA256|\
                 PROXY_MODE|PROXY_PORT|PROXY_METRICS_PORT|PROXY_API_PORT|PROXY_DOMAIN|PROXY_CONCURRENCY|\
                 PROXY_CPUS|PROXY_MEMORY|CUSTOM_IP|FAKE_CERT_LEN|\
                 PROXY_PROTOCOL|PROXY_PROTOCOL_TRUSTED_CIDRS|\
@@ -602,6 +607,8 @@ load_settings() {
     esac
     [[ "$WEB_PUBLIC_PORT" =~ ^[0-9]+$ ]] && [ "$WEB_PUBLIC_PORT" -ge 1 ] && [ "$WEB_PUBLIC_PORT" -le 65535 ] || WEB_PUBLIC_PORT="443"
     [ "$WEB_DEBUG" = "true" ] || WEB_DEBUG="false"
+    [[ "$ENGINE_CUSTOM_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/[^[:space:]\"\'\`\\\$]+$ ]] || ENGINE_CUSTOM_URL=""
+    [[ "$ENGINE_CUSTOM_SHA256" =~ ^[0-9a-f]{64}$ ]] || ENGINE_CUSTOM_SHA256=""
     [ "$WEB_DEBUG_SIDEBAND" = "true" ] || WEB_DEBUG_SIDEBAND="false"
     [ -z "$WEB_BASE_PATH" ] || { [ "${#WEB_BASE_PATH}" -le 128 ] \
         && [[ "$WEB_BASE_PATH" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*(/[A-Za-z0-9][A-Za-z0-9_-]*)*$ ]]; } || WEB_BASE_PATH=""

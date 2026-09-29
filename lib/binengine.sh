@@ -9,6 +9,9 @@ ENGINE_UNIT_FILE="/etc/systemd/system/${ENGINE_SERVICE}.service"
 ENGINE_VERSION_FILE="${ENGINE_BIN_DIR}/.version"
 ENGINE_PREV_BIN="${ENGINE_BIN_DIR}/${ENGINE_BIN_NAME}.prev"
 ENGINE_PREV_VERSION_FILE="${ENGINE_BIN_DIR}/.version.prev"
+# Откуда взят бинарник: ссылка на свою сборку. Пусто — официальный релиз.
+ENGINE_SOURCE_FILE="${ENGINE_BIN_DIR}/.source"
+ENGINE_PREV_SOURCE_FILE="${ENGINE_BIN_DIR}/.source.prev"
 TELEMT_RELEASES_URL="https://github.com/${TELEMT_GITHUB:-telemt/telemt}/releases/download"
 
 # ── Общее для обоих движков ───────────────────────────────────
@@ -130,22 +133,140 @@ binengine_fetch() {
         return "$_rc"
     fi
 
-    mkdir -p "$ENGINE_BIN_DIR"; chmod 750 "$ENGINE_BIN_DIR"
-    # Прошлый бинарник держим рядом: откат не требует сети.
-    if [ -x "$ENGINE_BIN_PATH" ]; then
-        cp -f "$ENGINE_BIN_PATH" "$ENGINE_PREV_BIN" 2>/dev/null || true
-        [ -r "$ENGINE_VERSION_FILE" ] && cp -f "$ENGINE_VERSION_FILE" "$ENGINE_PREV_VERSION_FILE" 2>/dev/null || true
-    fi
-
-    install -m 0755 "${_tmpd}/telemt" "$ENGINE_BIN_PATH" || {
-        rm -rf "$_tmpd"
-        log_error "Не удалось положить бинарник в ${ENGINE_BIN_PATH}"
-        return 1
-    }
+    _binengine_put "${_tmpd}/telemt" || { rm -rf "$_tmpd"; return 1; }
     rm -rf "$_tmpd"
 
     printf '%s\n' "$_ver" > "$ENGINE_VERSION_FILE"
+    rm -f "$ENGINE_SOURCE_FILE"
+    ENGINE_CUSTOM_URL=""; ENGINE_CUSTOM_SHA256=""
     log_success "MTProxyL-Telemt ${_ver} установлен: ${ENGINE_BIN_PATH}"
+}
+
+# Кладёт новый бинарник на место. Прошлый держим рядом вместе с его версией и
+# источником: откат не требует сети.
+_binengine_put() {
+    local _new="$1"
+    mkdir -p "$ENGINE_BIN_DIR"; chmod 750 "$ENGINE_BIN_DIR"
+    if [ -x "$ENGINE_BIN_PATH" ]; then
+        cp -f "$ENGINE_BIN_PATH" "$ENGINE_PREV_BIN" 2>/dev/null || true
+        cp -f "$ENGINE_VERSION_FILE" "$ENGINE_PREV_VERSION_FILE" 2>/dev/null || rm -f "$ENGINE_PREV_VERSION_FILE"
+        cp -f "$ENGINE_SOURCE_FILE" "$ENGINE_PREV_SOURCE_FILE" 2>/dev/null || rm -f "$ENGINE_PREV_SOURCE_FILE"
+    fi
+    install -m 0755 "$_new" "$ENGINE_BIN_PATH" || {
+        log_error "Не удалось положить бинарник в ${ENGINE_BIN_PATH}"
+        return 1
+    }
+}
+
+# ── Свой бинарник ─────────────────────────────────────────────
+
+binengine_source() {
+    [ -r "$ENGINE_SOURCE_FILE" ] && head -1 "$ENGINE_SOURCE_FILE"
+}
+
+binengine_is_custom() {
+    [ -n "$(binengine_source 2>/dev/null)" ]
+}
+
+_binengine_url_valid() {
+    [[ "$1" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/[^[:space:]\"\'\`\\\$]+$ ]]
+}
+
+# e_machine ELF: 0x3e — x86_64, 0xb7 — aarch64.
+_binengine_elf_arch_ok() {
+    local _m; _m=$(od -An -tx1 -j18 -N2 "$1" 2>/dev/null | tr -d ' \n')
+    case "$(uname -m):${_m}" in
+        x86_64:3e00|amd64:3e00|aarch64:b700|arm64:b700) return 0 ;;
+    esac
+    return 1
+}
+
+# binengine_install_custom <https-ссылка> [sha256] — бинарник telemt или архив
+# .tar.gz с ним. Без sha256 сверяемся с «<ссылка>.sha256», если он есть.
+binengine_install_custom() {
+    local _url="$1" _sha="${2:-}"
+    _binengine_url_valid "$_url" || {
+        log_error "Нужна ссылка https://… на бинарник telemt или архив .tar.gz с ним"
+        return 1
+    }
+    [ -z "$_sha" ] || [[ "$_sha" =~ ^[0-9a-fA-F]{64}$ ]] || {
+        log_error "sha256 — 64 шестнадцатеричных символа"
+        return 1
+    }
+    local _tmpd
+    _tmpd=$(mktemp -d "${TMPDIR:-/tmp}/mtproxyl-engine.XXXXXX") || return 1
+    local _rc=0
+    _binengine_custom_into "$_tmpd" "$_url" "${_sha,,}" || _rc=$?
+    if [ "$_rc" -ne 0 ]; then
+        rm -rf "$_tmpd"
+        return "$_rc"
+    fi
+    local _ver _got
+    _ver=$(cat "${_tmpd}/version"); _got=$(cat "${_tmpd}/sha256")
+    _binengine_put "${_tmpd}/telemt" || { rm -rf "$_tmpd"; return 1; }
+    rm -rf "$_tmpd"
+    printf '%s-custom\n' "$_ver" > "$ENGINE_VERSION_FILE"
+    printf '%s\n' "$_url" > "$ENGINE_SOURCE_FILE"
+    chmod 600 "$ENGINE_SOURCE_FILE" 2>/dev/null || true
+    ENGINE_CUSTOM_URL="$_url"; ENGINE_CUSTOM_SHA256="$_got"; ENGINE_VERSION="${_ver}-custom"
+    save_settings 2>/dev/null || true
+    log_success "Свой бинарник telemt ${_ver} установлен: ${ENGINE_BIN_PATH}"
+}
+
+_binengine_custom_into() {
+    local _dir="$1" _url="$2" _sha="$3" _got _want
+    log_info "Загрузка: ${_url}"
+    if ! curl -fsSL --proto '=https' --connect-timeout 20 --max-time 600 --retry 3 --retry-delay 3 \
+            --max-filesize 209715200 "$_url" -o "${_dir}/dl"; then
+        log_error "Не удалось скачать — проверьте ссылку и доступ к сайту"
+        return 1
+    fi
+    _got=$(sha256sum "${_dir}/dl" | awk '{print $1}')
+    if [ -n "$_sha" ]; then
+        [ "$_sha" = "$_got" ] || { log_error "sha256 не совпала: ожидали ${_sha}, скачано ${_got}"; return 1; }
+        log_success "Контрольная сумма sha256 совпала"
+    elif curl -fsSL --proto '=https' --max-time 30 "${_url}.sha256" -o "${_dir}/dl.sha256" 2>/dev/null \
+         && _want=$(awk 'NF{print tolower($1); exit}' "${_dir}/dl.sha256") && [[ "$_want" =~ ^[0-9a-f]{64}$ ]]; then
+        [ "$_want" = "$_got" ] || { log_error "sha256 не совпала с ${_url}.sha256 — файл повреждён или подменён"; return 1; }
+        log_success "Контрольная сумма sha256 совпала"
+    else
+        log_warn "Контрольной суммы рядом нет. Сверьте sha256 с опубликованной автором: ${_got}"
+    fi
+    printf '%s' "$_got" > "${_dir}/sha256"
+
+    case "$(od -An -tx1 -N4 "${_dir}/dl" | tr -d ' \n')" in
+        7f454c46)
+            mv -f "${_dir}/dl" "${_dir}/telemt" ;;
+        1f8b*)
+            mkdir -p "${_dir}/x"
+            tar xzf "${_dir}/dl" -C "${_dir}/x" 2>/dev/null || { log_error "Не удалось распаковать архив"; return 1; }
+            local _f _found=""
+            while IFS= read -r _f; do
+                [ "$(od -An -tx1 -N4 "$_f" | tr -d ' \n')" = "7f454c46" ] && { _found="$_f"; break; }
+            done < <(find "${_dir}/x" -type f -name 'telemt*' ! -name '*.sha256' 2>/dev/null)
+            [ -n "$_found" ] || { log_error "В архиве нет бинарника telemt"; return 1; }
+            mv -f "$_found" "${_dir}/telemt" ;;
+        *)
+            log_error "По ссылке не бинарник Linux и не архив .tar.gz"
+            return 1 ;;
+    esac
+    chmod 0755 "${_dir}/telemt"
+
+    _binengine_elf_arch_ok "${_dir}/telemt" || {
+        log_error "Бинарник собран под другую архитектуру, а сервер — $(uname -m)"
+        return 1
+    }
+    local _out _ver
+    _out=$(timeout 10 "${_dir}/telemt" --version 2>&1) || true
+    _ver=$(awk 'tolower($0) ~ /telemt/ {print $NF; exit}' <<< "$_out")
+    _ver="${_ver#v}"
+    if ! [[ "$_ver" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?([.-][0-9A-Za-z.-]+)?$ ]]; then
+        log_error "Бинарник не запустился или это не telemt: --version не вернул «telemt X.Y.Z»"
+        [ -n "$_out" ] && printf '%s\n' "$_out" | head -3 | sed 's/^/    /'
+        log_info "Частые причины: сборка под glibc на системе с musl или слишком старый glibc, инструкции x86-64-v3 на старом CPU"
+        return 1
+    fi
+    printf '%s' "${_ver%-custom}" > "${_dir}/version"
 }
 
 _binengine_fetch_into() {
@@ -203,6 +324,10 @@ _binengine_fetch_into() {
 
 binengine_ensure_installed() {
     binengine_installed && return 0
+    if [ -n "${ENGINE_CUSTOM_URL:-}" ]; then
+        binengine_install_custom "$ENGINE_CUSTOM_URL" "${ENGINE_CUSTOM_SHA256:-}"
+        return
+    fi
     binengine_fetch "${ENGINE_VERSION:-latest}"
 }
 
@@ -233,13 +358,22 @@ _binengine_memory_max() {
     return 1
 }
 
-# telemt 3.5.8 канонизирует путь helper'а iptables и запускает xtables-*-multi
-# под его собственным именем: тот печатает справку, сверка conntrack падает и
-# повторяется бесконечно (telemt issue #932). iptables движку не нужен — nft он
-# найдёт сам, поэтому multi-бинарники от процесса прячем. Без mount namespace
-# (часть LXC) такой юнит не стартует, поэтому сначала пробуем systemd-run.
+# telemt 3.5.8+ ведёт правила conntrack сам и на старте чистит и nft, и
+# iptables. В 3.5.8 helper iptables запускался без имени applet'а («No valid
+# subcommand given», telemt #932); в 3.5.9 это исправили, но iptables-nft 1.8.10+
+# сообщает об отсутствии цепочки «Chain '…' does not exist», и telemt считает
+# это ошибкой. Итог один: сверка падает и повторяется бесконечно. При наличии
+# nft iptables движку не нужен, поэтому multi-бинарники от процесса прячем.
+# Без mount namespace (часть LXC) такой юнит не стартует — сначала systemd-run.
 _binengine_hidden_helpers() {
-    local _b _t _seen=" " _lines=""
+    local _b _t _seen=" " _lines="" _v _nft=""
+    _v=$(binengine_version 2>/dev/null); _v="${_v#v}"; _v="${_v%%-*}"
+    [ -n "$_v" ] && _version_ge "$_v" "3.5.8" || return 1
+    for _b in /usr/sbin/nft /usr/bin/nft /sbin/nft /bin/nft; do
+        [ -x "$_b" ] && { _nft=1; break; }
+    done
+    [ -n "$_nft" ] || return 1
+    [ "$(get_expert_override_value server.conntrack_control backend 2>/dev/null)" != "iptables" ] || return 1
     for _b in iptables ip6tables iptables-restore ip6tables-restore; do
         _t=$(readlink -f "/usr/sbin/${_b}" 2>/dev/null) || continue
         [ -f "$_t" ] || continue
@@ -423,6 +557,7 @@ binengine_update_to() {
     local _tag="${1:-latest}"
     local _cur; _cur=$(binengine_version)
     log_info "Текущая версия: ${_cur}"
+    binengine_is_custom && log_warn "Свой бинарник будет заменён официальной сборкой telemt; вернуться — mtproxyl engine rollback"
     binengine_fetch "$_tag" || return 1
     ENGINE_VERSION=$(binengine_version)
     save_settings 2>/dev/null || true
@@ -463,6 +598,12 @@ binengine_rollback() {
     [ -f "$_tmp" ] && mv -f "$_tmp" "$ENGINE_PREV_BIN"
     printf '%s\n' "${_prev:-unknown}" > "$ENGINE_VERSION_FILE"
     printf '%s\n' "$_cur" > "$ENGINE_PREV_VERSION_FILE"
+    # Источник переезжает вместе с бинарником: свой остаётся своим.
+    local _src_cur _src_prev
+    _src_cur=$(cat "$ENGINE_SOURCE_FILE" 2>/dev/null); _src_prev=$(cat "$ENGINE_PREV_SOURCE_FILE" 2>/dev/null)
+    if [ -n "$_src_prev" ]; then printf '%s\n' "$_src_prev" > "$ENGINE_SOURCE_FILE"; else rm -f "$ENGINE_SOURCE_FILE"; fi
+    if [ -n "$_src_cur" ]; then printf '%s\n' "$_src_cur" > "$ENGINE_PREV_SOURCE_FILE"; else rm -f "$ENGINE_PREV_SOURCE_FILE"; fi
+    ENGINE_CUSTOM_URL="$_src_prev"; [ -n "$_src_prev" ] || ENGINE_CUSTOM_SHA256=""
     ENGINE_VERSION="${_prev:-}"
     save_settings 2>/dev/null || true
     log_success "Версия переключена на ${_prev:-предыдущую}"
@@ -493,8 +634,59 @@ _binengine_offer_image_cleanup() {
     log_success "Образы движка удалены"
 }
 
+# mtproxyl engine custom <ссылка> [--sha256 <хеш>] [--yes]. Свой бинарник живёт
+# в бинарном движке: с Docker-образа сначала переезжаем.
+engine_install_custom() {
+    local _url="" _sha="" _yes=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --sha256) _sha="${2:-}"; shift ;;
+            --sha256=*) _sha="${1#*=}" ;;
+            --yes|-y) _yes="--yes" ;;
+            *) [ -z "$_url" ] && _url="$1" ;;
+        esac
+        shift
+    done
+    _require_manager_mode || return 1
+    check_root
+    if [ -z "$_url" ]; then
+        echo -e "  ${BOLD}Использование:${NC} mtproxyl engine custom <ссылка> [--sha256 <хеш>] [--yes]"
+        echo -e "  ${DIM}Ссылка https на бинарник telemt или архив .tar.gz с ним, например:${NC}"
+        echo -e "  ${DIM}https://github.com/telemt/telemt/releases/download/3.5.7/telemt-x86_64-linux-musl.tar.gz${NC}"
+        return 1
+    fi
+    _binengine_url_valid "$_url" || {
+        log_error "Нужна ссылка https://… на бинарник telemt или архив .tar.gz с ним"
+        return 1
+    }
+    command -v systemctl &>/dev/null || {
+        log_error "Свой бинарник работает службой systemd, а systemd здесь нет"
+        return 1
+    }
+    log_warn "Бинарник запускается от root: ставьте только сборки, которым доверяете"
+
+    if ! engine_is_binary; then
+        echo ""
+        log_info "Свой бинарник работает в бинарном движке, сейчас — Docker-образ"
+        if [ "$_yes" != "--yes" ]; then
+            local _yn; read_line _yn "  ${BOLD}Перевести движок на бинарник и поставить свой? [y/N]:${NC} "
+            [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
+        fi
+        binengine_install_custom "$_url" "$_sha" || return 1
+        engine_switch_backend binary --yes
+        return
+    fi
+
+    binengine_install_custom "$_url" "$_sha" || return 1
+    binengine_write_unit || return 1
+    if [ "$(binengine_state)" != "absent" ]; then
+        load_secrets
+        restart_proxy_container
+    fi
+}
+
 engine_switch_backend() {
-    local _to="${1:-}"
+    local _to="${1:-}" _assume="${2:-}"
     _require_manager_mode || return 1
     check_root
     case "$_to" in
@@ -525,8 +717,10 @@ engine_switch_backend() {
         echo -e "  ${DIM}Секреты, настройки и порт сохранятся: конфиг генерируется заново${NC}"
         echo -e "  ${DIM}в ${CONFIG_DIR}/telemt.toml, контейнер ${CONTAINER_NAME} будет удалён.${NC}"
         echo -e "  ${DIM}Сам Docker остаётся в системе — его мы не ставили и не убираем.${NC}"
-        local _yn; read_line _yn "  ${BOLD}Продолжить? [y/N]:${NC} "
-        [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
+        if [ "$_assume" != "--yes" ]; then
+            local _yn; read_line _yn "  ${BOLD}Продолжить? [y/N]:${NC} "
+            [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
+        fi
 
         ENGINE_BACKEND="binary"
         if ! binengine_ensure_installed; then
@@ -542,8 +736,10 @@ engine_switch_backend() {
         echo ""
         log_warn "Движок переедет из бинарника в Docker-контейнер"
         echo -e "  ${DIM}Понадобится Docker: если его нет, он будет установлен.${NC}"
-        local _yn; read_line _yn "  ${BOLD}Продолжить? [y/N]:${NC} "
-        [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
+        if [ "$_assume" != "--yes" ]; then
+            local _yn; read_line _yn "  ${BOLD}Продолжить? [y/N]:${NC} "
+            [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
+        fi
 
         install_docker || { log_error "Без Docker перейти не получится"; return 1; }
         wait_for_docker || return 1
