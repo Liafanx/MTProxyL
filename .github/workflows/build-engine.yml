@@ -6,11 +6,11 @@ on:
       telemt_commit:
         description: 'Telemt commit hash to build from'
         required: true
-        default: 'e3f62db'
+        default: '4ca7418'
       version_tag:
         description: 'Version tag (e.g. 3.4.22-ed1895d)'
         required: true
-        default: '3.5.9-e3f62db'
+        default: '3.5.7-4ca7418'
       push_latest:
         description: 'Also update latest tag?'
         required: true
