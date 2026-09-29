@@ -358,16 +358,22 @@ _binengine_memory_max() {
     return 1
 }
 
-# telemt 3.5.8 канонизирует путь helper'а iptables и запускает xtables-*-multi
-# под его собственным именем: тот печатает справку, сверка conntrack падает и
-# повторяется бесконечно (telemt issue #932, исправлено в 3.5.9). iptables
-# движку не нужен — nft он найдёт сам, поэтому multi-бинарники от процесса
-# прячем. Без mount namespace (часть LXC) такой юнит не стартует, поэтому
-# сначала пробуем systemd-run.
+# telemt 3.5.8+ ведёт правила conntrack сам и на старте чистит и nft, и
+# iptables. В 3.5.8 helper iptables запускался без имени applet'а («No valid
+# subcommand given», telemt #932); в 3.5.9 это исправили, но iptables-nft 1.8.10+
+# сообщает об отсутствии цепочки «Chain '…' does not exist», и telemt считает
+# это ошибкой. Итог один: сверка падает и повторяется бесконечно. При наличии
+# nft iptables движку не нужен, поэтому multi-бинарники от процесса прячем.
+# Без mount namespace (часть LXC) такой юнит не стартует — сначала systemd-run.
 _binengine_hidden_helpers() {
-    local _b _t _seen=" " _lines="" _v
+    local _b _t _seen=" " _lines="" _v _nft=""
     _v=$(binengine_version 2>/dev/null); _v="${_v#v}"; _v="${_v%%-*}"
-    [ "$_v" = "3.5.8" ] || return 1
+    [ -n "$_v" ] && _version_ge "$_v" "3.5.8" || return 1
+    for _b in /usr/sbin/nft /usr/bin/nft /sbin/nft /bin/nft; do
+        [ -x "$_b" ] && { _nft=1; break; }
+    done
+    [ -n "$_nft" ] || return 1
+    [ "$(get_expert_override_value server.conntrack_control backend 2>/dev/null)" != "iptables" ] || return 1
     for _b in iptables ip6tables iptables-restore ip6tables-restore; do
         _t=$(readlink -f "/usr/sbin/${_b}" 2>/dev/null) || continue
         [ -f "$_t" ] || continue
