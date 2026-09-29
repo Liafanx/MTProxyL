@@ -12,7 +12,7 @@ _tui_engine_custom() {
     local _url _sha
     read_line _url "  ${BOLD}Ссылка:${NC} "
     [ -n "$_url" ] || { log_info "Отменено"; return 0; }
-    read_line _sha "  ${BOLD}sha256 [Enter — взять <ссылка>.sha256, если есть]:${NC} "
+    read_line _sha "  ${BOLD}sha256 [Enter — без проверки]:${NC} "
     engine_install_custom "$_url" ${_sha:+--sha256 "$_sha"}
 }
 

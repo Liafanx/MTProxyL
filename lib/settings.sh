@@ -7,7 +7,7 @@ MTPROXYL_MODE="manager"
 # MTProxyL-Telemt под systemd. ENGINE_VERSION пуст = последняя версия telemt.
 ENGINE_BACKEND="docker"
 ENGINE_VERSION=""
-# Свой бинарник telemt: ссылка https и sha256 скачанного файла. Пусто — релиз.
+# Свой бинарник telemt: ссылка https и sha256, если его указали. Пусто — релиз.
 ENGINE_CUSTOM_URL=""
 ENGINE_CUSTOM_SHA256=""
 PROXY_PORT=443

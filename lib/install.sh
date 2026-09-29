@@ -465,7 +465,7 @@ installer_pick_engine_backend() {
             _binengine_url_valid "$_cu" && break
             log_error "Нужна ссылка https://…"
         done
-        read_line _cs "  ${BOLD}sha256 [Enter — взять <ссылка>.sha256, если есть]:${NC} "
+        read_line _cs "  ${BOLD}sha256 [Enter — без проверки]:${NC} "
         [ -z "$_cs" ] || [[ "$_cs" =~ ^[0-9a-fA-F]{64}$ ]] || { log_warn "sha256 не похож на хеш — проверка по нему пропущена"; _cs=""; }
         ENGINE_CUSTOM_URL="$_cu"; ENGINE_CUSTOM_SHA256="${_cs,,}"
         log_success "Движок: свой бинарник telemt"

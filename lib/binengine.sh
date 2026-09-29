@@ -182,7 +182,8 @@ _binengine_elf_arch_ok() {
 }
 
 # binengine_install_custom <https-ссылка> [sha256] — бинарник telemt или архив
-# .tar.gz с ним. Без sha256 сверяемся с «<ссылка>.sha256», если он есть.
+# .tar.gz с ним. sha256 сверяется, только если передан: без него сборка — на
+# ответственности пользователя.
 binengine_install_custom() {
     local _url="$1" _sha="${2:-}"
     _binengine_url_valid "$_url" || {
@@ -201,20 +202,20 @@ binengine_install_custom() {
         rm -rf "$_tmpd"
         return "$_rc"
     fi
-    local _ver _got
-    _ver=$(cat "${_tmpd}/version"); _got=$(cat "${_tmpd}/sha256")
+    local _ver
+    _ver=$(cat "${_tmpd}/version")
     _binengine_put "${_tmpd}/telemt" || { rm -rf "$_tmpd"; return 1; }
     rm -rf "$_tmpd"
     printf '%s-custom\n' "$_ver" > "$ENGINE_VERSION_FILE"
     printf '%s\n' "$_url" > "$ENGINE_SOURCE_FILE"
     chmod 600 "$ENGINE_SOURCE_FILE" 2>/dev/null || true
-    ENGINE_CUSTOM_URL="$_url"; ENGINE_CUSTOM_SHA256="$_got"; ENGINE_VERSION="${_ver}-custom"
+    ENGINE_CUSTOM_URL="$_url"; ENGINE_CUSTOM_SHA256="${_sha,,}"; ENGINE_VERSION="${_ver}-custom"
     save_settings 2>/dev/null || true
     log_success "Свой бинарник telemt ${_ver} установлен: ${ENGINE_BIN_PATH}"
 }
 
 _binengine_custom_into() {
-    local _dir="$1" _url="$2" _sha="$3" _got _want
+    local _dir="$1" _url="$2" _sha="$3" _got
     log_info "Загрузка: ${_url}"
     if ! curl -fsSL --proto '=https' --connect-timeout 20 --max-time 600 --retry 3 --retry-delay 3 \
             --max-filesize 209715200 "$_url" -o "${_dir}/dl"; then
@@ -223,16 +224,15 @@ _binengine_custom_into() {
     fi
     _got=$(sha256sum "${_dir}/dl" | awk '{print $1}')
     if [ -n "$_sha" ]; then
-        [ "$_sha" = "$_got" ] || { log_error "sha256 не совпала: ожидали ${_sha}, скачано ${_got}"; return 1; }
-        log_success "Контрольная сумма sha256 совпала"
-    elif curl -fsSL --proto '=https' --max-time 30 "${_url}.sha256" -o "${_dir}/dl.sha256" 2>/dev/null \
-         && _want=$(awk 'NF{print tolower($1); exit}' "${_dir}/dl.sha256") && [[ "$_want" =~ ^[0-9a-f]{64}$ ]]; then
-        [ "$_want" = "$_got" ] || { log_error "sha256 не совпала с ${_url}.sha256 — файл повреждён или подменён"; return 1; }
+        if [ "$_sha" != "$_got" ]; then
+            log_error "sha256 не совпала: ожидали ${_sha}, скачано ${_got}"
+            log_info "Если файл по ссылке обновлён намеренно — поставьте его заново без хеша: mtproxyl engine custom <ссылка>"
+            return 1
+        fi
         log_success "Контрольная сумма sha256 совпала"
     else
-        log_warn "Контрольной суммы рядом нет. Сверьте sha256 с опубликованной автором: ${_got}"
+        log_warn "sha256 не указан — файл не проверяется, за сборку отвечаете вы. sha256 скачанного: ${_got}"
     fi
-    printf '%s' "$_got" > "${_dir}/sha256"
 
     case "$(od -An -tx1 -N4 "${_dir}/dl" | tr -d ' \n')" in
         7f454c46)
@@ -603,7 +603,8 @@ binengine_rollback() {
     _src_cur=$(cat "$ENGINE_SOURCE_FILE" 2>/dev/null); _src_prev=$(cat "$ENGINE_PREV_SOURCE_FILE" 2>/dev/null)
     if [ -n "$_src_prev" ]; then printf '%s\n' "$_src_prev" > "$ENGINE_SOURCE_FILE"; else rm -f "$ENGINE_SOURCE_FILE"; fi
     if [ -n "$_src_cur" ]; then printf '%s\n' "$_src_cur" > "$ENGINE_PREV_SOURCE_FILE"; else rm -f "$ENGINE_PREV_SOURCE_FILE"; fi
-    ENGINE_CUSTOM_URL="$_src_prev"; [ -n "$_src_prev" ] || ENGINE_CUSTOM_SHA256=""
+    # Хеш относился к скачанной сборке, у прежней он неизвестен.
+    ENGINE_CUSTOM_URL="$_src_prev"; ENGINE_CUSTOM_SHA256=""
     ENGINE_VERSION="${_prev:-}"
     save_settings 2>/dev/null || true
     log_success "Версия переключена на ${_prev:-предыдущую}"
