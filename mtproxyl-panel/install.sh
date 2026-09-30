@@ -676,6 +676,20 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp endpoint [0-9a-fA-F]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp endpoint clear
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp endpoint \[*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp proto [a-z]*
+# Туннель AWG до сервера-донора. Пароль донора идёт через stdin, не аргументом;
+# аргументы строго проверяет сам MTProxyL.
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script donor status --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script donor hostkey [0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script donor setup [0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script donor manual [0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script donor manual-script
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script donor finish [A-Za-z0-9+/]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script donor check --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script donor on --yes
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script donor on --yes --allow-disable-default-upstreams
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script donor off
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script donor remove --yes
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script donor remove --yes --remote --password-stdin
 # Телеграм-бот. Токен передаётся аргументом установки, поэтому правило на неё
 # отдельное и с ним же ограничен формат: только то, что похоже на токен.
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot status --json

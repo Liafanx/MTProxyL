@@ -169,6 +169,7 @@ show_main_menu() {
         fi
         # Только когда включён: на обычной установке строка была бы шумом.
         warp_menu_line 2>/dev/null || true
+        donor_menu_line 2>/dev/null || true
 
         local _shaping_summary _shape_calc _shape_applied
         _shaping_summary=$(shaping_home_summary 2>/dev/null) || _shaping_summary=""

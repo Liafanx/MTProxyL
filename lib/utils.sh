@@ -875,7 +875,7 @@ self_update() {
     if [ -z "$_lib_list" ]; then
         log_warn "Не удалось извлечь список библиотек из нового скрипта"
         log_info "Используем резервный список"
-        _lib_list="colors utils settings detect secrets config docker binengine engine traffic stats availability dc warp geoblock geoip upstream backup nft ipblock shaping selfmask web panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen"
+        _lib_list="colors utils settings detect secrets config docker binengine engine traffic stats availability dc warp donor geoblock geoip upstream backup nft ipblock shaping selfmask web panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_donor tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen"
     fi
 
     local _total=0 _ok=0 _failed=0 _skipped=0
@@ -1211,6 +1211,7 @@ show_cli_help() {
     echo -e "  ${BOLD}История IP:${NC}     ip-history status|flush|on|off"
     echo -e "  ${BOLD}Доступность:${NC}    availability status|check|details|target|on|off|interval|token"
     echo -e "  ${BOLD}Telegram/WARP:${NC}  warp status|on socks|on iface|off|scan|location|endpoint|proto"
+    echo -e "  ${BOLD}Донор (AWG):${NC}    donor status|setup <IP>|manual <IP>|finish <ключ>|check|on|off|remove"
     echo -e "  ${BOLD}Бэкапы:${NC}         backup [--encrypt] | restore <файл>"
     echo -e "  ${BOLD}Переезд:${NC}        migrate <[user@]хост[:порт]> [--dry-run] ${DIM}(только менеджер)${NC}"
     echo -e "  ${BOLD}Подкачка:${NC}       swap status|on [МБ]|off"
