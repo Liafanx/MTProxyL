@@ -51,6 +51,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	// Маршрут до Telegram через WARP делит с остальным один runner: включение
 	// уводит минуты на разведку, и параллельная правка настроек ему помешала бы.
 	s.registerWarpRoutes(mux, jwtSecret, client, runner)
+	s.registerDonorRoutes(mux, jwtSecret, client, runner)
 
 	// ── Availability ────────────────────────────────────────────────────────
 	// Mode travels with the probe: several features are manager-only, and the UI

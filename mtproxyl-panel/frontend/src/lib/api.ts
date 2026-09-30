@@ -1225,6 +1225,107 @@ export const warpApi = {
     }),
 };
 
+// ── Туннель AWG до сервера-донора ──────────────────────────────────────────
+// Настройка ставит пакеты на двух машинах — фоновой операцией. Пароль донора
+// уходит в MTProxyL через stdin и нигде не сохраняется.
+const DONOR_BASE = `${BASE}/api/donor`;
+
+export interface DonorCheck {
+  at: number;
+  result: string;
+  egress_ip: string;
+  rtt_ms: number | null;
+  error: string;
+}
+
+export interface DonorStatus {
+  configured: boolean;
+  /** '' — не настроен, pending — ждёт ключ донора, ready — готов. */
+  stage: '' | 'pending' | 'ready';
+  enabled: boolean;
+  setup_mode: '' | 'auto' | 'manual';
+  host: string;
+  ssh_port: number;
+  ssh_user: string;
+  awg_port: number;
+  net: string;
+  iface: string;
+  remote_iface: string;
+  socks: string;
+  awg_installed: boolean;
+  tunnel_up: boolean;
+  handshake_age: number | null;
+  rx_bytes: number;
+  tx_bytes: number;
+  egress_ip: string;
+  public_ip: string;
+  ipv6: boolean;
+  /** manager — свой конфиг, target — конфиг цели, manual — правится вручную. */
+  engine_mode: 'manager' | 'target' | 'manual';
+  engine_routed: '' | 'manager' | 'target';
+  disabled_upstreams: string;
+  default_upstreams: string;
+  warp_enabled: boolean;
+  setup_at: number;
+  check: DonorCheck;
+  manual_script: boolean;
+}
+
+export interface DonorStatusResponse {
+  supported: boolean;
+  message?: string;
+  status?: DonorStatus;
+}
+
+export interface DonorHostKey {
+  fingerprint: string;
+  type: string;
+}
+
+export interface DonorSetupRequest {
+  host: string;
+  ssh_port: number;
+  user: string;
+  password: string;
+  awg_port: number;
+  host_key: string;
+  allow_disable_default_upstreams: boolean;
+}
+
+export const donorApi = {
+  status: () => request<DonorStatusResponse>(DONOR_BASE, '/status'),
+  hostKeys: (host: string, port: number) =>
+    request<{ fingerprints: DonorHostKey[] }>(
+      DONOR_BASE,
+      `/hostkey?host=${encodeURIComponent(host)}&port=${port}`,
+    ),
+  setup: (req: DonorSetupRequest) =>
+    request<MtproxylOperation>(DONOR_BASE, '/setup', { method: 'POST', body: JSON.stringify(req) }),
+  manual: (host: string, awgPort: number) =>
+    request<{ output: string; script: string }>(DONOR_BASE, '/manual', {
+      method: 'POST',
+      body: JSON.stringify({ host, awg_port: awgPort }),
+    }),
+  manualScript: () => request<{ script: string }>(DONOR_BASE, '/manual-script'),
+  finish: (key: string, allowDisableDefaultUpstreams: boolean) =>
+    request<MtproxylOperation>(DONOR_BASE, '/finish', {
+      method: 'POST',
+      body: JSON.stringify({ key, allow_disable_default_upstreams: allowDisableDefaultUpstreams }),
+    }),
+  check: () => request<DonorStatusResponse>(DONOR_BASE, '/check', { method: 'POST' }),
+  enable: (allowDisableDefaultUpstreams: boolean) =>
+    request<MtproxylOperation>(DONOR_BASE, '/enable', {
+      method: 'POST',
+      body: JSON.stringify({ allow_disable_default_upstreams: allowDisableDefaultUpstreams }),
+    }),
+  disable: () => request<MtproxylOperation>(DONOR_BASE, '/disable', { method: 'POST' }),
+  remove: (remote: boolean, password: string) =>
+    request<MtproxylOperation>(DONOR_BASE, '/remove', {
+      method: 'POST',
+      body: JSON.stringify({ remote, password }),
+    }),
+};
+
 // ── История метрик (память панели, 2 часа) ────────────────────────────────
 
 export type HistoryRange = '15m' | '30m' | '1h' | '2h';

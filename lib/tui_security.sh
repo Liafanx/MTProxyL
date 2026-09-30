@@ -34,6 +34,8 @@ tui_security_menu() {
         fi
         echo -e "  ${DIM}[5]${NC} Блокировка IP адресов: $(_tui_ipblock_state_label)"
         echo -e "  ${DIM}[6]${NC} Ограничение скорости клиентов"
+        # Туннель — в любом режиме; конфиг цели правится с копией.
+        echo -e "  ${DIM}[7]${NC} Туннель AWG до сервера-донора: $(_tui_donor_state_label)"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
@@ -43,6 +45,7 @@ tui_security_menu() {
                 shaping_menu
                 press_any_key ;;
             2) tui_warp_menu ;;
+            7) tui_donor_menu ;;
             3)
                 _require_manager_mode || { press_any_key; continue; }
                 _require_no_superexpert || { press_any_key; continue; }

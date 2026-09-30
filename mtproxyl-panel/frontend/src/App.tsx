@@ -31,6 +31,7 @@ import { SuperExpertPage } from '@/pages/SuperExpertPage';
 import { AddonsPage } from '@/pages/AddonsPage';
 import { AvailabilityPage } from '@/pages/AvailabilityPage';
 import { WarpPage } from '@/pages/WarpPage';
+import { DonorPage } from '@/pages/DonorPage';
 import { TgbotPage } from '@/pages/TgbotPage';
 import { MtproxylContext, useMtproxylAvailability } from '@/hooks/useMtproxyl';
 import { BrandingContext, useBrandingProvider } from '@/hooks/useBranding';
@@ -85,6 +86,7 @@ function AuthenticatedApp() {
           <Route path="/addons" element={<AddonsPage />} />
           <Route path="/availability" element={<AvailabilityPage />} />
           <Route path="/warp" element={<WarpPage />} />
+          <Route path="/donor" element={<DonorPage />} />
           <Route path="/tgbot" element={<TgbotPage />} />
         </Route>
       </Routes>

@@ -882,6 +882,13 @@ uninstall() {
     if _warp_has_artifacts; then
         handle_warp_command remove || { log_error "WARP занят или не удалён. Повторите удаление после завершения операции"; return 1; }
     fi
+    if [ -d "$(_donor_dir)" ] || [ -f "$(_donor_awg_conf)" ]; then
+        donor_load
+        [ "${DONOR_ENGINE_ROUTED:-}" = "target" ] && _donor_drop_target >/dev/null 2>&1
+        [ -n "${DONOR_REMOTE_IFACE:-}" ] && \
+            log_info "Туннель на доноре ${DONOR_HOST} (${DONOR_REMOTE_IFACE}) остаётся — уберите его там сами"
+        donor_purge_local
+    fi
     systemctl daemon-reload >/dev/null 2>&1 || true
 
     # Гео-блокировка
