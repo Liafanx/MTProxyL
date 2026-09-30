@@ -6,6 +6,8 @@ DONOR_IFACE="mtpdonor"
 DONOR_UPSTREAM_NAME="donor"
 DONOR_UPSTREAM_LOCAL="donorlocal"
 DONOR_SOCKS_PORT_DEFAULT="1080"
+# С 1420 туннель теряет крупные пакеты там, где путь между серверами уже 1500.
+DONOR_MTU_DEFAULT="1280"
 DONOR_AWG_DIR="/etc/amnezia/amneziawg"
 DONOR_PPA_FPR="75C9DD72C799870E310542E24166F2C257290828"
 DONOR_TARGET_BEGIN="# mtproxyl-donor begin"
@@ -22,7 +24,7 @@ _donor_awg_key()     { echo "${DONOR_AWG_DIR}/${DONOR_IFACE}.key"; }
 # ── Состояние ───────────────────────────────────────────────────────────────
 
 _DONOR_KEYS="DONOR_ENABLED DONOR_STAGE DONOR_SETUP_MODE DONOR_HOST DONOR_SSH_PORT DONOR_SSH_USER
-DONOR_AWG_PORT DONOR_NET DONOR_REMOTE_IFACE DONOR_SOCKS_PORT DONOR_REMOTE_PUB DONOR_EGRESS_IP
+DONOR_AWG_PORT DONOR_NET DONOR_MTU DONOR_REMOTE_IFACE DONOR_SOCKS_PORT DONOR_REMOTE_PUB DONOR_EGRESS_IP
 DONOR_PUBLIC_IP DONOR_IPV6 DONOR_DISABLED_UPSTREAMS DONOR_ENGINE_ROUTED DONOR_TARGET_TLS_SCOPE
 DONOR_SETUP_AT DONOR_CHECK_AT DONOR_CHECK_RESULT DONOR_CHECK_EGRESS DONOR_CHECK_RTT DONOR_CHECK_ERROR"
 
@@ -30,7 +32,7 @@ _donor_reset_vars() {
     local _k
     for _k in $_DONOR_KEYS; do printf -v "$_k" '%s' ""; done
     DONOR_ENABLED="false"; DONOR_SSH_PORT="22"; DONOR_SSH_USER="root"
-    DONOR_SOCKS_PORT="$DONOR_SOCKS_PORT_DEFAULT"
+    DONOR_SOCKS_PORT="$DONOR_SOCKS_PORT_DEFAULT"; DONOR_MTU="$DONOR_MTU_DEFAULT"
 }
 
 donor_load() {
@@ -52,6 +54,7 @@ donor_load() {
         [[ "${!_n}" =~ ^[0-9]{1,12}$ ]] || printf -v "$_n" '%s' ""
     done
     [[ "$DONOR_NET" =~ ^10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || DONOR_NET=""
+    _donor_valid_mtu "$DONOR_MTU" || DONOR_MTU="$DONOR_MTU_DEFAULT"
     return 0
 }
 
@@ -86,6 +89,7 @@ _donor_valid_port() { [[ "$1" =~ ^[0-9]{1,5}$ ]] && [ "$((10#$1))" -ge 1 ] && [ 
 _donor_valid_user() { [[ "$1" =~ ^[a-z_][a-z0-9_.-]{0,31}$ ]]; }
 _donor_valid_pubkey() { [[ "$1" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]]; }
 _donor_valid_fp() { [[ "$1" =~ ^SHA256:[A-Za-z0-9+/]{43}$ ]]; }
+_donor_valid_mtu() { [[ "$1" =~ ^[0-9]{4}$ ]] && [ "$1" -ge 1200 ] && [ "$1" -le 1420 ]; }
 
 # ── Агент: одна и та же программа ставит AWG у нас и настраивает донор ─────
 # Выполняется через `bash -s`: всё завёрнуто в функции, а вызов идёт с
@@ -231,7 +235,18 @@ _mtpd_firewall_close() {
     return 0
 }
 
+# Адрес сервера с прокси для фаервола: при автонастройке — тот, с которого
+# пришли по SSH (под sudo переменная теряется — тогда присланный).
+_mtpd_client_ip() {
+    local _ip="${SSH_CLIENT%% *}"
+    if [ "${MTPD_CLIENT_FROM_SSH:-0}" = 1 ] && [[ "$_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        MTPD_CLIENT_IP="$_ip"
+    fi
+}
+
 _mtpd_setup() {
+    [ "${MTPD_CLIENT_FROM_SSH:-0}" = 1 ] && _mtpd_say "Вход на донор выполнен: $(hostname 2>/dev/null)"
+    _mtpd_client_ip
     _mtpd_os
     [ -n "${MTPD_PEER_PUB:-}" ] || _mtpd_fail 20 "Не передан ключ сервера с прокси"
     _mtpd_say "Проверяем, открывается ли Telegram с донора"
@@ -239,10 +254,14 @@ _mtpd_setup() {
     _mtpd_install_awg
     _mtpd_install_dante
 
-    local _dir=/etc/amnezia/amneziawg _conf _key _own_port _port="${MTPD_PORT:-0}"
+    local _dir=/etc/amnezia/amneziawg _conf _key _own_port _port="${MTPD_PORT:-0}" _net="" _cand
     _conf="${_dir}/${MTPD_IFACE}.conf"; _key="${_dir}/${MTPD_IFACE}.key"
     _own_port=$(awg show "$MTPD_IFACE" listen-port 2>/dev/null || true)
-    _mtpd_net_busy "$MTPD_NET" "$MTPD_IFACE" && _mtpd_fail 15 "Подсеть ${MTPD_NET}/30 на доноре уже занята"
+    # Кандидаты свободны на сервере с прокси; берём первый свободный и здесь.
+    for _cand in $MTPD_NET; do
+        _mtpd_net_busy "$_cand" "$MTPD_IFACE" || { _net="$_cand"; break; }
+    done
+    [ -n "$_net" ] || _mtpd_fail 15 "Подсети ${MTPD_NET// /, } (/30) на доноре уже заняты"
     if [ "$_port" = 0 ]; then
         [ -n "$_own_port" ] && _port="$_own_port"
         local _try=0
@@ -263,8 +282,7 @@ _mtpd_setup() {
     read -r _ext _src < <(ip -4 route get 1.1.1.1 2>/dev/null \
         | awk '{for (i = 1; i < NF; i++) { if ($i == "dev") d = $(i + 1); if ($i == "src") s = $(i + 1) }} END {print d, s}')
     [ -n "$_ext" ] || _mtpd_fail 17 "У донора нет маршрута в интернет по IPv4"
-    local _net="${MTPD_NET%.*}" _last="${MTPD_NET##*.}"
-    local _self="${_net}.$((_last + 1))" _peer="${_net}.$((_last + 2))"
+    local _self="${_net%.*}.$(( ${_net##*.} + 1 ))" _peer="${_net%.*}.$(( ${_net##*.} + 2 ))"
 
     local _fw=""
     if ! _mtpd_ufw_active && ! systemctl is-active --quiet firewalld 2>/dev/null \
@@ -277,6 +295,7 @@ PostDown = iptables -D INPUT -p udp --dport ${_port} -j ACCEPT; iptables -D INPU
         echo "[Interface]"
         echo "Address = ${_self}/30"
         echo "ListenPort = ${_port}"
+        echo "MTU = ${MTPD_MTU:-1280}"
         echo "PrivateKey = $(cat "$_key")"
         printf '%s\n' "$MTPD_PARAMS"
         [ -z "$_fw" ] || printf '%s\n' "$_fw"
@@ -342,12 +361,14 @@ EOF
     echo "  Порт AmneziaWG: ${_port}"
     echo "MTPD:pub=${_pub}"
     echo "MTPD:port=${_port}"
+    echo "MTPD:net=${_net}"
     echo "MTPD:egress=${_src}"
     echo "MTPD:public=${_public}"
     echo "MTPD:ipv6=${_v6}"
 }
 
 _mtpd_remove() {
+    _mtpd_client_ip
     local _conf="/etc/amnezia/amneziawg/${MTPD_IFACE}.conf" _port=""
     [ -f "$_conf" ] && _port=$(awk -F' *= *' '$1 == "ListenPort" {print $2}' "$_conf")
     systemctl disable --now "mtproxyl-donor-socks@${MTPD_IFACE}" >/dev/null 2>&1
@@ -380,12 +401,14 @@ _donor_agent_env() {
     local _action="$1" _port="${2:-0}" _peer_pub="${3:-}" _client_ip="${4:-}"
     printf 'MTPD_ACTION=%q\n' "$_action"
     printf 'MTPD_IFACE=%q\n' "${DONOR_REMOTE_IFACE:-}"
-    printf 'MTPD_NET=%q\n' "${DONOR_NET:-}"
+    printf 'MTPD_NET=%q\n' "${_DONOR_NET_CANDIDATES:-${DONOR_NET:-}}"
     printf 'MTPD_PORT=%q\n' "$_port"
     printf 'MTPD_PEER_PUB=%q\n' "$_peer_pub"
     printf 'MTPD_CLIENT_IP=%q\n' "$_client_ip"
     printf 'MTPD_SOCKS_PORT=%q\n' "${DONOR_SOCKS_PORT:-$DONOR_SOCKS_PORT_DEFAULT}"
     printf 'MTPD_FPR=%q\n' "$DONOR_PPA_FPR"
+    printf 'MTPD_MTU=%q\n' "${DONOR_MTU:-$DONOR_MTU_DEFAULT}"
+    printf 'MTPD_CLIENT_FROM_SSH=%q\n' "${_DONOR_CLIENT_FROM_SSH:-0}"
     printf 'MTPD_PARAMS=%q\n' "${_DONOR_PARAMS:-}"
 }
 
@@ -442,7 +465,10 @@ _donor_ssh_explain() {
     case "$1" in
         5) log_error "Донор не принял логин или пароль" ;;
         6) log_error "Ключ хоста донора не подтверждён" ;;
-        255) log_error "Не удалось подключиться к ${DONOR_HOST}:${DONOR_SSH_PORT} по SSH" ;;
+        255) log_error "Не удалось подключиться к ${DONOR_HOST}:${DONOR_SSH_PORT} по SSH"
+             echo -e "  ${DIM}Если донор переустанавливали, у него новый ключ хоста — забудьте старый:${NC}"
+             echo -e "  ${DIM}ssh-keygen -R '$(_donor_kh_name)' -f $(_donor_known_hosts)${NC}"
+             echo -e "  ${DIM}Защита от перебора на доноре тоже рвёт соединения — подождите несколько минут.${NC}" ;;
         *) log_error "SSH до донора завершился с кодом $1" ;;
     esac
 }
@@ -458,11 +484,46 @@ _donor_need_tools() {
         || { log_error "Не удалось поставить ${_pkgs[*]}"; return 1; }
 }
 
+_donor_fps_of() {
+    [ -n "$1" ] || return 0
+    ssh-keygen -lf <(printf '%s\n' "$1") -E sha256 2>/dev/null | awk '{print $2, $NF}'
+}
+
 # Ключи хоста — в _DONOR_SCAN, отпечатки «SHA256:… (ТИП)» — в _DONOR_FPS.
+# ssh-keyscan открывает соединение на каждый тип ключа, а защита от перебора
+# на доноре считает соединения: берём один тип, следующий — только если
+# сервер ответил, но такого ключа у него нет.
 _donor_scan_host() {
-    _DONOR_SCAN=$(ssh-keyscan -T 10 -p "${DONOR_SSH_PORT:-22}" "$DONOR_HOST" 2>/dev/null | grep -v '^#')
-    [ -n "$_DONOR_SCAN" ] || return 1
-    _DONOR_FPS=$(ssh-keygen -lf <(printf '%s\n' "$_DONOR_SCAN") -E sha256 2>/dev/null | awk '{print $2, $NF}')
+    local _t _out
+    _DONOR_SCAN=""; _DONOR_FPS=""
+    for _t in ed25519 ecdsa rsa; do
+        _out=$(ssh-keyscan -T 10 -t "$_t" -p "${DONOR_SSH_PORT:-22}" "$DONOR_HOST" 2>&1)
+        _DONOR_SCAN=$(grep -E '^[^#[:space:]]+ (ssh-|ecdsa-)' <<< "$_out" || true)
+        [ -n "$_DONOR_SCAN" ] && break
+        grep -q 'SSH-2.0' <<< "$_out" || return 1
+    done
+    _DONOR_FPS=$(_donor_fps_of "$_DONOR_SCAN")
+    [ -n "$_DONOR_FPS" ]
+}
+
+_donor_scan_cache() { echo "$(_donor_dir)/hostkey.scan"; }
+
+_donor_scan_save() {
+    install -d -m 700 "$(_donor_dir)" || return 0
+    { echo "# ${DONOR_HOST} ${DONOR_SSH_PORT:-22} $(date +%s)"; printf '%s\n' "$_DONOR_SCAN"; } > "$(_donor_scan_cache)"
+    chmod 600 "$(_donor_scan_cache)"
+}
+
+# Ключи, полученные шагом «Получить ключ хоста» не раньше часа назад.
+_donor_scan_load() {
+    local _f; _f=$(_donor_scan_cache)
+    [ -f "$_f" ] || return 1
+    local _h _p _ts
+    read -r _ _h _p _ts < "$_f"
+    [ "$_h" = "$DONOR_HOST" ] && [ "$_p" = "${DONOR_SSH_PORT:-22}" ] || return 1
+    [[ "$_ts" =~ ^[0-9]+$ ]] && [ $(( $(date +%s) - _ts )) -lt 3600 ] || return 1
+    _DONOR_SCAN=$(grep -v '^#' "$_f" || true)
+    _DONOR_FPS=$(_donor_fps_of "$_DONOR_SCAN")
     [ -n "$_DONOR_FPS" ]
 }
 
@@ -476,9 +537,15 @@ _donor_known_fps() {
 # Ключ хоста проверяем до пароля: пароль уходит только подтверждённому серверу.
 _donor_trust_host() {
     local _expected="${1:-}" _fps _known _fp _match=false
-    _donor_scan_host || { log_error "Донор ${DONOR_HOST}:${DONOR_SSH_PORT} не ответил по SSH"; return 1; }
-    _fps="$_DONOR_FPS"
     _known=$(_donor_known_fps)
+    # Ключ уже известен — сверит сам ssh, лишнее соединение не нужно.
+    if [ -n "$_known" ] && { [ -z "$_expected" ] || grep -qF "$_expected " <<< "$_known"; }; then
+        return 0
+    fi
+    if ! { [ -n "$_expected" ] && _donor_scan_load && grep -qF "$_expected " <<< "$_DONOR_FPS"; }; then
+        _donor_scan_host || { log_error "Донор ${DONOR_HOST}:${DONOR_SSH_PORT} не ответил по SSH"; return 1; }
+    fi
+    _fps="$_DONOR_FPS"
     while read -r _fp _; do
         [ -n "$_fp" ] && grep -qF "$_fp " <<< "$_fps" && _match=true
     done <<< "$_known"
@@ -516,6 +583,7 @@ donor_hostkey() {
     _donor_valid_port "$_port" || { log_error "Неверный порт SSH"; return 1; }
     DONOR_HOST="$_host"; DONOR_SSH_PORT="$_port"
     _donor_scan_host || { log_error "Донор ${_host}:${_port} не ответил по SSH"; return 1; }
+    _donor_scan_save
     local _fps="$_DONOR_FPS"
     if [ "$_json" = "--json" ]; then
         printf '%s\n' "$_fps" | awk 'BEGIN { printf "{\"fingerprints\":[" }
@@ -564,15 +632,20 @@ I4 = <b 0x43${_id}>
 I5 = <b 0x43${_id}>"
 }
 
-# Подсеть /30 в 10.200.0.0–10.249.255.0, свободная здесь; донор проверит у себя.
-_donor_pick_net() {
-    local _try _net
-    for _try in $(seq 1 40); do
+# Подсети /30 в 10.200.0.0–10.249.255.0, свободные здесь; донор возьмёт
+# первую свободную у себя — без повторных подключений.
+_donor_pick_nets() {
+    local _want="${1:-1}" _try _net _out=""
+    for _try in $(seq 1 60); do
         _net="10.$((200 + RANDOM % 50)).$((RANDOM % 256)).$(( (RANDOM % 64) * 4 ))"
-        ( eval "$(_donor_agent_script)"; ! _mtpd_net_busy "$_net" "$DONOR_IFACE" ) && { echo "$_net"; return 0; }
+        case " $_out " in *" $_net "*) continue ;; esac
+        ( eval "$(_donor_agent_script)"; ! _mtpd_net_busy "$_net" "$DONOR_IFACE" ) || continue
+        _out+="${_out:+ }${_net}"
+        [ "$(wc -w <<< "$_out")" -ge "$_want" ] && break
     done
-    return 1
+    [ -n "$_out" ] && echo "$_out"
 }
+_donor_pick_net() { _donor_pick_nets 1; }
 
 _donor_new_iface_name() { echo "mtpl$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"; }
 
@@ -585,7 +658,6 @@ _donor_ensure_key() {
 # Адрес, с которого мы приходим к донору: для правила фаервола на нём.
 _donor_client_ip() {
     local _ip
-    if [ -n "${_DONOR_SEEN_IP:-}" ]; then echo "$_DONOR_SEEN_IP"; return 0; fi
     _ip=$(curl -4 -fsS -m 8 https://api.ipify.org 2>/dev/null)
     _donor_valid_ipv4 "$_ip" && { echo "$_ip"; return 0; }
     _ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}')
@@ -601,6 +673,7 @@ _donor_write_local_conf() {
         echo "# MTProxyL: туннель до донора ${DONOR_HOST}"
         echo "[Interface]"
         echo "Address = $(_donor_local_ip)/30"
+        echo "MTU = ${DONOR_MTU:-$DONOR_MTU_DEFAULT}"
         echo "PrivateKey = ${_key}"
         printf '%s\n' "$_DONOR_PARAMS" "$_DONOR_SIGNATURE"
         echo ""
@@ -651,7 +724,9 @@ _donor_tunnel_down() {
 }
 
 _donor_socks_curl() {
-    curl -s -m "${2:-10}" --socks5 "$(_donor_socks_addr)" "$1" 2>/dev/null
+    local _url="$1" _t="${2:-10}"
+    shift 2 2>/dev/null || shift $#
+    curl -s -m "$_t" --socks5 "$(_donor_socks_addr)" "$@" "$_url" 2>/dev/null
 }
 
 # Выход через донора: IP и живой ответ Telegram.
@@ -1028,7 +1103,7 @@ _donor_guard_conflicts() {
 
 donor_setup() (
     check_root
-    local _host="" _port="22" _user="root" _awg_port="0" _fp="" _pw_stdin=false _allow=false _arg
+    local _host="" _port="22" _user="root" _awg_port="0" _fp="" _mtu="" _pw_stdin=false _allow=false _arg
     while [ $# -gt 0 ]; do
         _arg="$1"; shift
         case "$_arg" in
@@ -1036,6 +1111,7 @@ donor_setup() (
             --user) _user="${1:-}"; shift ;;
             --awg-port) _awg_port="${1:-}"; shift ;;
             --host-key) _fp="${1:-}"; shift ;;
+            --mtu) _mtu="${1:-}"; shift ;;
             --password-stdin) _pw_stdin=true ;;
             --allow-disable-default-upstreams) _allow=true ;;
             --yes) MTPROXYL_ASSUME_YES=1 ;;
@@ -1048,6 +1124,7 @@ donor_setup() (
     _donor_valid_user "$_user" || { log_error "Неверное имя пользователя: ${_user}"; return 1; }
     [ "$_awg_port" = 0 ] || _donor_valid_port "$_awg_port" || { log_error "Неверный порт AmneziaWG: ${_awg_port}"; return 1; }
     [ -z "$_fp" ] || _donor_valid_fp "$_fp" || { log_error "Отпечаток ключа хоста: SHA256:…"; return 1; }
+    [ -z "$_mtu" ] || _donor_valid_mtu "$_mtu" || { log_error "MTU туннеля: 1200–1420"; return 1; }
     # Пароль со stdin читаем первым: подтверждение ниже тоже читает stdin.
     if [ "$_pw_stdin" = true ]; then
         IFS= read -r _DONOR_PW || true
@@ -1069,53 +1146,52 @@ donor_setup() (
         log_warn "Прежний донор ${DONOR_HOST} останется настроенным — удалить на нём: mtproxyl donor remove --remote"
     fi
     DONOR_HOST="$_host"; DONOR_SSH_PORT="$_port"; DONOR_SSH_USER="$_user"
+    [ -n "$_mtu" ] && DONOR_MTU="$_mtu"
     [ "$_same_host" = true ] || { DONOR_REMOTE_IFACE=$(_donor_new_iface_name); DONOR_NET=""; DONOR_AWG_PORT=""; }
     [ "$_awg_port" = 0 ] && [ "$_same_host" = true ] && [ -n "$DONOR_AWG_PORT" ] && _awg_port="$DONOR_AWG_PORT"
 
     _donor_need_tools || return 1
     echo ""
-    log_info "Шаг 1/5: ключ хоста донора"
+    log_info "Шаг 1/4: ключ хоста донора"
     _donor_trust_host "$_fp" || return 1
-    log_info "Шаг 2/5: вход на донор"
-    local _rc=0
-    _DONOR_SEEN_IP=$(_donor_ssh 'printf %s "${SSH_CLIENT%% *}"') || { _rc=$?; _donor_ssh_explain "$_rc"; return 1; }
-    _donor_valid_ipv4 "$_DONOR_SEEN_IP" || _DONOR_SEEN_IP=""
-    log_success "Вход на ${_user}@${_host} выполнен"
 
     echo ""
-    log_info "Шаг 3/5: AmneziaWG на этом сервере"
+    log_info "Шаг 2/4: AmneziaWG на этом сервере"
     _donor_run_agent local install || { log_error "AmneziaWG на этом сервере не установлен"; return 1; }
     local _pub; _pub=$(_donor_ensure_key) || { log_error "Не удалось создать ключ AmneziaWG"; return 1; }
     _donor_gen_params
-    if [ -z "$DONOR_NET" ] || ( eval "$(_donor_agent_script)"; _mtpd_net_busy "$DONOR_NET" "$DONOR_IFACE" ); then
-        DONOR_NET=$(_donor_pick_net) || { log_error "Не нашлось свободной подсети 10.200–249.x.x/30"; return 1; }
+    # Прежняя подсеть — первой: при перенастройке адреса не меняются.
+    _DONOR_NET_CANDIDATES=$(_donor_pick_nets 5) || { log_error "Не нашлось свободной подсети 10.200–249.x.x/30"; return 1; }
+    if [ -n "$DONOR_NET" ] && ! ( eval "$(_donor_agent_script)"; _mtpd_net_busy "$DONOR_NET" "$DONOR_IFACE" ); then
+        _DONOR_NET_CANDIDATES="$DONOR_NET $_DONOR_NET_CANDIDATES"
     fi
 
+    # Вход и вся настройка донора — одним SSH-подключением.
     echo ""
-    log_info "Шаг 4/5: донор — AmneziaWG, SOCKS5 внутри туннеля"
-    local _try
-    for _try in 1 2 3; do
-        _donor_run_agent remote setup "$_awg_port" "$_pub" "$(_donor_client_ip)" && { _rc=0; break; }
-        _rc=$?
-        [ "$_rc" = 15 ] || break
-        DONOR_NET=$(_donor_pick_net) || break
-        log_info "Подсеть занята на доноре, пробуем ${DONOR_NET}/30"
-    done
+    log_info "Шаг 3/4: донор — вход, AmneziaWG, SOCKS5 внутри туннеля"
+    local _rc=0
+    _DONOR_CLIENT_FROM_SSH=1
+    _donor_run_agent remote setup "$_awg_port" "$_pub" "$(_donor_client_ip)" || _rc=$?
     if [ "$_rc" != 0 ]; then
-        [ "$_rc" = 5 ] || [ "$_rc" = 255 ] && _donor_ssh_explain "$_rc"
+        case "$_rc" in 5|6|255) _donor_ssh_explain "$_rc" ;; esac
         log_error "Донор не настроен"
         return 1
     fi
     DONOR_REMOTE_PUB=$(_donor_agent_value pub)
     DONOR_AWG_PORT=$(_donor_agent_value port)
+    DONOR_NET=$(_donor_agent_value net)
     DONOR_EGRESS_IP=$(_donor_agent_value egress)
     DONOR_PUBLIC_IP=$(_donor_agent_value public)
     DONOR_IPV6=$(_donor_agent_value ipv6)
     _donor_valid_pubkey "$DONOR_REMOTE_PUB" && _donor_valid_port "$DONOR_AWG_PORT" \
         || { log_error "Донор не вернул ключ и порт"; return 1; }
+    case " $_DONOR_NET_CANDIDATES " in
+        *" $DONOR_NET "*) ;;
+        *) log_error "Донор вернул чужую подсеть: ${DONOR_NET:-пусто}"; return 1 ;;
+    esac
     DONOR_SETUP_MODE="auto"
     echo ""
-    log_info "Шаг 5/5: туннель и маршрут движка"
+    log_info "Шаг 4/4: туннель и маршрут движка"
     _donor_finish_local "$_allow"
 )
 
@@ -1143,7 +1219,13 @@ _donor_finish_local() {
     log_success "Туннель поднят: $(_donor_local_ip) ⇄ $(_donor_remote_ip)"
     if ! _donor_probe; then
         log_error "Через SOCKS5 донора Telegram не ответил (код ${_DONOR_PROBE_TG:-нет})"
-        echo -e "  ${DIM}Служба на доноре: systemctl status mtproxyl-donor-socks@${DONOR_REMOTE_IFACE}${NC}"
+        # Мелкий ответ проходит, крупный — нет: между серверами путь уже MTU туннеля.
+        if [ "$(_donor_socks_curl http://example.com 8 -o /dev/null -w '%{http_code}')" = 200 ]; then
+            echo -e "  ${DIM}Мелкие ответы проходят, крупные теряются — похоже на MTU пути между серверами.${NC}"
+            echo -e "  ${DIM}Повторите настройку с меньшим MTU: --mtu $(( ${DONOR_MTU:-1280} - 80 ))${NC}"
+        else
+            echo -e "  ${DIM}Служба на доноре: systemctl status mtproxyl-donor-socks@${DONOR_REMOTE_IFACE}${NC}"
+        fi
         return 1
     fi
     log_success "Telegram отвечает через донор, выход: ${_DONOR_PROBE_EGRESS:-?}"
@@ -1168,8 +1250,18 @@ _donor_finish_local() {
 # Ручная настройка: скрипт для донора и ключ, который надо вернуть сюда.
 donor_manual() (
     check_root
-    local _host="${1:-}" _awg_port="${2:-}"
+    local _host="" _awg_port="" _mtu="" _arg
+    while [ $# -gt 0 ]; do
+        _arg="$1"; shift
+        case "$_arg" in
+            --mtu) _mtu="${1:-}"; shift ;;
+            --yes) MTPROXYL_ASSUME_YES=1 ;;
+            -*) log_error "Неизвестный параметр: ${_arg}"; return 1 ;;
+            *) if [ -z "$_host" ]; then _host="$_arg"; else _awg_port="$_arg"; fi ;;
+        esac
+    done
     _donor_valid_ipv4 "$_host" || { log_error "Нужен IPv4-адрес донора"; return 1; }
+    [ -z "$_mtu" ] || _donor_valid_mtu "$_mtu" || { log_error "MTU туннеля: 1200–1420"; return 1; }
     if [ -n "$_awg_port" ]; then
         _donor_valid_port "$_awg_port" || { log_error "Неверный порт AmneziaWG"; return 1; }
     else
@@ -1186,7 +1278,10 @@ donor_manual() (
     fi
     DONOR_HOST="$_host"; DONOR_AWG_PORT="$_awg_port"; DONOR_SETUP_MODE="manual"; DONOR_STAGE="pending"
     DONOR_REMOTE_PUB=""
+    [ -n "$_mtu" ] && DONOR_MTU="$_mtu"
     [ -n "$DONOR_NET" ] || DONOR_NET=$(_donor_pick_net) || { log_error "Не нашлось свободной подсети"; return 1; }
+    # Скрипт запускают со своего компьютера: SSH_CLIENT там не наш адрес.
+    _DONOR_CLIENT_FROM_SSH=0; _DONOR_NET_CANDIDATES="$DONOR_NET"
     local _pub; _pub=$(_donor_ensure_key) || return 1
     _donor_gen_params
     install -d -m 700 "$(_donor_dir)"
@@ -1321,6 +1416,7 @@ donor_remove() (
             echo ""
         fi
         if _donor_need_tools && [ -s "$(_donor_known_hosts)" ]; then
+            _DONOR_CLIENT_FROM_SSH=1
             _donor_run_agent remote remove 0 "" "$(_donor_client_ip)" || log_warn "На доноре убрать не вышло — удалите вручную: systemctl disable --now awg-quick@${DONOR_REMOTE_IFACE} mtproxyl-donor-socks@${DONOR_REMOTE_IFACE}"
         else
             log_warn "До донора не достучаться — на нём остался интерфейс ${DONOR_REMOTE_IFACE}"
@@ -1383,8 +1479,8 @@ donor_status_json() {
         "$(donor_configured && echo true || echo false)" "$(json_escape "${DONOR_STAGE:-}")" \
         "$([ "$DONOR_ENABLED" = true ] && echo true || echo false)" "$(json_escape "${DONOR_SETUP_MODE:-}")" \
         "$(json_escape "$DONOR_HOST")" "${DONOR_SSH_PORT:-22}" "$(json_escape "${DONOR_SSH_USER:-root}")"
-    printf '"awg_port":%s,"net":"%s","iface":"%s","remote_iface":"%s","socks":"%s","awg_installed":%s,' \
-        "${DONOR_AWG_PORT:-0}" "$(json_escape "$DONOR_NET")" "$DONOR_IFACE" \
+    printf '"awg_port":%s,"mtu":%s,"net":"%s","iface":"%s","remote_iface":"%s","socks":"%s","awg_installed":%s,' \
+        "${DONOR_AWG_PORT:-0}" "${DONOR_MTU:-$DONOR_MTU_DEFAULT}" "$(json_escape "$DONOR_NET")" "$DONOR_IFACE" \
         "$(json_escape "$DONOR_REMOTE_IFACE")" "$(json_escape "$_socks")" "$_installed"
     printf '"tunnel_up":%s,"handshake_age":%s,"rx_bytes":%s,"tx_bytes":%s,"egress_ip":"%s","public_ip":"%s","ipv6":%s,' \
         "$_up" "$_age" "${_rx:-0}" "${_tx:-0}" "$(json_escape "$DONOR_EGRESS_IP")" "$(json_escape "$DONOR_PUBLIC_IP")" \
@@ -1406,7 +1502,7 @@ donor_status() {
         return 0
     fi
     echo -e "  ${BOLD}Донор:${NC}        ${DONOR_SSH_USER}@${DONOR_HOST} (SSH ${DONOR_SSH_PORT}), AWG UDP ${DONOR_AWG_PORT:-?}"
-    echo -e "  ${BOLD}Туннель:${NC}      ${DONOR_IFACE} $(_donor_local_ip) ⇄ $(_donor_remote_ip) (${DONOR_REMOTE_IFACE} на доноре)"
+    echo -e "  ${BOLD}Туннель:${NC}      ${DONOR_IFACE} $(_donor_local_ip) ⇄ $(_donor_remote_ip) (${DONOR_REMOTE_IFACE} на доноре), MTU ${DONOR_MTU}"
     if [ "$DONOR_STAGE" = "pending" ]; then
         echo -e "  ${BOLD}Состояние:${NC}    ${YELLOW}ждёт публичный ключ донора${NC}"
         _donor_manual_instructions
@@ -1438,10 +1534,10 @@ donor_help() {
     echo -e "  ${BOLD}Туннель AWG до сервера-донора:${NC}"
     echo -e "    ${GREEN}donor status${NC} [--json]                       Состояние"
     echo -e "    ${GREEN}donor setup${NC} <IP> [--user root] [--ssh-port 22] [--awg-port N]"
-    echo -e "                  [--password-stdin] [--host-key SHA256:…] [--allow-disable-default-upstreams]"
+    echo -e "                  [--mtu 1280] [--password-stdin] [--host-key SHA256:…] [--allow-disable-default-upstreams]"
     echo -e "                                                  Настроить донор и туннель автоматически"
     echo -e "    ${GREEN}donor hostkey${NC} <IP> [порт SSH] [--json]      Отпечаток ключа хоста донора"
-    echo -e "    ${GREEN}donor manual${NC} <IP> [порт AWG]                Ручная настройка: скрипт для донора"
+    echo -e "    ${GREEN}donor manual${NC} <IP> [порт AWG] [--mtu N]      Ручная настройка: скрипт для донора"
     echo -e "    ${GREEN}donor manual-script${NC}                        Показать этот скрипт"
     echo -e "    ${GREEN}donor finish${NC} <ключ донора>                  Завершить ручную настройку"
     echo -e "    ${GREEN}donor check${NC} [--json]                        Проверить туннель и выход"

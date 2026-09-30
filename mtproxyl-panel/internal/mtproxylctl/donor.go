@@ -30,6 +30,7 @@ type DonorStatus struct {
 	SSHPort      int    `json:"ssh_port"`
 	SSHUser      string `json:"ssh_user"`
 	AwgPort      int    `json:"awg_port"`
+	Mtu          int    `json:"mtu"`
 	Net          string `json:"net"`
 	Iface        string `json:"iface"`
 	RemoteIface  string `json:"remote_iface"`
@@ -63,11 +64,13 @@ type DonorHostKey struct {
 // DonorSetupRequest is everything the automatic setup needs. The password goes
 // to the script through stdin and is never part of the argument list.
 type DonorSetupRequest struct {
-	Host                         string
-	SSHPort                      int
-	User                         string
-	Password                     string
-	AwgPort                      int
+	Host     string
+	SSHPort  int
+	User     string
+	Password string
+	AwgPort  int
+	// Mtu 0 — по умолчанию MTProxyL (1280).
+	Mtu                          int
 	HostKey                      string
 	AllowDisableDefaultUpstreams bool
 }
@@ -91,6 +94,8 @@ func ValidateDonorHost(host string) error {
 }
 
 func validDonorPort(p int) bool { return p >= 1 && p <= 65535 }
+
+func validDonorMtu(m int) bool { return m == 0 || (m >= 1200 && m <= 1420) }
 
 // ValidateDonorKey checks an AmneziaWG public key (base64 of 32 bytes).
 func ValidateDonorKey(key string) error {
@@ -161,6 +166,9 @@ func (r DonorSetupRequest) args() ([]string, error) {
 	if r.AwgPort != 0 && !validDonorPort(r.AwgPort) {
 		return nil, fmt.Errorf("неверный порт AmneziaWG")
 	}
+	if !validDonorMtu(r.Mtu) {
+		return nil, fmt.Errorf("MTU туннеля: 1200–1420")
+	}
 	if !donorHostKeyRe.MatchString(r.HostKey) {
 		return nil, fmt.Errorf("подтвердите ключ хоста донора")
 	}
@@ -171,6 +179,9 @@ func (r DonorSetupRequest) args() ([]string, error) {
 		"--ssh-port", strconv.Itoa(r.SSHPort), "--user", r.User}
 	if r.AwgPort != 0 {
 		args = append(args, "--awg-port", strconv.Itoa(r.AwgPort))
+	}
+	if r.Mtu != 0 {
+		args = append(args, "--mtu", strconv.Itoa(r.Mtu))
 	}
 	args = append(args, "--host-key", r.HostKey, "--password-stdin", "--yes")
 	if r.AllowDisableDefaultUpstreams {
@@ -197,9 +208,12 @@ func (c *Client) DonorSetup(ctx context.Context, r DonorSetupRequest) (string, e
 
 // DonorManual prepares the script for the donor and returns it with the
 // instructions printed by the command.
-func (c *Client) DonorManual(ctx context.Context, host string, awgPort int) (string, string, error) {
+func (c *Client) DonorManual(ctx context.Context, host string, awgPort, mtu int) (string, string, error) {
 	if err := ValidateDonorHost(host); err != nil {
 		return "", "", err
+	}
+	if !validDonorMtu(mtu) {
+		return "", "", fmt.Errorf("MTU туннеля: 1200–1420")
 	}
 	args := []string{"donor", "manual", strings.TrimSpace(host)}
 	if awgPort != 0 {
@@ -207,6 +221,9 @@ func (c *Client) DonorManual(ctx context.Context, host string, awgPort int) (str
 			return "", "", fmt.Errorf("неверный порт AmneziaWG")
 		}
 		args = append(args, strconv.Itoa(awgPort))
+	}
+	if mtu != 0 {
+		args = append(args, "--mtu", strconv.Itoa(mtu))
 	}
 	out, err := c.run(ctx, args...)
 	if err != nil {

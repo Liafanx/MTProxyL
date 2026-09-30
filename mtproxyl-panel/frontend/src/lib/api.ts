@@ -1248,6 +1248,7 @@ export interface DonorStatus {
   ssh_port: number;
   ssh_user: string;
   awg_port: number;
+  mtu: number;
   net: string;
   iface: string;
   remote_iface: string;
@@ -1288,6 +1289,8 @@ export interface DonorSetupRequest {
   user: string;
   password: string;
   awg_port: number;
+  /** 0 — по умолчанию (1280). */
+  mtu: number;
   host_key: string;
   allow_disable_default_upstreams: boolean;
 }
@@ -1301,10 +1304,10 @@ export const donorApi = {
     ),
   setup: (req: DonorSetupRequest) =>
     request<MtproxylOperation>(DONOR_BASE, '/setup', { method: 'POST', body: JSON.stringify(req) }),
-  manual: (host: string, awgPort: number) =>
+  manual: (host: string, awgPort: number, mtu: number) =>
     request<{ output: string; script: string }>(DONOR_BASE, '/manual', {
       method: 'POST',
-      body: JSON.stringify({ host, awg_port: awgPort }),
+      body: JSON.stringify({ host, awg_port: awgPort, mtu }),
     }),
   manualScript: () => request<{ script: string }>(DONOR_BASE, '/manual-script'),
   finish: (key: string, allowDisableDefaultUpstreams: boolean) =>

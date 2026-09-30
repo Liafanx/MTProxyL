@@ -103,6 +103,7 @@ func (s *Server) registerDonorRoutes(
 			User                         string `json:"user"`
 			Password                     string `json:"password"`
 			AwgPort                      int    `json:"awg_port"`
+			Mtu                          int    `json:"mtu"`
 			HostKey                      string `json:"host_key"`
 			AllowDisableDefaultUpstreams bool   `json:"allow_disable_default_upstreams"`
 		}
@@ -117,7 +118,7 @@ func (s *Server) registerDonorRoutes(
 		}
 		setup := mtproxylctl.DonorSetupRequest{
 			Host: req.Host, SSHPort: req.SSHPort, User: req.User, Password: req.Password,
-			AwgPort: req.AwgPort, HostKey: req.HostKey,
+			AwgPort: req.AwgPort, Mtu: req.Mtu, HostKey: req.HostKey,
 			AllowDisableDefaultUpstreams: req.AllowDisableDefaultUpstreams,
 		}
 		// Проверяем до запуска: ошибка ввода — это 400, а не упавшая операция.
@@ -141,11 +142,12 @@ func (s *Server) registerDonorRoutes(
 		var req struct {
 			Host    string `json:"host"`
 			AwgPort int    `json:"awg_port"`
+			Mtu     int    `json:"mtu"`
 		}
 		if !decode(w, r, &req) {
 			return
 		}
-		out, script, err := client.DonorManual(r.Context(), req.Host, req.AwgPort)
+		out, script, err := client.DonorManual(r.Context(), req.Host, req.AwgPort, req.Mtu)
 		if err != nil {
 			writeCLIError(w, "donor_manual_failed", err)
 			return

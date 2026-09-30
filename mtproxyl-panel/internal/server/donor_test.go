@@ -53,7 +53,7 @@ const testHostKey = "SHA256:ThD052sQ98w9W5vmUHU1NTqo2w1RnVqFwmY1d2rahFc"
 func TestDonorSetupPasswordOnlyOnStdin(t *testing.T) {
 	script, argsFile, stdinFile := recordingScript(t)
 	mux, runner := newDonorMux(t, script)
-	body := `{"host":"31.76.78.135","password":"s3cr3t pass","host_key":"` + testHostKey + `","allow_disable_default_upstreams":true}`
+	body := `{"host":"31.76.78.135","password":"s3cr3t pass","host_key":"` + testHostKey + `","mtu":1360,"allow_disable_default_upstreams":true}`
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, authedRequest(t, http.MethodPost, "/api/donor/setup", body))
 	if rec.Code != http.StatusAccepted {
@@ -64,7 +64,7 @@ func TestDonorSetupPasswordOnlyOnStdin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "donor\nsetup\n31.76.78.135\n--ssh-port\n22\n--user\nroot\n--host-key\n" + testHostKey +
+	want := "donor\nsetup\n31.76.78.135\n--ssh-port\n22\n--user\nroot\n--mtu\n1360\n--host-key\n" + testHostKey +
 		"\n--password-stdin\n--yes\n--allow-disable-default-upstreams\n"
 	if string(args) != want {
 		t.Fatalf("args: %q", args)
@@ -88,6 +88,7 @@ func TestDonorSetupRejectsBadInput(t *testing.T) {
 		`{"host":"31.76.78.135","host_key":"` + testHostKey + `","user":"root --yes"}`,
 		`{"host":"31.76.78.135","host_key":"` + testHostKey + `","password":"a\nb"}`,
 		`{"host":"31.76.78.135","host_key":"` + testHostKey + `","awg_port":70000}`,
+		`{"host":"31.76.78.135","host_key":"` + testHostKey + `","mtu":1500}`,
 	}
 	for _, body := range cases {
 		rec := httptest.NewRecorder()

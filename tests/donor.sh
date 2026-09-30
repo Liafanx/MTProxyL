@@ -175,6 +175,46 @@ if grep -qE "^(generate|restart)$" "$calls"; then echo "движок трону�
 MTPROXYL_MODE=manager
 unset MTPROXYL_ASSUME_YES
 
+# Ключ хоста: одно соединение на тип ключа, повторный скан не нужен, если
+# ключ уже подтверждён (защита от перебора на доноре считает соединения).
+ssh-keygen -q -t ed25519 -N "" -f "$test_dir/hk" >/dev/null
+hk_line="31.76.78.135 $(cut -d' ' -f1,2 "$test_dir/hk.pub")"
+hk_fp=$(ssh-keygen -lf "$test_dir/hk.pub" -E sha256 | awk '{print $2}')
+scans="$test_dir/scans"; : > "$scans"; scan_mode=ok
+ssh-keyscan() {
+    echo "$*" >> "$scans"
+    case "$scan_mode" in
+        ok) echo "# 31.76.78.135:22 SSH-2.0-OpenSSH_9.6"; [[ "$*" == *"-t ed25519"* ]] && echo "$hk_line" ;;
+        noed) echo "# 31.76.78.135:22 SSH-2.0-OpenSSH_9.6"; [[ "$*" == *"-t ecdsa"* ]] && echo "$hk_line" ;;
+        down) : ;;
+    esac
+    return 0
+}
+DONOR_HOST=31.76.78.135; DONOR_SSH_PORT=22
+_donor_scan_host; [ "$(wc -l < "$scans")" = 1 ]; grep -qF "$hk_fp (ED25519)" <<< "$_DONOR_FPS"
+: > "$scans"; scan_mode=noed; _donor_scan_host; [ "$(wc -l < "$scans")" = 2 ]
+: > "$scans"; scan_mode=down; fails _donor_scan_host; [ "$(wc -l < "$scans")" = 1 ]
+# Шаг «Получить ключ хоста» сохраняет скан — настройка его не повторяет.
+scan_mode=ok; rm -f "$(_donor_known_hosts)"
+donor_hostkey 31.76.78.135 --json | grep -qF "$hk_fp"
+: > "$scans"
+_donor_trust_host "$hk_fp" >/dev/null; [ "$(wc -l < "$scans")" = 0 ]
+grep -qF "$(cut -d' ' -f2 "$test_dir/hk.pub")" "$(_donor_known_hosts)"
+# Ключ уже в known_hosts — без сети; чужой отпечаток не принимается.
+rm -f "$(_donor_scan_cache)"
+_donor_trust_host "$hk_fp" >/dev/null; [ "$(wc -l < "$scans")" = 0 ]
+_donor_trust_host "" >/dev/null; [ "$(wc -l < "$scans")" = 0 ]
+fails _donor_trust_host "SHA256:$(printf 'b%.0s' $(seq 1 43))"
+unset -f ssh-keyscan
+
+# MTU туннеля — на обеих сторонах, по умолчанию 1280.
+_donor_reset_vars; [ "$DONOR_MTU" = 1280 ]
+_donor_agent_env setup 0 KEY 1.2.3.4 | grep -qx "MTPD_MTU=1280"
+DONOR_MTU=1500; _donor_valid_mtu "$DONOR_MTU" && exit 1
+DONOR_MTU=1360; _donor_agent_env setup 0 KEY 1.2.3.4 | grep -qx "MTPD_MTU=1360"
+grep -q 'echo "MTU = ${MTPD_MTU:-1280}"' <<< "$(_donor_agent_script)"
+donor_load
+
 # WARP и донор одновременно — нельзя.
 WARP_ENABLED=true; fails _donor_guard_conflicts; WARP_ENABLED=false
 

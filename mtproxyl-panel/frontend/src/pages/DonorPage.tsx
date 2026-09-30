@@ -167,7 +167,7 @@ function StateCard({ status }: { status: DonorStatus }) {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
         <Cell label="Донор" value={`${status.ssh_user}@${status.host}`} />
-        <Cell label="Порт AmneziaWG" value={status.awg_port ? `UDP ${status.awg_port}` : '—'} />
+        <Cell label="Порт AmneziaWG" value={status.awg_port ? `UDP ${status.awg_port} · MTU ${status.mtu}` : '—'} />
         <Cell label="Туннель" value={status.tunnel_up ? `${status.iface} поднят` : 'не поднят'} />
         <Cell
           label="Рукопожатие"
@@ -341,6 +341,7 @@ function AutoSetup({ status, locked, onAct, onError }: {
   const [user, setUser] = useState(status.ssh_user || 'root');
   const [password, setPassword] = useState('');
   const [awgPort, setAwgPort] = useState('');
+  const [mtu, setMtu] = useState('');
   const [keys, setKeys] = useState<DonorHostKey[] | null>(null);
   const [trusted, setTrusted] = useState(false);
   const [allowRoutes, setAllowRoutes] = useState(false);
@@ -375,6 +376,7 @@ function AutoSetup({ status, locked, onAct, onError }: {
       user: user.trim() || 'root',
       password,
       awg_port: Number(awgPort) || 0,
+      mtu: Number(mtu) || 0,
       host_key: hostKey,
       allow_disable_default_upstreams: allowRoutes,
     };
@@ -390,14 +392,19 @@ function AutoSetup({ status, locked, onAct, onError }: {
         обфускации для обеих сторон, поднимет туннель, проверит выход и переключит движок.
         Пароль передаётся только на время настройки и нигде не сохраняется.
       </p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         <Input placeholder="IP донора" value={host} onChange={(e) => setHost(e.target.value)} disabled={locked} />
         <Input placeholder="Порт SSH" value={sshPort} onChange={(e) => setSshPort(e.target.value)} disabled={locked} />
         <Input placeholder="Пользователь" value={user} onChange={(e) => setUser(e.target.value)} disabled={locked} />
         <Input type="password" autoComplete="off" placeholder="Пароль (пусто — по ключу)" value={password}
           onChange={(e) => setPassword(e.target.value)} disabled={locked} />
-        <Input placeholder="UDP-порт (случайный)" value={awgPort} onChange={(e) => setAwgPort(e.target.value)} disabled={locked} />
+        <Input placeholder="UDP-порт (авто)" value={awgPort} onChange={(e) => setAwgPort(e.target.value)} disabled={locked} />
+        <Input placeholder="MTU (1280)" value={mtu} onChange={(e) => setMtu(e.target.value)} disabled={locked} />
       </div>
+      <p className="text-xs text-text-secondary">
+        Защита от перебора SSH на доноре не помешает: получение ключа и настройка — по одному
+        подключению. MTU меньше 1280 нужен, только если крупные пакеты между серверами теряются.
+      </p>
 
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" className="gap-2" disabled={locked || scanning || !host.trim()} onClick={() => void scan()}>
@@ -442,13 +449,14 @@ function ManualSetup({ status, locked, onPrepared, onError }: {
 }) {
   const [host, setHost] = useState(status.host || '');
   const [awgPort, setAwgPort] = useState('');
+  const [mtu, setMtu] = useState('');
   const [working, setWorking] = useState(false);
 
   const prepare = async () => {
     setWorking(true);
     onError(null);
     try {
-      await donorApi.manual(host.trim(), Number(awgPort) || 0);
+      await donorApi.manual(host.trim(), Number(awgPort) || 0, Number(mtu) || 0);
       await onPrepared();
     } catch (e) {
       onError(errText(e, 'Не удалось подготовить скрипт'));
@@ -463,9 +471,10 @@ function ManualSetup({ status, locked, onPrepared, onError }: {
         Пароль донора панели не нужен: MTProxyL подготовит скрипт, вы запустите его на доноре
         от root и вернёте сюда публичный ключ, который скрипт напечатает в конце.
       </p>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
         <Input placeholder="IP донора" value={host} onChange={(e) => setHost(e.target.value)} disabled={locked || working} />
-        <Input placeholder="UDP-порт (случайный)" value={awgPort} onChange={(e) => setAwgPort(e.target.value)} disabled={locked || working} />
+        <Input placeholder="UDP-порт (авто)" value={awgPort} onChange={(e) => setAwgPort(e.target.value)} disabled={locked || working} />
+        <Input placeholder="MTU (1280)" value={mtu} onChange={(e) => setMtu(e.target.value)} disabled={locked || working} />
         <Button size="sm" variant="outline" disabled={locked || working || !host.trim()} onClick={() => void prepare()}>
           {working ? 'Готовим…' : 'Подготовить скрипт'}
         </Button>
