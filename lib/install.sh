@@ -458,7 +458,7 @@ installer_pick_engine_backend() {
         ENGINE_BACKEND="binary"
         echo ""
         echo -e "  ${DIM}Ссылка https на бинарник telemt или архив .tar.gz с ним, например:${NC}"
-        echo -e "  ${DIM}https://github.com/telemt/telemt/releases/download/3.5.7/telemt-x86_64-linux-musl.tar.gz${NC}"
+        echo -e "  ${DIM}https://github.com/telemt/telemt/releases/download/3.5.13/telemt-x86_64-linux-musl.tar.gz${NC}"
         local _cu _cs
         while true; do
             read_line _cu "  ${BOLD}Ссылка:${NC} "

@@ -5,7 +5,7 @@ _tui_engine_custom() {
     echo ""
     echo -e "  ${DIM}Своя сборка telemt: ссылка https на бинарник или архив .tar.gz с ним,${NC}"
     echo -e "  ${DIM}например релиз с GitHub:${NC}"
-    echo -e "  ${DIM}https://github.com/telemt/telemt/releases/download/3.5.7/telemt-x86_64-linux-musl.tar.gz${NC}"
+    echo -e "  ${DIM}https://github.com/telemt/telemt/releases/download/3.5.13/telemt-x86_64-linux-musl.tar.gz${NC}"
     echo -e "  ${DIM}Бинарник запускается от root — ставьте только сборки, которым доверяете.${NC}"
     echo -e "  ${DIM}Вернуться к прежнему: пункт «Откатить».${NC}"
     echo ""

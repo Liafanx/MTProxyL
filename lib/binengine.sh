@@ -364,11 +364,14 @@ _binengine_memory_max() {
 # сообщает об отсутствии цепочки «Chain '…' does not exist», и telemt считает
 # это ошибкой. Итог один: сверка падает и повторяется бесконечно. При наличии
 # nft iptables движку не нужен, поэтому multi-бинарники от процесса прячем.
+# В 3.5.11 telemt понимает и этот текст, а с 3.5.12 conntrack выключен по
+# умолчанию — там обход не нужен.
 # Без mount namespace (часть LXC) такой юнит не стартует — сначала systemd-run.
 _binengine_hidden_helpers() {
     local _b _t _seen=" " _lines="" _v _nft=""
     _v=$(binengine_version 2>/dev/null); _v="${_v#v}"; _v="${_v%%-*}"
     [ -n "$_v" ] && _version_ge "$_v" "3.5.8" || return 1
+    _version_ge "$_v" "3.5.11" && return 1
     for _b in /usr/sbin/nft /usr/bin/nft /sbin/nft /bin/nft; do
         [ -x "$_b" ] && { _nft=1; break; }
     done
@@ -653,7 +656,7 @@ engine_install_custom() {
     if [ -z "$_url" ]; then
         echo -e "  ${BOLD}Использование:${NC} mtproxyl engine custom <ссылка> [--sha256 <хеш>] [--yes]"
         echo -e "  ${DIM}Ссылка https на бинарник telemt или архив .tar.gz с ним, например:${NC}"
-        echo -e "  ${DIM}https://github.com/telemt/telemt/releases/download/3.5.7/telemt-x86_64-linux-musl.tar.gz${NC}"
+        echo -e "  ${DIM}https://github.com/telemt/telemt/releases/download/3.5.13/telemt-x86_64-linux-musl.tar.gz${NC}"
         return 1
     fi
     _binengine_url_valid "$_url" || {
