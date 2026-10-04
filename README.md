@@ -182,7 +182,7 @@ mtproxyl engine backend docker    # обратно
 «Свой бинарник telemt по ссылке»), в меню «Движок» или командой:
 
 ```bash
-mtproxyl engine custom https://github.com/telemt/telemt/releases/download/3.5.7/telemt-x86_64-linux-musl.tar.gz
+mtproxyl engine custom https://github.com/telemt/telemt/releases/download/3.5.13/telemt-x86_64-linux-musl.tar.gz
 mtproxyl engine custom <ссылка> --sha256 <хеш>   # сверить с опубликованной суммой
 mtproxyl install --engine-url <ссылка> [--engine-sha256 <хеш>] ...   # при установке
 ```
@@ -219,19 +219,21 @@ mtproxyl engine cleanup             # Показать список и запр�
 повторное скачивание. Размеры образов включают общие слои, поэтому сумма размеров
 не равна фактически освобождённому месту.
 
-**telemt 3.5.8+ и iptables.** Начиная с 3.5.8 движок сам ведёт правила
+**telemt 3.5.8–3.5.10 и iptables.** Начиная с 3.5.8 движок сам ведёт правила
 conntrack и на старте убирает свои цепочки и в nft, и в iptables. В 3.5.8 он
 запускал `xtables-nft-multi` без имени команды (telemt issue #932); в 3.5.9 это
 исправлено, но iptables-nft 1.8.10+ (Debian 13) сообщает об отсутствии цепочки
 словами «Chain '…' does not exist», и telemt принимает это за ошибку. В обоих
 случаях сверка conntrack падает и повторяется каждые полминуты, засоряя журнал.
-Бинарному движку 3.5.8 и новее MTProxyL прячет `xtables-*-multi` внутри его
+Бинарному движку 3.5.8–3.5.10 MTProxyL прячет `xtables-*-multi` внутри его
 службы (`InaccessiblePaths=`): при установленном `nft` iptables движку не нужен,
 а для остальной системы ничего не меняется. Обход не ставится, если `nft` нет,
 если в экспертных параметрах выбран `server.conntrack_control.backend =
 "iptables"` или если systemd не умеет изолировать пути (часть LXC). Строка
 пересчитывается при каждом запуске движка. Образ Docker построен на `scratch`,
-iptables в нём нет — там проблемы не бывает.
+iptables в нём нет — там проблемы не бывает. В 3.5.11 telemt сам понимает
+ответ iptables-nft, а с 3.5.12 conntrack по умолчанию выключен
+(`inline_conntrack_control = false`), поэтому для этих версий обход не ставится.
 
 ---
 
@@ -525,7 +527,7 @@ mtproxyl uninstall-telemt     # удалить telemt: uninstall или purge (R
 ```bash
 mtproxyl engine status         # версия цели, её бинарник и что лежит для отката
 mtproxyl engine list           # опубликованные версии telemt
-mtproxyl engine update 3.5.7   # поставить версию (новее или старше)
+mtproxyl engine update 3.5.13  # поставить версию (новее или старше)
 mtproxyl engine rollback       # вернуть предыдущую, без сети
 ```
 
@@ -1430,7 +1432,7 @@ mtproxyl detect               # (пере)обнаружить существу�
 mtproxyl edit-config          # открыть конфиг цели в $EDITOR/nano + предложить рестарт
 mtproxyl install-telemt       # официальный установщик telemt: установка/обновление, выбор версии
 mtproxyl uninstall-telemt     # официальный установщик telemt: uninstall / purge
-mtproxyl engine update 3.5.7  # сменить версию telemt цели: только бинарник, конфиг не трогается
+mtproxyl engine update 3.5.13 # сменить версию telemt цели: только бинарник, конфиг не трогается
 mtproxyl engine rollback      # вернуть предыдущую версию цели
 mtproxyl target-config show   # показать конфиг цели целиком
 mtproxyl target-config write            # заменить конфиг цели (текст со stdin)

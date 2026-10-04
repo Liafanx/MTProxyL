@@ -32,4 +32,25 @@ printf '%s\n' 3.5.6 > "$INSTALL_DIR/.telemt_version"
 remember_proxy_container_version
 [ "$(cat "$INSTALL_DIR/.telemt_version")" = 3.5.6 ]
 
+# Переприменение WEB зовёт build_telemt_image: выбранный образ на диске —
+# версия остаётся, закреплённая не подтягивается.
+log_info() { :; }; log_success() { :; }; log_warn() { :; }
+pulled=""
+docker() {
+    case "$1 ${2:-}" in
+        'image inspect') [ "$3" = mtproxyl-telemt:3.5.13-d3de986 ] || [ "$3" = mtproxyl-telemt:3.5.7-4ca7418 ] ;;
+        'pull '*) pulled+="$2 "; return 1 ;;
+        *) return 0 ;;
+    esac
+}
+printf '%s\n' 3.5.13-d3de986 > "$INSTALL_DIR/.telemt_version"
+build_telemt_image
+[ "$(cat "$INSTALL_DIR/.telemt_version")" = 3.5.13-d3de986 ]
+[ -z "$pulled" ]
+
+# Выбранного образа нет — берём закреплённый.
+printf '%s\n' 3.5.9-gone > "$INSTALL_DIR/.telemt_version"
+build_telemt_image
+[ "$(cat "$INSTALL_DIR/.telemt_version")" = 3.5.7-4ca7418 ]
+
 echo 'docker restart version: OK'

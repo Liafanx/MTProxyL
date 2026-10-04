@@ -132,6 +132,15 @@ build_telemt_image() {
     local commit="${TELEMT_COMMIT}"
     local version="${TELEMT_MIN_VERSION}-${commit}"
 
+    # Без force версию не меняем: выбранный пользователем образ уже на месте,
+    # иначе WEB/Selfmask при переприменении откатывали движок на закреплённый.
+    if [ "$force" = "false" ]; then
+        local _selected; _selected=$(cat "${INSTALL_DIR}/.telemt_version" 2>/dev/null)
+        if [ -n "$_selected" ] && docker image inspect "${DOCKER_IMAGE_BASE}:${_selected}" &>/dev/null; then
+            return 0
+        fi
+    fi
+
     if [ "$force" = "false" ] && docker image inspect "${DOCKER_IMAGE_BASE}:${version}" &>/dev/null; then
         echo "$version" > "${INSTALL_DIR}/.telemt_version"
         return 0

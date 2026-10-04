@@ -210,6 +210,8 @@ _catalog "web.timeouts" "decoy_header_secs"       "u64" "30"  "✔" "range:1:360
 _catalog "web" "carrier_learning"             "bool"  "true"     "✔" "bool"                              "true/false"        "Обучение carrier по успешным сессиям (нужен carriers)"
 _catalog "web" "carrier_negotiation_aggressiveness" "enum" "conservative" "✔" "enum:conservative,balanced,aggressive" "conservative/balanced/aggressive" "Насколько рано обучение доверяет выборке"
 _catalog "web" "carriers"                     "carrier_list" "false" "✔" "custom:_validate_web_carriers" "false или список через запятую" "Порядок перебора carrier при автосогласовании"
+_catalog "web" "carrier_method"               "enum"  "post"     "✔" "enum:post,put"                     "post/put"          "HTTP-метод carrier в bridge-странице; put — переиспользование соединений в WebKitGTK (telemt 3.5.12+)"
+_catalog "web" "conveyor"                     "bool"  "true"     "✔" "bool"                              "true/false"        "Конвейер HTTP-запросов uplink для новых WEB-сессий (telemt 3.5.13+)"
 
 # ── web.debug ─────────────────────────────────────────────────
 _catalog "web.debug" "capture_lifecycle"      "bool"  "true"     "✔" "bool"                              "true/false"        "Записывать события bridge, сессий и потоков"
@@ -223,7 +225,7 @@ _catalog "web.debug" "default_window_secs"    "u64"   "180"      "✔" "range:1:
 _catalog "web.debug" "max_window_secs"        "u64"   "3600"     "✔" "range:1:86400"                     "1..86400"          "Максимальное окно наблюдения /web-status"
 
 # ── server.conntrack_control ──────────────────────────────────
-_catalog "server.conntrack_control" "inline_conntrack_control" "bool"  "true"      "✘" "bool"                          "true/false"                      "Главный переключатель conntrack-control"
+_catalog "server.conntrack_control" "inline_conntrack_control" "bool"  "false"     "✘" "bool"                          "true/false"                      "Главный переключатель conntrack-control (до telemt 3.5.12 включён по умолчанию)"
 _catalog "server.conntrack_control" "mode"                     "enum"  "tracked"   "✘" "enum:tracked,notrack,hybrid"   "tracked/notrack/hybrid"          "Режим conntrack"
 _catalog "server.conntrack_control" "backend"                  "enum"  "auto"      "✘" "enum:auto,nftables,iptables"   "auto/nftables/iptables"          "Backend для notrack-правил"
 _catalog "server.conntrack_control" "profile"                  "enum"  "balanced"  "✘" "enum:conservative,balanced,aggressive" "conservative/balanced/aggressive" "Профиль давления conntrack"
