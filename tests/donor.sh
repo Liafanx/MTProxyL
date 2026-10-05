@@ -229,4 +229,21 @@ assert d["socks"] == "10.222.3.9:1080" and d["awg_port"] == 47321, d
 assert d["engine_mode"] == "manager" and d["tunnel_up"] is False and d["check"]["rtt_ms"] is None, d
 PY
 
+# Хук DKMS: макросы udp_tunnel зависят от заголовков ядра, повторный запуск
+# ничего не дублирует, чужие исходники не ломает.
+hookdir=$(mktemp -d); mkdir -p "$hookdir/compat"
+sed -n "/<<'HOOK'$/,/^HOOK$/p" <<< "$(_donor_agent_script)" | sed '1d;$d' > "$hookdir/hook.sh"
+printf 'ccflags-y := -DX\n' > "$hookdir/Kbuild"
+printf '%s\n' '#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 1, 5)' '#include <net/udp_tunnel.h>' \
+    '#define setup_udp_tunnel_sock(net, sk, sock_cfg) setup_udp_tunnel_sock(net, sk->sk_socket, sock_cfg)' \
+    '#define udp_tunnel_sock_release(sk) udp_tunnel_sock_release(sk->sk_socket)' '#endif' > "$hookdir/compat/compat.h"
+(cd "$hookdir" && sh hook.sh && sh hook.sh)
+[ "$(grep -c '^#ifndef MTPL_UDP_TUNNEL_SETUP_SK$' "$hookdir/compat/compat.h")" = 1 ]
+[ "$(grep -c '^#ifndef MTPL_UDP_TUNNEL_RELEASE_SK$' "$hookdir/compat/compat.h")" = 1 ]
+[ "$(grep -c 'MTPL_UDP_TUNNEL_SETUP_SK' "$hookdir/Kbuild")" = 1 ]
+# make считает скобки внутри $(shell): в шаблонах их быть не должно.
+! grep 'grep -qsE' "$hookdir/Kbuild" | grep -q "'[^']*[(),][^']*'"
+grep -q 'PRE_BUILD="../../../../../..%s"' <<< "$(_donor_agent_script)"
+rm -rf "$hookdir"
+
 echo "donor: ok"

@@ -131,7 +131,47 @@ _mtpd_awg_ready() {
     command -v awg >/dev/null 2>&1 && command -v awg-quick >/dev/null 2>&1 && modprobe amneziawg 2>/dev/null
 }
 
+# Ubuntu переносит в старые ядра изменения API (7.0.0-38: setup_udp_tunnel_sock
+# принимает struct sock), а модуль выбирает вариант по номеру версии — сборка
+# падает и вместе с ней apt upgrade. Хук DKMS перед каждой сборкой сверяет
+# сигнатуры с заголовками ядра; /usr/src не трогает, переживает обновления.
+MTPD_DKMS_HOOK=/usr/local/lib/mtproxyl/awg-dkms-compat.sh
+
+_mtpd_dkms_hook() {
+    install -d -m 755 "${MTPD_DKMS_HOOK%/*}" /etc/dkms || return 1
+    cat > "${MTPD_DKMS_HOOK}.tmp" <<'HOOK'
+#!/bin/sh
+# MTProxyL: сигнатуры udp_tunnel по заголовкам ядра, а не по его версии.
+[ -f Kbuild ] && [ -f compat/compat.h ] || exit 0
+grep -q 'MTPL_UDP_TUNNEL' Kbuild && exit 0
+cat >> Kbuild <<'KB'
+mtpl-udp-h := $(wildcard $(srctree)/include/net/udp_tunnel.h $(objtree)/include/net/udp_tunnel.h)
+ccflags-y += $(if $(mtpl-udp-h),$(shell grep -qsE 'setup_udp_tunnel_sock.struct net .net. struct sock .' $(mtpl-udp-h) && echo -DMTPL_UDP_TUNNEL_SETUP_SK))
+ccflags-y += $(if $(mtpl-udp-h),$(shell grep -qsE 'udp_tunnel_sock_release.struct sock .' $(mtpl-udp-h) && echo -DMTPL_UDP_TUNNEL_RELEASE_SK))
+KB
+sed -i \
+    -e 's|^#define setup_udp_tunnel_sock(net, sk, sock_cfg) setup_udp_tunnel_sock(net, sk->sk_socket, sock_cfg)$|#ifndef MTPL_UDP_TUNNEL_SETUP_SK\n&\n#endif|' \
+    -e 's|^#define udp_tunnel_sock_release(sk) udp_tunnel_sock_release(sk->sk_socket)$|#ifndef MTPL_UDP_TUNNEL_RELEASE_SK\n&\n#endif|' \
+    compat/compat.h
+HOOK
+    chmod 755 "${MTPD_DKMS_HOOK}.tmp" && mv "${MTPD_DKMS_HOOK}.tmp" "$MTPD_DKMS_HOOK" || return 1
+    # PRE_BUILD dkms ищет от каталога сборки /var/lib/dkms/<модуль>/<версия>/build.
+    printf '# MTProxyL: совместимость AmneziaWG с ядрами Ubuntu\nPRE_BUILD="../../../../../..%s"\n' \
+        "$MTPD_DKMS_HOOK" > /etc/dkms/amneziawg.conf
+}
+
+# Модуль не собрался: пакет DKMS снимаем, иначе каждое обновление ядра
+# будет заканчиваться ошибкой apt. Журнал сборки сохраняем.
+_mtpd_drop_broken_dkms() {
+    local _log
+    _log=$(ls -t /var/lib/dkms/amneziawg/*/build/make.log 2>/dev/null | head -1)
+    [ -n "$_log" ] && cp "$_log" /tmp/mtpd-dkms-make.log 2>/dev/null
+    _mtpd_apt purge amneziawg amneziawg-dkms >>/tmp/mtpd-apt.log 2>&1 || true
+    dpkg --configure -a >>/tmp/mtpd-apt.log 2>&1 || true
+}
+
 _mtpd_install_awg() {
+    _mtpd_dkms_hook || true
     if _mtpd_awg_ready; then _mtpd_say "AmneziaWG уже установлен"; return 0; fi
     local _virt; _virt=$(systemd-detect-virt 2>/dev/null || true)
     case "$_virt" in
@@ -139,9 +179,12 @@ _mtpd_install_awg() {
             _mtpd_fail 11 "Виртуализация ${_virt}: модуль ядра AmneziaWG здесь не загрузить, нужен KVM или выделенный сервер" ;;
     esac
     _mtpd_say "Ставим AmneziaWG: модуль ядра собирается через DKMS, это до нескольких минут"
+    # Прошлая неудачная сборка могла оставить пакеты ненастроенными — с хуком
+    # она пройдёт, а apt без этого ничего ставить не станет.
+    dpkg --configure -a >/tmp/mtpd-apt.log 2>&1 || true
     command -v curl >/dev/null 2>&1 && command -v gpg >/dev/null 2>&1 \
-        || _mtpd_apt install ca-certificates curl gnupg >/dev/null 2>&1 \
-        || _mtpd_fail 12 "Не удалось поставить curl и gnupg"
+        || _mtpd_apt install ca-certificates curl gnupg >>/tmp/mtpd-apt.log 2>&1 \
+        || _mtpd_fail 12 "Не удалось поставить curl и gnupg, лог: /tmp/mtpd-apt.log"
     install -d -m 755 /etc/apt/keyrings
     curl -fsS -m 60 "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${MTPD_FPR}" \
         | gpg --dearmor > /etc/apt/keyrings/amnezia-ppa.gpg.tmp 2>/dev/null \
@@ -151,15 +194,19 @@ _mtpd_install_awg() {
     mv /etc/apt/keyrings/amnezia-ppa.gpg.tmp /etc/apt/keyrings/amnezia-ppa.gpg
     echo "deb [signed-by=/etc/apt/keyrings/amnezia-ppa.gpg] https://ppa.launchpadcontent.net/amnezia/ppa/ubuntu $(_mtpd_ppa_dist) main" \
         > /etc/apt/sources.list.d/amnezia-ppa.list
-    _mtpd_apt update >/tmp/mtpd-apt.log 2>&1 || _mtpd_fail 12 "apt update не прошёл, лог: /tmp/mtpd-apt.log"
+    _mtpd_apt update >>/tmp/mtpd-apt.log 2>&1 || _mtpd_fail 12 "apt update не прошёл, лог: /tmp/mtpd-apt.log"
     _mtpd_apt install "linux-headers-$(uname -r)" >>/tmp/mtpd-apt.log 2>&1 \
-        || _mtpd_say "Заголовков для ядра $(uname -r) в репозитории нет, модуль может не собраться"
-    _mtpd_apt install amneziawg >>/tmp/mtpd-apt.log 2>&1 \
-        || _mtpd_fail 12 "Не удалось поставить amneziawg, лог: /tmp/mtpd-apt.log"
+        || _mtpd_say "Заголовки ядра $(uname -r) не поставились, модуль может не собраться (лог: /tmp/mtpd-apt.log)"
+    _mtpd_apt install amneziawg >>/tmp/mtpd-apt.log 2>&1 || true
     if ! modprobe amneziawg 2>/dev/null; then
         command -v dkms >/dev/null 2>&1 && dkms autoinstall -k "$(uname -r)" >>/tmp/mtpd-apt.log 2>&1
-        modprobe amneziawg 2>/dev/null \
-            || _mtpd_fail 13 "Модуль amneziawg не загрузился: нет заголовков ядра $(uname -r) или включён Secure Boot. Лог: /tmp/mtpd-apt.log"
+        dpkg --configure -a >>/tmp/mtpd-apt.log 2>&1 || true
+    fi
+    if ! modprobe amneziawg 2>/dev/null; then
+        command -v awg >/dev/null 2>&1 || dpkg -s amneziawg-dkms >/dev/null 2>&1 \
+            || _mtpd_fail 12 "Не удалось поставить amneziawg, лог: /tmp/mtpd-apt.log"
+        _mtpd_drop_broken_dkms
+        _mtpd_fail 13 "Модуль amneziawg не собрался под ядро $(uname -r) (или включён Secure Boot). Пакет DKMS снят, чтобы не мешать обновлениям системы. Журнал сборки: /tmp/mtpd-dkms-make.log"
     fi
     _mtpd_say "AmneziaWG установлен: $(awg --version 2>/dev/null | awk '{print $2}')"
 }
@@ -388,6 +435,7 @@ _mtpd_remove() {
 _mtpd_main() {
     case "${MTPD_ACTION:-}" in
         install) _mtpd_os; _mtpd_install_awg ;;
+        hook)    _mtpd_dkms_hook ;;
         setup)   _mtpd_setup ;;
         remove)  _mtpd_remove ;;
         *)       _mtpd_fail 2 "Неизвестное действие агента: ${MTPD_ACTION:-}" ;;
@@ -701,7 +749,16 @@ _donor_handshake_age() {
     echo $(( $(date +%s) - _ts ))
 }
 
+# Хук совместимости DKMS для серверов, где AmneziaWG поставлен до 1.6.32:
+# без него следующее обновление ядра Ubuntu может сломать apt.
+_donor_dkms_hook_local() {
+    [ -f /etc/dkms/amneziawg.conf ] && return 0
+    dpkg -s amneziawg-dkms >/dev/null 2>&1 || return 0
+    _donor_agent_program hook | bash -s >/dev/null 2>&1 || true
+}
+
 _donor_tunnel_up() {
+    _donor_dkms_hook_local
     systemctl enable "awg-quick@${DONOR_IFACE}" >/dev/null 2>&1
     systemctl restart "awg-quick@${DONOR_IFACE}" >/dev/null 2>&1 || {
         log_error "Интерфейс ${DONOR_IFACE} не поднялся"
@@ -1344,6 +1401,7 @@ donor_check() {
         [ "$_json" = "--json" ] && { donor_status_json; return 0; }
         log_error "Туннель до донора не настроен"; return 1
     fi
+    _donor_dkms_hook_local
     local _res="ok" _err="" _age
     if ! ip link show "$DONOR_IFACE" >/dev/null 2>&1; then
         _res="down"; _err="интерфейс ${DONOR_IFACE} не поднят"
