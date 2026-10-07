@@ -54,10 +54,13 @@ jq -nc '{status:"success",proto:"masque",filter:"",best_endpoint:"162.159.198.1:
 mapfile -t masque < <(_warp_scan_args deep)
 [[ " ${masque[*]} " != *" -sweep-ports "* ]]
 
-# A tunnel responding to Cloudflare is insufficient: probe a Telegram DC.
+# A tunnel responding to Cloudflare is insufficient: a DC must answer HTTP.
 WARP_MODE=upstream
-curl() { printf '* SOCKS5 request granted.\n' >&2; return 28; }
+curl() { printf '404'; }
 _warp_telegram_probe
+# DME: TCP opens, data is cut — curl reports 000.
+curl() { printf '000'; return 28; }
+if _warp_telegram_probe; then exit 1; fi
 WARP_MODE=iface
 printf '0\n' > "$test_dir/packet-count"
 warp_matched_packets() {
@@ -67,15 +70,20 @@ warp_matched_packets() {
     printf '%s\n' "$count" > "$test_dir/packet-count"
     printf '%s\n' "$count"
 }
-curl() {
-    local uri="${*: -1}" ip
-    ip="${uri#telnet://}"
-    ip="${ip%:443}"
-    printf '* Connected to %s (%s) port 443\n' "$ip" "$ip" >&2
-    return 28
-}
+curl() { [[ "${*: -1}" == http://149.154.*/ ]] && printf '404'; }
 _warp_telegram_probe
 curl() { return 28; }
 if _warp_telegram_probe; then exit 1; fi
+
+# Fallback candidates: same proto and filter, scan order, no active one, no dups.
+WARP_MODE=upstream
+WARP_PROTO=awg
+WARP_LOCATION=ARN
+jq -nc '{status:"success",proto:"awg",filter:"ARN",nodes:[
+    {node:"ARN",endpoint:"1.1.1.1:2408"},{node:"ARN",endpoint:"2.2.2.2:2408"},
+    {node:"ARN",endpoint:"1.1.1.1:2408"},{node:"ARN",endpoint:"3.3.3.3:2408"}]}' > "$(_warp_scan_file)"
+[[ "$(_warp_scan_candidates 2.2.2.2:2408 | tr '\n' ' ')" == "1.1.1.1:2408 3.3.3.3:2408 " ]]
+WARP_LOCATION=AMS
+[[ -z "$(_warp_scan_candidates)" ]]
 
 echo 'warp selection: ok'
