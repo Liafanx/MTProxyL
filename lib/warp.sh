@@ -464,6 +464,14 @@ _warp_cached_endpoint() {
     ' "$_f" 2>/dev/null
 }
 
+# Остальные адреса последней разведки того же протокола и фильтра, кроме $1.
+_warp_scan_candidates() {
+    jq -r --arg proto "$(_warp_proto)" --arg filter "$(_warp_scan_filter)" --arg skip "${1:-}" '
+        select(.status == "success" and .proto == $proto and (.filter // "") == $filter) |
+        .nodes[]?.endpoint // empty | select(. != $skip)' \
+        "$(_warp_scan_file)" 2>/dev/null | awk '!seen[$0]++'
+}
+
 # Закреплённый адрес без результата разведки проверяем точечно; для нового
 # узла или автовыбора запускаем обычную разведку.
 warp_resolve_endpoint() {
@@ -1228,7 +1236,7 @@ _warp_enable() {
         if is_proxy_running; then restart_proxy_container || return 1; fi
     fi
 
-    local _route_ok=false
+    local _route_ok=false _cand
     if _warp_wait_route; then
         _route_ok=true
     else
@@ -1236,21 +1244,35 @@ _warp_enable() {
         _warp_start_services || return 1
         _warp_wait_route && _route_ok=true
     fi
+    # Адрес жив по разведке, но DC не отвечают (выход в РФ, DPI) — берём следующие.
+    if [ "$_route_ok" != true ] && [ -z "${WARP_ENDPOINT:-}" ]; then
+        while IFS= read -r _cand; do
+            log_warn "Через ${_ep} Telegram не отвечает; пробуем ${_cand}"
+            _ep="$_cand"
+            if [ "$(_warp_mode)" = iface ]; then _warp_generate_iface_conf "$_ep" || continue; fi
+            _warp_write_state "$_ep" || return 1
+            _warp_start_services || continue
+            if _warp_wait_route 8; then _route_ok=true; break; fi
+        done < <(_warp_scan_candidates "$_ep" | head -n 4)
+    fi
     if [ "$_route_ok" = true ]; then
-        log_success "Трафик до Telegram идёт через WARP (вариант $(_warp_variant_letter))"
-        if [ -n "${WARP_LOCATION:-}" ]; then
-            local _exit _exit_ip _exit_loc _exit_colo
-            _exit=$(warp_exit_info 2>/dev/null) || return 1
+        log_success "Трафик до Telegram идёт через WARP (вариант $(_warp_variant_letter)), адрес ${_ep}"
+        local _exit _exit_ip _exit_loc _exit_colo
+        if _exit=$(warp_exit_info 2>/dev/null); then
             IFS='|' read -r _exit_ip _exit_loc _exit_colo <<< "$_exit"
-            if ! _warp_exit_matches_location "$_exit_loc" "$_exit_colo"; then
-                log_error "Выбрана локация ${WARP_LOCATION}, но фактический узел Cloudflare ${_exit_colo} (GeoIP WARP: ${_exit_loc})"
-                log_info "Эндпоинт сменил anycast-маршрут — запустите разведку выбранного узла ещё раз"
-                return 1
+            if [ -n "${WARP_LOCATION:-}" ] && ! _warp_exit_matches_location "$_exit_loc" "$_exit_colo"; then
+                log_warn "Выбрана локация ${WARP_LOCATION}, а Cloudflare вывел туннель через узел ${_exit_colo}"
+                log_info "С части сетей anycast меняет узел от подключения к подключению; маршрут рабочий, оставляем"
+            else
+                log_success "Выход: узел Cloudflare ${_exit_colo}, GeoIP WARP ${_exit_loc}"
             fi
-            log_success "Выход подтверждён: узел Cloudflare ${_exit_colo}, GeoIP WARP ${_exit_loc}"
         fi
     else
-        log_warn "Правила применены, но WARP и TCP-соединение с Telegram не подтвердились"
+        log_warn "Правила применены, но ни один адрес не довёл трафик до Telegram"
+        case "$(_warp_proto)" in
+            masque|masque-h2) log_info "Эта сеть может резать данные внутри MASQUE — попробуйте протокол awg" ;;
+            *) log_info "Попробуйте другой протокол (masque-h2) или убрать локацию" ;;
+        esac
         log_info "Смотрите: mtproxyl warp status, journalctl -u ${WARP_SOCKS_UNIT}"
         return 1
     fi
@@ -1327,16 +1349,22 @@ _warp_nft_applied() {
 }
 
 # Выход по версии самого Cloudflare: в его ответе есть warp=on/off.
-warp_exit_info() {
-    local _url="https://www.cloudflare.com/cdn-cgi/trace" _out=""
-    local -a _route=()
+# Аргументы curl, ведущие запрос через туннель, по одному на строку.
+_warp_curl_route() {
     if [ "$(_warp_mode)" != "iface" ] && _warp_unit_active "$WARP_SOCKS_UNIT"; then
-        _route=(-x "socks5h://127.0.0.1:$(_warp_socks_port)")
+        printf '%s\n' -x "socks5h://127.0.0.1:$(_warp_socks_port)"
     elif [ "$(_warp_mode)" = "iface" ] && ip link show "$WARP_IFACE" >/dev/null 2>&1; then
-        _route=(--proxy '' --interface "$WARP_IFACE")
+        printf '%s\n' --proxy '' --interface "$WARP_IFACE"
     else
         return 1
     fi
+}
+
+warp_exit_info() {
+    local _url="https://www.cloudflare.com/cdn-cgi/trace" _out=""
+    local -a _route=()
+    mapfile -t _route < <(_warp_curl_route)
+    [ "${#_route[@]}" -gt 0 ] || return 1
     for _url in https://www.cloudflare.com/cdn-cgi/trace https://1.1.1.1/cdn-cgi/trace; do
         _out=$(curl -fsS --noproxy '' --max-time 5 "${_route[@]}" "$_url" 2>/dev/null)
         if grep -Eq '^warp=(on|plus)$' <<< "$_out"; then break; fi
@@ -1422,30 +1450,40 @@ _warp_telegram_probe() {
     else
         _before=$(warp_matched_packets)
     fi
-    # Два стабильных DC: проверяем реальное TCP-соединение, а не только ответ
-    # Cloudflare trace. Один DC может временно не отвечать — достаточно второго.
+    # Ответ DC на порту 80, а не голое TCP: через часть узлов соединение
+    # открывается, но ответа нет. Достаточно одного DC из двух.
     for _ip in 149.154.175.50 149.154.167.50; do
-        _out=$(LC_ALL=C curl -v --noproxy '' --connect-timeout 2 --max-time 3 \
-            -o /dev/null "${_route[@]}" "telnet://${_ip}:443" </dev/null 2>&1) || true
-        if [ "$(_warp_mode)" = upstream ]; then
-            grep -Fq 'SOCKS5 request granted' <<< "$_out" && return 0
-        else
-            if grep -Fq "Connected to ${_ip} " <<< "$_out"; then
-                _after=$(warp_matched_packets)
-                [ "$_after" -gt "$_before" ] && return 0
-            fi
-        fi
+        _out=$(curl -s --noproxy '' --connect-timeout 3 --max-time 5 -o /dev/null \
+            -w '%{http_code}' "${_route[@]}" "http://${_ip}/" </dev/null 2>/dev/null) || true
+        [ -n "$_out" ] && [ "$_out" != 000 ] || continue
+        [ "$(_warp_mode)" = upstream ] && return 0
+        _after=$(warp_matched_packets)
+        [ "$_after" -gt "$_before" ] && return 0
     done
     return 1
 }
 
+# Узел выхода не сверяем: anycast Cloudflare на части сетей меняет его от
+# подключения к подключению, а рабочий маршрут из-за этого не откатываем.
 warp_check_route() {
     warp_route_ready || return 1
-    local _exit _ip _loc _colo
-    _exit=$(warp_exit_info 2>/dev/null) || return 1
-    IFS='|' read -r _ip _loc _colo <<< "$_exit"
-    _warp_exit_matches_location "$_loc" "$_colo" || return 1
-    _warp_telegram_probe
+    warp_exit_info >/dev/null 2>&1 || return 1
+    _warp_telegram_probe || return 1
+    [ "${1:-}" != full ] || _warp_bulk_probe
+}
+
+# Поток через туннель не должен вставать на первых килобайтах: на части сетей
+# туннель поднимается, а после ~16 КБ данные перестают идти. Только при выборе
+# адреса, не в ежеминутной проверке — это 256 КБ трафика.
+_warp_bulk_probe() {
+    local -a _route=()
+    local _size
+    mapfile -t _route < <(_warp_curl_route)
+    [ "${#_route[@]}" -gt 0 ] || return 1
+    _size=$(curl -s --noproxy '' --connect-timeout 5 --max-time 10 -o /dev/null \
+        -w '%{size_download}' "${_route[@]}" \
+        "https://speed.cloudflare.com/__down?bytes=262144" 2>/dev/null) || true
+    [ "${_size:-0}" -ge 262144 ]
 }
 
 warp_status() {
@@ -1736,8 +1774,8 @@ _warp_health_save() {
 
 _warp_wait_route() {
     local _i
-    for _i in {1..15}; do
-        warp_check_route && return 0
+    for ((_i = 1; _i <= ${1:-15}; _i++)); do
+        warp_check_route full && return 0
         [ "$_i" -ne 1 ] || log_info "Ждём подтверждение маршрута WARP..."
         sleep 2
     done
@@ -1820,25 +1858,19 @@ warp_recover() {
         log_success "Туннель и маршрут WARP восстановлены"
         return 0
     fi
-    local _ep _candidate _host
-    _candidate=$(jq -r --arg proto "$(_warp_proto)" --arg filter "$WARP_LOCATION" \
-        --arg active "$(jq -r '.endpoint // ""' <<< "$_state")" \
-        'select(.proto==$proto and .filter==$filter) | [.nodes[] | select(.endpoint!=$active)][0].endpoint // empty' \
-        "$(_warp_scan_file)" 2>/dev/null)
-    if [ -n "$_candidate" ]; then
-        _host="${_candidate%:*}"; _host="${_host#[}"; _host="${_host%]}"
-        _ep=$(warp_scan_best "$_host" "${_candidate##*:}") || _ep=""
-    fi
-    if [ -z "${_ep:-}" ]; then
-        if warp_scan_collect; then
-            _ep=$(jq -r '.best_endpoint // empty' "$(_warp_scan_file)")
-        fi
-    fi
-    if [ -n "${_ep:-}" ] && _warp_activate_endpoint "$_ep"; then
-        _warp_health_save 0 "$_now" recovered
-        log_success "WARP восстановлен через $_ep"
-        return 0
-    fi
+    local _ep _active _round
+    _active=$(jq -r '.endpoint // ""' <<< "$_state")
+    # Сначала адреса прошлой разведки, затем свежей; по три за круг.
+    for _round in cached fresh; do
+        if [ "$_round" = fresh ]; then warp_scan_collect || break; fi
+        while IFS= read -r _ep; do
+            if _warp_activate_endpoint "$_ep"; then
+                _warp_health_save 0 "$_now" recovered
+                log_success "WARP восстановлен через $_ep"
+                return 0
+            fi
+        done < <(_warp_scan_candidates "$_active" | head -n 3)
+    done
     _warp_health_save 3 "$_now" failed "Не удалось восстановить туннель в выбранной локации"
     log_error "WARP не восстановлен; локация, протокол и маршруты сохранены"
     return 1
