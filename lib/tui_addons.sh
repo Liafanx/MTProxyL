@@ -423,7 +423,7 @@ _addon_check_pq_domain() {
     elif [[ "${_temp:-}" == X25519 ]]; then
         echo -e "  ${RED}${BOLD}🔴 МАРКЕР: ДА${NC}"
         echo -e "  ${RED}PQ не поддерживается + группа обмена ключами = X25519${NC}"
-        echo -e "  ${YELLOW}⚠️ Риск блокировки на ТСПУ для iOS клиентов${NC}"
+        echo -e "  ${YELLOW}⚠️ iOS-клиенты могут подключаться нестабильно${NC}"
     else
         echo -e "  ${GREEN}${BOLD}🟢 Маркер: НЕТ${NC}"
         echo -e "  ${DIM}PQ не поддерживается, но группа обмена ключами не X25519${NC}"

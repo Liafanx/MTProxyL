@@ -1349,16 +1349,22 @@ _warp_nft_applied() {
 }
 
 # Выход по версии самого Cloudflare: в его ответе есть warp=on/off.
-warp_exit_info() {
-    local _url="https://www.cloudflare.com/cdn-cgi/trace" _out=""
-    local -a _route=()
+# Аргументы curl, ведущие запрос через туннель, по одному на строку.
+_warp_curl_route() {
     if [ "$(_warp_mode)" != "iface" ] && _warp_unit_active "$WARP_SOCKS_UNIT"; then
-        _route=(-x "socks5h://127.0.0.1:$(_warp_socks_port)")
+        printf '%s\n' -x "socks5h://127.0.0.1:$(_warp_socks_port)"
     elif [ "$(_warp_mode)" = "iface" ] && ip link show "$WARP_IFACE" >/dev/null 2>&1; then
-        _route=(--proxy '' --interface "$WARP_IFACE")
+        printf '%s\n' --proxy '' --interface "$WARP_IFACE"
     else
         return 1
     fi
+}
+
+warp_exit_info() {
+    local _url="https://www.cloudflare.com/cdn-cgi/trace" _out=""
+    local -a _route=()
+    mapfile -t _route < <(_warp_curl_route)
+    [ "${#_route[@]}" -gt 0 ] || return 1
     for _url in https://www.cloudflare.com/cdn-cgi/trace https://1.1.1.1/cdn-cgi/trace; do
         _out=$(curl -fsS --noproxy '' --max-time 5 "${_route[@]}" "$_url" 2>/dev/null)
         if grep -Eq '^warp=(on|plus)$' <<< "$_out"; then break; fi
@@ -1444,8 +1450,8 @@ _warp_telegram_probe() {
     else
         _before=$(warp_matched_packets)
     fi
-    # Ответ DC на порту 80, а не голое TCP: у выхода в РФ (DME) соединение
-    # открывается, а данные режет ТСПУ. Достаточно одного DC из двух.
+    # Ответ DC на порту 80, а не голое TCP: через часть узлов соединение
+    # открывается, но ответа нет. Достаточно одного DC из двух.
     for _ip in 149.154.175.50 149.154.167.50; do
         _out=$(curl -s --noproxy '' --connect-timeout 3 --max-time 5 -o /dev/null \
             -w '%{http_code}' "${_route[@]}" "http://${_ip}/" </dev/null 2>/dev/null) || true
@@ -1462,7 +1468,22 @@ _warp_telegram_probe() {
 warp_check_route() {
     warp_route_ready || return 1
     warp_exit_info >/dev/null 2>&1 || return 1
-    _warp_telegram_probe
+    _warp_telegram_probe || return 1
+    [ "${1:-}" != full ] || _warp_bulk_probe
+}
+
+# Поток через туннель не должен вставать на первых килобайтах: на части сетей
+# туннель поднимается, а после ~16 КБ данные перестают идти. Только при выборе
+# адреса, не в ежеминутной проверке — это 256 КБ трафика.
+_warp_bulk_probe() {
+    local -a _route=()
+    local _size
+    mapfile -t _route < <(_warp_curl_route)
+    [ "${#_route[@]}" -gt 0 ] || return 1
+    _size=$(curl -s --noproxy '' --connect-timeout 5 --max-time 10 -o /dev/null \
+        -w '%{size_download}' "${_route[@]}" \
+        "https://speed.cloudflare.com/__down?bytes=262144" 2>/dev/null) || true
+    [ "${_size:-0}" -ge 262144 ]
 }
 
 warp_status() {
@@ -1754,7 +1775,7 @@ _warp_health_save() {
 _warp_wait_route() {
     local _i
     for ((_i = 1; _i <= ${1:-15}; _i++)); do
-        warp_check_route && return 0
+        warp_check_route full && return 0
         [ "$_i" -ne 1 ] || log_info "Ждём подтверждение маршрута WARP..."
         sleep 2
     done

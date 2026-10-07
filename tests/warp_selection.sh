@@ -75,6 +75,13 @@ _warp_telegram_probe
 curl() { return 28; }
 if _warp_telegram_probe; then exit 1; fi
 
+# Tunnel that stalls after the first ~16 KB fails the bulk probe.
+_warp_curl_route() { printf '%s\n' -x socks5h://127.0.0.1:1; }
+curl() { printf '16384'; return 28; }
+if _warp_bulk_probe; then exit 1; fi
+curl() { printf '262144'; }
+_warp_bulk_probe
+
 # Fallback candidates: same proto and filter, scan order, no active one, no dups.
 WARP_MODE=upstream
 WARP_PROTO=awg
