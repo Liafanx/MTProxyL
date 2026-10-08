@@ -1131,6 +1131,8 @@ export interface WarpStatus {
   proto: string;
   endpoint: string;
   location: string;
+  /** Узлы Cloudflare, исключённые из выбора (DME,LED); '' — нет. Нет поля — старый MTProxyL. */
+  exclude?: string;
   installed: boolean;
   version: string;
   socks_active: boolean;
@@ -1181,6 +1183,8 @@ export interface WarpScanResult {
   filter?: string;
   depth?: 'quick' | 'deep';
   nodes: WarpScanNode[];
+  /** Найденные, но исключённые из выбора узлы. */
+  excluded?: WarpScanNode[];
 }
 
 export interface WarpScanResponse {
@@ -1192,6 +1196,8 @@ export interface WarpSettingsPatch {
   location?: string;
   endpoint?: string;
   proto?: string;
+  /** Коды узлов через запятую; '' — без исключений. */
+  exclude?: string;
 }
 
 export const warpApi = {

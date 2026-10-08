@@ -181,12 +181,13 @@ func (s *Server) registerWarpRoutes(
 			Location *string `json:"location"`
 			Endpoint *string `json:"endpoint"`
 			Proto    *string `json:"proto"`
+			Exclude  *string `json:"exclude"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<10)).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "Не удалось разобрать запрос")
 			return
 		}
-		if _, err := client.WarpSetSettings(r.Context(), req.Proto, req.Location, req.Endpoint); err != nil {
+		if _, err := client.WarpSetSettings(r.Context(), req.Proto, req.Location, req.Endpoint, req.Exclude); err != nil {
 			writeCLIError(w, "warp_settings_failed", err)
 			return
 		}

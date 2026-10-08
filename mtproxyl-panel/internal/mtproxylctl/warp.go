@@ -26,10 +26,12 @@ type WarpStatus struct {
 	Health          WarpHealth `json:"health"`
 	Enabled         bool       `json:"enabled"`
 	// Mode: socks (A), iface (B) или upstream (C).
-	Mode      string `json:"mode"`
-	Proto     string `json:"proto"`
-	Endpoint  string `json:"endpoint"`
-	Location  string `json:"location"`
+	Mode     string `json:"mode"`
+	Proto    string `json:"proto"`
+	Endpoint string `json:"endpoint"`
+	Location string `json:"location"`
+	// Exclude: узлы Cloudflare, исключённые из выбора (DME,LED); пусто — нет.
+	Exclude   string `json:"exclude"`
 	Installed bool   `json:"installed"`
 	Version   string `json:"version"`
 	// socks — в режимах socks и upstream, redirect — только в socks.
@@ -197,6 +199,8 @@ type WarpScanResult struct {
 	Filter       string         `json:"filter"`
 	Depth        string         `json:"depth"`
 	Nodes        []WarpScanNode `json:"nodes"`
+	// Excluded — найденные, но исключённые из выбора узлы.
+	Excluded []WarpScanNode `json:"excluded"`
 }
 
 // WarpGetScan returns the last scan without starting a new one.
@@ -215,6 +219,9 @@ func (c *Client) WarpGetScan(ctx context.Context) (*WarpScanResult, error) {
 	var res WarpScanResult
 	if err := json.Unmarshal([]byte(line), &res); err != nil {
 		return nil, fmt.Errorf("parse warp scan: %w", err)
+	}
+	if res.Excluded == nil {
+		res.Excluded = []WarpScanNode{}
 	}
 	return &res, nil
 }
@@ -257,7 +264,10 @@ func (c *Client) WarpSetEndpoint(ctx context.Context, ep string) (string, error)
 	return stripANSI(out), err
 }
 
-func (c *Client) WarpSetSettings(ctx context.Context, proto, location, endpoint *string) (string, error) {
+// Cloudflare node codes to exclude, comma-separated; empty means none.
+var warpExcludeRe = regexp.MustCompile(`^[A-Z]{3}(,[A-Z]{3})*$`)
+
+func (c *Client) WarpSetSettings(ctx context.Context, proto, location, endpoint, exclude *string) (string, error) {
 	p, l, e := "keep", "keep", "keep"
 	if proto != nil {
 		p = *proto
@@ -283,7 +293,17 @@ func (c *Client) WarpSetSettings(ctx context.Context, proto, location, endpoint 
 			return "", fmt.Errorf("неверный endpoint WARP")
 		}
 	}
-	out, err := c.run(ctx, "warp", "settings", p, l, e)
+	args := []string{"warp", "settings", p, l, e}
+	if exclude != nil {
+		x := strings.ToUpper(strings.ReplaceAll(*exclude, " ", ""))
+		if x == "" {
+			x = "none"
+		} else if !warpExcludeRe.MatchString(x) {
+			return "", fmt.Errorf("исключения: коды узлов через запятую (DME,LED)")
+		}
+		args = append(args, x)
+	}
+	out, err := c.run(ctx, args...)
 	return stripANSI(out), err
 }
 

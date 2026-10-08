@@ -281,6 +281,7 @@ export function WarpPage() {
 
             <ScanResults
               scan={scan}
+              exclude={status.exclude}
               busy={busy || running}
               onPick={async (patch) => {
                 setBusy(true);
@@ -400,15 +401,28 @@ function EnableReviewCard({
 // warpscout'ом в консоли и вписывать в настройки руками.
 function ScanResults({
   scan,
+  exclude,
   busy,
   onPick,
 }: {
   scan: WarpScanResult | null;
+  /** undefined — установленный MTProxyL не умеет исключать узлы. */
+  exclude?: string;
   busy: boolean;
-  onPick: (patch: { location?: string; endpoint?: string }) => Promise<void>;
+  onPick: (patch: { location?: string; endpoint?: string; exclude?: string }) => Promise<void>;
 }) {
   const [visibleCount, setVisibleCount] = useState(20);
   useEffect(() => { setVisibleCount(20); }, [scan?.scanned_at]);
+  const excluded = excludeList(exclude);
+  const setExcluded = (nodes: string[]) => void onPick({ exclude: nodes.join(',') });
+  const excludedBlock = exclude !== undefined && (
+    <ExcludedNodes
+      scan={scan}
+      excluded={excluded}
+      busy={busy}
+      onRestore={(node) => setExcluded(excluded.filter((x) => x !== node))}
+    />
+  );
   if (!scan || scan.nodes.length === 0) {
     return (
       <Card className="p-4 space-y-2">
@@ -428,6 +442,7 @@ function ScanResults({
             Снять фильтр {scan.filter} (затем запустить разведку)
           </Button>
         )}
+        {excludedBlock}
       </Card>
     );
   }
@@ -482,6 +497,16 @@ function ScanResults({
                     >
                       Использовать этот адрес
                     </Button>
+                    {exclude !== undefined && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => setExcluded([...excluded, n.node.toUpperCase()])}
+                      >
+                        Исключить узел {n.node}
+                      </Button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -499,7 +524,56 @@ function ScanResults({
         с учётом сохранённого фильтра. Код и город — физический узел Cloudflare;
         <code>loc</code> — геометка выходного IP, она может указывать другую страну.
       </p>
+      {excludedBlock}
     </Card>
+  );
+}
+
+function excludeList(exclude?: string): string[] {
+  return (exclude ?? '').split(',').map((x) => x.trim().toUpperCase()).filter(Boolean);
+}
+
+/** Исключённые узлы: найденные разведкой и просто записанные в список. */
+function ExcludedNodes({
+  scan,
+  excluded,
+  busy,
+  onRestore,
+}: {
+  scan: WarpScanResult | null;
+  excluded: string[];
+  busy: boolean;
+  onRestore: (node: string) => void;
+}) {
+  if (excluded.length === 0) {
+    return <p className="text-xs text-text-secondary">Исключённых узлов нет.</p>;
+  }
+  const found = new Map<string, number>();
+  for (const n of scan?.excluded ?? []) {
+    const key = n.node.toUpperCase();
+    found.set(key, (found.get(key) ?? 0) + 1);
+  }
+  return (
+    <div className="space-y-2 border-t border-border pt-3">
+      <div className="text-xs font-medium text-text-primary">Исключены из выбора</div>
+      <div className="flex flex-wrap gap-2">
+        {excluded.map((node) => (
+          <span key={node} className="inline-flex items-center gap-2 rounded-md border border-border px-2 py-1 text-xs">
+            <span className="font-mono">{node}</span>
+            <span className="text-text-secondary">
+              {found.get(node) ? `найдено адресов: ${found.get(node)}` : 'в разведке не встречался'}
+            </span>
+            <Button size="sm" variant="outline" disabled={busy} onClick={() => onRestore(node)}>
+              Вернуть
+            </Button>
+          </span>
+        ))}
+      </div>
+      <p className="text-[11px] text-text-secondary/80">
+        Исключённые узлы не выбираются разведкой и автовосстановлением. Вернуть
+        узел можно без новой разведки: его адреса сохраняются.
+      </p>
+    </div>
   );
 }
 
@@ -649,6 +723,7 @@ function SettingsForm({ status, onSaved, disabled }: { status: WarpStatus; onSav
   const [location, setLocation] = useState(status.location);
   const [endpoint, setEndpoint] = useState(status.endpoint);
   const [proto, setProto] = useState(status.proto);
+  const [exclude, setExclude] = useState(status.exclude ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -657,14 +732,21 @@ function SettingsForm({ status, onSaved, disabled }: { status: WarpStatus; onSav
     setLocation(status.location);
     setEndpoint(status.endpoint);
     setProto(status.proto);
-  }, [status.location, status.endpoint, status.proto]);
+    setExclude(status.exclude ?? '');
+  }, [status.location, status.endpoint, status.proto, status.exclude]);
 
   const save = async () => {
     setSaving(true);
     setError(null);
     setSaved(false);
     try {
-      await warpApi.save({ location: location.trim(), endpoint: endpoint.trim(), proto });
+      await warpApi.save({
+        location: location.trim(),
+        endpoint: endpoint.trim(),
+        proto,
+        // Старый MTProxyL не знает исключений — поле не отправляем.
+        ...(status.exclude !== undefined ? { exclude: exclude.trim() } : {}),
+      });
       setSaved(true);
       onSaved();
     } catch (e) {
@@ -676,7 +758,7 @@ function SettingsForm({ status, onSaved, disabled }: { status: WarpStatus; onSav
 
   return (
     <CollapsibleSection title="Где выходить и через что" defaultOpen>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         <label className="flex flex-col gap-1">
           <span className="text-xs text-text-secondary">Фильтр разведки и автовыбора</span>
           <Input
@@ -725,6 +807,23 @@ function SettingsForm({ status, onSaved, disabled }: { status: WarpStatus; onSav
             userspace-туннель warpscout.
           </span>
         </label>
+        {status.exclude !== undefined && (
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-text-secondary">Исключённые узлы</span>
+            <Input
+              value={exclude}
+              onChange={(e) => setExclude(e.target.value)}
+              placeholder="пусто — без исключений"
+              spellCheck={false}
+            />
+            <span className="text-[11px] text-text-secondary/80">
+              Коды узлов Cloudflare через запятую (DME, LED). Такие узлы не
+              выбираются разведкой, а если туннель всё же вышел через них, он
+              переподключается. По умолчанию исключён DME: Telegram через него
+              не отвечает. Очистите поле, чтобы вернуть все узлы.
+            </span>
+          </label>
+        )}
       </div>
 
       {error && (

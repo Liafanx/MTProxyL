@@ -345,7 +345,43 @@ _warp_report_to_json() {
         split("\n") | map(select(length>0) | split("\t") |
         {node:.[0],endpoint:.[1],ping:.[2],region:.[3],location:.[4],tunnel_ping:.[5],loss:.[6]}) |
         reduce .[] as $r ({seen:{},rows:[]}; if .seen[$r.endpoint] then . else .seen[$r.endpoint]=true | .rows+=[$r] end) | .rows |
-        {scanned_at:$ts,proto:$proto,filter:$filter,depth:$depth,nodes:.,status:(if length>0 then "success" else "empty" end),best_endpoint:(.[0].endpoint // "")}'
+        {scanned_at:$ts,proto:$proto,filter:$filter,depth:$depth,nodes:.,excluded:[],status:"success"}' |
+        jq -c --arg ex "$(_warp_excluded)" "$_WARP_SPLIT_JQ"
+}
+
+# Узлы, исключённые из выбора, через запятую в верхнем регистре.
+_warp_excluded() {
+    local _e="${WARP_EXCLUDE-DME}"
+    _e="${_e//[[:space:]]/}"
+    echo "${_e^^}"
+}
+
+_warp_node_excluded() {
+    [ -n "${1:-}" ] && [[ ",$(_warp_excluded)," == *",${1^^},"* ]]
+}
+
+# Делит узлы разведки на доступные и исключённые; исключённые хранятся, чтобы
+# вернуть их в выбор без новой разведки.
+_WARP_SPLIT_JQ='
+    ((.nodes // []) + (.excluded // [])) as $all |
+    ($ex | split(",") | map(select(length > 0))) as $x |
+    .nodes = [$all[] | select((.node // "" | ascii_upcase) as $n | $x | index($n) | not)] |
+    .excluded = [$all[] | select((.node // "" | ascii_upcase) as $n | $x | index($n))] |
+    .best_endpoint = (.nodes[0].endpoint // "") |
+    if .status == "success" or .status == "empty" then
+        .status = (if (.nodes | length) > 0 then "success" else "empty" end)
+    else . end'
+
+# Пересобрать последнюю разведку под новый список исключений.
+_warp_scan_reexclude() {
+    local _f _tmp; _f=$(_warp_scan_file)
+    [ -s "$_f" ] || return 0
+    _tmp=$(mktemp "$(_warp_dir)/scan.XXXXXX") || return 1
+    if jq -c --arg ex "$(_warp_excluded)" "$_WARP_SPLIT_JQ" "$_f" > "$_tmp"; then
+        chmod 600 "$_tmp"; mv "$_tmp" "$_f"
+    else
+        rm -f "$_tmp"; return 1
+    fi
 }
 
 # Сохраняем полный список рабочих адресов для TUI и панели.
@@ -401,7 +437,7 @@ warp_scan_print() {
     local _f; _f=$(_warp_scan_file)
     [ -s "$_f" ] || { log_info "Разведки ещё не было: mtproxyl warp scan"; return 1; }
     local _rows
-    _rows=$(tr '{' '\n' < "$_f" | awk -F'"' '
+    _rows=$(jq -c '.nodes[]?' "$_f" 2>/dev/null | awk -F'"' '
         /"node":/ {
             node = ""; ep = ""; ping = ""; region = ""; place = ""
             for (i = 1; i < NF; i++) {
@@ -418,6 +454,8 @@ warp_scan_print() {
     echo -e "  ${BOLD}Живые узлы последней разведки${NC}"
     echo -e "  ${DIM}Узел   Эндпоинт               Пинг      loc    Город узла${NC}"
     printf '%s\n' "$_rows"
+    local _skipped; _skipped=$(jq -r '[(.excluded // [])[].node] | unique | join(", ")' "$_f" 2>/dev/null)
+    [ -z "$_skipped" ] || echo -e "  ${DIM}Исключены из выбора: ${_skipped} — вернуть: mtproxyl warp exclude none${NC}"
     echo ""
     echo -e "  ${DIM}Локация задаётся кодом узла (FRA) или страны (DE): mtproxyl warp location DE${NC}"
 }
@@ -438,8 +476,11 @@ _warp_cached_endpoint() {
     if [ -s "$_f" ]; then
         _proto=$(jq -r '.proto // ""' "$_f" 2>/dev/null)
         if _warp_proto_compatible "$_wanted_proto" "$_proto"; then
-            _ep=$(jq -er --arg pin "${WARP_ENDPOINT:-}" --arg location "${WARP_LOCATION:-}" '
+            _ep=$(jq -er --arg pin "${WARP_ENDPOINT:-}" --arg location "${WARP_LOCATION:-}" \
+                --arg ex ",$(_warp_excluded)," '
                 select(.location == $location and .pin == $pin) |
+                ("," + (.node // "-" | ascii_upcase) + ",") as $n |
+                select($pin != "" or ($ex | contains($n) | not)) |
                 select(($location | split(",") | map(select(length == 2)) | length) == 0 or (.country // "") != "") |
                 .endpoint // empty' "$_f" 2>/dev/null)
             if _warp_valid_endpoint "$_ep"; then echo "$_ep"; return 0; fi
@@ -1270,8 +1311,12 @@ _warp_enable() {
     else
         log_warn "Правила применены, но ни один адрес не довёл трафик до Telegram"
         case "$(_warp_proto)" in
-            masque|masque-h2) log_info "Эта сеть может резать данные внутри MASQUE — попробуйте протокол awg" ;;
-            *) log_info "Попробуйте другой протокол (masque-h2) или убрать локацию" ;;
+            masque|masque-h2) log_info "Эта сеть может не пропускать данные внутри MASQUE — попробуйте протокол awg" ;;
+            *) if [ "$(_warp_mode)" = iface ]; then
+                   log_info "Вариант B работает только на обычном WireGuard. Если он с этого сервера не проходит — вариант C с awg"
+               else
+                   log_info "Попробуйте другой протокол (masque-h2) или убрать локацию"
+               fi ;;
         esac
         log_info "Смотрите: mtproxyl warp status, journalctl -u ${WARP_SOCKS_UNIT}"
         return 1
@@ -1465,9 +1510,12 @@ _warp_telegram_probe() {
 
 # Узел выхода не сверяем: anycast Cloudflare на части сетей меняет его от
 # подключения к подключению, а рабочий маршрут из-за этого не откатываем.
+# Код 2 — сам туннель не отвечает Cloudflare; 3 — выход через исключённый
+# узел; 1 — туннель есть, Telegram нет.
 warp_check_route() {
-    warp_route_ready || return 1
-    warp_exit_info >/dev/null 2>&1 || return 1
+    warp_route_ready || return 2
+    local _exit; _exit=$(warp_exit_info 2>/dev/null) || return 2
+    ! _warp_node_excluded "$(cut -d'|' -f3 <<< "$_exit")" || return 3
     _warp_telegram_probe || return 1
     [ "${1:-}" != full ] || _warp_bulk_probe
 }
@@ -1511,6 +1559,7 @@ warp_status() {
         jq -r '"  Проверка: \(.checked_at | todateiso8601), ошибок подряд: \(.failures)", (if .last_recovery_at>0 then "  Восстановление: \(.last_recovery_at | todateiso8601)" else empty end), (if .error!="" then "  Ошибка: \(.error)" else empty end)' "$(_warp_health_file)"
     fi
     echo -e "  ${BOLD}Локация:${NC}      ${WARP_LOCATION:-${DIM}лучший по задержке${NC}}"
+    echo -e "  ${BOLD}Исключены:${NC}    $(_warp_excluded | sed "s/^\$/нет/")"
 
     local _exit; _exit=$(warp_exit_info 2>/dev/null)
     if [ -n "$_exit" ]; then
@@ -1567,10 +1616,11 @@ warp_status_json() {
     printf '{"watchdog_enabled":%s,"active_endpoint":"%s","active_proto":"%s","health":%s,' \
         "$([ "${WARP_WATCHDOG_ENABLED:-true}" = true ] && echo true || echo false)" \
         "$(json_escape "$_active")" "$(json_escape "$_active_proto")" "$_health"
-    printf '"enabled":%s,"mode":"%s","proto":"%s","endpoint":"%s","location":"%s",' \
+    printf '"enabled":%s,"mode":"%s","proto":"%s","endpoint":"%s","location":"%s","exclude":"%s",' \
         "$([ "${WARP_ENABLED:-false}" = "true" ] && echo true || echo false)" \
         "$(_warp_mode)" "$(_warp_configured_proto)" \
-        "$(json_escape "${WARP_ENDPOINT:-}")" "$(json_escape "${WARP_LOCATION:-}")"
+        "$(json_escape "${WARP_ENDPOINT:-}")" "$(json_escape "${WARP_LOCATION:-}")" \
+        "$(json_escape "$(_warp_excluded)")"
     printf '"installed":%s,"version":"%s","socks_active":%s,"redirect_active":%s,"iface_active":%s,' \
         "$([ -x "$(_warp_bin)" ] && echo true || echo false)" \
         "$(json_escape "$(_warp_bin_version 2>/dev/null)")" \
@@ -1682,9 +1732,36 @@ _warp_scan_dependencies() {
     command -v jq >/dev/null && command -v timeout >/dev/null
 }
 
+# Исключения: коды узлов через запятую, none — без исключений, default — DME.
+_warp_parse_exclude() {
+    case "${1,,}" in
+        none|clear) echo "" ;;
+        default) echo "DME" ;;
+        *) [[ "$1" =~ ^[A-Za-z]{3}(,[A-Za-z]{3})*$ ]] || return 1; echo "${1^^}" ;;
+    esac
+}
+
+warp_set_exclude() {
+    if [ -z "${1:-}" ]; then
+        echo "  Исключены из выбора: $(_warp_excluded | sed 's/^$/нет/')"
+        return 0
+    fi
+    local _v; _v=$(_warp_parse_exclude "$1") || {
+        log_error "Исключения: коды узлов через запятую (DME,LED), none или default"; return 1; }
+    WARP_EXCLUDE="$_v"
+    save_settings || return 1
+    _warp_scan_reexclude || true
+    log_success "Исключены из выбора: ${WARP_EXCLUDE:-нет}"
+    log_info "Действующий туннель переподключится при следующей проверке, если вышел через исключённый узел"
+}
+
 warp_set_settings() {
-    local _proto="${1:-keep}" _location="${2:-keep}" _ep="${3:-keep}"
+    local _proto="${1:-keep}" _location="${2:-keep}" _ep="${3:-keep}" _exclude="${4:-keep}"
     case "$_proto" in keep|awg|wg|masque|masque-h2) ;; *) log_error "Неверный протокол WARP"; return 1 ;; esac
+    if [ "$_exclude" != keep ]; then
+        _exclude=$(_warp_parse_exclude "$_exclude") || { log_error "Неверный список исключённых узлов"; return 1; }
+        WARP_EXCLUDE="$_exclude"
+    fi
     if [ "$_location" != keep ] && [ "$_location" != clear ]; then
         [[ "$_location" =~ ^[A-Za-z]{2,3}(,[A-Za-z]{2,3})*$ ]] || { log_error "Неверная локация WARP"; return 1; }
     fi
@@ -1697,6 +1774,7 @@ warp_set_settings() {
     [ "$_ep" = keep ] || WARP_ENDPOINT="$_ep"
     [ "$_ep" != clear ] || WARP_ENDPOINT=""
     save_settings || return 1
+    _warp_scan_reexclude || true
     log_success "Выбор сохранён. Для смены действующего туннеля: mtproxyl warp apply"
 }
 
@@ -1773,9 +1851,20 @@ _warp_health_save() {
 }
 
 _warp_wait_route() {
-    local _i
+    local _i _rc _up=false _rerolls=0
     for ((_i = 1; _i <= ${1:-15}; _i++)); do
-        warp_check_route full && return 0
+        _rc=0; warp_check_route full || _rc=$?
+        [ "$_rc" -ne 0 ] || return 0
+        [ "$_rc" -eq 2 ] || _up=true
+        # Узел выхода выбирает anycast Cloudflare — переподключение даёт другой.
+        if [ "$_rc" -eq 3 ] && [ "$_rerolls" -lt 4 ]; then
+            _rerolls=$((_rerolls + 1))
+            log_info "Выход пришёлся на исключённый узел — переподключаем туннель"
+            _warp_start_services >/dev/null 2>&1 || true
+            continue
+        fi
+        # Туннель так и не поднялся — дальше ждать бессмысленно.
+        [ "$_up" = true ] || [ "$_i" -lt 5 ] || return 1
         [ "$_i" -ne 1 ] || log_info "Ждём подтверждение маршрута WARP..."
         sleep 2
     done
@@ -1884,11 +1973,19 @@ warp_watch() {
     [[ "$_fails" =~ ^[0-9]+$ ]] || _fails=0
     [[ "$_last" =~ ^[0-9]+$ ]] || _last=0
     _now=$(date +%s)
-    if warp_check_route; then
+    local _rc=0
+    warp_check_route || _rc=$?
+    if [ "$_rc" -eq 0 ]; then
         _warp_health_save 0 "$_last" healthy
         return 0
     fi
     _fails=$((_fails + 1))
+    if [ "$_rc" -eq 3 ]; then
+        # Выход через исключённый узел чинится переподключением — без ожидания.
+        _warp_health_save "$_fails" "$_last" unhealthy "Выход через исключённый узел"
+        warp_recover
+        return
+    fi
     _warp_health_save "$_fails" "$_last" unhealthy "Cloudflare/WARP или TCP до Telegram не подтверждены"
     [ "$_fails" -ge 3 ] && [ "$((_now - _last))" -ge 300 ] || return 0
     warp_recover
@@ -1966,7 +2063,8 @@ _warp_dispatch() {
         recover)     warp_recover ;;
         watch)       warp_watch ;;
         watchdog)    warp_set_watchdog "${2:-}" ;;
-        settings)    warp_set_settings "${2:-keep}" "${3:-keep}" "${4:-keep}" ;;
+        settings)    warp_set_settings "${2:-keep}" "${3:-keep}" "${4:-keep}" "${5:-keep}" ;;
+        exclude)     warp_set_exclude "${2:-}" ;;
         preflight)
             [ "${3:-}" = "--json" ] || { log_error "warp preflight <вариант> --json"; return 1; }
             warp_preflight "${2:-}" ;;
@@ -1999,6 +2097,7 @@ _warp_dispatch() {
             echo -e "    ${GREEN}warp off${NC}              Выключить, вернуть прямой ход"
             echo -e "    ${GREEN}warp scan${NC}             Разведка: найти лучший эндпоинт"
             echo -e "    ${GREEN}warp location${NC} <A>     Страны (DE,NL) или узлы (FRA,AMS), clear — авто"
+            echo -e "    ${GREEN}warp exclude${NC} <N>      Исключить узлы (DME,LED); none — без исключений, default — DME"
             echo -e "    ${GREEN}warp endpoint${NC} <A>     Закрепить адрес, clear — выбирать разведкой"
             echo -e "    ${GREEN}warp proto${NC} <P>        awg (по умолчанию), wg, masque"
             echo -e "    ${GREEN}warp hint${NC}             Что дописать в конфиг чужой цели для варианта C"
