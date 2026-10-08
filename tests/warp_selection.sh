@@ -82,7 +82,7 @@ if _warp_bulk_probe; then exit 1; fi
 curl() { printf '262144'; }
 _warp_bulk_probe
 
-# Nodes in Russia are dropped from the scan result; best moves to the next one.
+# Excluded nodes (DME by default) leave the choice; best moves to the next one.
 {
     printf '# Best endpoint per node\n'
     printf '%-6s %-22s %-13s %-10s %s\n' NODE ENDPOINT 'ENDPOINT PING' 'SEEN AS' 'NODE LOCATION'
@@ -90,13 +90,45 @@ _warp_bulk_probe
     printf '%-6s %-22s %-13s %-10s %s\n' ARN '8.47.69.95:2408' 20ms RU 'Stockholm, SE'
 } > "$test_dir/report"
 _warp_report_to_json "$test_dir/report" | jq -e '.status=="success" and (.nodes|length)==1
-    and .best_endpoint=="8.47.69.95:2408" and .skipped_nodes==["DME"]' >/dev/null
+    and .best_endpoint=="8.47.69.95:2408" and .excluded[0].node=="DME"' >/dev/null
 {
     printf '# Best endpoint per node\n'
     printf '%-6s %-22s %-13s %-10s %s\n' NODE ENDPOINT 'ENDPOINT PING' 'SEEN AS' 'NODE LOCATION'
     printf '%-6s %-22s %-13s %-10s %s\n' DME '188.114.98.140:2408' 1ms RU 'Moscow, RU'
 } > "$test_dir/report"
 _warp_report_to_json "$test_dir/report" | jq -e '.status=="empty" and .best_endpoint==""' >/dev/null
+# Clearing the exclusion brings DME back without a new scan.
+_warp_report_to_json "$test_dir/report" > "$(_warp_scan_file)"
+WARP_EXCLUDE=""
+_warp_scan_reexclude
+jq -e '.status=="success" and .best_endpoint=="188.114.98.140:2408" and (.excluded|length)==0' "$(_warp_scan_file)" >/dev/null
+WARP_EXCLUDE="dme, led"
+[ "$(_warp_excluded)" = DME,LED ]
+_warp_node_excluded led
+if _warp_node_excluded AMS; then exit 1; fi
+_warp_scan_reexclude
+jq -e '.status=="empty" and .excluded[0].node=="DME"' "$(_warp_scan_file)" >/dev/null
+[ "$(_warp_parse_exclude none)" = "" ]
+[ "$(_warp_parse_exclude default)" = DME ]
+[ "$(_warp_parse_exclude ams,fra)" = AMS,FRA ]
+if _warp_parse_exclude 'DM;E' >/dev/null; then exit 1; fi
+unset WARP_EXCLUDE
+[ "$(_warp_excluded)" = DME ]
+
+# A saved state on an excluded node is not reused; a pinned address is.
+WARP_MODE=upstream; WARP_PROTO=awg; WARP_LOCATION=""; WARP_ENDPOINT=""
+rm -f "$(_warp_scan_file)"
+jq -nc '{endpoint:"188.114.98.140:2408",proto:"awg",mode:"upstream",location:"",pin:"",node:"DME"}' > "$(_warp_state)"
+if _warp_cached_endpoint >/dev/null; then exit 1; fi
+WARP_EXCLUDE=""
+[[ "$(_warp_cached_endpoint)" == "188.114.98.140:2408" ]]
+unset WARP_EXCLUDE
+
+# Exit through an excluded node: code 3, the wait reconnects instead of accepting.
+warp_route_ready() { return 0; }
+warp_exit_info() { echo "1.2.3.4|RU|DME"; }
+rc=0; warp_check_route || rc=$?
+[ "$rc" -eq 3 ]
 
 # Tunnel never answers: give up after 5 tries instead of 15.
 sleep() { :; }; log_info() { :; }

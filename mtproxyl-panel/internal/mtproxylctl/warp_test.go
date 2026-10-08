@@ -31,7 +31,7 @@ func TestWarpSettingsOneInvocation(t *testing.T) {
 	}
 	c := New(config.MtproxylConfig{Enabled: true, ScriptPath: script})
 	proto, loc, ep := "masque-h2", "de,ams", "[2606:4700::1]:443"
-	out, err := c.WarpSetSettings(context.Background(), &proto, &loc, &ep)
+	out, err := c.WarpSetSettings(context.Background(), &proto, &loc, &ep, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,12 +39,26 @@ func TestWarpSettingsOneInvocation(t *testing.T) {
 		t.Fatalf("args: %q", out)
 	}
 	loc = "DE;id"
-	if _, err := c.WarpSetSettings(context.Background(), &proto, &loc, &ep); err == nil {
+	if _, err := c.WarpSetSettings(context.Background(), &proto, &loc, &ep, nil); err == nil {
 		t.Fatal("invalid settings accepted")
 	}
-	out, err = c.WarpSetSettings(context.Background(), nil, nil, nil)
+	out, err = c.WarpSetSettings(context.Background(), nil, nil, nil, nil)
 	if err != nil || !strings.Contains(out, "settings\nkeep\nkeep\nkeep\n") {
 		t.Fatalf("partial patch: %q %v", out, err)
+	}
+	ex := "dme, led"
+	out, err = c.WarpSetSettings(context.Background(), nil, nil, nil, &ex)
+	if err != nil || !strings.HasSuffix(out, "keep\nkeep\nkeep\nDME,LED\n") {
+		t.Fatalf("exclude: %q %v", out, err)
+	}
+	ex = ""
+	out, err = c.WarpSetSettings(context.Background(), nil, nil, nil, &ex)
+	if err != nil || !strings.HasSuffix(out, "keep\nnone\n") {
+		t.Fatalf("exclude none: %q %v", out, err)
+	}
+	ex = "DME;id"
+	if _, err := c.WarpSetSettings(context.Background(), nil, nil, nil, &ex); err == nil {
+		t.Fatal("invalid exclude accepted")
 	}
 }
 

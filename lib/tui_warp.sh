@@ -127,6 +127,7 @@ tui_warp_menu() {
         echo -e "  ${DIM}[15]${NC} Восстановить туннель"
         echo -e "  ${DIM}[16]${NC} Автовосстановление: ${WARP_WATCHDOG_ENABLED:-true}"
         echo -e "  ${DIM}[17]${NC} Обновить warpscout"
+        echo -e "  ${DIM}[18]${NC} Исключённые узлы: $(_warp_excluded | sed 's/^$/нет/')"
         echo -e "  ${DIM}[0]${NC} Назад"
         echo ""
 
@@ -159,6 +160,7 @@ tui_warp_menu() {
                 fi
                 press_any_key ;;
             17) handle_warp_command install; press_any_key ;;
+            18) _tui_warp_exclude ;;
             0|"") return ;;
         esac
     done
@@ -207,6 +209,29 @@ _tui_warp_location() {
             local _v; read_line _v "  ${BOLD}Локация:${NC} "
             [ -n "$_v" ] && handle_warp_command settings keep "$_v" clear
             ;;
+        *) return 0 ;;
+    esac
+    press_any_key
+}
+
+_tui_warp_exclude() {
+    echo ""
+    echo -e "  ${BOLD}Узлы, исключённые из выбора${NC}"
+    echo -e "  ${DIM}Через них разведка и автовосстановление туннель не выведут.${NC}"
+    echo -e "  ${DIM}По умолчанию исключён DME: Telegram через него не отвечает.${NC}"
+    echo -e "  ${DIM}Сейчас: $(_warp_excluded | sed 's/^$/нет/')${NC}"
+    echo ""
+    echo -e "  ${DIM}[1]${NC} Задать список ${DIM}(коды узлов через запятую: DME,LED)${NC}"
+    echo -e "  ${DIM}[2]${NC} По умолчанию ${DIM}(DME)${NC}"
+    echo -e "  ${DIM}[3]${NC} Без исключений"
+    echo -e "  ${DIM}[0]${NC} Отмена"
+    local _c; _c=$(read_choice "выбор" "0")
+    case "$_c" in
+        1)
+            local _v; read_line _v "  ${BOLD}Узлы:${NC} "
+            [ -n "$_v" ] && handle_warp_command exclude "$_v" ;;
+        2) handle_warp_command exclude default ;;
+        3) handle_warp_command exclude none ;;
         *) return 0 ;;
     esac
     press_any_key
