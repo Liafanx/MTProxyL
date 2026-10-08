@@ -91,6 +91,8 @@ SUPEREXPERT_ENABLED="false"
 NGINX_CUSTOM_ENABLED="false"
 HTTPS_HSTS_ENABLED="true"
 HTTPS_PERMISSIONS_ENABLED="true"
+# Журнал запросов nginx: по умолчанию не пишется, растёт на гигабайты
+NGINX_ACCESS_LOG="false"
 
 # Selfmask (локальный nginx + Let's Encrypt либо самоподписанный сертификат)
 SELFMASK_ENABLED="false"
@@ -298,6 +300,7 @@ SUPEREXPERT_ENABLED='${SUPEREXPERT_ENABLED}'
 NGINX_CUSTOM_ENABLED='${NGINX_CUSTOM_ENABLED}'
 HTTPS_HSTS_ENABLED='${HTTPS_HSTS_ENABLED}'
 HTTPS_PERMISSIONS_ENABLED='${HTTPS_PERMISSIONS_ENABLED}'
+NGINX_ACCESS_LOG='${NGINX_ACCESS_LOG}'
 
 # Порты, запомненные за режимами
 PORT_PROFILE_MANAGER='${PORT_PROFILE_MANAGER}'
@@ -538,7 +541,7 @@ load_settings() {
                 WEB_DECOY_MODE|WEB_DECOY_DIR|WEB_DECOY_UPSTREAM|WEB_DEBUG|WEB_FP_SEED|\
                 WEB_DEBUG_SIDEBAND|WEB_BASE_PATH|\
                 WEB_ONLY_PREV_NFT|WEB_ONLY_PREV_ZAPRET2|\
-                SUPEREXPERT_ENABLED|NGINX_CUSTOM_ENABLED|HTTPS_HSTS_ENABLED|HTTPS_PERMISSIONS_ENABLED|\
+                SUPEREXPERT_ENABLED|NGINX_CUSTOM_ENABLED|HTTPS_HSTS_ENABLED|HTTPS_PERMISSIONS_ENABLED|NGINX_ACCESS_LOG|\
                 IPBLOCK_ENABLED|IPBLOCK_ACTION|IPBLOCK_LIST|IPBLOCK_LIST6|\
                 PORT_PROFILE_MANAGER|PORT_PROFILE_REANIMATOR)
                     printf -v "$key" '%s' "$val"
@@ -661,4 +664,21 @@ load_settings() {
     _ensure_ip_history_timer
     _ensure_availability_timer
     if declare -F _ensure_dc_watch_timer >/dev/null; then _ensure_dc_watch_timer; fi
+    _ensure_quiet_timers
+    if declare -F _selfmask_ensure_log_limits >/dev/null; then _selfmask_ensure_log_limits; fi
+}
+
+# Юниты по таймеру пишут «Starting/Finished» на каждый запуск. Старые установки
+# получают тишину здесь, новые — сразу из генераторов юнитов.
+_ensure_quiet_timers() {
+    [ "$(id -u)" -eq 0 ] || return 0
+    local _t _svc _changed=""
+    for _t in /etc/systemd/system/mtproxyl*.timer; do
+        [ -f "$_t" ] || continue
+        _svc=$(sed -n 's/^Unit=//p' "$_t" | head -1)
+        _svc="/etc/systemd/system/${_svc:-$(basename "$_t" .timer).service}"
+        [ -f "$_svc" ] && ! grep -q '^LogLevelMax=' "$_svc" || continue
+        sed -i '/^Type=oneshot$/a LogLevelMax=notice\nSyslogLevel=notice' "$_svc" && _changed=1
+    done
+    [ -z "$_changed" ] || systemctl daemon-reload 2>/dev/null || true
 }

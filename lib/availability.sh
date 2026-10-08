@@ -803,6 +803,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+LogLevelMax=notice
+SyslogLevel=notice
 # «-»: исчерпанная квота и молчащий сервис — обычное дело, и падающий каждые
 # четверть часа юнит в журнале выглядел бы поломкой.
 ExecStart=-${INSTALL_DIR}/mtproxyl.sh availability check --quiet

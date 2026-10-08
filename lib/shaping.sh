@@ -442,6 +442,8 @@ After=mtproxyl-shaping.service
 
 [Service]
 Type=oneshot
+LogLevelMax=notice
+SyslogLevel=notice
 ExecStart=/usr/local/bin/mtproxyl shaping tick
 UNIT
     cat > "$SHAPING_TIMER_UNIT" <<'UNIT' || return 1

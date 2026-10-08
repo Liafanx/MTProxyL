@@ -341,6 +341,8 @@ Description=MTProxyL: перезапуск движка при падении DC
 
 [Service]
 Type=oneshot
+LogLevelMax=notice
+SyslogLevel=notice
 ExecStart=${INSTALL_DIR}/mtproxyl.sh dc watch
 TimeoutStartSec=5min
 UMask=0077

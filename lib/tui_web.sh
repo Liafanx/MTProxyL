@@ -164,7 +164,7 @@ tui_web_menu() {
             http_upstream) _decoy_label="HTTP-origin" ;;
         esac
         echo -e "  ${CYAN}[10]${NC} Заглушка  ${DIM}${_decoy_label}${NC}"
-        echo -e "  ${CYAN}[11]${NC} HTTPS-заголовки Selfmask и WEB"
+        echo -e "  ${CYAN}[11]${NC} HTTPS-заголовки и журнал запросов nginx"
         echo -e "  ${CYAN}[12]${NC} Путь WEB  ${DIM}$([ -n "${WEB_BASE_PATH:-}" ] && echo "/${WEB_BASE_PATH}/" || echo "корень /")${NC}"
         echo -e "  ${CYAN}[13]${NC} Отчёты bridge в /web-status  ${DIM}$([ "${WEB_DEBUG_SIDEBAND:-false}" = "true" ] && echo "включены" || echo "выключены")${NC}"
         echo ""

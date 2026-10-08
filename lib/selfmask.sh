@@ -1501,6 +1501,7 @@ events {
 http {
 ${_mime}
     server_tokens off;
+$(_selfmask_nginx_access_log)
     server_names_hash_bucket_size 128;
 
     server {
@@ -1594,6 +1595,89 @@ _selfmask_restore_custom_service() {
     "$(_selfmask_nginx_bin_for_conf "$NGINX_CUSTOM_FILE")" -t -c "$NGINX_CUSTOM_FILE" &>/dev/null || return 1
     _selfmask_install_pq_service "$NGINX_CUSTOM_FILE"
     systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null
+}
+
+SELFMASK_LOG_DIR="/var/log/mtproxyl-nginx"
+SELFMASK_LOGROTATE="/etc/logrotate.d/mtproxyl"
+
+# Журнал запросов выключен по умолчанию: его никто не читает, а с WEB он
+# пишет строку на каждый запрос клиента.
+_selfmask_nginx_access_log() {
+    if [ "${NGINX_ACCESS_LOG:-false}" = "true" ]; then
+        echo "    access_log ${SELFMASK_LOG_DIR}/access.log combined buffer=64k flush=1m;"
+    else
+        echo "    access_log off;"
+    fi
+}
+
+_selfmask_logrotate_conf() {
+    cat << LR_EOF
+${SELFMASK_LOG_DIR}/*.log {
+    daily
+    maxsize 20M
+    rotate 3
+    compress
+    delaycompress
+    missingok
+    notifempty
+    sharedscripts
+    postrotate
+        [ -s /run/mtproxyl-nginx.pid ] && kill -USR1 "\$(cat /run/mtproxyl-nginx.pid)" 2>/dev/null || true
+    endscript
+}
+
+${ZAPRET2_DEBUG_LOG:-/var/log/mtproxyl-nfqws2.log} {
+    daily
+    maxsize 20M
+    rotate 2
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+LR_EOF
+}
+
+# Потолок для логов nginx и nfqws2: ротация logrotate, а без него (или пока
+# он не дошёл) файл больше 100 МБ обрезается до последних 10 МБ.
+_selfmask_ensure_log_limits() {
+    [ "$(id -u)" -eq 0 ] || return 0
+    local _dbg="${ZAPRET2_DEBUG_LOG:-/var/log/mtproxyl-nfqws2.log}" _want _f _tmp
+    [ -d "$SELFMASK_LOG_DIR" ] || [ -f "$_dbg" ] || return 0
+    if [ -d /etc/logrotate.d ]; then
+        _want=$(_selfmask_logrotate_conf)
+        [ "$(cat "$SELFMASK_LOGROTATE" 2>/dev/null)" = "$_want" ] \
+            || printf '%s\n' "$_want" > "$SELFMASK_LOGROTATE"
+    fi
+    for _f in "$SELFMASK_LOG_DIR"/*.log "$_dbg"; do
+        [ -n "$(find "$_f" -maxdepth 0 -size +100M 2>/dev/null)" ] || continue
+        _tmp=$(mktemp) || continue
+        tail -c 10M "$_f" > "$_tmp" && cat "$_tmp" > "$_f"
+        rm -f "$_tmp"
+    done
+    _selfmask_patch_access_log
+}
+
+# Конфиг, собранный до появления настройки, получает access_log на месте —
+# без пересборки и перезапуска nginx.
+_selfmask_patch_access_log() {
+    local _conf; _conf=$(_selfmask_generated_pq_conf)
+    [ "${NGINX_CUSTOM_ENABLED:-false}" != "true" ] && [ -f "$_conf" ] || return 0
+    [ ! -e "${_conf}.log-patch-failed" ] || return 0
+    grep -q '^    access_log ' "$_conf" && return 0
+    grep -q '^    server_tokens off;$' "$_conf" || return 0
+    local _bak="${_conf}.bak-log" _line
+    _line=$(_selfmask_nginx_access_log)
+    cp -p "$_conf" "$_bak" || return 0
+    awk -v l="$_line" '{ print } !d && $0 == "    server_tokens off;" { print l; d = 1 }' \
+        "$_bak" > "$_conf"
+    if "$(_selfmask_nginx_bin_for_conf "$_conf")" -t -c "$_conf" >/dev/null 2>&1; then
+        rm -f "$_bak"
+        systemctl reload "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
+    else
+        mv -f "$_bak" "$_conf"
+        : > "${_conf}.log-patch-failed"
+    fi
 }
 
 _selfmask_activate_nginx_conf() {
@@ -1786,6 +1870,7 @@ ${_web_stream}
 http {
 ${_mime}
     server_tokens off;
+$(_selfmask_nginx_access_log)
     map_hash_bucket_size 128;
     server_names_hash_bucket_size 128;
 ${_web_map}
@@ -2552,7 +2637,7 @@ selfmask_remove_pq_nginx() {
 
     # Удаляем файлы PQ nginx
     rm -rf "${SELFMASK_PQ_PREFIX}"
-    rm -rf /var/log/mtproxyl-nginx
+    rm -rf /var/log/mtproxyl-nginx "$SELFMASK_LOGROTATE"
     rm -rf /var/lib/mtproxyl-nginx
 
     log_success "PQ nginx полностью удалён"
@@ -2591,7 +2676,7 @@ _selfmask_cleanup_for_uninstall() {
 
     # Удаляем PQ nginx
     rm -rf "${SELFMASK_PQ_PREFIX}" 2>/dev/null || true
-    rm -rf /var/log/mtproxyl-nginx 2>/dev/null || true
+    rm -rf /var/log/mtproxyl-nginx "$SELFMASK_LOGROTATE" 2>/dev/null || true
     rm -rf /var/lib/mtproxyl-nginx 2>/dev/null || true
 
     systemctl daemon-reload &>/dev/null || true

@@ -450,7 +450,7 @@ panel_uninstall() {
         systemctl disable --now "$PANEL_SERVICE" &>/dev/null || true
         rm -f "$PANEL_BINARY" "/etc/systemd/system/${PANEL_SERVICE}.service"
         rm -f "/etc/sudoers.d/${PANEL_SERVICE}" "/etc/sudoers.d/${PANEL_SERVICE}-mtproxyl" \
-              "/etc/sudoers.d/${PANEL_SERVICE}-engine"
+              "/etc/sudoers.d/${PANEL_SERVICE}-engine" "/etc/sudoers.d/${PANEL_SERVICE}-quiet"
         systemctl daemon-reload &>/dev/null || true
     fi
     log_success "Панель удалена"

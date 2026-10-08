@@ -3,14 +3,16 @@
 
 tui_https_headers_menu() {
     while true; do
-        echo "  Общие настройки HTTPS для Selfmask и WEB"
+        echo "  Общие настройки nginx для Selfmask и WEB"
         echo "  [1] HSTS: ${HTTPS_HSTS_ENABLED:-true} (кроме самоподписанных сертификатов)"
         echo "  [2] Permissions-Policy: ${HTTPS_PERMISSIONS_ENABLED:-true}"
+        echo "  [3] Журнал запросов nginx: ${NGINX_ACCESS_LOG:-false} (/var/log/mtproxyl-nginx/access.log)"
         echo "  [0] Назад. Свой nginx и внешний HAProxy настраиваются вручную."
         local _c _key _v; _c=$(read_choice "выбор" "0")
         case "$_c" in
             1) _key=HTTPS_HSTS_ENABLED ;;
             2) _key=HTTPS_PERMISSIONS_ENABLED ;;
+            3) _key=NGINX_ACCESS_LOG ;;
             *) return 0 ;;
         esac
         _v=true; [ "${!_key}" = true ] && _v=false
@@ -70,7 +72,7 @@ tui_selfmask_menu() {
         echo -e "  ${CYAN}[5]${NC}  Показать конфиг PQ nginx"
         echo -e "  ${CYAN}[6]${NC}  Пользовательский конфиг nginx"
         echo -e "  ${RED}[7]${NC}  Полностью удалить PQ nginx"
-        echo -e "  ${CYAN}[8]${NC}  HTTPS-заголовки Selfmask и WEB"
+        echo -e "  ${CYAN}[8]${NC}  HTTPS-заголовки и журнал запросов nginx"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""

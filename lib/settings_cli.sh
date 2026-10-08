@@ -8,6 +8,7 @@ _SETTINGS_SETTABLE=(
     "PROXY_LOG_LEVEL|enum:silent,normal,verbose,debug|Уровень логирования (RUST_LOG имеет приоритет)"
     "HTTPS_HSTS_ENABLED|bool|HSTS для HTTPS-доменов Selfmask и WEB"
     "HTTPS_PERMISSIONS_ENABLED|bool|Запрет камеры, микрофона и геолокации для Selfmask и WEB"
+    "NGINX_ACCESS_LOG|bool|Журнал запросов nginx Selfmask и WEB (/var/log/mtproxyl-nginx/access.log)"
     "PROXY_PORT|range:1:65535|Порт прокси"
     "PROXY_DOMAIN|custom:_validate_settings_domain|Домен FakeTLS (SNI)"
     "CUSTOM_IP|custom:_validate_settings_ip|IP или домен для ссылок (пусто — автоопределение)"
@@ -151,12 +152,12 @@ settings_set_param() {
             log_info "Если у движка задан RUST_LOG, он имеет приоритет"
             return 0
             ;;
-        HTTPS_HSTS_ENABLED|HTTPS_PERMISSIONS_ENABLED)
+        HTTPS_HSTS_ENABLED|HTTPS_PERMISSIONS_ENABLED|NGINX_ACCESS_LOG)
             check_root
             local _old="${!_key}"
             printf -v "$_key" '%s' "$_val"
             if [ "${NGINX_CUSTOM_ENABLED:-false}" = "true" ]; then
-                log_info "Свой nginx-конфиг: заголовки добавляются вручную"
+                log_info "Свой nginx-конфиг: это настраивается в нём вручную"
             elif [ "${SELFMASK_ENABLED:-false}" = "true" ] || web_is_enabled; then
                 if web_is_enabled && ! web_uses_managed_nginx; then
                     log_info "Перенесите обновлённый фрагмент: mtproxyl web haproxy-config"
