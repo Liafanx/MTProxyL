@@ -82,6 +82,35 @@ if _warp_bulk_probe; then exit 1; fi
 curl() { printf '262144'; }
 _warp_bulk_probe
 
+# Nodes in Russia are dropped from the scan result; best moves to the next one.
+{
+    printf '# Best endpoint per node\n'
+    printf '%-6s %-22s %-13s %-10s %s\n' NODE ENDPOINT 'ENDPOINT PING' 'SEEN AS' 'NODE LOCATION'
+    printf '%-6s %-22s %-13s %-10s %s\n' DME '188.114.98.140:2408' 1ms RU 'Moscow, RU'
+    printf '%-6s %-22s %-13s %-10s %s\n' ARN '8.47.69.95:2408' 20ms RU 'Stockholm, SE'
+} > "$test_dir/report"
+_warp_report_to_json "$test_dir/report" | jq -e '.status=="success" and (.nodes|length)==1
+    and .best_endpoint=="8.47.69.95:2408" and .skipped_nodes==["DME"]' >/dev/null
+{
+    printf '# Best endpoint per node\n'
+    printf '%-6s %-22s %-13s %-10s %s\n' NODE ENDPOINT 'ENDPOINT PING' 'SEEN AS' 'NODE LOCATION'
+    printf '%-6s %-22s %-13s %-10s %s\n' DME '188.114.98.140:2408' 1ms RU 'Moscow, RU'
+} > "$test_dir/report"
+_warp_report_to_json "$test_dir/report" | jq -e '.status=="empty" and .best_endpoint==""' >/dev/null
+
+# Tunnel never answers: give up after 5 tries instead of 15.
+sleep() { :; }; log_info() { :; }
+tries=0
+warp_check_route() { tries=$((tries + 1)); return 2; }
+if _warp_wait_route; then exit 1; fi
+[ "$tries" -eq 5 ]
+# Tunnel up but Telegram silent: keep the full wait.
+tries=0
+warp_check_route() { tries=$((tries + 1)); return 1; }
+if _warp_wait_route; then exit 1; fi
+[ "$tries" -eq 15 ]
+unset -f sleep warp_check_route
+
 # Fallback candidates: same proto and filter, scan order, no active one, no dups.
 WARP_MODE=upstream
 WARP_PROTO=awg

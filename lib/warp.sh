@@ -345,7 +345,10 @@ _warp_report_to_json() {
         split("\n") | map(select(length>0) | split("\t") |
         {node:.[0],endpoint:.[1],ping:.[2],region:.[3],location:.[4],tunnel_ping:.[5],loss:.[6]}) |
         reduce .[] as $r ({seen:{},rows:[]}; if .seen[$r.endpoint] then . else .seen[$r.endpoint]=true | .rows+=[$r] end) | .rows |
-        {scanned_at:$ts,proto:$proto,filter:$filter,depth:$depth,nodes:.,status:(if length>0 then "success" else "empty" end),best_endpoint:(.[0].endpoint // "")}'
+        # Узлы в России (DME и др.) отсеиваем: Telegram через них не отвечает.
+        (map(select(.location | test(", RU$"))) | map(.node) | unique) as $ru |
+        map(select(.location | test(", RU$") | not)) |
+        {scanned_at:$ts,proto:$proto,filter:$filter,depth:$depth,nodes:.,skipped_nodes:$ru,status:(if length>0 then "success" else "empty" end),best_endpoint:(.[0].endpoint // "")}'
 }
 
 # Сохраняем полный список рабочих адресов для TUI и панели.
@@ -418,6 +421,8 @@ warp_scan_print() {
     echo -e "  ${BOLD}Живые узлы последней разведки${NC}"
     echo -e "  ${DIM}Узел   Эндпоинт               Пинг      loc    Город узла${NC}"
     printf '%s\n' "$_rows"
+    local _skipped; _skipped=$(jq -r '(.skipped_nodes // []) | join(", ")' "$_f" 2>/dev/null)
+    [ -z "$_skipped" ] || echo -e "  ${DIM}Пропущены узлы в России (${_skipped}): Telegram через них не отвечает${NC}"
     echo ""
     echo -e "  ${DIM}Локация задаётся кодом узла (FRA) или страны (DE): mtproxyl warp location DE${NC}"
 }
@@ -1270,8 +1275,12 @@ _warp_enable() {
     else
         log_warn "Правила применены, но ни один адрес не довёл трафик до Telegram"
         case "$(_warp_proto)" in
-            masque|masque-h2) log_info "Эта сеть может резать данные внутри MASQUE — попробуйте протокол awg" ;;
-            *) log_info "Попробуйте другой протокол (masque-h2) или убрать локацию" ;;
+            masque|masque-h2) log_info "Эта сеть может не пропускать данные внутри MASQUE — попробуйте протокол awg" ;;
+            *) if [ "$(_warp_mode)" = iface ]; then
+                   log_info "Вариант B работает только на обычном WireGuard. Если он с этого сервера не проходит — вариант C с awg"
+               else
+                   log_info "Попробуйте другой протокол (masque-h2) или убрать локацию"
+               fi ;;
         esac
         log_info "Смотрите: mtproxyl warp status, journalctl -u ${WARP_SOCKS_UNIT}"
         return 1
@@ -1465,9 +1474,10 @@ _warp_telegram_probe() {
 
 # Узел выхода не сверяем: anycast Cloudflare на части сетей меняет его от
 # подключения к подключению, а рабочий маршрут из-за этого не откатываем.
+# Код 2 — сам туннель не отвечает Cloudflare; 1 — туннель есть, Telegram нет.
 warp_check_route() {
-    warp_route_ready || return 1
-    warp_exit_info >/dev/null 2>&1 || return 1
+    warp_route_ready || return 2
+    warp_exit_info >/dev/null 2>&1 || return 2
     _warp_telegram_probe || return 1
     [ "${1:-}" != full ] || _warp_bulk_probe
 }
@@ -1773,9 +1783,13 @@ _warp_health_save() {
 }
 
 _warp_wait_route() {
-    local _i
+    local _i _rc _up=false
     for ((_i = 1; _i <= ${1:-15}; _i++)); do
-        warp_check_route full && return 0
+        _rc=0; warp_check_route full || _rc=$?
+        [ "$_rc" -ne 0 ] || return 0
+        [ "$_rc" -eq 2 ] || _up=true
+        # Туннель так и не поднялся — дальше ждать бессмысленно.
+        [ "$_up" = true ] || [ "$_i" -lt 5 ] || return 1
         [ "$_i" -ne 1 ] || log_info "Ждём подтверждение маршрута WARP..."
         sleep 2
     done
