@@ -8,6 +8,7 @@ _SETTINGS_SETTABLE=(
     "PROXY_LOG_LEVEL|enum:silent,normal,verbose,debug|Уровень логирования (RUST_LOG имеет приоритет)"
     "HTTPS_HSTS_ENABLED|bool|HSTS для HTTPS-доменов Selfmask и WEB"
     "HTTPS_PERMISSIONS_ENABLED|bool|Запрет камеры, микрофона и геолокации для Selfmask и WEB"
+    "NGINX_ACCESS_LOG|bool|Журнал запросов nginx Selfmask и WEB (/var/log/mtproxyl-nginx/access.log)"
     "PROXY_PORT|range:1:65535|Порт прокси"
     "PROXY_DOMAIN|custom:_validate_settings_domain|Домен FakeTLS (SNI)"
     "CUSTOM_IP|custom:_validate_settings_ip|IP или домен для ссылок (пусто — автоопределение)"
@@ -134,6 +135,11 @@ settings_set_param() {
     }
 
     case "$_key" in
+        PROXY_API_PORT)
+            check_root
+            api_port_set "$_val"
+            return $?
+            ;;
         PROXY_LOG_LEVEL)
             check_root
             _require_manager_mode && _require_no_superexpert || return 1
@@ -151,12 +157,12 @@ settings_set_param() {
             log_info "Если у движка задан RUST_LOG, он имеет приоритет"
             return 0
             ;;
-        HTTPS_HSTS_ENABLED|HTTPS_PERMISSIONS_ENABLED)
+        HTTPS_HSTS_ENABLED|HTTPS_PERMISSIONS_ENABLED|NGINX_ACCESS_LOG)
             check_root
             local _old="${!_key}"
             printf -v "$_key" '%s' "$_val"
             if [ "${NGINX_CUSTOM_ENABLED:-false}" = "true" ]; then
-                log_info "Свой nginx-конфиг: заголовки добавляются вручную"
+                log_info "Свой nginx-конфиг: это настраивается в нём вручную"
             elif [ "${SELFMASK_ENABLED:-false}" = "true" ] || web_is_enabled; then
                 if web_is_enabled && ! web_uses_managed_nginx; then
                     log_info "Перенесите обновлённый фрагмент: mtproxyl web haproxy-config"
@@ -212,11 +218,9 @@ settings_set_param() {
     # Порты метрик и API попадают в конфиг движка, но на лету не подхватываются:
     # движок открывает сокеты при старте.
     case "$_key" in
-        PROXY_METRICS_PORT|PROXY_API_PORT)
+        PROXY_METRICS_PORT)
             generate_telemt_config >/dev/null 2>&1 || true
             log_info "Порт применится после перезапуска: mtproxyl restart"
-            [ "$_key" = "PROXY_API_PORT" ] && \
-                log_warn "Поправьте url в конфиге панели: /etc/mtproxyl-panel/config.toml"
             ;;
         BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT|DC_THRESHOLD|DC_RESTART_THRESHOLD|DC_RESTART_COOLDOWN|\
         AVAILABILITY_THRESHOLD|AVAILABILITY_HOST|AVAILABILITY_PORT|AVAILABILITY_SNI|AVAILABILITY_PROBES)
@@ -248,11 +252,80 @@ settings_set_param() {
     return 0
 }
 
+# Порт REST API движка: в менеджере — наша настройка, в реаниматоре —
+# [server.api] listen цели. Через этот порт работает панель.
+api_port_current() {
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        _get_telemt_api_port
+    else
+        echo "${PROXY_API_PORT:-9091}"
+    fi
+}
+
+api_port_set() {
+    local _port="$1" _cur
+    [[ "$_port" =~ ^[0-9]+$ ]] && [ "$_port" -ge 1 ] && [ "$_port" -le 65535 ] \
+        || { log_error "Порт: число от 1 до 65535"; return 1; }
+    _cur=$(api_port_current)
+    if [ "$_port" = "$_cur" ]; then
+        log_info "Порт API уже ${_port}"
+        panel_sync_api_port "$_port"
+        return 0
+    fi
+    is_port_available "$_port" || { log_error "Порт ${_port} уже занят"; return 1; }
+
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        _api_port_set_target "$_port" || return 1
+    else
+        _require_manager_mode && _require_no_superexpert || return 1
+        if [ "$_port" = "${PROXY_PORT:-443}" ] || [ "$_port" = "${PROXY_METRICS_PORT:-9090}" ]; then
+            log_error "Порт ${_port} занят самим прокси или метриками"; return 1
+        fi
+        PROXY_API_PORT="$_port"
+        save_settings
+        load_secrets
+        generate_telemt_config >/dev/null || return 1
+        log_success "Порт API: ${_port}"
+        if is_proxy_running; then
+            log_info "Перезапуск прокси: движок слушает API только с момента старта"
+            restart_target || return 1
+        fi
+    fi
+    panel_sync_api_port "$_port"
+}
+
+_api_port_set_target() {
+    local _port="$1" _cfg="${DETECTED_CONFIG_PATH:-}" _listen _host
+    [ -n "$_cfg" ] && [ -f "$_cfg" ] || { log_error "Конфиг цели не найден — выполните 'mtproxyl detect'"; return 1; }
+    [ "$_port" != "$(_get_telemt_metrics_port)" ] || { log_error "Порт ${_port} занят метриками цели"; return 1; }
+    # Порт опубликованного контейнера задан при его создании, конфигом его не сменить.
+    if [ "${DETECTED_MODE:-}" = "docker" ] && [ -n "${DETECTED_CONTAINER:-}" ] \
+       && [ "$(docker inspect -f '{{.HostConfig.NetworkMode}}' "$DETECTED_CONTAINER" 2>/dev/null)" != "host" ]; then
+        log_error "Контейнер цели работает не в сети хоста: порт API задан публикацией (-p) при его создании"
+        log_info "Пересоздайте контейнер с новым портом и выполните: mtproxyl settings set PROXY_API_PORT <порт>"
+        return 1
+    fi
+    _listen=$(_toml_get_string_in_section "server.api" "listen" "$_cfg")
+    _host="${_listen%:*}"; [ -n "$_listen" ] && [ "$_host" != "$_listen" ] || _host="127.0.0.1"
+    backup_target_config "api" "true" || true
+    if grep -qE '^[[:space:]]*\[server\.api\][[:space:]]*(#.*)?$' "$_cfg"; then
+        _toml_safe_set "listen" "\"${_host}:${_port}\"" "server.api" "$_cfg" || {
+            log_error "Не удалось записать порт в конфиг цели"; return 1; }
+    else
+        printf '\n[server.api]\nlisten = "%s:%s"\n' "$_host" "$_port" >> "$_cfg"
+    fi
+    log_success "Порт API цели: ${_port} (${_cfg})"
+    [ -n "${TARGET_CONFIG_BACKUP:-}" ] && log_info "Резервная копия: ${TARGET_CONFIG_BACKUP}"
+    restart_target
+}
+
 handle_settings_command() {
     local PROXY_LOG_LEVEL; PROXY_LOG_LEVEL=$(proxy_log_level)
     local _sub="${1:-list}"; shift 2>/dev/null || true
     case "$_sub" in
         list)
+            # В реаниматоре показываем порт цели; save_settings здесь не зовётся.
+            local PROXY_API_PORT; PROXY_API_PORT=$(api_port_current)
             if [ "${1:-}" = "--json" ]; then
                 settings_settable_json
             else

@@ -1793,6 +1793,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+LogLevelMax=notice
+SyslogLevel=notice
 ExecStart=${INSTALL_DIR}/mtproxyl.sh warp watch
 TimeoutStartSec=15min
 KillMode=control-group

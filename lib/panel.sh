@@ -450,7 +450,7 @@ panel_uninstall() {
         systemctl disable --now "$PANEL_SERVICE" &>/dev/null || true
         rm -f "$PANEL_BINARY" "/etc/systemd/system/${PANEL_SERVICE}.service"
         rm -f "/etc/sudoers.d/${PANEL_SERVICE}" "/etc/sudoers.d/${PANEL_SERVICE}-mtproxyl" \
-              "/etc/sudoers.d/${PANEL_SERVICE}-engine"
+              "/etc/sudoers.d/${PANEL_SERVICE}-engine" "/etc/sudoers.d/${PANEL_SERVICE}-quiet"
         systemctl daemon-reload &>/dev/null || true
     fi
     log_success "Панель удалена"
@@ -485,6 +485,33 @@ SUDO_EOF
     fi
     install -m 0440 "$_tmp" "$_f" && rm -f "$_tmp" \
         && log_success "Панель получила доступ к журналу ${ENGINE_SERVICE}"
+}
+
+# Панель ходит к движку по [telemt] url из своего конфига и читает его при
+# старте. Перезапуск отложен и вынесен из её cgroup: команду могла вызвать
+# сама панель, и мгновенный restart оборвал бы ответ ей.
+panel_sync_api_port() {
+    local _port="$1" _cfg="${PANEL_CONFIG_DIR}/config.toml" _url _new _tmp
+    panel_installed 2>/dev/null && [ -f "$_cfg" ] || return 0
+    _url=$(awk '
+        /^[[:space:]]*\[/ { insect = ($0 ~ /^[[:space:]]*\[telemt\]/) }
+        insect && /^[[:space:]]*url[[:space:]]*=/ { sub(/^[^=]*=[[:space:]]*"/, ""); sub(/".*$/, ""); print; exit }
+    ' "$_cfg")
+    [ -n "$_url" ] || return 0
+    _new=$(printf '%s' "${_url%/}" | sed -E "s#^([a-z]+://[^/]*):[0-9]+#\\1:${_port}#; t; s#^([a-z]+://[^/:]+)#\\1:${_port}#")
+    [ "$_new" != "$_url" ] || return 0
+    _tmp=$(_mktemp "$PANEL_CONFIG_DIR") || return 1
+    awk -v u="$_new" '
+        /^[[:space:]]*\[/ { insect = ($0 ~ /^[[:space:]]*\[telemt\]/) }
+        insect && !done && /^[[:space:]]*url[[:space:]]*=/ { print "url = \"" u "\""; done = 1; next }
+        { print }
+    ' "$_cfg" > "$_tmp" && cat "$_tmp" > "$_cfg"
+    rm -f "$_tmp"
+    if ! systemd-run --quiet --on-active=3 --unit="mtproxyl-panel-reload-$$" \
+            systemctl restart "$PANEL_SERVICE" &>/dev/null; then
+        systemctl restart "$PANEL_SERVICE" &>/dev/null || true
+    fi
+    log_success "Панель переключена на ${_new} и перезапустится через несколько секунд"
 }
 
 # Пользователь, от которого работает панель: в юните он и записан.
@@ -1219,6 +1246,8 @@ handle_panel_command() {
         password)  panel_password ;;
         cert)      panel_issue_cert "${2:-}" "${3:-}" ;;
         selfmask)  handle_panel_selfmask_command "${2:-status}" "${3:-}" ;;
+        api-port)
+            if [ -n "${2:-}" ]; then check_root; api_port_set "$2"; else api_port_current; fi ;;
         status)    panel_show_status ;;
         *)
             echo -e "  ${BOLD}MTProxyL-Panel (веб-панель):${NC}"
@@ -1234,6 +1263,8 @@ handle_panel_command() {
             echo -e "                     Выпустить сертификат Let's Encrypt"
             echo -e "    ${GREEN}panel selfmask${NC} [status|on [путь]|rotate|off]"
             echo -e "                     Общий путь панели через Selfmask / WEB"
+            echo -e "    ${GREEN}panel api-port${NC} [порт]"
+            echo -e "                     Порт REST API движка, через который работает панель"
             echo -e "    ${GREEN}panel uninstall${NC}  Удалить"
             ;;
     esac
@@ -1267,6 +1298,7 @@ tui_panel_menu() {
                     _selfmask_action="Общий путь панели: управление"
                 echo -e "  ${CYAN}[8]${NC}  ${_selfmask_action}"
             fi
+            echo -e "  ${CYAN}[9]${NC}  Порт REST API движка [$(api_port_current)] ${DIM}— через него панель работает с движком${NC}"
         else
             echo -e "  ${CYAN}[1]${NC}  Установить"
             echo ""
@@ -1329,6 +1361,14 @@ tui_panel_menu() {
                     fi
                     press_any_key
                     ;;
+                9)
+                    echo ""
+                    echo -e "  ${DIM}Движок перезапустится, панель переключится на новый порт сама.${NC}"
+                    [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && \
+                        echo -e "  ${DIM}Порт запишется в [server.api] конфига цели.${NC}"
+                    local _ap; read_line _ap "  ${BOLD}Новый порт API [$(api_port_current)]:${NC} "
+                    [ -n "$_ap" ] && { api_port_set "$_ap" || true; }
+                    press_any_key ;;
                 0|"") return ;;
             esac
         else

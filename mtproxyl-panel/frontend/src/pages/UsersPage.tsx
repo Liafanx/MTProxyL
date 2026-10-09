@@ -14,7 +14,8 @@ import { usePolling } from '@/hooks/usePolling';
 import { telemt, panelApi, ApiError, mtproxylUsersApi, mtproxylApi } from '@/lib/api';
 import { useMtproxyl } from '@/hooks/useMtproxyl';
 import { Link } from 'react-router-dom';
-import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, ArrowUpDown, Search, ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react';
+import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, ArrowUpDown, Search, ChevronLeft, ChevronRight, RotateCcw, ArrowLeftRight } from 'lucide-react';
+import { UsersTransfer } from '@/components/UsersTransfer';
 import { formatBytes } from '@/lib/utils';
 import { useQuota, resetUserQuota, type QuotaEntry } from '@/hooks/useQuota';
 import { QuotaBar } from '@/components/QuotaBar';
@@ -163,6 +164,7 @@ export function UsersPage() {
   }, []);
 
   const [createOpen, setCreateOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
   // В режиме Manager конфиг движка примонтирован в контейнер только для
   // чтения — telemt отвечает на запись «Device or resource busy». Владелец
   // пользователей там MTProxyL, и правим мы их через его CLI. Чтение
@@ -333,6 +335,13 @@ export function UsersPage() {
                 <span className="sm:hidden">Сбросить всё</span>
               </Button>
             )}
+            {mtproxylEnabled && (
+              <Button variant="outline" onClick={() => setTransferOpen((v) => !v)}>
+                <ArrowLeftRight size={16} className="mr-1.5" />
+                <span className="hidden sm:inline">Экспорт и импорт</span>
+                <span className="sm:hidden">Файл</span>
+              </Button>
+            )}
             <Button onClick={() => setCreateOpen(true)}>
               <Plus size={16} className="mr-1.5" />
               <span className="hidden sm:inline">Создать пользователя</span>
@@ -340,6 +349,8 @@ export function UsersPage() {
             </Button>
           </div>
         </div>
+
+        {mtproxylEnabled && transferOpen && <UsersTransfer onImported={refresh} />}
 
         {/* Mobile Sort Bar */}
         <div className="lg:hidden flex items-center justify-between gap-2 bg-surface p-2 sm:p-3 rounded-lg border border-border">

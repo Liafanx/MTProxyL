@@ -315,6 +315,8 @@ After=network-online.target
 
 [Service]
 Type=oneshot
+LogLevelMax=notice
+SyslogLevel=notice
 # «-»: остановленный движок — обычное дело, и падающий каждые несколько минут
 # юнит в журнале выглядел бы поломкой.
 ExecStart=-${INSTALL_DIR}/mtproxyl.sh ip-history flush

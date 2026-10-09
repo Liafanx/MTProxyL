@@ -17,6 +17,7 @@ DATA_DIR="/var/lib/mtproxyl-panel"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 SUDOERS_FILE="/etc/sudoers.d/${SERVICE_NAME}"
 MTPROXYL_SUDOERS_FILE="/etc/sudoers.d/${SERVICE_NAME}-mtproxyl"
+QUIET_SUDOERS_FILE="/etc/sudoers.d/${SERVICE_NAME}-quiet"
 MTPROXYL_SCRIPT="/opt/mtproxyl/mtproxyl.sh"
 MTPROXYL_INSTALL_DIR="/opt/mtproxyl"
 LEGACY_BIN_DIR="/opt/bin/telemt"
@@ -459,6 +460,19 @@ EOF
   $SUDO mkdir -p "$(dirname "$SUDOERS_FILE")"
   $SUDO install -m 0440 "$_tmp" "$SUDOERS_FILE"
   say "Права sudo установлены: $SUDOERS_FILE"
+  install_quiet_sudoers "$_visudo"
+}
+
+# Панель зовёт sudo каждые несколько секунд, и каждый вызов — три строки в
+# журнале. Отдельным файлом: если visudo не примет флаги, права не страдают.
+install_quiet_sudoers() {
+  _tmp="$TEMP_DIR/sudoers-quiet"
+  printf 'Defaults:%s !syslog, !pam_session\n' "$SYSTEM_USER" >"$_tmp"
+  if [ -n "$1" ] && ! $SUDO "$1" -cf "$_tmp" >/dev/null 2>&1; then
+    $SUDO rm -f "$QUIET_SUDOERS_FILE"
+    return 0
+  fi
+  $SUDO install -m 0440 "$_tmp" "$QUIET_SUDOERS_FILE"
 }
 
 # ── Sudoers for the MTProxyL bridge ─────────────────────────────────────────
@@ -549,6 +563,8 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script secret disable [A-Za-z0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script secret rename [A-Za-z0-9]* [A-Za-z0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script secret setlimits [A-Za-z0-9]* * * * *
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script secret adtag [A-Za-z0-9]* *
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script secret export -
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script secret import -
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script dc status --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup list --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup cat mtproxyl-[0-9]*.tar.gz
@@ -1544,7 +1560,7 @@ do_uninstall() {
   fi
 
   if [ -f "$SUDOERS_FILE" ]; then
-    $SUDO rm -f "$SUDOERS_FILE"
+    $SUDO rm -f "$SUDOERS_FILE" "$QUIET_SUDOERS_FILE"
     say "Права sudo удалены"
   fi
 

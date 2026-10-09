@@ -67,6 +67,12 @@ case "$1 $2 $3" in
     # потому что пустой пропущенный аргумент сдвинул бы все следующие.
     printf 'arg=%s\n' "$@"
     ;;
+  "secret export -")
+    printf '# label|key|enabled|max_conns|max_ips|quota|expires|notes|ad_tag\nalice|0123456789abcdef0123456789abcdef|true|5|0|1073741824|0||\n'
+    ;;
+  "secret import -")
+    echo "  [✓] Импортировано: $(grep -vc '^#'), пропущено дубликатов: 0, строк с ошибкой: 0"
+    ;;
   "superexpert write ")
     # Отражаем stdin, чтобы тест мог убедиться: он действительно доходит.
     cat

@@ -1,6 +1,10 @@
 package mtproxylctl
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+)
 
 func TestValidateSecretLabel(t *testing.T) {
 	ok := []string{"alice", "user1", "a", "A_b-c", "7bob", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
@@ -15,5 +19,24 @@ func TestValidateSecretLabel(t *testing.T) {
 		if err := ValidateSecretLabel(l); err == nil {
 			t.Errorf("метка %q должна отвергаться", l)
 		}
+	}
+}
+
+// Export goes to the browser verbatim; import pipes the file through stdin.
+func TestSecretsExportImport(t *testing.T) {
+	c := newStubClient(t)
+	body, err := c.ExportSecrets(context.Background())
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if !strings.Contains(body, "alice|0123456789abcdef0123456789abcdef|true|5|0|1073741824|0||") {
+		t.Errorf("unexpected export %q", body)
+	}
+	out, err := c.ImportSecrets(context.Background(), body)
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if !strings.Contains(out, "Импортировано: 1") || strings.Contains(out, "\x1b") {
+		t.Errorf("unexpected import output %q", out)
 	}
 }

@@ -7,6 +7,7 @@ import { useTheme, THEMES, THEME_LABELS } from '@/hooks/useTheme';
 import { useNavLayout, NAV_LAYOUTS, NAV_LAYOUT_LABELS } from '@/hooks/useNavLayout';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { HistoryStorageCard } from '@/components/HistoryStorageCard';
+import { ApiPortCard } from '@/components/ApiPortCard';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -278,6 +279,7 @@ export function PanelSettingsPage() {
         </Card>
 
         <HistoryStorageCard onError={(msg) => { setNotice(''); setError(msg); }} onNotice={(msg) => { setError(''); setNotice(msg); }} />
+        <ApiPortCard onError={(msg) => { setNotice(''); setError(msg); }} onNotice={(msg) => { setError(''); setNotice(msg); }} />
 
         <Card>
           <CardHeader><CardTitle>Иконка сайта</CardTitle></CardHeader>

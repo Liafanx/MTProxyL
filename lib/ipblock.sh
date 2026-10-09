@@ -239,6 +239,8 @@ UNITEOF
 Description=MTProxyL blocklist counters
 [Service]
 Type=oneshot
+LogLevelMax=notice
+SyslogLevel=notice
 ExecStart=/bin/bash ${INSTALL_DIR}/mtproxyl.sh block hits-sample
 UNITEOF
     cat > /etc/systemd/system/${IPBLOCK_SERVICE}-hits.timer <<'UNITEOF'
