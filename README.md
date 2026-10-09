@@ -329,6 +329,7 @@ mtproxyl install --help          # полный список аргументо�
 | `--web` | `yes`, `no` | `no` | Включить WEB. `--proxy-mode web` и `combined` включают его автоматически. |
 | `--web-domain` | домен | — | Публичный домен WEB с A-записью на сервер. Обязателен без `--selfmask`. |
 | `--web-carrier` | `https`, `https-lanes`, `websocket`, `websocket-lanes` | `websocket` | Транспорт WEB. |
+| `--web-carriers` | список carrier через запятую | — | Перебор carrier до основного (telemt 3.5.4+). |
 | `--web-layout` | `shared`, `split` | `shared` | Раскладка совместного режима. |
 | `--web-frontend` | `nginx`, `haproxy`, `haproxy-nginx` | `nginx` | Встроенный nginx, существующий HAProxy на этой машине либо HAProxy перед встроенным nginx. |
 | `--web-haproxy-cert` | абсолютный путь | `/etc/haproxy/certs/<домен>.pem` | PEM с сертификатом и ключом для фрагмента HAProxy. |

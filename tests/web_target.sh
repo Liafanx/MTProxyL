@@ -146,6 +146,24 @@ diff "$test_dir/orig-split.toml" "$DETECTED_CONFIG_PATH"
 DETECTED_PORT=443; WEB_TARGET_PORT=443
 sed -i 's/^port = 8443$/port = 443/' "$DETECTED_CONFIG_PATH"
 
+# Порт цели читается мимо нашего блока, даже если в [server] его нет.
+sed -i '/^port = 443$/d' "$DETECTED_CONFIG_PATH"
+cp "$DETECTED_CONFIG_PATH" "$test_dir/orig-noport.toml"
+_web_target_write
+[ -z "$(_toml_get_value port "$DETECTED_CONFIG_PATH")" ]
+# Цель без [server] и [general.links]: таблицы уходят в начало блока, до listener'ов.
+grep -v '^\[server\]$\|^\[general.links\]$\|^public_host' "$test_dir/orig-noport.toml" > "$DETECTED_CONFIG_PATH"
+cp "$DETECTED_CONFIG_PATH" "$test_dir/orig-bare.toml"
+WEB_TARGET_PREV_SAVED=false; WEB_TARGET_PREV_PUBLIC_PORT=""; WEB_TARGET_PREV_PP_CIDRS=""
+_web_target_write
+block=$(awk -v b="$WEB_TARGET_BEGIN" -v e="$WEB_TARGET_END" 'index($0,b)==1{f=1} f{print} index($0,e)==1{f=0}' "$DETECTED_CONFIG_PATH")
+[ "$(grep -n '^\[server\]$' <<< "$block" | cut -d: -f1)" -lt "$(grep -n '^\[\[server.listeners\]\]$' <<< "$block" | head -1 | cut -d: -f1)" ]
+grep -q '^\[general.links\]$' <<< "$block"
+_web_target_in_copy _web_target_unwrite_now
+diff "$test_dir/orig-bare.toml" "$DETECTED_CONFIG_PATH"
+cp "$test_dir/orig.toml" "$DETECTED_CONFIG_PATH"
+WEB_TARGET_PREV_SAVED=false; WEB_TARGET_PREV_PUBLIC_PORT=""; WEB_TARGET_PREV_PP_CIDRS=""
+
 # Чего MTProxyL у цели не делает.
 printf '\n[web]\nenabled = true\n' >> "$DETECTED_CONFIG_PATH"
 web_target_foreign_web
@@ -166,15 +184,28 @@ fails web_set_param WEB_FRONTEND haproxy
 # Статус для панели: owner и раскладка цели, а не менеджера.
 PROXY_MODE=web; WEB_LAYOUT=split
 json=$(web_status_json)
-jq -e '.owner == "mtproxyl" and .reanimator and .layout == "shared" and .proxy_mode == "combined" and .proxy_port == 443' <<< "$json" >/dev/null
+WEB_FRONTEND=haproxy
+json=$(web_status_json)
+jq -e '.owner == "mtproxyl" and .reanimator and .layout == "shared" and .proxy_mode == "combined" and .proxy_port == 443 and .frontend == "nginx"' <<< "$json" >/dev/null
 web_settable_json | jq -e 'map(.key) | (index("WEB_FRONTEND") == null) and (index("WEB_CARRIERS") != null)' >/dev/null
+
+# Новые ключи переживают сохранение и загрузку, массив — в кавычках.
+for _f in _ensure_availability_timer _ensure_dc_watch_timer _ensure_ip_history_timer _ensure_log_limits _ensure_quiet_timers; do
+    eval "$_f() { :; }"
+done
+WEB_CARRIERS=https,websocket WEB_TARGET_ENABLED=true WEB_TARGET_PORT=443 WEB_TARGET_PREV_SAVED=true
+WEB_TARGET_PREV_PUBLIC_PORT=__absent__ WEB_TARGET_PREV_PP_CIDRS='["10.0.0.1/32", "127.0.0.1/32"]'
+set +u
+save_settings >/dev/null
+WEB_CARRIERS=x WEB_TARGET_ENABLED=x WEB_TARGET_PREV_PP_CIDRS=x
+load_settings
+[ "$WEB_CARRIERS|$WEB_TARGET_ENABLED|$WEB_TARGET_PORT|$WEB_TARGET_PREV_PUBLIC_PORT" = "https,websocket|true|443|__absent__" ]
+[ "$WEB_TARGET_PREV_PP_CIDRS" = '["10.0.0.1/32", "127.0.0.1/32"]' ]
+set -u
 
 # Битый список из settings.conf не доходит до конфига.
 WEB_CARRIERS="https;id"
 printf "WEB_CARRIERS='https;id'\n" > "$SETTINGS_FILE"
-for _f in _ensure_availability_timer _ensure_dc_watch_timer _ensure_ip_history_timer _ensure_log_limits _ensure_quiet_timers; do
-    eval "$_f() { :; }"
-done
 load_settings
 [ -z "$WEB_CARRIERS" ]
 

@@ -56,8 +56,11 @@ load_detect_settings() {
 _toml_get_value() {
     local _key="$1" _file="$2"
     [ -f "$_file" ] || return 0
+    # Блок WEB от MTProxyL не в счёт: в нём port приватного listener'а цели.
     awk -v k="$_key" '
-        /^[[:space:]]*#/ { next }
+        /^# >>> mtproxyl-web/ { skip = 1; next }
+        /^# <<< mtproxyl-web/ { skip = 0; next }
+        skip || /^[[:space:]]*#/ { next }
         $1 == k && $2 == "=" { gsub(/[^0-9]/, "", $3); print $3; exit }
     ' "$_file" 2>/dev/null
 }

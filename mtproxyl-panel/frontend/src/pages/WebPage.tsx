@@ -76,6 +76,9 @@ export function WebPage() {
   const { allowed: isManagerMode, loading: modeLoading } = useManagerOnly();
   const isManager = isManagerMode || status?.owner === 'mtproxyl';
   const reanimator = !!status?.reanimator;
+  // Основной carrier движок ставит последним сам — в перебор его не считаем.
+  const carrierChain = status?.carriers_supported === false ? [] : (status?.carriers ?? '')
+    .split(',').filter((c) => c && c !== status?.carrier);
 
   useEffect(() => {
     void load();
@@ -223,8 +226,8 @@ export function WebPage() {
                     <Row label="Frontend" value={FRONTEND_LABELS[status.frontend] ?? status.frontend} />
                     <Row
                       label="Транспорт"
-                      value={status.carriers && status.carriers_supported !== false
-                        ? `перебор: ${[...status.carriers.split(',').filter((c) => c !== status.carrier), status.carrier].join(' → ')}`
+                      value={carrierChain.length > 0
+                        ? `перебор: ${[...carrierChain, status.carrier].join(' → ')}`
                         : CARRIER_LABELS[status.carrier] ?? status.carrier}
                     />
                     <Row label="Секрет в ссылке" value={status.secret_mode} />

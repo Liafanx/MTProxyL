@@ -1468,8 +1468,9 @@ donor_enable() (
     donor_load
     [ "$DONOR_STAGE" = "ready" ] || { log_error "Туннель до донора не настроен: mtproxyl donor setup <IP|домен>"; return 1; }
     _donor_guard_conflicts || return 1
-    _donor_tunnel_up || return 1
+    # Пока туннель лежал, домен мог переехать: сверяем адрес до подъёма.
     _donor_reresolve_now
+    _donor_tunnel_up || return 1
     _donor_probe || { log_error "Через SOCKS5 донора Telegram не ответил — движок не переключаем"; return 1; }
     _donor_route_engine "$_allow" || return 1
     DONOR_ENABLED="true"; donor_save
@@ -1593,7 +1594,10 @@ _donor_reresolve_now() {
     _donor_host_is_name "$DONOR_HOST" || return 0
     _ip=$(_donor_resolve "$DONOR_HOST") || return 0
     _cur=$(awg show "$DONOR_IFACE" endpoints 2>/dev/null | awk 'NR == 1 {print $2}')
-    [ "$_cur" = "${_ip}:${DONOR_AWG_PORT}" ] && [ "$_ip" = "$DONOR_RESOLVED_IP" ] && return 0
+    # Опущенный туннель endpoint не показывает — тогда сверяем с запомненным.
+    if [ "$_ip" = "$DONOR_RESOLVED_IP" ] && { [ -z "$_cur" ] || [ "$_cur" = "${_ip}:${DONOR_AWG_PORT}" ]; }; then
+        return 0
+    fi
     if [ -n "$_cur" ] && [ "$_cur" != "${_ip}:${DONOR_AWG_PORT}" ]; then
         awg set "$DONOR_IFACE" peer "$DONOR_REMOTE_PUB" endpoint "${_ip}:${DONOR_AWG_PORT}" || return 1
         echo "Донор ${DONOR_HOST}: адрес ${_cur%:*} → ${_ip}"
@@ -1638,7 +1642,9 @@ donor_set_host() (
     if [ "$DONOR_STAGE" = "ready" ] && [ -f "$(_donor_awg_conf)" ]; then
         local _cur; _cur=$(awg show "$DONOR_IFACE" endpoints 2>/dev/null | awk 'NR == 1 {print $2}')
         sed -i "s|^Endpoint = .*|Endpoint = ${_ip}:${DONOR_AWG_PORT}|; s|^# MTProxyL: туннель до донора .*|# MTProxyL: туннель до донора ${_host}|" "$(_donor_awg_conf)"
-        [ -n "$_cur" ] && awg set "$DONOR_IFACE" peer "$DONOR_REMOTE_PUB" endpoint "${_ip}:${DONOR_AWG_PORT}"
+        if [ -n "$_cur" ] && ! awg set "$DONOR_IFACE" peer "$DONOR_REMOTE_PUB" endpoint "${_ip}:${DONOR_AWG_PORT}"; then
+            log_warn "Живой туннель на новый адрес не переведён — поднимите его заново: mtproxyl donor on"
+        fi
     fi
     DONOR_RESOLVED_IP="$_ip"
     donor_save

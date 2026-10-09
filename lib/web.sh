@@ -948,7 +948,7 @@ web_carriers_chain() {
 # Сохранённый перебор; до 1.6.37 он жил только экспертным web.carriers.
 web_carriers_saved() {
     local _o
-    if [ -z "${WEB_CARRIERS:-}" ] && declare -F get_expert_override_value >/dev/null; then
+    if [ -z "${WEB_CARRIERS:-}" ] && ! web_is_reanimator && declare -F get_expert_override_value >/dev/null; then
         _o=$(get_expert_override_value web carriers 2>/dev/null | tr -d ' []"')
         [ "$_o" = "false" ] || { printf '%s' "$_o"; return 0; }
     fi
@@ -1472,7 +1472,7 @@ web_status_json() {
         "$(web_is_enabled && echo true || echo false)" \
         "$(json_escape "$(if web_is_reanimator; then web_is_enabled && echo combined || echo mtproto; else echo "${PROXY_MODE:-mtproto}"; fi)")" \
         "$(mtproto_is_enabled && echo true || echo false)" \
-        "$(json_escape "${WEB_FRONTEND:-nginx}")" "$(web_haproxy_ready && echo true || echo false)" \
+        "$(json_escape "$(web_is_reanimator && echo nginx || echo "${WEB_FRONTEND:-nginx}")")" "$(web_haproxy_ready && echo true || echo false)" \
         "$(json_escape "$(web_haproxy_cert)")" \
         "$(if web_is_only_mode; then echo web; elif web_layout_is_split; then echo split; else echo shared; fi)" \
         "$(web_public_port)" "$(web_is_reanimator && web_target_public_port || echo "${PROXY_PORT:-443}")" \
@@ -2519,8 +2519,28 @@ _web_target_restore_keys() {
     WEB_TARGET_PREV_SAVED="false"; WEB_TARGET_PREV_PUBLIC_PORT=""; WEB_TARGET_PREV_PP_CIDRS=""
 }
 
+# Цель перечитывает конфиг после каждой записи, а снятие блока, профилей и
+# правка ключей — это несколько записей. Делаем их в копии и кладём результат
+# одной записью: иначе цель успела бы увидеть конфиг без [web].
+_web_target_in_copy() {
+    local _real="${DETECTED_CONFIG_PATH:-}" _work _rc=0
+    [ -f "$_real" ] || return 1
+    _work=$(_mktemp "$(dirname "$_real")") || return 1
+    cat "$_real" > "$_work" || { rm -f "$_work"; return 1; }
+    DETECTED_CONFIG_PATH="$_work" "$@" || _rc=$?
+    if [ "$_rc" -eq 0 ] && ! cmp -s "$_work" "$_real"; then
+        cat "$_work" > "$_real" || _rc=1
+    fi
+    rm -f "$_work"
+    return "$_rc"
+}
+
 # Пишет блок заново. Секции, которых у цели нет, уходят внутрь блока.
-_web_target_write() {
+_web_target_write() { _web_target_in_copy _web_target_write_now; }
+
+_web_target_unwrite_now() { _web_target_strip && _web_target_restore_keys; }
+
+_web_target_write_now() {
     local _f="$DETECTED_CONFIG_PATH"
     _web_target_strip || return 1
     _WEB_TARGET_EXTRA=""
@@ -2534,9 +2554,9 @@ _web_target_write() {
     _block=$(
         echo ""
         echo "$WEB_TARGET_BEGIN"
+        [ -z "$_WEB_TARGET_EXTRA" ] || printf '%s\n' "$_WEB_TARGET_EXTRA"
         _web_target_listeners_toml
         web_sections_toml || exit 1
-        [ -z "$_WEB_TARGET_EXTRA" ] || printf '%s\n' "$_WEB_TARGET_EXTRA"
         echo "$WEB_TARGET_END"
     ) || { log_error "Не удалось собрать WEB-конфиг цели"; return 1; }
     printf '%s\n' "$_block" >> "$_f"
@@ -2560,7 +2580,7 @@ _web_target_rollback() {
         cat "$_backup" > "$DETECTED_CONFIG_PATH"
         [ "$_was" = "true" ] || { WEB_TARGET_PREV_SAVED="false"; WEB_TARGET_PREV_PUBLIC_PORT=""; WEB_TARGET_PREV_PP_CIDRS=""; }
     else
-        _web_target_strip; _web_target_restore_keys; WEB_TARGET_ENABLED="false"
+        _web_target_in_copy _web_target_unwrite_now; WEB_TARGET_ENABLED="false"
     fi
     [ "${WEB_TARGET_ENABLED}" = "true" ] || WEB_TARGET_PORT=""
     save_settings || true
@@ -2674,8 +2694,7 @@ web_target_disable() {
     fi
 
     backup_target_config "web-off" "true" || true
-    _web_target_strip
-    _web_target_restore_keys
+    _web_target_in_copy _web_target_unwrite_now
     WEB_TARGET_PORT=""
     save_settings || true
     log_info "Цель возвращается на порт $(web_target_public_port)..."
