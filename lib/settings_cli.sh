@@ -319,6 +319,61 @@ _api_port_set_target() {
     restart_target
 }
 
+# Заголовок Authorization, который движок требует на REST API ([server.api]
+# auth_header). В менеджере живёт экспертной настройкой, в реаниматоре — в
+# конфиге цели. Панель шлёт его же: её конфиг правится следом.
+api_auth_current() {
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        _get_telemt_auth_header
+    else
+        get_expert_override_value server.api auth_header
+    fi
+}
+
+api_auth_set() {
+    local _v="$1" _cfg
+    if [ ${#_v} -gt 512 ] || ! [[ "$_v" =~ ^[[:print:]]*$ ]] || [[ "$_v" == *[\"\'\\\|]* ]]; then
+        log_error "Заголовок: до 512 печатных символов, без кавычек, \\ и |"
+        return 1
+    fi
+    if [ "$_v" = "$(api_auth_current)" ]; then
+        log_info "Заголовок авторизации API не изменился"
+        panel_sync_api_auth "$_v"
+        return 0
+    fi
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        _cfg="${DETECTED_CONFIG_PATH:-}"
+        [ -n "$_cfg" ] && [ -f "$_cfg" ] || { log_error "Конфиг цели не найден — выполните 'mtproxyl detect'"; return 1; }
+        backup_target_config "api" "true" || true
+        if [ -z "$_v" ]; then
+            _toml_safe_unset "auth_header" "server.api" "$_cfg" 2>/dev/null || true
+        elif grep -qE '^[[:space:]]*\[server\.api\][[:space:]]*(#.*)?$' "$_cfg"; then
+            _toml_safe_set "auth_header" "\"${_v}\"" "server.api" "$_cfg" || {
+                log_error "Не удалось записать заголовок в конфиг цели"; return 1; }
+        else
+            printf '\n[server.api]\nauth_header = "%s"\n' "$_v" >> "$_cfg"
+        fi
+        [ -n "${TARGET_CONFIG_BACKUP:-}" ] && log_info "Резервная копия: ${TARGET_CONFIG_BACKUP}"
+        restart_target
+    else
+        _require_manager_mode && _require_no_superexpert || return 1
+        if [ -z "$_v" ]; then
+            delete_expert_override server.api auth_header || return 1
+        else
+            save_expert_override server.api auth_header "$_v" || return 1
+        fi
+        load_secrets
+        generate_telemt_config >/dev/null || return 1
+        if is_proxy_running; then
+            log_info "Перезапуск прокси, чтобы движок принял заголовок"
+            restart_target || return 1
+        fi
+    fi
+    if [ -n "$_v" ]; then log_success "Заголовок авторизации API задан"
+    else log_success "Заголовок авторизации API снят — API без авторизации, только localhost"; fi
+    panel_sync_api_auth "$_v"
+}
+
 handle_settings_command() {
     local PROXY_LOG_LEVEL; PROXY_LOG_LEVEL=$(proxy_log_level)
     local _sub="${1:-list}"; shift 2>/dev/null || true

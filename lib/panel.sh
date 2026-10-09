@@ -500,18 +500,49 @@ panel_sync_api_port() {
     [ -n "$_url" ] || return 0
     _new=$(printf '%s' "${_url%/}" | sed -E "s#^([a-z]+://[^/]*):[0-9]+#\\1:${_port}#; t; s#^([a-z]+://[^/:]+)#\\1:${_port}#")
     [ "$_new" != "$_url" ] || return 0
-    _tmp=$(_mktemp "$PANEL_CONFIG_DIR") || return 1
-    awk -v u="$_new" '
+    _panel_telemt_cfg_set url "$_new" || return 1
+    _panel_restart_later
+    log_success "Панель переключена на ${_new} и перезапустится через несколько секунд"
+}
+
+# Тот же заголовок, что требует движок, — в [telemt] auth_header панели.
+panel_sync_api_auth() {
+    local _v="$1" _cfg="${PANEL_CONFIG_DIR}/config.toml" _cur
+    panel_installed 2>/dev/null && [ -f "$_cfg" ] || return 0
+    _cur=$(awk '
         /^[[:space:]]*\[/ { insect = ($0 ~ /^[[:space:]]*\[telemt\]/) }
-        insect && !done && /^[[:space:]]*url[[:space:]]*=/ { print "url = \"" u "\""; done = 1; next }
+        insect && /^[[:space:]]*auth_header[[:space:]]*=/ { sub(/^[^=]*=[[:space:]]*"/, ""); sub(/"[[:space:]]*$/, ""); print; exit }
+    ' "$_cfg")
+    [ "$_cur" != "$_v" ] || return 0
+    _panel_telemt_cfg_set auth_header "$_v" || return 1
+    _panel_restart_later
+    log_success "Панель получила новый заголовок и перезапустится через несколько секунд"
+}
+
+# Ключ секции [telemt] конфига панели; пустое значение удаляет строку. Правим
+# на месте: файл принадлежит пользователю панели.
+_panel_telemt_cfg_set() {
+    local _key="$1" _val="$2" _cfg="${PANEL_CONFIG_DIR}/config.toml" _tmp
+    _tmp=$(_mktemp "$PANEL_CONFIG_DIR") || return 1
+    awk -v k="$_key" -v v="$_val" '
+        function put() { if (v != "") print k " = \"" v "\""; done = 1 }
+        /^[[:space:]]*\[/ {
+            if (insect && !done) put()
+            insect = ($0 ~ /^[[:space:]]*\[telemt\]/)
+        }
+        insect && !done && $0 ~ ("^[[:space:]]*" k "[[:space:]]*=") { put(); next }
         { print }
+        END { if (insect && !done) put() }
     ' "$_cfg" > "$_tmp" && cat "$_tmp" > "$_cfg"
     rm -f "$_tmp"
-    if ! systemd-run --quiet --on-active=3 --unit="mtproxyl-panel-reload-$$" \
+}
+
+# Отложенно и вне cgroup панели: команду могла вызвать сама панель.
+_panel_restart_later() {
+    if ! systemd-run --quiet --on-active=3 --unit="mtproxyl-panel-reload-$$-${RANDOM}" \
             systemctl restart "$PANEL_SERVICE" &>/dev/null; then
         systemctl restart "$PANEL_SERVICE" &>/dev/null || true
     fi
-    log_success "Панель переключена на ${_new} и перезапустится через несколько секунд"
 }
 
 # Пользователь, от которого работает панель: в юните он и записан.
@@ -1248,6 +1279,20 @@ handle_panel_command() {
         selfmask)  handle_panel_selfmask_command "${2:-status}" "${3:-}" ;;
         api-port)
             if [ -n "${2:-}" ]; then check_root; api_port_set "$2"; else api_port_current; fi ;;
+        api-auth)
+            check_root
+            case "${2:-}" in
+                set)
+                    local _v="${3:-}"
+                    [ "$_v" = "-" ] && { IFS= read -r _v || true; }
+                    [ -n "$_v" ] || { log_error "Использование: panel api-auth set <заголовок|->"; return 1; }
+                    api_auth_set "$_v" ;;
+                clear) api_auth_set "" ;;
+                --json)
+                    printf '{"set":%s}\n' "$([ -n "$(api_auth_current)" ] && echo true || echo false)" ;;
+                *)
+                    [ -n "$(api_auth_current)" ] && echo "задан" || echo "не задан" ;;
+            esac ;;
         status)    panel_show_status ;;
         *)
             echo -e "  ${BOLD}MTProxyL-Panel (веб-панель):${NC}"
@@ -1265,6 +1310,8 @@ handle_panel_command() {
             echo -e "                     Общий путь панели через Selfmask / WEB"
             echo -e "    ${GREEN}panel api-port${NC} [порт]"
             echo -e "                     Порт REST API движка, через который работает панель"
+            echo -e "    ${GREEN}panel api-auth${NC} [set <заголовок|->|clear]"
+            echo -e "                     Заголовок Authorization для REST API движка"
             echo -e "    ${GREEN}panel uninstall${NC}  Удалить"
             ;;
     esac
@@ -1299,6 +1346,7 @@ tui_panel_menu() {
                 echo -e "  ${CYAN}[8]${NC}  ${_selfmask_action}"
             fi
             echo -e "  ${CYAN}[9]${NC}  Порт REST API движка [$(api_port_current)] ${DIM}— через него панель работает с движком${NC}"
+            echo -e "  ${CYAN}[10]${NC} Заголовок авторизации API [$([ -n "$(api_auth_current 2>/dev/null)" ] && echo задан || echo 'не задан')]"
         else
             echo -e "  ${CYAN}[1]${NC}  Установить"
             echo ""
@@ -1368,6 +1416,14 @@ tui_panel_menu() {
                         echo -e "  ${DIM}Порт запишется в [server.api] конфига цели.${NC}"
                     local _ap; read_line _ap "  ${BOLD}Новый порт API [$(api_port_current)]:${NC} "
                     [ -n "$_ap" ] && { api_port_set "$_ap" || true; }
+                    press_any_key ;;
+                10)
+                    echo ""
+                    echo -e "  ${DIM}Значение заголовка Authorization, например: Bearer <токен>.${NC}"
+                    echo -e "  ${DIM}Движок перезапустится, панель получит заголовок сама. «-» — снять.${NC}"
+                    local _ah; read_line _ah "  ${BOLD}Заголовок [Enter — оставить]:${NC} "
+                    if [ "$_ah" = "-" ]; then api_auth_set "" || true
+                    elif [ -n "$_ah" ]; then api_auth_set "$_ah" || true; fi
                     press_any_key ;;
                 0|"") return ;;
             esac

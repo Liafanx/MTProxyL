@@ -544,6 +544,38 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 
 	// Экспорт с лимитами — в обоих режимах: файл из реаниматора импортируется
 	// в менеджер как есть.
+	// Заголовок Authorization к API движка: наружу отдаём только «задан или нет».
+	mux.Handle("GET /api/mtproxyl/api-auth", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		set, err := client.APIAuthSet(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]bool{"set": set}})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/api-auth", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			Value string `json:"value"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		out, err := client.SetAPIAuth(r.Context(), strings.TrimSpace(req.Value))
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
 	mux.Handle("GET /api/mtproxyl/users/export", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
 			return
