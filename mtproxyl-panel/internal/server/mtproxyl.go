@@ -542,6 +542,52 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: list})
 	}))
 
+	// Экспорт с лимитами — в обоих режимах: файл из реаниматора импортируется
+	// в менеджер как есть.
+	mux.Handle("GET /api/mtproxyl/users/export", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		body, err := client.ExportSecrets(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="mtproxyl-secrets.csv"`)
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(body))
+	}))
+
+	mux.Handle("POST /api/mtproxyl/users/import", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			Body string `json:"body"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		if len(req.Body) > 1024*1024 {
+			writeError(w, http.StatusBadRequest, "too_large", "Файл больше 1 МБ")
+			return
+		}
+		if strings.TrimSpace(req.Body) == "" {
+			writeError(w, http.StatusBadRequest, "empty_body", "Пустой файл")
+			return
+		}
+		out, err := client.ImportSecrets(r.Context(), req.Body)
+		invalidateUsersCache()
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
 	mux.Handle("POST /api/mtproxyl/users", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) || busy(w) {
 			return

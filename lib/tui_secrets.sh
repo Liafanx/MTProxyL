@@ -17,6 +17,8 @@ tui_target_users_menu() {
         echo -e "  ${DIM}[7]${NC} Переименовать"
         echo -e "  ${DIM}[8]${NC} Ссылка для подключения"
         echo -e "  ${DIM}[9]${NC} Рекламная метка"
+        echo -e "  ${DIM}[10]${NC} Экспорт пользователей с лимитами"
+        echo -e "  ${DIM}[11]${NC} Импорт пользователей"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         local l
@@ -75,6 +77,15 @@ tui_target_users_menu() {
                     echo -en "  ${BOLD}Рекламная метка:${NC} "; local at; read_line at
                     [ -n "$at" ] && { target_user_adtag "$l" "$at" || true; }
                 fi
+                press_any_key ;;
+            10)
+                target_users_export "/tmp/mtproxyl-secrets-$(date +%Y%m%d).csv" || true
+                echo -e "  ${DIM}Файл подходит для импорта в режиме менеджера${NC}"
+                press_any_key ;;
+            11)
+                echo -e "  ${DIM}Подойдёт экспорт из менеджера или реаниматора и база ${SECRETS_FILE}${NC}"
+                echo -en "  ${BOLD}Файл для импорта:${NC} "; local f; read_line f
+                [ -n "$f" ] && { target_users_import "$f" || true; }
                 press_any_key ;;
             0)  return ;;
         esac
@@ -193,7 +204,7 @@ tui_secrets_menu() {
                 secret_export_file "/tmp/mtproxyl-secrets-$(date +%Y%m%d).csv" || true
                 press_any_key ;;
             12)
-                echo -e "  ${DIM}Подойдёт и экспорт из пункта [11], и сама база ${SECRETS_FILE}${NC}"
+                echo -e "  ${DIM}Подойдёт экспорт из пункта [11] (и из реаниматора), и сама база ${SECRETS_FILE}${NC}"
                 echo -en "  ${BOLD}Файл для импорта:${NC} "; local f; read_line f
                 [ -n "$f" ] && { secret_import_file "$f" || true; }
                 press_any_key ;;

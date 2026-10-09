@@ -30,11 +30,11 @@ const GROUPS: { title: string; description: string; keys: string[] }[] = [
     keys: ['PROXY_CONCURRENCY', 'PROXY_PROTOCOL', 'PROXY_LOG_LEVEL'],
   },
   {
-    title: 'Служебные порты',
+    title: 'Метрики',
     description:
-      'Оба слушаются только на localhost. Меняются не на лету — движок открывает сокеты ' +
-      'при старте, так что нужен перезапуск.',
-    keys: ['PROXY_METRICS_PORT', 'PROXY_API_PORT'],
+      'Слушается только на localhost. Меняется не на лету — движок открывает сокет ' +
+      'при старте, так что нужен перезапуск. Порт API — в «Обслуживании».',
+    keys: ['PROXY_METRICS_PORT'],
   },
 ];
 
@@ -49,7 +49,6 @@ const GROUPED_KEYS = new Set([...GROUPS.flatMap((g) => g.keys), ...MAINTENANCE_K
 const WARNINGS: Record<string, string> = {
   PROXY_PORT: 'Прокси перезапустится, ссылки изменятся, правила гео-блокировки переедут на новый порт.',
   PROXY_DOMAIN: 'Ссылки изменятся — старые перестанут работать.',
-  PROXY_API_PORT: 'После перезапуска поправьте адрес в конфиге панели, иначе она потеряет движок.',
   PROXY_METRICS_PORT: 'Применится только после перезапуска прокси.',
 };
 

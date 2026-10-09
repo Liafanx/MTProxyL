@@ -577,6 +577,12 @@ export interface MtproxylUserLimits {
 
 export const mtproxylUsersApi = {
   list: () => request<MtproxylUser[]>(MTPROXYL_BASE, '/users'),
+  exportUrl: () => `${MTPROXYL_BASE}/users/export`,
+  importFile: (body: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/users/import', {
+      method: 'POST',
+      body: JSON.stringify({ body }),
+    }),
   create: (label: string, secret?: string) =>
     request<{ output: string }>(MTPROXYL_BASE, '/users', {
       method: 'POST',

@@ -487,6 +487,33 @@ SUDO_EOF
         && log_success "Панель получила доступ к журналу ${ENGINE_SERVICE}"
 }
 
+# Панель ходит к движку по [telemt] url из своего конфига и читает его при
+# старте. Перезапуск отложен и вынесен из её cgroup: команду могла вызвать
+# сама панель, и мгновенный restart оборвал бы ответ ей.
+panel_sync_api_port() {
+    local _port="$1" _cfg="${PANEL_CONFIG_DIR}/config.toml" _url _new _tmp
+    panel_installed 2>/dev/null && [ -f "$_cfg" ] || return 0
+    _url=$(awk '
+        /^[[:space:]]*\[/ { insect = ($0 ~ /^[[:space:]]*\[telemt\]/) }
+        insect && /^[[:space:]]*url[[:space:]]*=/ { sub(/^[^=]*=[[:space:]]*"/, ""); sub(/".*$/, ""); print; exit }
+    ' "$_cfg")
+    [ -n "$_url" ] || return 0
+    _new=$(printf '%s' "${_url%/}" | sed -E "s#^([a-z]+://[^/]*):[0-9]+#\\1:${_port}#; t; s#^([a-z]+://[^/:]+)#\\1:${_port}#")
+    [ "$_new" != "$_url" ] || return 0
+    _tmp=$(_mktemp "$PANEL_CONFIG_DIR") || return 1
+    awk -v u="$_new" '
+        /^[[:space:]]*\[/ { insect = ($0 ~ /^[[:space:]]*\[telemt\]/) }
+        insect && !done && /^[[:space:]]*url[[:space:]]*=/ { print "url = \"" u "\""; done = 1; next }
+        { print }
+    ' "$_cfg" > "$_tmp" && cat "$_tmp" > "$_cfg"
+    rm -f "$_tmp"
+    if ! systemd-run --quiet --on-active=3 --unit="mtproxyl-panel-reload-$$" \
+            systemctl restart "$PANEL_SERVICE" &>/dev/null; then
+        systemctl restart "$PANEL_SERVICE" &>/dev/null || true
+    fi
+    log_success "Панель переключена на ${_new} и перезапустится через несколько секунд"
+}
+
 # Пользователь, от которого работает панель: в юните он и записан.
 _panel_system_user() {
     local _u

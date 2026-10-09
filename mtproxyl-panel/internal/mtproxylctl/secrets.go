@@ -101,6 +101,24 @@ func (c *Client) RemoveSecret(ctx context.Context, label string) (string, error)
 	return stripANSI(out), err
 }
 
+// ExportSecrets returns users with their limits in the CLI export format
+// (label|key|enabled|max_conns|max_ips|quota|expires|notes|ad_tag). Works in
+// both modes, so a Reanimator export imports into Manager unchanged.
+func (c *Client) ExportSecrets(ctx context.Context) (string, error) {
+	out, err := c.run(ctx, "secret", "export", "-")
+	if err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+// ImportSecrets adds users from text in the export format; existing labels
+// are skipped by the CLI.
+func (c *Client) ImportSecrets(ctx context.Context, body string) (string, error) {
+	out, err := c.runWithStdin(ctx, body, "secret", "import", "-")
+	return stripANSI(out), err
+}
+
 // RotateSecret issues a new key for a user, invalidating their old links.
 func (c *Client) RotateSecret(ctx context.Context, label string) (string, error) {
 	if err := ValidateSecretLabel(label); err != nil {

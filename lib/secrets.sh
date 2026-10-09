@@ -79,58 +79,71 @@ load_secrets() {
     done < "$SECRETS_FILE"
 }
 
-# Импорт: понимает и экспорт из меню, и файл базы секретов. Формат
-# распознаётся по третьему полю — у базы там метка времени (issue #29).
+# Разбор строки импорта в _IMP_*. Понимает экспорт (из менеджера и из
+# реаниматора) и файл базы секретов: у базы в третьем поле метка времени (issue #29).
+_secret_parse_line() {
+    local -a _f=()
+    IFS='|' read -ra _f <<< "$1"
+    _IMP_L="${_f[0]:-}"; _IMP_K="${_f[1]:-}"
+    [[ "$_IMP_L" =~ ^[a-zA-Z0-9_-]+$ ]] && [ ${#_IMP_L} -le 32 ] || return 1
+    [[ "$_IMP_K" =~ ^[0-9a-fA-F]{32}$ ]] || return 1
+    if [[ "${_f[2]:-}" =~ ^[0-9]{9,}$ ]]; then
+        _IMP_CR="${_f[2]}";     _IMP_EN="${_f[3]:-true}"; _IMP_MC="${_f[4]:-0}"; _IMP_MI="${_f[5]:-0}"
+        _IMP_Q="${_f[6]:-0}";   _IMP_EX="${_f[7]:-0}";    _IMP_N="${_f[8]:-}";   _IMP_AT="${_f[9]:-}"
+    else
+        _IMP_CR="$(date +%s)";  _IMP_EN="${_f[2]:-true}"; _IMP_MC="${_f[3]:-0}"; _IMP_MI="${_f[4]:-0}"
+        _IMP_Q="${_f[5]:-0}";   _IMP_EX="${_f[6]:-0}";    _IMP_N="${_f[7]:-}";   _IMP_AT="${_f[8]:-}"
+    fi
+    # Те же проверки, что в load_secrets: чужой файл приносит что угодно.
+    [[ "$_IMP_MC" =~ ^[0-9]+$ ]] || _IMP_MC="0"
+    [[ "$_IMP_MI" =~ ^[0-9]+$ ]] || _IMP_MI="0"
+    [[ "$_IMP_Q"  =~ ^[0-9]+$ ]] || _IMP_Q="0"
+    [ "$_IMP_EN" = "true" ] || [ "$_IMP_EN" = "false" ] || _IMP_EN="true"
+    if [ -z "$_IMP_EX" ] || { [ "$_IMP_EX" != "0" ] \
+        && ! [[ "$_IMP_EX" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9:Z+.-]+)?$ ]]; }; then
+        _IMP_EX="0"
+    fi
+    [[ "$_IMP_AT" =~ ^[0-9a-fA-F]{32}$ ]] || _IMP_AT=""
+    _IMP_N="${_IMP_N//|/ }"
+    return 0
+}
+
+# «-» вместо файла — данные со стандартного ввода (так их передаёт панель).
+_secret_import_source() {
+    if [ "${1:-}" = "-" ]; then
+        local _tmp; _tmp=$(_mktemp) || return 1
+        cat > "$_tmp"
+        echo "$_tmp"
+        return 0
+    fi
+    [ -f "${1:-}" ] || { log_error "Файл не найден: ${1:-}"; return 1; }
+    echo "$1"
+}
+
 secret_import_file() {
-    local _file="${1:-}"
-    [ -f "$_file" ] || { log_error "Файл не найден: ${_file}"; return 1; }
+    local _file; _file=$(_secret_import_source "${1:-}") || return 1
 
     local _added=0 _dup=0 _bad=0 _line
+    local _IMP_L _IMP_K _IMP_CR _IMP_EN _IMP_MC _IMP_MI _IMP_Q _IMP_EX _IMP_N _IMP_AT
     while IFS= read -r _line || [ -n "$_line" ]; do
         [[ "$_line" =~ ^[[:space:]]*# ]] && continue
         [[ "$_line" =~ ^[[:space:]]*$ ]] && continue
-
-        local _oldIFS="$IFS"
-        declare -a _f=()
-        IFS='|' read -ra _f <<< "$_line"
-        IFS="$_oldIFS"
-
-        local _l="${_f[0]:-}" _k="${_f[1]:-}"
-        [[ "$_l" =~ ^[a-zA-Z0-9_-]+$ ]] && [ ${#_l} -le 32 ] || { _bad=$((_bad + 1)); continue; }
-        [[ "$_k" =~ ^[0-9a-fA-F]{32}$ ]] || { _bad=$((_bad + 1)); continue; }
-
-        local _cr _en _mc _mi _q _ex _n _at
-        if [[ "${_f[2]:-}" =~ ^[0-9]{9,}$ ]]; then
-            _cr="${_f[2]}";     _en="${_f[3]:-true}"; _mc="${_f[4]:-0}"; _mi="${_f[5]:-0}"
-            _q="${_f[6]:-0}";   _ex="${_f[7]:-0}";    _n="${_f[8]:-}";   _at="${_f[9]:-}"
-        else
-            _cr="$(date +%s)";  _en="${_f[2]:-true}"; _mc="${_f[3]:-0}"; _mi="${_f[4]:-0}"
-            _q="${_f[5]:-0}";   _ex="${_f[6]:-0}";    _n="${_f[7]:-}";   _at="${_f[8]:-}"
-        fi
+        _secret_parse_line "$_line" || { _bad=$((_bad + 1)); continue; }
 
         local _i _exists=false
         for _i in "${!SECRETS_LABELS[@]}"; do
-            [ "${SECRETS_LABELS[$_i]}" = "$_l" ] && { _exists=true; break; }
+            [ "${SECRETS_LABELS[$_i]}" = "$_IMP_L" ] && { _exists=true; break; }
         done
         if $_exists; then _dup=$((_dup + 1)); continue; fi
 
-        # Те же проверки, что в load_secrets: чужой файл приносит что угодно.
-        [[ "$_mc" =~ ^[0-9]+$ ]] || _mc="0"
-        [[ "$_mi" =~ ^[0-9]+$ ]] || _mi="0"
-        [[ "$_q"  =~ ^[0-9]+$ ]] || _q="0"
-        [ "$_en" = "true" ] || [ "$_en" = "false" ] || _en="true"
-        if [ "$_ex" != "0" ] && ! [[ "$_ex" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}(T[0-9:Z+.-]+)?$ ]]; then
-            _ex="0"
-        fi
-        [[ "$_at" =~ ^[0-9a-fA-F]{32}$ ]] || _at=""
-
-        SECRETS_LABELS+=("$_l");   SECRETS_KEYS+=("$_k")
-        SECRETS_CREATED+=("$_cr"); SECRETS_ENABLED+=("$_en")
-        SECRETS_MAX_CONNS+=("$_mc"); SECRETS_MAX_IPS+=("$_mi")
-        SECRETS_QUOTA+=("$_q");    SECRETS_EXPIRES+=("$_ex")
-        SECRETS_NOTES+=("${_n//|/ }"); SECRETS_ADTAG+=("$_at")
+        SECRETS_LABELS+=("$_IMP_L");   SECRETS_KEYS+=("$_IMP_K")
+        SECRETS_CREATED+=("$_IMP_CR"); SECRETS_ENABLED+=("$_IMP_EN")
+        SECRETS_MAX_CONNS+=("$_IMP_MC"); SECRETS_MAX_IPS+=("$_IMP_MI")
+        SECRETS_QUOTA+=("$_IMP_Q");    SECRETS_EXPIRES+=("$_IMP_EX")
+        SECRETS_NOTES+=("$_IMP_N");    SECRETS_ADTAG+=("$_IMP_AT")
         _added=$((_added + 1))
     done < "$_file"
+    [ "${1:-}" != "-" ] || rm -f "$_file"
 
     if [ "$_added" -gt 0 ]; then
         save_secrets
@@ -140,22 +153,31 @@ secret_import_file() {
     return 0
 }
 
-# Экспорт секретов в файл того же формата, что читает secret_import_file.
-secret_export_file() {
-    local _file="${1:-}"
-    [ -n "$_file" ] || { log_error "Требуется имя файла"; return 1; }
+_SECRET_EXPORT_HEADER="# label|key|enabled|max_conns|max_ips|quota|expires|notes|ad_tag"
 
+# Экспорт в формате, который читает импорт. «-» — в стандартный вывод.
+_secret_export_write() {
+    local _file="$1" _rows="$2" _count="$3"
+    [ -n "$_file" ] || { log_error "Требуется имя файла"; return 1; }
+    if [ "$_file" = "-" ]; then
+        printf '%s\n%s' "$_SECRET_EXPORT_HEADER" "$_rows"
+        return 0
+    fi
     local _tmp; _tmp=$(_mktemp "$(dirname "$_file")") || { log_error "Не удалось создать временный файл"; return 1; }
-    echo "# label|key|enabled|max_conns|max_ips|quota|expires|notes|ad_tag" > "$_tmp"
-    local _i
-    for _i in "${!SECRETS_LABELS[@]}"; do
-        # «|» в заметке сдвинул бы поля при обратном импорте.
-        local _note="${SECRETS_NOTES[$_i]:-}"; _note="${_note//|/ }"
-        echo "${SECRETS_LABELS[$_i]}|${SECRETS_KEYS[$_i]}|${SECRETS_ENABLED[$_i]}|${SECRETS_MAX_CONNS[$_i]:-0}|${SECRETS_MAX_IPS[$_i]:-0}|${SECRETS_QUOTA[$_i]:-0}|${SECRETS_EXPIRES[$_i]:-0}|${_note}|${SECRETS_ADTAG[$_i]:-}" >> "$_tmp"
-    done
+    printf '%s\n%s' "$_SECRET_EXPORT_HEADER" "$_rows" > "$_tmp"
     chmod 600 "$_tmp"
     mv "$_tmp" "$_file"
-    log_success "Экспортировано ${#SECRETS_LABELS[@]} секретов в ${_file}"
+    log_success "Экспортировано ${_count} секретов в ${_file}"
+}
+
+secret_export_file() {
+    local _rows="" _i _note
+    for _i in "${!SECRETS_LABELS[@]}"; do
+        # «|» в заметке сдвинул бы поля при обратном импорте.
+        _note="${SECRETS_NOTES[$_i]:-}"; _note="${_note//|/ }"
+        _rows+="${SECRETS_LABELS[$_i]}|${SECRETS_KEYS[$_i]}|${SECRETS_ENABLED[$_i]}|${SECRETS_MAX_CONNS[$_i]:-0}|${SECRETS_MAX_IPS[$_i]:-0}|${SECRETS_QUOTA[$_i]:-0}|${SECRETS_EXPIRES[$_i]:-0}|${_note}|${SECRETS_ADTAG[$_i]:-}"$'\n'
+    done
+    _secret_export_write "${1:-}" "$_rows" "${#SECRETS_LABELS[@]}"
 }
 
 # Добавить секрет
@@ -1475,6 +1497,54 @@ target_users_list() {
     echo ""
 }
 
+# Экспорт пользователей цели в формате менеджера: файл переносится в режим
+# менеджера (или на другую цель) обычным импортом.
+target_users_export() {
+    _target_users_ready || return 1
+    local _rows="" _n=0 _st _lb _key _c _i _q _e _a
+    while IFS='|' read -r _st _lb _key; do
+        [ -n "$_lb" ] || continue
+        _c=$(_target_user_limit "$_lb" "access.user_max_tcp_conns")
+        _i=$(_target_user_limit "$_lb" "access.user_max_unique_ips")
+        _q=$(_target_user_limit "$_lb" "access.user_data_quota")
+        _e=$(_target_user_limit "$_lb" "access.user_expirations")
+        _a=$(_target_user_limit "$_lb" "access.user_ad_tags")
+        _rows+="${_lb}|${_key}|$([ "$_st" = on ] && echo true || echo false)|${_c:-0}|${_i:-0}|${_q:-0}|${_e:-0}||${_a}"$'\n'
+        _n=$((_n + 1))
+    done < <(_target_section_pairs "access.users")
+    _secret_export_write "${1:-}" "$_rows" "$_n"
+}
+
+# Импорт в конфиг цели: тот же формат, существующие метки пропускаются.
+# Заметок у цели нет — они теряются.
+target_users_import() {
+    _target_users_ready || return 1
+    local _file; _file=$(_secret_import_source "${1:-}") || return 1
+    local _added=0 _dup=0 _bad=0 _line _ex _backed=""
+    local _IMP_L _IMP_K _IMP_CR _IMP_EN _IMP_MC _IMP_MI _IMP_Q _IMP_EX _IMP_N _IMP_AT
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        [[ "$_line" =~ ^[[:space:]]*# ]] && continue
+        [[ "$_line" =~ ^[[:space:]]*$ ]] && continue
+        _secret_parse_line "$_line" || { _bad=$((_bad + 1)); continue; }
+        [ -z "$(_target_user_state "$_IMP_L")" ] || { _dup=$((_dup + 1)); continue; }
+        _ex=$(_normalize_expiry "$_IMP_EX" 2>/dev/null) || _ex="0"
+        [ -n "$_backed" ] || { backup_target_config "users" "true" || true; _backed=1; }
+        _target_set_in_section "$_IMP_L" "\"${_IMP_K}\"" "access.users" || { _bad=$((_bad + 1)); continue; }
+        _target_users_set_limit "$_IMP_L" "access.user_max_tcp_conns" "$_IMP_MC" num
+        _target_users_set_limit "$_IMP_L" "access.user_max_unique_ips" "$_IMP_MI" num
+        _target_users_set_limit "$_IMP_L" "access.user_data_quota" "$_IMP_Q" num
+        _target_users_set_limit "$_IMP_L" "access.user_expirations" "$_ex" str
+        _target_users_set_limit "$_IMP_L" "access.user_ad_tags" "$_IMP_AT" str
+        [ "$_IMP_EN" = "true" ] || _toml_toggle_key "$_IMP_L" "access.users" "$DETECTED_CONFIG_PATH" "off" || true
+        web_target_add_profile "$_IMP_L" >/dev/null 2>&1 || true
+        _added=$((_added + 1))
+    done < "$_file"
+    [ "${1:-}" != "-" ] || rm -f "$_file"
+    log_success "Импортировано: ${_added}, пропущено дубликатов: ${_dup}, строк с ошибкой: ${_bad}"
+    [ -n "${TARGET_CONFIG_BACKUP:-}" ] && log_info "Резервная копия: ${TARGET_CONFIG_BACKUP}"
+    [ "$_added" -eq 0 ] || _target_users_apply
+}
+
 # Те же подкоманды, что у менеджера, но поверх конфига цели. Набор намеренно
 # совпадает: панель дёргает 'mtproxyl secret ...' одинаково в обоих режимах, и
 # расхождение в именах означало бы вторую реализацию на её стороне.
@@ -1499,6 +1569,8 @@ handle_target_user_command() {
             target_user_setlimits "$_l" "${1:-0}" "${2:-0}" "${3:-0}" "${4:-}" ;;
         limits)   target_user_show_limits "${1:-}" ;;
         adtag)    check_root; target_user_adtag "${1:-}" "${2:-}" ;;
+        export)   check_root; target_users_export "${1:--}" ;;
+        import)   check_root; target_users_import "${1:-}" ;;
         link)
             local _links; _links=$(target_user_link "${1:-}") || {
                 log_error "Пользователь '${1:-}' не найден у цели"; return 1; }
@@ -1531,6 +1603,8 @@ handle_target_user_command() {
             echo -e "                              Рекламная метка пользователя"
             echo -e "    ${GREEN}secret link${NC} <метка>        Ссылка"
             echo -e "    ${GREEN}secret qr${NC} <метка>          Ссылки (устар., = link)"
+            echo -e "    ${GREEN}secret export${NC} [файл|-]     Экспорт с лимитами (по умолчанию в вывод)"
+            echo -e "    ${GREEN}secret import${NC} <файл|->     Импорт (существующие метки пропускаются)"
             ;;
     esac
 }
@@ -1566,7 +1640,7 @@ handle_secret_command() {
     # 'secret list --json' (запрос панели) попадал в ветку пишущих команд и в
     # режиме супер эксперта отказывал, хотя ничего не пишет.
     case "$subcmd" in
-        list|link|qr|"") ;;
+        list|link|qr|export|"") ;;
         *) _require_no_superexpert || return 1 ;;
     esac
     case "$subcmd" in
@@ -1590,6 +1664,8 @@ handle_secret_command() {
         link)     get_proxy_links "${1:-}"; echo "" ;;
         clone)    check_root; secret_clone "$1" "$2" ;;
         rename)   check_root; secret_rename "$1" "$2" ;;
+        export)   check_root; secret_export_file "${1:--}" ;;
+        import)   check_root; secret_import_file "${1:-}" ;;
         qr)
             # QR из терминала убран: остаются те же ссылки текстом.
             local links; links=$(get_proxy_links "${1:-}") || return 1
@@ -1609,6 +1685,8 @@ handle_secret_command() {
             echo -e "    ${GREEN}secret qr${NC} [метка]         Ссылки (устар., = link)"
             echo -e "    ${GREEN}secret clone${NC} <из> <в>     Клонировать"
             echo -e "    ${GREEN}secret rename${NC} <из> <в>    Переименовать"
+            echo -e "    ${GREEN}secret export${NC} [файл|-]    Экспорт с лимитами (по умолчанию в вывод)"
+            echo -e "    ${GREEN}secret import${NC} <файл|->    Импорт (существующие метки пропускаются)"
             ;;
     esac
 }

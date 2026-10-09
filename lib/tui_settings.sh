@@ -256,27 +256,10 @@ tui_settings_menu() {
                 echo ""
                 echo -e "  ${DIM}REST API движка (только localhost). Через него работает веб-панель.${NC}"
                 echo -e "  ${DIM}Текущий: 127.0.0.1:${PROXY_API_PORT:-9091}${NC}"
-                echo -e "  ${YELLOW}После смены порта поправьте адрес в конфиге панели:${NC}"
-                echo -e "  ${DIM}  /etc/mtproxyl-panel/config.toml → [telemt] url${NC}"
+                echo -e "  ${DIM}Прокси перезапустится, панель переключится на новый порт сама.${NC}"
                 echo ""
-                while true; do
-                    local _ap; read_line _ap "  ${BOLD}Новый порт API [${PROXY_API_PORT:-9091}]:${NC} "
-                    [ -z "$_ap" ] && break
-                    if ! validate_port "$_ap"; then
-                        log_error "Некорректный порт"; continue
-                    fi
-                    if [ "$_ap" = "${PROXY_METRICS_PORT:-9090}" ] || [ "$_ap" = "${PROXY_PORT:-443}" ]; then
-                        log_error "Этот порт уже занят самим прокси или метриками"; continue
-                    fi
-                    if is_port_available "$_ap"; then
-                        PROXY_API_PORT="$_ap"
-                        save_settings
-                        log_success "Порт API установлен: ${PROXY_API_PORT}"
-                        is_proxy_running && { load_secrets; restart_proxy_container || true; }
-                        break
-                    fi
-                    log_error "Порт ${_ap} уже занят, попробуйте другой"
-                done
+                local _ap; read_line _ap "  ${BOLD}Новый порт API [${PROXY_API_PORT:-9091}]:${NC} "
+                [ -n "$_ap" ] && { api_port_set "$_ap" || true; }
                 press_any_key ;;
             12) show_config; press_any_key ;;
             13)

@@ -19,7 +19,11 @@ export const MAINTENANCE_KEYS = [
   'BACKUP_RETENTION_DAYS',
   'IP_HISTORY_LIMIT',
   'IP_HISTORY_INTERVAL',
+  'PROXY_API_PORT',
 ];
+
+/** После смены порта API движок и панель перезапускаются — страницу перечитываем. */
+const API_PORT_RELOAD_MS = 8000;
 
 /** Бэкапы — только у менеджера, у чужой цели их делать нечем. */
 const MANAGER_ONLY_KEYS = new Set(['BACKUP_RETENTION_DAYS']);
@@ -101,8 +105,13 @@ export function MaintenancePage() {
       for (const key of dirty) {
         await mtproxylSettingsApi.set(key, edits[key]);
       }
-      setNotice(`Сохранено настроек: ${dirty.length}`);
       setError(null);
+      if (dirty.includes('PROXY_API_PORT')) {
+        setNotice('Порт API изменён: движок перезапущен, панель переподключается — страница обновится сама.');
+        window.setTimeout(() => window.location.reload(), API_PORT_RELOAD_MS);
+        return;
+      }
+      setNotice(`Сохранено настроек: ${dirty.length}`);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось сохранить настройки');
@@ -119,7 +128,9 @@ export function MaintenancePage() {
         <p className="text-sm text-text-secondary mt-1">
           Настройки самого MTProxyL: в конфиг движка они не попадают. Глубина истории IP
           и перезапуск при падении DC работают в обоих режимах, хранение бэкапов — только
-          в Manager, потому что бэкапить чужую цель нечем.
+          в Manager, потому что бэкапить чужую цель нечем. Порт REST API, через который
+          панель работает с движком, меняется в обоих режимах: в реаниматоре — в конфиге
+          цели. Движок перезапустится, панель переключится на новый порт сама.
         </p>
       </div>
 
