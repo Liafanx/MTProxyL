@@ -50,7 +50,6 @@ tui_settings_menu() {
         echo -e "  ${DIM}[9]${NC} PROXY protocol вкл/выкл"
         echo -e "  ${DIM}[10]${NC} Управление движком"
         echo -e "  ${DIM}[11]${NC} Изменить порт метрик"        
-        echo -e "  ${DIM}[16]${NC} Изменить порт REST API [${PROXY_API_PORT:-9091}]"
         echo -e "  ${DIM}[12]${NC} Просмотр текущего конфига"
         echo -e "  ${DIM}[13]${NC} Тюнинг движка (tune) Telemt"
         echo -e "  ${DIM}[14]${NC} Пользовательские URL Telegram"
@@ -251,15 +250,6 @@ tui_settings_menu() {
                         log_error "Некорректный порт"
                     fi
                 done
-                press_any_key ;;
-            16)
-                echo ""
-                echo -e "  ${DIM}REST API движка (только localhost). Через него работает веб-панель.${NC}"
-                echo -e "  ${DIM}Текущий: 127.0.0.1:${PROXY_API_PORT:-9091}${NC}"
-                echo -e "  ${DIM}Прокси перезапустится, панель переключится на новый порт сама.${NC}"
-                echo ""
-                local _ap; read_line _ap "  ${BOLD}Новый порт API [${PROXY_API_PORT:-9091}]:${NC} "
-                [ -n "$_ap" ] && { api_port_set "$_ap" || true; }
                 press_any_key ;;
             12) show_config; press_any_key ;;
             13)

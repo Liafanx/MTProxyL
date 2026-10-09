@@ -33,7 +33,7 @@ const GROUPS: { title: string; description: string; keys: string[] }[] = [
     title: 'Метрики',
     description:
       'Слушается только на localhost. Меняется не на лету — движок открывает сокет ' +
-      'при старте, так что нужен перезапуск. Порт API — в «Обслуживании».',
+      'при старте, так что нужен перезапуск. Порт API — в «Настройках панели».',
     keys: ['PROXY_METRICS_PORT'],
   },
 ];
@@ -43,7 +43,7 @@ const GROUPS: { title: string; description: string; keys: string[] }[] = [
  * оно доступно в обоих режимах, и дублировать их здесь незачем. Всё остальное
  * показываем блоком «Прочее», чтобы новая настройка не пропала молча.
  */
-const GROUPED_KEYS = new Set([...GROUPS.flatMap((g) => g.keys), ...MAINTENANCE_KEYS]);
+const GROUPED_KEYS = new Set([...GROUPS.flatMap((g) => g.keys), ...MAINTENANCE_KEYS, 'PROXY_API_PORT']);
 
 /** Ключи, смена которых рвёт активные соединения или требует действий от вас. */
 const WARNINGS: Record<string, string> = {

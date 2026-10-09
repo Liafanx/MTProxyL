@@ -1246,6 +1246,8 @@ handle_panel_command() {
         password)  panel_password ;;
         cert)      panel_issue_cert "${2:-}" "${3:-}" ;;
         selfmask)  handle_panel_selfmask_command "${2:-status}" "${3:-}" ;;
+        api-port)
+            if [ -n "${2:-}" ]; then check_root; api_port_set "$2"; else api_port_current; fi ;;
         status)    panel_show_status ;;
         *)
             echo -e "  ${BOLD}MTProxyL-Panel (веб-панель):${NC}"
@@ -1261,6 +1263,8 @@ handle_panel_command() {
             echo -e "                     Выпустить сертификат Let's Encrypt"
             echo -e "    ${GREEN}panel selfmask${NC} [status|on [путь]|rotate|off]"
             echo -e "                     Общий путь панели через Selfmask / WEB"
+            echo -e "    ${GREEN}panel api-port${NC} [порт]"
+            echo -e "                     Порт REST API движка, через который работает панель"
             echo -e "    ${GREEN}panel uninstall${NC}  Удалить"
             ;;
     esac
@@ -1294,6 +1298,7 @@ tui_panel_menu() {
                     _selfmask_action="Общий путь панели: управление"
                 echo -e "  ${CYAN}[8]${NC}  ${_selfmask_action}"
             fi
+            echo -e "  ${CYAN}[9]${NC}  Порт REST API движка [$(api_port_current)] ${DIM}— через него панель работает с движком${NC}"
         else
             echo -e "  ${CYAN}[1]${NC}  Установить"
             echo ""
@@ -1356,6 +1361,14 @@ tui_panel_menu() {
                     fi
                     press_any_key
                     ;;
+                9)
+                    echo ""
+                    echo -e "  ${DIM}Движок перезапустится, панель переключится на новый порт сама.${NC}"
+                    [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && \
+                        echo -e "  ${DIM}Порт запишется в [server.api] конфига цели.${NC}"
+                    local _ap; read_line _ap "  ${BOLD}Новый порт API [$(api_port_current)]:${NC} "
+                    [ -n "$_ap" ] && { api_port_set "$_ap" || true; }
+                    press_any_key ;;
                 0|"") return ;;
             esac
         else

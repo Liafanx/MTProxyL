@@ -58,8 +58,6 @@ tui_target_menu() {
             fi
             echo -e "  ${DIM}[6]${NC} Версия telemt: обновить или откатить ${DIM}(только бинарник)${NC}"
         fi
-        [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && \
-            echo -e "  ${DIM}[7]${NC} Порт REST API цели [$(api_port_current)] ${DIM}(через него работает панель)${NC}"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
@@ -100,11 +98,6 @@ tui_target_menu() {
             6)
                 [ "$_telemt_item" = "true" ] || continue
                 _tui_target_engine ;;
-            7)
-                [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] || continue
-                local _ap; read_line _ap "  ${BOLD}Новый порт API [$(api_port_current)]:${NC} "
-                [ -n "$_ap" ] && { api_port_set "$_ap" || true; }
-                press_any_key ;;
             0|"") return ;;
         esac
     done
