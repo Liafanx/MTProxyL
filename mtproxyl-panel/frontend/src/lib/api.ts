@@ -528,6 +528,15 @@ export interface MtproxylSetting {
   value: string;
 }
 
+export const mtproxylApiAuthApi = {
+  get: () => request<{ set: boolean }>(MTPROXYL_BASE, '/api-auth'),
+  set: (value: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/api-auth', {
+      method: 'POST',
+      body: JSON.stringify({ value }),
+    }),
+};
+
 export const mtproxylSettingsApi = {
   list: () => request<MtproxylSetting[]>(MTPROXYL_BASE, '/settings'),
   set: (key: string, value: string) =>

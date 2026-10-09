@@ -40,3 +40,24 @@ func TestSecretsExportImport(t *testing.T) {
 		t.Errorf("unexpected import output %q", out)
 	}
 }
+
+// The header travels through stdin; quotes and pipes are refused before the CLI.
+func TestAPIAuth(t *testing.T) {
+	c := newStubClient(t)
+	set, err := c.APIAuthSet(context.Background())
+	if err != nil || !set {
+		t.Fatalf("APIAuthSet = %v, %v", set, err)
+	}
+	out, err := c.SetAPIAuth(context.Background(), "Bearer abc")
+	if err != nil || !strings.Contains(out, "got:Bearer abc") {
+		t.Fatalf("set: %q, %v", out, err)
+	}
+	if out, err = c.SetAPIAuth(context.Background(), ""); err != nil || !strings.Contains(out, "cleared") {
+		t.Fatalf("clear: %q, %v", out, err)
+	}
+	for _, bad := range []string{`a"b`, "a|b", "a\nb", `a\b`} {
+		if _, err := c.SetAPIAuth(context.Background(), bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

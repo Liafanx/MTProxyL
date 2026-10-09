@@ -49,4 +49,18 @@ api_port_set 9201 >/dev/null
 grep -qx 'url = "http://127.0.0.1:9201"' "$PANEL_CONFIG_DIR/config.toml"
 [ "$restarted" -eq 2 ]
 
+# Auth header: target [server.api] and the panel's [telemt] follow; clearing removes both.
+api_auth_set "Bearer abc123" >/dev/null
+[ "$(_get_telemt_auth_header)" = "Bearer abc123" ]
+grep -qx 'auth_header = "Bearer abc123"' "$PANEL_CONFIG_DIR/config.toml"
+[ "$(awk '/^\[telemt\]/{t=1} t&&/^auth_header/{print NR}' "$PANEL_CONFIG_DIR/config.toml")" -gt 0 ]
+api_auth_set "Bearer xyz" >/dev/null
+[ "$(grep -c '^auth_header' "$PANEL_CONFIG_DIR/config.toml")" -eq 1 ]
+if api_auth_set 'bad"quote' 2>/dev/null; then exit 1; fi
+if api_auth_set 'a|b' 2>/dev/null; then exit 1; fi
+api_auth_set "" >/dev/null
+[ -z "$(_get_telemt_auth_header)" ]
+if grep -q '^auth_header' "$PANEL_CONFIG_DIR/config.toml"; then exit 1; fi
+grep -qx 'listen = "127.0.0.1:9201"' "$DETECTED_CONFIG_PATH"
+
 echo 'api port: ok'

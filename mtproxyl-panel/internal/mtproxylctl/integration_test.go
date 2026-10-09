@@ -73,6 +73,15 @@ case "$1 $2 $3" in
   "secret import -")
     echo "  [✓] Импортировано: $(grep -vc '^#'), пропущено дубликатов: 0, строк с ошибкой: 0"
     ;;
+  "panel api-auth --json")
+    echo '{"set":true}'
+    ;;
+  "panel api-auth set")
+    [ "$4" = "-" ] && read -r v && echo "  [✓] got:$v"
+    ;;
+  "panel api-auth clear")
+    echo "  [✓] cleared"
+    ;;
   "superexpert write ")
     # Отражаем stdin, чтобы тест мог убедиться: он действительно доходит.
     cat

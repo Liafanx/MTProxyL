@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 // Secret is one entry of `mtproxyl secret list --json`. MTProxyL calls these
@@ -98,6 +99,38 @@ func (c *Client) RemoveSecret(ctx context.Context, label string) (string, error)
 		return "", err
 	}
 	out, err := c.run(ctx, "secret", "remove", label)
+	return stripANSI(out), err
+}
+
+// APIAuthSet reports whether the engine API requires an Authorization header.
+// The value itself never leaves the server.
+func (c *Client) APIAuthSet(ctx context.Context) (bool, error) {
+	out, err := c.run(ctx, "panel", "api-auth", "--json")
+	if err != nil {
+		return false, err
+	}
+	var r struct {
+		Set bool `json:"set"`
+	}
+	if err := json.Unmarshal([]byte(firstJSONLine(out)), &r); err != nil {
+		return false, fmt.Errorf("api-auth: %w", err)
+	}
+	return r.Set, nil
+}
+
+// SetAPIAuth sets the engine API Authorization header (empty clears it). The
+// value goes through stdin so it stays out of the process list and sudo logs.
+func (c *Client) SetAPIAuth(ctx context.Context, value string) (string, error) {
+	if strings.ContainsAny(value, "\"'\\|\r\n") || len(value) > 512 {
+		return "", fmt.Errorf("заголовок: до 512 символов, без кавычек, \\ и |")
+	}
+	var out string
+	var err error
+	if value == "" {
+		out, err = c.run(ctx, "panel", "api-auth", "clear")
+	} else {
+		out, err = c.runWithStdin(ctx, value+"\n", "panel", "api-auth", "set", "-")
+	}
 	return stripANSI(out), err
 }
 

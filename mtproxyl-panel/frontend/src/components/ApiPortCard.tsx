@@ -1,19 +1,19 @@
 import { useEffect, useState } from 'react';
-import { Save } from 'lucide-react';
+import { Save, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useMtproxyl } from '@/hooks/useMtproxyl';
-import { mtproxylSettingsApi } from '@/lib/api';
+import { mtproxylApiAuthApi, mtproxylSettingsApi } from '@/lib/api';
 
 /** После смены порта движок и панель перезапускаются — страницу перечитываем. */
 const RELOAD_MS = 8000;
 
 /**
- * Порт REST API движка, через который панель с ним работает. Меняет его
- * MTProxyL: в менеджере — свою настройку, в реаниматоре — конфиг цели, — и сам
- * переключает панель на новый порт.
+ * Порт и заголовок авторизации REST API движка, через который панель с ним
+ * работает. Меняет их MTProxyL: в менеджере — свои настройки, в реаниматоре —
+ * конфиг цели, — и сам переключает панель на новые значения.
  */
 export function ApiPortCard({ onError, onNotice }: {
   onError: (msg: string) => void;
@@ -23,6 +23,8 @@ export function ApiPortCard({ onError, onNotice }: {
   const [current, setCurrent] = useState('');
   const [value, setValue] = useState('');
   const [saving, setSaving] = useState(false);
+  const [authSet, setAuthSet] = useState<boolean | null>(null);
+  const [auth, setAuth] = useState('');
 
   useEffect(() => {
     if (!enabled) return;
@@ -33,28 +35,40 @@ export function ApiPortCard({ onError, onNotice }: {
         setValue(v);
       })
       .catch(() => setCurrent(''));
+    mtproxylApiAuthApi.get()
+      .then((r) => setAuthSet(r.set))
+      .catch(() => setAuthSet(null));
   }, [enabled]);
 
   if (!enabled || !current) return null;
 
   const valid = /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 65535;
 
-  const save = async () => {
+  const apply = async (run: () => Promise<unknown>, done: string, fail: string) => {
     setSaving(true);
     try {
-      await mtproxylSettingsApi.set('PROXY_API_PORT', value);
-      onNotice('Порт API изменён: движок перезапущен, панель переподключается — страница обновится сама.');
+      await run();
+      onNotice(`${done}: движок перезапущен, панель переподключается — страница обновится сама.`);
       window.setTimeout(() => window.location.reload(), RELOAD_MS);
     } catch (e) {
-      onError(e instanceof Error ? e.message : 'Не удалось сменить порт API');
+      onError(e instanceof Error ? e.message : fail);
       setSaving(false);
     }
   };
+  const save = () =>
+    apply(() => mtproxylSettingsApi.set('PROXY_API_PORT', value), 'Порт API изменён', 'Не удалось сменить порт API');
+  const authValid = auth.trim() !== '' && !/["'\\|]/.test(auth) && auth.length <= 512;
+  const saveAuth = (v: string) =>
+    apply(
+      () => mtproxylApiAuthApi.set(v),
+      v ? 'Заголовок авторизации задан' : 'Заголовок авторизации снят',
+      'Не удалось изменить заголовок авторизации',
+    );
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Порт API движка</CardTitle>
+        <CardTitle>API движка</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <p className="text-sm text-text-secondary">
@@ -81,6 +95,39 @@ export function ApiPortCard({ onError, onNotice }: {
             {saving ? 'Применение…' : 'Применить'}
           </Button>
         </div>
+        {authSet !== null && (
+          <div className="space-y-2 border-t border-border pt-3">
+            <p className="text-sm text-text-secondary">
+              Заголовок Authorization, который движок требует на API, — например{' '}
+              <span className="font-mono">Bearer &lt;токен&gt;</span>. Сейчас{' '}
+              {authSet ? 'задан' : 'не задан: API открыт только для localhost'}. Значение не
+              показывается; панель получит новый заголовок сама.
+            </p>
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="space-y-1 min-w-0 flex-1 max-w-md">
+                <Label htmlFor="api-auth">Новый заголовок</Label>
+                <Input
+                  id="api-auth"
+                  type="password"
+                  autoComplete="off"
+                  value={auth}
+                  placeholder={authSet ? 'задан — введите новый' : 'не задан'}
+                  onChange={(e) => setAuth(e.target.value)}
+                />
+              </div>
+              <Button disabled={saving || !authValid} onClick={() => void saveAuth(auth.trim())}>
+                <Save size={14} className="mr-2" />
+                Задать
+              </Button>
+              {authSet && (
+                <Button variant="outline" disabled={saving} onClick={() => void saveAuth('')}>
+                  <Trash2 size={14} className="mr-2" />
+                  Снять
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
