@@ -104,6 +104,28 @@ export interface WebLinkConfig {
   base_path?: string;
 }
 
+// Статус WEB отвечает секунды: без памяти о прошлом ответе страница сначала
+// рисовала обычные ссылки, а через несколько секунд меняла их на WEB.
+const WEB_LINK_CONFIG_KEY = 'mtproxyl.webLinkConfig';
+
+export function loadWebLinkConfig(): WebLinkConfig | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(WEB_LINK_CONFIG_KEY) ?? 'null');
+    return v && typeof v.enabled === 'boolean' && typeof v.domain === 'string' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveWebLinkConfig(web: WebLinkConfig): void {
+  const { enabled, domain, secret_mode, mtproto_enabled, base_path } = web;
+  try {
+    localStorage.setItem(WEB_LINK_CONFIG_KEY, JSON.stringify({ enabled, domain, secret_mode, mtproto_enabled, base_path }));
+  } catch {
+    // Без localStorage просто ждём живой статус.
+  }
+}
+
 function base64Url(bytes: number[]): string {
   let binary = '';
   for (const b of bytes) binary += String.fromCharCode(b);
