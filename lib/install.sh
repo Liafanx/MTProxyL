@@ -429,8 +429,8 @@ installer_pick_web_site() {
     esac
 }
 
-# Чем менеджер будет держать движок. Docker привычнее, бинарник экономит
-# время установки и память: сам Docker тогда не ставится вовсе.
+# Чем менеджер будет держать движок. По умолчанию бинарник: он экономит время
+# установки и память, сам Docker тогда не ставится вовсе. Docker — вторым.
 installer_pick_engine_backend() {
     ENGINE_VERSION=""; ENGINE_CUSTOM_URL=""; ENGINE_CUSTOM_SHA256=""
     # Бинарник живёт службой systemd. Без него (Alpine с OpenRC) выбирать не из
@@ -440,11 +440,21 @@ installer_pick_engine_backend() {
         log_info "Движок: Docker-образ (бинарнику нужен systemd, а его здесь нет)"
         return 0
     fi
+    if ! binengine_arch >/dev/null 2>&1; then
+        ENGINE_BACKEND="docker"
+        log_info "Движок: Docker-образ (под архитектуру $(uname -m) сборок telemt нет)"
+        return 0
+    fi
+    # Переустановка не меняет движок молча: по Enter остаётся прежний.
+    local _def=1 _mark1=" (по умолчанию)" _mark2=""
+    if [ -f "$SETTINGS_FILE" ] && [ "${ENGINE_BACKEND:-docker}" = "docker" ]; then
+        _def=2; _mark1=""; _mark2=" (сейчас)"
+    fi
     echo ""
     draw_header "ДВИЖОК"
     echo ""
-    echo -e "  ${BOLD}[1]${NC} Docker-образ ${DIM}— контейнер mtproxyl (по умолчанию)${NC}"
-    echo -e "  ${BOLD}[2]${NC} Бинарник MTProxyL-Telemt ${DIM}— служба systemd, без Docker${NC}"
+    echo -e "  ${BOLD}[1]${NC} Бинарник MTProxyL-Telemt ${DIM}— служба systemd, без Docker${_mark1}${NC}"
+    echo -e "  ${BOLD}[2]${NC} Docker-образ ${DIM}— контейнер mtproxyl${_mark2}${NC}"
     echo -e "  ${BOLD}[3]${NC} Свой бинарник telemt по ссылке ${DIM}— тоже служба systemd${NC}"
     echo ""
     echo -e "  ${DIM}Бинарник ставится за секунды и не тянет за собой Docker: на${NC}"
@@ -453,7 +463,7 @@ installer_pick_engine_backend() {
     echo -e "  ${DIM}меняется только то, чем запущен движок. Сменить можно позже:${NC}"
     echo -e "  ${DIM}главное меню → Движок.${NC}"
     echo ""
-    local _ec; _ec=$(_fix_read_choice "выбор" "1" "${_FIX_ANS_ENGINE-}")
+    local _ec; _ec=$(_fix_read_choice "выбор" "$_def" "${_FIX_ANS_ENGINE-}")
     if [ "$_ec" = "3" ]; then
         ENGINE_BACKEND="binary"
         echo ""
@@ -471,11 +481,11 @@ installer_pick_engine_backend() {
         log_success "Движок: свой бинарник telemt"
         return 0
     elif [ "$_ec" = "2" ]; then
-        ENGINE_BACKEND="binary"
-        log_success "Движок: бинарник MTProxyL-Telemt"
-    else
         ENGINE_BACKEND="docker"
         log_success "Движок: Docker-образ"
+    else
+        ENGINE_BACKEND="binary"
+        log_success "Движок: бинарник MTProxyL-Telemt"
     fi
 
     [ "$ENGINE_BACKEND" = "binary" ] || return 0

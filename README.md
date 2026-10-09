@@ -122,20 +122,23 @@ mtproxyl
 
 <a id="engine-backend"></a>
 
-## Движок: Docker или бинарник
+## Движок: бинарник или Docker
 
 В режиме **Manager** MTProxyL сам владеет движком telemt и может держать его
 двумя способами. Выбор делается в мастере установки сразу после выбора режима.
+По умолчанию — бинарник. Docker-образ ставится, если выбрать его вторым пунктом,
+а также сам, когда бинарнику негде работать: нет systemd или нет сборки telemt
+под архитектуру процессора. При переустановке по умолчанию остаётся прежний движок.
 
-| | **Docker-образ** *(по умолчанию)* | **Бинарник MTProxyL-Telemt** |
+| | **Бинарник MTProxyL-Telemt** *(по умолчанию)* | **Docker-образ** |
 | --- | --- | --- |
-| Что ставится | контейнер `mtproxyl`, сеть `host` | `/opt/mtproxyl/engine/mtproxyl-telemt` |
-| Чем управляется | Docker | служба `mtproxyl-telemt.service` |
-| Конфиг | `/opt/mtproxyl/mtproxy/config.toml` | `/opt/mtproxyl/mtproxy/telemt.toml` |
-| Логи | `docker logs mtproxyl` | `journalctl -u mtproxyl-telemt` |
-| Нужен Docker | да | **нет, он вообще не ставится** |
-| Установка на чистой машине | несколько минут | секунды |
-| Лимиты CPU и памяти | `--cpus`, `--memory` | те же `--cpus`, `--memory` → `CPUQuota`, `MemoryMax` |
+| Что ставится | `/opt/mtproxyl/engine/mtproxyl-telemt` | контейнер `mtproxyl`, сеть `host` |
+| Чем управляется | служба `mtproxyl-telemt.service` | Docker |
+| Конфиг | `/opt/mtproxyl/mtproxy/telemt.toml` | `/opt/mtproxyl/mtproxy/config.toml` |
+| Логи | `journalctl -u mtproxyl-telemt` | `docker logs mtproxyl` |
+| Нужен Docker | **нет, он вообще не ставится** | да |
+| Установка на чистой машине | секунды | несколько минут |
+| Лимиты CPU и памяти | `--cpus`, `--memory` → `CPUQuota`, `MemoryMax` | `--cpus`, `--memory` |
 
 Образ берётся готовым из GHCR. Если его там нет, MTProxyL собирает образ сам —
 не компиляцией, а вокруг официального musl-бинарника релиза, с проверкой sha256:
@@ -276,7 +279,7 @@ mtproxyl install --help          # полный список аргументо�
 
 | Аргумент | Значения | По умолчанию | Что делает |
 | --- | --- | --- | --- |
-| `--engine` | `docker`, `binary` | `docker` | Чем держать telemt: контейнером или бинарником `mtproxyl-telemt` под systemd. С `binary` Docker не ставится вовсе. На переустановке поверх (`--force`) без этого аргумента остаётся прежний носитель. |
+| `--engine` | `binary`, `docker` | `binary` | Чем держать telemt: бинарником `mtproxyl-telemt` под systemd или контейнером. С `binary` Docker не ставится вовсе. Без systemd или без сборки telemt под архитектуру процессора по умолчанию берётся `docker`. На переустановке поверх (`--force`) без этого аргумента остаётся прежний носитель. |
 | `--engine-version` | тег релиза telemt, например `3.5.5` | последняя | Версия бинарника. Имеет смысл только с `--engine binary`. |
 | `--engine-url` | ссылка `https` на бинарник или `.tar.gz` | — | Свой бинарник telemt, ставится бинарным движком. См. [Свой бинарник telemt](#свой-бинарник-telemt). |
 | `--engine-sha256` | 64 hex-символа | без проверки | sha256 файла по `--engine-url`. Необязателен: без него файл не проверяется. |

@@ -43,8 +43,8 @@ install_args_help() {
     mtproxyl install --mode manager [параметры]
 
   Движок
-    --engine docker|binary     чем держать telemt: контейнер (по умолчанию)
-                               или бинарник MTProxyL-Telemt под systemd
+    --engine binary|docker     чем держать telemt: бинарник MTProxyL-Telemt
+                               под systemd (по умолчанию) или контейнер
     --engine-version <тег>     версия telemt для бинарника (по умолчанию
                                последняя), например 3.5.5
     --engine-url <ссылка>      свой бинарник telemt или архив .tar.gz по https,
@@ -609,7 +609,12 @@ run_installer_args() {
     if [ -n "$_IA_ENGINE" ]; then
         ENGINE_BACKEND="$_IA_ENGINE"
     elif [ ! -f "$SETTINGS_FILE" ]; then
-        ENGINE_BACKEND="docker"
+        # Новая установка — бинарник, если он здесь вообще возможен.
+        if command -v systemctl &>/dev/null && binengine_arch >/dev/null 2>&1; then
+            ENGINE_BACKEND="binary"
+        else
+            ENGINE_BACKEND="docker"
+        fi
     fi
     ENGINE_BACKEND="${ENGINE_BACKEND:-docker}"
     ENGINE_VERSION=""
