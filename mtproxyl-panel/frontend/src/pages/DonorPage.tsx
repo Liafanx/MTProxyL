@@ -167,6 +167,7 @@ function StateCard({ status }: { status: DonorStatus }) {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
         <Cell label="Донор" value={`${status.ssh_user}@${status.host}`} />
+        {status.host_is_name && <Cell label="Адрес донора" value={status.resolved_ip ? `${status.resolved_ip} · по домену` : '—'} />}
         <Cell label="Порт AmneziaWG" value={status.awg_port ? `UDP ${status.awg_port} · MTU ${status.mtu}` : '—'} />
         <Cell label="Туннель" value={status.tunnel_up ? `${status.iface} поднят` : 'не поднят'} />
         <Cell
@@ -212,6 +213,8 @@ function ControlsCard({
   const [removing, setRemoving] = useState(false);
   const [remote, setRemote] = useState(status.setup_mode === 'auto');
   const [password, setPassword] = useState('');
+  const [changingHost, setChangingHost] = useState(false);
+  const [newHost, setNewHost] = useState(status.host);
   const needRoutes = !status.enabled && status.default_upstreams !== '' && status.engine_mode !== 'manual';
 
   return (
@@ -234,6 +237,9 @@ function ControlsCard({
             Включить — движок пойдёт через донор
           </Button>
         )}
+        <Button size="sm" variant="outline" disabled={locked} onClick={() => setChangingHost((v) => !v)}>
+          Сменить адрес
+        </Button>
         <Button size="sm" variant="outline" disabled={locked} onClick={onReconfigure}>
           {reconfiguring ? 'Скрыть перенастройку' : 'Перенастроить'}
         </Button>
@@ -244,6 +250,23 @@ function ControlsCard({
 
       {needRoutes && (
         <RoutesConsent routes={status.default_upstreams} checked={allowRoutes} onChange={setAllowRoutes} disabled={locked} />
+      )}
+
+      {changingHost && (
+        <div className="rounded-md border border-border p-3 space-y-3 text-sm">
+          <div className="text-text-secondary">
+            Новый IP или домен того же донора. Ключи, подсеть и интерфейс {status.remote_iface || ''} на
+            доноре остаются прежними. С доменом туннель сам переходит на новый адрес из A-записи.
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Input value={newHost} onChange={(e) => setNewHost(e.target.value)} placeholder="IP или домен донора"
+              disabled={locked} className="max-w-xs" />
+            <Button size="sm" disabled={locked || !newHost.trim()}
+              onClick={() => { setChangingHost(false); onAct(() => donorApi.setHost(newHost.trim())); }}>
+              Сохранить
+            </Button>
+          </div>
+        </div>
       )}
 
       {removing && (
@@ -393,7 +416,7 @@ function AutoSetup({ status, locked, onAct, onError }: {
         Пароль передаётся только на время настройки и нигде не сохраняется.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-        <Input placeholder="IP донора" value={host} onChange={(e) => setHost(e.target.value)} disabled={locked} />
+        <Input placeholder="IP или домен донора" value={host} onChange={(e) => setHost(e.target.value)} disabled={locked} />
         <Input placeholder="Порт SSH" value={sshPort} onChange={(e) => setSshPort(e.target.value)} disabled={locked} />
         <Input placeholder="Пользователь" value={user} onChange={(e) => setUser(e.target.value)} disabled={locked} />
         <Input type="password" autoComplete="off" placeholder="Пароль (пусто — по ключу)" value={password}
@@ -472,7 +495,7 @@ function ManualSetup({ status, locked, onPrepared, onError }: {
         от root и вернёте сюда публичный ключ, который скрипт напечатает в конце.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
-        <Input placeholder="IP донора" value={host} onChange={(e) => setHost(e.target.value)} disabled={locked || working} />
+        <Input placeholder="IP или домен донора" value={host} onChange={(e) => setHost(e.target.value)} disabled={locked || working} />
         <Input placeholder="UDP-порт (авто)" value={awgPort} onChange={(e) => setAwgPort(e.target.value)} disabled={locked || working} />
         <Input placeholder="MTU (1280)" value={mtu} onChange={(e) => setMtu(e.target.value)} disabled={locked || working} />
         <Button size="sm" variant="outline" disabled={locked || working || !host.trim()} onClick={() => void prepare()}>

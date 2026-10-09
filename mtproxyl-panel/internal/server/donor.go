@@ -228,6 +228,25 @@ func (s *Server) registerDonorRoutes(
 		start(w, "donor:off", client.DonorDisable)
 	}))
 
+	mux.Handle("POST /api/donor/host", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		var req struct {
+			Host string `json:"host"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		if err := mtproxylctl.ValidateDonorHost(req.Host); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+		start(w, "donor:host", func(ctx context.Context) (string, error) {
+			return client.DonorSetHost(ctx, req.Host)
+		})
+	}))
+
 	mux.Handle("POST /api/donor/remove", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
 			return

@@ -10,6 +10,7 @@ import { NginxCustomConfigCard } from '@/components/NginxCustomConfigCard';
 import { HttpsHeadersCard } from '@/components/HttpsHeadersCard';
 import { SiteSourcePicker, siteSourceLabel } from '@/components/SiteSourcePicker';
 import { CopyButton } from '@/components/CopyButton';
+import { CarrierOrderPicker } from '@/components/CarrierOrderPicker';
 import { mtproxylApi, type SelfmaskStatus, type WebParam, type WebStatus } from '@/lib/api';
 import { useManagerOnly, useMtproxylOperation } from '@/hooks/useMtproxyl';
 
@@ -70,9 +71,11 @@ export function WebPage() {
     'web:',
     'selfmask:nginx-custom-',
   ]);
-  // В реаниматоре WEB поднимает хозяин цели: включать и настраивать нам нечего,
-  // MTProxyL там только читает её конфиг и собирает ссылки.
-  const { allowed: isManager, loading: modeLoading } = useManagerOnly();
+  // В реаниматоре WEB цели поднимает MTProxyL, если его не настроил её хозяин:
+  // тогда owner = target, и мы только читаем конфиг и собираем ссылки.
+  const { allowed: isManagerMode, loading: modeLoading } = useManagerOnly();
+  const isManager = isManagerMode || status?.owner === 'mtproxyl';
+  const reanimator = !!status?.reanimator;
 
   useEffect(() => {
     void load();
@@ -84,7 +87,7 @@ export function WebPage() {
   );
 
   // В shared публичный порт задаёт сам прокси, поэтому поле не показываем.
-  const layout = valueOf('WEB_LAYOUT') || 'shared';
+  const layout = status?.reanimator ? status.layout : valueOf('WEB_LAYOUT') || 'shared';
   const frontend = valueOf('WEB_FRONTEND') || 'nginx';
   const decoyMode = valueOf('WEB_DECOY_MODE') || 'static_directory';
   const visibleParams = params.filter((p) => {
@@ -218,7 +221,12 @@ export function WebPage() {
                   <>
                     <Row label="Раскладка" value={LAYOUT_LABELS[status.layout] ?? status.layout} />
                     <Row label="Frontend" value={FRONTEND_LABELS[status.frontend] ?? status.frontend} />
-                    <Row label="Транспорт" value={CARRIER_LABELS[status.carrier] ?? status.carrier} />
+                    <Row
+                      label="Транспорт"
+                      value={status.carriers && status.carriers_supported !== false
+                        ? `перебор: ${[...status.carriers.split(',').filter((c) => c !== status.carrier), status.carrier].join(' → ')}`
+                        : CARRIER_LABELS[status.carrier] ?? status.carrier}
+                    />
                     <Row label="Секрет в ссылке" value={status.secret_mode} />
                     <Row label="public_addr" value={status.public_addr || 'не определён'} mono />
                     {(status.base_path_saved || status.base_path) && (
@@ -287,6 +295,18 @@ export function WebPage() {
               </Card>
             )}
 
+            {reanimator && isManager && (
+              <Card>
+                <CardContent className="pt-4 text-sm text-text-secondary">
+                  WEB поднимается в конфиге цели отдельным блоком; остальной конфиг не меняется.
+                  {status.layout === 'shared'
+                    ? ' Цель на :443 — её обычный MTProto уходит на приватный порт, публичный :443 разбирает по SNI nginx MTProxyL.'
+                    : ' Цель не на :443 — её обычный MTProto остаётся на своём порту, WEB принимает nginx на :443.'}
+                  {status.engine_version && status.engine_version !== 'unknown' && ` Версия telemt цели: ${status.engine_version}.`}
+                </CardContent>
+              </Card>
+            )}
+
             {!modeLoading && !isManager && (
               <Card>
                 <CardContent className="pt-4 space-y-2 text-sm text-text-secondary">
@@ -301,7 +321,7 @@ export function WebPage() {
               </Card>
             )}
 
-            {isManager && (
+            {isManager && !reanimator && (
               <Card>
                 <CardHeader>
                   <CardTitle>Режим транспорта</CardTitle>
@@ -337,7 +357,19 @@ export function WebPage() {
                         <div className="text-sm text-text-primary">{p.desc}</div>
                         <div className="font-mono text-xs text-text-secondary">{p.key}</div>
                       </div>
-                      {p.key === 'WEB_DECOY_SOURCE' ? (
+                      {p.key === 'WEB_CARRIERS' ? (
+                        <div className="space-y-1">
+                          <CarrierOrderPicker
+                            value={valueOf(p.key)}
+                            main={valueOf('WEB_CARRIER') || 'websocket'}
+                            onChange={(v) => setEdits((e) => ({ ...e, [p.key]: v }))}
+                            disabled={saving || running}
+                          />
+                          {status.carriers_supported === false && (
+                            <div className="text-xs text-warning">Перебор работает с telemt 3.5.4+</div>
+                          )}
+                        </div>
+                      ) : p.key === 'WEB_DECOY_SOURCE' ? (
                         <SiteSourcePicker
                           value={valueOf(p.key)}
                           onChange={(v) => setEdits((e) => ({ ...e, [p.key]: v }))}

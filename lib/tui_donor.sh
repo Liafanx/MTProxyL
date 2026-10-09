@@ -16,10 +16,10 @@ _tui_donor_auto() {
     echo -e "  ${DIM}вход root по паролю или ключу. Пароль нужен только на время настройки.${NC}"
     echo ""
     local _host _port _user _awg
-    read_line _host "  ${BOLD}IP донора:${NC} "
+    read_line _host "  ${BOLD}IP или домен донора:${NC} "
     _host="${_host// /}"
     [ -n "$_host" ] || return 0
-    _donor_valid_ipv4 "$_host" || { log_error "Нужен IPv4-адрес"; return 1; }
+    _donor_valid_host "$_host" || { log_error "Нужен IPv4-адрес или домен"; return 1; }
     read_line _port "  ${BOLD}Порт SSH [22]:${NC} "
     read_line _user "  ${BOLD}Пользователь [root]:${NC} "
     read_line _awg "  ${BOLD}UDP-порт туннеля на доноре [случайный]:${NC} "
@@ -34,7 +34,7 @@ _tui_donor_manual() {
     echo -e "  ${DIM}от root сами. Пароль донора сюда вводить не нужно.${NC}"
     echo ""
     local _host _awg
-    read_line _host "  ${BOLD}IP донора:${NC} "
+    read_line _host "  ${BOLD}IP или домен донора:${NC} "
     _host="${_host// /}"
     [ -n "$_host" ] || return 0
     read_line _awg "  ${BOLD}UDP-порт туннеля на доноре [случайный]:${NC} "
@@ -75,7 +75,7 @@ tui_donor_menu() {
         local _ready=false _pending=false
         [ "$DONOR_STAGE" = ready ] && donor_configured && _ready=true
         [ "$DONOR_STAGE" = pending ] && _pending=true
-        echo -e "  ${DIM}[1]${NC} Настроить автоматически — IP, логин и пароль донора"
+        echo -e "  ${DIM}[1]${NC} Настроить автоматически — адрес, логин и пароль донора"
         echo -e "  ${DIM}[2]${NC} Ручная настройка — скрипт для донора и инструкция"
         if [ "$_ready" = true ]; then
             echo -e "  ${DIM}[3]${NC} Проверить туннель"
@@ -88,6 +88,7 @@ tui_donor_menu() {
         [ "$_pending" = true ] && echo -e "  ${DIM}[5]${NC} Ввести ключ донора — завершить ручную настройку"
         if donor_configured; then
             echo -e "  ${DIM}[6]${NC} Удалить туннель"
+            echo -e "  ${DIM}[7]${NC} Сменить адрес донора — IP или домен, без перенастройки"
         fi
         echo -e "  ${DIM}[0]${NC} Назад"
         local _c; _c=$(read_choice "выбор" "0")
@@ -106,6 +107,14 @@ tui_donor_menu() {
                 press_any_key ;;
             5) [ "$_pending" = true ] && { _tui_donor_finish; press_any_key; } ;;
             6) donor_configured && { _tui_donor_remove; press_any_key; } ;;
+            7)
+                donor_configured || continue
+                echo ""
+                echo -e "  ${DIM}С доменом туннель сам переходит на новый адрес из A-записи.${NC}"
+                local _nh; read_line _nh "  ${BOLD}Новый IP или домен [${DONOR_HOST}]:${NC} "
+                _nh="${_nh// /}"
+                [ -n "$_nh" ] && donor_set_host "$_nh"
+                press_any_key ;;
             0|"") return ;;
         esac
     done

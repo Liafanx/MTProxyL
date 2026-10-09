@@ -78,9 +78,7 @@ _system_nginx_has_stream() {
 }
 
 _selfmask_web_needs_stream() {
-    [ "${WEB_ENABLED:-false}" = "true" ] \
-        && [ "${PROXY_MODE:-mtproto}" != "web" ] \
-        && [ "${WEB_LAYOUT:-shared}" != "split" ]
+    web_is_enabled 2>/dev/null && ! web_is_only_mode && ! web_layout_is_split
 }
 
 # Какой nginx использовать для заглушки. Системный годится при OpenSSL
@@ -474,9 +472,9 @@ selfmask_show_requirements() {
 # «telemt :443 → mask» в этом случае описывала несуществующий путь.
 _selfmask_scheme_line() {
     local _back="127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}"
-    # В реаниматоре WEB поднимает хозяин цели, и наши WEB_* к нему отношения
-    # не имеют: раскладку портов оттуда взять неоткуда.
-    if web_is_reanimator 2>/dev/null; then
+    # WEB, поднятый хозяином цели, нам не принадлежит: раскладки его портов
+    # мы не знаем. Свой WEB у цели описывается так же, как в менеджере.
+    if web_is_reanimator 2>/dev/null && ! web_is_enabled 2>/dev/null; then
         local _p="${DETECTED_PORT:-${PROXY_PORT:-443}}"
         if web_target_enabled 2>/dev/null; then
             echo "telemt :${_p} → mask → nginx ${_back}; WEB у цели: $(web_target_host 2>/dev/null || echo '—')"

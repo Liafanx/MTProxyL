@@ -1343,6 +1343,12 @@ switch_to_manager_mode() {
         log_info "Уже в режиме manager"
         return 0
     fi
+    # WEB у цели держит её на приватном порту, а :443 — у nginx: в менеджере
+    # этот блок стал бы ничьим.
+    if [ "${WEB_TARGET_ENABLED:-false}" = "true" ]; then
+        log_error "У цели включён WEB Proxy — сначала выключите его: mtproxyl web disable"
+        return 1
+    fi
     echo ""
     log_warn "Переход в режим Manager. MTProxyL начнёт устанавливать/владеть СВОИМ telemt."
     local _c; read_line _c "  ${BOLD}Введите 'yes' для подтверждения:${NC} "

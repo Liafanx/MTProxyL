@@ -250,7 +250,9 @@ export function UsersPage() {
     setDeleting(true);
     setActionError('');
     try {
-      if (usersOwnedByMtproxyl) {
+      // Профиль WEB, ссылающийся на пользователя, движок снять не даст:
+      // MTProxyL убирает профиль раньше пользователя.
+      if (usersOwnedByMtproxyl || (mtproxylEnabled && webStatus?.enabled)) {
         await mtproxylUsersApi.remove(deleteUser);
       } else {
         await telemt.delete(`/v1/users/${deleteUser}`);
@@ -259,11 +261,14 @@ export function UsersPage() {
       setDeleteUser(null);
       refresh();
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'Не удалось удалить');
+      const msg = err instanceof ApiError ? err.message : 'Не удалось удалить';
+      setActionError(msg.includes('references unknown access user')
+        ? 'У пользователя есть профиль WEB Proxy в конфиге движка — сначала уберите его из [[web.vhosts.profiles]] или включите интеграцию с MTProxyL'
+        : msg);
     } finally {
       setDeleting(false);
     }
-  }, [deleteUser, refresh, usersOwnedByMtproxyl, syncWebProfiles]);
+  }, [deleteUser, refresh, usersOwnedByMtproxyl, mtproxylEnabled, webStatus?.enabled, syncWebProfiles]);
 
   const handleResetQuota = useCallback(async () => {
     if (!resetUser) return;

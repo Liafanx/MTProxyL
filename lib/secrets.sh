@@ -1216,6 +1216,9 @@ target_user_remove() {
     [ "$_left" -le 1 ] && { log_error "Нельзя удалить последнего пользователя цели"; return 1; }
 
     backup_target_config "users" "true" || true
+    # Профиль на несуществующего пользователя движок конфигом не примет, а
+    # перечитывает он файл после каждой записи — профиль снимаем первым.
+    web_target_remove_profile "$_label" || true
     _toml_safe_unset "$_label" "access.users" "$DETECTED_CONFIG_PATH" || {
         log_error "Не удалось удалить пользователя из конфига цели"
         return 1
@@ -1226,8 +1229,6 @@ target_user_remove() {
         _toml_safe_unset "$_label" "$_sect" "$DETECTED_CONFIG_PATH" 2>/dev/null || true
         _target_drop_empty_limit_section "$_sect" 2>/dev/null || true
     done
-    # Профиль на несуществующего пользователя движок конфигом не примет.
-    web_target_remove_profile "$_label" || true
     log_success "Пользователь '${_label}' удалён у цели"
     [ -n "${TARGET_CONFIG_BACKUP:-}" ] && log_info "Резервная копия: ${TARGET_CONFIG_BACKUP}"
     _target_users_apply
@@ -1277,11 +1278,15 @@ target_user_toggle() {
     fi
 
     backup_target_config "users" "true" || true
+    # Выключенный пользователь для движка не существует, и его профиль WEB
+    # сделал бы конфиг невалидным: профиль снимаем до, а возвращаем после.
+    [ "$_want" = "off" ] && { web_target_remove_profile "$_label" || true; }
     _toml_toggle_key "$_label" "access.users" "$DETECTED_CONFIG_PATH" "$_want" || {
         log_error "Не удалось изменить состояние пользователя в конфиге цели"
         return 1
     }
     log_success "Пользователь '${_label}' $([ "$_want" = "on" ] && echo "включён" || echo "выключен")"
+    [ "$_want" = "on" ] && { web_target_add_profile "$_label" || true; }
     _target_users_apply
 }
 
@@ -1535,8 +1540,11 @@ target_users_import() {
         _target_users_set_limit "$_IMP_L" "access.user_data_quota" "$_IMP_Q" num
         _target_users_set_limit "$_IMP_L" "access.user_expirations" "$_ex" str
         _target_users_set_limit "$_IMP_L" "access.user_ad_tags" "$_IMP_AT" str
-        [ "$_IMP_EN" = "true" ] || _toml_toggle_key "$_IMP_L" "access.users" "$DETECTED_CONFIG_PATH" "off" || true
-        web_target_add_profile "$_IMP_L" >/dev/null 2>&1 || true
+        if [ "$_IMP_EN" = "true" ]; then
+            web_target_add_profile "$_IMP_L" >/dev/null 2>&1 || true
+        else
+            _toml_toggle_key "$_IMP_L" "access.users" "$DETECTED_CONFIG_PATH" "off" || true
+        fi
         _added=$((_added + 1))
     done < "$_file"
     [ "${1:-}" != "-" ] || rm -f "$_file"

@@ -25,7 +25,7 @@ _donor_awg_key()     { echo "${DONOR_AWG_DIR}/${DONOR_IFACE}.key"; }
 
 _DONOR_KEYS="DONOR_ENABLED DONOR_STAGE DONOR_SETUP_MODE DONOR_HOST DONOR_SSH_PORT DONOR_SSH_USER
 DONOR_AWG_PORT DONOR_NET DONOR_MTU DONOR_REMOTE_IFACE DONOR_SOCKS_PORT DONOR_REMOTE_PUB DONOR_EGRESS_IP
-DONOR_PUBLIC_IP DONOR_IPV6 DONOR_DISABLED_UPSTREAMS DONOR_ENGINE_ROUTED DONOR_TARGET_TLS_SCOPE
+DONOR_PUBLIC_IP DONOR_RESOLVED_IP DONOR_IPV6 DONOR_DISABLED_UPSTREAMS DONOR_ENGINE_ROUTED DONOR_TARGET_TLS_SCOPE
 DONOR_SETUP_AT DONOR_CHECK_AT DONOR_CHECK_RESULT DONOR_CHECK_EGRESS DONOR_CHECK_RTT DONOR_CHECK_ERROR"
 
 _donor_reset_vars() {
@@ -85,6 +85,24 @@ _donor_valid_ipv4() {
     case "$1" in 0.*|127.*|255.*) return 1 ;; esac
     return 0
 }
+# Домен, а не IP: адрес донора может смениться, а туннель и интерфейс на
+# доноре остаются прежними.
+_donor_valid_name() {
+    [ "${#1}" -le 253 ] && [[ "$1" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z][A-Za-z0-9-]{0,61}[A-Za-z0-9]$ ]]
+}
+_donor_valid_host() { _donor_valid_ipv4 "$1" || _donor_valid_name "$1"; }
+_donor_host_is_name() { ! _donor_valid_ipv4 "$1" && _donor_valid_name "$1"; }
+
+# IPv4 донора: у домена — первая A-запись. AWG получает адрес, а не имя:
+# иначе интерфейс не поднимется при загрузке без DNS и может уйти на AAAA.
+_donor_resolve() {
+    local _ip
+    _donor_valid_ipv4 "$1" && { echo "$1"; return 0; }
+    _donor_valid_name "$1" || return 1
+    _ip=$(getent ahostsv4 "$1" 2>/dev/null | awk '{print $1; exit}')
+    _donor_valid_ipv4 "$_ip" && echo "$_ip"
+}
+
 _donor_valid_port() { [[ "$1" =~ ^[0-9]{1,5}$ ]] && [ "$((10#$1))" -ge 1 ] && [ "$((10#$1))" -le 65535 ]; }
 _donor_valid_user() { [[ "$1" =~ ^[a-z_][a-z0-9_.-]{0,31}$ ]]; }
 _donor_valid_pubkey() { [[ "$1" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$ ]]; }
@@ -627,7 +645,7 @@ _donor_trust_host() {
 donor_hostkey() {
     local _host="${1:-}" _port="${2:-22}" _json="${3:-}"
     [ "$_port" = "--json" ] && { _json="--json"; _port=22; }
-    _donor_valid_ipv4 "$_host" || { log_error "Нужен IPv4-адрес донора"; return 1; }
+    _donor_valid_host "$_host" || { log_error "Нужен IPv4-адрес или домен донора"; return 1; }
     _donor_valid_port "$_port" || { log_error "Неверный порт SSH"; return 1; }
     DONOR_HOST="$_host"; DONOR_SSH_PORT="$_port"
     _donor_scan_host || { log_error "Донор ${_host}:${_port} не ответил по SSH"; return 1; }
@@ -695,6 +713,17 @@ _donor_pick_nets() {
 }
 _donor_pick_net() { _donor_pick_nets 1; }
 
+# Тот же сервер под другим адресом или именем: интерфейс на нём переиспользуем,
+# иначе каждая смена IP оставляла бы на доноре ещё один.
+_donor_same_donor() {
+    local _new="$1" _ip
+    [ -n "$DONOR_REMOTE_IFACE" ] && [ -n "$DONOR_HOST" ] || return 1
+    [ "$DONOR_HOST" = "$_new" ] && return 0
+    _ip=$(_donor_resolve "$_new") || return 1
+    [ "$_ip" = "${DONOR_RESOLVED_IP:-}" ] || [ "$_ip" = "${DONOR_PUBLIC_IP:-}" ] \
+        || [ "$_ip" = "$(_donor_resolve "$DONOR_HOST")" ]
+}
+
 _donor_new_iface_name() { echo "mtpl$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"; }
 
 _donor_ensure_key() {
@@ -716,6 +745,9 @@ _donor_client_ip() {
 
 _donor_write_local_conf() {
     local _key; _key=$(cat "$(_donor_awg_key)") || return 1
+    local _ip; _ip=$(_donor_resolve "$DONOR_HOST") || _ip="${DONOR_RESOLVED_IP:-}"
+    [ -n "$_ip" ] || { log_error "Домен ${DONOR_HOST} не разрешается в IPv4"; return 1; }
+    DONOR_RESOLVED_IP="$_ip"
     local _tmp; _tmp=$(mktemp "${DONOR_AWG_DIR}/.${DONOR_IFACE}.XXXXXX") || return 1
     {
         echo "# MTProxyL: туннель до донора ${DONOR_HOST}"
@@ -727,7 +759,7 @@ _donor_write_local_conf() {
         echo ""
         echo "[Peer]"
         echo "PublicKey = ${DONOR_REMOTE_PUB}"
-        echo "Endpoint = ${DONOR_HOST}:${DONOR_AWG_PORT}"
+        echo "Endpoint = ${_ip}:${DONOR_AWG_PORT}"
         echo "AllowedIPs = $(_donor_remote_ip)/32"
         echo "PersistentKeepalive = 25"
     } > "$_tmp"
@@ -1176,7 +1208,8 @@ donor_setup() (
             *) [ -z "$_host" ] && _host="$_arg" || { log_error "Лишний аргумент: ${_arg}"; return 1; } ;;
         esac
     done
-    _donor_valid_ipv4 "$_host" || { log_error "Нужен IPv4-адрес донора"; return 1; }
+    _donor_valid_host "$_host" || { log_error "Нужен IPv4-адрес или домен донора"; return 1; }
+    _donor_resolve "$_host" >/dev/null || { log_error "Домен ${_host} не разрешается в IPv4"; return 1; }
     _donor_valid_port "$_port" || { log_error "Неверный порт SSH: ${_port}"; return 1; }
     _donor_valid_user "$_user" || { log_error "Неверное имя пользователя: ${_user}"; return 1; }
     [ "$_awg_port" = 0 ] || _donor_valid_port "$_awg_port" || { log_error "Неверный порт AmneziaWG: ${_awg_port}"; return 1; }
@@ -1198,7 +1231,7 @@ donor_setup() (
 
     donor_load
     local _same_host=false
-    [ "$DONOR_HOST" = "$_host" ] && [ -n "$DONOR_REMOTE_IFACE" ] && _same_host=true
+    _donor_same_donor "$_host" && _same_host=true
     if [ -n "$DONOR_HOST" ] && [ "$_same_host" = false ]; then
         log_warn "Прежний донор ${DONOR_HOST} останется настроенным — удалить на нём: mtproxyl donor remove --remote"
     fi
@@ -1298,6 +1331,7 @@ _donor_finish_local() {
     _donor_ipv6_hint
     DONOR_ENABLED="true"
     donor_save
+    _donor_resolve_timer_sync
     [ -n "${DONOR_ENGINE_ROUTED:-}" ] && _donor_wait_dc
     echo ""
     log_success "Готово: движок выходит к Telegram через донор ${DONOR_HOST}"
@@ -1317,7 +1351,8 @@ donor_manual() (
             *) if [ -z "$_host" ]; then _host="$_arg"; else _awg_port="$_arg"; fi ;;
         esac
     done
-    _donor_valid_ipv4 "$_host" || { log_error "Нужен IPv4-адрес донора"; return 1; }
+    _donor_valid_host "$_host" || { log_error "Нужен IPv4-адрес или домен донора"; return 1; }
+    _donor_resolve "$_host" >/dev/null || { log_error "Домен ${_host} не разрешается в IPv4"; return 1; }
     [ -z "$_mtu" ] || _donor_valid_mtu "$_mtu" || { log_error "MTU туннеля: 1200–1420"; return 1; }
     if [ -n "$_awg_port" ]; then
         _donor_valid_port "$_awg_port" || { log_error "Неверный порт AmneziaWG"; return 1; }
@@ -1330,7 +1365,7 @@ donor_manual() (
         _donor_run_agent local install || { log_error "AmneziaWG на этом сервере не установлен"; return 1; }
     }
     donor_load
-    if [ "$DONOR_HOST" != "$_host" ] || [ -z "$DONOR_REMOTE_IFACE" ]; then
+    if ! _donor_same_donor "$_host"; then
         DONOR_REMOTE_IFACE=$(_donor_new_iface_name); DONOR_NET=""
     fi
     DONOR_HOST="$_host"; DONOR_AWG_PORT="$_awg_port"; DONOR_SETUP_MODE="manual"; DONOR_STAGE="pending"
@@ -1381,7 +1416,7 @@ donor_finish() (
         esac
     done
     donor_load
-    [ "$DONOR_STAGE" = "pending" ] || { log_error "Ручная настройка не начата: mtproxyl donor manual <IP>"; return 1; }
+    [ "$DONOR_STAGE" = "pending" ] || { log_error "Ручная настройка не начата: mtproxyl donor manual <IP|домен>"; return 1; }
     _donor_valid_pubkey "$_key" || { log_error "Это не ключ AmneziaWG (44 символа base64)"; return 1; }
     _donor_guard_conflicts || return 1
     _DONOR_PARAMS=$(grep -E '^(Jc|Jmin|Jmax|S[1-4]|H[1-4]) = ' "$(_donor_dir)/params.pending" 2>/dev/null)
@@ -1431,12 +1466,14 @@ donor_enable() (
         esac
     done
     donor_load
-    [ "$DONOR_STAGE" = "ready" ] || { log_error "Туннель до донора не настроен: mtproxyl donor setup <IP>"; return 1; }
+    [ "$DONOR_STAGE" = "ready" ] || { log_error "Туннель до донора не настроен: mtproxyl donor setup <IP|домен>"; return 1; }
     _donor_guard_conflicts || return 1
     _donor_tunnel_up || return 1
+    _donor_reresolve_now
     _donor_probe || { log_error "Через SOCKS5 донора Telegram не ответил — движок не переключаем"; return 1; }
     _donor_route_engine "$_allow" || return 1
     DONOR_ENABLED="true"; donor_save
+    _donor_resolve_timer_sync
     [ -n "${DONOR_ENGINE_ROUTED:-}" ] && _donor_wait_dc
     log_success "Движок снова выходит через донор ${DONOR_HOST}"
 )
@@ -1448,6 +1485,7 @@ donor_disable() {
     _donor_unroute_engine
     _donor_tunnel_down
     DONOR_ENABLED="false"; donor_save
+    _donor_resolve_timer_sync
     log_success "Туннель до донора выключен — движок ходит к Telegram напрямую"
 }
 
@@ -1489,10 +1527,128 @@ donor_remove() (
 
 # Без вопросов и без движка — для удаления MTProxyL.
 donor_purge_local() {
+    _donor_resolve_timer_remove
     systemctl disable --now "awg-quick@${DONOR_IFACE}" >/dev/null 2>&1 || true
     rm -f "$(_donor_awg_conf)" "$(_donor_awg_key)"
     rm -rf "$(_donor_dir)"
 }
+
+# ── Донор по домену ────────────────────────────────────────────────────────
+# AWG разрешает имя один раз, при подъёме. Таймер раз в минуту сверяет A-запись
+# и переводит туннель на новый адрес на ходу — как reresolve-dns у WireGuard.
+
+DONOR_RESOLVE_UNIT="mtproxyl-donor-resolve"
+
+_donor_resolve_timer_install() {
+    command -v systemctl >/dev/null 2>&1 || return 0
+    [ -f "/etc/systemd/system/${DONOR_RESOLVE_UNIT}.timer" ] && return 0
+    cat > "/etc/systemd/system/${DONOR_RESOLVE_UNIT}.service" <<UNIT
+[Unit]
+Description=MTProxyL: адрес донора по домену
+
+[Service]
+Type=oneshot
+LogLevelMax=notice
+SyslogLevel=notice
+ExecStart=${INSTALL_DIR}/mtproxyl.sh donor reresolve
+TimeoutStartSec=2min
+UMask=0077
+UNIT
+    cat > "/etc/systemd/system/${DONOR_RESOLVE_UNIT}.timer" <<UNIT
+[Unit]
+Description=MTProxyL: проверка адреса донора
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
+UNIT
+    systemctl daemon-reload >/dev/null 2>&1 || return 1
+    systemctl enable --now "${DONOR_RESOLVE_UNIT}.timer" >/dev/null 2>&1
+}
+
+_donor_resolve_timer_remove() {
+    command -v systemctl >/dev/null 2>&1 || return 0
+    [ -f "/etc/systemd/system/${DONOR_RESOLVE_UNIT}.timer" ] || return 0
+    systemctl disable --now "${DONOR_RESOLVE_UNIT}.timer" >/dev/null 2>&1 || true
+    rm -f "/etc/systemd/system/${DONOR_RESOLVE_UNIT}.timer" "/etc/systemd/system/${DONOR_RESOLVE_UNIT}.service"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
+_donor_resolve_timer_sync() {
+    if [ "$DONOR_ENABLED" = "true" ] && [ "$DONOR_STAGE" = "ready" ] && _donor_host_is_name "$DONOR_HOST"; then
+        _donor_resolve_timer_install || log_warn "Не удалось поставить таймер ${DONOR_RESOLVE_UNIT}"
+    else
+        _donor_resolve_timer_remove
+    fi
+}
+
+# Endpoint живого интерфейса и конфига — на текущий адрес донора. DNS не
+# ответил — оставляем прежний адрес, а не роняем туннель.
+_donor_reresolve_now() {
+    local _ip _cur _conf
+    _donor_host_is_name "$DONOR_HOST" || return 0
+    _ip=$(_donor_resolve "$DONOR_HOST") || return 0
+    _cur=$(awg show "$DONOR_IFACE" endpoints 2>/dev/null | awk 'NR == 1 {print $2}')
+    [ "$_cur" = "${_ip}:${DONOR_AWG_PORT}" ] && [ "$_ip" = "$DONOR_RESOLVED_IP" ] && return 0
+    if [ -n "$_cur" ] && [ "$_cur" != "${_ip}:${DONOR_AWG_PORT}" ]; then
+        awg set "$DONOR_IFACE" peer "$DONOR_REMOTE_PUB" endpoint "${_ip}:${DONOR_AWG_PORT}" || return 1
+        echo "Донор ${DONOR_HOST}: адрес ${_cur%:*} → ${_ip}"
+    fi
+    _conf=$(_donor_awg_conf)
+    [ -f "$_conf" ] && sed -i "s|^Endpoint = .*|Endpoint = ${_ip}:${DONOR_AWG_PORT}|" "$_conf"
+    DONOR_RESOLVED_IP="$_ip"
+    donor_save
+}
+
+donor_reresolve() {
+    donor_load
+    [ "$DONOR_ENABLED" = "true" ] && [ "$DONOR_STAGE" = "ready" ] || return 0
+    _donor_reresolve_now
+}
+
+# Новый адрес того же донора: ключи, подсеть и интерфейс на нём не меняются.
+donor_set_host() (
+    check_root
+    local _host="${1:-}"
+    donor_load
+    donor_configured || { log_error "Туннель до донора не настроен"; return 1; }
+    _donor_valid_host "$_host" || { log_error "Нужен IPv4-адрес или домен донора"; return 1; }
+    local _ip; _ip=$(_donor_resolve "$_host") || { log_error "Домен ${_host} не разрешается в IPv4"; return 1; }
+    [ "$_host" = "$DONOR_HOST" ] && [ "$_ip" = "$DONOR_RESOLVED_IP" ] && { log_info "Адрес донора не изменился"; return 0; }
+
+    local _old="$DONOR_HOST"
+    # Ключ хоста тот же — переносим его под новое имя, чтобы SSH не спросил заново.
+    local _kh _old_name _new_name _lines
+    _kh=$(_donor_known_hosts)
+    _old_name=$(_donor_kh_name)
+    if [ -s "$_kh" ]; then
+        _lines=$(ssh-keygen -F "$_old_name" -f "$_kh" 2>/dev/null | grep -v '^#' | cut -d' ' -f2-)
+        DONOR_HOST="$_host"
+        _new_name=$(_donor_kh_name)
+        if [ -n "$_lines" ] && [ "$_new_name" != "$_old_name" ]; then
+            ssh-keygen -R "$_new_name" -f "$_kh" >/dev/null 2>&1; rm -f "${_kh}.old"
+            sed "s|^|${_new_name} |" <<< "$_lines" >> "$_kh"
+        fi
+    fi
+    DONOR_HOST="$_host"
+    if [ "$DONOR_STAGE" = "ready" ] && [ -f "$(_donor_awg_conf)" ]; then
+        local _cur; _cur=$(awg show "$DONOR_IFACE" endpoints 2>/dev/null | awk 'NR == 1 {print $2}')
+        sed -i "s|^Endpoint = .*|Endpoint = ${_ip}:${DONOR_AWG_PORT}|; s|^# MTProxyL: туннель до донора .*|# MTProxyL: туннель до донора ${_host}|" "$(_donor_awg_conf)"
+        [ -n "$_cur" ] && awg set "$DONOR_IFACE" peer "$DONOR_REMOTE_PUB" endpoint "${_ip}:${DONOR_AWG_PORT}"
+    fi
+    DONOR_RESOLVED_IP="$_ip"
+    donor_save
+    _donor_resolve_timer_sync
+    log_success "Адрес донора: ${_host}$(_donor_host_is_name "$_host" && echo " (${_ip})")"
+    [ "$_old" = "$_host" ] || log_info "Интерфейс ${DONOR_REMOTE_IFACE} на доноре остаётся прежним"
+    if _donor_host_is_name "$_host"; then
+        log_info "Смену A-записи туннель подхватит сам за минуту"
+    fi
+)
 
 # ── Состояние для меню и панели ────────────────────────────────────────────
 
@@ -1543,6 +1699,8 @@ donor_status_json() {
     printf '"tunnel_up":%s,"handshake_age":%s,"rx_bytes":%s,"tx_bytes":%s,"egress_ip":"%s","public_ip":"%s","ipv6":%s,' \
         "$_up" "$_age" "${_rx:-0}" "${_tx:-0}" "$(json_escape "$DONOR_EGRESS_IP")" "$(json_escape "$DONOR_PUBLIC_IP")" \
         "$([ "$DONOR_IPV6" = yes ] && echo true || echo false)"
+    printf '"resolved_ip":"%s","host_is_name":%s,' "$(json_escape "${DONOR_RESOLVED_IP:-}")" \
+        "$(_donor_host_is_name "$DONOR_HOST" && echo true || echo false)"
     printf '"engine_mode":"%s","engine_routed":"%s","disabled_upstreams":"%s","default_upstreams":"%s","warp_enabled":%s,' \
         "$_mode_engine" "$(json_escape "$_routed")" "$(json_escape "$DONOR_DISABLED_UPSTREAMS")" \
         "$(json_escape "$_others")" "$([ "${WARP_ENABLED:-false}" = true ] && echo true || echo false)"
@@ -1556,10 +1714,12 @@ donor_status() {
     donor_load
     echo ""
     if ! donor_configured; then
-        log_info "Туннель до донора не настроен: mtproxyl donor setup <IP донора>"
+        log_info "Туннель до донора не настроен: mtproxyl donor setup <IP или домен донора>"
         return 0
     fi
     echo -e "  ${BOLD}Донор:${NC}        ${DONOR_SSH_USER}@${DONOR_HOST} (SSH ${DONOR_SSH_PORT}), AWG UDP ${DONOR_AWG_PORT:-?}"
+    _donor_host_is_name "$DONOR_HOST" && [ -n "$DONOR_RESOLVED_IP" ] \
+        && echo -e "  ${BOLD}Адрес:${NC}        ${DONOR_RESOLVED_IP} ${DIM}(домен проверяется раз в минуту)${NC}"
     echo -e "  ${BOLD}Туннель:${NC}      ${DONOR_IFACE} $(_donor_local_ip) ⇄ $(_donor_remote_ip) (${DONOR_REMOTE_IFACE} на доноре), MTU ${DONOR_MTU}"
     if [ "$DONOR_STAGE" = "pending" ]; then
         echo -e "  ${BOLD}Состояние:${NC}    ${YELLOW}ждёт публичный ключ донора${NC}"
@@ -1591,11 +1751,12 @@ donor_status() {
 donor_help() {
     echo -e "  ${BOLD}Туннель AWG до сервера-донора:${NC}"
     echo -e "    ${GREEN}donor status${NC} [--json]                       Состояние"
-    echo -e "    ${GREEN}donor setup${NC} <IP> [--user root] [--ssh-port 22] [--awg-port N]"
+    echo -e "    ${GREEN}donor setup${NC} <IP|домен> [--user root] [--ssh-port 22] [--awg-port N]"
     echo -e "                  [--mtu 1280] [--password-stdin] [--host-key SHA256:…] [--allow-disable-default-upstreams]"
     echo -e "                                                  Настроить донор и туннель автоматически"
-    echo -e "    ${GREEN}donor hostkey${NC} <IP> [порт SSH] [--json]      Отпечаток ключа хоста донора"
-    echo -e "    ${GREEN}donor manual${NC} <IP> [порт AWG] [--mtu N]      Ручная настройка: скрипт для донора"
+    echo -e "    ${GREEN}donor hostkey${NC} <IP|домен> [порт SSH] [--json] Отпечаток ключа хоста донора"
+    echo -e "    ${GREEN}donor manual${NC} <IP|домен> [порт AWG] [--mtu N] Ручная настройка: скрипт для донора"
+    echo -e "    ${GREEN}donor host${NC} <IP|домен>                      Новый адрес того же донора, без перенастройки"
     echo -e "    ${GREEN}donor manual-script${NC}                        Показать этот скрипт"
     echo -e "    ${GREEN}donor finish${NC} <ключ донора>                  Завершить ручную настройку"
     echo -e "    ${GREEN}donor check${NC} [--json]                        Проверить туннель и выход"
@@ -1621,6 +1782,8 @@ handle_donor_command() {
         on|enable)     donor_enable "$@" ;;
         off|disable)   donor_disable ;;
         remove)        donor_remove "$@" ;;
+        host)          donor_set_host "$@" ;;
+        reresolve)     donor_reresolve ;;
         help|-h|--help) donor_help ;;
         *) log_error "Неизвестная команда: donor ${_sub}"; donor_help; return 1 ;;
     esac

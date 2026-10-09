@@ -164,9 +164,7 @@ show_main_menu() {
 
         echo -e "  ${BOLD}MEKO оптим.:${NC} $(meko_opt_status 2>/dev/null || echo "${DIM}—${NC}")"
         echo -e "  ${BOLD}Selfmask:${NC}    $(selfmask_status_line 2>/dev/null || echo "${DIM}—${NC}")"
-        if [ "$_reanimator" != "true" ]; then
-            echo -e "  ${BOLD}WEB Proxy:${NC}   $(web_status_line 2>/dev/null || echo "${DIM}—${NC}")"
-        fi
+        echo -e "  ${BOLD}WEB Proxy:${NC}   $(web_status_line 2>/dev/null || echo "${DIM}—${NC}")"
         # Только когда включён: на обычной установке строка была бы шумом.
         warp_menu_line 2>/dev/null || true
         donor_menu_line 2>/dev/null || true
@@ -222,9 +220,9 @@ show_main_menu() {
             # Цели на сервере нет — добавляем пункт установки оригинального
             # telemt: чинить пока нечего. Нумерация остаётся сплошной,
             # поэтому номера двух последних пунктов зависят от этого.
-            local _n_telemt="__none__" _n_setup=13 _n_uninstall=14
+            local _n_telemt="__none__" _n_setup=14 _n_uninstall=15
             if _no_telemt_target; then
-                _n_telemt=13; _n_setup=14; _n_uninstall=15
+                _n_telemt=14; _n_setup=15; _n_uninstall=16
             fi
             echo -e "  ${BRIGHT_CYAN}[1]${NC}   Управление прокси"
             echo -e "  ${BRIGHT_CYAN}[2]${NC}   Пользователи цели"
@@ -238,6 +236,7 @@ show_main_menu() {
             echo -e "  ${BRIGHT_CYAN}[10]${NC}  Цель / режим (Manager ⇄ Reanimator)"
             echo -e "  ${BRIGHT_CYAN}[11]${NC}  Редактировать конфиг цели"
             echo -e "  ${BRIGHT_CYAN}[12]${NC}  Информация"
+            echo -e "  ${BRIGHT_CYAN}[13]${NC}  WEB Proxy  ${DIM}$(web_status_line)${NC}"
             echo ""
             [ "$_n_telemt" != "__none__" ] && \
                 echo -e "  ${GREEN}[${_n_telemt}]${NC}  Установить telemt (официальный установщик)"
@@ -259,6 +258,7 @@ show_main_menu() {
                 10) tui_target_menu ;;
                 11) edit_target_config || true; press_any_key ;;
                 12) show_server_info; press_any_key ;;
+                13) tui_web_menu ;;
                 "$_n_telemt")    install_original_telemt || true; press_any_key ;;
                 "$_n_setup")     run_installer ;;
                 "$_n_uninstall") uninstall; exit 0 ;;

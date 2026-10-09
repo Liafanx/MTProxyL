@@ -228,6 +228,10 @@ export interface WebStatus {
   proxy_port: number;
   domain: string;
   carrier: string;
+  /** Перебор carrier до основного через запятую; пусто — без перебора. */
+  carriers?: string;
+  /** Движок умеет перебор (telemt 3.5.4+). */
+  carriers_supported?: boolean;
   secret_mode: string;
   public_addr: string;
   listen_port: number;
@@ -246,6 +250,10 @@ export interface WebStatus {
   path_supported?: boolean;
   /** Что мешает включению, через точку с запятой. Пусто — можно включать. */
   problems: string;
+  /** mtproxyl — WEB ведёт MTProxyL; target — его настроил хозяин цели. */
+  owner?: 'mtproxyl' | 'target';
+  reanimator?: boolean;
+  engine_version?: string;
 }
 
 export interface WebParam {
@@ -1281,6 +1289,9 @@ export interface DonorStatus {
   tx_bytes: number;
   egress_ip: string;
   public_ip: string;
+  /** Адрес, на который смотрит туннель; у домена — его текущая A-запись. */
+  resolved_ip?: string;
+  host_is_name?: boolean;
   ipv6: boolean;
   /** manager — свой конфиг, target — конфиг цели, manual — правится вручную. */
   engine_mode: 'manager' | 'target' | 'manual';
@@ -1337,6 +1348,8 @@ export const donorApi = {
       body: JSON.stringify({ key, allow_disable_default_upstreams: allowDisableDefaultUpstreams }),
     }),
   check: () => request<DonorStatusResponse>(DONOR_BASE, '/check', { method: 'POST' }),
+  setHost: (host: string) =>
+    request<MtproxylOperation>(DONOR_BASE, '/host', { method: 'POST', body: JSON.stringify({ host }) }),
   enable: (allowDisableDefaultUpstreams: boolean) =>
     request<MtproxylOperation>(DONOR_BASE, '/enable', {
       method: 'POST',
