@@ -50,6 +50,28 @@ load_detect_settings() {
         simple|precise) ;;
         *) DETECT_BRIDGE_STRATEGY="simple" ;;
     esac
+    _ensure_target_config_owner
+}
+
+# Официальный установщик кладёт конфиг как root:telemt, а движок с 3.5.8 при
+# записи через API возвращает файлу прежнего владельца — от telemt это EPERM,
+# и создание пользователя падает. Отдаём конфиг пользователю движка.
+_ensure_target_config_owner() {
+    [ "$(id -u)" -eq 0 ] && [ "${MTPROXYL_MODE:-}" = "reanimator" ] && [ "${DETECTED_MODE:-}" = "local" ] || return 0
+    local _cfg="${DETECTED_CONFIG_PATH:-}" _pid _uid="" _f
+    [ -f "$_cfg" ] && [ ! -L "$_cfg" ] || return 0
+    for _pid in $(_telemt_host_pids 2>/dev/null); do
+        tr '\0' ' ' < "/proc/${_pid}/cmdline" 2>/dev/null | grep -qF "$_cfg" || continue
+        _uid=$(awk '/^Uid:/ { print $3; exit }' "/proc/${_pid}/status" 2>/dev/null)
+        break
+    done
+    [[ "$_uid" =~ ^[0-9]+$ ]] && [ "$_uid" != 0 ] || return 0
+    # Без своего каталога движок не создаст и временный файл — тут не поможем.
+    [ "$(stat -c %u "$(dirname "$_cfg")" 2>/dev/null)" = "$_uid" ] || return 0
+    for _f in "$_cfg" "${_cfg}.lock"; do
+        [ -f "$_f" ] && [ ! -L "$_f" ] && [ "$(stat -c %u "$_f" 2>/dev/null)" != "$_uid" ] || continue
+        chown "$_uid" "$_f" 2>/dev/null || true
+    done
 }
 
 # ── Работа с произвольным TOML (чужой конфиг, только точечные правки) ──
