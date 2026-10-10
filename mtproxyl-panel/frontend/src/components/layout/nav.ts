@@ -29,7 +29,7 @@ export const MTPROXYL_NAV_ITEMS: NavItem[] = [
   { to: '/mode', icon: ToggleLeft, label: 'Режим работы' },
   { to: '/proxy-settings', icon: SlidersHorizontal, label: 'Настройки прокси', managerOnly: true },
   { to: '/selfmask', icon: Globe, label: 'Selfmask' },
-  { to: '/web', icon: Globe2, label: 'WEB Proxy', managerOnly: true },
+  { to: '/web', icon: Globe2, label: 'WEB Proxy' },
   { to: '/traffic', icon: Gauge, label: 'Трафик', primary: true },
   { to: '/shaping', icon: Gauge, label: 'Ограничение скорости' },
   { to: '/nft', icon: ShieldAlert, label: 'Лимитер и защита' },
