@@ -702,10 +702,11 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script warp proto [a-z]*
 # Туннель AWG до сервера-донора. Пароль донора идёт через stdin, не аргументом;
 # аргументы строго проверяет сам MTProxyL.
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script donor status --json
-$SYSTEM_USER ALL=(root) NOPASSWD: $_script donor hostkey [0-9]*
-$SYSTEM_USER ALL=(root) NOPASSWD: $_script donor setup [0-9]*
-$SYSTEM_USER ALL=(root) NOPASSWD: $_script donor manual [0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script donor hostkey [A-Za-z0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script donor setup [A-Za-z0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script donor manual [A-Za-z0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script donor manual-script
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script donor host [A-Za-z0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script donor finish [A-Za-z0-9+/]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script donor check --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script donor on --yes

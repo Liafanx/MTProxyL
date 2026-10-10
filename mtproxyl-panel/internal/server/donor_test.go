@@ -153,3 +153,28 @@ echo '{"configured":true,"stage":"ready","enabled":true,"setup_mode":"auto","hos
 		t.Fatalf("status: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestDonorHostByDomain(t *testing.T) {
+	script, argsFile, _ := recordingScript(t)
+	mux, runner := newDonorMux(t, script)
+	for _, body := range []string{`{"host":"-oProxyCommand=id"}`, `{"host":"donor.example.com; id"}`, `{"host":"localhost"}`} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, authedRequest(t, http.MethodPost, "/api/donor/host", body))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, authedRequest(t, http.MethodPost, "/api/donor/host", `{"host":"donor.example.com"}`))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("host: %d %s", rec.Code, rec.Body.String())
+	}
+	waitRunner(runner)
+	args, _ := os.ReadFile(argsFile)
+	if string(args) != "donor\nhost\ndonor.example.com\n" {
+		t.Fatalf("args: %q", args)
+	}
+	if err := mtproxylctl.ValidateDonorHost("donor.example.com"); err != nil {
+		t.Fatal(err)
+	}
+}

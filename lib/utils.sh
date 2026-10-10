@@ -1211,7 +1211,7 @@ show_cli_help() {
     echo -e "  ${BOLD}История IP:${NC}     ip-history status|flush|on|off"
     echo -e "  ${BOLD}Доступность:${NC}    availability status|check|details|target|on|off|interval|token"
     echo -e "  ${BOLD}Telegram/WARP:${NC}  warp status|on socks|on iface|off|scan|location|endpoint|proto"
-    echo -e "  ${BOLD}Донор (AWG):${NC}    donor status|setup <IP>|manual <IP>|finish <ключ>|check|on|off|remove"
+    echo -e "  ${BOLD}Донор (AWG):${NC}    donor status|setup <IP|домен>|manual <IP|домен>|host <IP|домен>|finish <ключ>|check|on|off|remove"
     echo -e "  ${BOLD}Бэкапы:${NC}         backup [--encrypt] | restore <файл>"
     echo -e "  ${BOLD}Переезд:${NC}        migrate <[user@]хост[:порт]> [--dry-run] ${DIM}(только менеджер)${NC}"
     echo -e "  ${BOLD}Подкачка:${NC}       swap status|on [МБ]|off"

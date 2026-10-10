@@ -21,20 +21,24 @@ type WebStatus struct {
 	HAProxyCert    string `json:"haproxy_cert"`
 	// Layout is "shared" (one public port split by SNI) or "split" (WEB gets
 	// its own port and the proxy keeps PROXY_PORT untouched).
-	Layout      string `json:"layout"`
-	PublicPort  int    `json:"public_port"`
-	ProxyPort   int    `json:"proxy_port"`
-	Domain      string `json:"domain"`
-	Carrier     string `json:"carrier"`
-	SecretMode  string `json:"secret_mode"`
-	PublicAddr  string `json:"public_addr"`
-	ListenPort  int    `json:"listen_port"`
-	TLSPort     int    `json:"tls_port"`
-	MTProxyPort int    `json:"mtproxy_port"`
-	DecoyMode   string `json:"decoy_mode"`
-	DecoySource string `json:"decoy_source"`
-	DecoyDir    string `json:"decoy_dir"`
-	Debug       bool   `json:"debug"`
+	Layout     string `json:"layout"`
+	PublicPort int    `json:"public_port"`
+	ProxyPort  int    `json:"proxy_port"`
+	Domain     string `json:"domain"`
+	Carrier    string `json:"carrier"`
+	// Carriers is the negotiation order before Carrier, comma-separated;
+	// empty disables negotiation. It needs telemt 3.5.4+.
+	Carriers          string `json:"carriers"`
+	CarriersSupported bool   `json:"carriers_supported"`
+	SecretMode        string `json:"secret_mode"`
+	PublicAddr        string `json:"public_addr"`
+	ListenPort        int    `json:"listen_port"`
+	TLSPort           int    `json:"tls_port"`
+	MTProxyPort       int    `json:"mtproxy_port"`
+	DecoyMode         string `json:"decoy_mode"`
+	DecoySource       string `json:"decoy_source"`
+	DecoyDir          string `json:"decoy_dir"`
+	Debug             bool   `json:"debug"`
 	// Sideband is true when bridge pages report lifecycle events to /web-status.
 	Sideband bool `json:"sideband"`
 	// BasePath is the path actually written to the engine config; the saved
@@ -45,6 +49,11 @@ type WebStatus struct {
 	// Problems is a semicolon-separated list of preflight blockers. Empty means
 	// the mode can be switched on.
 	Problems string `json:"problems"`
+	// Owner is "mtproxyl" when MTProxyL manages WEB (always in manager mode)
+	// and "target" when the reanimator target's owner configured it.
+	Owner         string `json:"owner,omitempty"`
+	Reanimator    bool   `json:"reanimator,omitempty"`
+	EngineVersion string `json:"engine_version,omitempty"`
 }
 
 // WebStatus reports the current WEB proxy configuration.

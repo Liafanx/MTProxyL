@@ -62,6 +62,46 @@ fails _donor_valid_pubkey "QZcNc85hYh8MVnlMymhaUFy28PXqWauJ0s9SLRvRZ3d="
 _donor_valid_fp "SHA256:$(printf 'a%.0s' $(seq 1 43))"
 fails _donor_valid_user "root; id"
 
+# Донор по домену: имя проходит, мусор нет; разрешение — только в IPv4.
+_donor_valid_host donor.example.com
+_donor_valid_host 31.76.78.135
+fails _donor_valid_host "-oProxyCommand=id"
+fails _donor_valid_host "donor.example.com; id"
+fails _donor_valid_host localhost
+_donor_host_is_name donor.example.com
+fails _donor_host_is_name 31.76.78.135
+getent() { [ "$2" = donor.example.com ] && printf '%s STREAM donor.example.com\n' 203.0.113.7; }
+[ "$(_donor_resolve donor.example.com)" = 203.0.113.7 ]
+[ "$(_donor_resolve 31.76.78.135)" = 31.76.78.135 ]
+fails _donor_resolve gone.example.com
+# Тот же сервер под доменом — интерфейс на доноре прежний.
+DONOR_HOST=203.0.113.7; DONOR_REMOTE_IFACE=mtpl1b49d2; DONOR_RESOLVED_IP=203.0.113.7
+_donor_same_donor donor.example.com
+fails _donor_same_donor gone.example.com
+DONOR_REMOTE_IFACE=""
+fails _donor_same_donor donor.example.com
+# Сменилась A-запись: endpoint живого интерфейса и конфига переезжают.
+mkdir -p "$test_dir/awg"; DONOR_AWG_DIR="$test_dir/awg"
+DONOR_HOST=donor.example.com; DONOR_AWG_PORT=47321; DONOR_REMOTE_PUB=pub; DONOR_RESOLVED_IP=198.51.100.9
+printf 'Endpoint = 198.51.100.9:47321\n' > "$(_donor_awg_conf)"
+awg() {
+    case "$1 $3" in
+        "show endpoints") printf 'pub\t198.51.100.9:47321\n' ;;
+        "set peer") printf '%s\n' "$*" > "$test_dir/awg.set" ;;
+    esac
+}
+donor_save() { :; }
+_donor_reresolve_now >/dev/null
+grep -qx "set mtpdonor peer pub endpoint 203.0.113.7:47321" "$test_dir/awg.set"
+grep -qx "Endpoint = 203.0.113.7:47321" "$(_donor_awg_conf)"
+[ "$DONOR_RESOLVED_IP" = 203.0.113.7 ]
+# DNS молчит — прежний адрес остаётся.
+rm -f "$test_dir/awg.set"; DONOR_HOST=gone.example.com
+_donor_reresolve_now
+[ ! -e "$test_dir/awg.set" ]
+unset -f getent awg donor_save
+source "$repo/lib/donor.sh"
+
 # Состояние: круг сохранения, мусор в числах отбрасывается.
 _donor_reset_vars
 DONOR_HOST=31.76.78.135; DONOR_NET=10.222.3.8; DONOR_AWG_PORT=47321; DONOR_STAGE=ready

@@ -126,6 +126,12 @@ WEB_LAYOUT="shared"
 WEB_PUBLIC_PORT="443"       # публичный порт встроенного nginx
 WEB_DOMAIN=""
 WEB_CARRIER="websocket"        # https|https-lanes|websocket|websocket-lanes
+WEB_TARGET_ENABLED="false"  # реаниматор: WEB у цели поднят MTProxyL
+WEB_TARGET_PORT=""          # публичный порт цели на время WEB
+WEB_TARGET_PREV_SAVED="false"
+WEB_TARGET_PREV_PUBLIC_PORT=""
+WEB_TARGET_PREV_PP_CIDRS=""
+WEB_CARRIERS=""             # порядок перебора через запятую (telemt 3.5.4+); пусто — перебора нет
 WEB_SECRET_MODE="dd"        # plain|dd, ee движок в WEB не поддерживает
 WEB_LISTEN_ADDR="127.0.0.1" # интерфейс plain HTTP listener'а telemt
 WEB_LISTEN_PORT="15080"     # приватный listener telemt, transport = "web"
@@ -276,6 +282,12 @@ WEB_LAYOUT='${WEB_LAYOUT}'
 WEB_PUBLIC_PORT='${WEB_PUBLIC_PORT}'
 WEB_DOMAIN='${WEB_DOMAIN}'
 WEB_CARRIER='${WEB_CARRIER}'
+WEB_CARRIERS='${WEB_CARRIERS}'
+WEB_TARGET_ENABLED='${WEB_TARGET_ENABLED}'
+WEB_TARGET_PORT='${WEB_TARGET_PORT}'
+WEB_TARGET_PREV_SAVED='${WEB_TARGET_PREV_SAVED}'
+WEB_TARGET_PREV_PUBLIC_PORT='${WEB_TARGET_PREV_PUBLIC_PORT}'
+WEB_TARGET_PREV_PP_CIDRS='${WEB_TARGET_PREV_PP_CIDRS}'
 WEB_SECRET_MODE='${WEB_SECRET_MODE}'
 WEB_LISTEN_ADDR='${WEB_LISTEN_ADDR}'
 WEB_LISTEN_PORT='${WEB_LISTEN_PORT}'
@@ -534,7 +546,7 @@ load_settings() {
                 SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS|SELFMASK_CERT_MODE|\
                 PANEL_SELFMASK_ENABLED|PANEL_SELFMASK_PATH|PANEL_SELFMASK_PREV_LISTEN|\
                 PANEL_SELFMASK_PREV_BASE_PATH|\
-                WEB_ENABLED|WEB_FRONTEND|WEB_LAYOUT|WEB_PUBLIC_PORT|WEB_DOMAIN|WEB_CARRIER|WEB_SECRET_MODE|\
+                WEB_ENABLED|WEB_FRONTEND|WEB_LAYOUT|WEB_PUBLIC_PORT|WEB_DOMAIN|WEB_CARRIER|WEB_CARRIERS|WEB_TARGET_ENABLED|WEB_TARGET_PORT|WEB_TARGET_PREV_SAVED|WEB_TARGET_PREV_PUBLIC_PORT|WEB_TARGET_PREV_PP_CIDRS|WEB_SECRET_MODE|\
                 WEB_LISTEN_ADDR|WEB_LISTEN_PORT|WEB_TRUSTED_PROXY_CIDRS|\
                 WEB_TLS_PORT|WEB_MTPROXY_PORT|\
                 WEB_HAPROXY_CERT|\
@@ -631,6 +643,10 @@ load_settings() {
         https|https-lanes|websocket|websocket-lanes) ;;
         *) WEB_CARRIER="websocket" ;;
     esac
+    [ "$WEB_TARGET_ENABLED" = "true" ] || WEB_TARGET_ENABLED="false"
+    [[ "$WEB_TARGET_PORT" =~ ^[0-9]{1,5}$ ]] || WEB_TARGET_PORT=""
+    [[ "$WEB_CARRIERS" =~ ^(https|https-lanes|websocket|websocket-lanes)(,(https|https-lanes|websocket|websocket-lanes)){0,3}$ ]] \
+        || WEB_CARRIERS=""
     # ee движок в WEB не принимает — только plain и dd.
     case "$WEB_SECRET_MODE" in
         plain|dd) ;;

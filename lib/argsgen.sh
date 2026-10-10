@@ -197,6 +197,7 @@ _argsgen_build() {
             _a+=(--web-haproxy-cert "$WEB_HAPROXY_CERT")
         fi
         _a+=(--web-carrier "${WEB_CARRIER:-websocket}")
+        [ -n "${WEB_CARRIERS:-}" ] && _a+=(--web-carriers "$WEB_CARRIERS")
         _a+=(--web-secret-mode "${WEB_SECRET_MODE:-dd}")
         [ -n "${WEB_DOMAIN:-}" ] && _a+=(--web-domain "$WEB_DOMAIN")
         [ -n "${WEB_BASE_PATH:-}" ] && _a+=(--web-path "$WEB_BASE_PATH")

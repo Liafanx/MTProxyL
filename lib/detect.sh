@@ -56,8 +56,11 @@ load_detect_settings() {
 _toml_get_value() {
     local _key="$1" _file="$2"
     [ -f "$_file" ] || return 0
+    # Блок WEB от MTProxyL не в счёт: в нём port приватного listener'а цели.
     awk -v k="$_key" '
-        /^[[:space:]]*#/ { next }
+        /^# >>> mtproxyl-web/ { skip = 1; next }
+        /^# <<< mtproxyl-web/ { skip = 0; next }
+        skip || /^[[:space:]]*#/ { next }
         $1 == k && $2 == "=" { gsub(/[^0-9]/, "", $3); print $3; exit }
     ' "$_file" 2>/dev/null
 }
@@ -1342,6 +1345,12 @@ switch_to_manager_mode() {
     if [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
         log_info "Уже в режиме manager"
         return 0
+    fi
+    # WEB у цели держит её на приватном порту, а :443 — у nginx: в менеджере
+    # этот блок стал бы ничьим.
+    if [ "${WEB_TARGET_ENABLED:-false}" = "true" ]; then
+        log_error "У цели включён WEB Proxy — сначала выключите его: mtproxyl web disable"
+        return 1
     fi
     echo ""
     log_warn "Переход в режим Manager. MTProxyL начнёт устанавливать/владеть СВОИМ telemt."

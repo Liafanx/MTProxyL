@@ -20,7 +20,7 @@ _IA_CPUS=""; _IA_MEMORY=""
 _IA_SECRETS=()
 _IA_SELFMASK_DOMAIN=""; _IA_SELFMASK_CERT=""; _IA_SELFMASK_EMAIL=""
 _IA_SELFMASK_TEMPLATE=""; _IA_SELFMASK_BACKEND_PORT=""
-_IA_WEB=""; _IA_WEB_DOMAIN=""; _IA_WEB_CARRIER=""; _IA_WEB_LAYOUT=""; _IA_WEB_FRONTEND=""
+_IA_WEB=""; _IA_WEB_DOMAIN=""; _IA_WEB_CARRIER=""; _IA_WEB_CARRIERS=""; _IA_WEB_LAYOUT=""; _IA_WEB_FRONTEND=""
 _IA_WEB_HAPROXY_CERT=""
 _IA_WEB_PORT=""; _IA_WEB_SECRET_MODE=""; _IA_WEB_PATH=""
 _IA_WEB_DECOY=""; _IA_WEB_DECOY_UPSTREAM=""
@@ -106,6 +106,7 @@ install_args_help() {
     --web-haproxy-cert ПУТЬ    PEM сертификат + ключ для фрагмента HAProxy
     --web-domain <домен>       по умолчанию web.<домен selfmask>
     --web-carrier https|https-lanes|websocket|websocket-lanes
+    --web-carriers <список>    перебор carrier через запятую (telemt 3.5.4+)
     --web-port N               публичный порт WEB для WEB-only и split
     --web-secret-mode plain|dd
     --web-path <путь>          WEB под путём, например app/sync (telemt 3.5.8+)
@@ -225,6 +226,7 @@ _install_args_parse() {
                 esac ;;
             --web-domain)      _IA_WEB_DOMAIN="${_v,,}" ;;
             --web-carrier)     _IA_WEB_CARRIER="$_v" ;;
+            --web-carriers)    _IA_WEB_CARRIERS="${_v,,}" ;;
             --web-layout)      _IA_WEB_LAYOUT="$_v" ;;
             --web-frontend)    _IA_WEB_FRONTEND="${_v,,}" ;;
             --web-haproxy-cert) _IA_WEB_HAPROXY_CERT="$_v" ;;
@@ -488,6 +490,10 @@ _install_args_validate() {
             *) log_error "--web-carrier: https, https-lanes, websocket или websocket-lanes"; _ok=false ;;
         esac
     fi
+    if [ -n "$_IA_WEB_CARRIERS" ] \
+       && ! [[ "$_IA_WEB_CARRIERS" =~ ^(https|https-lanes|websocket|websocket-lanes)(,(https|https-lanes|websocket|websocket-lanes)){0,3}$ ]]; then
+        log_error "--web-carriers: список из https, https-lanes, websocket, websocket-lanes через запятую"; _ok=false
+    fi
     if [ -n "$_IA_WEB_LAYOUT" ]; then
         case "$_IA_WEB_LAYOUT" in
             shared|split) ;;
@@ -541,7 +547,7 @@ _install_args_validate() {
     if [ "$_IA_WEB" = "yes" ] && [ -z "$_IA_WEB_DOMAIN" ] && [ -z "$_IA_SELFMASK_DOMAIN" ]; then
         log_error "--web yes требует --web-domain <домен> либо --selfmask <домен>"; _ok=false
     fi
-    if [ "$_IA_WEB" != "yes" ] && { [ -n "$_IA_WEB_DOMAIN" ] || [ -n "$_IA_WEB_CARRIER" ] || \
+    if [ "$_IA_WEB" != "yes" ] && { [ -n "$_IA_WEB_DOMAIN" ] || [ -n "$_IA_WEB_CARRIER" ] || [ -n "$_IA_WEB_CARRIERS" ] || \
        [ -n "$_IA_WEB_LAYOUT" ] || [ -n "$_IA_WEB_PORT" ] || [ -n "$_IA_WEB_SECRET_MODE" ] || \
        [ -n "$_IA_WEB_FRONTEND" ] || [ -n "$_IA_WEB_HAPROXY_CERT" ] || \
        [ -n "$_IA_WEB_DECOY" ] || [ -n "$_IA_WEB_DECOY_UPSTREAM" ] || [ -n "$_IA_WEB_PATH" ]; }; then
@@ -922,6 +928,7 @@ _install_args_web() {
     WEB_DECOY_UPSTREAM="${_IA_WEB_DECOY_UPSTREAM:-}"
     [ -n "$_IA_WEB_DOMAIN" ]      && WEB_DOMAIN="$_IA_WEB_DOMAIN"
     [ -n "$_IA_WEB_CARRIER" ]     && WEB_CARRIER="$_IA_WEB_CARRIER"
+    [ -n "$_IA_WEB_CARRIERS" ]    && WEB_CARRIERS="$_IA_WEB_CARRIERS"
     [ -n "$_IA_WEB_SECRET_MODE" ] && WEB_SECRET_MODE="$_IA_WEB_SECRET_MODE"
     [ -n "$_IA_WEB_PATH" ]        && WEB_BASE_PATH="$_IA_WEB_PATH"
     if [ -n "$_IA_WEB_PORT" ]; then

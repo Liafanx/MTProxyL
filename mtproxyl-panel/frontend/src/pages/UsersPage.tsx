@@ -19,7 +19,7 @@ import { UsersTransfer } from '@/components/UsersTransfer';
 import { formatBytes } from '@/lib/utils';
 import { useQuota, resetUserQuota, type QuotaEntry } from '@/hooks/useQuota';
 import { QuotaBar } from '@/components/QuotaBar';
-import { buildProxyLinks, extractSecret, mergeUserStats, type UserLinks } from './usersPage.helpers';
+import { buildProxyLinks, extractSecret, loadWebLinkConfig, mergeUserStats, saveWebLinkConfig, type UserLinks, type WebLinkConfig } from './usersPage.helpers';
 
 type SortKey = 'username' | 'current_connections' | 'active_unique_ips' | 'total_octets' | 'total_bytes' | 'expiration_rfc3339';
 type SortDir = 'asc' | 'desc';
@@ -87,7 +87,15 @@ export function UsersPage() {
   const { data: mtproxylUsers } = usePolling(() => mtproxylUsersApi.list(), 10000);
   // Статус WEB нужен, чтобы дособрать tg://webproxy: движок такие ссылки не
   // отдаёт. Опрашиваем редко — он меняется вручную.
-  const { data: webStatus } = usePolling(() => mtproxylApi.web(), 60000);
+  const { data: webLive, loading: webLoading, error: webError } = usePolling(() => mtproxylApi.web(), 60000);
+  // Пока живой статус WEB не пришёл, берём прошлый, а без него ссылки не
+  // показываем вовсе: угаданные обычные ссылки в режиме «Только WEB» неверны.
+  const [webCached] = useState(loadWebLinkConfig);
+  useEffect(() => {
+    if (webLive) saveWebLinkConfig(webLive);
+  }, [webLive]);
+  const webStatus: WebLinkConfig | null = webLive ?? (webError ? null : webCached);
+  const linksPending = !webLive && !webError && webLoading && !webCached;
   const mergedUsers = useMemo(() => mergeUserStats(users ?? [], mtproxylUsers), [users, mtproxylUsers]);
   const { quotaByUser, supported: quotaSupported, refresh: refreshQuota } = useQuota(10000);
 
@@ -250,7 +258,9 @@ export function UsersPage() {
     setDeleting(true);
     setActionError('');
     try {
-      if (usersOwnedByMtproxyl) {
+      // Профиль WEB, ссылающийся на пользователя, движок снять не даст:
+      // MTProxyL убирает профиль раньше пользователя.
+      if (usersOwnedByMtproxyl || (mtproxylEnabled && webStatus?.enabled)) {
         await mtproxylUsersApi.remove(deleteUser);
       } else {
         await telemt.delete(`/v1/users/${deleteUser}`);
@@ -259,11 +269,14 @@ export function UsersPage() {
       setDeleteUser(null);
       refresh();
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'Не удалось удалить');
+      const msg = err instanceof ApiError ? err.message : 'Не удалось удалить';
+      setActionError(msg.includes('references unknown access user')
+        ? 'У пользователя есть профиль WEB Proxy в конфиге движка — сначала уберите его из [[web.vhosts.profiles]] или включите интеграцию с MTProxyL'
+        : msg);
     } finally {
       setDeleting(false);
     }
-  }, [deleteUser, refresh, usersOwnedByMtproxyl, syncWebProfiles]);
+  }, [deleteUser, refresh, usersOwnedByMtproxyl, mtproxylEnabled, webStatus?.enabled, syncWebProfiles]);
 
   const handleResetQuota = useCallback(async () => {
     if (!resetUser) return;
@@ -444,7 +457,9 @@ export function UsersPage() {
                           <Link to={`/users/${u.username}`} className="text-accent hover:underline">{u.username}</Link>
                         </TableCell>
                         <TableCell>
-                          <ProxyLinkButtons links={buildProxyLinks(u.links, webStatus ?? undefined)} />
+                          {linksPending
+                            ? <span className="text-xs text-text-secondary">…</span>
+                            : <ProxyLinkButtons links={buildProxyLinks(u.links, webStatus ?? undefined)} />}
                         </TableCell>
                         <TableCell>
                           <Badge variant={u.current_connections > 0 ? 'default' : 'outline'}>
@@ -529,7 +544,7 @@ export function UsersPage() {
                   totalTraffic={u.total_octets}
                   accumulatedTraffic={u.total_bytes}
                   online={u.current_connections > 0}
-                  links={buildProxyLinks(u.links, webStatus ?? undefined)}
+                  links={linksPending ? [] : buildProxyLinks(u.links, webStatus ?? undefined)}
                   onEdit={() => setEditUser(u)}
                   onDelete={() => setDeleteUser(u.username)}
                   quotaUsed={quotaByUser.get(u.username)?.used_bytes}

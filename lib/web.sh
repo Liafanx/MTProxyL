@@ -7,13 +7,19 @@
 WEB_MIN_ENGINE_VERSION="3.5.1"
 WEB_SITE_REDEPLOY_MARKER="${INSTALL_DIR}/.web-site-redeploy"
 
-web_is_enabled() { [ "${WEB_ENABLED:-false}" = "true" ]; }
-mtproto_is_enabled() { [ "${PROXY_MODE:-mtproto}" != "web" ]; }
-web_is_only_mode() { [ "${PROXY_MODE:-mtproto}" = "web" ]; }
-web_frontend_is_haproxy() { [ "${WEB_FRONTEND:-nginx}" = "haproxy" ]; }
+# В реаниматоре WEB цели ведёт отдельный флаг: WEB_ENABLED остаётся от
+# менеджера и к цели не относится. Раскладка там выбирается сама: только
+# nginx MTProxyL, обычный MTProto остаётся всегда.
+web_is_enabled() {
+    if web_is_reanimator; then [ "${WEB_TARGET_ENABLED:-false}" = "true" ]; return; fi
+    [ "${WEB_ENABLED:-false}" = "true" ]
+}
+mtproto_is_enabled() { web_is_reanimator || [ "${PROXY_MODE:-mtproto}" != "web" ]; }
+web_is_only_mode() { ! web_is_reanimator && [ "${PROXY_MODE:-mtproto}" = "web" ]; }
+web_frontend_is_haproxy() { ! web_is_reanimator && [ "${WEB_FRONTEND:-nginx}" = "haproxy" ]; }
 # HAProxy держит публичный порт, но TLS и заглушку по-прежнему обслуживает
 # nginx MTProxyL: клиент приходит в него по PROXY protocol с приватного порта.
-web_frontend_is_haproxy_nginx() { [ "${WEB_FRONTEND:-nginx}" = "haproxy-nginx" ]; }
+web_frontend_is_haproxy_nginx() { ! web_is_reanimator && [ "${WEB_FRONTEND:-nginx}" = "haproxy-nginx" ]; }
 web_frontend_has_haproxy() { web_frontend_is_haproxy || web_frontend_is_haproxy_nginx; }
 # При direct HAProxy на другом узле публичный DNS закономерно указывает на него,
 # а не на сервер MTProxyL. Нелокальный bind — явный признак такой схемы.
@@ -30,6 +36,7 @@ web_uses_managed_nginx() { ! web_frontend_is_haproxy; }
 web_can_disable() { mtproto_is_enabled && { web_uses_managed_nginx || web_layout_is_split; }; }
 
 proxy_transport_mode_title() {
+    if web_is_reanimator; then web_is_enabled && echo "MTProto + WEB" || echo "Только MTProto"; return; fi
     case "${PROXY_MODE:-mtproto}" in
         web) echo "Только WEB" ;;
         combined) echo "MTProto + WEB" ;;
@@ -39,7 +46,11 @@ proxy_transport_mode_title() {
 
 # shared — один публичный порт на двоих, nginx разводит по SNI.
 # split — у WEB свой порт, движок остаётся на PROXY_PORT напрямую.
-web_layout_is_split() { [ "${WEB_LAYOUT:-shared}" = "split" ]; }
+# У цели не на 443 обычный MTProto остаётся на своём порту — это split.
+web_layout_is_split() {
+    if web_is_reanimator; then [ "$(web_target_public_port)" != "443" ]; return; fi
+    [ "${WEB_LAYOUT:-shared}" = "split" ]
+}
 # Публичный порт слушает nginx сам. За HAProxy он всегда сидит на приватном,
 # поэтому «прямой» раскладки там нет ни в split, ни в WEB-only.
 web_frontend_is_direct() {
@@ -50,6 +61,7 @@ web_frontend_is_direct() {
 # Порт, на который приходит клиент WEB. В ссылку он не пишется, но именно
 # он идёт в public_addr.
 web_public_port() {
+    web_is_reanimator && { echo 443; return 0; }
     web_frontend_has_haproxy && { echo 443; return 0; }
     if web_frontend_is_direct; then echo "${WEB_PUBLIC_PORT:-443}"; else echo "${PROXY_PORT:-443}"; fi
 }
@@ -75,7 +87,11 @@ web_domain() {
 }
 
 web_decoy_dir()  { echo "${WEB_DECOY_DIR:-${SELFMASK_SITE_DIR:-/var/www/mtproxyl-selfmask}}"; }
-web_empty_decoy_dir() { echo "${INSTALL_DIR}/web-empty"; }
+# Цель может работать не от root, а каталог MTProxyL закрыт: пустую заглушку
+# для неё держим в общедоступном месте.
+web_empty_decoy_dir() {
+    if web_is_reanimator; then echo "/var/lib/mtproxyl-web/empty"; else echo "${INSTALL_DIR}/web-empty"; fi
+}
 web_effective_decoy_dir() {
     [ "${WEB_DECOY_MODE:-empty}" = "empty" ] && web_empty_decoy_dir || web_decoy_dir
 }
@@ -83,6 +99,7 @@ web_effective_decoy_dir() {
 _web_prepare_empty_decoy() {
     local _dir; _dir=$(web_empty_decoy_dir)
     mkdir -p "$_dir"
+    web_is_reanimator && chmod 755 "$(dirname "$_dir")" "$_dir"
     find "$_dir" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
     install -m 0644 /dev/null "${_dir}/index.html"
     install -m 0644 /dev/null "${_dir}/404.html"
@@ -96,7 +113,10 @@ _web_ensure_404() {
 }
 
 # Домен маскировки FakeTLS — с ним WEB совпасть не может.
-web_faketls_domain() { echo "${PROXY_DOMAIN:-${SELFMASK_DOMAIN:-}}"; }
+web_faketls_domain() {
+    if web_is_reanimator; then _target_tls_domain 2>/dev/null; return 0; fi
+    echo "${PROXY_DOMAIN:-${SELFMASK_DOMAIN:-}}"
+}
 
 # Адрес 0.0.0.0 годится только для bind. Локальные nginx/HAProxy и проверки
 # должны подключаться к loopback; при конкретном частном адресе используют его.
@@ -345,6 +365,16 @@ _web_decoy_toml() {
 # берём первого и пропускаем остальных.
 _web_profiles_toml() {
     local i _n=0 _seen=" "
+    if web_is_reanimator; then
+        local _lb _mode="${WEB_SECRET_MODE:-dd}"
+        while IFS= read -r _lb; do
+            [ -n "$_lb" ] || continue
+            printf '\n[[web.vhosts.profiles]]\nuser = "%s"\nsecret_mode = "%s"\n' "$_lb" "$_mode"
+            _n=$((_n + 1))
+        done < <(_web_target_users)
+        [ "$_n" -gt 0 ]
+        return
+    fi
     for i in "${!SECRETS_LABELS[@]}"; do
         [ "${SECRETS_ENABLED[$i]}" = "true" ] || continue
         case "$_seen" in
@@ -364,6 +394,7 @@ _web_profiles_toml() {
 # уникальным секретом.
 web_profile_count() {
     local i _n=0 _seen=" "
+    web_is_reanimator && { _web_target_users | grep -c .; return 0; }
     for i in "${!SECRETS_LABELS[@]}"; do
         [ "${SECRETS_ENABLED[$i]}" = "true" ] || continue
         case "$_seen" in *" ${SECRETS_KEYS[$i]} "*) continue ;; esac
@@ -399,6 +430,7 @@ web_limits_fingerprint() {
 # Пользователи, чей профиль не попадёт в vhost из-за общего секрета.
 web_duplicate_secret_labels() {
     local i _seen=" " _dup=""
+    web_is_reanimator && return 0
     for i in "${!SECRETS_LABELS[@]}"; do
         [ "${SECRETS_ENABLED[$i]}" = "true" ] || continue
         case "$_seen" in
@@ -416,6 +448,7 @@ web_sections_toml() {
     [ -n "$_domain" ] || return 1
 
     printf '\n[web]\nenabled = true\ncarrier = "%s"\n' "${WEB_CARRIER:-websocket}"
+    web_carriers_toml
     printf '\n[web.debug]\nenabled = %s\n' "$([ "${WEB_DEBUG:-false}" = "true" ] && echo true || echo false)"
     web_engine_supports_path && printf 'sideband = %s\n' "$(web_sideband_enabled && echo true || echo false)"
     printf '\n[[web.vhosts]]\nhost = "%s"\npublic_addr = "%s"\n' "$_domain" "$_addr"
@@ -870,10 +903,64 @@ web_haproxy_port_owned() {
 # знает, поэтому на нём WEB остаётся в корне и ссылки прежние.
 WEB_PATH_MIN_ENGINE_VERSION="3.5.8"
 
-web_engine_supports_path() {
-    local _v; _v=$(engine_current_version 2>/dev/null | tr -d ' \t\r\n')
+# Версия движка, к которому относится WEB: в реаниматоре — цели.
+web_engine_version() {
+    if web_is_reanimator; then
+        target_engine_version 2>/dev/null || echo "unknown"
+        return 0
+    fi
+    engine_current_version 2>/dev/null
+}
+
+# Версию цели в Docker не узнать — считаем её свежей: если ключ движку
+# незнаком, он не стартует, и включение откатится.
+_web_engine_at_least() {
+    local _v; _v=$(web_engine_version | tr -d ' \t\r\n')
     _v="${_v#v}"; _v="${_v%%-*}"
-    [ -n "$_v" ] && _version_ge "$_v" "$WEB_PATH_MIN_ENGINE_VERSION"
+    if [ -z "$_v" ] || [ "$_v" = "unknown" ]; then web_is_reanimator; return; fi
+    _version_ge "$_v" "$1"
+}
+
+web_engine_supports_path() { _web_engine_at_least "$WEB_PATH_MIN_ENGINE_VERSION"; }
+
+WEB_CARRIERS_MIN_ENGINE_VERSION="3.5.4"
+WEB_CARRIER_ALL="websocket websocket-lanes https-lanes https"
+
+web_engine_supports_carriers() { _web_engine_at_least "$WEB_CARRIERS_MIN_ENGINE_VERSION"; }
+
+# Перебор без основного carrier: движок сам ставит его последним.
+web_carriers_effective() {
+    local _c _out="" _all
+    _all=$(web_carriers_saved)
+    for _c in ${_all//,/ }; do
+        [ "$_c" = "${WEB_CARRIER:-websocket}" ] || _out+="${_out:+,}${_c}"
+    done
+    printf '%s' "$_out"
+}
+
+# Порядок перебора для подписи: «websocket-lanes → websocket → https».
+web_carriers_chain() {
+    local _e; _e=$(web_carriers_effective)
+    [ -n "$_e" ] && web_engine_supports_carriers || { printf '%s' "${WEB_CARRIER:-websocket}"; return 0; }
+    printf '%s → %s' "${_e//,/ → }" "${WEB_CARRIER:-websocket}"
+}
+
+# Сохранённый перебор; до 1.6.37 он жил только экспертным web.carriers.
+web_carriers_saved() {
+    local _o
+    if [ -z "${WEB_CARRIERS:-}" ] && ! web_is_reanimator && declare -F get_expert_override_value >/dev/null; then
+        _o=$(get_expert_override_value web carriers 2>/dev/null | tr -d ' []"')
+        [ "$_o" = "false" ] || { printf '%s' "$_o"; return 0; }
+    fi
+    printf '%s' "${WEB_CARRIERS:-}"
+}
+
+web_carriers_toml() {
+    local _e _c _arr=""
+    _e=$(web_carriers_effective)
+    [ -n "$_e" ] && web_engine_supports_carriers || return 0
+    for _c in ${_e//,/ }; do _arr+="${_arr:+, }\"${_c}\""; done
+    printf 'carriers = [%s]\n' "$_arr"
 }
 
 # Путь, который действительно уходит в конфиг движка.
@@ -1041,7 +1128,9 @@ _web_prepare_frontend() {
         SELFMASK_SITE_DIR="$WEB_DECOY_DIR"
     fi
 
-    if engine_is_binary; then
+    if web_is_reanimator; then
+        :
+    elif engine_is_binary; then
         binengine_ensure_installed || return 1
     else
         build_telemt_image || return 1
@@ -1132,11 +1221,7 @@ _web_obtain_cert() {
 
 # Поэтому сначала уводим движок на loopback и только потом поднимаем nginx.
 web_enable() {
-    if web_is_reanimator; then
-        log_error "В режиме реаниматора конфигом владеет цель — WEB включает её хозяин"
-        log_info "Мы покажем состояние и соберём ссылки: mtproxyl web status, mtproxyl web links"
-        return 1
-    fi
+    web_is_reanimator && { web_target_enable; return; }
     if _superexpert_active; then
         log_error "В режиме супер эксперта transport задаётся в пользовательском конфиге"
         return 1
@@ -1223,7 +1308,7 @@ web_enable() {
     fi
 
     _web_reapply_geoblock
-    log_success "WEB Proxy включён: $(web_domain), carrier ${WEB_CARRIER}"
+    log_success "WEB Proxy включён: $(web_domain), carrier $(web_carriers_chain)"
     _web_enable_links_tail
 }
 
@@ -1248,7 +1333,7 @@ _web_enable_links_tail() {
 # Обратный порядок: сначала снимаем nginx с публичного порта, иначе движок
 # не сможет его занять обратно.
 web_disable() {
-    web_is_reanimator && { log_error "В режиме реаниматора WEB выключает хозяин конфига цели"; return 1; }
+    web_is_reanimator && { web_target_disable; return; }
     web_is_enabled || { log_info "WEB Proxy и так выключен"; return 0; }
     if web_is_only_mode; then
         log_error "WEB нельзя выключить в режиме «Только WEB»: движок останется без транспорта"
@@ -1299,7 +1384,7 @@ web_disable() {
 }
 
 web_set_proxy_mode() {
-    web_is_reanimator && { log_error "Режим транспорта настраивает хозяин цели"; return 1; }
+    web_is_reanimator && { log_error "У цели обычный MTProto остаётся всегда: режим «Только WEB» — в менеджере"; return 1; }
     _superexpert_active && {
         log_error "В режиме супер эксперта transport задаётся в пользовательском конфиге"
         return 1
@@ -1348,7 +1433,7 @@ _web_status_json_target() {
         _host=$(web_target_host 2>/dev/null)
         _mode=$(_web_target_secret_mode 2>/dev/null)
     fi
-    printf '{"enabled":%s,"proxy_mode":"target","mtproto_enabled":true,"frontend":"target","haproxy_ready":false,"haproxy_cert":"","layout":"target","public_port":%s,"proxy_port":%s,"domain":"%s","carrier":"","secret_mode":"%s","public_addr":"","listen_port":0,"tls_port":0,"mtproxy_port":0,"decoy_mode":"","decoy_dir":"","debug":false,"sideband":false,"base_path":"%s","base_path_saved":"","path_supported":false,"problems":"","owner":"target"}\n' \
+    printf '{"enabled":%s,"proxy_mode":"target","mtproto_enabled":true,"frontend":"target","haproxy_ready":false,"haproxy_cert":"","layout":"target","public_port":%s,"proxy_port":%s,"domain":"%s","carrier":"","secret_mode":"%s","public_addr":"","listen_port":0,"tls_port":0,"mtproxy_port":0,"decoy_mode":"","decoy_dir":"","debug":false,"sideband":false,"base_path":"%s","base_path_saved":"","path_supported":false,"problems":"","owner":"target","reanimator":true}\n' \
         "$_en" "${DETECTED_PORT:-443}" "${DETECTED_PORT:-443}" "$(json_escape "$_host")" "$(json_escape "$_mode")" \
         "$(json_escape "$(web_target_base_path 2>/dev/null)")"
 }
@@ -1373,19 +1458,26 @@ web_sync_profiles() {
     log_success "Профили WEB пересобраны: $(web_profile_count) шт."
 }
 
+# Чужой WEB у цели показываем как есть; свой или ещё не включённый — так же,
+# как в менеджере, плюс owner, чтобы панель знала, что им можно управлять.
+_web_target_foreign_shown() { web_is_reanimator && ! web_target_managed && web_target_enabled 2>/dev/null; }
+
 web_status_json() {
-    web_is_reanimator && { _web_status_json_target; return 0; }
+    _web_target_foreign_shown && { _web_status_json_target; return 0; }
     local _d _addr _problems
     _d=$(web_domain 2>/dev/null)
     _addr=$(web_public_addr 2>/dev/null)
-    _problems=$(web_preflight_problems 2>/dev/null | tr '\n' ';')
-    printf '{"enabled":%s,"proxy_mode":"%s","mtproto_enabled":%s,"frontend":"%s","haproxy_ready":%s,"haproxy_cert":"%s","layout":"%s","public_port":%s,"proxy_port":%s,"domain":"%s","carrier":"%s","secret_mode":"%s","public_addr":"%s","listen_port":%s,"tls_port":%s,"mtproxy_port":%s,"decoy_mode":"%s","decoy_source":"%s","decoy_dir":"%s","debug":%s,"sideband":%s,"base_path":"%s","base_path_saved":"%s","path_supported":%s,"problems":"%s"}\n' \
+    _problems=$( { web_is_reanimator && web_target_problems; web_preflight_problems; } 2>/dev/null | tr '\n' ';')
+    printf '{"enabled":%s,"proxy_mode":"%s","mtproto_enabled":%s,"frontend":"%s","haproxy_ready":%s,"haproxy_cert":"%s","layout":"%s","public_port":%s,"proxy_port":%s,"domain":"%s","carrier":"%s","carriers":"%s","carriers_supported":%s,"secret_mode":"%s","public_addr":"%s","listen_port":%s,"tls_port":%s,"mtproxy_port":%s,"decoy_mode":"%s","decoy_source":"%s","decoy_dir":"%s","debug":%s,"sideband":%s,"base_path":"%s","base_path_saved":"%s","path_supported":%s,"problems":"%s","owner":"mtproxyl","reanimator":%s,"engine_version":"%s"}\n' \
         "$(web_is_enabled && echo true || echo false)" \
-        "$(json_escape "${PROXY_MODE:-mtproto}")" "$(mtproto_is_enabled && echo true || echo false)" \
-        "$(json_escape "${WEB_FRONTEND:-nginx}")" "$(web_haproxy_ready && echo true || echo false)" \
+        "$(json_escape "$(if web_is_reanimator; then web_is_enabled && echo combined || echo mtproto; else echo "${PROXY_MODE:-mtproto}"; fi)")" \
+        "$(mtproto_is_enabled && echo true || echo false)" \
+        "$(json_escape "$(web_is_reanimator && echo nginx || echo "${WEB_FRONTEND:-nginx}")")" "$(web_haproxy_ready && echo true || echo false)" \
         "$(json_escape "$(web_haproxy_cert)")" \
-        "$(json_escape "$([ "${PROXY_MODE:-mtproto}" = web ] && echo web || echo "${WEB_LAYOUT:-shared}")")" "$(web_public_port)" "${PROXY_PORT:-443}" \
+        "$(if web_is_only_mode; then echo web; elif web_layout_is_split; then echo split; else echo shared; fi)" \
+        "$(web_public_port)" "$(web_is_reanimator && web_target_public_port || echo "${PROXY_PORT:-443}")" \
         "$(json_escape "$_d")" "$(json_escape "${WEB_CARRIER:-}")" \
+        "$(json_escape "$(web_carriers_saved)")" "$(web_engine_supports_carriers && echo true || echo false)" \
         "$(json_escape "${WEB_SECRET_MODE:-}")" "$(json_escape "$_addr")" \
         "${WEB_LISTEN_PORT:-15080}" "${WEB_TLS_PORT:-15444}" "${WEB_MTPROXY_PORT:-15443}" \
         "$(json_escape "${WEB_DECOY_MODE:-empty}")" "$(json_escape "${SELFMASK_SITE_SOURCE:-stub}")" \
@@ -1394,7 +1486,8 @@ web_status_json() {
         "$(web_sideband_enabled && echo true || echo false)" \
         "$(json_escape "$(web_base_path)")" "$(json_escape "${WEB_BASE_PATH:-}")" \
         "$(web_engine_supports_path && echo true || echo false)" \
-        "$(json_escape "$_problems")"
+        "$(json_escape "$_problems")" "$(web_is_reanimator && echo true || echo false)" \
+        "$(json_escape "$(web_engine_version)")"
 }
 
 # ── Проверка предусловий ──────────────────────────────────────
@@ -1489,7 +1582,7 @@ web_preflight_problems() {
        && web_haproxy_port_owned 80; then
         _p+="порт 80 занят HAProxy, а через него nginx MTProxyL выпускает сертификат — освободите :80"$'\n'
     fi
-    web_engine_supports || _p+="движок $(engine_current_version 2>/dev/null) не умеет WEB, нужен ${WEB_MIN_ENGINE_VERSION} или новее"$'\n'
+    web_engine_supports || _p+="движок $(web_engine_version) не умеет WEB, нужен ${WEB_MIN_ENGINE_VERSION} или новее"$'\n'
     # У каждого vhost должен быть хотя бы один профиль, а профиль — это
     # включённый пользователь с уникальным секретом.
     local _pn; _pn=$(web_profile_count 2>/dev/null)
@@ -1498,7 +1591,8 @@ web_preflight_problems() {
     else
         # Свой лимит мы поднимаем сами, но экспертный оверрайд главнее, и
         # заниженное значение роняет движок на старте.
-        local _pl; _pl=$(get_expert_override_value web.limits max_profiles 2>/dev/null)
+        local _pl=""
+        web_is_reanimator || _pl=$(get_expert_override_value web.limits max_profiles 2>/dev/null)
         if [ -n "$_pl" ] && [ "$_pn" -gt "$_pl" ]; then
             _p+="пользователей ${_pn}, а web.limits.max_profiles = ${_pl} — движок откажется стартовать"$'\n'
         fi
@@ -1513,6 +1607,7 @@ web_preflight_problems() {
 # До 3.5.1 движок ключей WEB не знает: он их молча игнорирует, и listener
 # с transport = "web" превращается во второй MTProxy-порт.
 web_engine_supports() {
+    web_is_reanimator && { _web_engine_at_least "$WEB_MIN_ENGINE_VERSION"; return; }
     local _v; _v=$(engine_current_version 2>/dev/null | tr -d ' \t\r\n')
     _v="${_v#v}"; _v="${_v%%-*}"
     [ -n "$_v" ] || return 1
@@ -1626,7 +1721,7 @@ _web_status_print_target() {
 }
 
 web_status_print() {
-    web_is_reanimator && { _web_status_print_target; return 0; }
+    _web_target_foreign_shown && { _web_status_print_target; return 0; }
     echo ""
     echo -e "  ${BOLD}🌐 WEB Proxy${NC}"
     echo -e "  ──────────────────────────────────────────────"
@@ -1636,12 +1731,15 @@ web_status_print() {
         echo -e "   🔴 Состояние        ${DIM}выключен${NC}"
     fi
     echo -e "   🧩 Режим            $(proxy_transport_mode_title)"
+    if web_is_reanimator; then
+        echo -e "   🎯 Цель             порт $(web_target_public_port), telemt $(web_engine_version)"
+    fi
     echo -e "   🚪 Frontend         $(web_frontend_title)"
     echo -e "   🔗 Домен            $(web_domain 2>/dev/null || echo '—')"
     if mtproto_is_enabled; then
         echo -e "   🎭 Домен маскировки $(web_faketls_domain 2>/dev/null || echo '—')"
     fi
-    echo -e "   🚚 Carrier          ${WEB_CARRIER:-—}"
+    echo -e "   🚚 Carrier          $(web_carriers_chain)"
     echo -e "   🔑 Режим секрета    ${WEB_SECRET_MODE:-—}"
     echo -e "   📍 public_addr      $(web_public_addr 2>/dev/null || echo '—')"
     if [ -n "${WEB_BASE_PATH:-}" ]; then
@@ -1707,7 +1805,7 @@ web_status_print() {
     fi
     local _dup; _dup=$(web_duplicate_secret_labels 2>/dev/null)
     [ -n "$_dup" ] && echo -e "   ⚠️  Общий секрет     ${YELLOW}${_dup}${NC} — без профиля WEB"
-    local _p; _p=$(web_preflight_problems 2>/dev/null)
+    local _p; _p=$( { web_is_reanimator && web_target_problems; web_preflight_problems; } 2>/dev/null)
     if [ -n "$_p" ]; then
         echo ""
         echo -e "  ${YELLOW}Мешает включению:${NC}"
@@ -1785,6 +1883,7 @@ _WEB_SETTABLE=(
     "WEB_PUBLIC_PORT|range:1:65535|Порт nginx WEB в раскладке split"
     "WEB_DOMAIN|custom:_validate_web_domain|Публичный домен WEB Proxy"
     "WEB_CARRIER|enum:https,https-lanes,websocket,websocket-lanes|Транспорт carrier"
+    "WEB_CARRIERS|custom:_validate_web_carriers_setting|Перебор carrier до основного через запятую, по порядку; пусто — без перебора (telemt 3.5.4+)"
     "WEB_SECRET_MODE|enum:plain,dd|Представление секрета в ссылке"
     "WEB_LISTEN_ADDR|custom:_validate_web_listen_addr|IPv4-адрес WEB и приватного MTProxy-listener'а (127.0.0.1, частный адрес или 0.0.0.0)"
     "WEB_LISTEN_PORT|range:1:65535|Приватный порт listener'а движка"
@@ -1811,6 +1910,11 @@ _validate_web_base_path() {
         echo "совпадает с путём панели ${_panel} на WEB-домене" >&2
         return 1
     }
+}
+
+_validate_web_carriers_setting() {
+    [ -z "$1" ] || [ "$1" = "none" ] && return 0
+    _validate_web_carriers "$1" >&2
 }
 
 _validate_web_listen_addr() {
@@ -1885,12 +1989,15 @@ web_settable_json() {
     printf '['
     for _e in "${_WEB_SETTABLE[@]}"; do
         IFS='|' read -r _k _v _d <<< "$_e"
+        web_is_reanimator && _web_target_key_fixed "$_k" && continue
         [ "$_first" -eq 1 ] || printf ','
         _first=0
         if [ "$_k" = "WEB_DECOY_SOURCE" ]; then
             _value="${SELFMASK_SITE_SOURCE:-stub}"
         elif [ "$_k" = "WEB_HAPROXY_CERT" ]; then
             _value=$(web_haproxy_cert)
+        elif [ "$_k" = "WEB_CARRIERS" ]; then
+            _value=$(web_carriers_saved)
         else
             _value="${!_k:-}"
         fi
@@ -1898,6 +2005,12 @@ web_settable_json() {
             "$_k" "$(json_escape "$_v")" "$(json_escape "$_d")" "$(json_escape "$_value")"
     done
     printf ']\n'
+}
+
+# У цели frontend только наш nginx, раскладка следует из её порта.
+_web_target_key_fixed() {
+    case "$1" in WEB_FRONTEND|WEB_LAYOUT|WEB_PUBLIC_PORT|WEB_HAPROXY_CERT) return 0 ;; esac
+    return 1
 }
 
 _web_find_settable() {
@@ -1913,6 +2026,10 @@ web_set_param() {
     local _key="$1" _val="$2" _entry
     if [ -z "$_key" ]; then
         log_error "Использование: mtproxyl web set <ключ> <значение>"
+        return 1
+    fi
+    if web_is_reanimator && _web_target_key_fixed "$_key"; then
+        log_error "${_key} у цели не настраивается: frontend — nginx MTProxyL, раскладка следует из порта цели"
         return 1
     fi
     if ! _entry=$(_web_find_settable "$_key"); then
@@ -1932,6 +2049,11 @@ web_set_param() {
     if [ "$_key" = "WEB_DECOY_SOURCE" ]; then
         SELFMASK_SITE_SOURCE="$_val"
         touch "$WEB_SITE_REDEPLOY_MARKER"
+    elif [ "$_key" = "WEB_CARRIERS" ]; then
+        [ "$_val" = "none" ] && _val=""
+        WEB_CARRIERS="$_val"
+        # Экспертный web.carriers перекрыл бы эту настройку — источник один.
+        delete_expert_override web carriers 2>/dev/null || true
     else
         printf -v "$_key" '%s' "$_val"
     fi
@@ -1939,8 +2061,11 @@ web_set_param() {
     log_success "${_key} = ${_val}"
     if [ "$_key" = "WEB_BASE_PATH" ]; then
         web_engine_supports_path \
-            || log_warn "Движок $(engine_current_version 2>/dev/null) не знает base_path — WEB останется в корне до обновления до ${WEB_PATH_MIN_ENGINE_VERSION}"
+            || log_warn "Движок $(web_engine_version) не знает base_path — WEB останется в корне до обновления до ${WEB_PATH_MIN_ENGINE_VERSION}"
         log_warn "Ссылки tg://webproxy изменятся: после применения раздайте новые (mtproxyl web links)"
+    fi
+    if [ "$_key" = "WEB_CARRIERS" ] && [ -n "$_val" ] && ! web_engine_supports_carriers; then
+        log_warn "Движок $(web_engine_version) не умеет перебор — нужен telemt ${WEB_CARRIERS_MIN_ENGINE_VERSION}+, пока работает только ${WEB_CARRIER:-websocket}"
     fi
     if [ "$_key" = "WEB_DEBUG_SIDEBAND" ] && [ "$_val" = "true" ] && [ "${WEB_DEBUG:-false}" != "true" ]; then
         log_info "Отчёты заработают вместе с диагностикой: mtproxyl web set WEB_DEBUG true"
@@ -1951,7 +2076,9 @@ web_set_param() {
 
 # Короткая строка для шапки главного меню.
 web_status_line() {
-    if web_is_enabled; then
+    if _web_target_foreign_shown; then
+        echo -e "${GREEN}у цели${NC} ($(web_target_host 2>/dev/null), настроил её хозяин)"
+    elif web_is_enabled; then
         echo -e "${GREEN}включён${NC} ($(web_domain 2>/dev/null), $(proxy_transport_mode_title))"
     else
         echo -e "${DIM}выключен${NC}"
@@ -2054,7 +2181,11 @@ web_target_add_profile() {
     _n=$(web_target_profiles 2>/dev/null | grep -c .)
     _lim=$(_toml_get_string_in_section "web.limits" "max_profiles" "$_f" 2>/dev/null)
     [ -n "$_lim" ] || _lim=32
-    if [ "${_n:-0}" -gt "${_lim:-32}" ]; then
+    if [ "${_n:-0}" -gt "${_lim:-32}" ] && web_target_managed; then
+        # Блок наш — лимит поднимаем сами, но применится он только перезапуском.
+        _web_target_write >/dev/null 2>&1 \
+            && log_info "Лимит профилей WEB поднят — цель примет его после перезапуска: mtproxyl restart"
+    elif [ "${_n:-0}" -gt "${_lim:-32}" ]; then
         log_warn "Профилей WEB ${_n}, а web.limits.max_profiles = ${_lim} — цель не стартует"
         log_info "Поднимите лимит в её конфиге: [web.limits] max_profiles = $(( ((_n + 31) / 32) * 32 ))"
     fi
@@ -2149,7 +2280,7 @@ web_target_sync_profiles() {
     local _added=0 _removed=0 _st _lb _u _m
     local _users=" "
     while IFS='|' read -r _st _lb _; do
-        [ -n "$_lb" ] || continue
+        [ -n "$_lb" ] && [ "$_st" = "on" ] || continue
         _users+="${_lb} "
     done < <(_target_section_pairs "access.users" 2>/dev/null)
 
@@ -2183,4 +2314,391 @@ web_target_link() {
         return $?
     done <<< "$(web_target_profiles)"
     return 1
+}
+
+# ── Реаниматор: WEB, который поднимает MTProxyL ───────────────
+# Всё наше в конфиге цели лежит одним блоком между метками: включение пишет
+# его заново, выключение снимает целиком. Профили, дописанные потом вместе с
+# пользователями, живут вне блока и снимаются отдельно.
+
+WEB_TARGET_BEGIN="# >>> mtproxyl-web: блок ведёт MTProxyL, ручные правки в нём пропадут"
+WEB_TARGET_END="# <<< mtproxyl-web"
+
+web_target_managed() { web_is_reanimator && [ "${WEB_TARGET_ENABLED:-false}" = "true" ]; }
+
+# Публичный порт цели. На время WEB он сохранён: в shared сама цель уходит
+# на приватный порт.
+web_target_public_port() {
+    if [ "${WEB_TARGET_ENABLED:-false}" = "true" ] && [ -n "${WEB_TARGET_PORT:-}" ]; then
+        echo "$WEB_TARGET_PORT"
+    else
+        echo "${DETECTED_PORT:-${PROXY_PORT:-443}}"
+    fi
+}
+
+_web_target_has_block() {
+    [ -f "${DETECTED_CONFIG_PATH:-}" ] && grep -qF "$WEB_TARGET_BEGIN" "$DETECTED_CONFIG_PATH"
+}
+
+# Конфиг цели без нашего блока.
+_web_target_outside_block() {
+    [ -f "${DETECTED_CONFIG_PATH:-}" ] || return 0
+    awk -v b="$WEB_TARGET_BEGIN" -v e="$WEB_TARGET_END" '
+        index($0, b) == 1 { skip = 1; next }
+        skip { if (index($0, e) == 1) skip = 0; next }
+        { print }' "$DETECTED_CONFIG_PATH"
+}
+
+# WEB, который завёл хозяин цели: таблицы [web…] вне нашего блока. Профили
+# пользователей при нашем WEB тоже лежат снаружи — их не считаем.
+web_target_foreign_web() {
+    _web_target_outside_block | awk '
+        { t = $0; sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]*#.*$/, "", t) }
+        t ~ /^\[\[web\.vhosts\.profiles\]\]$/ { next }
+        t ~ /^\[+web[].]/ { found = 1 }
+        END { exit !found }'
+}
+
+_web_target_own_listeners() {
+    _web_target_outside_block | grep -Eq '^[[:space:]]*\[\[server\.listeners\]\]'
+}
+
+# Значение ключа секции как есть — с кавычками и скобками массива.
+_web_target_raw_get() {
+    local _key="$1" _sect="$2"
+    _web_target_outside_block | awk -v s="[${_sect}]" -v k="$_key" '
+        { t = $0; sub(/^[[:space:]]+/, "", t) }
+        t ~ /^\[/ { h = t; sub(/[[:space:]]*#.*$/, "", h); sub(/[[:space:]]+$/, "", h); ins = (h == s); next }
+        ins && t ~ "^" k "[[:space:]]*=" {
+            v = t; sub(/^[^=]*=[[:space:]]*/, "", v); sub(/[[:space:]]+#[^"\047]*$/, "", v)
+            sub(/[[:space:]]+$/, "", v); print v; exit
+        }'
+}
+
+_web_target_has_section() {
+    _web_target_outside_block | awk -v s="[$1]" '
+        { t = $0; sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]*#.*$/, "", t); sub(/[[:space:]]+$/, "", t) }
+        t == s { f = 1 } END { exit !f }'
+}
+
+# Включённые пользователи цели с уникальным секретом — по профилю на каждого.
+_web_target_users() {
+    local _st _lb _v _seen=" "
+    while IFS='|' read -r _st _lb _v; do
+        [ "$_st" = "on" ] && [ -n "$_lb" ] || continue
+        _v="${_v//\"/}"; _v="${_v//\'/}"
+        case "$_seen" in *" ${_v} "*) continue ;; esac
+        _seen+="${_v} "
+        printf '%s\n' "$_lb"
+    done < <(_target_section_pairs "access.users" 2>/dev/null)
+}
+
+# Почему MTProxyL не может поднять WEB у этой цели. Пусто — может.
+web_target_problems() {
+    local _p=""
+    case "${DETECTED_MODE:-unknown}" in
+        mtproxymax) _p+="цель ведёт mtproxymax — WEB включают в нём самом"$'\n' ;;
+        local|config_only|manual|docker) ;;
+        *) _p+="цель не обнаружена: mtproxyl detect"$'\n' ;;
+    esac
+    [ -f "${DETECTED_CONFIG_PATH:-}" ] || { _p+="конфиг цели не найден"$'\n'; printf '%s' "$_p"; return 0; }
+    if [ "${DETECTED_NETWORK_MODE:-host}" = "bridge" ]; then
+        _p+="цель в Docker без сети хоста — до её приватного порта WEB nginx не достучится; нужен network_mode: host"$'\n'
+    elif [ "${DETECTED_MODE:-}" = "docker" ] && [ "${WEB_DECOY_MODE:-empty}" != "http_upstream" ]; then
+        _p+="цель в Docker не видит каталоги этого сервера — выберите заглушку HTTP-origin: mtproxyl web set WEB_DECOY_MODE http_upstream"$'\n'
+    fi
+    web_target_foreign_web && _p+="WEB в конфиге цели уже настроил её хозяин — MTProxyL его только показывает"$'\n'
+    if ! web_layout_is_split; then
+        _web_target_own_listeners \
+            && _p+="у цели свои [[server.listeners]] — перенести её с :443 автоматически нельзя; переведите цель на другой порт или настройте WEB вручную"$'\n'
+        [ "$(_web_target_raw_get proxy_protocol server)" = "true" ] \
+            && _p+="цель уже принимает PROXY protocol, значит :443 держит другой frontend — WEB настраивайте в нём"$'\n'
+    fi
+    printf '%s' "$_p"
+}
+
+# Listener'ы цели. Явный список отменяет порт из [server], поэтому при
+# переходе на него обычный MTProto перечисляем сами.
+_web_target_listeners_toml() {
+    if ! web_layout_is_split; then
+        cat << TOML
+
+[[server.listeners]]
+ip = "${WEB_LISTEN_ADDR:-127.0.0.1}"
+port = ${WEB_MTPROXY_PORT:-15443}
+transport = "mtproxy"
+proxy_protocol = true
+TOML
+    elif ! _web_target_own_listeners; then
+        local _v4 _v6 _pp
+        _v4=$(_web_target_raw_get listen_addr_ipv4 server | tr -d '"\047')
+        _v6=$(_web_target_raw_get listen_addr_ipv6 server | tr -d '"\047')
+        _pp=$(_web_target_raw_get proxy_protocol server)
+        [ "$_pp" = "true" ] || _pp="false"
+        cat << TOML
+
+[[server.listeners]]
+ip = "${_v4:-0.0.0.0}"
+port = $(web_target_public_port)
+transport = "mtproxy"
+proxy_protocol = ${_pp}
+TOML
+        if [ -s /proc/net/if_inet6 ] && [ "${_v6-::}" != "" ]; then
+            cat << TOML
+
+[[server.listeners]]
+ip = "${_v6:-::}"
+port = $(web_target_public_port)
+transport = "mtproxy"
+proxy_protocol = ${_pp}
+TOML
+        fi
+    fi
+    cat << TOML
+
+[[server.listeners]]
+ip = "${WEB_LISTEN_ADDR:-127.0.0.1}"
+port = ${WEB_LISTEN_PORT:-15080}
+transport = "web"
+proxy_protocol = false
+reuse_allow = false
+web_client_ip_source = "x_forwarded_for"
+web_trusted_proxy_cidrs = $(web_trusted_proxy_cidrs_toml)
+TOML
+}
+
+_web_target_strip() {
+    local _f="${DETECTED_CONFIG_PATH:-}" _tmp _u _m
+    [ -f "$_f" ] || return 1
+    if _web_target_has_block; then
+        _tmp=$(_mktemp "$(dirname "$_f")") || return 1
+        awk -v b="$WEB_TARGET_BEGIN" -v e="$WEB_TARGET_END" '
+            index($0, b) == 1 { skip = 1; next }
+            skip { if (index($0, e) == 1) skip = 0; next }
+            { print }' "$_f" > "$_tmp" || { rm -f "$_tmp"; return 1; }
+        # Пустые строки, оставшиеся в конце после блока, не копим.
+        sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$_tmp"
+        cat "$_tmp" > "$_f"; rm -f "$_tmp"
+    fi
+    while IFS='|' read -r _u _m; do
+        [ -n "$_u" ] && web_target_remove_profile "$_u" >/dev/null 2>&1
+    done <<< "$(web_target_profiles 2>/dev/null)"
+    return 0
+}
+
+# Ключи вне блока, которые shared меняет в чужих секциях. Прежние значения
+# запоминаем, чтобы выключение вернуло их как было.
+_WEB_TARGET_EXTRA=""
+_web_target_set_key() {
+    local _key="$1" _val="$2" _sect="$3" _var="$4" _cur
+    if ! _web_target_has_section "$_sect"; then
+        _WEB_TARGET_EXTRA+=$(printf '\n[%s]\n%s = %s' "$_sect" "$_key" "$_val")
+        return 0
+    fi
+    if [ "${WEB_TARGET_PREV_SAVED:-false}" != "true" ]; then
+        _cur=$(_web_target_raw_get "$_key" "$_sect")
+        printf -v "$_var" '%s' "${_cur:-__absent__}"
+    fi
+    _toml_safe_set "$_key" "$_val" "$_sect" "$DETECTED_CONFIG_PATH" >/dev/null
+}
+
+_web_target_restore_key() {
+    local _key="$1" _sect="$2" _prev="$3"
+    [ -n "$_prev" ] || return 0
+    if [ "$_prev" = "__absent__" ]; then
+        _toml_safe_unset "$_key" "$_sect" "$DETECTED_CONFIG_PATH" >/dev/null 2>&1 || true
+    else
+        _toml_safe_set "$_key" "$_prev" "$_sect" "$DETECTED_CONFIG_PATH" >/dev/null 2>&1 || true
+    fi
+}
+
+_web_target_restore_keys() {
+    [ "${WEB_TARGET_PREV_SAVED:-false}" = "true" ] || return 0
+    _web_target_restore_key public_port general.links "${WEB_TARGET_PREV_PUBLIC_PORT:-}"
+    _web_target_restore_key proxy_protocol_trusted_cidrs server "${WEB_TARGET_PREV_PP_CIDRS:-}"
+    WEB_TARGET_PREV_SAVED="false"; WEB_TARGET_PREV_PUBLIC_PORT=""; WEB_TARGET_PREV_PP_CIDRS=""
+}
+
+# Цель перечитывает конфиг после каждой записи, а снятие блока, профилей и
+# правка ключей — это несколько записей. Делаем их в копии и кладём результат
+# одной записью: иначе цель успела бы увидеть конфиг без [web].
+_web_target_in_copy() {
+    local _real="${DETECTED_CONFIG_PATH:-}" _work _rc=0
+    [ -f "$_real" ] || return 1
+    _work=$(_mktemp "$(dirname "$_real")") || return 1
+    cat "$_real" > "$_work" || { rm -f "$_work"; return 1; }
+    DETECTED_CONFIG_PATH="$_work" "$@" || _rc=$?
+    if [ "$_rc" -eq 0 ] && ! cmp -s "$_work" "$_real"; then
+        cat "$_work" > "$_real" || _rc=1
+    fi
+    rm -f "$_work"
+    return "$_rc"
+}
+
+# Пишет блок заново. Секции, которых у цели нет, уходят внутрь блока.
+_web_target_write() { _web_target_in_copy _web_target_write_now; }
+
+_web_target_unwrite_now() { _web_target_strip && _web_target_restore_keys; }
+
+_web_target_write_now() {
+    local _f="$DETECTED_CONFIG_PATH"
+    _web_target_strip || return 1
+    _WEB_TARGET_EXTRA=""
+    if ! web_layout_is_split; then
+        _web_target_set_key public_port "$(web_target_public_port)" general.links WEB_TARGET_PREV_PUBLIC_PORT
+        _web_target_set_key proxy_protocol_trusted_cidrs \
+            "$(web_trusted_proxy_cidrs_toml "${WEB_TRUSTED_PROXY_CIDRS:-127.0.0.1/32}")" server WEB_TARGET_PREV_PP_CIDRS
+        WEB_TARGET_PREV_SAVED="true"
+    fi
+    local _block
+    _block=$(
+        echo ""
+        echo "$WEB_TARGET_BEGIN"
+        [ -z "$_WEB_TARGET_EXTRA" ] || printf '%s\n' "$_WEB_TARGET_EXTRA"
+        _web_target_listeners_toml
+        web_sections_toml || exit 1
+        echo "$WEB_TARGET_END"
+    ) || { log_error "Не удалось собрать WEB-конфиг цели"; return 1; }
+    printf '%s\n' "$_block" >> "$_f"
+}
+
+_web_target_logs_hint() {
+    if [ "${DETECTED_MODE:-}" = "docker" ] && [ -n "${DETECTED_CONTAINER:-}" ]; then
+        log_info "Логи цели: docker logs --tail 50 ${DETECTED_CONTAINER}"
+        docker logs --tail 10 "$DETECTED_CONTAINER" 2>&1 | sed 's/^/    /'
+    else
+        log_info "Логи цели: journalctl -u telemt -n 50"
+        journalctl -u telemt -n 10 --no-pager 2>/dev/null | sed 's/^/    /'
+    fi
+}
+
+# Откат к виду до включения: конфиг цели — из резервной копии, nginx — без WEB.
+_web_target_rollback() {
+    local _backup="$1" _was="${2:-false}"
+    WEB_TARGET_ENABLED="$_was"
+    if [ -n "$_backup" ] && [ -f "$_backup" ]; then
+        cat "$_backup" > "$DETECTED_CONFIG_PATH"
+        [ "$_was" = "true" ] || { WEB_TARGET_PREV_SAVED="false"; WEB_TARGET_PREV_PUBLIC_PORT=""; WEB_TARGET_PREV_PP_CIDRS=""; }
+    else
+        _web_target_in_copy _web_target_unwrite_now; WEB_TARGET_ENABLED="false"
+    fi
+    [ "${WEB_TARGET_ENABLED}" = "true" ] || WEB_TARGET_PORT=""
+    save_settings || true
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ] || [ "${WEB_TARGET_ENABLED}" = "true" ]; then
+        _selfmask_configure_nginx >/dev/null 2>&1 && systemctl restart "${SELFMASK_PQ_SERVICE}" >/dev/null 2>&1 || true
+    else
+        systemctl stop "${SELFMASK_PQ_SERVICE}" >/dev/null 2>&1 || true
+    fi
+    restart_target >/dev/null 2>&1 || true
+}
+
+# Порядок как в менеджере: сертификат, цель уходит с :443 на приватные порты,
+# затем nginx занимает публичный. Любой сбой возвращает цель как было.
+web_target_enable() {
+    if web_target_foreign_web && ! _web_target_has_block; then
+        log_error "WEB в конфиге цели уже настроил её хозяин — MTProxyL его только показывает"
+        log_info "Ссылки: mtproxyl web links"
+        return 1
+    fi
+    local _was="${WEB_TARGET_ENABLED:-false}"
+    [ "$_was" = "true" ] || WEB_TARGET_PORT="${DETECTED_PORT:-${PROXY_PORT:-443}}"
+    WEB_TARGET_ENABLED="true"
+
+    local _problems
+    _problems="$(web_target_problems)$(web_preflight_problems "$_was")"
+    if [ -n "$_problems" ]; then
+        log_error "WEB Proxy у цели включить нельзя:"
+        printf '%s' "$_problems" | sed 's/^/    • /'
+        WEB_TARGET_ENABLED="$_was"
+        return 1
+    fi
+    _web_prepare_frontend || { WEB_TARGET_ENABLED="$_was"; return 1; }
+
+    log_info "Выпуск сертификата с WEB-доменом $(web_domain)..."
+    _web_obtain_cert || { WEB_TARGET_ENABLED="$_was"; return 1; }
+    [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "letsencrypt" ] && _selfmask_setup_renewal || true
+
+    backup_target_config "web" "true" || true
+    local _backup="${TARGET_CONFIG_BACKUP:-}"
+    if ! _web_target_write; then
+        _web_target_rollback "$_backup" "$_was"
+        return 1
+    fi
+    save_settings || true
+
+    if web_layout_is_split; then
+        log_info "Цель остаётся на порту $(web_target_public_port), WEB принимает nginx на :443..."
+    else
+        log_info "Цель уходит с :443 на ${WEB_LISTEN_ADDR:-127.0.0.1}:${WEB_MTPROXY_PORT:-15443}, :443 займёт nginx..."
+    fi
+    restart_target >/dev/null 2>&1 || true
+    if ! _web_wait_listener; then
+        log_error "Цель не открыла приватный WEB-порт ${WEB_LISTEN_PORT:-15080} — откатываем"
+        _web_target_logs_hint
+        _web_target_rollback "$_backup" "$_was"
+        return 1
+    fi
+
+    log_info "Настройка nginx на публичном порту..."
+    if ! _selfmask_configure_nginx || ! systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null; then
+        log_error "nginx не поднялся — возвращаем цель как было"
+        _web_target_rollback "$_backup" "$_was"
+        return 1
+    fi
+    _web_reapply_geoblock
+    log_success "WEB Proxy у цели включён: $(web_domain), carrier $(web_carriers_chain)"
+    [ -n "$_backup" ] && log_info "Резервная копия конфига цели: ${_backup}"
+    echo ""
+    draw_header "ССЫЛКИ WEB PROXY"
+    _web_target_wait_links
+    web_links_print || true
+    echo -e "  ${DIM}Порта в ссылке нет: клиент WEB ходит только на 443. Обычные ссылки не изменились.${NC}"
+    echo ""
+}
+
+# Ссылка собирается из конфига, но имеет смысл, когда цель уже приняла его.
+_web_target_wait_links() {
+    local _i
+    for _i in 1 2 3 4 5; do
+        _web_listener_ready && return 0
+        sleep 1
+    done
+}
+
+web_target_disable() {
+    if ! web_target_managed; then
+        if web_target_enabled 2>/dev/null; then
+            log_error "WEB в конфиге цели настроил её хозяин — выключает его тоже он"
+            return 1
+        fi
+        log_info "WEB Proxy у цели и так выключен"
+        return 0
+    fi
+    if [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ] &&
+       [ "${SELFMASK_ENABLED:-false}" != "true" ] &&
+       declare -F panel_selfmask_disable >/dev/null; then
+        panel_selfmask_disable || {
+            log_error "Не удалось снять общий путь панели — отключение WEB отменено"
+            return 1
+        }
+    fi
+    WEB_TARGET_ENABLED="false"
+    save_settings || return 1
+
+    log_info "Снятие nginx с :443..."
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+        _selfmask_configure_nginx && systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null \
+            || log_warn "nginx Selfmask не перезапустился — проверьте: mtproxyl selfmask status"
+    else
+        systemctl stop "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
+    fi
+
+    backup_target_config "web-off" "true" || true
+    _web_target_in_copy _web_target_unwrite_now
+    WEB_TARGET_PORT=""
+    save_settings || true
+    log_info "Цель возвращается на порт $(web_target_public_port)..."
+    restart_target >/dev/null 2>&1 || true
+    _web_reapply_geoblock
+    log_success "WEB Proxy у цели выключен"
 }

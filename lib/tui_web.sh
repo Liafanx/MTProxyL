@@ -72,25 +72,81 @@ _tui_web_frontend_menu() {
     esac
 }
 
-_tui_web_carrier_menu() {
+_tui_web_carrier_title() {
+    case "$1" in
+        websocket)       echo "один сокет на все потоки, стабильный" ;;
+        websocket-lanes) echo "отдельный сокет на каждый поток" ;;
+        https-lanes)     echo "потоки не блокируют друг друга, нужен HTTP/2" ;;
+        https)           echo "максимальная совместимость, единственный у iOS" ;;
+    esac
+}
+
+_tui_web_carrier_main_menu() {
     echo ""
-    echo -e "  ${BOLD}Транспорт carrier${NC}"
+    echo -e "  ${BOLD}Основной carrier${NC}"
+    echo -e "  ${DIM}Им пользуются клиенты без перебора, и он же — последний запасной.${NC}"
     echo ""
-    echo -e "  ${CYAN}[1]${NC}  websocket    ${DIM}по умолчанию, стабильный один сокет${NC}"
-    echo -e "  ${CYAN}[2]${NC}  websocket-lanes ${DIM}отдельный сокет на каждый поток${NC}"
-    echo -e "  ${CYAN}[3]${NC}  https-lanes  ${DIM}потоки не блокируют друг друга, нужен HTTP/2${NC}"
-    echo -e "  ${CYAN}[4]${NC}  https        ${DIM}максимальная совместимость${NC}"
+    local _i=1 _c
+    for _c in $WEB_CARRIER_ALL; do
+        echo -e "  ${CYAN}[${_i}]${NC}  ${_c}  ${DIM}$(_tui_web_carrier_title "$_c")${NC}"
+        _i=$((_i + 1))
+    done
     echo ""
     echo -e "  ${DIM}[0]${NC}  Отмена"
     echo ""
-    local _c; _c=$(read_choice "выбор" "0")
-    case "$_c" in
-        1) web_set_param WEB_CARRIER websocket ;;
-        2) web_set_param WEB_CARRIER websocket-lanes ;;
-        3) web_set_param WEB_CARRIER https-lanes ;;
-        4) web_set_param WEB_CARRIER https ;;
-        *) return 0 ;;
+    local _n; _n=$(read_choice "выбор" "0")
+    case "$_n" in
+        1|2|3|4) web_set_param WEB_CARRIER "$(echo $WEB_CARRIER_ALL | cut -d' ' -f"$_n")" ;;
     esac
+}
+
+# Пункт перебора включается в конец очереди и выключается с места: порядок
+# перебора — порядок включения. Точная перестановка — в панели или web set.
+_tui_web_carrier_menu() {
+    while true; do
+        clear_screen
+        draw_header "ТРАНСПОРТ CARRIER"
+        echo ""
+        echo -e "  Основной   ${BOLD}${WEB_CARRIER:-websocket}${NC}"
+        echo -e "  Порядок    $(web_carriers_chain)"
+        web_engine_supports_carriers || echo -e "  ${YELLOW}Перебор работает с telemt ${WEB_CARRIERS_MIN_ENGINE_VERSION}+, сейчас $(web_engine_version)${NC}"
+        echo ""
+        echo -e "  ${DIM}Клиент с перебором пробует carrier по очереди до первого рабочего,${NC}"
+        echo -e "  ${DIM}остальные (и iOS) сразу берут основной.${NC}"
+        echo ""
+        local _i=1 _c _on _pos _list
+        _list=$(web_carriers_effective)
+        for _c in $WEB_CARRIER_ALL; do
+            if [ "$_c" = "${WEB_CARRIER:-websocket}" ]; then
+                _on="${DIM}основной${NC}"
+            else
+                _pos=$(tr ',' '\n' <<< "$_list" | grep -nx -- "$_c" | cut -d: -f1)
+                [ -n "$_pos" ] && _on="${GREEN}в переборе #${_pos}${NC}" || _on="${DIM}выключен${NC}"
+            fi
+            echo -e "  ${CYAN}[${_i}]${NC}  $(printf '%-16s' "$_c") ${_on}"
+            _i=$((_i + 1))
+        done
+        echo ""
+        echo -e "  ${CYAN}[5]${NC}  Сменить основной"
+        echo -e "  ${CYAN}[6]${NC}  Выключить перебор"
+        echo -e "  ${DIM}[0]${NC}  Назад"
+        echo ""
+        local _n; _n=$(read_choice "выбор" "0")
+        case "$_n" in
+            1|2|3|4)
+                _c=$(echo $WEB_CARRIER_ALL | cut -d' ' -f"$_n")
+                [ "$_c" = "${WEB_CARRIER:-websocket}" ] && continue
+                if tr ',' '\n' <<< "$_list" | grep -qx -- "$_c"; then
+                    _list=$(tr ',' '\n' <<< "$_list" | grep -vx -- "$_c" | paste -sd, -)
+                else
+                    _list="${_list:+${_list},}${_c}"
+                fi
+                web_set_param WEB_CARRIERS "${_list:-none}" >/dev/null ;;
+            5) _tui_web_carrier_main_menu; press_any_key ;;
+            6) web_set_param WEB_CARRIERS none >/dev/null ;;
+            *) web_is_enabled && log_info "Примените заново: пункт [1] меню WEB"; return 0 ;;
+        esac
+    done
 }
 
 _tui_web_decoy_menu() {
@@ -142,14 +198,20 @@ tui_web_menu() {
         web_status_print
 
         echo -e "  ${CYAN}[1]${NC}  $(web_is_enabled && ! web_can_disable && echo "Применить заново" || { web_is_enabled && echo "Выключить" || echo "Включить"; })"
-        echo -e "  ${CYAN}[2]${NC}  Режим  ${DIM}$(proxy_transport_mode_title)${NC}"
-        if mtproto_is_enabled; then
-            echo -e "  ${CYAN}[3]${NC}  Раскладка портов  ${DIM}${WEB_LAYOUT:-shared}${NC}"
-        else
-            echo -e "  ${DIM}[3]  Раскладка не нужна без обычного MTProto${NC}"
+        # У цели обычный MTProto остаётся всегда, frontend — только наш nginx,
+        # а раскладка следует из её порта.
+        local _rean=false
+        web_is_reanimator && _rean=true
+        if [ "$_rean" = false ]; then
+            echo -e "  ${CYAN}[2]${NC}  Режим  ${DIM}$(proxy_transport_mode_title)${NC}"
+            if mtproto_is_enabled; then
+                echo -e "  ${CYAN}[3]${NC}  Раскладка портов  ${DIM}${WEB_LAYOUT:-shared}${NC}"
+            else
+                echo -e "  ${DIM}[3]  Раскладка не нужна без обычного MTProto${NC}"
+            fi
         fi
-        echo -e "  ${CYAN}[4]${NC}  Транспорт carrier  ${DIM}${WEB_CARRIER:-websocket}${NC}"
-        echo -e "  ${CYAN}[5]${NC}  Frontend  ${DIM}$(web_frontend_title)${NC}"
+        echo -e "  ${CYAN}[4]${NC}  Транспорт carrier  ${DIM}$(web_carriers_chain)${NC}"
+        [ "$_rean" = false ] && echo -e "  ${CYAN}[5]${NC}  Frontend  ${DIM}$(web_frontend_title)${NC}"
         echo -e "  ${CYAN}[6]${NC}  Домен  ${DIM}$(web_domain 2>/dev/null || echo '—')${NC}"
         echo -e "  ${CYAN}[7]${NC}  Ссылки tg://webproxy"
         echo -e "  ${CYAN}[8]${NC}  Диагностика /web-status  ${DIM}$([ "${WEB_DEBUG:-false}" = "true" ] && echo "включена" || echo "выключена")${NC}"
@@ -189,15 +251,16 @@ tui_web_menu() {
                 fi
                 press_any_key ;;
             2)
+                [ "$_rean" = false ] || continue
                 echo ""
                 echo -e "  ${CYAN}[1]${NC} Только WEB"
                 echo -e "  ${CYAN}[2]${NC} MTProto + WEB"
                 local _m; _m=$(read_choice "выбор" "$([ "${PROXY_MODE:-mtproto}" = web ] && echo 1 || echo 2)")
                 case "$_m" in 1) web_set_proxy_mode web ;; 2) web_set_proxy_mode combined ;; esac
                 press_any_key ;;
-            3) mtproto_is_enabled && _tui_web_layout_menu; press_any_key ;;
+            3) [ "$_rean" = false ] || continue; mtproto_is_enabled && _tui_web_layout_menu; press_any_key ;;
             4) _tui_web_carrier_menu; press_any_key ;;
-            5) _tui_web_frontend_menu; press_any_key ;;
+            5) [ "$_rean" = false ] || continue; _tui_web_frontend_menu; press_any_key ;;
             6)
                 echo ""
                 if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then

@@ -392,6 +392,7 @@ _mig_build_args() {
     if web_is_enabled 2>/dev/null; then
         _a+=(--web yes --web-layout "${WEB_LAYOUT:-shared}")
         _a+=(--web-carrier "${WEB_CARRIER:-websocket}")
+        [ -n "${WEB_CARRIERS:-}" ] && _a+=(--web-carriers "$WEB_CARRIERS")
         _a+=(--web-secret-mode "${WEB_SECRET_MODE:-dd}")
         [ -n "${WEB_DOMAIN:-}" ] && _a+=(--web-domain "$WEB_DOMAIN")
         [ -n "${WEB_BASE_PATH:-}" ] && _a+=(--web-path "$WEB_BASE_PATH")

@@ -42,7 +42,11 @@ type DonorStatus struct {
 	TxBytes      int64  `json:"tx_bytes"`
 	EgressIP     string `json:"egress_ip"`
 	PublicIP     string `json:"public_ip"`
-	IPv6         bool   `json:"ipv6"`
+	// ResolvedIP is the address the tunnel uses; for a domain host it follows
+	// the A record.
+	ResolvedIP string `json:"resolved_ip"`
+	HostIsName bool   `json:"host_is_name"`
+	IPv6       bool   `json:"ipv6"`
 	// EngineMode: manager — маршрут в своём конфиге, target — в конфиге цели,
 	// manual — конфиг чужой и панель его не правит.
 	EngineMode        string     `json:"engine_mode"`
@@ -82,13 +86,21 @@ var (
 	donorUserRe    = regexp.MustCompile(`^[a-z_][a-z0-9_.-]{0,31}$`)
 	donorHostKeyRe = regexp.MustCompile(`^SHA256:[A-Za-z0-9+/]{43}$`)
 	donorPubKeyRe  = regexp.MustCompile(`^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]=$`)
+	donorNameRe    = regexp.MustCompile(`^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z][A-Za-z0-9-]{0,61}[A-Za-z0-9]$`)
 )
 
-// ValidateDonorHost accepts a public IPv4 address only.
+// ValidateDonorHost accepts a public IPv4 address or a domain name: a domain
+// keeps the tunnel when the donor's address changes.
 func ValidateDonorHost(host string) error {
-	a, err := netip.ParseAddr(strings.TrimSpace(host))
-	if err != nil || !a.Is4() || a.IsLoopback() || a.IsUnspecified() || a.IsMulticast() {
-		return fmt.Errorf("нужен IPv4-адрес донора")
+	host = strings.TrimSpace(host)
+	if a, err := netip.ParseAddr(host); err == nil {
+		if !a.Is4() || a.IsLoopback() || a.IsUnspecified() || a.IsMulticast() {
+			return fmt.Errorf("нужен IPv4-адрес или домен донора")
+		}
+		return nil
+	}
+	if len(host) > 253 || !donorNameRe.MatchString(host) {
+		return fmt.Errorf("нужен IPv4-адрес или домен донора")
 	}
 	return nil
 }
@@ -247,6 +259,15 @@ func (c *Client) DonorFinish(ctx context.Context, key string, allowDisableDefaul
 		args = append(args, "--allow-disable-default-upstreams")
 	}
 	out, err := c.run(ctx, args...)
+	return stripANSI(out), err
+}
+
+// DonorSetHost points the configured tunnel at a new address of the same donor.
+func (c *Client) DonorSetHost(ctx context.Context, host string) (string, error) {
+	if err := ValidateDonorHost(host); err != nil {
+		return "", err
+	}
+	out, err := c.run(ctx, "donor", "host", strings.TrimSpace(host))
 	return stripANSI(out), err
 }
 

@@ -1,4 +1,4 @@
-import { buildProxyLinks, buildWebLink, extractSecret, mergeUserStats } from './usersPage.helpers';
+import { buildProxyLinks, buildWebLink, extractSecret, loadWebLinkConfig, mergeUserStats, saveWebLinkConfig } from './usersPage.helpers';
 import type { MtproxylUser } from '@/lib/api';
 
 
@@ -169,3 +169,18 @@ const webOnlyGroups = buildProxyLinks(
 assertDeepEqual(webOnlyGroups.map((g) => g.label), ['WEB']);
 
 console.log('usersPage.helpers: WEB-ссылки — ок');
+
+// Прошлый статус WEB переживает перезагрузку страницы; мусор в хранилище — нет.
+const store = new Map<string, string>();
+(globalThis as unknown as { localStorage: unknown }).localStorage = {
+  getItem: (k: string) => store.get(k) ?? null,
+  setItem: (k: string, v: string) => void store.set(k, v),
+};
+if (loadWebLinkConfig() !== null) throw new Error('пустое хранилище дало статус');
+saveWebLinkConfig({ enabled: true, domain: 'web.example.com', secret_mode: 'dd', mtproto_enabled: false, base_path: '' });
+assertDeepEqual(loadWebLinkConfig(), { enabled: true, domain: 'web.example.com', secret_mode: 'dd', mtproto_enabled: false, base_path: '' });
+store.set('mtproxyl.webLinkConfig', '{broken');
+if (loadWebLinkConfig() !== null) throw new Error('битый JSON принят');
+store.set('mtproxyl.webLinkConfig', '{"enabled":"yes"}');
+if (loadWebLinkConfig() !== null) throw new Error('чужой формат принят');
+console.log('usersPage.helpers: память статуса WEB — ок');
