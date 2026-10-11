@@ -40,33 +40,54 @@ _tui_web_frontend_menu() {
     echo ""
     echo -e "  ${BOLD}Frontend WEB Proxy${NC}"
     echo ""
-    echo -e "  ${CYAN}[1]${NC}  nginx MTProxyL  ${DIM}сертификат и конфиг управляются автоматически${NC}"
-    echo -e "  ${CYAN}[2]${NC}  внешний HAProxy ${DIM}уже установлен на этой машине${NC}"
-    echo -e "  ${CYAN}[3]${NC}  HAProxy → nginx MTProxyL ${DIM}публичный порт у HAProxy, TLS и заглушка у нас${NC}"
+    echo -e "  ${CYAN}[1]${NC}  nginx MTProxyL   ${DIM}сертификат и конфиг управляются автоматически${NC}"
+    echo -e "  ${CYAN}[2]${NC}  Caddy MTProxyL   ${DIM}то же, но держит Caddy с layer4${NC}"
+    echo -e "  ${CYAN}[3]${NC}  HAProxy MTProxyL ${DIM}то же, но держит HAProxy с OpenSSL 3.5.7${NC}"
+    echo -e "  ${CYAN}[4]${NC}  внешний HAProxy  ${DIM}уже установлен на этой машине${NC}"
+    echo -e "  ${CYAN}[5]${NC}  внешний HAProxy → nginx MTProxyL ${DIM}публичный порт у HAProxy, TLS и заглушка у нас${NC}"
     echo ""
     echo -e "  ${DIM}[0]${NC}  Отмена"
     echo ""
     local _cur=1
-    web_frontend_is_haproxy && _cur=2
-    web_frontend_is_haproxy_nginx && _cur=3
+    front_is caddy && _cur=2
+    front_is haproxy && _cur=3
+    web_frontend_is_haproxy && _cur=4
+    web_frontend_is_haproxy_nginx && _cur=5
     local _c; _c=$(read_choice "выбор" "$_cur")
     case "$_c" in
-        1) web_set_param WEB_FRONTEND nginx ;;
-        3)
-            web_set_param WEB_FRONTEND haproxy-nginx || return 0
-            echo ""
-            log_info "HAProxy остаётся вашим: фрагмент — mtproxyl web haproxy-config"
-            log_info "Сертификат выпускает и продлевает MTProxyL, PEM для HAProxy не нужен"
+        1|2|3)
+            local _f=nginx
+            [ "$_c" = 2 ] && _f=caddy
+            [ "$_c" = 3 ] && _f=haproxy
+            web_frontend_has_haproxy && { web_set_param WEB_FRONTEND nginx || return 0; }
+            if front_in_use; then
+                front_switch "$_f"
+            else
+                FRONT_SERVER="$_f"
+                save_settings
+                log_success "Заглушку будет держать $(front_title)"
+            fi
             ;;
-        2)
-            web_set_param WEB_FRONTEND haproxy || return 0
-            echo ""
-            local _cert; read_line _cert "  ${BOLD}PEM сертификат + ключ [$(web_haproxy_cert)]:${NC} "
-            [ -n "$_cert" ] && web_set_param WEB_HAPROXY_CERT "$_cert"
-            echo ""
-            log_info "MTProxyL не меняет HAProxy. Фрагмент: mtproxyl web haproxy-config"
-            [ "${SELFMASK_ENABLED:-false}" = "true" ] \
-                && log_warn "Перед включением внешнего HAProxy отключите Selfmask"
+        4|5)
+            if ! front_is nginx; then
+                if front_in_use; then front_switch nginx || return 0
+                else FRONT_SERVER="nginx"; save_settings; fi
+            fi
+            if [ "$_c" = 5 ]; then
+                web_set_param WEB_FRONTEND haproxy-nginx || return 0
+                echo ""
+                log_info "HAProxy остаётся вашим: фрагмент — mtproxyl web haproxy-config"
+                log_info "Сертификат выпускает и продлевает MTProxyL, PEM для HAProxy не нужен"
+            else
+                web_set_param WEB_FRONTEND haproxy || return 0
+                echo ""
+                local _cert; read_line _cert "  ${BOLD}PEM сертификат + ключ [$(web_haproxy_cert)]:${NC} "
+                [ -n "$_cert" ] && web_set_param WEB_HAPROXY_CERT "$_cert"
+                echo ""
+                log_info "MTProxyL не меняет HAProxy. Фрагмент: mtproxyl web haproxy-config"
+                [ "${SELFMASK_ENABLED:-false}" = "true" ] \
+                    && log_warn "Перед включением внешнего HAProxy отключите Selfmask"
+            fi
             ;;
         *) return 0 ;;
     esac
@@ -247,7 +268,9 @@ tui_web_menu() {
             1)
                 if web_is_enabled && ! web_can_disable; then web_enable
                 elif web_is_enabled; then web_disable
-                else web_enable
+                else
+                    [ "$_rean" = false ] && ! web_frontend_has_haproxy && front_pick_tui
+                    web_enable
                 fi
                 press_any_key ;;
             2)

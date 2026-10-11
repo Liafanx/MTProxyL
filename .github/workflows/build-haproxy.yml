@@ -94,7 +94,11 @@ jobs:
           ARG HAPROXY_VER
           ARG PREFIX=/opt/mtproxyl-haproxy
 
-          RUN apt-get update -qq && apt-get install -y -qq \
+          # У Debian 11 пакеты безопасности уже пропадают с зеркал: берём снимок
+          # на дату образа. Старая glibc нужна для Ubuntu 20.04+.
+          RUN sed -i -e '/^deb http:\/\/deb.debian.org/d' \
+                -e 's|^# deb http://snapshot|deb [check-valid-until=no] http://snapshot|' /etc/apt/sources.list && \
+              apt-get update -qq && apt-get install -y -qq --no-install-recommends \
               build-essential wget ca-certificates perl libpcre2-dev binutils file \
               && rm -rf /var/lib/apt/lists/*
 
@@ -117,7 +121,7 @@ jobs:
               cp /tmp/openssl-static/bin/openssl ${PREFIX}/bin/openssl
 
           RUN ${PREFIX}/sbin/haproxy -vv | tee /tmp/hv.txt && \
-              grep -q "Running on OpenSSL version : OpenSSL ${OPENSSL_VER}" /tmp/hv.txt
+              grep -qE "Running on (OpenSSL|SSL library) version : OpenSSL ${OPENSSL_VER}" /tmp/hv.txt
           RUN ldd ${PREFIX}/sbin/haproxy | grep -Ei 'libssl|libcrypto' && \
               (echo "ОШИБКА: OpenSSL слинкован динамически" && exit 1) || echo "OK: OpenSSL статически"
           RUN objdump -T ${PREFIX}/sbin/haproxy | grep -oP 'GLIBC_[0-9.]+' | sort -V | uniq | tail -1

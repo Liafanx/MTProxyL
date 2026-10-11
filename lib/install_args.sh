@@ -19,7 +19,7 @@ _IA_MASK=""; _IA_SNI_POLICY=""
 _IA_CPUS=""; _IA_MEMORY=""
 _IA_SECRETS=()
 _IA_SELFMASK_DOMAIN=""; _IA_SELFMASK_CERT=""; _IA_SELFMASK_EMAIL=""
-_IA_SELFMASK_TEMPLATE=""; _IA_SELFMASK_BACKEND_PORT=""
+_IA_SELFMASK_TEMPLATE=""; _IA_SELFMASK_BACKEND_PORT=""; _IA_FRONT=""
 _IA_WEB=""; _IA_WEB_DOMAIN=""; _IA_WEB_CARRIER=""; _IA_WEB_CARRIERS=""; _IA_WEB_LAYOUT=""; _IA_WEB_FRONTEND=""
 _IA_WEB_HAPROXY_CERT=""
 _IA_WEB_PORT=""; _IA_WEB_SECRET_MODE=""; _IA_WEB_PATH=""
@@ -95,7 +95,10 @@ install_args_help() {
     --selfmask-cert letsencrypt|selfsigned
     --selfmask-email <email>   почта для Let's Encrypt (необязательна)
     --selfmask-template stub|filemanager|catrunner|mekorunner|<url>|</path>
-    --selfmask-backend-port N  локальный порт nginx (по умолчанию 8444)
+    --selfmask-backend-port N  локальный порт заглушки (по умолчанию 8444)
+    --front nginx|caddy|haproxy
+                               чем держать заглушку и TLS Selfmask/WEB
+                               (по умолчанию nginx)
 
   WEB Proxy
     --web yes|no               включить WEB Proxy
@@ -240,6 +243,7 @@ _install_args_parse() {
             --selfmask-email)        _IA_SELFMASK_EMAIL="$_v" ;;
             --selfmask-template)     _IA_SELFMASK_TEMPLATE="$_v" ;;
             --selfmask-backend-port) _IA_SELFMASK_BACKEND_PORT="$_v" ;;
+            --front)           _IA_FRONT="${_v,,}" ;;
             --block-file)   _IA_BLOCK_FILE="$_v" ;;
             --block)        _IA_BLOCK_LIST="$_v" ;;
             --block-action)
@@ -506,6 +510,19 @@ _install_args_validate() {
             *) log_error "--web-frontend: nginx, haproxy или haproxy-nginx"; _ok=false ;;
         esac
     fi
+    if [ -n "$_IA_FRONT" ]; then
+        case "$_IA_FRONT" in
+            nginx|caddy|haproxy) ;;
+            *) log_error "--front: nginx, caddy или haproxy"; _ok=false ;;
+        esac
+        [ -n "$_IA_SELFMASK_DOMAIN" ] || [ "$_IA_WEB" = "yes" ] \
+            || { log_error "--front задан без Selfmask и WEB"; _ok=false; }
+        case "$_IA_WEB_FRONTEND" in
+            haproxy|haproxy-nginx)
+                [ "$_IA_FRONT" = "nginx" ] \
+                    || { log_error "--web-frontend ${_IA_WEB_FRONTEND} работает только с --front nginx"; _ok=false; } ;;
+        esac
+    fi
     if [ -n "$_IA_WEB_HAPROXY_CERT" ] \
        && [[ ! "$_IA_WEB_HAPROXY_CERT" =~ ^/[A-Za-z0-9_./+-]+$ ]]; then
         log_error "--web-haproxy-cert: нужен безопасный абсолютный путь без пробелов"; _ok=false
@@ -723,6 +740,11 @@ run_installer_args() {
     fi
 
     _install_args_autostart
+
+    if [ -n "$_IA_FRONT" ]; then
+        FRONT_SERVER="$_IA_FRONT"
+        save_settings >/dev/null 2>&1 || true
+    fi
 
     if [ -n "$_IA_SELFMASK_DOMAIN" ]; then
         _install_args_selfmask || log_warn "Selfmask не настроен — остальное установлено"

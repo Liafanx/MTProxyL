@@ -11,7 +11,7 @@ FRONT_HAPROXY_PREFIX="/opt/mtproxyl-haproxy"
 FRONT_HAPROXY_SERVICE="mtproxyl-haproxy.service"
 FRONT_HAPROXY_VERSION="3.2.25"
 FRONT_HAPROXY_OPENSSL_VERSION="3.5.7"
-FRONT_HAPROXY_RELEASE_TAG="haproxy-${FRONT_HAPROXY_VERSION}-openssl${FRONT_HAPROXY_OPENSSL_VERSION}-r1"
+FRONT_HAPROXY_RELEASE_TAG="haproxy-${FRONT_HAPROXY_VERSION}-openssl${FRONT_HAPROXY_OPENSSL_VERSION}-r2"
 FRONT_STATIC_SERVICE="mtproxyl-static.service"
 FRONT_STATIC_PORT="15481"
 FRONT_CADDY_CUSTOM_FILE="${INSTALL_DIR:-/opt/mtproxyl}/caddy-custom.Caddyfile"
@@ -201,7 +201,7 @@ _front_caddy_test() {
 # ── HAProxy ───────────────────────────────────────────────────
 
 _front_haproxy_openssl() {
-    "$1" -vv 2>/dev/null | awk -F': ' '/^Running on OpenSSL version/ { print $2; exit }' \
+    "$1" -vv 2>/dev/null | awk -F': ' '/^Running on (OpenSSL|SSL library) version/ { print $2; exit }' \
         | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
 }
 
@@ -921,6 +921,39 @@ front_update() {
         _selfmask_configure_nginx || return 1
         log_success "$(front_title) перезапущен на новой сборке"
     fi
+}
+
+# Заглушку уже кто-то держит — Selfmask или наш WEB.
+front_in_use() {
+    [ "${SELFMASK_ENABLED:-false}" = "true" ] && return 0
+    web_is_enabled 2>/dev/null && web_uses_managed_nginx 2>/dev/null
+}
+
+# Выбор перед первой установкой заглушки. Работающего держателя здесь не
+# меняем: это перенос, у него своя команда.
+front_pick_tui() {
+    if front_in_use; then
+        echo -e "  ${DIM}Заглушку держит $(front_title); сменить — mtproxyl front set nginx|caddy|haproxy${NC}"
+        return 0
+    fi
+    echo ""
+    echo -e "  ${BOLD}Чем держать заглушку и TLS${NC} ${DIM}(у всех постквантовый X25519MLKEM768)${NC}"
+    echo -e "  ${DIM}[1]${NC} nginx   ${DIM}OpenSSL 3.5.7 — вариант по умолчанию${NC}"
+    echo -e "  ${DIM}[2]${NC} Caddy   ${DIM}с модулем layer4 для общего :443${NC}"
+    echo -e "  ${DIM}[3]${NC} HAProxy ${DIM}OpenSSL 3.5.7, файлы сайта отдаёт mtproxyl-static${NC}"
+    local _def=1 _c
+    front_is caddy && _def=2
+    front_is haproxy && _def=3
+    _c=$(read_choice "выбор" "$_def")
+    case "$_c" in
+        2) FRONT_SERVER="caddy" ;;
+        3) FRONT_SERVER="haproxy" ;;
+        *) FRONT_SERVER="nginx" ;;
+    esac
+    if [ "$FRONT_SERVER" != "nginx" ] && web_frontend_has_haproxy 2>/dev/null; then
+        WEB_FRONTEND="nginx"
+    fi
+    return 0
 }
 
 front_status_json() {

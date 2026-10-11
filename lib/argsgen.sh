@@ -190,6 +190,10 @@ _argsgen_build() {
         [ -n "${SELFMASK_NGINX_BACKEND_PORT:-}" ] && _a+=(--selfmask-backend-port "$SELFMASK_NGINX_BACKEND_PORT")
     fi
 
+    if { [ "${_AG_ON[selfmask]}" = "yes" ] && [ -n "${SELFMASK_DOMAIN:-}" ]; } || [ "${_AG_ON[web]}" = "yes" ]; then
+        [ "${FRONT_SERVER:-nginx}" != "nginx" ] && _a+=(--front "$FRONT_SERVER")
+    fi
+
     if [ "${_AG_ON[web]}" = "yes" ]; then
         _a+=(--web yes --web-layout "${WEB_LAYOUT:-shared}")
         _a+=(--web-frontend "${WEB_FRONTEND:-nginx}")

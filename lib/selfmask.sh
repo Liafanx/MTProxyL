@@ -538,7 +538,8 @@ _selfmask_collect_params() {
     draw_header "ПАРАМЕТРЫ SELFMASK"
     echo ""
     echo -e "  ${DIM}Selfmask маскирует прокси под реальный сайт на вашем домене.${NC}"
-    echo -e "  ${DIM}MTProto остаётся на порту прокси (${PROXY_PORT:-443}), браузерные запросы и mask идут в локальный nginx.${NC}"
+    echo -e "  ${DIM}MTProto остаётся на порту прокси (${PROXY_PORT:-443}), браузерные запросы и mask идут на локальную заглушку.${NC}"
+    front_pick_tui
     echo ""
     echo -e "  ${BOLD}Тип сертификата${NC}"
     echo -e "  ${DIM}[1]${NC} Let's Encrypt ${DIM}(реальный домен, нужна A-запись на этот сервер)${NC}"
@@ -2160,6 +2161,8 @@ if [ -n "\$_ours" ] && [ "\$_domain" = "\$_ours" ]; then
     for _u in ${SELFMASK_PQ_SERVICE} ${FRONT_CADDY_SERVICE} ${FRONT_HAPROXY_SERVICE}; do
         systemctl is-active --quiet "\$_u" && systemctl reload "\$_u" 2>/dev/null
     done
+    # API на HTTPS держит свою копию сертификата.
+    systemctl is-active --quiet ${API_SERVICE:-mtproxyl-api.service} && ${INSTALL_DIR}/mtproxyl.sh api sync-cert >/dev/null 2>&1
 fi
 
 # У панели своя копия сертификата: /etc/letsencrypt её пользователю не
@@ -2687,6 +2690,7 @@ _selfmask_cleanup_for_uninstall() {
     fi
 
     front_remove_alt
+    declare -F api_uninstall >/dev/null && api_uninstall >/dev/null 2>&1
     # Останавливаем и удаляем PQ nginx сервис
     systemctl disable --now "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
     rm -f "/etc/systemd/system/${SELFMASK_PQ_SERVICE}" 2>/dev/null || true

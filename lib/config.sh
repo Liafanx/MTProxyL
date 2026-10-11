@@ -556,6 +556,19 @@ TOML_EOF
                 echo "${SECRETS_LABELS[$i]} = \"${SECRETS_EXPIRES[$i]}\"" >> "$tmp"
         done
     fi
+    local has_rate=false
+    for i in "${!SECRETS_LABELS[@]}"; do
+        [ "${SECRETS_ENABLED[$i]}" = "true" ] && _rate_toml "${SECRETS_RATE[$i]:-}" >/dev/null && has_rate=true
+    done
+    if $has_rate; then
+        echo "" >> "$tmp"; echo "[access.user_rate_limits]" >> "$tmp"
+        local _rtv
+        for i in "${!SECRETS_LABELS[@]}"; do
+            [ "${SECRETS_ENABLED[$i]}" = "true" ] || continue
+            _rtv=$(_rate_toml "${SECRETS_RATE[$i]:-}") || continue
+            echo "${SECRETS_LABELS[$i]} = ${_rtv}" >> "$tmp"
+        done
+    fi
     # Своя рекламная метка пользователя. Общая из [general] остаётся в силе
     # для всех остальных — секция её не отменяет, а перекрывает поимённо.
     local has_adtag=false

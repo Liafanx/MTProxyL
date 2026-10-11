@@ -30,7 +30,7 @@ web_dns_must_point_to_this_server() {
 web_frontend_title() {
     if web_frontend_is_haproxy; then echo "внешний HAProxy"
     elif web_frontend_is_haproxy_nginx; then echo "внешний HAProxy → nginx MTProxyL"
-    else echo "nginx MTProxyL"; fi
+    else echo "$(front_title) MTProxyL"; fi
 }
 web_uses_managed_nginx() { ! web_frontend_is_haproxy; }
 web_can_disable() { mtproto_is_enabled && { web_uses_managed_nginx || web_layout_is_split; }; }

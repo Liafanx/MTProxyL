@@ -15,6 +15,7 @@ mkdir -p "$CONFIG_DIR"
 # shellcheck source=/dev/null
 source "$repo/lib/utils.sh"
 source "$repo/lib/settings.sh"
+source "$repo/lib/front.sh"
 source "$repo/lib/web.sh"
 source "$repo/lib/expert_catalog.sh"
 source "$repo/lib/expert_mode.sh"
