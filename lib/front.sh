@@ -788,6 +788,19 @@ _front_activate() {
         _selfmask_restore_port80_holders
         return 1
     }
+    _front_wait_listen
+}
+
+# Служба «запущена» раньше, чем держатель занял порты, а certbot и
+# проверки стучатся сразу. Ждём до 5 секунд, пока процесс не начнёт слушать.
+_front_wait_listen() {
+    local _name _i
+    case "$(front_server)" in caddy) _name="caddy" ;; haproxy) _name="haproxy" ;; *) return 0 ;; esac
+    for _i in $(seq 1 25); do
+        ss -lntp 2>/dev/null | grep -q "\"${_name}\"" && return 0
+        sleep 0.2
+    done
+    return 0
 }
 
 # Временный конфиг на время выпуска сертификата: на :80 только файлы
