@@ -38,17 +38,19 @@ bob = "2027-01-31T23:59:59Z"
 
 [access.user_ad_tags]
 alice = "$k3"
+[access.user_rate_limits]
+alice = { up_bps = 1000000, down_bps = 4000000 }
 TOML
 target_users_export - > "$test_dir/export.csv"
-grep -qx "alice|$k1|true|5|0|1073741824|0||$k3" "$test_dir/export.csv"
-grep -qx "bob|$k2|false|0|2|0|2027-01-31T23:59:59Z||" "$test_dir/export.csv"
+grep -qx "alice|$k1|true|5|0|1073741824|0||$k3|1000000:4000000" "$test_dir/export.csv"
+grep -qx "bob|$k2|false|0|2|0|2027-01-31T23:59:59Z|||" "$test_dir/export.csv"
 
 # Manager imports it from stdin with every limit intact.
 load_secrets
 secret_import_file - < "$test_dir/export.csv" >/dev/null
 load_secrets
 [ "${#SECRETS_LABELS[@]}" -eq 2 ]
-[ "${SECRETS_MAX_CONNS[0]}|${SECRETS_QUOTA[0]}|${SECRETS_ADTAG[0]}" = "5|1073741824|$k3" ]
+[ "${SECRETS_MAX_CONNS[0]}|${SECRETS_QUOTA[0]}|${SECRETS_ADTAG[0]}|${SECRETS_RATE[0]}" = "5|1073741824|$k3|1000000:4000000" ]
 [ "${SECRETS_ENABLED[1]}|${SECRETS_MAX_IPS[1]}|${SECRETS_EXPIRES[1]}" = "false|2|2027-01-31T23:59:59Z" ]
 # Second import skips existing labels.
 [[ "$(secret_import_file - < "$test_dir/export.csv")" == *"Импортировано: 0, пропущено дубликатов: 2"* ]]
@@ -56,15 +58,17 @@ load_secrets
 # Manager export round-trips; notes survive.
 SECRETS_NOTES[0]="vip|client"
 secret_export_file - > "$test_dir/manager.csv"
-grep -qx "alice|$k1|true|5|0|1073741824|0|vip client|$k3" "$test_dir/manager.csv"
+grep -qx "alice|$k1|true|5|0|1073741824|0|vip client|$k3|1000000:4000000" "$test_dir/manager.csv"
 
 # Reanimator import into an empty target keeps limits and the disabled state.
 printf '[access.users]\nroot = "%s"\n' "$k3" > "$DETECTED_CONFIG_PATH"
 target_users_import "$test_dir/manager.csv" >/dev/null
 target_users_export - > "$test_dir/back.csv"
-grep -qx "alice|$k1|true|5|0|1073741824|0||$k3" "$test_dir/back.csv"
-grep -qx "bob|$k2|false|0|2|0|2027-01-31T23:59:59Z||" "$test_dir/back.csv"
-grep -qx "root|$k3|true|0|0|0|0||" "$test_dir/back.csv"
+grep -qx "alice|$k1|true|5|0|1073741824|0||$k3|1000000:4000000" "$test_dir/back.csv"
+grep -qx "bob|$k2|false|0|2|0|2027-01-31T23:59:59Z|||" "$test_dir/back.csv"
+grep -qx "root|$k3|true|0|0|0|0|||" "$test_dir/back.csv"
+# Старый экспорт без поля скорости читается как раньше.
+_secret_parse_line "old|$k1|true|1|2|3|0|n|$k3" && [ "$_IMP_MC|$_IMP_RT" = "1|" ]
 printf 'bad line\n' | target_users_import - | grep -q "строк с ошибкой: 1"
 
 echo 'secrets export/import: ok'
