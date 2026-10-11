@@ -200,6 +200,7 @@ _argsgen_build() {
     if [ "${_AG_ON[web]}" = "yes" ]; then
         _a+=(--web yes --web-layout "${WEB_LAYOUT:-shared}")
         _a+=(--web-frontend "${WEB_FRONTEND:-nginx}")
+        [ "${WEB_DNS_CHECK:-true}" = "false" ] && _a+=(--web-dns-check no)
         if [ "${WEB_FRONTEND:-nginx}" = "haproxy" ] && [ -n "${WEB_HAPROXY_CERT:-}" ]; then
             _a+=(--web-haproxy-cert "$WEB_HAPROXY_CERT")
         fi

@@ -258,6 +258,8 @@ export interface WebStatus {
   owner?: 'mtproxyl' | 'target';
   reanimator?: boolean;
   engine_version?: string;
+  front?: 'nginx' | 'caddy' | 'haproxy';
+  front_title?: string;
 }
 
 export interface WebParam {

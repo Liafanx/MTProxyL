@@ -3,16 +3,16 @@
 
 tui_https_headers_menu() {
     while true; do
-        echo "  Общие настройки nginx для Selfmask и WEB"
+        echo "  Общие HTTPS-настройки Selfmask и WEB ($(front_title))"
         echo "  [1] HSTS: ${HTTPS_HSTS_ENABLED:-true} (кроме самоподписанных сертификатов)"
         echo "  [2] Permissions-Policy: ${HTTPS_PERMISSIONS_ENABLED:-true}"
-        echo "  [3] Журнал запросов nginx: ${NGINX_ACCESS_LOG:-false} (/var/log/mtproxyl-nginx/access.log)"
-        echo "  [0] Назад. Свой nginx и внешний HAProxy настраиваются вручную."
+        front_is nginx && echo "  [3] Журнал запросов nginx: ${NGINX_ACCESS_LOG:-false} (/var/log/mtproxyl-nginx/access.log)"
+        echo "  [0] Назад. Свой конфиг и внешний HAProxy настраиваются вручную."
         local _c _key _v; _c=$(read_choice "выбор" "0")
         case "$_c" in
             1) _key=HTTPS_HSTS_ENABLED ;;
             2) _key=HTTPS_PERMISSIONS_ENABLED ;;
-            3) _key=NGINX_ACCESS_LOG ;;
+            3) front_is nginx || return 0; _key=NGINX_ACCESS_LOG ;;
             *) return 0 ;;
         esac
         _v=true; [ "${!_key}" = true ] && _v=false
@@ -25,9 +25,9 @@ tui_selfmask_menu() {
     while true; do
         clear_screen
         if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "selfsigned" ]; then
-            draw_header "SELFMASK (PQ NGINX + САМОПОДПИСАННЫЙ CERT)"
+            draw_header "SELFMASK ($(front_title | tr '[:lower:]' '[:upper:]') + САМОПОДПИСАННЫЙ CERT)"
         else
-            draw_header "SELFMASK (PQ NGINX + LET'S ENCRYPT)"
+            draw_header "SELFMASK ($(front_title | tr '[:lower:]' '[:upper:]') + LET'S ENCRYPT)"
         fi
         echo ""
 
@@ -38,7 +38,7 @@ tui_selfmask_menu() {
         echo -e "  ${BOLD}Тип cert:${NC}  ${SELFMASK_CERT_MODE:-letsencrypt}"
         echo -e "  ${BOLD}Backend:${NC}   127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}"
         echo -e "  ${BOLD}TLS:${NC}       $(_selfmask_get_tls_info)"
-        echo -e "  ${BOLD}PQ nginx:${NC}  $([ -x "$(_selfmask_pq_nginx_bin)" ] && echo -e "${GREEN}установлен${NC}" || echo -e "${DIM}не установлен${NC}")"
+        echo -e "  ${BOLD}Держатель:${NC} $(front_title) — $(front_source 2>/dev/null)"
         echo -e "  ${BOLD}Свой conf:${NC}  $(nginx_custom_status_line)"
 
         if [ -n "${SELFMASK_DOMAIN:-}" ] && [ -f "$(_selfmask_cert_dir)/fullchain.pem" ]; then
@@ -71,8 +71,8 @@ tui_selfmask_menu() {
         echo -e "  ${CYAN}[4]${NC}  Отключить selfmask"
         echo -e "  ${CYAN}[5]${NC}  Показать конфиг $(front_title)"
         echo -e "  ${CYAN}[6]${NC}  Свой конфиг $(front_title)"
-        echo -e "  ${RED}[7]${NC}  Полностью удалить PQ nginx"
-        echo -e "  ${CYAN}[8]${NC}  HTTPS-заголовки и журнал запросов nginx\n  ${CYAN}[9]${NC}  Держатель заглушки  ${DIM}$(front_title)${NC}"
+        echo -e "  ${RED}[7]${NC}  Полностью удалить сборку PQ nginx"
+        echo -e "  ${CYAN}[8]${NC}  HTTPS-заголовки$(front_is nginx && echo " и журнал запросов nginx")\n  ${CYAN}[9]${NC}  Держатель заглушки  ${DIM}$(front_title)${NC}"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""

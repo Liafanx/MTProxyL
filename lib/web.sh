@@ -24,9 +24,13 @@ web_frontend_has_haproxy() { web_frontend_is_haproxy || web_frontend_is_haproxy_
 # При direct HAProxy на другом узле публичный DNS закономерно указывает на него,
 # а не на сервер MTProxyL. Нелокальный bind — явный признак такой схемы.
 web_dns_must_point_to_this_server() {
+    web_dns_check_disabled && return 1
     web_frontend_is_haproxy && [ "${WEB_LISTEN_ADDR:-127.0.0.1}" != "127.0.0.1" ] && return 1
     return 0
 }
+# A-запись WEB-домена не сверяем: перед сервером CDN или балансировщик.
+web_dns_check_disabled() { [ "${WEB_DNS_CHECK:-true}" = "false" ]; }
+
 web_frontend_title() {
     if web_frontend_is_haproxy; then echo "внешний HAProxy"
     elif web_frontend_is_haproxy_nginx; then echo "внешний HAProxy → nginx MTProxyL"
@@ -248,8 +252,14 @@ web_domain_ip() {
 # адрес сервера, чтобы конфиг хотя бы собрался.
 web_public_ip() {
     local _ip _ips _server
-    _ips=$(web_domain_ips 2>/dev/null)
     _server=$(web_server_ip 2>/dev/null)
+    # За CDN адреса домена меняются, а public_addr входит в identity профиля:
+    # берём стабильный адрес самого сервера.
+    if web_dns_check_disabled && [ -n "$_server" ]; then
+        echo "$_server"
+        return 0
+    fi
+    _ips=$(web_domain_ips 2>/dev/null)
     if [ -n "$_server" ] && grep -Fxq "$_server" <<< "$_ips"; then
         echo "$_server"
         return 0
@@ -1249,6 +1259,7 @@ web_enable() {
         return 1
     fi
 
+    web_dns_check_disabled && log_warn "A-запись $(web_domain) не сверяется (WEB_DNS_CHECK=false): домен должен вести на CDN или балансировщик, который шлёт трафик на этот сервер :443"
     web_warn_zapret2
 
     save_settings || return 1
@@ -1292,9 +1303,9 @@ web_enable() {
     fi
 
     if web_uses_managed_nginx; then
-        log_info "Настройка nginx на публичном порту..."
+        log_info "Настройка $(front_title) на публичном порту..."
         if ! _selfmask_configure_nginx || ! systemctl restart "$(front_service)" &>/dev/null; then
-            log_error "nginx не поднялся — возвращаем прежний режим"
+            log_error "$(front_title) не поднялся — возвращаем прежний режим"
             _web_restore_runtime "$_old_mode" "$_old_enabled" "$_old_running"
             return 1
         fi
@@ -1363,7 +1374,7 @@ web_disable() {
     save_settings || return 1
 
     if web_uses_managed_nginx; then
-        log_info "Снятие nginx с порта $(web_public_port)..."
+        log_info "Снятие $(front_title) с порта $(web_public_port)..."
         if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
             _selfmask_configure_nginx || return 1
         else
@@ -1468,7 +1479,7 @@ web_status_json() {
     _d=$(web_domain 2>/dev/null)
     _addr=$(web_public_addr 2>/dev/null)
     _problems=$( { web_is_reanimator && web_target_problems; web_preflight_problems; } 2>/dev/null | tr '\n' ';')
-    printf '{"enabled":%s,"proxy_mode":"%s","mtproto_enabled":%s,"frontend":"%s","haproxy_ready":%s,"haproxy_cert":"%s","layout":"%s","public_port":%s,"proxy_port":%s,"domain":"%s","carrier":"%s","carriers":"%s","carriers_supported":%s,"secret_mode":"%s","public_addr":"%s","listen_port":%s,"tls_port":%s,"mtproxy_port":%s,"decoy_mode":"%s","decoy_source":"%s","decoy_dir":"%s","debug":%s,"sideband":%s,"base_path":"%s","base_path_saved":"%s","path_supported":%s,"problems":"%s","owner":"mtproxyl","reanimator":%s,"engine_version":"%s"}\n' \
+    printf '{"enabled":%s,"proxy_mode":"%s","mtproto_enabled":%s,"frontend":"%s","haproxy_ready":%s,"haproxy_cert":"%s","layout":"%s","public_port":%s,"proxy_port":%s,"domain":"%s","carrier":"%s","carriers":"%s","carriers_supported":%s,"secret_mode":"%s","public_addr":"%s","listen_port":%s,"tls_port":%s,"mtproxy_port":%s,"decoy_mode":"%s","decoy_source":"%s","decoy_dir":"%s","debug":%s,"sideband":%s,"base_path":"%s","base_path_saved":"%s","path_supported":%s,"problems":"%s","owner":"mtproxyl","reanimator":%s,"engine_version":"%s","front":"%s","front_title":"%s"}\n' \
         "$(web_is_enabled && echo true || echo false)" \
         "$(json_escape "$(if web_is_reanimator; then web_is_enabled && echo combined || echo mtproto; else echo "${PROXY_MODE:-mtproto}"; fi)")" \
         "$(mtproto_is_enabled && echo true || echo false)" \
@@ -1487,7 +1498,7 @@ web_status_json() {
         "$(json_escape "$(web_base_path)")" "$(json_escape "${WEB_BASE_PATH:-}")" \
         "$(web_engine_supports_path && echo true || echo false)" \
         "$(json_escape "$_problems")" "$(web_is_reanimator && echo true || echo false)" \
-        "$(json_escape "$(web_engine_version)")"
+        "$(json_escape "$(web_engine_version)")" "$(front_server)" "$(front_title)"
 }
 
 # ── Проверка предусловий ──────────────────────────────────────
@@ -1523,7 +1534,7 @@ web_preflight_problems() {
     # Для нашего nginx и локального HAProxy DNS обязан вести на этот сервер.
     # При HAProxy на отдельном узле он закономерно ведёт на frontend, а не на
     # backend MTProxyL: там проверяем только наличие публичной A-записи.
-    if [ -n "$_d" ]; then
+    if [ -n "$_d" ] && ! web_dns_check_disabled; then
         local _dips _dip_label _sip
         _dips=$(web_domain_ips 2>/dev/null)
         _sip=$(web_server_ip 2>/dev/null)
@@ -1696,7 +1707,7 @@ web_fingerprint_state() {
         echo "свои заголовки и server_tokens off"
         return 0
     fi
-    echo "старый конфиг nginx — переприменить: mtproxyl web enable"
+    echo "старый конфиг $(front_title) — переприменить: mtproxyl web enable"
 }
 
 # ── Команда CLI ───────────────────────────────────────────────
@@ -1751,6 +1762,7 @@ web_status_print() {
     echo -e "   🚚 Carrier          $(web_carriers_chain)"
     echo -e "   🔑 Режим секрета    ${WEB_SECRET_MODE:-—}"
     echo -e "   📍 public_addr      $(web_public_addr 2>/dev/null || echo '—')"
+    web_dns_check_disabled && echo -e "   🛰  A-запись       ${YELLOW}не сверяется${NC} ${DIM}(CDN/балансировщик, WEB_DNS_CHECK=false)${NC}"
     if [ -n "${WEB_BASE_PATH:-}" ]; then
         if web_engine_supports_path; then
             echo -e "   🛣  Путь WEB         /${WEB_BASE_PATH}/"
@@ -1781,13 +1793,13 @@ web_status_print() {
         echo -e "   🪟 Порты            HAProxy :443 → MTProto :${WEB_MTPROXY_PORT:-15443}, TLS :${WEB_TLS_PORT:-15444} → WEB :${WEB_LISTEN_PORT:-15080}"
     elif web_is_only_mode; then
         echo -e "   🧭 Раскладка        ${BOLD}WEB-only${NC} — без обычного MTProto"
-        echo -e "   🪟 Порты            nginx :$(web_public_port) → WEB :${WEB_LISTEN_PORT:-15080}"
+        echo -e "   🪟 Порты            $(front_title) :$(web_public_port) → WEB :${WEB_LISTEN_PORT:-15080}"
     elif web_layout_is_split; then
         echo -e "   🧭 Раскладка        ${BOLD}split${NC} — свой порт у WEB"
-        echo -e "   🪟 Порты            nginx :$(web_public_port) → WEB :${WEB_LISTEN_PORT:-15080}, прокси :${PROXY_PORT:-443} напрямую"
+        echo -e "   🪟 Порты            $(front_title) :$(web_public_port) → WEB :${WEB_LISTEN_PORT:-15080}, прокси :${PROXY_PORT:-443} напрямую"
     else
         echo -e "   🧭 Раскладка        ${BOLD}shared${NC} — один порт, разбор по SNI"
-        echo -e "   🪟 Порты            nginx :${PROXY_PORT:-443} → движок :${WEB_MTPROXY_PORT:-15443}, WEB :${WEB_LISTEN_PORT:-15080}"
+        echo -e "   🪟 Порты            $(front_title) :${PROXY_PORT:-443} → движок :${WEB_MTPROXY_PORT:-15443}, WEB :${WEB_LISTEN_PORT:-15080}"
     fi
     if web_frontend_has_haproxy; then
         local _haproxy_state
@@ -1798,7 +1810,7 @@ web_status_print() {
         fi
         echo -e "   ⚙️  HAProxy          ${_haproxy_state}"
         if web_frontend_is_haproxy_nginx; then
-            echo -e "   📄 Сертификат       у nginx MTProxyL: $(web_cert_dir 2>/dev/null || echo '—')"
+            echo -e "   📄 Сертификат       у $(front_title) MTProxyL: $(web_cert_dir 2>/dev/null || echo '—')"
         else
             echo -e "   📄 PEM              $(web_haproxy_cert)"
         fi
@@ -1878,7 +1890,7 @@ handle_web_command() {
             echo -e "    ${GREEN}web links${NC}     Ссылки tg://webproxy"
             echo -e "    ${GREEN}web sync${NC}      Свести профили WEB со списком пользователей"
             echo -e "    ${GREEN}web haproxy-config${NC} Готовый фрагмент внешнего HAProxy"
-            echo -e "    ${GREEN}web nginx-config${NC} Управление пользовательским nginx.conf"
+            echo -e "    ${GREEN}web nginx-config${NC} Свой конфиг держателя (nginx/Caddy/HAProxy)"
             echo -e "    ${GREEN}web set${NC} K V    Изменить параметр"
             echo -e "    ${GREEN}web json${NC}      Статус в JSON"
             ;;
@@ -1906,6 +1918,7 @@ _WEB_SETTABLE=(
     "WEB_DECOY_UPSTREAM|custom:_validate_web_upstream|HTTP-origin заглушки"
     "WEB_DEBUG|enum:true,false|Страница диагностики /web-status"
     "WEB_DEBUG_SIDEBAND|enum:true,false|Отчёты bridge-страницы в /web-status (telemt 3.5.8+, вместе с WEB_DEBUG)"
+    "WEB_DNS_CHECK|enum:true,false|Сверять A-запись WEB-домена с IP сервера; false — для CDN и балансировщика перед сервером"
     "WEB_BASE_PATH|custom:_validate_web_base_path|Путь WEB внутри домена, например app/sync; пусто — корень (telemt 3.5.8+)"
 )
 
@@ -2038,7 +2051,7 @@ web_set_param() {
         return 1
     fi
     if web_is_reanimator && _web_target_key_fixed "$_key"; then
-        log_error "${_key} у цели не настраивается: frontend — nginx MTProxyL, раскладка следует из порта цели"
+        log_error "${_key} у цели не настраивается: frontend — $(front_title) MTProxyL, раскладка следует из порта цели"
         return 1
     fi
     if ! _entry=$(_web_find_settable "$_key"); then
@@ -2636,9 +2649,9 @@ web_target_enable() {
     save_settings || true
 
     if web_layout_is_split; then
-        log_info "Цель остаётся на порту $(web_target_public_port), WEB принимает nginx на :443..."
+        log_info "Цель остаётся на порту $(web_target_public_port), WEB принимает $(front_title) на :443..."
     else
-        log_info "Цель уходит с :443 на ${WEB_LISTEN_ADDR:-127.0.0.1}:${WEB_MTPROXY_PORT:-15443}, :443 займёт nginx..."
+        log_info "Цель уходит с :443 на ${WEB_LISTEN_ADDR:-127.0.0.1}:${WEB_MTPROXY_PORT:-15443}, :443 займёт $(front_title)..."
     fi
     restart_target >/dev/null 2>&1 || true
     if ! _web_wait_listener; then
@@ -2648,9 +2661,9 @@ web_target_enable() {
         return 1
     fi
 
-    log_info "Настройка nginx на публичном порту..."
+    log_info "Настройка $(front_title) на публичном порту..."
     if ! _selfmask_configure_nginx || ! systemctl restart "$(front_service)" &>/dev/null; then
-        log_error "nginx не поднялся — возвращаем цель как было"
+        log_error "$(front_title) не поднялся — возвращаем цель как было"
         _web_target_rollback "$_backup" "$_was"
         return 1
     fi
@@ -2694,10 +2707,10 @@ web_target_disable() {
     WEB_TARGET_ENABLED="false"
     save_settings || return 1
 
-    log_info "Снятие nginx с :443..."
+    log_info "Снятие $(front_title) с :443..."
     if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
         _selfmask_configure_nginx && systemctl restart "$(front_service)" &>/dev/null \
-            || log_warn "nginx Selfmask не перезапустился — проверьте: mtproxyl selfmask status"
+            || log_warn "$(front_title) Selfmask не перезапустился — проверьте: mtproxyl selfmask status"
     else
         front_stop
     fi

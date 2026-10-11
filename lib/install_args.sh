@@ -25,6 +25,7 @@ _IA_WEB_HAPROXY_CERT=""
 _IA_WEB_PORT=""; _IA_WEB_SECRET_MODE=""; _IA_WEB_PATH=""
 _IA_WEB_DECOY=""; _IA_WEB_DECOY_UPSTREAM=""
 _IA_GEOIP=""
+_IA_WEB_DNS_CHECK=""
 _IA_API=""; _IA_API_LISTEN=""; _IA_API_ALLOW=""; _IA_API_TLS=""
 _IA_BLOCK_FILE=""
 _IA_BLOCK_LIST=""
@@ -112,6 +113,7 @@ install_args_help() {
     --web-carrier https|https-lanes|websocket|websocket-lanes
     --web-carriers <список>    перебор carrier через запятую (telemt 3.5.4+)
     --web-port N               публичный порт WEB для WEB-only и split
+    --web-dns-check yes|no     сверять A-запись WEB-домена (no — CDN, балансировщик)
     --web-secret-mode plain|dd
     --web-path <путь>          WEB под путём, например app/sync (telemt 3.5.8+)
     --web-decoy empty|site|upstream
@@ -241,6 +243,12 @@ _install_args_parse() {
             --web-frontend)    _IA_WEB_FRONTEND="${_v,,}" ;;
             --web-haproxy-cert) _IA_WEB_HAPROXY_CERT="$_v" ;;
             --web-port)        _IA_WEB_PORT="$_v" ;;
+            --web-dns-check)
+                case "${_v,,}" in
+                    yes|y|да|true|on)   _IA_WEB_DNS_CHECK="true" ;;
+                    no|n|нет|false|off) _IA_WEB_DNS_CHECK="false" ;;
+                    *) log_error "--web-dns-check: yes или no"; return 1 ;;
+                esac ;;
             --web-secret-mode) _IA_WEB_SECRET_MODE="$_v" ;;
             --web-path)        _IA_WEB_PATH="${_v#/}"; _IA_WEB_PATH="${_IA_WEB_PATH%/}" ;;
             --web-decoy)       _IA_WEB_DECOY="${_v,,}" ;;
@@ -592,7 +600,7 @@ _install_args_validate() {
         log_error "--web yes требует --web-domain <домен> либо --selfmask <домен>"; _ok=false
     fi
     if [ "$_IA_WEB" != "yes" ] && { [ -n "$_IA_WEB_DOMAIN" ] || [ -n "$_IA_WEB_CARRIER" ] || [ -n "$_IA_WEB_CARRIERS" ] || \
-       [ -n "$_IA_WEB_LAYOUT" ] || [ -n "$_IA_WEB_PORT" ] || [ -n "$_IA_WEB_SECRET_MODE" ] || \
+       [ -n "$_IA_WEB_LAYOUT" ] || [ -n "$_IA_WEB_PORT" ] || [ -n "$_IA_WEB_SECRET_MODE" ] || [ -n "$_IA_WEB_DNS_CHECK" ] || \
        [ -n "$_IA_WEB_FRONTEND" ] || [ -n "$_IA_WEB_HAPROXY_CERT" ] || \
        [ -n "$_IA_WEB_DECOY" ] || [ -n "$_IA_WEB_DECOY_UPSTREAM" ] || [ -n "$_IA_WEB_PATH" ]; }; then
         log_error "Параметры WEB заданы без --web yes"; _ok=false
@@ -976,6 +984,7 @@ _install_args_web() {
         log_info "MTProto: :${PROXY_PORT}, WEB: :443 — автоматически выбрана раскладка split"
     fi
     WEB_FRONTEND="${_IA_WEB_FRONTEND:-nginx}"
+    [ -n "$_IA_WEB_DNS_CHECK" ] && WEB_DNS_CHECK="$_IA_WEB_DNS_CHECK"
     WEB_HAPROXY_CERT="${_IA_WEB_HAPROXY_CERT:-}"
     case "${_IA_WEB_DECOY:-}" in
         site) WEB_DECOY_MODE="static_directory" ;;

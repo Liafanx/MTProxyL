@@ -7,7 +7,7 @@ _tui_web_layout_menu() {
     echo -e "  ${BOLD}Раскладка портов${NC}"
     echo ""
     echo -e "  ${CYAN}[1]${NC}  shared — WEB и обычный прокси на одном порту"
-    echo -e "       ${DIM}$(web_frontend_has_haproxy && echo 'HAProxy' || echo 'nginx') разбирает SNI. Домен WEB должен отличаться от домена${NC}"
+    echo -e "       ${DIM}$(web_frontend_has_haproxy && echo 'HAProxy' || front_title) разбирает SNI. Домен WEB должен отличаться от домена${NC}"
     echo -e "       ${DIM}маскировки.${NC}"
     echo ""
     echo -e "  ${CYAN}[2]${NC}  split — у WEB свой порт"
@@ -239,7 +239,7 @@ tui_web_menu() {
         if web_frontend_has_haproxy; then
             echo -e "  ${CYAN}[9]${NC}  Конфигурация HAProxy"
         else
-            echo -e "  ${CYAN}[9]${NC}  Пользовательский конфиг nginx  ${DIM}$(nginx_custom_status_line)${NC}"
+            echo -e "  ${CYAN}[9]${NC}  Свой конфиг $(front_title)  ${DIM}$(nginx_custom_status_line)${NC}"
         fi
         local _decoy_label="выключена"
         case "${WEB_DECOY_MODE:-empty}" in
@@ -247,9 +247,10 @@ tui_web_menu() {
             http_upstream) _decoy_label="HTTP-origin" ;;
         esac
         echo -e "  ${CYAN}[10]${NC} Заглушка  ${DIM}${_decoy_label}${NC}"
-        echo -e "  ${CYAN}[11]${NC} HTTPS-заголовки и журнал запросов nginx"
+        echo -e "  ${CYAN}[11]${NC} HTTPS-заголовки$(front_is nginx && echo " и журнал запросов nginx")"
         echo -e "  ${CYAN}[12]${NC} Путь WEB  ${DIM}$([ -n "${WEB_BASE_PATH:-}" ] && echo "/${WEB_BASE_PATH}/" || echo "корень /")${NC}"
         echo -e "  ${CYAN}[13]${NC} Отчёты bridge в /web-status  ${DIM}$([ "${WEB_DEBUG_SIDEBAND:-false}" = "true" ] && echo "включены" || echo "выключены")${NC}"
+        [ "$_rean" = false ] && echo -e "  ${CYAN}[14]${NC} Проверка A-записи домена  ${DIM}$(web_dns_check_disabled && echo "выключена (CDN/балансировщик)" || echo "включена")${NC}"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -258,6 +259,16 @@ tui_web_menu() {
         case "$_c" in
             11) tui_https_headers_menu ;;
             12) _tui_web_base_path_menu; press_any_key ;;
+            14)
+                [ "$_rean" = false ] || continue
+                if web_dns_check_disabled; then
+                    web_set_param WEB_DNS_CHECK true
+                else
+                    echo -e "  ${DIM}Для домена за CDN или балансировщиком: A-запись ведёт на них, а не на этот сервер.${NC}"
+                    echo -e "  ${DIM}Они должны пропускать HTTPS (и для сертификата — HTTP :80) на этот сервер.${NC}"
+                    web_set_param WEB_DNS_CHECK false
+                fi
+                press_any_key ;;
             13)
                 if [ "${WEB_DEBUG_SIDEBAND:-false}" = "true" ]; then
                     web_set_param WEB_DEBUG_SIDEBAND false

@@ -454,14 +454,14 @@ selfmask_show_requirements() {
     echo -e "  ${BOLD}Selfmask / FakeTLS:${NC}"
     echo -e "  ${GREEN}${SYM_CHECK}${NC} ${DIM}Заглушка ставится самим MTProxyL — PQ hybrid${NC}"
     echo -e "    ${DIM}(X25519MLKEM768) поддерживается гарантированно.${NC}"
-    echo -e "  ${DIM}• Backend nginx работает на ${BOLD}TLS 1.3${NC}${DIM}.${NC}"
+    echo -e "  ${DIM}• Заглушка ($(front_title)) работает на ${BOLD}TLS 1.3${NC}${DIM}.${NC}"
     echo ""
     if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "selfsigned" ]; then
         # Самоподписанный сертификат мы выписываем сами и на любой домен —
         # чужого домена в этой схеме нет, проверять на PQ нечего.
         echo -e "  ${DIM}Сертификат самоподписанный: домен может быть любым, даже${NC}"
         echo -e "  ${DIM}несуществующим — A-запись, порт 80 и Let's Encrypt не нужны.${NC}"
-        echo -e "  ${DIM}Домен нигде не проверяется: TLS отдаёт наш же nginx, поэтому${NC}"
+        echo -e "  ${DIM}Домен нигде не проверяется: TLS отдаёт наш же $(front_title), поэтому${NC}"
         echo -e "  ${DIM}поддержка PQ не зависит от выбранного имени.${NC}"
     else
         echo -e "  ${DIM}Если вы используете ${BOLD}чужой${NC}${DIM} домен для FakeTLS — его поддержку${NC}"
@@ -481,20 +481,20 @@ _selfmask_scheme_line() {
     if web_is_reanimator 2>/dev/null && ! web_is_enabled 2>/dev/null; then
         local _p="${DETECTED_PORT:-${PROXY_PORT:-443}}"
         if web_target_enabled 2>/dev/null; then
-            echo "telemt :${_p} → mask → nginx ${_back}; WEB у цели: $(web_target_host 2>/dev/null || echo '—')"
+            echo "telemt :${_p} → mask → $(front_title) ${_back}; WEB у цели: $(web_target_host 2>/dev/null || echo '—')"
         else
-            echo "telemt :${_p} → mask → nginx ${_back}"
+            echo "telemt :${_p} → mask → $(front_title) ${_back}"
         fi
         return 0
     fi
     if ! web_is_enabled 2>/dev/null; then
-        echo "telemt :${PROXY_PORT:-443} → mask → nginx ${_back}"
+        echo "telemt :${PROXY_PORT:-443} → mask → $(front_title) ${_back}"
         return 0
     fi
     if web_layout_is_split; then
-        echo "telemt :${PROXY_PORT:-443} → mask → nginx ${_back}; WEB: nginx :$(web_public_port) → telemt :${WEB_LISTEN_PORT:-15080}"
+        echo "telemt :${PROXY_PORT:-443} → mask → $(front_title) ${_back}; WEB: $(front_title) :$(web_public_port) → telemt :${WEB_LISTEN_PORT:-15080}"
     else
-        echo "nginx :${PROXY_PORT:-443} → по SNI: telemt :${WEB_MTPROXY_PORT:-15443} → mask → nginx ${_back}; $(web_domain 2>/dev/null) → nginx :${WEB_TLS_PORT:-15444} → telemt :${WEB_LISTEN_PORT:-15080}"
+        echo "$(front_title) :${PROXY_PORT:-443} → по SNI: telemt :${WEB_MTPROXY_PORT:-15443} → mask → $(front_title) ${_back}; $(web_domain 2>/dev/null) → $(front_title) :${WEB_TLS_PORT:-15444} → telemt :${WEB_LISTEN_PORT:-15080}"
     fi
 }
 
@@ -514,8 +514,8 @@ selfmask_show_status() {
     echo ""
 
     local _site_conf="$(_selfmask_pq_conf)"
-    [ -f "$_site_conf" ] && echo -e "  ${BOLD}Nginx conf:${NC}     ${_site_conf}" || echo -e "  ${BOLD}Nginx conf:${NC}     ${DIM}не найден${NC}"
-    echo -e "  ${BOLD}Свой nginx conf:${NC} $(nginx_custom_status_line)"
+    [ -f "$_site_conf" ] && echo -e "  ${BOLD}Конфиг:${NC}         ${_site_conf}" || echo -e "  ${BOLD}Конфиг:${NC}         ${DIM}не найден${NC}"
+    echo -e "  ${BOLD}Свой конфиг:${NC}    $(nginx_custom_status_line)"
 
     if [ -n "${SELFMASK_DOMAIN:-}" ] && [ -f "$(_selfmask_cert_dir)/fullchain.pem" ]; then
         echo -e "  ${BOLD}Сертификат:${NC}     ${GREEN}найден${NC}"
@@ -680,7 +680,7 @@ _selfmask_collect_params() {
     esac
 
     echo ""
-    echo -en "  ${BOLD}Локальный backend-порт nginx [${SELFMASK_NGINX_BACKEND_PORT:-8444}]:${NC} "
+    echo -en "  ${BOLD}Локальный порт заглушки [${SELFMASK_NGINX_BACKEND_PORT:-8444}]:${NC} "
     local _bp
     read_line _bp
     if [ -n "$_bp" ]; then
@@ -2331,7 +2331,9 @@ selfmask_verify() {
 
     local _ok=true
 
-    if [ -x "$(_selfmask_nginx_bin)" ]; then
+    if ! front_is nginx; then
+        log_success "Держатель заглушки: $(front_title) — $(front_source)"
+    elif [ -x "$(_selfmask_nginx_bin)" ]; then
         log_success "nginx с поддержкой PQ: $(_selfmask_nginx_source)"
     else
         log_error "nginx с поддержкой PQ не найден"; _ok=false
@@ -2363,7 +2365,7 @@ selfmask_verify() {
     fi
 
     local _site_conf="$(_selfmask_pq_conf)"
-    [ -f "$_site_conf" ] && log_success "Конфиг nginx найден" || { log_warn "Конфиг nginx не найден"; _ok=false; }
+    [ -f "$_site_conf" ] && log_success "Конфиг $(front_title) найден" || { log_warn "Конфиг $(front_title) не найден"; _ok=false; }
 
     local _http_code=""
     if [ -n "${SELFMASK_DOMAIN:-}" ]; then
@@ -2373,9 +2375,9 @@ selfmask_verify() {
     fi
 
     if [ "$_http_code" = "200" ] || [ "$_http_code" = "403" ] || [ "$_http_code" = "404" ]; then
-        log_success "Backend nginx отвечает (HTTP ${_http_code})"
+        log_success "Заглушка $(front_title) отвечает (HTTP ${_http_code})"
     else
-        log_warn "Backend nginx не отвечает как ожидалось (HTTP ${_http_code:-?})"
+        log_warn "Заглушка $(front_title) не отвечает как ожидалось (HTTP ${_http_code:-?})"
     fi
 
     if [ -n "${SELFMASK_DOMAIN:-}" ] && [ -n "$_verify_openssl" ]; then
@@ -2526,7 +2528,7 @@ selfmask_disable() {
 
     echo ""
     echo -e "  ${YELLOW}${BOLD}Отключение Selfmask${NC}"
-    echo -e "  ${DIM}Будет отключён nginx selfmask и MTProxyL перестанет использовать локальный mask backend.${NC}"
+    echo -e "  ${DIM}Будет отключена заглушка selfmask ($(front_title)) и MTProxyL перестанет использовать локальный mask backend.${NC}"
     if [ "${SELFMASK_PREV_SAVED:-false}" = "true" ]; then
         echo -e "  ${DIM}Fake SNI и маскировка вернутся к тому, что было до включения${NC}"
         echo -e "  ${DIM}(${SELFMASK_PREV_DOMAIN:-домен не был задан}). Ссылки при этом изменятся.${NC}"
@@ -2564,7 +2566,7 @@ selfmask_disable() {
         if _selfmask_restore_target_settings; then
             log_warn "Ссылки цели изменились — проверьте их после перезапуска"
         else
-            echo -e "  ${DIM}Nginx-заглушка selfmask отключена. Конфиг цели не тронут —${NC}"
+            echo -e "  ${DIM}Заглушка selfmask отключена. Конфиг цели не тронут —${NC}"
             echo -e "  ${DIM}при необходимости верните в [censorship] цели прежние${NC}"
             echo -e "  ${DIM}tls_domain/mask_host/mask_port/unknown_sni_action вручную${NC}"
             echo -e "  ${DIM}и перезапустите цель.${NC}"
@@ -2588,7 +2590,7 @@ selfmask_disable() {
 
     if web_is_enabled 2>/dev/null; then
         _selfmask_configure_nginx || return 1
-        log_info "PQ nginx оставлен для WEB Proxy"
+        log_info "$(front_title) оставлен для WEB Proxy"
     fi
 
     if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
@@ -2982,7 +2984,7 @@ handle_selfmask_command() {
             echo -e "    ${GREEN}selfmask set${NC} K V   Изменить параметр"
             echo -e "    ${GREEN}selfmask settable${NC} Список параметров (JSON)"
             echo -e "    ${GREEN}selfmask pq-nginx${NC}  Обновить nginx из состава MTProxyL (нужен stream для WEB)"
-            echo -e "    ${GREEN}selfmask nginx-config${NC} Управление пользовательским nginx.conf"
+            echo -e "    ${GREEN}selfmask nginx-config${NC} Свой конфиг держателя (nginx/Caddy/HAProxy)"
             echo -e "    ${GREEN}selfmask panel-cert${NC} Отдать сертификат веб-панели"
             echo -e "    ${GREEN}selfmask verify${NC}   Проверка"
             echo -e "    ${GREEN}selfmask disable${NC}  Отключить"

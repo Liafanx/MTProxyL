@@ -56,6 +56,14 @@ WEB_LISTEN_ADDR=10.20.30.40
     WEB_LISTEN_ADDR=127.0.0.1
     problems=$(web_preflight_problems)
     grep -Fq 'публичная A-запись' <<< "$problems"
+    # Домен за CDN: A-запись не сверяем, public_addr — стабильный IP сервера.
+    WEB_DNS_CHECK=false
+    problems=$(web_preflight_problems)
+    ! grep -Fq 'A-запись' <<< "$problems" || { echo "A-запись проверяется при WEB_DNS_CHECK=false: $problems" >&2; exit 1; }
+    unset -f web_public_addr
+    [ "$(web_public_ip)" = 198.51.100.10 ]
+    WEB_DNS_CHECK=true
+    [ "$(web_public_ip)" = 203.0.113.25 ]
 )
 
 set +u

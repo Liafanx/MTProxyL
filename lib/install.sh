@@ -259,6 +259,11 @@ run_installer() {
             WEB_DOMAIN="$_web_domain"
             break
         done
+        local _behind; read_line _behind "  ${BOLD}Домен за CDN или балансировщиком (A-запись не на этот сервер)? [y/N]:${NC} "
+        if [[ "$_behind" =~ ^[yYдД] ]]; then
+            WEB_DNS_CHECK="false"
+            log_info "A-запись сверяться не будет; public_addr — IP этого сервера"
+        fi
         if [ "${PROXY_MODE:-}" = combined ]; then
             log_warn "В shared на :443 WEB и MTProto должны иметь разные домены (SNI)."
             log_info "При совпадении SNI MTProto попадёт в WEB и работать не будет."
@@ -269,10 +274,15 @@ run_installer() {
             fi
         fi
         echo ""
-        echo -e "  ${BOLD}Frontend WEB Proxy${NC}"
-        echo -e "  ${DIM}[1] nginx MTProxyL  [2] Существующий HAProxy${NC}"
+        echo -e "  ${BOLD}Frontend WEB Proxy${NC} ${DIM}(чем держать TLS и заглушку, у всех PQ X25519MLKEM768)${NC}"
+        echo -e "  ${DIM}[1] nginx MTProxyL  [2] Caddy MTProxyL  [3] HAProxy MTProxyL  [4] Существующий HAProxy${NC}"
         local _web_frontend_choice; _web_frontend_choice=$(read_choice "выбор" "1")
-        if [ "$_web_frontend_choice" = "2" ]; then
+        case "$_web_frontend_choice" in
+            2) FRONT_SERVER="caddy" ;;
+            3) FRONT_SERVER="haproxy" ;;
+            *) FRONT_SERVER="nginx" ;;
+        esac
+        if [ "$_web_frontend_choice" = "4" ]; then
             WEB_FRONTEND="haproxy"
             local _haproxy_cert; read_line _haproxy_cert "  ${DIM}PEM сертификат + ключ [$(web_haproxy_cert)]:${NC} "
             [ -n "$_haproxy_cert" ] && WEB_HAPROXY_CERT="$_haproxy_cert"

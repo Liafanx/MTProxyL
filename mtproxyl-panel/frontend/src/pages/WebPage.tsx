@@ -93,6 +93,8 @@ export function WebPage() {
 
   // В shared публичный порт задаёт сам прокси, поэтому поле не показываем.
   const layout = status?.reanimator ? status.layout : valueOf('WEB_LAYOUT') || 'shared';
+  // Держатель заглушки: nginx, Caddy или HAProxy (MTProxyL 1.7.0+).
+  const fr = status?.front_title || 'nginx';
   const frontend = valueOf('WEB_FRONTEND') || 'nginx';
   const decoyMode = valueOf('WEB_DECOY_MODE') || 'static_directory';
   const visibleParams = params.filter((p) => {
@@ -188,7 +190,7 @@ export function WebPage() {
         <h1 className="text-xl font-semibold text-text-primary">WEB Proxy</h1>
         <p className="text-sm text-text-secondary mt-1">
           Тип прокси WEB: MTProto внутри обычного HTTPS. TLS терминирует
-          nginx MTProxyL либо внешний HAProxy; движок получает простой HTTP
+          {fr} MTProxyL либо внешний HAProxy; движок получает простой HTTP
           на приватном порту.
         </p>
       </div>
@@ -225,7 +227,7 @@ export function WebPage() {
                 {status.layout !== 'target' && (
                   <>
                     <Row label="Раскладка" value={LAYOUT_LABELS[status.layout] ?? status.layout} />
-                    <Row label="Frontend" value={FRONTEND_LABELS[status.frontend] ?? status.frontend} />
+                    <Row label="Frontend" value={status.frontend === 'nginx' ? `${fr} MTProxyL` : FRONTEND_LABELS[status.frontend] ?? status.frontend} />
                     <Row
                       label="Транспорт"
                       value={carrierChain.length > 0
@@ -251,10 +253,10 @@ export function WebPage() {
                             ? `HAProxy :443 → MTProto :${status.mtproxy_port}, TLS :${status.tls_port} → WEB :${status.listen_port}`
                             : `HAProxy :443 → WEB :${status.listen_port}${status.layout === 'split' ? `, MTProto :${status.proxy_port}` : ''}`
                           : status.layout === 'split'
-                            ? `nginx :${status.public_port} → WEB :${status.listen_port}`
+                            ? `${fr} :${status.public_port} → WEB :${status.listen_port}`
                             : status.layout === 'web'
-                              ? `nginx :${status.public_port} → WEB :${status.listen_port}`
-                              : `nginx :${status.public_port} → движок :${status.mtproxy_port}, WEB :${status.listen_port}`
+                              ? `${fr} :${status.public_port} → WEB :${status.listen_port}`
+                              : `${fr} :${status.public_port} → движок :${status.mtproxy_port}, WEB :${status.listen_port}`
                       }
                       mono
                     />
@@ -305,8 +307,8 @@ export function WebPage() {
                 <CardContent className="pt-4 text-sm text-text-secondary">
                   WEB поднимается в конфиге цели отдельным блоком; остальной конфиг не меняется.
                   {status.layout === 'shared'
-                    ? ' Цель на :443 — её обычный MTProto уходит на приватный порт, публичный :443 разбирает по SNI nginx MTProxyL.'
-                    : ' Цель не на :443 — её обычный MTProto остаётся на своём порту, WEB принимает nginx на :443.'}
+                    ? ` Цель на :443 — её обычный MTProto уходит на приватный порт, публичный :443 разбирает по SNI ${fr} MTProxyL.`
+                    : ` Цель не на :443 — её обычный MTProto остаётся на своём порту, WEB принимает ${fr} на :443.`}
                   {status.engine_version && status.engine_version !== 'unknown' && ` Версия telemt цели: ${status.engine_version}.`}
                 </CardContent>
               </Card>
