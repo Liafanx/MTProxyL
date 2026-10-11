@@ -876,6 +876,40 @@ tgbot_show_status() {
     echo ""
 }
 
+# SOCKS5, которые уже поднял сам MTProxyL: туннель WARP и донор. Бот может
+# идти через них, если Telegram с сервера напрямую недоступен.
+# Строки: имя|url|подпись
+tgbot_socks_candidates() {
+    if declare -F _warp_unit_active >/dev/null && _warp_unit_active "${WARP_SOCKS_UNIT:-mtproxyl-warp-socks.service}"; then
+        echo "warp|socks5://127.0.0.1:$(_warp_socks_port)|WARP"
+    fi
+    if declare -F donor_configured >/dev/null && donor_configured 2>/dev/null \
+       && [ "${DONOR_ENABLED:-false}" = "true" ] && ip link show "${DONOR_IFACE:-}" >/dev/null 2>&1; then
+        echo "donor|socks5://$(_donor_remote_ip):${DONOR_SOCKS_PORT:-1080}|донор ${DONOR_HOST}"
+    fi
+    return 0
+}
+
+# Доходит ли через прокси до API Telegram: любой HTTP-ответ — значит да.
+_tgbot_socks_works() {
+    local _code
+    _code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 --proxy "$1" https://api.telegram.org/ 2>/dev/null)
+    [ -n "$_code" ] && [ "$_code" != "000" ]
+}
+
+tgbot_socks_candidates_json() {
+    local _name _url _label _ok _first=1
+    printf '['
+    while IFS='|' read -r _name _url _label; do
+        [ -n "$_url" ] || continue
+        _ok=false; _tgbot_socks_works "$_url" && _ok=true
+        [ $_first -eq 1 ] || printf ','
+        _first=0
+        printf '{"name":"%s","url":"%s","label":"%s","works":%s}' "$_name" "$_url" "$(json_escape "$_label")" "$_ok"
+    done < <(tgbot_socks_candidates)
+    printf ']\n'
+}
+
 handle_tgbot_command() {
     local _sub="${1:-status}"; shift 2>/dev/null || true
     case "$_sub" in
@@ -883,6 +917,7 @@ handle_tgbot_command() {
         setup)      tgbot_setup ;;
         uninstall)  tgbot_uninstall "${1:-}" ;;
         set)        check_root; tgbot_set_param "${1:-}" "${2:-}" ;;
+        proxy-candidates) check_root; load_upstreams 2>/dev/null; tgbot_socks_candidates_json ;;
         update)     check_root; tgbot_update_sources && log_success "Код бота обновлён" ;;
         start)      check_root; systemctl start "$TGBOT_SERVICE" && log_success "Запущен" ;;
         stop)       check_root; systemctl stop "$TGBOT_SERVICE" && log_success "Остановлен" ;;

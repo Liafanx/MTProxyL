@@ -1791,6 +1791,20 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"lines": out}})
 	}))
 
+	// Готовые SOCKS5 для бота: туннель WARP и донор, с проверкой до Telegram.
+	mux.Handle("GET /api/tgbot/proxy-candidates", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		list, err := client.TgbotProxyCandidates(r.Context())
+		if err != nil {
+			// Старый MTProxyL или правило sudo не обновлено — просто без подсказок.
+			writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: []mtproxylctl.TgbotSocksCandidate{}})
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: list})
+	}))
+
 	// Установка тянет venv и aiogram — это минуты, поэтому она уходит в тот же
 	// раннер, что и прочие долгие операции, с журналом по шагам.
 	mux.Handle("POST /api/tgbot/install", protected(func(w http.ResponseWriter, r *http.Request) {

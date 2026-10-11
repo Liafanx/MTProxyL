@@ -550,6 +550,7 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script front set nginx
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script front set caddy
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script front set haproxy
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script api status --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot proxy-candidates
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script api on
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script api off
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script api key

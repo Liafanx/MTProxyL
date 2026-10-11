@@ -9,7 +9,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { OperationProgress } from '@/components/OperationProgress';
 import { StatusDot } from '@/components/StatusDot';
 import { useManagerOnly, useMtproxylOperation } from '@/hooks/useMtproxyl';
-import { tgbotApi, type TgbotStatus } from '@/lib/api';
+import { tgbotApi, type TgbotSocksCandidate, type TgbotStatus } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 const NOTIFY_LABELS: Array<[string, string]> = [
@@ -383,14 +383,48 @@ function ProxyRow({ value, disabled, onSave }: {
   value: string; disabled?: boolean; onSave: (v: string) => void;
 }) {
   const [draft, setDraft] = useState(value);
+  const [candidates, setCandidates] = useState<TgbotSocksCandidate[] | null>(null);
   useEffect(() => setDraft(value), [value]);
+  // Проверка идёт через каждый прокси до Telegram — секунды, поэтому по кнопке.
+  const find = () => {
+    setCandidates(null);
+    tgbotApi.proxyCandidates().then(setCandidates).catch(() => setCandidates([]));
+  };
+  useEffect(find, []);
   return (
-    <div className="flex items-center gap-2">
-      <Input value={draft} disabled={disabled} placeholder="socks5://127.0.0.1:1080"
-        onChange={(e) => setDraft(e.target.value)} className="max-w-[320px]" />
-      <Button size="sm" disabled={disabled || draft === value} onClick={() => onSave(draft.trim())}>
-        Сохранить
-      </Button>
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <Input value={draft} disabled={disabled} placeholder="socks5://127.0.0.1:1080"
+          onChange={(e) => setDraft(e.target.value)} className="max-w-[320px]" />
+        <Button size="sm" disabled={disabled || draft === value} onClick={() => onSave(draft.trim())}>
+          Сохранить
+        </Button>
+      </div>
+      {candidates === null && <p className="text-xs text-text-secondary">Ищем SOCKS5, поднятые MTProxyL…</p>}
+      {candidates && candidates.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs text-text-secondary">Поднятые MTProxyL — можно взять как выход для бота:</p>
+          {candidates.map((c) => (
+            <div key={c.url} className="flex flex-wrap items-center gap-2 text-sm">
+              <Button size="sm" variant="outline" disabled={disabled || value === c.url}
+                onClick={() => onSave(c.url)}>
+                {value === c.url ? 'Выбран' : 'Использовать'}
+              </Button>
+              <span>{c.label}</span>
+              <code className="text-xs text-text-secondary">{c.url}</code>
+              <span className={c.works ? 'text-xs text-success' : 'text-xs text-danger'}>
+                {c.works ? 'Telegram доступен' : 'Telegram не отвечает'}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {candidates && candidates.length === 0 && (
+        <p className="text-xs text-text-secondary">
+          MTProxyL сейчас не держит SOCKS5 — его поднимают WARP в режиме туннеля и туннель до донора.{' '}
+          <button type="button" className="underline" onClick={find}>Проверить снова</button>
+        </p>
+      )}
     </div>
   );
 }

@@ -1168,6 +1168,14 @@ export interface TgbotStatusResponse {
 
 const TGBOT_BASE = `${BASE}/api/tgbot`;
 
+/** SOCKS5, поднятый самим MTProxyL (WARP, донор), и доходит ли он до Telegram. */
+export interface TgbotSocksCandidate {
+  name: string;
+  url: string;
+  label: string;
+  works: boolean;
+}
+
 export const tgbotApi = {
   status: () => request<TgbotStatusResponse>(TGBOT_BASE, '/status'),
   logs: (lines = 100) =>
@@ -1190,6 +1198,8 @@ export const tgbotApi = {
       method: 'POST',
       body: JSON.stringify({ id, remove }),
     }),
+  proxyCandidates: () =>
+    request<TgbotSocksCandidate[]>(TGBOT_BASE, '/proxy-candidates'),
   set: (key: string, value: string) =>
     request<TgbotStatusResponse>(TGBOT_BASE, '/settings', {
       method: 'PUT',

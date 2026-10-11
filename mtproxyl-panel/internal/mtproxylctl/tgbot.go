@@ -206,3 +206,25 @@ func TgbotTokenHint() string {
 		"Свой Telegram ID подскажет @userinfobot",
 	}, "\n")
 }
+
+// TgbotSocksCandidate — SOCKS5, который поднял сам MTProxyL (WARP, донор).
+type TgbotSocksCandidate struct {
+	Name  string `json:"name"`
+	URL   string `json:"url"`
+	Label string `json:"label"`
+	Works bool   `json:"works"`
+}
+
+// TgbotProxyCandidates предлагает боту готовые SOCKS5 и проверяет, доходят
+// ли они до API Telegram. Пустой список — ничего подходящего не поднято.
+func (c *Client) TgbotProxyCandidates(ctx context.Context) ([]TgbotSocksCandidate, error) {
+	out, err := c.run(ctx, "tgbot", "proxy-candidates")
+	if err != nil {
+		return nil, err
+	}
+	list := []TgbotSocksCandidate{}
+	if err := json.Unmarshal([]byte(firstJSONLine(out)), &list); err != nil {
+		return []TgbotSocksCandidate{}, nil
+	}
+	return list, nil
+}
