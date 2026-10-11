@@ -136,15 +136,11 @@ _selfmask_custom_pq_conf() {
 }
 
 nginx_custom_active() {
-    [ "${NGINX_CUSTOM_ENABLED:-false}" = "true" ] && [ -f "$NGINX_CUSTOM_FILE" ]
+    [ "${NGINX_CUSTOM_ENABLED:-false}" = "true" ] && [ -f "$(front_custom_file)" ]
 }
 
 _selfmask_pq_conf() {
-    if [ "${NGINX_CUSTOM_ENABLED:-false}" = "true" ]; then
-        _selfmask_custom_pq_conf
-    else
-        _selfmask_generated_pq_conf
-    fi
+    front_active_conf
 }
 
 # Без mime.types nginx отдаёт всё как text/plain, и браузер такой CSS не
@@ -186,25 +182,32 @@ EOF
 # Явно включённый доступ к панели через домен Selfmask. Панель слушает только
 # loopback и сама обслуживает base_path; nginx завершает внешний TLS тем же
 # сертификатом, что и сайт-заглушка, и передаёт URI без переписывания.
-_selfmask_panel_proxy_block() {
-    [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ] || return 0
-    [ "${NGINX_CUSTOM_ENABLED:-false}" != "true" ] || return 0
+# Путь, схема и порт панели для публикации на домене заглушки — или ничего.
+_selfmask_panel_proxy_params() {
+    [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ] || return 1
+    [ "${NGINX_CUSTOM_ENABLED:-false}" != "true" ] || return 1
 
     local _cfg="${PANEL_CONFIG_DIR:-/etc/mtproxyl-panel}/config.toml"
-    local _path="${PANEL_SELFMASK_PATH:-}" _listen _host _port _scheme="http" _tls=""
-    [ -f "$_cfg" ] && [ -x "${PANEL_BINARY:-/usr/local/bin/mtproxyl-panel}" ] || return 0
-    [[ "$_path" =~ ^/[A-Za-z0-9_-]{1,64}$ ]] || return 0
+    local _path="${PANEL_SELFMASK_PATH:-}" _listen _host _port _scheme="http"
+    [ -f "$_cfg" ] && [ -x "${PANEL_BINARY:-/usr/local/bin/mtproxyl-panel}" ] || return 1
+    [[ "$_path" =~ ^/[A-Za-z0-9_-]{1,64}$ ]] || return 1
 
     _listen=$(_panel_config_value listen)
     _host="${_listen%:*}"; _port="${_listen##*:}"
     case "$_host" in
         127.0.0.1|localhost|::1|"[::1]") ;;
-        *) return 0 ;;
+        *) return 1 ;;
     esac
-    [[ "$_port" =~ ^[0-9]+$ ]] && [ "$_port" -ge 1 ] && [ "$_port" -le 65535 ] || return 0
+    [[ "$_port" =~ ^[0-9]+$ ]] && [ "$_port" -ge 1 ] && [ "$_port" -le 65535 ] || return 1
+    grep -qE '^[[:space:]]*(cert_file|acme_domain)[[:space:]]*=' "$_cfg" 2>/dev/null && _scheme="https"
+    echo "$_path $_scheme $_port"
+}
 
-    if grep -qE '^[[:space:]]*(cert_file|acme_domain)[[:space:]]*=' "$_cfg" 2>/dev/null; then
-        _scheme="https"
+_selfmask_panel_proxy_block() {
+    local _p _path _scheme _port _tls=""
+    _p=$(_selfmask_panel_proxy_params) || return 0
+    read -r _path _scheme _port <<< "$_p"
+    if [ "$_scheme" = "https" ]; then
         _tls=$(cat << 'TLS_EOF'
             proxy_ssl_verify off;
             proxy_ssl_server_name on;
@@ -421,9 +424,9 @@ selfmask_show_status_json() {
     local _cert="false" _nginx="false" _conf
     _conf="$(_selfmask_pq_conf)"
     [ -n "${SELFMASK_DOMAIN:-}" ] && [ -f "$(_selfmask_cert_dir)/fullchain.pem" ] && _cert="true"
-    systemctl is-active "${SELFMASK_PQ_SERVICE}" &>/dev/null && _nginx="true"
+    front_is_active && _nginx="true"
 
-    printf '{"enabled":%s,"domain":"%s","site_source":"%s","site_dir":"%s","backend_port":%d,"cert_mode":"%s","auto_renew":%s,"nginx_conf":"%s","nginx_conf_exists":%s,"nginx_custom_enabled":%s,"nginx_custom_active":%s,"nginx_custom_file":"%s","nginx_custom_file_exists":%s,"cert_found":%s,"pq_nginx_active":%s,"pq_source":"%s","pq_available":%s,"pq_system":%s,"prev_saved":%s,"prev_domain":"%s"}\n' \
+    printf '{"enabled":%s,"domain":"%s","site_source":"%s","site_dir":"%s","backend_port":%d,"cert_mode":"%s","auto_renew":%s,"nginx_conf":"%s","nginx_conf_exists":%s,"nginx_custom_enabled":%s,"nginx_custom_active":%s,"nginx_custom_file":"%s","nginx_custom_file_exists":%s,"cert_found":%s,"pq_nginx_active":%s,"pq_source":"%s","pq_available":%s,"pq_system":%s,"prev_saved":%s,"prev_domain":"%s","front":"%s","front_title":"%s","front_source":"%s"}\n' \
         "$([ "${SELFMASK_ENABLED:-false}" = "true" ] && echo true || echo false)" \
         "$(json_escape "${SELFMASK_DOMAIN:-}")" \
         "$(json_escape "${SELFMASK_SITE_SOURCE:-stub}")" \
@@ -435,14 +438,15 @@ selfmask_show_status_json() {
         "$([ -f "$_conf" ] && echo true || echo false)" \
         "$([ "${NGINX_CUSTOM_ENABLED:-false}" = "true" ] && echo true || echo false)" \
         "$(nginx_custom_active && echo true || echo false)" \
-        "$(json_escape "$NGINX_CUSTOM_FILE")" \
-        "$([ -f "$NGINX_CUSTOM_FILE" ] && echo true || echo false)" \
+        "$(json_escape "$(front_custom_file)")" \
+        "$([ -f "$(front_custom_file)" ] && echo true || echo false)" \
         "$_cert" "$_nginx" \
         "$(json_escape "$(_pq_openssl_source)")" \
         "$(_pq_openssl_bin >/dev/null 2>&1 && echo true || echo false)" \
         "$(_system_openssl_has_pq && echo true || echo false)" \
         "$([ "${SELFMASK_PREV_SAVED:-false}" = "true" ] && echo true || echo false)" \
-        "$(json_escape "${SELFMASK_PREV_DOMAIN:-}")"
+        "$(json_escape "${SELFMASK_PREV_DOMAIN:-}")" \
+        "$(front_server)" "$(front_title)" "$(json_escape "$(front_source 2>/dev/null)")"
 }
 
 selfmask_show_requirements() {
@@ -519,10 +523,11 @@ selfmask_show_status() {
         echo -e "  ${BOLD}Сертификат:${NC}     ${DIM}не найден${NC}"
     fi
 
-    if systemctl is-active "${SELFMASK_PQ_SERVICE}" &>/dev/null; then
-        echo -e "  ${BOLD}PQ nginx:${NC}       ${GREEN}активен${NC}"
+    echo -e "  ${BOLD}Держатель:${NC}      $(front_title) — $(front_source 2>/dev/null)"
+    if front_is_active; then
+        echo -e "  ${BOLD}Служба:${NC}         ${GREEN}активна${NC} ($(front_service))"
     else
-        echo -e "  ${BOLD}PQ nginx:${NC}       ${DIM}не запущен${NC}"
+        echo -e "  ${BOLD}Служба:${NC}         ${DIM}не запущена${NC} ($(front_service))"
     fi
 
     selfmask_show_requirements
@@ -737,6 +742,10 @@ _selfmask_install_pq_nginx() {
     # force — качать нашу сборку в любом случае. Нужен, когда системного nginx
     # или уже стоящего не хватает по возможностям (например, нет stream).
     local _force="${2:-}"
+    if [ "$_need" = "nginx" ] && ! front_is nginx; then
+        front_install "$_force"
+        return
+    fi
 
     # Системный nginx с OpenSSL 3.5.0+ умеет X25519MLKEM768 сам — качать свою
     # сборку незачем. Каталоги под конфиг и логи всё равно готовим: запускаем
@@ -865,6 +874,9 @@ SELFMASK_SYSTEM_NGINX_WAS_ACTIVE="false"
 SELFMASK_PANEL_WAS_ACTIVE="false"
 
 _selfmask_stop_own_nginx() {
+    # Порт 80 держит и Caddy/HAProxy — свой держатель занятым не считаем.
+    local _f
+    for _f in caddy haproxy; do front_stop "$_f"; done
     if systemctl is-active "${SELFMASK_PQ_SERVICE}" &>/dev/null 2>&1; then
         log_info "Останавливаем предыдущий экземпляр PQ nginx"
         systemctl stop "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
@@ -1483,67 +1495,72 @@ _selfmask_obtain_cert() {
     fi
 
     mkdir -p "${SELFMASK_SITE_DIR}/.well-known/acme-challenge"
-    mkdir -p "${SELFMASK_PQ_PREFIX}/conf"
+    if ! front_is nginx; then
+        _selfmask_open_public_ports
+        front_start_acme || return 1
+    else
+        mkdir -p "${SELFMASK_PQ_PREFIX}/conf"
 
-    local _mime; _mime=$(_selfmask_nginx_mime_block)
+        local _mime; _mime=$(_selfmask_nginx_mime_block)
 
-    local _acme_conf
-    _acme_conf="$(_selfmask_generated_pq_conf)"
-    cat > "$_acme_conf" << EOF
-worker_processes auto;
+        local _acme_conf
+        _acme_conf="$(_selfmask_generated_pq_conf)"
+        cat > "$_acme_conf" << EOF
+    worker_processes auto;
 
-events {
-    worker_connections 1024;
-}
+    events {
+        worker_connections 1024;
+    }
 
-http {
-${_mime}
-    server_tokens off;
-$(_selfmask_nginx_access_log)
-    server_names_hash_bucket_size 128;
+    http {
+    ${_mime}
+        server_tokens off;
+    $(_selfmask_nginx_access_log)
+        server_names_hash_bucket_size 128;
 
-    server {
-        listen 80;
-        server_name ${SELFMASK_DOMAIN};
-        root ${SELFMASK_SITE_DIR};
-
-        location /.well-known/acme-challenge/ {
+        server {
+            listen 80;
+            server_name ${SELFMASK_DOMAIN};
             root ${SELFMASK_SITE_DIR};
-            allow all;
-        }
 
-        location / {
-            return 200 'ok';
-            add_header Content-Type text/plain;
+            location /.well-known/acme-challenge/ {
+                root ${SELFMASK_SITE_DIR};
+                allow all;
+            }
+
+            location / {
+                return 200 'ok';
+                add_header Content-Type text/plain;
+            }
         }
     }
-}
 EOF
 
-    _selfmask_open_public_ports
-    _selfmask_install_pq_service "$_acme_conf"
-    _selfmask_free_ports || { _selfmask_restore_custom_service || true; return 1; }
+        _selfmask_open_public_ports
+        _selfmask_install_pq_service "$_acme_conf"
+        _selfmask_free_ports || { _selfmask_restore_custom_service || true; return 1; }
 
-    mkdir -p /var/lib/mtproxyl-nginx/body
-    mkdir -p /var/lib/mtproxyl-nginx/proxy
-    mkdir -p /var/lib/mtproxyl-nginx/fastcgi
-    mkdir -p /var/log/mtproxyl-nginx
-    mkdir -p /var/lock
-    rm -f /run/mtproxyl-nginx.pid 2>/dev/null || true
+        mkdir -p /var/lib/mtproxyl-nginx/body
+        mkdir -p /var/lib/mtproxyl-nginx/proxy
+        mkdir -p /var/lib/mtproxyl-nginx/fastcgi
+        mkdir -p /var/log/mtproxyl-nginx
+        mkdir -p /var/lock
+        rm -f /run/mtproxyl-nginx.pid 2>/dev/null || true
 
-    local _test_out=""
-    _test_out=$("$(_selfmask_nginx_bin)" -t -c "$_acme_conf" 2>&1) || {
-        log_error "Ошибка временного конфига PQ nginx для ACME"
-        echo "$_test_out" | sed 's/^/    /'
-        _selfmask_restore_custom_service || true
-        return 1
-    }
+        local _test_out=""
+        _test_out=$("$(_selfmask_nginx_bin)" -t -c "$_acme_conf" 2>&1) || {
+            log_error "Ошибка временного конфига PQ nginx для ACME"
+            echo "$_test_out" | sed 's/^/    /'
+            _selfmask_restore_custom_service || true
+            return 1
+        }
     
-    systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null || {
-        log_error "Не удалось запустить PQ nginx"
-        _selfmask_restore_custom_service || true
-        return 1
-    }
+        systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null || {
+            log_error "Не удалось запустить PQ nginx"
+            _selfmask_restore_custom_service || true
+            return 1
+        }
+    fi
 
     # Почта необязательна: без неё certbot регистрируется анонимно, только
     # писем об истечении не будет. Пустое -m он не принимает вовсе.
@@ -1589,6 +1606,7 @@ EOF
 }
 
 _selfmask_restore_custom_service() {
+    front_is nginx || return 0
     nginx_custom_active || return 0
     "$(_selfmask_nginx_bin_for_conf "$NGINX_CUSTOM_FILE")" -t -c "$NGINX_CUSTOM_FILE" &>/dev/null || return 1
     _selfmask_install_pq_service "$NGINX_CUSTOM_FILE"
@@ -1659,6 +1677,7 @@ _selfmask_ensure_log_limits() {
 # Конфиг, собранный до появления настройки, получает access_log на месте —
 # без пересборки и перезапуска nginx.
 _selfmask_patch_access_log() {
+    front_is nginx || return 0
     local _conf; _conf=$(_selfmask_generated_pq_conf)
     [ "${NGINX_CUSTOM_ENABLED:-false}" != "true" ] && [ -f "$_conf" ] || return 0
     [ ! -e "${_conf}.log-patch-failed" ] || return 0
@@ -1715,6 +1734,7 @@ _selfmask_activate_nginx_conf() {
 }
 
 _selfmask_configure_nginx() {
+    front_is nginx || { front_configure_alt; return; }
     log_info "Настройка PQ nginx..."
 
     local _cert_dir
@@ -2137,7 +2157,9 @@ done
 # Заглушка selfmask: подхватывает новый сертификат без обрыва соединений.
 # Только на своём домене — чужое продление её не касается.
 if [ -n "\$_ours" ] && [ "\$_domain" = "\$_ours" ]; then
-    systemctl reload ${SELFMASK_PQ_SERVICE} 2>/dev/null || true
+    for _u in ${SELFMASK_PQ_SERVICE} ${FRONT_CADDY_SERVICE} ${FRONT_HAPROXY_SERVICE}; do
+        systemctl is-active --quiet "\$_u" && systemctl reload "\$_u" 2>/dev/null
+    done
 fi
 
 # У панели своя копия сертификата: /etc/letsencrypt её пользователю не
@@ -2330,10 +2352,10 @@ selfmask_verify() {
         _ok=false
     fi
 
-    if systemctl is-active "${SELFMASK_PQ_SERVICE}" &>/dev/null; then
-        log_success "PQ nginx активен"
+    if front_is_active; then
+        log_success "$(front_title) активен"
     else
-        log_warn "PQ nginx не запущен"
+        log_warn "$(front_title) не запущен"
         _ok=false
     fi
 
@@ -2527,10 +2549,7 @@ selfmask_disable() {
     fi
 
     if ! web_is_enabled 2>/dev/null; then
-        systemctl disable --now "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
-        rm -f "/etc/systemd/system/${SELFMASK_PQ_SERVICE}" 2>/dev/null || true
-        systemctl daemon-reload &>/dev/null || true
-        rm -f "$(_selfmask_generated_pq_conf)" 2>/dev/null || true
+        front_disable_current
     fi
 
     SELFMASK_ENABLED="false"
@@ -2609,8 +2628,8 @@ selfmask_remove_pq_nginx() {
         }
     fi
 
-    # Сначала отключаем selfmask если активен
-    if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
+    # Сначала отключаем selfmask если активен — если его держит nginx.
+    if [ "${SELFMASK_ENABLED:-false}" = "true" ] && front_is nginx; then
         log_info "Отключаем selfmask..."
         systemctl disable --now "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
         rm -f "/etc/systemd/system/${SELFMASK_PQ_SERVICE}" 2>/dev/null || true
@@ -2667,6 +2686,7 @@ _selfmask_cleanup_for_uninstall() {
         save_settings 2>/dev/null || true
     fi
 
+    front_remove_alt
     # Останавливаем и удаляем PQ nginx сервис
     systemctl disable --now "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
     rm -f "/etc/systemd/system/${SELFMASK_PQ_SERVICE}" 2>/dev/null || true
@@ -2684,6 +2704,7 @@ _selfmask_cleanup_for_uninstall() {
 # устаревшая своя — обе лечатся одинаково.
 selfmask_refresh_pq_nginx() {
     check_root
+    front_is nginx || { front_update; return; }
     log_info "Обновление nginx из состава MTProxyL (${SELFMASK_PQ_RELEASE_TAG})..."
     _selfmask_install_pq_nginx nginx force || return 1
     local _bin; _bin=$(_selfmask_pq_nginx_bin)
@@ -2706,7 +2727,7 @@ selfmask_refresh_pq_nginx() {
 nginx_custom_status_line() {
     if nginx_custom_active; then
         echo -e "${GREEN}включён${NC}"
-    elif [ -f "$NGINX_CUSTOM_FILE" ]; then
+    elif [ -f "$(front_custom_file)" ]; then
         echo -e "${DIM}выключен, файл сохранён${NC}"
     else
         echo -e "${DIM}выключен${NC}"
@@ -2715,21 +2736,30 @@ nginx_custom_status_line() {
 
 nginx_custom_status_json() {
     local _size=0 _mtime=""
-    if [ -f "$NGINX_CUSTOM_FILE" ]; then
-        _size=$(stat -c %s "$NGINX_CUSTOM_FILE" 2>/dev/null || echo 0)
-        _mtime=$(stat -c %y "$NGINX_CUSTOM_FILE" 2>/dev/null || true)
+    if [ -f "$(front_custom_file)" ]; then
+        _size=$(stat -c %s "$(front_custom_file)" 2>/dev/null || echo 0)
+        _mtime=$(stat -c %y "$(front_custom_file)" 2>/dev/null || true)
     fi
-    printf '{"enabled":%s,"active":%s,"file":"%s","file_exists":%s,"size":%s,"modified":"%s"}\n' \
+    printf '{"enabled":%s,"active":%s,"file":"%s","file_exists":%s,"size":%s,"modified":"%s","front":"%s"}\n' \
         "$([ "${NGINX_CUSTOM_ENABLED:-false}" = "true" ] && echo true || echo false)" \
         "$(nginx_custom_active && echo true || echo false)" \
-        "$(json_escape "$NGINX_CUSTOM_FILE")" \
-        "$([ -f "$NGINX_CUSTOM_FILE" ] && echo true || echo false)" \
-        "${_size:-0}" "$(json_escape "$_mtime")"
+        "$(json_escape "$(front_custom_file)")" \
+        "$([ -f "$(front_custom_file)" ] && echo true || echo false)" \
+        "${_size:-0}" "$(json_escape "$_mtime")" "$(front_server)"
 }
 
 _nginx_custom_validate() {
     local _conf="$1" _out=""
-    [ -s "$_conf" ] || { log_error "Конфиг nginx пуст"; return 1; }
+    [ -s "$_conf" ] || { log_error "Конфиг $(front_title) пуст"; return 1; }
+    if ! front_is nginx; then
+        front_install >/dev/null || return 1
+        _out=$(front_test_conf "$_conf") || {
+            log_error "Проверка конфига $(front_title) завершилась ошибкой"
+            echo "$_out" | sed 's/^/    /' | tail -20
+            return 1
+        }
+        return 0
+    fi
     if _selfmask_conf_needs_stream "$_conf" && ! _system_nginx_has_stream \
        && [ ! -x "$(_selfmask_pq_nginx_bin)" ]; then
         log_info "Конфигу нужен stream — устанавливаем nginx из состава MTProxyL"
@@ -2745,23 +2775,23 @@ _nginx_custom_validate() {
 }
 
 nginx_custom_show() {
-    local _conf="$NGINX_CUSTOM_FILE"
-    [ -f "$_conf" ] || _conf="$(_selfmask_generated_pq_conf)"
-    [ -f "$_conf" ] || { log_error "Конфиг nginx ещё не создан"; return 1; }
+    local _conf="$(front_custom_file)"
+    [ -f "$_conf" ] || _conf="$(front_generated_conf)"
+    [ -f "$_conf" ] || { log_error "Конфиг $(front_title) ещё не создан"; return 1; }
     cat "$_conf"
 }
 
 nginx_custom_test() {
-    local _conf="$NGINX_CUSTOM_FILE"
+    local _conf="$(front_custom_file)"
     [ -f "$_conf" ] || { log_error "Пользовательский конфиг не найден"; return 1; }
     _nginx_custom_validate "$_conf" || return 1
-    log_success "Конфиг nginx корректен"
+    log_success "Конфиг $(front_title) корректен"
 }
 
 nginx_custom_enable() {
     check_root
     if nginx_custom_active; then
-        log_info "Пользовательский конфиг nginx уже включён"
+        log_info "Свой конфиг $(front_title) уже включён"
         return 0
     fi
     if [ "${SELFMASK_ENABLED:-false}" != "true" ] && ! web_is_enabled 2>/dev/null; then
@@ -2770,27 +2800,27 @@ nginx_custom_enable() {
     fi
 
     echo ""
-    log_warn "MTProxyL перестанет пересобирать nginx.conf при изменении настроек"
+    log_warn "MTProxyL перестанет пересобирать конфиг $(front_title) при изменении настроек"
     echo -e "  ${DIM}Маршруты, домены и порты в пользовательском файле нужно синхронизировать вручную.${NC}"
-    local _yn; read_line _yn "  ${BOLD}Включить пользовательский конфиг nginx? [y/N]:${NC} "
+    local _yn; read_line _yn "  ${BOLD}Включить свой конфиг $(front_title)? [y/N]:${NC} "
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
-    if [ ! -f "$NGINX_CUSTOM_FILE" ]; then
+    if [ ! -f "$(front_custom_file)" ]; then
         NGINX_CUSTOM_ENABLED="false"
         _selfmask_configure_nginx || { _selfmask_restore_port80_holders; return 1; }
         mkdir -p "$INSTALL_DIR"
-        cp "$(_selfmask_generated_pq_conf)" "$NGINX_CUSTOM_FILE" || {
+        cp "$(front_generated_conf)" "$(front_custom_file)" || {
             _selfmask_restore_port80_holders
-            log_error "Не удалось создать ${NGINX_CUSTOM_FILE}"
+            log_error "Не удалось создать $(front_custom_file)"
             return 1
         }
-        chmod 600 "$NGINX_CUSTOM_FILE"
+        chmod 600 "$(front_custom_file)"
         log_success "Создан пользовательский конфиг из текущего рабочего"
     else
         log_info "Используем сохранённый пользовательский конфиг"
     fi
 
-    _nginx_custom_validate "$NGINX_CUSTOM_FILE" || {
+    _nginx_custom_validate "$(front_custom_file)" || {
         _selfmask_restore_port80_holders
         return 1
     }
@@ -2809,21 +2839,21 @@ nginx_custom_enable() {
         return 1
     fi
     _selfmask_restore_port80_holders
-    log_success "Пользовательский конфиг nginx включён"
-    echo -e "  ${BOLD}Файл:${NC} ${NGINX_CUSTOM_FILE}"
+    log_success "Свой конфиг $(front_title) включён"
+    echo -e "  ${BOLD}Файл:${NC} $(front_custom_file)"
 }
 
 nginx_custom_disable() {
     check_root
     if [ "${NGINX_CUSTOM_ENABLED:-false}" != "true" ]; then
-        log_info "Пользовательский конфиг nginx уже выключен"
+        log_info "Свой конфиг $(front_title) уже выключен"
         return 0
     fi
 
     echo ""
-    log_warn "Nginx снова будет собираться из настроек MTProxyL"
+    log_warn "$(front_title) снова будет собираться из настроек MTProxyL"
     echo -e "  ${DIM}Пользовательский файл останется на месте для повторного включения.${NC}"
-    local _yn; read_line _yn "  ${BOLD}Выключить пользовательский конфиг nginx? [y/N]:${NC} "
+    local _yn; read_line _yn "  ${BOLD}Выключить свой конфиг $(front_title)? [y/N]:${NC} "
     [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
 
     NGINX_CUSTOM_ENABLED="false"
@@ -2842,13 +2872,13 @@ nginx_custom_disable() {
         fi
         _selfmask_restore_port80_holders
     fi
-    log_success "Стандартный конфиг nginx включён, пользовательский файл сохранён"
+    log_success "Стандартный конфиг $(front_title) включён, свой файл сохранён"
 }
 
 nginx_custom_write() {
     check_root
     mkdir -p "$INSTALL_DIR"
-    local _tmp _size _backup="${NGINX_CUSTOM_FILE}.bak"
+    local _tmp _size _backup; _backup="$(front_custom_file).bak"
     _tmp=$(_mktemp "$INSTALL_DIR") || return 1
     cat > "$_tmp"
     _size=$(stat -c %s "$_tmp" 2>/dev/null || echo 0)
@@ -2859,27 +2889,26 @@ nginx_custom_write() {
     fi
     _nginx_custom_validate "$_tmp" || { rm -f "$_tmp"; return 1; }
 
-    [ ! -f "$NGINX_CUSTOM_FILE" ] || cp -f "$NGINX_CUSTOM_FILE" "$_backup"
+    [ ! -f "$(front_custom_file)" ] || cp -f "$(front_custom_file)" "$_backup"
     chmod 600 "$_tmp"
-    mv -f "$_tmp" "$NGINX_CUSTOM_FILE"
+    mv -f "$_tmp" "$(front_custom_file)"
 
     if nginx_custom_active && ! _selfmask_configure_nginx; then
         if [ -f "$_backup" ]; then
-            mv -f "$_backup" "$NGINX_CUSTOM_FILE"
-            _selfmask_install_pq_service "$NGINX_CUSTOM_FILE"
-            systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
+            mv -f "$_backup" "$(front_custom_file)"
+            _selfmask_configure_nginx >/dev/null 2>&1 || true
         fi
         _selfmask_restore_port80_holders
-        log_error "Изменение отменено: nginx не запустился"
+        log_error "Изменение отменено: $(front_title) не запустился"
         return 1
     fi
     _selfmask_restore_port80_holders
-    log_success "Пользовательский конфиг nginx сохранён"
+    log_success "Свой конфиг $(front_title) сохранён"
 }
 
 nginx_custom_edit() {
     check_root
-    [ -f "$NGINX_CUSTOM_FILE" ] || {
+    [ -f "$(front_custom_file)" ] || {
         log_error "Пользовательский конфиг не найден — сначала включите режим"
         return 1
     }
@@ -2891,10 +2920,10 @@ nginx_custom_edit() {
 
     local _tmp _editor="${EDITOR:-nano}"
     _tmp=$(_mktemp "$INSTALL_DIR") || return 1
-    cp "$NGINX_CUSTOM_FILE" "$_tmp" || return 1
+    cp "$(front_custom_file)" "$_tmp" || return 1
     command -v "$_editor" &>/dev/null || _editor="vi"
     "$_editor" "$_tmp"
-    cmp -s "$_tmp" "$NGINX_CUSTOM_FILE" && { rm -f "$_tmp"; log_info "Файл не изменён"; return 0; }
+    cmp -s "$_tmp" "$(front_custom_file)" && { rm -f "$_tmp"; log_info "Файл не изменён"; return 0; }
     nginx_custom_write < "$_tmp"
     local _rc=$?
     rm -f "$_tmp"

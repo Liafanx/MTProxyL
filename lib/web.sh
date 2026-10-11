@@ -16,10 +16,10 @@ web_is_enabled() {
 }
 mtproto_is_enabled() { web_is_reanimator || [ "${PROXY_MODE:-mtproto}" != "web" ]; }
 web_is_only_mode() { ! web_is_reanimator && [ "${PROXY_MODE:-mtproto}" = "web" ]; }
-web_frontend_is_haproxy() { ! web_is_reanimator && [ "${WEB_FRONTEND:-nginx}" = "haproxy" ]; }
+web_frontend_is_haproxy() { ! web_is_reanimator && front_is nginx && [ "${WEB_FRONTEND:-nginx}" = "haproxy" ]; }
 # HAProxy держит публичный порт, но TLS и заглушку по-прежнему обслуживает
 # nginx MTProxyL: клиент приходит в него по PROXY protocol с приватного порта.
-web_frontend_is_haproxy_nginx() { ! web_is_reanimator && [ "${WEB_FRONTEND:-nginx}" = "haproxy-nginx" ]; }
+web_frontend_is_haproxy_nginx() { ! web_is_reanimator && front_is nginx && [ "${WEB_FRONTEND:-nginx}" = "haproxy-nginx" ]; }
 web_frontend_has_haproxy() { web_frontend_is_haproxy || web_frontend_is_haproxy_nginx; }
 # При direct HAProxy на другом узле публичный DNS закономерно указывает на него,
 # а не на сервер MTProxyL. Нелокальный bind — явный признак такой схемы.
@@ -1177,7 +1177,7 @@ _web_restore_runtime() {
        || { web_is_enabled && web_uses_managed_nginx; }; then
         _selfmask_configure_nginx >/dev/null 2>&1 || true
     else
-        systemctl stop "${SELFMASK_PQ_SERVICE}" >/dev/null 2>&1 || true
+        front_stop
     fi
 }
 
@@ -1261,7 +1261,7 @@ web_enable() {
         }
         [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "letsencrypt" ] && _selfmask_setup_renewal || true
     elif [ "${SELFMASK_ENABLED:-false}" != "true" ]; then
-        systemctl stop "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
+        front_stop
     fi
 
     if web_is_only_mode; then
@@ -1293,7 +1293,7 @@ web_enable() {
 
     if web_uses_managed_nginx; then
         log_info "Настройка nginx на публичном порту..."
-        if ! _selfmask_configure_nginx || ! systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null; then
+        if ! _selfmask_configure_nginx || ! systemctl restart "$(front_service)" &>/dev/null; then
             log_error "nginx не поднялся — возвращаем прежний режим"
             _web_restore_runtime "$_old_mode" "$_old_enabled" "$_old_running"
             return 1
@@ -1367,7 +1367,7 @@ web_disable() {
         if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
             _selfmask_configure_nginx || return 1
         else
-            systemctl stop "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
+            front_stop
         fi
     else
         log_info "HAProxy остаётся без изменений — удалите его WEB-маршрут самостоятельно"
@@ -1563,7 +1563,7 @@ web_preflight_problems() {
        && ! web_frontend_is_direct && ! web_frontend_is_haproxy_nginx && ! web_nginx_has_stream; then
         _p+="nginx активного WEB не поддерживает stream — примените WEB заново: mtproxyl web enable"$'\n'
     fi
-    if web_uses_managed_nginx && nginx_custom_active 2>/dev/null \
+    if web_uses_managed_nginx && front_is nginx && nginx_custom_active 2>/dev/null \
        && [ "${WEB_DECOY_MODE:-empty}" != "http_upstream" ]; then
         grep -Eq 'proxy_hide_header[[:space:]]+ETag' "$NGINX_CUSTOM_FILE" 2>/dev/null \
             || _p+="пользовательский nginx.conf не скрывает ETag: добавьте proxy_hide_header ETag"$'\n'
@@ -1638,6 +1638,8 @@ web_busy_ports() {
         # занятым навсегда — кнопка «Включить» больше не срабатывала.
         case "$_who" in
             *nginx*|*telemt*|*mtproxyl*) continue ;;
+            *caddy*) front_is caddy && continue ;;
+            *haproxy*) front_is haproxy && systemctl is-active --quiet "$FRONT_HAPROXY_SERVICE" && continue ;;
         esac
         _busy+="${_p} "
     done
@@ -1648,6 +1650,7 @@ web_busy_ports() {
 # движок уйдёт с публичного порта, иначе он останется мёртвым.
 web_nginx_has_stream() {
     web_uses_managed_nginx || return 0
+    front_is nginx || return 0
     local _bin
     _bin=$(_selfmask_nginx_bin 2>/dev/null) || return 1
     [ -x "$_bin" ] || return 1
@@ -1678,8 +1681,14 @@ web_fingerprint_state() {
         echo "заголовки задаёт HAProxy — возьмите фрагмент: mtproxyl web haproxy-config"
         return 0
     fi
-    if nginx_custom_active 2>/dev/null; then
-        echo "пользовательский nginx.conf — заголовки не подставляются"
+    if [ "${NGINX_CUSTOM_ENABLED:-false}" = "true" ]; then
+        echo "свой конфиг $(front_title) — заголовки не подставляются"
+        return 0
+    fi
+    if ! front_is nginx; then
+        grep -q 'Content-Security-Policy' "$(front_generated_conf)" 2>/dev/null \
+            && { echo "свои заголовки ($(front_title))"; return 0; }
+        echo "конфиг $(front_title) без WEB — переприменить: mtproxyl web enable"
         return 0
     fi
     local _conf; _conf=$(_selfmask_generated_pq_conf 2>/dev/null)
@@ -2585,9 +2594,9 @@ _web_target_rollback() {
     [ "${WEB_TARGET_ENABLED}" = "true" ] || WEB_TARGET_PORT=""
     save_settings || true
     if [ "${SELFMASK_ENABLED:-false}" = "true" ] || [ "${WEB_TARGET_ENABLED}" = "true" ]; then
-        _selfmask_configure_nginx >/dev/null 2>&1 && systemctl restart "${SELFMASK_PQ_SERVICE}" >/dev/null 2>&1 || true
+        _selfmask_configure_nginx >/dev/null 2>&1 && systemctl restart "$(front_service)" >/dev/null 2>&1 || true
     else
-        systemctl stop "${SELFMASK_PQ_SERVICE}" >/dev/null 2>&1 || true
+        front_stop
     fi
     restart_target >/dev/null 2>&1 || true
 }
@@ -2640,7 +2649,7 @@ web_target_enable() {
     fi
 
     log_info "Настройка nginx на публичном порту..."
-    if ! _selfmask_configure_nginx || ! systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null; then
+    if ! _selfmask_configure_nginx || ! systemctl restart "$(front_service)" &>/dev/null; then
         log_error "nginx не поднялся — возвращаем цель как было"
         _web_target_rollback "$_backup" "$_was"
         return 1
@@ -2687,10 +2696,10 @@ web_target_disable() {
 
     log_info "Снятие nginx с :443..."
     if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
-        _selfmask_configure_nginx && systemctl restart "${SELFMASK_PQ_SERVICE}" &>/dev/null \
+        _selfmask_configure_nginx && systemctl restart "$(front_service)" &>/dev/null \
             || log_warn "nginx Selfmask не перезапустился — проверьте: mtproxyl selfmask status"
     else
-        systemctl stop "${SELFMASK_PQ_SERVICE}" &>/dev/null || true
+        front_stop
     fi
 
     backup_target_config "web-off" "true" || true

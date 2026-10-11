@@ -6,6 +6,10 @@
 
 ---
 
+## v1.7.0 — 11.10.2026
+
+- Selfmask и WEB Proxy: заглушку и публичный TLS теперь может держать не только nginx, но и Caddy или HAProxy — с теми же раскладками портов, заголовками, страницей 404, доступом к панели на домене и постквантовым обменом ключами X25519MLKEM768. Выбор — `mtproxyl front set nginx|caddy|haproxy`, текущий — `mtproxyl front status`. Если подходящего Caddy (с модулем layer4) или HAProxy (с OpenSSL 3.5+) в системе нет, MTProxyL ставит свою сборку: Caddy с layer4, HAProxy 3.2 с OpenSSL 3.5.7. Файлы сайта за HAProxy раздаёт небольшой `mtproxyl-static` на loopback. Свой конфиг поддерживается у каждого: `mtproxyl selfmask nginx-config on|write|edit` работает с конфигом выбранного держателя.
+
 ## v1.6.39 — 10.10.2026
 
 - Reanimator: у цели, поставленной официальным установщиком telemt, не создавались пользователи через панель и API движка — «failed to write config: Operation not permitted (os error 1)». Установщик отдаёт конфиг root, а движок работает от своего пользователя и с telemt 3.5.8 при записи через API не может сохранить прежнего владельца файла. Теперь MTProxyL передаёт конфиг цели пользователю движка; права на файл не меняются.

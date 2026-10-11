@@ -1,0 +1,178 @@
+name: Сборка HAProxy с PQ OpenSSL (держатель заглушки)
+
+# HAProxy с OpenSSL статически — ради X25519MLKEM768 там, где системный
+# OpenSSL старше 3.5. Файлы сайта HAProxy не раздаёт, поэтому рядом кладём
+# mtproxyl-static из этого репозитория.
+
+on:
+  # Тег haproxy-<версия>-openssl<версия>-<ревизия> собирает и публикует релиз.
+  push:
+    tags: ['haproxy-*-openssl*-*']
+  workflow_dispatch:
+    inputs:
+      haproxy_version:
+        description: 'Версия HAProxy (ветка 3.2 LTS)'
+        required: true
+        default: '3.2.25'
+      openssl_version:
+        description: 'Версия OpenSSL'
+        required: true
+        default: '3.5.7'
+      build_rev:
+        description: 'Ревизия сборки, добавляется к тегу'
+        required: true
+        default: 'r1'
+      push_release:
+        description: 'Опубликовать как Release?'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      haproxy: ${{ steps.v.outputs.haproxy }}
+      openssl: ${{ steps.v.outputs.openssl }}
+      rev: ${{ steps.v.outputs.rev }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - id: v
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          IN_H: ${{ github.event.inputs.haproxy_version }}
+          IN_O: ${{ github.event.inputs.openssl_version }}
+          IN_REV: ${{ github.event.inputs.build_rev }}
+          IN_PUB: ${{ github.event.inputs.push_release }}
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            t="${REF_NAME#haproxy-}"; h="${t%%-openssl*}"; t="${t#*-openssl}"; o="${t%%-*}"; rev="${t#*-}"; pub=true
+          else
+            h="$IN_H"; o="$IN_O"; rev="$IN_REV"; pub="$IN_PUB"
+          fi
+          { echo "haproxy=$h"; echo "openssl=$o"; echo "rev=$rev"; echo "publish=$pub"; } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: meta
+    name: Сборка ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: mtproxyl-static
+        env:
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: '0'
+        run: |
+          cd mtproxyl-static
+          go vet ./...
+          go build -trimpath -ldflags "-s -w -X main.version=${{ github.sha }}" -o ../mtproxyl-static-linux-${{ matrix.arch }} .
+
+      - name: Dockerfile
+        run: |
+          cat > Dockerfile.haproxy << 'EOF'
+          FROM debian:11-slim AS builder
+          ARG OPENSSL_VER
+          ARG HAPROXY_VER
+          ARG PREFIX=/opt/mtproxyl-haproxy
+
+          RUN apt-get update -qq && apt-get install -y -qq \
+              build-essential wget ca-certificates perl libpcre2-dev binutils file \
+              && rm -rf /var/lib/apt/lists/*
+
+          RUN cd /tmp && \
+              wget -q "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VER}/openssl-${OPENSSL_VER}.tar.gz" && \
+              tar xzf "openssl-${OPENSSL_VER}.tar.gz" && cd "openssl-${OPENSSL_VER}" && \
+              ./Configure no-shared no-tests --prefix=/tmp/openssl-static \
+                --openssldir=/tmp/openssl-static/ssl --libdir=lib && \
+              make -j"$(nproc)" && make install_sw
+
+          RUN cd /tmp && \
+              wget -q "https://www.haproxy.org/download/${HAPROXY_VER%.*}/src/haproxy-${HAPROXY_VER}.tar.gz" && \
+              tar xzf "haproxy-${HAPROXY_VER}.tar.gz" && cd "haproxy-${HAPROXY_VER}" && \
+              make -j"$(nproc)" TARGET=linux-glibc \
+                USE_OPENSSL=1 SSL_INC=/tmp/openssl-static/include SSL_LIB=/tmp/openssl-static/lib \
+                USE_PCRE2=1 USE_PCRE2_JIT=1 USE_PROMEX=0 USE_LUA= \
+                ADDLIB="-ldl -lpthread" && \
+              mkdir -p ${PREFIX}/sbin ${PREFIX}/bin ${PREFIX}/conf && \
+              cp haproxy ${PREFIX}/sbin/haproxy && strip ${PREFIX}/sbin/haproxy && \
+              cp /tmp/openssl-static/bin/openssl ${PREFIX}/bin/openssl
+
+          RUN ${PREFIX}/sbin/haproxy -vv | tee /tmp/hv.txt && \
+              grep -q "Running on OpenSSL version : OpenSSL ${OPENSSL_VER}" /tmp/hv.txt
+          RUN ldd ${PREFIX}/sbin/haproxy | grep -Ei 'libssl|libcrypto' && \
+              (echo "ОШИБКА: OpenSSL слинкован динамически" && exit 1) || echo "OK: OpenSSL статически"
+          RUN objdump -T ${PREFIX}/sbin/haproxy | grep -oP 'GLIBC_[0-9.]+' | sort -V | uniq | tail -1
+          RUN file ${PREFIX}/sbin/haproxy ${PREFIX}/bin/openssl
+
+          FROM scratch AS artifact
+          COPY --from=builder /opt/mtproxyl-haproxy /opt/mtproxyl-haproxy
+          EOF
+
+      - name: Сборка архива
+        run: |
+          mkdir -p out
+          docker buildx build --platform linux/${{ matrix.arch }} \
+            --build-arg OPENSSL_VER=${{ needs.meta.outputs.openssl }} \
+            --build-arg HAPROXY_VER=${{ needs.meta.outputs.haproxy }} \
+            --output type=local,dest=./out -f Dockerfile.haproxy .
+          install -m 755 mtproxyl-static-linux-${{ matrix.arch }} out/opt/mtproxyl-haproxy/bin/mtproxyl-static
+          ARCHIVE="mtproxyl-haproxy-${{ needs.meta.outputs.haproxy }}-openssl${{ needs.meta.outputs.openssl }}-linux-${{ matrix.arch }}.tar.gz"
+          tar czf "$ARCHIVE" -C out opt/mtproxyl-haproxy
+          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: haproxy-${{ matrix.arch }}
+          path: |
+            ${{ env.ARCHIVE }}
+            mtproxyl-static-linux-${{ matrix.arch }}
+          retention-days: 7
+
+  release:
+    name: Публикация Release
+    needs: [meta, build]
+    if: needs.meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - run: find artifacts -type f
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: haproxy-${{ needs.meta.outputs.haproxy }}-openssl${{ needs.meta.outputs.openssl }}-${{ needs.meta.outputs.rev }}
+          name: "HAProxy ${{ needs.meta.outputs.haproxy }} + OpenSSL ${{ needs.meta.outputs.openssl }}"
+          body: |
+            HAProxy ${{ needs.meta.outputs.haproxy }} с OpenSSL ${{ needs.meta.outputs.openssl }} (статически) — держатель заглушки Selfmask и WEB в MTProxyL.
+
+            - X25519MLKEM768 на любом дистрибутиве, Debian 11+ / Ubuntu 20.04+;
+            - `mtproxyl-static` — раздача файлов сайта на loopback (HAProxy файлы не отдаёт);
+            - `linux/amd64` и `linux/arm64`.
+
+            MTProxyL скачивает её сам: `mtproxyl front set haproxy`.
+          files: |
+            artifacts/*/*.tar.gz
+            artifacts/*/mtproxyl-static-linux-*
+          draft: false
+          prerelease: false

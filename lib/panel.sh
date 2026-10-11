@@ -775,7 +775,7 @@ _panel_selfmask_serves_acme() {
     local _domain="$1"
     [ -n "$_domain" ] || return 1
     [ -n "${SELFMASK_SITE_DIR:-}" ] && [ -d "$SELFMASK_SITE_DIR" ] || return 1
-    systemctl is-active "${SELFMASK_PQ_SERVICE:-mtproxyl-pq-nginx.service}" &>/dev/null || return 1
+    systemctl is-active "$(front_service)" &>/dev/null || return 1
     command -v curl &>/dev/null || return 1
 
     local _dir="${SELFMASK_SITE_DIR}/.well-known/acme-challenge"
@@ -795,8 +795,8 @@ _panel_selfmask_serves_acme() {
 # Кто сейчас держит порт 80 — из тех, кого мы вправе трогать.
 _panel_port80_holders() {
     local _out=""
-    systemctl is-active "${SELFMASK_PQ_SERVICE:-mtproxyl-pq-nginx.service}" &>/dev/null \
-        && _out+="${SELFMASK_PQ_SERVICE:-mtproxyl-pq-nginx.service} "
+    systemctl is-active "$(front_service)" &>/dev/null \
+        && _out+="$(front_service) "
     systemctl is-active nginx &>/dev/null && _out+="nginx "
     systemctl is-active apache2 &>/dev/null && _out+="apache2 "
     echo "$_out"

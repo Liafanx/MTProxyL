@@ -89,6 +89,7 @@ WARP_DISABLED_UPSTREAMS=""
 # менеджер только копирует его файл на место config.toml
 SUPEREXPERT_ENABLED="false"
 NGINX_CUSTOM_ENABLED="false"
+FRONT_SERVER="nginx"          # nginx|caddy|haproxy — держатель заглушки Selfmask и WEB
 HTTPS_HSTS_ENABLED="true"
 HTTPS_PERMISSIONS_ENABLED="true"
 # Журнал запросов nginx: по умолчанию не пишется, растёт на гигабайты
@@ -310,6 +311,7 @@ SUPEREXPERT_ENABLED='${SUPEREXPERT_ENABLED}'
 
 # Пользовательский конфиг nginx
 NGINX_CUSTOM_ENABLED='${NGINX_CUSTOM_ENABLED}'
+FRONT_SERVER='${FRONT_SERVER}'
 HTTPS_HSTS_ENABLED='${HTTPS_HSTS_ENABLED}'
 HTTPS_PERMISSIONS_ENABLED='${HTTPS_PERMISSIONS_ENABLED}'
 NGINX_ACCESS_LOG='${NGINX_ACCESS_LOG}'
@@ -553,7 +555,7 @@ load_settings() {
                 WEB_DECOY_MODE|WEB_DECOY_DIR|WEB_DECOY_UPSTREAM|WEB_DEBUG|WEB_FP_SEED|\
                 WEB_DEBUG_SIDEBAND|WEB_BASE_PATH|\
                 WEB_ONLY_PREV_NFT|WEB_ONLY_PREV_ZAPRET2|\
-                SUPEREXPERT_ENABLED|NGINX_CUSTOM_ENABLED|HTTPS_HSTS_ENABLED|HTTPS_PERMISSIONS_ENABLED|NGINX_ACCESS_LOG|\
+                SUPEREXPERT_ENABLED|NGINX_CUSTOM_ENABLED|FRONT_SERVER|HTTPS_HSTS_ENABLED|HTTPS_PERMISSIONS_ENABLED|NGINX_ACCESS_LOG|\
                 IPBLOCK_ENABLED|IPBLOCK_ACTION|IPBLOCK_LIST|IPBLOCK_LIST6|\
                 PORT_PROFILE_MANAGER|PORT_PROFILE_REANIMATOR)
                     printf -v "$key" '%s' "$val"
@@ -665,6 +667,7 @@ load_settings() {
 
     [ "$SUPEREXPERT_ENABLED" = "true" ] || SUPEREXPERT_ENABLED="false"
     [ "$NGINX_CUSTOM_ENABLED" = "true" ] || NGINX_CUSTOM_ENABLED="false"
+    case "$FRONT_SERVER" in nginx|caddy|haproxy) ;; *) FRONT_SERVER="nginx" ;; esac
     [[ "$IP_HISTORY_INTERVAL" =~ ^[0-9]+$ ]] || IP_HISTORY_INTERVAL="5"
 
     [ "$AVAILABILITY_ENABLED" = "false" ] || AVAILABILITY_ENABLED="true"

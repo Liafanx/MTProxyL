@@ -47,7 +47,7 @@ tui_selfmask_menu() {
             echo -e "  ${BOLD}Сертификат:${NC} ${DIM}не найден${NC}"
         fi
 
-        if systemctl is-active "${SELFMASK_PQ_SERVICE}" &>/dev/null; then
+        if systemctl is-active "$(front_service)" &>/dev/null; then
             echo -e "  ${BOLD}Служба:${NC}    ${GREEN}активна${NC}"
         else
             echo -e "  ${BOLD}Служба:${NC}    ${DIM}не запущена${NC}"
@@ -109,7 +109,7 @@ tui_nginx_custom_menu() {
         draw_header "ПОЛЬЗОВАТЕЛЬСКИЙ КОНФИГ NGINX"
         echo ""
         echo -e "  ${BOLD}Статус:${NC} $(nginx_custom_status_line)"
-        echo -e "  ${BOLD}Файл:${NC}   ${NGINX_CUSTOM_FILE}"
+        echo -e "  ${BOLD}Файл:${NC}   $(front_custom_file)"
         echo ""
         echo -e "  ${DIM}При включённом режиме MTProxyL не перезаписывает этот файл.${NC}"
         echo -e "  ${DIM}Изменения настроек nginx нужно переносить в него вручную.${NC}"

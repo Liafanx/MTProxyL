@@ -1,0 +1,138 @@
+name: Сборка Caddy с layer4 (держатель заглушки)
+
+# Обычный Caddy не разбирает SNI без расшифровки, а общему :443 это нужно:
+# MTProto уходит движку как есть. Собираем с модулем caddy-l4.
+# X25519MLKEM768 в Go 1.24+ включён по умолчанию.
+
+on:
+  # Тег caddy-<версия>-l4-<ревизия> собирает и публикует релиз с тем же именем.
+  push:
+    tags: ['caddy-*-l4-*']
+  workflow_dispatch:
+    inputs:
+      caddy_version:
+        description: 'Версия Caddy без v'
+        required: true
+        default: '2.11.7'
+      l4_ref:
+        description: 'Коммит или тег caddy-l4 (пусто — последний)'
+        required: false
+        default: ''
+      build_rev:
+        description: 'Ревизия сборки, добавляется к тегу'
+        required: true
+        default: 'r1'
+      push_release:
+        description: 'Опубликовать как Release?'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      rev: ${{ steps.v.outputs.rev }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - id: v
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          IN_VER: ${{ github.event.inputs.caddy_version }}
+          IN_REV: ${{ github.event.inputs.build_rev }}
+          IN_PUB: ${{ github.event.inputs.push_release }}
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            v="${REF_NAME#caddy-}"; rev="${v##*-l4-}"; v="${v%-l4-*}"; pub=true
+          else
+            v="$IN_VER"; rev="$IN_REV"; pub="$IN_PUB"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"; echo "rev=$rev" >> "$GITHUB_OUTPUT"; echo "publish=$pub" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: meta
+    name: Сборка ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+      - name: Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: xcaddy
+        run: go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+
+      - name: Сборка
+        env:
+          CADDY_VERSION: ${{ needs.meta.outputs.version }}
+          L4_REF: ${{ github.event.inputs.l4_ref }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          l4="github.com/mholt/caddy-l4"
+          [ -n "$L4_REF" ] && l4="${l4}@${L4_REF}"
+          mkdir -p out/opt/mtproxyl-caddy/bin
+          "$(go env GOPATH)/bin/xcaddy" build "v${CADDY_VERSION}" \
+            --with "$l4" \
+            --output out/opt/mtproxyl-caddy/bin/caddy
+          file out/opt/mtproxyl-caddy/bin/caddy
+
+      - name: Проверка (amd64)
+        if: matrix.arch == 'amd64'
+        run: |
+          set -euo pipefail
+          bin=out/opt/mtproxyl-caddy/bin/caddy
+          "$bin" version
+          "$bin" list-modules | grep -qx layer4
+          "$bin" list-modules | grep -q '^layer4.handlers.proxy$'
+          "$bin" list-modules | grep -q '^layer4.matchers.tls$'
+
+      - name: Архив
+        run: |
+          ARCHIVE="mtproxyl-caddy-${{ needs.meta.outputs.version }}-l4-linux-${{ matrix.arch }}.tar.gz"
+          tar czf "$ARCHIVE" -C out opt/mtproxyl-caddy
+          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: caddy-${{ matrix.arch }}
+          path: ${{ env.ARCHIVE }}
+          retention-days: 7
+
+  release:
+    name: Публикация Release
+    needs: [meta, build]
+    if: needs.meta.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - run: find artifacts -type f
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: caddy-${{ needs.meta.outputs.version }}-l4-${{ needs.meta.outputs.rev }}
+          name: "Caddy ${{ needs.meta.outputs.version }} + layer4"
+          body: |
+            Caddy ${{ needs.meta.outputs.version }} с модулем caddy-l4 — держатель заглушки Selfmask и WEB в MTProxyL.
+
+            - разбор SNI без расшифровки на общем :443 (MTProto уходит движку как есть);
+            - X25519MLKEM768 по умолчанию (Go 1.24+);
+            - статическая сборка, `linux/amd64` и `linux/arm64`.
+
+            MTProxyL скачивает её сам: `mtproxyl front set caddy`.
+          files: artifacts/*/*.tar.gz
+          draft: false
+          prerelease: false
