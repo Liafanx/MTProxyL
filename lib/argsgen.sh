@@ -25,6 +25,7 @@ _AG_ITEMS=(
     "web|WEB Proxy|yes"
     "shaping|Шейпинг по IPv4|no"
     "geoip|База GeoIP|no"
+    "api|API управления (новый ключ)|no"
     "block|Список блокировок|no"
     "dcrestart|Перезапуск при падении DC|no"
     "force|Ставить поверх существующей|no"
@@ -102,6 +103,8 @@ _argsgen_defaults() {
         _AG_ON[shaping]="no"; _AG_VAL[shaping]="выключен"
     fi
 
+    _AG_ON[api]="$(api_is_enabled 2>/dev/null && echo yes || echo no)"
+    _AG_VAL[api]="$(api_is_enabled 2>/dev/null && echo "${API_LISTEN:-127.0.0.1:9190}" || echo "выключен")"
     _AG_ON[geoip]="$(geoip_installed 2>/dev/null && echo yes || echo no)"
     _AG_VAL[geoip]="$(geoip_installed 2>/dev/null && echo "установлена" || echo "нет")"
 
@@ -244,6 +247,11 @@ _argsgen_build() {
     fi
 
     [ "${_AG_ON[geoip]}" = "yes" ] && _a+=(--geoip yes)
+    if [ "${_AG_ON[api]:-no}" = "yes" ]; then
+        _a+=(--api yes --api-listen "${API_LISTEN:-127.0.0.1:9190}")
+        [ -n "${API_ALLOW:-}" ] && _a+=(--api-allow "$API_ALLOW")
+        [ "${API_TLS:-off}" = "selfmask" ] && _a+=(--api-tls selfmask)
+    fi
 
     if [ "${_AG_ON[block]}" = "yes" ]; then
         local _bl; _bl=$(ipblock_entries 2>/dev/null | paste -sd, -)

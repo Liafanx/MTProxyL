@@ -17,6 +17,7 @@ interface Props {
 }
 
 export function NginxCustomConfigCard({ status, running, onStart, onError }: Props) {
+  const fr = status.front_title || 'nginx';
   const [content, setContent] = useState('');
   const [savedContent, setSavedContent] = useState('');
   const [saving, setSaving] = useState(false);
@@ -40,7 +41,7 @@ export function NginxCustomConfigCard({ status, running, onStart, onError }: Pro
       })
       .catch((e) => {
         if (!cancelled) {
-          onError(e instanceof Error ? e.message : 'Не удалось загрузить конфиг nginx');
+          onError(e instanceof Error ? e.message : `Не удалось загрузить конфиг ${fr}`);
         }
       });
     return () => {
@@ -56,7 +57,7 @@ export function NginxCustomConfigCard({ status, running, onStart, onError }: Pro
     try {
       onStart(await mtproxylApi.toggleSelfmaskNginxConfig(enabled));
     } catch (e) {
-      onError(e instanceof Error ? e.message : 'Не удалось переключить конфиг nginx');
+      onError(e instanceof Error ? e.message : `Не удалось переключить конфиг ${fr}`);
     }
   };
 
@@ -68,7 +69,7 @@ export function NginxCustomConfigCard({ status, running, onStart, onError }: Pro
       setSavedContent(content);
       setOutput(res.output || 'Конфиг сохранён и проверен');
     } catch (e) {
-      onError(e instanceof Error ? e.message : 'Не удалось сохранить конфиг nginx');
+      onError(e instanceof Error ? e.message : `Не удалось сохранить конфиг ${fr}`);
     } finally {
       setSaving(false);
     }
@@ -81,7 +82,7 @@ export function NginxCustomConfigCard({ status, running, onStart, onError }: Pro
       const res = await mtproxylApi.testSelfmaskNginxConfig();
       setOutput(res.output || 'Конфиг корректен');
     } catch (e) {
-      onError(e instanceof Error ? e.message : 'Проверка nginx завершилась ошибкой');
+      onError(e instanceof Error ? e.message : `Проверка конфига ${fr} завершилась ошибкой`);
     } finally {
       setTesting(false);
     }
@@ -92,7 +93,7 @@ export function NginxCustomConfigCard({ status, running, onStart, onError }: Pro
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-3">
-            Пользовательский конфиг nginx
+            Свой конфиг {fr}
             <StatusBadge
               status={status.nginx_custom_active}
               labelOn="ВКЛЮЧЁН"
@@ -131,7 +132,7 @@ export function NginxCustomConfigCard({ status, running, onStart, onError }: Pro
                 onClick={test}
                 disabled={running || saving || testing}
               >
-                {testing ? 'Проверка…' : 'Проверить nginx -t'}
+                {testing ? 'Проверка…' : 'Проверить конфиг'}
               </Button>
             )}
           </div>
@@ -172,13 +173,13 @@ export function NginxCustomConfigCard({ status, running, onStart, onError }: Pro
         onConfirm={toggle}
         title={
           confirmToggle
-            ? 'Включить пользовательский nginx.conf'
-            : 'Вернуть стандартный nginx.conf'
+            ? `Включить свой конфиг ${fr}`
+            : `Вернуть стандартный конфиг ${fr}`
         }
         message={
           confirmToggle
             ? 'Текущий рабочий конфиг будет скопирован один раз. После этого изменения Selfmask и WEB Proxy нужно переносить в него вручную.'
-            : 'MTProxyL снова начнёт генерировать nginx.conf из своих настроек. Пользовательский файл сохранится, но дополнительные маршруты из него перестанут применяться.'
+            : `MTProxyL снова начнёт генерировать конфиг ${fr} из своих настроек. Пользовательский файл сохранится, но дополнительные маршруты из него перестанут применяться.`
         }
         confirmLabel={confirmToggle ? 'Включить' : 'Вернуть стандартный'}
       />

@@ -7,6 +7,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { OperationProgress } from '@/components/OperationProgress';
 import { ParamField } from '@/components/ParamField';
 import { NginxCustomConfigCard } from '@/components/NginxCustomConfigCard';
+import { FrontServerCard } from '@/components/FrontServerCard';
 import { HttpsHeadersCard } from '@/components/HttpsHeadersCard';
 import { SiteSourcePicker, siteSourceLabel } from '@/components/SiteSourcePicker';
 import { CopyButton } from '@/components/CopyButton';
@@ -70,6 +71,7 @@ export function WebPage() {
   const { operation, start, dismiss, running } = useMtproxylOperation(load, [
     'web:',
     'selfmask:nginx-custom-',
+    'front:',
   ]);
   // В реаниматоре WEB цели поднимает MTProxyL, если его не настроил её хозяин:
   // тогда owner = target, и мы только читаем конфиг и собираем ссылки.
@@ -420,6 +422,14 @@ export function WebPage() {
               </div>
             )}
 
+            {isManager && !frontend.startsWith('haproxy') && (
+              <FrontServerCard
+                running={running}
+                onStart={start}
+                onError={setError}
+                refreshKey={operation?.phase}
+              />
+            )}
             {isManager && frontend === 'nginx' && nginxStatus && (
               <NginxCustomConfigCard
                 status={nginxStatus}

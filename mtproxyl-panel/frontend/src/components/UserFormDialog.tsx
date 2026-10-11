@@ -12,6 +12,9 @@ interface UserFormData {
   expiration_rfc3339?: string;
   data_quota_bytes?: number | '';
   max_unique_ips?: number | '';
+  /** Скорость в форме — Мбит/с; в API уходит в бит/с. */
+  rate_up_mbps?: number | '';
+  rate_down_mbps?: number | '';
 }
 
 interface UserFormDialogProps {
@@ -39,6 +42,8 @@ interface UserFormDialogProps {
   secretRotateOnly?: boolean;
   /** Переименование выполняет MTProxyL: API самого telemt его не поддерживает. */
   usernameEditable?: boolean;
+  /** Текущая скорость в бит/с — для правки. */
+  initialRate?: { up: number; down: number };
 }
 
 /** Байты трудно читать глазами — показываем, сколько это на самом деле. */
@@ -63,7 +68,17 @@ const emptyForm: UserFormData = {
   expiration_rfc3339: '',
   data_quota_bytes: '',
   max_unique_ips: '',
+  rate_up_mbps: '',
+  rate_down_mbps: '',
 };
+
+const MBIT = 1_000_000;
+
+/** «Без ограничения» или пусто → 0, иначе Мбит/с → бит/с. */
+function mbpsToBps(v: number | '' | undefined): number {
+  const n = Number(v);
+  return v === '' || v === undefined || !Number.isFinite(n) || n <= 0 ? 0 : Math.round(n * MBIT);
+}
 
 export function UserFormDialog({
   open,
@@ -74,6 +89,7 @@ export function UserFormDialog({
   currentSecret,
   secretRotateOnly,
   usernameEditable = true,
+  initialRate,
 }: UserFormDialogProps) {
   const [form, setForm] = useState<UserFormData>(emptyForm);
   const [loading, setLoading] = useState(false);
@@ -88,11 +104,13 @@ export function UserFormDialog({
       if (init.max_tcp_conns === 0) init.max_tcp_conns = '';
       if (init.data_quota_bytes === 0) init.data_quota_bytes = '';
       if (init.max_unique_ips === 0) init.max_unique_ips = '';
+      init.rate_up_mbps = initialRate?.up ? initialRate.up / MBIT : '';
+      init.rate_down_mbps = initialRate?.down ? initialRate.down / MBIT : '';
       setForm(init);
       setError('');
       setSecretShown(false);
     }
-  }, [open, initialData]);
+  }, [open, initialData, initialRate]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -122,6 +140,17 @@ export function UserFormDialog({
       }
       if (form.max_unique_ips !== '' && form.max_unique_ips !== undefined && Number(form.max_unique_ips) > 0) {
         payload.max_unique_ips = Number(form.max_unique_ips);
+      }
+
+      // Скорость шлём, только если её задали или сняли: так её не трогают
+      // движки старше 3.4.1, где этих полей нет.
+      const up = mbpsToBps(form.rate_up_mbps);
+      const down = mbpsToBps(form.rate_down_mbps);
+      const prevUp = initialRate?.up ?? 0;
+      const prevDown = initialRate?.down ?? 0;
+      if (up !== prevUp || down !== prevDown) {
+        payload.rate_limit_up_bps = up > 0 ? up : null;
+        payload.rate_limit_down_bps = down > 0 ? down : null;
       }
 
       await onSubmit(payload);
@@ -267,6 +296,34 @@ export function UserFormDialog({
               {quotaHint(form.data_quota_bytes)}
             </p>
           </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="rate_down">Скорость к клиенту, Мбит/с</Label>
+              <Input
+                id="rate_down"
+                type="number"
+                step="0.1"
+                value={form.rate_down_mbps}
+                onChange={set('rate_down_mbps')}
+                min={0}
+                placeholder="без ограничения"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="rate_up">Скорость от клиента, Мбит/с</Label>
+              <Input
+                id="rate_up"
+                type="number"
+                step="0.1"
+                value={form.rate_up_mbps}
+                onChange={set('rate_up_mbps')}
+                min={0}
+                placeholder="без ограничения"
+              />
+            </div>
+          </div>
+          <p className="-mt-2 text-xs text-text-secondary">Нужен telemt 3.4.1+. Пусто или 0 — без ограничения.</p>
 
           <div className="space-y-1.5">
             <Label htmlFor="expiration">Действует до</Label>

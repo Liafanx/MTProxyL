@@ -25,6 +25,7 @@ _IA_WEB_HAPROXY_CERT=""
 _IA_WEB_PORT=""; _IA_WEB_SECRET_MODE=""; _IA_WEB_PATH=""
 _IA_WEB_DECOY=""; _IA_WEB_DECOY_UPSTREAM=""
 _IA_GEOIP=""
+_IA_API=""; _IA_API_LISTEN=""; _IA_API_ALLOW=""; _IA_API_TLS=""
 _IA_BLOCK_FILE=""
 _IA_BLOCK_LIST=""
 _IA_BLOCK_ACTION=""
@@ -119,6 +120,12 @@ install_args_help() {
 
   Дополнения
     --geoip yes|no             база GeoIP: страна, город и ASN в истории IP
+
+  API управления (описание — api.md)
+    --api yes|no               включить mtproxyl-api; ключ выводится в конце
+    --api-listen АДРЕС:ПОРТ    где слушать (по умолчанию 127.0.0.1:9190)
+    --api-allow СПИСОК         разрешённые IP/подсети через запятую
+    --api-tls off|selfmask     HTTPS на сертификате Selfmask
     --block-file ПУТЬ          список заблокированных адресов из файла (# — комментарии)
     --block СПИСОК             заблокированные адреса через запятую
     --block-action drop|reject что делать с заблокированными, по умолчанию drop
@@ -251,6 +258,15 @@ _install_args_parse() {
                     drop|reject) _IA_BLOCK_ACTION="${_v,,}" ;;
                     *) log_error "--block-action: drop или reject"; return 1 ;;
                 esac ;;
+            --api)
+                case "${_v,,}" in
+                    yes|y|да|true|on)   _IA_API="yes" ;;
+                    no|n|нет|false|off) _IA_API="no" ;;
+                    *) log_error "--api: yes или no"; return 1 ;;
+                esac ;;
+            --api-listen) _IA_API_LISTEN="$_v" ;;
+            --api-allow)  _IA_API_ALLOW="$_v" ;;
+            --api-tls)    _IA_API_TLS="${_v,,}" ;;
             --geoip)
                 case "${_v,,}" in
                     yes|y|да|true|on)   _IA_GEOIP="yes" ;;
@@ -510,6 +526,17 @@ _install_args_validate() {
             *) log_error "--web-frontend: nginx, haproxy или haproxy-nginx"; _ok=false ;;
         esac
     fi
+    if [ -n "$_IA_API_LISTEN$_IA_API_ALLOW$_IA_API_TLS" ] && [ "$_IA_API" != "yes" ]; then
+        log_error "Параметры API заданы без --api yes"; _ok=false
+    fi
+    [ -z "$_IA_API_LISTEN" ] || _api_validate_listen "$_IA_API_LISTEN" \
+        || { log_error "--api-listen: адрес:порт, например 0.0.0.0:9190"; _ok=false; }
+    [ -z "$_IA_API_ALLOW" ] || _api_validate_allow "$_IA_API_ALLOW" \
+        || { log_error "--api-allow: IP или подсети через запятую"; _ok=false; }
+    case "$_IA_API_TLS" in ""|off) ;;
+        selfmask) [ -n "$_IA_SELFMASK_DOMAIN" ] || { log_error "--api-tls selfmask требует --selfmask"; _ok=false; } ;;
+        *) log_error "--api-tls: off или selfmask"; _ok=false ;;
+    esac
     if [ -n "$_IA_FRONT" ]; then
         case "$_IA_FRONT" in
             nginx|caddy|haproxy) ;;
@@ -760,6 +787,15 @@ run_installer_args() {
     if [ "$_IA_GEOIP" = "yes" ]; then
         echo ""
         geoip_install || log_warn "База GeoIP не установлена — поставьте позже: меню «Дополнения»"
+    fi
+
+    if [ "$_IA_API" = "yes" ]; then
+        echo ""
+        draw_header "API УПРАВЛЕНИЯ"
+        [ -n "$_IA_API_LISTEN" ] && API_LISTEN="$_IA_API_LISTEN"
+        [ -n "$_IA_API_ALLOW" ] && API_ALLOW="${_IA_API_ALLOW// /}"
+        [ -n "$_IA_API_TLS" ] && API_TLS="$_IA_API_TLS"
+        api_enable || log_warn "API не включён — включите позже: mtproxyl api on"
     fi
 
     if [ -n "${_IA_BLOCK_ACTION}" ]; then
