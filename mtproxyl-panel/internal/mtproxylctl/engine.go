@@ -37,6 +37,10 @@ type EngineVersions struct {
 	Reason     string `json:"reason,omitempty"`
 	BinPath    string `json:"bin_path,omitempty"`
 	ConfigPath string `json:"config_path,omitempty"`
+	// Service — имя службы бинарного движка; ServiceNaming — random или
+	// standard (mtproxyl-telemt).
+	Service       string `json:"service,omitempty"`
+	ServiceNaming string `json:"service_naming,omitempty"`
 }
 
 type EngineCleanupCandidate struct {
@@ -109,6 +113,16 @@ func (c *Client) EngineUpdate(ctx context.Context, tag string) (string, error) {
 		return "", err
 	}
 	out, err := c.run(ctx, "engine", "update", strings.TrimSpace(tag))
+	return stripANSI(out), err
+}
+
+// EngineServiceName переименовывает службу и бинарник движка: random выдаёт
+// новое случайное имя, standard возвращает mtproxyl-telemt.
+func (c *Client) EngineServiceName(ctx context.Context, naming string) (string, error) {
+	if naming != "random" && naming != "standard" {
+		return "", fmt.Errorf("имя службы: random или standard")
+	}
+	out, err := c.run(ctx, "engine", "service-name", naming)
 	return stripANSI(out), err
 }
 

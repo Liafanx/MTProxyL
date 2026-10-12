@@ -11,16 +11,16 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { mtproxylControlApi, type ControlApiStatus } from '@/lib/api';
 
 const ENDPOINTS: [string, string][] = [
-  ['GET /v1/users', 'список пользователей с лимитами и трафиком (?links=1 — со ссылками)'],
-  ['POST /v1/users', 'создать: username, secret?, max_tcp_conns, max_unique_ips, data_quota_bytes, expiration_rfc3339, user_ad_tag, rate_limit_up_bps, rate_limit_down_bps, enabled'],
-  ['GET /v1/users/{имя}', 'пользователь со ссылками'],
-  ['PATCH /v1/users/{имя}', 'изменить только переданные поля; username — переименовать'],
+  ['GET /v1/users', 'список пользователей (UserInfo) со ссылками и живыми данными движка'],
+  ['POST /v1/users', 'создать: username, secret?, max_tcp_conns, max_unique_ips, data_quota_bytes, expiration_rfc3339, user_ad_tag, rate_limit_up_bps, rate_limit_down_bps, enabled → {user, secret}'],
+  ['GET /v1/users/{имя}', 'пользователь (UserInfo)'],
+  ['PATCH /v1/users/{имя}', 'JSON Merge Patch: только переданные поля, null снимает ограничение; username в теле — новое имя'],
   ['DELETE /v1/users/{имя}', 'удалить'],
   ['POST /v1/users/{имя}/enable | disable', 'включить или выключить'],
-  ['POST /v1/users/{имя}/rotate-secret', 'новый секрет — старые ссылки перестанут работать'],
+  ['POST /v1/users/{имя}/rotate-secret', 'новый секрет ({"secret"} — свой) — старые ссылки перестанут работать'],
   ['POST /v1/users/{имя}/reset-quota', 'обнулить израсходованную квоту'],
   ['POST /v1/users/{имя}/reset-traffic', 'сбросить накопленный трафик и историю IP'],
-  ['GET /v1/users/{имя}/links', 'ссылки tg://'],
+  ['GET /v1/users/{имя}/links', 'ссылки: classic, secure, tls, tls_domains, web'],
   ['GET /v1/status', 'состояние прокси'],
   ['POST /v1/proxy/restart', 'перезапустить прокси'],
 ];
@@ -203,8 +203,9 @@ curl -X POST -H "Authorization: Bearer <ключ>" ${base}/v1/users \\
             ))}
           </ul>
           <p className="text-xs text-text-secondary">
-            Ответ: <code>{'{"ok":true,"data":…}'}</code> или <code>{'{"ok":false,"error":{"code","message"}}'}</code>.
-            Имена полей — как у API telemt; скорость в бит/с, 0 — без ограничения.
+            Формат совместим с API telemt: <code>{'{"ok":true,"data":…,"revision":…}'}</code> или{' '}
+            <code>{'{"ok":false,"error":{"code","message"}}'}</code>; без ограничения — <code>null</code>,
+            срок — RFC3339 с <code>+00:00</code>, скорость в бит/с. Подробно — api.md в репозитории.
           </p>
         </CardContent>
       </Card>

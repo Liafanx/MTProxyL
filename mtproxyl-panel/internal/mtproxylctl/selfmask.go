@@ -38,6 +38,10 @@ type SelfmaskStatus struct {
 	// is about to come back instead of promising a vague "previous setup".
 	PrevSaved  bool   `json:"prev_saved"`
 	PrevDomain string `json:"prev_domain"`
+	// Front/FrontTitle/FrontSource — держатель заглушки и откуда он взят.
+	Front       string `json:"front,omitempty"`
+	FrontTitle  string `json:"front_title,omitempty"`
+	FrontSource string `json:"front_source,omitempty"`
 }
 
 // SelfmaskStatus reports the current decoy-site configuration.
@@ -87,6 +91,13 @@ func (c *Client) SetSelfmaskNginxCustom(ctx context.Context, enabled bool) (stri
 		action = "on"
 	}
 	out, err := c.run(ctx, "selfmask", "nginx-config", action)
+	return stripANSI(out), err
+}
+
+// ResetSelfmaskNginxCustom переписывает свой конфиг держателя актуальным
+// сгенерированным; прежний остаётся рядом с .bak.
+func (c *Client) ResetSelfmaskNginxCustom(ctx context.Context) (string, error) {
+	out, err := c.run(ctx, "selfmask", "nginx-config", "reset")
 	return stripANSI(out), err
 }
 

@@ -277,6 +277,12 @@ geoblock_service_enabled() {
     systemctl is-enabled --quiet "$GEOBLOCK_SERVICE" 2>/dev/null
 }
 
+# После переименования службы движка юнит правил ссылается на старое имя.
+geoblock_unit_refresh() {
+    [ -f "$GEOBLOCK_UNIT" ] || return 0
+    geoblock_install_service >/dev/null 2>&1 || true
+}
+
 geoblock_install_service() {
     command -v systemctl &>/dev/null || return 0
     cat > "$GEOBLOCK_UNIT" <<UNIT_EOF
@@ -284,7 +290,7 @@ geoblock_install_service() {
 Description=MTProxyL country rules
 After=network-online.target nftables.service netfilter-persistent.service
 Wants=network-online.target
-Before=mtproxyl.service mtproxyl-telemt.service
+Before=mtproxyl.service ${ENGINE_SERVICE:-mtproxyl-telemt}.service
 
 [Service]
 Type=oneshot

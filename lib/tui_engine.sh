@@ -16,6 +16,20 @@ _tui_engine_custom() {
     engine_install_custom "$_url" ${_sha:+--sha256 "$_sha"}
 }
 
+_tui_engine_service_name() {
+    echo ""
+    echo -e "  ${BOLD}Имя службы и бинарника движка${NC}"
+    echo -e "  ${DIM}Сейчас: ${ENGINE_SERVICE} — $(binengine_naming_title | sed 's/ (.*//')${NC}"
+    echo -e "  ${CYAN}[1]${NC}  случайное ${DIM}обычное на вид имя, по списку служб не видно прокси; повторный выбор — новое имя${NC}"
+    echo -e "  ${CYAN}[2]${NC}  стандартное ${DIM}${ENGINE_SERVICE_STANDARD}${NC}"
+    echo -e "  ${DIM}[0]${NC}  Отмена"
+    local _c; _c=$(read_choice "выбор" "0")
+    case "$_c" in
+        1) binengine_set_naming random ;;
+        2) binengine_set_naming standard ;;
+    esac
+}
+
 tui_engine_menu() {
     while true; do
         clear_screen
@@ -25,7 +39,7 @@ tui_engine_menu() {
         echo -e "  ${BOLD}Версия:${NC}    telemt v$(get_telemt_version)"
         if engine_is_binary; then
             echo -e "  ${BOLD}Бинарник:${NC}  ${ENGINE_BIN_PATH}"
-            echo -e "  ${BOLD}Служба:${NC}    ${ENGINE_SERVICE}.service"
+            echo -e "  ${BOLD}Служба:${NC}    ${ENGINE_SERVICE}.service ${DIM}— имя $(binengine_naming_title | sed 's/ (.*//')${NC}"
             binengine_is_custom && echo -e "  ${BOLD}Источник:${NC}  свой бинарник — $(binengine_source)"
         else
             echo -e "  ${BOLD}Закреплён:${NC} commit ${TELEMT_COMMIT}"
@@ -43,6 +57,7 @@ tui_engine_menu() {
         fi
         command -v docker >/dev/null && echo -e "  ${DIM}[6]${NC} Очистить неиспользуемые Docker-образы"
         command -v systemctl >/dev/null && echo -e "  ${DIM}[7]${NC} Свой бинарник telemt по ссылке"
+        command -v systemctl >/dev/null && echo -e "  ${DIM}[8]${NC} Имя службы движка"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
@@ -52,6 +67,7 @@ tui_engine_menu() {
             4) handle_engine_command rebuild; press_any_key ;;
             6) handle_engine_command cleanup; press_any_key ;;
             7) _tui_engine_custom; load_settings; press_any_key ;;
+            8) _tui_engine_service_name; load_settings; press_any_key ;;
             5) if engine_is_binary; then
                    engine_switch_backend docker
                else

@@ -75,6 +75,19 @@ export function MtproxylEngineCard() {
     }
   };
 
+  const rename = async (naming: 'random' | 'standard') => {
+    const msg = naming === 'random'
+      ? 'Выдать службе движка новое случайное имя? Движок перезапустится.'
+      : 'Вернуть службе движка стандартное имя mtproxyl-telemt? Движок перезапустится.';
+    if (!window.confirm(msg)) return;
+    try {
+      setActionError(null);
+      start(await mtproxylApi.engineServiceName(naming));
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Не удалось переименовать службу');
+    }
+  };
+
   const current = info?.current ?? '';
   const previewCleanup = async () => {
     setCleanupLoading(true);
@@ -255,6 +268,33 @@ export function MtproxylEngineCard() {
             </div>
           )}
         </div>
+
+        {!isTarget && info?.binary && info.service && (
+          <div className="rounded-md border border-border p-3 space-y-2">
+            <p className="text-xs lg:text-sm font-medium text-text-primary">Имя службы</p>
+            <p className="text-xs text-text-secondary">
+              Сейчас <code className="font-mono text-text-primary">{info.service}.service</code>
+              {info.service_naming === 'random' ? ' — случайное имя' : ' — стандартное имя'}.
+              Случайное имя прячет прокси в списке служб и процессов; служба и бинарник называются одинаково.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => void rename('random')}
+                disabled={running}
+                className="rounded-md bg-accent/15 text-accent hover:bg-accent/25 px-3 py-2 text-xs font-medium disabled:opacity-50"
+              >
+                {info.service_naming === 'random' ? 'Новое случайное имя' : 'Случайное имя'}
+              </button>
+              <button
+                onClick={() => void rename('standard')}
+                disabled={running || info.service_naming !== 'random'}
+                className="rounded-md bg-accent/15 text-accent hover:bg-accent/25 px-3 py-2 text-xs font-medium disabled:opacity-50"
+              >
+                Стандартное mtproxyl-telemt
+              </button>
+            </div>
+          </div>
+        )}
 
         <p className="text-xs text-text-secondary">
           Смена версии перезапускает движок: активные соединения оборвутся, клиенты

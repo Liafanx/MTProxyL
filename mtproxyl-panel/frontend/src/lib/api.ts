@@ -375,6 +375,9 @@ export interface MtproxylEngineVersions {
   reason?: string;
   bin_path?: string;
   config_path?: string;
+  /** Имя службы бинарного движка и как оно выбрано (MTProxyL 1.7.1+). */
+  service?: string;
+  service_naming?: 'random' | 'standard';
 }
 
 /** Перезапуск движка при падении DC: настройки и что уже случилось. */
@@ -440,6 +443,13 @@ export const mtproxylApi = {
       body: JSON.stringify({ tag }),
     }),
 
+  /** random — новое случайное имя службы движка, standard — mtproxyl-telemt. */
+  engineServiceName: (naming: 'random' | 'standard') =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/engine/service-name', {
+      method: 'POST',
+      body: JSON.stringify({ naming }),
+    }),
+
   dcStatus: () => request<MtproxylDCStatus>(MTPROXYL_BASE, '/dc'),
 
   stats: () => request<MtproxylStats>(MTPROXYL_BASE, '/stats'),
@@ -492,6 +502,9 @@ export const mtproxylApi = {
       method: 'POST',
       body: JSON.stringify({ enabled }),
     }),
+  /** Переписать свой конфиг держателя актуальным сгенерированным (.bak рядом). */
+  resetSelfmaskNginxConfig: () =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/selfmask/nginx-config/reset', { method: 'POST' }),
   testSelfmaskNginxConfig: () =>
     request<{ output: string }>(MTPROXYL_BASE, '/selfmask/nginx-config/test', { method: 'POST' }),
 
@@ -564,7 +577,15 @@ export const mtproxylFrontApi = {
       method: 'POST',
       body: JSON.stringify({ server }),
     }),
+  /** Frontend публичного WEB: держатель MTProxyL или внешний HAProxy. */
+  setWebFrontend: (choice: WebFrontendChoice) =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/web/frontend', {
+      method: 'POST',
+      body: JSON.stringify({ choice }),
+    }),
 };
+
+export type WebFrontendChoice = 'nginx' | 'caddy' | 'haproxy' | 'external' | 'external-nginx';
 
 /** Внешний API управления MTProxyL (mtproxyl-api). */
 export interface ControlApiStatus {

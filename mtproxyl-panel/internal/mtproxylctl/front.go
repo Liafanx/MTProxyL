@@ -51,6 +51,18 @@ func (c *Client) SetFront(ctx context.Context, server string) (string, error) {
 	return stripANSI(out), err
 }
 
+// SetWebFrontend выбирает, кто принимает публичный WEB: держатель MTProxyL
+// (nginx, caddy, haproxy) или внешний HAProxy (external, external-nginx).
+func (c *Client) SetWebFrontend(ctx context.Context, choice string) (string, error) {
+	switch choice {
+	case "nginx", "caddy", "haproxy", "external", "external-nginx":
+	default:
+		return "", fmt.Errorf("frontend: nginx, caddy, haproxy, external или external-nginx")
+	}
+	out, err := c.run(ctx, "web", "frontend", choice)
+	return stripANSI(out), err
+}
+
 // APIStatus — `mtproxyl api status --json`.
 type APIStatus struct {
 	Enabled   bool   `json:"enabled"`

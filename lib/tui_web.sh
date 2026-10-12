@@ -55,39 +55,13 @@ _tui_web_frontend_menu() {
     web_frontend_is_haproxy_nginx && _cur=5
     local _c; _c=$(read_choice "выбор" "$_cur")
     case "$_c" in
-        1|2|3)
-            local _f=nginx
-            [ "$_c" = 2 ] && _f=caddy
-            [ "$_c" = 3 ] && _f=haproxy
-            web_frontend_has_haproxy && { web_set_param WEB_FRONTEND nginx || return 0; }
-            if front_in_use; then
-                front_switch "$_f"
-            else
-                FRONT_SERVER="$_f"
-                save_settings
-                log_success "Заглушку будет держать $(front_title)"
-            fi
-            ;;
-        4|5)
-            if ! front_is nginx; then
-                if front_in_use; then front_switch nginx || return 0
-                else FRONT_SERVER="nginx"; save_settings; fi
-            fi
-            if [ "$_c" = 5 ]; then
-                web_set_param WEB_FRONTEND haproxy-nginx || return 0
-                echo ""
-                log_info "HAProxy остаётся вашим: фрагмент — mtproxyl web haproxy-config"
-                log_info "Сертификат выпускает и продлевает MTProxyL, PEM для HAProxy не нужен"
-            else
-                web_set_param WEB_FRONTEND haproxy || return 0
-                echo ""
-                local _cert; read_line _cert "  ${BOLD}PEM сертификат + ключ [$(web_haproxy_cert)]:${NC} "
-                [ -n "$_cert" ] && web_set_param WEB_HAPROXY_CERT "$_cert"
-                echo ""
-                log_info "MTProxyL не меняет HAProxy. Фрагмент: mtproxyl web haproxy-config"
-                [ "${SELFMASK_ENABLED:-false}" = "true" ] \
-                    && log_warn "Перед включением внешнего HAProxy отключите Selfmask"
-            fi
+        1) web_set_frontend nginx ;;
+        2) web_set_frontend caddy ;;
+        3) web_set_frontend haproxy ;;
+        5) web_set_frontend external-nginx ;;
+        4)
+            local _cert; read_line _cert "  ${BOLD}PEM сертификат + ключ [$(web_haproxy_cert)]:${NC} "
+            web_set_frontend external "$_cert"
             ;;
         *) return 0 ;;
     esac
@@ -251,12 +225,14 @@ tui_web_menu() {
         echo -e "  ${CYAN}[12]${NC} Путь WEB  ${DIM}$([ -n "${WEB_BASE_PATH:-}" ] && echo "/${WEB_BASE_PATH}/" || echo "корень /")${NC}"
         echo -e "  ${CYAN}[13]${NC} Отчёты bridge в /web-status  ${DIM}$([ "${WEB_DEBUG_SIDEBAND:-false}" = "true" ] && echo "включены" || echo "выключены")${NC}"
         [ "$_rean" = false ] && echo -e "  ${CYAN}[14]${NC} Проверка A-записи домена  ${DIM}$(web_dns_check_disabled && echo "выключена (CDN/балансировщик)" || echo "включена")${NC}"
+        web_is_enabled && web_can_disable && echo -e "  ${CYAN}[15]${NC} Применить заново  ${DIM}пересобрать конфиг движка и держателя без выключения WEB${NC}"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
         local _c; _c=$(read_choice "выбор" "0")
 
         case "$_c" in
+            15) web_is_enabled && web_enable; press_any_key ;;
             11) tui_https_headers_menu ;;
             12) _tui_web_base_path_menu; press_any_key ;;
             14)

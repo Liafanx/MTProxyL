@@ -87,6 +87,31 @@ func (s *Server) registerFrontRoutes(
 		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
 	}))
 
+	mux.Handle("POST /api/mtproxyl/web/frontend", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		var req struct {
+			Choice string `json:"choice"`
+		}
+		if !decode(w, r, &req) {
+			return
+		}
+		switch req.Choice {
+		case "nginx", "caddy", "haproxy", "external", "external-nginx":
+		default:
+			writeError(w, http.StatusBadRequest, "bad_request", "Frontend: nginx, caddy, haproxy, external или external-nginx")
+			return
+		}
+		if !runner.Start("web:frontend:"+req.Choice, func(ctx context.Context) (string, error) {
+			return client.SetWebFrontend(ctx, req.Choice)
+		}) {
+			writeError(w, http.StatusConflict, "operation_busy", "Другая операция MTProxyL уже выполняется")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
+	}))
+
 	mux.Handle("GET /api/mtproxyl/api", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
 			return

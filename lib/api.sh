@@ -104,10 +104,13 @@ _api_write_sudoers() {
 Defaults:${_u} !syslog, !pam_session
 Defaults:${_u} env_keep += "MTPROXYL_ASSUME_YES"
 ${_u} ALL=(root) NOPASSWD: ${_s} secret list --json
+${_u} ALL=(root) NOPASSWD: ${_s} secret api-view
+${_u} ALL=(root) NOPASSWD: ${_s} secret api-view [A-Za-z0-9]*
 ${_u} ALL=(root) NOPASSWD: ${_s} secret add [A-Za-z0-9]*
 ${_u} ALL=(root) NOPASSWD: ${_s} secret add [A-Za-z0-9]* [0-9a-fA-F]*
 ${_u} ALL=(root) NOPASSWD: ${_s} secret remove [A-Za-z0-9]*
 ${_u} ALL=(root) NOPASSWD: ${_s} secret rotate [A-Za-z0-9]*
+${_u} ALL=(root) NOPASSWD: ${_s} secret rotate [A-Za-z0-9]* [0-9a-fA-F]*
 ${_u} ALL=(root) NOPASSWD: ${_s} secret enable [A-Za-z0-9]*
 ${_u} ALL=(root) NOPASSWD: ${_s} secret disable [A-Za-z0-9]*
 ${_u} ALL=(root) NOPASSWD: ${_s} secret rename [A-Za-z0-9]* [A-Za-z0-9]*

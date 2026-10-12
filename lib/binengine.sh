@@ -2,17 +2,131 @@
 # MTProxyL — движок MTProxyL-Telemt бинарником, без Docker
 
 ENGINE_BIN_DIR="${INSTALL_DIR}/engine"
-ENGINE_BIN_NAME="mtproxyl-telemt"
-ENGINE_BIN_PATH="${ENGINE_BIN_DIR}/${ENGINE_BIN_NAME}"
-ENGINE_SERVICE="mtproxyl-telemt"
-ENGINE_UNIT_FILE="/etc/systemd/system/${ENGINE_SERVICE}.service"
+ENGINE_SERVICE_STANDARD="mtproxyl-telemt"
 ENGINE_VERSION_FILE="${ENGINE_BIN_DIR}/.version"
-ENGINE_PREV_BIN="${ENGINE_BIN_DIR}/${ENGINE_BIN_NAME}.prev"
 ENGINE_PREV_VERSION_FILE="${ENGINE_BIN_DIR}/.version.prev"
 # Откуда взят бинарник: ссылка на свою сборку. Пусто — официальный релиз.
 ENGINE_SOURCE_FILE="${ENGINE_BIN_DIR}/.source"
 ENGINE_PREV_SOURCE_FILE="${ENGINE_BIN_DIR}/.source.prev"
 TELEMT_RELEASES_URL="https://github.com/${TELEMT_GITHUB:-telemt/telemt}/releases/download"
+
+# ── Имя службы ────────────────────────────────────────────────
+# Служба и бинарник называются одинаково: стандартно mtproxyl-telemt или
+# случайным именем из settings.conf, чтобы по списку служб и процессов не
+# было видно, что это прокси.
+
+binengine_apply_names() {
+    local _n="$ENGINE_SERVICE_STANDARD"
+    [ "${ENGINE_SERVICE_NAMING:-}" = "random" ] && [ -n "${ENGINE_SERVICE_NAME:-}" ] && _n="$ENGINE_SERVICE_NAME"
+    ENGINE_SERVICE="$_n"
+    ENGINE_BIN_NAME="$_n"
+    ENGINE_BIN_PATH="${ENGINE_BIN_DIR}/${_n}"
+    ENGINE_PREV_BIN="${ENGINE_BIN_DIR}/${_n}.prev"
+    ENGINE_UNIT_FILE="/etc/systemd/system/${_n}.service"
+}
+binengine_apply_names
+
+_binengine_name_taken() {
+    [ -e "/etc/systemd/system/${1}.service" ] || [ -e "/lib/systemd/system/${1}.service" ] \
+        || [ -e "/usr/lib/systemd/system/${1}.service" ] || command -v "$1" >/dev/null 2>&1
+}
+
+# Обычное на вид имя службы: два слога и «d», как у системных демонов.
+binengine_random_name() {
+    local _a=(net sys data kv log mesh edge sync cache stat node core link host io)
+    local _b=(relay watch agent queue store guard flow pulse bridge track shard pool)
+    local _n _i
+    for _i in $(seq 1 50); do
+        _n="${_a[RANDOM % ${#_a[@]}]}${_b[RANDOM % ${#_b[@]}]}d"
+        _binengine_name_taken "$_n" || { echo "$_n"; return 0; }
+    done
+    printf 'svc%04xd\n' $((RANDOM))
+}
+
+binengine_naming_title() {
+    case "${ENGINE_SERVICE_NAMING:-}" in
+        random) echo "случайное (${ENGINE_SERVICE})" ;;
+        *)      echo "стандартное (${ENGINE_SERVICE_STANDARD})" ;;
+    esac
+}
+
+# Выбор по умолчанию: у установки с уже существующей службой mtproxyl-telemt
+# имя не меняем молча, новой — случайное.
+binengine_resolve_naming() {
+    [ -n "${ENGINE_SERVICE_NAMING:-}" ] && { binengine_apply_names; return 0; }
+    if [ -f "/etc/systemd/system/${ENGINE_SERVICE_STANDARD}.service" ]; then
+        ENGINE_SERVICE_NAMING="standard"
+    else
+        ENGINE_SERVICE_NAMING="random"
+        [ -n "${ENGINE_SERVICE_NAME:-}" ] || ENGINE_SERVICE_NAME=$(binengine_random_name)
+    fi
+    binengine_apply_names
+    _binengine_adopt_standard_files
+    save_settings 2>/dev/null || true
+}
+
+# Бинарник и его прошлая версия могли остаться под стандартным именем от
+# установки до выбора случайного — забираем их, если служба не на них.
+_binengine_adopt_standard_files() {
+    [ "$ENGINE_SERVICE" = "$ENGINE_SERVICE_STANDARD" ] && return 0
+    [ -f "/etc/systemd/system/${ENGINE_SERVICE_STANDARD}.service" ] && return 0
+    local _std="${ENGINE_BIN_DIR}/${ENGINE_SERVICE_STANDARD}"
+    [ ! -e "$ENGINE_BIN_PATH" ] && [ -x "$_std" ] && mv -f "$_std" "$ENGINE_BIN_PATH"
+    [ ! -e "$ENGINE_PREV_BIN" ] && [ -f "${_std}.prev" ] && mv -f "${_std}.prev" "$ENGINE_PREV_BIN"
+    return 0
+}
+
+# binengine_set_naming random|standard — переименовать службу и бинарник.
+# random выдаёт новое случайное имя и при повторном вызове.
+binengine_set_naming() {
+    local _mode="${1:-}"
+    case "$_mode" in random|standard) ;; *)
+        log_error "Использование: mtproxyl engine service-name random|standard"
+        return 1 ;;
+    esac
+    local _old_svc="$ENGINE_SERVICE" _old_bin="$ENGINE_BIN_PATH" _old_prev="$ENGINE_PREV_BIN"
+    local _old_unit="$ENGINE_UNIT_FILE" _had_unit=false _was_running=false
+    [ -f "$_old_unit" ] && _had_unit=true
+    systemctl is-active --quiet "$_old_svc" 2>/dev/null && _was_running=true
+
+    ENGINE_SERVICE_NAMING="$_mode"
+    if [ "$_mode" = "random" ]; then
+        ENGINE_SERVICE_NAME=$(binengine_random_name)
+    fi
+    binengine_apply_names
+    if [ "$ENGINE_SERVICE" = "$_old_svc" ]; then
+        save_settings
+        log_info "Служба уже называется ${ENGINE_SERVICE}"
+        return 0
+    fi
+
+    if [ "$_had_unit" = "true" ]; then
+        [ "$_was_running" = "true" ] && flush_traffic_to_disk 2>/dev/null || true
+        systemctl disable --now "$_old_svc" &>/dev/null || true
+        rm -f "$_old_unit"
+        systemctl daemon-reload 2>/dev/null || true
+    fi
+    mkdir -p "$ENGINE_BIN_DIR"
+    [ -f "$_old_bin" ] && mv -f "$_old_bin" "$ENGINE_BIN_PATH"
+    [ -f "$_old_prev" ] && mv -f "$_old_prev" "$ENGINE_PREV_BIN"
+    save_settings
+    log_success "Служба движка: ${_old_svc} → ${ENGINE_SERVICE}"
+
+    if [ "$_had_unit" = "true" ]; then
+        binengine_write_unit || return 1
+        if [ "$_was_running" = "true" ]; then
+            systemctl start "$ENGINE_SERVICE" 2>/dev/null || {
+                log_error "Не удалось запустить ${ENGINE_SERVICE}"
+                journalctl -u "$ENGINE_SERVICE" -n 10 --no-pager 2>/dev/null | sed 's/^/    /'
+                return 1
+            }
+            log_success "Движок запущен под новым именем"
+        fi
+    fi
+    declare -F geoblock_unit_refresh >/dev/null && geoblock_unit_refresh
+    declare -F panel_grant_engine_journal >/dev/null && panel_grant_engine_journal 2>/dev/null
+    return 0
+}
 
 # ── Общее для обоих движков ───────────────────────────────────
 
@@ -146,6 +260,7 @@ binengine_fetch() {
 # источником: откат не требует сети.
 _binengine_put() {
     local _new="$1"
+    binengine_resolve_naming
     mkdir -p "$ENGINE_BIN_DIR"; chmod 750 "$ENGINE_BIN_DIR"
     if [ -x "$ENGINE_BIN_PATH" ]; then
         cp -f "$ENGINE_BIN_PATH" "$ENGINE_PREV_BIN" 2>/dev/null || true
@@ -323,6 +438,7 @@ _binengine_fetch_into() {
 }
 
 binengine_ensure_installed() {
+    binengine_resolve_naming
     binengine_installed && return 0
     if [ -n "${ENGINE_CUSTOM_URL:-}" ]; then
         binengine_install_custom "$ENGINE_CUSTOM_URL" "${ENGINE_CUSTOM_SHA256:-}"
@@ -395,6 +511,20 @@ _binengine_hidden_helpers() {
     printf '%s' "$_lines"
 }
 
+# Юниты движка под прежним именем: при смене имени из мастера установки старая
+# служба осталась бы держать порт. Свои узнаём по ExecStart из каталога движка.
+_binengine_drop_stale_units() {
+    local _f _u
+    for _f in /etc/systemd/system/*.service; do
+        [ -f "$_f" ] && [ "$_f" != "$ENGINE_UNIT_FILE" ] || continue
+        grep -q "^ExecStart=${ENGINE_BIN_DIR}/" "$_f" 2>/dev/null || continue
+        _u=$(basename "$_f" .service)
+        systemctl disable --now "$_u" &>/dev/null || true
+        rm -f "$_f"
+        log_info "Снята служба движка под прежним именем: ${_u}"
+    done
+}
+
 binengine_write_unit() {
     command -v systemctl &>/dev/null || {
         log_error "Нет systemd — бинарным движком некому управлять"
@@ -404,9 +534,14 @@ binengine_write_unit() {
     _q=$(_binengine_cpu_quota) && _limits+="CPUQuota=${_q}"$'\n'
     _mm=$(_binengine_memory_max) && _limits+="MemoryMax=${_mm}"$'\n'
     _hide=$(_binengine_hidden_helpers) && _limits+="${_hide}"
+    binengine_resolve_naming
+    _binengine_adopt_standard_files
+    _binengine_drop_stale_units
+    local _desc="MTProxyL-Telemt proxy engine"
+    [ "$ENGINE_SERVICE" != "$ENGINE_SERVICE_STANDARD" ] && _desc="${ENGINE_SERVICE} service"
     cat > "$ENGINE_UNIT_FILE" << UNIT_EOF
 [Unit]
-Description=MTProxyL-Telemt proxy engine
+Description=${_desc}
 After=network-online.target
 Wants=network-online.target
 

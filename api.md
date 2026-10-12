@@ -9,8 +9,10 @@
 - По умолчанию **выключен**. Включается одной командой на сервере.
 - Работает **без веб-панели** — это отдельная служба.
 - Работает в обоих режимах MTProxyL: **Manager** и **Reanimator**.
-- Имена полей совпадают с API telemt, чтобы интеграцию не приходилось
-  держать в двух вариантах.
+- **Совместим с API telemt**: те же пути, поля, форматы ответов и коды
+  ошибок (`UserInfo`, `CreateUserResponse`, JSON Merge Patch, `revision` и
+  `If-Match`, `user_exists`). Клиент, написанный под API telemt, работает с
+  `mtproxyl-api` без правок — меняются только адрес и ключ.
 
 > Почему не API самого telemt? В режиме Manager конфиг движка собирает
 > MTProxyL, и пользователи, созданные через API движка, пропадут при
@@ -102,25 +104,33 @@ Authorization: 3f1c…a9
 
 ## Формат запросов и ответов
 
-- Тело запросов и ответов — JSON (`Content-Type: application/json`), UTF-8.
-- Тело запроса — не больше 64 КБ. Неизвестные поля отклоняются с `400`: так
-  опечатка в имени поля не превращается в молча проигнорированную правку.
+Формат — как у [API telemt](https://github.com/telemt/telemt/blob/main/docs/API.md).
+
+- Тело запросов и ответов — JSON, UTF-8. `Content-Type` не обязателен.
+- Тело запроса — не больше 64 КБ. Незнакомые поля пропускаются, как у
+  telemt: можно прислать объект пользователя из `GET` целиком.
 - Успех:
 
 ```json
-{ "ok": true, "data": { … } }
+{ "ok": true, "data": { … }, "revision": "43fc4932…" }
 ```
+
+`revision` — отпечаток настроек пользователей (SHA-256, hex); есть в ответах
+методов `/v1/users…`. Его можно передать в заголовке `If-Match` при изменении:
+если с тех пор пользователей кто-то поменял, ответ — `409 revision_conflict`
+и ничего не меняется. Без `If-Match` проверки нет.
 
 - Ошибка:
 
 ```json
-{ "ok": false, "error": { "code": "not_found", "message": "Секрет 'bob' не найден" } }
+{ "ok": false, "error": { "code": "not_found", "message": "Секрет 'bob' не найден" }, "request_id": 7 }
 ```
 
 `message` — текст для человека (на русском), `code` — для программы.
 
 Имя пользователя (`username`): латиница, цифры, `_` и `-`, первая — буква
-или цифра, до 32 символов.
+или цифра, до 32 символов. Это строже, чем у telemt (там ещё `.` и до 64
+символов): такие имена принимает MTProxyL.
 
 Запросы, меняющие состояние, выполняются по одному: параллельные ждут
 очереди. Одна операция обычно занимает 1–3 секунды (MTProxyL пересобирает
@@ -128,73 +138,93 @@ Authorization: 3f1c…a9
 
 ## Объект пользователя
 
+`UserInfo` — как у telemt, плюс несколько полей MTProxyL в конце.
+
 ```json
 {
   "username": "alice",
-  "secret": "5ec993f420bc4f580ebc8b7d8dc1e43d",
   "enabled": true,
+  "in_runtime": true,
+  "user_ad_tag": null,
   "max_tcp_conns": 8,
-  "max_unique_ips": 3,
+  "expiration_rfc3339": "2027-01-31T23:59:59+00:00",
   "data_quota_bytes": 10737418240,
-  "expiration_rfc3339": "2027-01-31T23:59:59Z",
-  "user_ad_tag": "",
-  "rate_limit_up_bps": 0,
+  "rate_limit_up_bps": null,
   "rate_limit_down_bps": 20000000,
+  "max_unique_ips": 3,
+  "current_connections": 2,
+  "active_unique_ips": 1,
+  "active_unique_ips_list": ["198.51.100.7"],
+  "recent_unique_ips": 1,
+  "recent_unique_ips_list": ["198.51.100.7"],
+  "total_octets": 53477376,
+  "links": {
+    "classic": [],
+    "secure": [],
+    "tls": ["tg://proxy?server=proxy.example.com&port=443&secret=ee5ec9…"],
+    "tls_domains": [],
+    "web": ["tg://webproxy?server=web.example.com&secret=dd5ec9…"]
+  },
+  "secret": "5ec993f420bc4f580ebc8b7d8dc1e43d",
   "notes": "",
   "created": 1791715149,
-  "traffic": { "in_bytes": 1048576, "out_bytes": 52428800, "total_bytes": 53477376 },
-  "links": [
-    "tg://proxy?server=proxy.example.com&port=443&secret=ee5ec9…",
-    "tg://webproxy?server=web.example.com&secret=dd5ec9…"
-  ]
+  "traffic": { "in_bytes": 1048576, "out_bytes": 52428800, "total_bytes": 53477376 }
 }
 ```
 
 | Поле | Тип | Описание |
 | --- | --- | --- |
 | `username` | string | Имя (метка) пользователя |
-| `secret` | string | Секрет, 32 hex. Ссылки строятся из него |
 | `enabled` | bool | Выключенный пользователь не может подключиться, но не удаляется |
-| `max_tcp_conns` | int | Одновременных TCP-соединений. `0` — без ограничения |
-| `max_unique_ips` | int | Уникальных IP. `0` — без ограничения |
-| `data_quota_bytes` | int | Квота трафика в байтах. `0` — без ограничения |
-| `expiration_rfc3339` | string | Срок действия, RFC3339. Пусто — бессрочно |
-| `user_ad_tag` | string | Своя рекламная метка (32 hex от @MTProxybot). Пусто — общая |
-| `rate_limit_up_bps` | int | Скорость от клиента, бит/с. `0` — без ограничения. Нужен telemt 3.4.1+ |
-| `rate_limit_down_bps` | int | Скорость к клиенту, бит/с. `0` — без ограничения |
-| `notes` | string | Заметка (только чтение через API) |
-| `created` | int | Время создания, Unix-секунды (`0` у пользователей цели в Reanimator) |
-| `traffic` | object | Накопленный MTProxyL трафик, байты: от клиента, к клиенту, всего |
-| `links` | string[] | Рабочие ссылки: `tg://proxy` на каждый включённый вид и `tg://webproxy`, если включён WEB Proxy. В списке — только с `?links=1` |
+| `in_runtime` | bool | Пользователь уже есть в работающем движке |
+| `user_ad_tag` | string \| null | Своя рекламная метка (32 hex от @MTProxybot). `null` — общая |
+| `max_tcp_conns` | int \| null | Одновременных TCP-соединений. `null` — без ограничения |
+| `expiration_rfc3339` | string \| null | Срок действия, RFC3339 в UTC (`…+00:00`, как у telemt). `null` — бессрочно |
+| `data_quota_bytes` | int \| null | Квота трафика в байтах. `null` — без ограничения |
+| `rate_limit_up_bps` | int \| null | Скорость от клиента, бит/с. `null` — без ограничения. Нужен telemt 3.4.1+ |
+| `rate_limit_down_bps` | int \| null | Скорость к клиенту, бит/с. `null` — без ограничения |
+| `max_unique_ips` | int \| null | Уникальных IP. `null` — без ограничения |
+| `current_connections` | int | Подключений сейчас (из движка) |
+| `active_unique_ips`, `active_unique_ips_list` | int, string[] | Активные IP (из движка) |
+| `recent_unique_ips`, `recent_unique_ips_list` | int, string[] | IP за недавнее окно движка |
+| `total_octets` | int | Трафик по счётчику движка, байты |
+| `links` | object | Ссылки по видам, как у telemt: `classic`, `secure` (dd), `tls` (ee), `tls_domains` (`{domain, link}` для дополнительных доменов), плюс `web` — ссылки `tg://webproxy`, если включён WEB Proxy |
+| `secret` | string | *MTProxyL.* Секрет, 32 hex |
+| `notes` | string | *MTProxyL.* Заметка (только чтение) |
+| `created` | int | *MTProxyL.* Время создания, Unix-секунды (`0` у пользователей цели в Reanimator) |
+| `traffic` | object | *MTProxyL.* Накопленный трафик, байты: от клиента, к клиенту, всего. В отличие от `total_octets` переживает перезапуски движка |
+
+Если API движка не отвечает, живые поля (`current_connections`, списки IP)
+нулевые, `total_octets` берётся из накопленного трафика.
 
 Скорость в бит/с: 10 Мбит/с = `10000000`, 512 кбит/с = `512000`. Максимум —
 100 Гбит/с.
 
 ## Методы
 
-| Метод | Путь | Что делает |
+| Метод | Путь | Ответ `data` |
 | --- | --- | --- |
-| `GET` | `/v1/health` | Проверка ключа и доступности |
-| `GET` | `/v1/status` | Состояние прокси |
-| `POST` | `/v1/proxy/restart` | Перезапуск прокси |
-| `GET` | `/v1/users` | Список пользователей |
-| `POST` | `/v1/users` | Создать пользователя |
-| `GET` | `/v1/users/{username}` | Один пользователь со ссылками |
-| `PATCH` | `/v1/users/{username}` | Изменить переданные поля |
-| `DELETE` | `/v1/users/{username}` | Удалить |
-| `POST` | `/v1/users/{username}/enable` | Включить |
-| `POST` | `/v1/users/{username}/disable` | Выключить |
-| `POST` | `/v1/users/{username}/rotate-secret` | Новый секрет |
-| `POST` | `/v1/users/{username}/reset-quota` | Обнулить израсходованную квоту |
-| `POST` | `/v1/users/{username}/reset-traffic` | Сбросить накопленный трафик и историю IP |
-| `GET` | `/v1/users/{username}/links` | Ссылки |
+| `GET` | `/v1/health` | `{status, read_only, api_version}` |
+| `GET` | `/v1/status` | Состояние прокси (MTProxyL) |
+| `POST` | `/v1/proxy/restart` | `{restarted}` (MTProxyL) |
+| `GET` | `/v1/users` | `UserInfo[]`, по имени |
+| `POST` | `/v1/users` | `201`, `{user: UserInfo, secret}` |
+| `GET` | `/v1/users/{username}` | `UserInfo` |
+| `PATCH` | `/v1/users/{username}` | `UserInfo` |
+| `DELETE` | `/v1/users/{username}` | `{username, in_runtime}` |
+| `POST` | `/v1/users/{username}/enable` | `UserInfo` |
+| `POST` | `/v1/users/{username}/disable` | `UserInfo` |
+| `POST` | `/v1/users/{username}/rotate-secret` | `{user: UserInfo, secret}` |
+| `POST` | `/v1/users/{username}/reset-quota` | `{username, used_bytes, last_reset_epoch_secs}` |
+| `POST` | `/v1/users/{username}/reset-traffic` | `{username, traffic}` (MTProxyL) |
+| `GET` | `/v1/users/{username}/links` | `{username, links}` (MTProxyL) |
 
 ### `GET /v1/health`
 
 Ничего не делает, кроме проверки ключа. Удобно для проверки интеграции.
 
 ```json
-{ "ok": true, "data": { "status": "ok", "api_version": "1.3.0" } }
+{ "ok": true, "data": { "status": "ok", "read_only": false, "api_version": "1.3.1" } }
 ```
 
 ### `GET /v1/status`
@@ -205,7 +235,7 @@ Authorization: 3f1c…a9
 {
   "ok": true,
   "data": {
-    "version": "1.7.0", "mode": "manager", "status": "running",
+    "version": "1.7.1", "mode": "manager", "status": "running",
     "port": 443, "domain": "proxy.example.com", "uptime": 86400,
     "connections": 120, "unique_ips": 87,
     "traffic_in": 1234567, "traffic_out": 98765432, "traffic_total": 99999999,
@@ -222,9 +252,8 @@ Authorization: 3f1c…a9
 
 ### `GET /v1/users`
 
-Массив [объектов пользователя](#объект-пользователя). Ссылки не входят —
-каждая требует отдельного вызова; добавьте `?links=1`, если они нужны всем
-(на больших списках это заметно дольше).
+Массив [`UserInfo`](#объект-пользователя), отсортированный по имени, со
+ссылками и живыми данными движка.
 
 ### `POST /v1/users`
 
@@ -247,60 +276,81 @@ Authorization: 3f1c…a9
 ```
 
 - `secret` — необязательно: без него сгенерируется.
-- `expiration_rfc3339` — полная дата RFC3339 или `ГГГГ-ММ-ДД` (до конца этого
-  дня по UTC).
+- `expiration_rfc3339` — RFC3339 с любым смещением (`Z`, `+03:00`) или
+  `ГГГГ-ММ-ДД` (до конца этого дня по UTC). В ответе срок всегда в UTC с `+00:00`.
 - `enabled: false` — создать сразу выключенным.
 
-Ответ — `201` и пользователь со ссылками. Если лимит не прошёл проверку,
-пользователь не остаётся наполовину созданным: он удаляется, а в ответе — ошибка.
+Ответ — `201`, как `CreateUserResponse` у telemt:
+
+```json
+{ "ok": true, "data": { "user": { "username": "alice", … }, "secret": "5ec993f4…" }, "revision": "…" }
+```
+
+Если лимит не прошёл проверку, пользователь не остаётся наполовину созданным:
+он удаляется, а в ответе — ошибка. Имя занято — `409 user_exists`.
 
 ### `GET /v1/users/{username}`
 
-Пользователь со ссылками. `404`, если такого нет.
+`UserInfo`. `404`, если такого нет.
 
 ### `PATCH /v1/users/{username}`
 
-Меняет **только переданные** поля, остальные остаются как были. Можно
-передать любые поля из создания, кроме `secret`.
+JSON Merge Patch, как у telemt: поле не передано — не меняется, `null` —
+снять ограничение, значение — установить.
 
 ```json
-{ "data_quota_bytes": 21474836480, "expiration_rfc3339": "2027-02-28" }
+{ "data_quota_bytes": 21474836480, "expiration_rfc3339": "2027-02-28T20:59:59+00:00", "max_tcp_conns": null }
 ```
 
-- Снять ограничение — передать `0` (для срока и метки — пустую строку `""`).
-- `username` с новым значением — переименование. Выполняется последним:
-  если другая правка не прошла, имя остаётся прежним. Секрет и ссылки при
-  переименовании не меняются.
-- Секрет меняется только через `rotate-secret` — `secret` в PATCH даёт `400`.
+- `null` снимает ограничение: для лимитов, скорости, срока и метки. `0` и
+  `""` тоже снимают. `"enabled": null` — включить, как у telemt.
+- `secret` — поставить этот секрет (32 hex); старые ссылки перестанут
+  работать. Совпадающий с текущим ничего не меняет.
+- Имя пользователя берётся из адреса (`/v1/users/alice`). `username` в теле —
+  расширение MTProxyL: *новое* имя, то есть переименование. Пустая строка,
+  `null` или текущее имя игнорируются, поэтому объект из `GET` можно
+  присылать целиком. Переименование выполняется последним: если другая правка
+  не прошла, имя остаётся прежним.
+- Поля только для чтения (`in_runtime`, `links`, `current_connections`,
+  `traffic` и т.п.) игнорируются.
 
-Ответ — пользователь со ссылками (уже под новым именем, если меняли).
+Продлить срок пользователю `px-462031623-7`:
+
+```bash
+curl -X PATCH -H "Authorization: Bearer $KEY" \
+  https://proxy.example.com:9190/v1/users/px-462031623-7 \
+  -d '{"expiration_rfc3339":"2027-03-01T00:00:00+00:00"}'
+```
+
+Ответ — `UserInfo` (уже под новым именем, если меняли).
 
 ### `DELETE /v1/users/{username}`
 
 ```json
-{ "ok": true, "data": { "username": "alice", "deleted": "true" } }
+{ "ok": true, "data": { "username": "alice", "in_runtime": false }, "revision": "…" }
 ```
 
-В Manager последнего пользователя удалить нельзя — `409`: движок без
-пользователей не запускается.
+В Manager последнего пользователя удалить нельзя — `409 last_user_forbidden`:
+движок без пользователей не запускается.
 
 ### `POST /v1/users/{username}/enable`, `/disable`
 
-Включает или выключает пользователя. Ответ — пользователь со ссылками.
+Включает или выключает пользователя. Ответ — `UserInfo`.
 
 ### `POST /v1/users/{username}/rotate-secret`
 
-Выдаёт новый секрет. Старые ссылки сразу перестают работать. Ответ —
-пользователь с новыми ссылками.
+Новый секрет. Тело необязательно: `{"secret":"<32 hex>"}` ставит заданный,
+без тела — случайный. Старые ссылки сразу перестают работать. Ответ — как у
+создания: `{user, secret}`.
 
 ### `POST /v1/users/{username}/reset-quota`
 
 Обнуляет израсходованную квоту: её считает сам движок, и сброс идёт через
 его API. Нужен включённый API движка (по умолчанию включён). Накопленный
-MTProxyL трафик не меняется.
+MTProxyL трафик (`traffic`) не меняется.
 
 ```json
-{ "ok": true, "data": { "username": "alice", "quota": "reset" } }
+{ "ok": true, "data": { "username": "alice", "used_bytes": 0, "last_reset_epoch_secs": 1791800000 } }
 ```
 
 Типичный сценарий продления подписки — сбросить квоту и сдвинуть срок:
@@ -312,25 +362,28 @@ curl -X PATCH …/v1/users/alice -d '{"expiration_rfc3339":"2027-03-31"}'
 
 ### `POST /v1/users/{username}/reset-traffic`
 
-Сбрасывает накопленную MTProxyL статистику пользователя: трафик и историю IP.
-Квоту движка не трогает — для неё `reset-quota`.
+*MTProxyL.* Сбрасывает накопленную статистику пользователя: трафик и историю
+IP. Квоту движка не трогает — для неё `reset-quota`.
 
 ### `GET /v1/users/{username}/links`
 
+*MTProxyL.* Только ссылки, в том же виде, что `links` в `UserInfo`.
+
 ```json
-{ "ok": true, "data": { "username": "alice", "links": ["tg://proxy?…", "tg://webproxy?…"] } }
+{ "ok": true, "data": { "username": "alice", "links": { "classic": [], "secure": [], "tls": ["tg://proxy?…"], "tls_domains": [], "web": ["tg://webproxy?…"] } } }
 ```
 
 ## Коды ошибок
 
 | HTTP | `code` | Когда |
 | --- | --- | --- |
-| `400` | `bad_request` | Неверное имя, неизвестное поле, неверный формат значения |
+| `400` | `bad_request` | Неверное имя, неверный формат значения |
 | `401` | `unauthorized` | Нет ключа или ключ неверный |
 | `403` | `forbidden` | Адрес не входит в `API_ALLOW` |
 | `404` | `not_found` | Пользователь не найден |
-| `409` | `already_exists` | Пользователь с таким именем уже есть |
-| `409` | `conflict` | Нельзя удалить последнего пользователя |
+| `409` | `user_exists` | Пользователь с таким именем уже есть |
+| `409` | `last_user_forbidden` | Нельзя удалить последнего пользователя |
+| `409` | `revision_conflict` | `If-Match` не совпал с текущей ревизией |
 | `422` | `rejected` | MTProxyL отказал: например, значение вне допустимого, выключен API движка |
 | `429` | `too_many_attempts` | Слишком много неверных ключей с этого адреса за минуту |
 | `504` | `timeout` | Команда MTProxyL не уложилась в 5 минут |
@@ -347,7 +400,7 @@ KEY=3f1c…a9
 curl -s -X POST "$API/v1/users" -H "Authorization: Bearer $KEY" \
   -d '{"username":"order1042","data_quota_bytes":53687091200,
        "expiration_rfc3339":"2026-11-11","rate_limit_down_bps":20000000}' \
-  | jq -r '.data.links[0]'
+  | jq -r '.data.user.links.tls[0]'
 
 # Сколько потратил
 curl -s "$API/v1/users/order1042" -H "Authorization: Bearer $KEY" | jq '.data.traffic'
@@ -376,13 +429,13 @@ def call(method, path, **kw):
         raise RuntimeError(f'{r.status_code} {body["error"]["code"]}: {body["error"]["message"]}')
     return body["data"]
 
-user = call("POST", "/v1/users", json={
+created = call("POST", "/v1/users", json={
     "username": "tg_123456789",
     "max_unique_ips": 3,
     "data_quota_bytes": 50 * 1024**3,
     "expiration_rfc3339": "2026-11-11",
 })
-print(user["links"])
+print(created["user"]["links"]["tls"], created["secret"])
 
 call("PATCH", "/v1/users/tg_123456789", json={"rate_limit_down_bps": 10_000_000})
 ```

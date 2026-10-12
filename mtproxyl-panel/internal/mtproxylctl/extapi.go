@@ -75,6 +75,70 @@ func (c *Client) Links(ctx context.Context, label string) ([]string, error) {
 	return links, nil
 }
 
+// EngineUser — строка ответа движка на /v1/users: живые подключения и IP.
+type EngineUser struct {
+	Username            string   `json:"username"`
+	InRuntime           bool     `json:"in_runtime"`
+	CurrentConnections  int64    `json:"current_connections"`
+	ActiveUniqueIPs     int      `json:"active_unique_ips"`
+	ActiveUniqueIPsList []string `json:"active_unique_ips_list"`
+	RecentUniqueIPs     int      `json:"recent_unique_ips"`
+	RecentUniqueIPsList []string `json:"recent_unique_ips_list"`
+	TotalOctets         int64    `json:"total_octets"`
+}
+
+// APIView — `mtproxyl secret api-view [метка]`: ссылки по меткам и живые
+// данные движка. Live пуст, если API движка не ответил.
+type APIView struct {
+	Links map[string][]string
+	Live  map[string]EngineUser
+}
+
+func (c *Client) APIView(ctx context.Context, label string) (*APIView, error) {
+	args := []string{"secret", "api-view"}
+	if label != "" {
+		if err := ValidateSecretLabel(label); err != nil {
+			return nil, err
+		}
+		args = append(args, label)
+	}
+	out, err := c.run(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+	var raw struct {
+		Links map[string][]string `json:"links"`
+		Live  *struct {
+			Data []EngineUser `json:"data"`
+		} `json:"live"`
+	}
+	if err := json.Unmarshal([]byte(firstJSONLine(out)), &raw); err != nil {
+		return nil, fmt.Errorf("api-view: неожиданный ответ")
+	}
+	v := &APIView{Links: raw.Links, Live: map[string]EngineUser{}}
+	if v.Links == nil {
+		v.Links = map[string][]string{}
+	}
+	if raw.Live != nil {
+		for _, u := range raw.Live.Data {
+			v.Live[u.Username] = u
+		}
+	}
+	return v, nil
+}
+
+// RotateSecretTo ставит пользователю заданный секрет (32 hex).
+func (c *Client) RotateSecretTo(ctx context.Context, label, secret string) (string, error) {
+	if err := ValidateSecretLabel(label); err != nil {
+		return "", err
+	}
+	if !secretHexRe.MatchString(secret) {
+		return "", fmt.Errorf("секрет: ровно 32 шестнадцатеричных символа")
+	}
+	out, err := c.run(ctx, "secret", "rotate", label, strings.ToLower(secret))
+	return stripANSI(out), err
+}
+
 // StatusRaw returns `mtproxyl status --json` untouched.
 func (c *Client) StatusRaw(ctx context.Context) (json.RawMessage, error) {
 	out, err := c.run(ctx, "status", "--json")

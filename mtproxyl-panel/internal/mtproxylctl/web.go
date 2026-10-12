@@ -54,6 +54,9 @@ type WebStatus struct {
 	Owner         string `json:"owner,omitempty"`
 	Reanimator    bool   `json:"reanimator,omitempty"`
 	EngineVersion string `json:"engine_version,omitempty"`
+	// Front/FrontTitle — держатель заглушки (nginx, caddy, haproxy).
+	Front      string `json:"front,omitempty"`
+	FrontTitle string `json:"front_title,omitempty"`
 }
 
 // WebStatus reports the current WEB proxy configuration.

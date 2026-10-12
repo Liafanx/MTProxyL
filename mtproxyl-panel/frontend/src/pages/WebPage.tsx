@@ -7,12 +7,11 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { OperationProgress } from '@/components/OperationProgress';
 import { ParamField } from '@/components/ParamField';
 import { NginxCustomConfigCard } from '@/components/NginxCustomConfigCard';
-import { FrontServerCard } from '@/components/FrontServerCard';
 import { HttpsHeadersCard } from '@/components/HttpsHeadersCard';
 import { SiteSourcePicker, siteSourceLabel } from '@/components/SiteSourcePicker';
 import { CopyButton } from '@/components/CopyButton';
 import { CarrierOrderPicker } from '@/components/CarrierOrderPicker';
-import { mtproxylApi, type SelfmaskStatus, type WebParam, type WebStatus } from '@/lib/api';
+import { mtproxylApi, mtproxylFrontApi, type SelfmaskStatus, type WebFrontendChoice, type WebParam, type WebStatus } from '@/lib/api';
 import { useManagerOnly, useMtproxylOperation } from '@/hooks/useMtproxyl';
 
 const LAYOUT_LABELS: Record<string, string> = {
@@ -21,11 +20,14 @@ const LAYOUT_LABELS: Record<string, string> = {
   split: 'split — у WEB свой порт',
 };
 
-const FRONTEND_LABELS: Record<string, string> = {
-  nginx: 'nginx MTProxyL',
-  haproxy: 'Внешний HAProxy',
-  'haproxy-nginx': 'HAProxy → nginx MTProxyL',
-};
+// Frontend и держатель заглушки — один выбор, как в меню терминала.
+const FRONTEND_CHOICES: { id: WebFrontendChoice; title: string }[] = [
+  { id: 'nginx', title: 'nginx MTProxyL' },
+  { id: 'caddy', title: 'Caddy MTProxyL' },
+  { id: 'haproxy', title: 'HAProxy MTProxyL' },
+  { id: 'external', title: 'Внешний HAProxy' },
+  { id: 'external-nginx', title: 'Внешний HAProxy → nginx MTProxyL' },
+];
 
 const CARRIER_LABELS: Record<string, string> = {
   websocket: 'websocket — по умолчанию, стабильный один сокет',
@@ -46,6 +48,7 @@ export function WebPage() {
   const [links, setLinks] = useState<string | null>(null);
   const [haproxyConfig, setHAProxyConfig] = useState<string | null>(null);
   const [confirmDisable, setConfirmDisable] = useState(false);
+  const [pendingFrontend, setPendingFrontend] = useState<WebFrontendChoice | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -97,6 +100,23 @@ export function WebPage() {
   const fr = status?.front_title || 'nginx';
   const frontend = valueOf('WEB_FRONTEND') || 'nginx';
   const decoyMode = valueOf('WEB_DECOY_MODE') || 'static_directory';
+  const frontendChoice: WebFrontendChoice = frontend === 'haproxy'
+    ? 'external'
+    : frontend === 'haproxy-nginx'
+      ? 'external-nginx'
+      : status?.front ?? 'nginx';
+  const frontendTitle = (c: WebFrontendChoice) => FRONTEND_CHOICES.find((x) => x.id === c)?.title ?? c;
+
+  const changeFrontend = async () => {
+    const target = pendingFrontend;
+    setPendingFrontend(null);
+    if (!target) return;
+    try {
+      start(await mtproxylFrontApi.setWebFrontend(target));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
   const visibleParams = params.filter((p) => {
     if (status?.proxy_mode === 'web' && ['WEB_LAYOUT', 'WEB_TLS_PORT', 'WEB_MTPROXY_PORT'].includes(p.key)) return false;
     if (layout === 'split' && ['WEB_TLS_PORT', 'WEB_MTPROXY_PORT'].includes(p.key)) return false;
@@ -190,7 +210,7 @@ export function WebPage() {
         <h1 className="text-xl font-semibold text-text-primary">WEB Proxy</h1>
         <p className="text-sm text-text-secondary mt-1">
           Тип прокси WEB: MTProto внутри обычного HTTPS. TLS терминирует
-          {fr} MTProxyL либо внешний HAProxy; движок получает простой HTTP
+          {` ${fr} `}MTProxyL либо внешний HAProxy; движок получает простой HTTP
           на приватном порту.
         </p>
       </div>
@@ -227,7 +247,14 @@ export function WebPage() {
                 {status.layout !== 'target' && (
                   <>
                     <Row label="Раскладка" value={LAYOUT_LABELS[status.layout] ?? status.layout} />
-                    <Row label="Frontend" value={status.frontend === 'nginx' ? `${fr} MTProxyL` : FRONTEND_LABELS[status.frontend] ?? status.frontend} />
+                    <Row
+                      label="Frontend"
+                      value={status.frontend === 'haproxy'
+                        ? 'Внешний HAProxy'
+                        : status.frontend === 'haproxy-nginx'
+                          ? `Внешний HAProxy → ${fr} MTProxyL`
+                          : `${fr} MTProxyL`}
+                    />
                     <Row
                       label="Транспорт"
                       value={carrierChain.length > 0
@@ -376,6 +403,17 @@ export function WebPage() {
                             <div className="text-xs text-warning">Перебор работает с telemt 3.5.4+</div>
                           )}
                         </div>
+                      ) : p.key === 'WEB_FRONTEND' ? (
+                        <select
+                          value={frontendChoice}
+                          disabled={saving || running || reanimator}
+                          onChange={(e) => setPendingFrontend(e.target.value as WebFrontendChoice)}
+                          className="rounded border border-border bg-surface px-2 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-accent/50 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {FRONTEND_CHOICES.map((c) => (
+                            <option key={c.id} value={c.id}>{c.title}</option>
+                          ))}
+                        </select>
                       ) : p.key === 'WEB_DECOY_SOURCE' ? (
                         <SiteSourcePicker
                           value={valueOf(p.key)}
@@ -424,14 +462,6 @@ export function WebPage() {
               </div>
             )}
 
-            {isManager && !frontend.startsWith('haproxy') && (
-              <FrontServerCard
-                running={running}
-                onStart={start}
-                onError={setError}
-                refreshKey={operation?.phase}
-              />
-            )}
             {isManager && frontend === 'nginx' && nginxStatus && (
               <NginxCustomConfigCard
                 status={nginxStatus}
@@ -493,6 +523,18 @@ export function WebPage() {
         confirmVariant="danger"
         onConfirm={runDisable}
         onClose={() => setConfirmDisable(false)}
+      />
+      <ConfirmDialog
+        open={pendingFrontend !== null}
+        title="Сменить frontend WEB?"
+        message={pendingFrontend === 'external' || pendingFrontend === 'external-nginx'
+          ? `Публичный WEB будет принимать ваш HAProxy (${frontendTitle(pendingFrontend)}). MTProxyL его не меняет: после выбора добавьте фрагмент конфигурации и нажмите «Применить заново».`
+          : `Заглушку и публичный TLS будет держать ${frontendTitle(pendingFrontend ?? 'nginx')}. Если держатель меняется, MTProxyL поставит сборку и переприменит Selfmask и WEB — сайт на несколько секунд станет недоступен.`}
+        confirmLabel="Сменить"
+        loadingLabel="Меняем…"
+        confirmVariant="default"
+        onConfirm={() => void changeFrontend()}
+        onClose={() => setPendingFrontend(null)}
       />
     </div>
   );

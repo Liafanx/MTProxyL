@@ -1,3 +1,23 @@
+# MTProxyL-Panel 1.3.1
+
+- «WEB Proxy»: держатель заглушки выбирается в поле «Frontend публичного WEB»
+  вместе с внешним HAProxy — пять вариантов, как в меню терминала.
+- «WEB Proxy» и «Selfmask»: статус, порты и свой конфиг называют выбранный
+  держатель (Caddy, HAProxy) вместо nginx.
+- «Обновление», карточка движка: имя службы движка — случайное или стандартное
+  `mtproxyl-telemt`, смена одной кнопкой. Установщик панели берёт имя службы
+  из MTProxyL, а не считает его всегда `mtproxyl-telemt`.
+- «Selfmask» и «WEB Proxy», карточка «Свой конфиг»: кнопка «Переписать
+  актуальным» — заменяет свой файл конфигом из текущих настроек, прежний
+  остаётся в `.bak`. Нужен MTProxyL 1.7.1 (`nginx-config reset`).
+- `mtproxyl-api` отвечает в формате API telemt: `UserInfo` с `null` вместо
+  «без ограничения», ссылки объектом `{classic, secure, tls, tls_domains, web}`,
+  срок с `+00:00`, `{user, secret}` при создании, `user_exists`, `revision` и
+  `If-Match`, PATCH по JSON Merge Patch. Нужен MTProxyL 1.7.1 (`secret api-view`).
+- Нужен MTProxyL 1.7.1. После обновления панели выполните `mtproxyl panel install`,
+  чтобы панель получила права на `mtproxyl web frontend`, `mtproxyl engine service-name`
+  и `nginx-config reset`.
+
 # MTProxyL-Panel 1.3.0
 - «API управления» — новая страница: включение внешнего API MTProxyL, ключ
   (показывается один раз), адрес, разрешённые адреса, HTTPS на сертификате

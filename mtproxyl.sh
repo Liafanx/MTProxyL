@@ -20,7 +20,7 @@ export LC_NUMERIC=C
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="1.7.0"
+VERSION="1.7.1"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -291,7 +291,7 @@ cli_main() {
                     # конфига цели, а не наш PROXY_DOMAIN.
                     _mode_sni=$(_current_sni_domain 2>/dev/null || echo "")
 
-                    printf '{"mode":"%s","proxy_mode":"%s","engine":"%s","tools_only":%s,"detected_mode":"%s","detected_config":"%s","port":%d,"sni":"%s","engine_config":"%s","api_port":%d,"api_enabled":%s,"own_container":"%s","running":%s,"log_kind":"%s","log_target":"%s"}\n' \
+                    printf '{"mode":"%s","proxy_mode":"%s","engine":"%s","tools_only":%s,"detected_mode":"%s","detected_config":"%s","port":%d,"sni":"%s","engine_config":"%s","api_port":%d,"api_enabled":%s,"own_container":"%s","running":%s,"log_kind":"%s","log_target":"%s","engine_service":"%s"}\n' \
                         "$(json_escape "${MTPROXYL_MODE:-manager}")" \
                         "$(json_escape "${PROXY_MODE:-mtproto}")" \
                         "$(json_escape "$(engine_backend)")" \
@@ -306,7 +306,8 @@ cli_main() {
                         "$(json_escape "${_own_state}")" \
                         "$(is_proxy_running 2>/dev/null && echo true || echo false)" \
                         "$(json_escape "${_log_kind}")" \
-                        "$(json_escape "${_log_target}")"
+                        "$(json_escape "${_log_target}")" \
+                        "$(json_escape "${ENGINE_SERVICE:-mtproxyl-telemt}")"
                     ;;
                 "")         echo -e "  ${BOLD}Текущий режим:${NC} ${MTPROXYL_MODE:-manager}" ;;
                 *)          log_error "Использование: mtproxyl mode [manager|reanimator|--json]" ;;

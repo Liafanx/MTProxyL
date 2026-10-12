@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,9 +16,12 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Liafanx/mtproxyl-panel/internal/mtproxylctl"
@@ -36,7 +40,8 @@ type CLI interface {
 	SetSecretRate(ctx context.Context, label string, up, down int64) (string, error)
 	ResetQuota(ctx context.Context, label string) (string, error)
 	ResetUserTraffic(ctx context.Context, label string) (string, error)
-	Links(ctx context.Context, label string) ([]string, error)
+	APIView(ctx context.Context, label string) (*mtproxylctl.APIView, error)
+	RotateSecretTo(ctx context.Context, label, secret string) (string, error)
 	StatusRaw(ctx context.Context) (json.RawMessage, error)
 	RestartProxy(ctx context.Context) (string, error)
 }
@@ -192,8 +197,23 @@ func writeOK(w http.ResponseWriter, code int, data any) {
 	writeJSON(w, code, map[string]any{"ok": true, "data": data})
 }
 
+// writeRev — конверт telemt с revision: её можно вернуть в If-Match.
+func writeRev(w http.ResponseWriter, code int, data any, rev string) {
+	if rev == "" {
+		writeOK(w, code, data)
+		return
+	}
+	writeJSON(w, code, map[string]any{"ok": true, "data": data, "revision": rev})
+}
+
+var requestID atomic.Int64
+
 func writeErr(w http.ResponseWriter, code int, kind, msg string) {
-	writeJSON(w, code, map[string]any{"ok": false, "error": map[string]string{"code": kind, "message": msg}})
+	writeJSON(w, code, map[string]any{
+		"ok":         false,
+		"error":      map[string]string{"code": kind, "message": msg},
+		"request_id": requestID.Add(1),
+	})
 }
 
 // cliErr переводит отказ CLI в код HTTP по его же сообщению.
@@ -209,9 +229,9 @@ func cliErr(w http.ResponseWriter, err error) {
 	case strings.Contains(low, "не найден"):
 		writeErr(w, http.StatusNotFound, "not_found", msg)
 	case strings.Contains(low, "уже существует"), strings.Contains(low, "уже есть"):
-		writeErr(w, http.StatusConflict, "already_exists", msg)
+		writeErr(w, http.StatusConflict, "user_exists", msg)
 	case strings.Contains(low, "последний"):
-		writeErr(w, http.StatusConflict, "conflict", msg)
+		writeErr(w, http.StatusConflict, "last_user_forbidden", msg)
 	case ce == nil:
 		writeErr(w, http.StatusBadRequest, "bad_request", msg)
 	case strings.Contains(strings.ToLower(err.Error()), "timed out"):
@@ -226,8 +246,9 @@ func decode(r *http.Request, v any) error {
 	if r.Body == nil {
 		return nil
 	}
+	// Незнакомые поля пропускаем, как telemt: клиент может прислать объект
+	// пользователя целиком.
 	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil
@@ -238,6 +259,10 @@ func decode(r *http.Request, v any) error {
 }
 
 // ── Модель пользователя ───────────────────────────────────────
+// Ответы повторяют контракт API telemt (UserInfo, CreateUserResponse и т.д.):
+// клиент, написанный под telemt, работает с MTProxyL без правок. Поля сверх
+// контракта (secret, notes, created, traffic, links.web) клиенты telemt
+// пропускают.
 
 type Traffic struct {
 	In    int64 `json:"in_bytes"`
@@ -245,31 +270,31 @@ type Traffic struct {
 	Total int64 `json:"total_bytes"`
 }
 
-type User struct {
-	Username         string   `json:"username"`
-	Secret           string   `json:"secret"`
-	Enabled          bool     `json:"enabled"`
-	MaxTCPConns      int      `json:"max_tcp_conns"`
-	MaxUniqueIPs     int      `json:"max_unique_ips"`
-	DataQuotaBytes   int64    `json:"data_quota_bytes"`
-	Expiration       string   `json:"expiration_rfc3339"`
-	UserAdTag        string   `json:"user_ad_tag"`
-	RateLimitUpBps   int64    `json:"rate_limit_up_bps"`
-	RateLimitDownBps int64    `json:"rate_limit_down_bps"`
-	Notes            string   `json:"notes"`
-	Created          int64    `json:"created"`
-	Traffic          Traffic  `json:"traffic"`
-	Links            []string `json:"links,omitempty"`
+// rec — пользователь, как его хранит MTProxyL: 0 и "" значат «без ограничения».
+type rec struct {
+	Username         string
+	Secret           string
+	Enabled          bool
+	MaxTCPConns      int64
+	MaxUniqueIPs     int64
+	DataQuotaBytes   int64
+	Expiration       string
+	UserAdTag        string
+	RateLimitUpBps   int64
+	RateLimitDownBps int64
+	Notes            string
+	Created          int64
+	Traffic          Traffic
 }
 
-func fromSecret(s mtproxylctl.Secret) User {
+func fromSecret(s mtproxylctl.Secret) rec {
 	exp := s.Expires
 	if exp == "0" {
 		exp = ""
 	}
-	return User{
+	return rec{
 		Username: s.Label, Secret: s.Secret, Enabled: s.Enabled,
-		MaxTCPConns: s.MaxConns, MaxUniqueIPs: s.MaxIPs, DataQuotaBytes: s.QuotaBytes,
+		MaxTCPConns: int64(s.MaxConns), MaxUniqueIPs: int64(s.MaxIPs), DataQuotaBytes: s.QuotaBytes,
 		Expiration: exp, UserAdTag: s.AdTag,
 		RateLimitUpBps: s.RateUpBps, RateLimitDownBps: s.RateDownBps,
 		Notes: s.Notes, Created: s.Created,
@@ -277,25 +302,201 @@ func fromSecret(s mtproxylctl.Secret) User {
 	}
 }
 
+type TLSDomainLink struct {
+	Domain string `json:"domain"`
+	Link   string `json:"link"`
+}
+
+// UserLinks — как у telemt; web — ссылки tg://webproxy, у telemt их нет.
+type UserLinks struct {
+	Classic    []string        `json:"classic"`
+	Secure     []string        `json:"secure"`
+	TLS        []string        `json:"tls"`
+	TLSDomains []TLSDomainLink `json:"tls_domains"`
+	Web        []string        `json:"web"`
+}
+
+// UserInfo — представление пользователя из API telemt.
+type UserInfo struct {
+	Username            string    `json:"username"`
+	Enabled             bool      `json:"enabled"`
+	InRuntime           bool      `json:"in_runtime"`
+	UserAdTag           *string   `json:"user_ad_tag"`
+	MaxTCPConns         *int64    `json:"max_tcp_conns"`
+	Expiration          *string   `json:"expiration_rfc3339"`
+	DataQuotaBytes      *int64    `json:"data_quota_bytes"`
+	RateLimitUpBps      *int64    `json:"rate_limit_up_bps"`
+	RateLimitDownBps    *int64    `json:"rate_limit_down_bps"`
+	MaxUniqueIPs        *int64    `json:"max_unique_ips"`
+	CurrentConnections  int64     `json:"current_connections"`
+	ActiveUniqueIPs     int       `json:"active_unique_ips"`
+	ActiveUniqueIPsList []string  `json:"active_unique_ips_list"`
+	RecentUniqueIPs     int       `json:"recent_unique_ips"`
+	RecentUniqueIPsList []string  `json:"recent_unique_ips_list"`
+	TotalOctets         int64     `json:"total_octets"`
+	Links               UserLinks `json:"links"`
+	// Сверх контракта telemt.
+	Secret  string  `json:"secret"`
+	Notes   string  `json:"notes"`
+	Created int64   `json:"created"`
+	Traffic Traffic `json:"traffic"`
+}
+
+func nz(v int64) *int64 {
+	if v <= 0 {
+		return nil
+	}
+	return &v
+}
+
+func ns(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
+}
+
+// telemtTime приводит срок к виду, в котором его отдаёт telemt
+// (chrono to_rfc3339): UTC со смещением +00:00.
+func telemtTime(v string) *string {
+	if v == "" {
+		return nil
+	}
+	layouts := []string{time.RFC3339Nano, "2006-01-02"}
+	for _, l := range layouts {
+		if t, err := time.Parse(l, v); err == nil {
+			out := t.UTC().Format("2006-01-02T15:04:05.999999999") + "+00:00"
+			return &out
+		}
+	}
+	return &v
+}
+
+// splitLinks раскладывает ссылки по видам, как telemt: classic — голый
+// секрет, secure — dd, tls — ee с доменом, tls_domains — дополнительные домены.
+func splitLinks(links []string) UserLinks {
+	out := UserLinks{Classic: []string{}, Secure: []string{}, TLS: []string{}, TLSDomains: []TLSDomainLink{}, Web: []string{}}
+	first := ""
+	for _, l := range links {
+		if strings.HasPrefix(l, "tg://webproxy") || strings.HasPrefix(l, "https://t.me/webproxy") {
+			out.Web = append(out.Web, l)
+			continue
+		}
+		u, err := url.Parse(l)
+		if err != nil {
+			continue
+		}
+		sec := strings.ToLower(u.Query().Get("secret"))
+		switch {
+		case strings.HasPrefix(sec, "ee") && len(sec) > 34:
+			out.TLS = append(out.TLS, l)
+			dom := ""
+			if b, err := hex.DecodeString(sec[34:]); err == nil {
+				dom = string(b)
+			}
+			if first == "" {
+				first = dom
+			} else if dom != "" && dom != first {
+				out.TLSDomains = append(out.TLSDomains, TLSDomainLink{Domain: dom, Link: l})
+			}
+		case strings.HasPrefix(sec, "dd") && len(sec) == 34:
+			out.Secure = append(out.Secure, l)
+		case len(sec) == 32:
+			out.Classic = append(out.Classic, l)
+		}
+	}
+	return out
+}
+
+func toInfo(r rec, v *mtproxylctl.APIView) UserInfo {
+	u := UserInfo{
+		Username: r.Username, Enabled: r.Enabled, InRuntime: r.Enabled,
+		UserAdTag: ns(r.UserAdTag), MaxTCPConns: nz(r.MaxTCPConns), Expiration: telemtTime(r.Expiration),
+		DataQuotaBytes: nz(r.DataQuotaBytes), RateLimitUpBps: nz(r.RateLimitUpBps),
+		RateLimitDownBps: nz(r.RateLimitDownBps), MaxUniqueIPs: nz(r.MaxUniqueIPs),
+		ActiveUniqueIPsList: []string{}, RecentUniqueIPsList: []string{},
+		TotalOctets: r.Traffic.Total,
+		Links:       splitLinks(nil),
+		Secret:      r.Secret, Notes: r.Notes, Created: r.Created, Traffic: r.Traffic,
+	}
+	if v == nil {
+		return u
+	}
+	u.Links = splitLinks(v.Links[r.Username])
+	if live, ok := v.Live[r.Username]; ok {
+		u.InRuntime = live.InRuntime
+		u.CurrentConnections = live.CurrentConnections
+		u.ActiveUniqueIPs = live.ActiveUniqueIPs
+		u.RecentUniqueIPs = live.RecentUniqueIPs
+		u.TotalOctets = live.TotalOctets
+		if live.ActiveUniqueIPsList != nil {
+			u.ActiveUniqueIPsList = live.ActiveUniqueIPsList
+		}
+		if live.RecentUniqueIPsList != nil {
+			u.RecentUniqueIPsList = live.RecentUniqueIPsList
+		}
+	} else if v.Live != nil && len(v.Live) > 0 {
+		u.InRuntime = false
+	}
+	return u
+}
+
+// revisionOf — отпечаток настроек пользователей, аналог revision у telemt:
+// по нему клиент делает If-Match. Трафик в него не входит — он меняется сам.
+func revisionOf(list []mtproxylctl.Secret) string {
+	h := sha256.New()
+	for _, s := range list {
+		fmt.Fprintf(h, "%s|%s|%t|%d|%d|%d|%s|%s|%d|%d\n", s.Label, s.Secret, s.Enabled,
+			s.MaxConns, s.MaxIPs, s.QuotaBytes, s.Expires, s.AdTag, s.RateUpBps, s.RateDownBps)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 var usernameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 
-func (s *Server) findUser(ctx context.Context, name string) (*User, error) {
+const usernameRule = "username: латиница, цифры, дефис и подчёркивание, до 32 символов, первый — буква или цифра"
+
+func (s *Server) findUser(ctx context.Context, name string) (*rec, string, error) {
 	list, err := s.cli.ListSecrets(ctx)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
+	rev := revisionOf(list)
 	for _, sec := range list {
 		if sec.Label == name {
 			u := fromSecret(sec)
-			return &u, nil
+			return &u, rev, nil
 		}
 	}
-	return nil, nil
+	return nil, rev, nil
 }
 
-// userWithLinks — состояние пользователя после операции, со ссылками.
-func (s *Server) userWithLinks(w http.ResponseWriter, r *http.Request, name string, code int) {
-	u, err := s.findUser(r.Context(), name)
+// checkRevision — If-Match как у telemt: несовпадение даёт 409.
+func checkRevision(w http.ResponseWriter, r *http.Request, rev string) bool {
+	want := strings.Trim(strings.TrimSpace(r.Header.Get("If-Match")), `"`)
+	if want == "" || want == rev {
+		return true
+	}
+	writeErr(w, http.StatusConflict, "revision_conflict", "конфигурация изменилась: перечитайте пользователя и повторите")
+	return false
+}
+
+// info — пользователь после операции в виде UserInfo и текущая ревизия.
+func (s *Server) info(ctx context.Context, name string) (*UserInfo, string, error) {
+	u, rev, err := s.findUser(ctx, name)
+	if err != nil || u == nil {
+		return nil, rev, err
+	}
+	view, err := s.cli.APIView(ctx, name)
+	if err != nil {
+		view = nil
+	}
+	i := toInfo(*u, view)
+	return &i, rev, nil
+}
+
+func (s *Server) writeUser(w http.ResponseWriter, r *http.Request, name string, code int, wrap func(*UserInfo) any) {
+	u, rev, err := s.info(r.Context(), name)
 	if err != nil {
 		cliErr(w, err)
 		return
@@ -304,16 +505,17 @@ func (s *Server) userWithLinks(w http.ResponseWriter, r *http.Request, name stri
 		writeErr(w, http.StatusNotFound, "not_found", "пользователь "+name+" не найден")
 		return
 	}
-	if links, err := s.cli.Links(r.Context(), name); err == nil {
-		u.Links = links
+	var data any = u
+	if wrap != nil {
+		data = wrap(u)
 	}
-	writeOK(w, code, u)
+	writeRev(w, code, data, rev)
 }
 
 func pathUser(w http.ResponseWriter, r *http.Request) (string, bool) {
 	name := r.PathValue("username")
 	if !usernameRe.MatchString(name) {
-		writeErr(w, http.StatusBadRequest, "bad_request", "имя: латиница, цифры, дефис и подчёркивание, до 32 символов")
+		writeErr(w, http.StatusNotFound, "not_found", "пользователь "+name+" не найден")
 		return "", false
 	}
 	return name, true
@@ -322,7 +524,7 @@ func pathUser(w http.ResponseWriter, r *http.Request) (string, bool) {
 // ── Обработчики ───────────────────────────────────────────────
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
-	writeOK(w, http.StatusOK, map[string]string{"status": "ok", "api_version": s.version})
+	writeOK(w, http.StatusOK, map[string]any{"status": "ok", "read_only": false, "api_version": s.version})
 }
 
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
@@ -350,18 +552,16 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 		cliErr(w, err)
 		return
 	}
-	out := make([]User, 0, len(list))
-	withLinks := r.URL.Query().Get("links") == "true" || r.URL.Query().Get("links") == "1"
-	for _, sec := range list {
-		u := fromSecret(sec)
-		if withLinks {
-			if links, err := s.cli.Links(r.Context(), u.Username); err == nil {
-				u.Links = links
-			}
-		}
-		out = append(out, u)
+	view, err := s.cli.APIView(r.Context(), "")
+	if err != nil {
+		view = nil
 	}
-	writeOK(w, http.StatusOK, out)
+	out := make([]UserInfo, 0, len(list))
+	for _, sec := range list {
+		out = append(out, toInfo(fromSecret(sec), view))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Username < out[j].Username })
+	writeRev(w, http.StatusOK, out, revisionOf(list))
 }
 
 func (s *Server) getUser(w http.ResponseWriter, r *http.Request) {
@@ -369,97 +569,143 @@ func (s *Server) getUser(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.userWithLinks(w, r, name, http.StatusOK)
+	s.writeUser(w, r, name, http.StatusOK, nil)
 }
 
-// Поля запроса — указатели: отсутствующее поле значит «не менять».
-type userFields struct {
-	Username         *string `json:"username"`
-	Secret           *string `json:"secret"`
-	Enabled          *bool   `json:"enabled"`
-	MaxTCPConns      *int64  `json:"max_tcp_conns"`
-	MaxUniqueIPs     *int64  `json:"max_unique_ips"`
-	DataQuotaBytes   *int64  `json:"data_quota_bytes"`
-	Expiration       *string `json:"expiration_rfc3339"`
-	UserAdTag        *string `json:"user_ad_tag"`
-	RateLimitUpBps   *int64  `json:"rate_limit_up_bps"`
-	RateLimitDownBps *int64  `json:"rate_limit_down_bps"`
+// opt — поле JSON Merge Patch: Set — поле прислали, Null — прислали null.
+type opt[T any] struct {
+	Set  bool
+	Null bool
+	V    T
 }
 
-func (f *userFields) touchesLimits() bool {
-	return f.MaxTCPConns != nil || f.MaxUniqueIPs != nil || f.DataQuotaBytes != nil || f.Expiration != nil
+func (o *opt[T]) UnmarshalJSON(b []byte) error {
+	o.Set = true
+	if string(b) == "null" {
+		o.Null = true
+		return nil
+	}
+	return json.Unmarshal(b, &o.V)
 }
 
-func (f *userFields) touchesRate() bool { return f.RateLimitUpBps != nil || f.RateLimitDownBps != nil }
+// userReq — CreateUserRequest и PatchUserRequest telemt; username в PATCH —
+// переименование (у telemt его нет).
+type userReq struct {
+	Username         opt[string] `json:"username"`
+	Secret           opt[string] `json:"secret"`
+	Enabled          opt[bool]   `json:"enabled"`
+	MaxTCPConns      opt[int64]  `json:"max_tcp_conns"`
+	MaxUniqueIPs     opt[int64]  `json:"max_unique_ips"`
+	DataQuotaBytes   opt[int64]  `json:"data_quota_bytes"`
+	Expiration       opt[string] `json:"expiration_rfc3339"`
+	UserAdTag        opt[string] `json:"user_ad_tag"`
+	RateLimitUpBps   opt[int64]  `json:"rate_limit_up_bps"`
+	RateLimitDownBps opt[int64]  `json:"rate_limit_down_bps"`
+}
 
-// apply доводит пользователя до запрошенного: лимиты, метка, скорость,
-// включённость. Незатронутые поля берутся из текущего состояния.
-func (s *Server) apply(ctx context.Context, cur *User, f *userFields) error {
-	if f.touchesLimits() {
-		conns, ips, quota, exp := int64(cur.MaxTCPConns), int64(cur.MaxUniqueIPs), cur.DataQuotaBytes, cur.Expiration
-		if f.MaxTCPConns != nil {
-			conns = *f.MaxTCPConns
+func (f *userReq) validate() error {
+	for name, o := range map[string]opt[int64]{
+		"max_tcp_conns": f.MaxTCPConns, "max_unique_ips": f.MaxUniqueIPs, "data_quota_bytes": f.DataQuotaBytes,
+		"rate_limit_up_bps": f.RateLimitUpBps, "rate_limit_down_bps": f.RateLimitDownBps,
+	} {
+		if o.Set && !o.Null && o.V < 0 {
+			return fmt.Errorf("%s: не может быть отрицательным", name)
 		}
-		if f.MaxUniqueIPs != nil {
-			ips = *f.MaxUniqueIPs
+	}
+	if f.Expiration.Set && !f.Expiration.Null && f.Expiration.V != "" {
+		if _, err := time.Parse(time.RFC3339Nano, f.Expiration.V); err != nil {
+			if _, err2 := time.Parse("2006-01-02", f.Expiration.V); err2 != nil {
+				return fmt.Errorf("expiration_rfc3339 must be valid RFC3339")
+			}
 		}
-		if f.DataQuotaBytes != nil {
-			quota = *f.DataQuotaBytes
-		}
-		if f.Expiration != nil {
-			exp = *f.Expiration
-		}
-		if _, err := s.cli.SetLimitsFull(ctx, cur.Username, conns, ips, quota, exp); err != nil {
+	}
+	if f.UserAdTag.Set && !f.UserAdTag.Null && f.UserAdTag.V != "" && !hex32Re.MatchString(f.UserAdTag.V) {
+		return fmt.Errorf("user_ad_tag: ровно 32 шестнадцатеричных символа")
+	}
+	if f.Secret.Set && !f.Secret.Null && f.Secret.V != "" && !hex32Re.MatchString(f.Secret.V) {
+		return fmt.Errorf("secret: ровно 32 шестнадцатеричных символа")
+	}
+	return nil
+}
+
+var hex32Re = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
+
+func pick64(o opt[int64], cur int64) int64 {
+	if !o.Set {
+		return cur
+	}
+	if o.Null {
+		return 0
+	}
+	return o.V
+}
+
+func pickStr(o opt[string], cur string) string {
+	if !o.Set {
+		return cur
+	}
+	if o.Null {
+		return ""
+	}
+	return o.V
+}
+
+// apply доводит пользователя до запрошенного. Незатронутые поля берутся из
+// текущего состояния, null снимает ограничение.
+func (s *Server) apply(ctx context.Context, cur *rec, f *userReq) error {
+	if f.MaxTCPConns.Set || f.MaxUniqueIPs.Set || f.DataQuotaBytes.Set || f.Expiration.Set {
+		if _, err := s.cli.SetLimitsFull(ctx, cur.Username,
+			pick64(f.MaxTCPConns, cur.MaxTCPConns), pick64(f.MaxUniqueIPs, cur.MaxUniqueIPs),
+			pick64(f.DataQuotaBytes, cur.DataQuotaBytes), pickStr(f.Expiration, cur.Expiration)); err != nil {
 			return err
 		}
 	}
-	if f.touchesRate() {
-		up, down := cur.RateLimitUpBps, cur.RateLimitDownBps
-		if f.RateLimitUpBps != nil {
-			up = *f.RateLimitUpBps
-		}
-		if f.RateLimitDownBps != nil {
-			down = *f.RateLimitDownBps
-		}
-		if _, err := s.cli.SetSecretRate(ctx, cur.Username, up, down); err != nil {
+	if f.RateLimitUpBps.Set || f.RateLimitDownBps.Set {
+		if _, err := s.cli.SetSecretRate(ctx, cur.Username,
+			pick64(f.RateLimitUpBps, cur.RateLimitUpBps), pick64(f.RateLimitDownBps, cur.RateLimitDownBps)); err != nil {
 			return err
 		}
 	}
-	if f.UserAdTag != nil && *f.UserAdTag != cur.UserAdTag {
-		if _, err := s.cli.SetSecretAdTag(ctx, cur.Username, *f.UserAdTag); err != nil {
+	if tag := pickStr(f.UserAdTag, cur.UserAdTag); f.UserAdTag.Set && !strings.EqualFold(tag, cur.UserAdTag) {
+		if _, err := s.cli.SetSecretAdTag(ctx, cur.Username, tag); err != nil {
 			return err
 		}
 	}
-	if f.Enabled != nil && *f.Enabled != cur.Enabled {
-		if _, err := s.cli.ToggleSecret(ctx, cur.Username, *f.Enabled); err != nil {
-			return err
+	// enabled: null у telemt тоже значит «включён».
+	if f.Enabled.Set {
+		want := f.Enabled.Null || f.Enabled.V
+		if want != cur.Enabled {
+			if _, err := s.cli.ToggleSecret(ctx, cur.Username, want); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
-	var f userFields
+	var f userReq
 	if err := decode(r, &f); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	if f.Username == nil || !usernameRe.MatchString(*f.Username) {
-		writeErr(w, http.StatusBadRequest, "bad_request", "username: латиница, цифры, дефис и подчёркивание, до 32 символов")
+	if f.Username.Null || !usernameRe.MatchString(f.Username.V) {
+		writeErr(w, http.StatusBadRequest, "bad_request", usernameRule)
 		return
 	}
-	name := *f.Username
-	secret := ""
-	if f.Secret != nil {
-		secret = *f.Secret
+	if err := f.validate(); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
 	}
+	name := f.Username.V
+	secret := pickStr(f.Secret, "")
 	s.write.Lock()
 	defer s.write.Unlock()
-	if _, err := s.cli.AddSecret(r.Context(), name, secret); err != nil {
+	if _, err := s.cli.AddSecret(r.Context(), name, strings.ToLower(secret)); err != nil {
 		cliErr(w, err)
 		return
 	}
-	cur, err := s.findUser(r.Context(), name)
+	cur, _, err := s.findUser(r.Context(), name)
 	if err != nil || cur == nil {
 		writeErr(w, http.StatusInternalServerError, "internal_error", "пользователь создан, но не прочитан")
 		return
@@ -470,7 +716,12 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		cliErr(w, err)
 		return
 	}
-	s.userWithLinks(w, r, name, http.StatusCreated)
+	s.writeUser(w, r, name, http.StatusCreated, withSecret)
+}
+
+// withSecret — CreateUserResponse telemt: {user, secret}.
+func withSecret(u *UserInfo) any {
+	return map[string]any{"user": u, "secret": u.Secret}
 }
 
 func (s *Server) patchUser(w http.ResponseWriter, r *http.Request) {
@@ -478,18 +729,28 @@ func (s *Server) patchUser(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var f userFields
+	var f userReq
 	if err := decode(r, &f); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	if f.Secret != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "секрет меняется через POST /v1/users/{username}/rotate-secret")
+	if err := f.validate(); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
+	}
+	// Пустое, null или прежнее имя — не переименование: так шлют клиенты,
+	// отправляющие объект пользователя целиком.
+	rename := ""
+	if f.Username.Set && !f.Username.Null && f.Username.V != "" && f.Username.V != name {
+		if !usernameRe.MatchString(f.Username.V) {
+			writeErr(w, http.StatusBadRequest, "bad_request", usernameRule)
+			return
+		}
+		rename = f.Username.V
 	}
 	s.write.Lock()
 	defer s.write.Unlock()
-	cur, err := s.findUser(r.Context(), name)
+	cur, rev, err := s.findUser(r.Context(), name)
 	if err != nil {
 		cliErr(w, err)
 		return
@@ -498,23 +759,42 @@ func (s *Server) patchUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", "пользователь "+name+" не найден")
 		return
 	}
+	if !checkRevision(w, r, rev) {
+		return
+	}
 	if err := s.apply(r.Context(), cur, &f); err != nil {
 		cliErr(w, err)
 		return
 	}
-	// Переименование последним: если другая правка не прошла, имя прежнее.
-	if f.Username != nil && *f.Username != name {
-		if !usernameRe.MatchString(*f.Username) {
-			writeErr(w, http.StatusBadRequest, "bad_request", "username: латиница, цифры, дефис и подчёркивание, до 32 символов")
-			return
-		}
-		if _, err := s.cli.RenameSecret(r.Context(), name, *f.Username); err != nil {
+	// secret в PATCH ставит этот секрет, как у telemt.
+	if sec := pickStr(f.Secret, ""); sec != "" && !strings.EqualFold(sec, cur.Secret) {
+		if _, err := s.cli.RotateSecretTo(r.Context(), name, sec); err != nil {
 			cliErr(w, err)
 			return
 		}
-		name = *f.Username
 	}
-	s.userWithLinks(w, r, name, http.StatusOK)
+	// Переименование последним: если другая правка не прошла, имя прежнее.
+	if rename != "" {
+		if _, err := s.cli.RenameSecret(r.Context(), name, rename); err != nil {
+			cliErr(w, err)
+			return
+		}
+		name = rename
+	}
+	s.writeUser(w, r, name, http.StatusOK, nil)
+}
+
+// guardRev — If-Match для операций без тела.
+func (s *Server) guardRev(w http.ResponseWriter, r *http.Request) bool {
+	if r.Header.Get("If-Match") == "" {
+		return true
+	}
+	list, err := s.cli.ListSecrets(r.Context())
+	if err != nil {
+		cliErr(w, err)
+		return false
+	}
+	return checkRevision(w, r, revisionOf(list))
 }
 
 func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
@@ -524,11 +804,18 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	s.write.Lock()
 	defer s.write.Unlock()
+	if !s.guardRev(w, r) {
+		return
+	}
 	if _, err := s.cli.RemoveSecret(r.Context(), name); err != nil {
 		cliErr(w, err)
 		return
 	}
-	writeOK(w, http.StatusOK, map[string]string{"username": name, "deleted": "true"})
+	rev := ""
+	if list, err := s.cli.ListSecrets(r.Context()); err == nil {
+		rev = revisionOf(list)
+	}
+	writeRev(w, http.StatusOK, map[string]any{"username": name, "in_runtime": false}, rev)
 }
 
 func (s *Server) toggle(enable bool) http.HandlerFunc {
@@ -539,11 +826,14 @@ func (s *Server) toggle(enable bool) http.HandlerFunc {
 		}
 		s.write.Lock()
 		defer s.write.Unlock()
+		if !s.guardRev(w, r) {
+			return
+		}
 		if _, err := s.cli.ToggleSecret(r.Context(), name, enable); err != nil {
 			cliErr(w, err)
 			return
 		}
-		s.userWithLinks(w, r, name, http.StatusOK)
+		s.writeUser(w, r, name, http.StatusOK, nil)
 	}
 }
 
@@ -552,13 +842,33 @@ func (s *Server) rotate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var f struct {
+		Secret string `json:"secret"`
+	}
+	if err := decode(r, &f); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	if f.Secret != "" && !hex32Re.MatchString(f.Secret) {
+		writeErr(w, http.StatusBadRequest, "bad_request", "secret: ровно 32 шестнадцатеричных символа")
+		return
+	}
 	s.write.Lock()
 	defer s.write.Unlock()
-	if _, err := s.cli.RotateSecret(r.Context(), name); err != nil {
+	if !s.guardRev(w, r) {
+		return
+	}
+	var err error
+	if f.Secret != "" {
+		_, err = s.cli.RotateSecretTo(r.Context(), name, f.Secret)
+	} else {
+		_, err = s.cli.RotateSecret(r.Context(), name)
+	}
+	if err != nil {
 		cliErr(w, err)
 		return
 	}
-	s.userWithLinks(w, r, name, http.StatusOK)
+	s.writeUser(w, r, name, http.StatusOK, withSecret)
 }
 
 func (s *Server) resetQuota(w http.ResponseWriter, r *http.Request) {
@@ -572,7 +882,7 @@ func (s *Server) resetQuota(w http.ResponseWriter, r *http.Request) {
 		cliErr(w, err)
 		return
 	}
-	writeOK(w, http.StatusOK, map[string]string{"username": name, "quota": "reset"})
+	writeOK(w, http.StatusOK, map[string]any{"username": name, "used_bytes": 0, "last_reset_epoch_secs": time.Now().Unix()})
 }
 
 func (s *Server) resetTraffic(w http.ResponseWriter, r *http.Request) {
@@ -594,12 +904,9 @@ func (s *Server) links(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	links, err := s.cli.Links(r.Context(), name)
-	if err != nil {
-		cliErr(w, err)
-		return
-	}
-	writeOK(w, http.StatusOK, map[string]any{"username": name, "links": links})
+	s.writeUser(w, r, name, http.StatusOK, func(u *UserInfo) any {
+		return map[string]any{"username": u.Username, "links": u.Links}
+	})
 }
 
 // LogRequests — короткий журнал: метод, путь, код, длительность. Без тела и
