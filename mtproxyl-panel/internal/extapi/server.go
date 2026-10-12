@@ -481,6 +481,12 @@ func checkRevision(w http.ResponseWriter, r *http.Request, rev string) bool {
 	return false
 }
 
+// logViewErr — без api-view ссылки и живые данные пусты; причина обычно в
+// правах sudo от прошлой версии, её видно только в журнале.
+func logViewErr(err error) {
+	log.Printf("api-view: %v (ссылки пусты; права обновит: mtproxyl api update)", err)
+}
+
 // info — пользователь после операции в виде UserInfo и текущая ревизия.
 func (s *Server) info(ctx context.Context, name string) (*UserInfo, string, error) {
 	u, rev, err := s.findUser(ctx, name)
@@ -489,6 +495,7 @@ func (s *Server) info(ctx context.Context, name string) (*UserInfo, string, erro
 	}
 	view, err := s.cli.APIView(ctx, name)
 	if err != nil {
+		logViewErr(err)
 		view = nil
 	}
 	i := toInfo(*u, view)
@@ -554,6 +561,7 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	view, err := s.cli.APIView(r.Context(), "")
 	if err != nil {
+		logViewErr(err)
 		view = nil
 	}
 	out := make([]UserInfo, 0, len(list))

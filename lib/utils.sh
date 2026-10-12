@@ -976,6 +976,13 @@ self_update() {
             || log_warn "Права не обновились — выполните: mtproxyl panel install"
     fi
 
+    # То же у API: права и юнит пишет уже новая версия скрипта.
+    if [ "${API_ENABLED:-false}" = true ]; then
+        "${INSTALL_DIR}/mtproxyl.sh" api sync-cert >/dev/null 2>&1 \
+            && log_success "API управления получил права на команды v${_new_ver}" \
+            || log_warn "Права API не обновились — выполните: mtproxyl api update"
+    fi
+
     if [ "$_restart" = "false" ]; then
         return 0
     fi

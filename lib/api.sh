@@ -257,6 +257,8 @@ _api_open_port() {
 
 api_restart_if_active() {
     api_is_enabled || return 0
+    # Новый mtproxyl-api может звать подкоманды, которых нет в старых правах.
+    _api_write_sudoers || log_warn "Права sudo mtproxyl-api обновить не удалось"
     _api_sync_tls || return 1
     _api_write_unit
     systemctl restart "$API_SERVICE" &>/dev/null || { log_error "mtproxyl-api не перезапустился"; return 1; }
