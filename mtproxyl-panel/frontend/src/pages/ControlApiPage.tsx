@@ -14,7 +14,7 @@ const ENDPOINTS: [string, string][] = [
   ['GET /v1/users', 'список пользователей с лимитами и трафиком (?links=1 — со ссылками)'],
   ['POST /v1/users', 'создать: username, secret?, max_tcp_conns, max_unique_ips, data_quota_bytes, expiration_rfc3339, user_ad_tag, rate_limit_up_bps, rate_limit_down_bps, enabled'],
   ['GET /v1/users/{имя}', 'пользователь со ссылками'],
-  ['PATCH /v1/users/{имя}', 'изменить только переданные поля; username — переименовать'],
+  ['PATCH /v1/users/{имя}', 'изменить только переданные поля; имя берётся из адреса, username в теле — новое имя'],
   ['DELETE /v1/users/{имя}', 'удалить'],
   ['POST /v1/users/{имя}/enable | disable', 'включить или выключить'],
   ['POST /v1/users/{имя}/rotate-secret', 'новый секрет — старые ссылки перестанут работать'],

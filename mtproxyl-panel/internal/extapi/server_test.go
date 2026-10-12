@@ -193,6 +193,30 @@ func TestUserLifecycle(t *testing.T) {
 	}
 }
 
+// Клиенты шлют объект пользователя целиком: пустое или прежнее имя, тот же
+// секрет и поля только для чтения не должны давать ошибку после правки.
+func TestPatchFullObject(t *testing.T) {
+	f := newFake()
+	s := New(f, HashKey(key), nil, "t")
+	body := `{"username":"","secret":"` + strings.Repeat("a", 32) + `","expiration_rfc3339":"2027-01-01","notes":"","created":1,"traffic":{"total_bytes":0},"links":[]}`
+	if c, out := do(t, s, "PATCH", "/v1/users/alice", body, key); c != 200 {
+		t.Fatalf("полный объект: %d %v", c, out)
+	}
+	if f.users["alice"].Expires != "2027-01-01" {
+		t.Fatalf("срок не применён: %+v", f.users["alice"])
+	}
+	if c, _ := do(t, s, "PATCH", "/v1/users/alice", `{"username":"alice","max_tcp_conns":2}`, key); c != 200 {
+		t.Fatal("прежнее имя")
+	}
+	// Плохое имя отклоняется до записи остальных полей.
+	if c, _ := do(t, s, "PATCH", "/v1/users/alice", `{"username":"плохое","max_tcp_conns":9}`, key); c != 400 {
+		t.Fatal("плохое имя должно отклоняться")
+	}
+	if f.users["alice"].MaxConns != 2 {
+		t.Fatalf("правка прошла при плохом имени: %+v", f.users["alice"])
+	}
+}
+
 func TestCreateRollsBackOnBadLimits(t *testing.T) {
 	f := newFake()
 	s := New(&failingLimits{f}, HashKey(key), nil, "t")

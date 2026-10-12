@@ -384,6 +384,11 @@ type userFields struct {
 	UserAdTag        *string `json:"user_ad_tag"`
 	RateLimitUpBps   *int64  `json:"rate_limit_up_bps"`
 	RateLimitDownBps *int64  `json:"rate_limit_down_bps"`
+	// Поля только для чтения: клиент может прислать объект из GET целиком.
+	Notes   json.RawMessage `json:"notes"`
+	Created json.RawMessage `json:"created"`
+	Traffic json.RawMessage `json:"traffic"`
+	Links   json.RawMessage `json:"links"`
 }
 
 func (f *userFields) touchesLimits() bool {
@@ -483,8 +488,13 @@ func (s *Server) patchUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
 	}
-	if f.Secret != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "секрет меняется через POST /v1/users/{username}/rotate-secret")
+	// Пустое или прежнее имя — не переименование: так шлют клиенты,
+	// отправляющие объект пользователя целиком.
+	if f.Username != nil && (*f.Username == "" || *f.Username == name) {
+		f.Username = nil
+	}
+	if f.Username != nil && !usernameRe.MatchString(*f.Username) {
+		writeErr(w, http.StatusBadRequest, "bad_request", "username: латиница, цифры, дефис и подчёркивание, до 32 символов")
 		return
 	}
 	s.write.Lock()
@@ -498,16 +508,16 @@ func (s *Server) patchUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", "пользователь "+name+" не найден")
 		return
 	}
+	if f.Secret != nil && *f.Secret != "" && *f.Secret != cur.Secret {
+		writeErr(w, http.StatusBadRequest, "bad_request", "секрет меняется через POST /v1/users/{username}/rotate-secret")
+		return
+	}
 	if err := s.apply(r.Context(), cur, &f); err != nil {
 		cliErr(w, err)
 		return
 	}
 	// Переименование последним: если другая правка не прошла, имя прежнее.
-	if f.Username != nil && *f.Username != name {
-		if !usernameRe.MatchString(*f.Username) {
-			writeErr(w, http.StatusBadRequest, "bad_request", "username: латиница, цифры, дефис и подчёркивание, до 32 символов")
-			return
-		}
+	if f.Username != nil {
 		if _, err := s.cli.RenameSecret(r.Context(), name, *f.Username); err != nil {
 			cliErr(w, err)
 			return
