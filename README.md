@@ -837,7 +837,9 @@ mtproxyl block import list.txt append     # добавить к текущему
   Caddy — Go 1.24+; если в системе нет подходящей версии, MTProxyL ставит свою сборку
   (Caddy с модулем layer4 для общего :443, HAProxy 3.2 + `mtproxyl-static` для файлов сайта)
 - Выбор перед первой установкой Selfmask или WEB, перенос — `mtproxyl front set nginx|caddy|haproxy`,
-  при установке — `--front caddy`
+  при установке — `--front caddy`. Держатель и внешний HAProxy выбираются одной командой
+  `mtproxyl web frontend nginx|caddy|haproxy|external|external-nginx` — то же в меню
+  «WEB Proxy → Frontend» и в панели в поле «Frontend публичного WEB»
 - Свой конфиг у каждого: `mtproxyl selfmask nginx-config on|write|edit|test`
 
 ### API управления *(новое в v1.7.0)*
@@ -1113,6 +1115,7 @@ mtproxyl web mode combined    # MTProto + WEB
 mtproxyl web links            # Ссылки tg://webproxy
 mtproxyl web sync             # Свести профили WEB со списком пользователей
 mtproxyl web haproxy-config   # Готовый фрагмент внешнего HAProxy
+mtproxyl web frontend caddy   # Кто принимает WEB: nginx|caddy|haproxy|external|external-nginx
 mtproxyl web nginx-config on|off|edit|show|test
 mtproxyl web nginx-config write < nginx.conf
 mtproxyl web set WEB_DECOY_MODE empty

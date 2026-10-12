@@ -564,7 +564,15 @@ export const mtproxylFrontApi = {
       method: 'POST',
       body: JSON.stringify({ server }),
     }),
+  /** Frontend публичного WEB: держатель MTProxyL или внешний HAProxy. */
+  setWebFrontend: (choice: WebFrontendChoice) =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/web/frontend', {
+      method: 'POST',
+      body: JSON.stringify({ choice }),
+    }),
 };
+
+export type WebFrontendChoice = 'nginx' | 'caddy' | 'haproxy' | 'external' | 'external-nginx';
 
 /** Внешний API управления MTProxyL (mtproxyl-api). */
 export interface ControlApiStatus {

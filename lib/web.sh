@@ -1880,6 +1880,7 @@ handle_web_command() {
         haproxy-config) web_haproxy_config ;;
         nginx-config) handle_nginx_custom_command "$@" ;;
         set)     check_root; web_set_param "${1:-}" "${2:-}" ;;
+        frontend) check_root; load_secrets; web_set_frontend "${1:-}" "${2:-}" ;;
         settable) web_settable_json ;;
         *)
             echo -e "  ${BOLD}WEB Proxy:${NC}"
@@ -1891,6 +1892,7 @@ handle_web_command() {
             echo -e "    ${GREEN}web sync${NC}      Свести профили WEB со списком пользователей"
             echo -e "    ${GREEN}web haproxy-config${NC} Готовый фрагмент внешнего HAProxy"
             echo -e "    ${GREEN}web nginx-config${NC} Свой конфиг держателя (nginx/Caddy/HAProxy)"
+            echo -e "    ${GREEN}web frontend${NC} nginx|caddy|haproxy|external|external-nginx  Кто принимает публичный WEB"
             echo -e "    ${GREEN}web set${NC} K V    Изменить параметр"
             echo -e "    ${GREEN}web json${NC}      Статус в JSON"
             ;;
@@ -1899,7 +1901,7 @@ handle_web_command() {
 
 # Формат как в каталогах NFT и Selfmask: КЛЮЧ|валидатор|описание.
 _WEB_SETTABLE=(
-    "WEB_FRONTEND|enum:nginx,haproxy,haproxy-nginx|Frontend публичного WEB: nginx MTProxyL, внешний HAProxy или HAProxy перед нашим nginx"
+    "WEB_FRONTEND|enum:nginx,haproxy,haproxy-nginx|Frontend публичного WEB: держатель MTProxyL (nginx, Caddy, HAProxy) или внешний HAProxy"
     "WEB_LAYOUT|enum:shared,split|shared — один порт с FakeTLS по SNI, split — свой порт"
     "WEB_PUBLIC_PORT|range:1:65535|Порт nginx WEB в раскладке split"
     "WEB_DOMAIN|custom:_validate_web_domain|Публичный домен WEB Proxy"
@@ -2044,6 +2046,49 @@ _web_find_settable() {
 }
 
 # Меняет только сохранённое значение. Конфиги перестраивает web enable.
+# Frontend WEB одной командой: держатель MTProxyL (nginx, caddy, haproxy) или
+# внешний HAProxy (external — сам держит TLS, external-nginx — перед нашим nginx).
+web_set_frontend() {
+    local _choice="${1:-}" _cert="${2:-}"
+    if web_is_reanimator; then
+        log_error "У цели frontend не выбирается: заглушку держит $(front_title) MTProxyL"
+        return 1
+    fi
+    case "$_choice" in
+        nginx|caddy|haproxy)
+            web_frontend_has_haproxy && { web_set_param WEB_FRONTEND nginx || return 1; }
+            if front_in_use; then
+                front_switch "$_choice"
+            else
+                FRONT_SERVER="$_choice"
+                save_settings
+                log_success "Заглушку будет держать $(front_title)"
+            fi
+            ;;
+        external|external-nginx)
+            if ! front_is nginx; then
+                if front_in_use; then front_switch nginx || return 1
+                else FRONT_SERVER="nginx"; save_settings; fi
+            fi
+            if [ "$_choice" = "external-nginx" ]; then
+                web_set_param WEB_FRONTEND haproxy-nginx || return 1
+                log_info "HAProxy остаётся вашим: фрагмент — mtproxyl web haproxy-config"
+                log_info "Сертификат выпускает и продлевает MTProxyL, PEM для HAProxy не нужен"
+            else
+                web_set_param WEB_FRONTEND haproxy || return 1
+                [ -n "$_cert" ] && { web_set_param WEB_HAPROXY_CERT "$_cert" || return 1; }
+                log_info "MTProxyL не меняет HAProxy. Фрагмент: mtproxyl web haproxy-config"
+                [ "${SELFMASK_ENABLED:-false}" = "true" ] \
+                    && log_warn "Перед включением внешнего HAProxy отключите Selfmask"
+            fi
+            ;;
+        *)
+            log_error "Использование: mtproxyl web frontend nginx|caddy|haproxy|external [PEM]|external-nginx"
+            return 1
+            ;;
+    esac
+}
+
 web_set_param() {
     local _key="$1" _val="$2" _entry
     if [ -z "$_key" ]; then

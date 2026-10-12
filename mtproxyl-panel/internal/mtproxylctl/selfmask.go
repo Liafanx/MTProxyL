@@ -38,6 +38,10 @@ type SelfmaskStatus struct {
 	// is about to come back instead of promising a vague "previous setup".
 	PrevSaved  bool   `json:"prev_saved"`
 	PrevDomain string `json:"prev_domain"`
+	// Front/FrontTitle/FrontSource — держатель заглушки и откуда он взят.
+	Front       string `json:"front,omitempty"`
+	FrontTitle  string `json:"front_title,omitempty"`
+	FrontSource string `json:"front_source,omitempty"`
 }
 
 // SelfmaskStatus reports the current decoy-site configuration.
