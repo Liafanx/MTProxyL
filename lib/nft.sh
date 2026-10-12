@@ -70,7 +70,7 @@ ZAPRET2_CONF="${ZAPRET2_ETC_DIR}/mtproto.conf"
 ZAPRET2_LUA="${ZAPRET2_LUA_DIR}/mtproto.lua"
 ZAPRET2_SERVICE="mtproxyl-zapret2.service"
 ZAPRET2_NFT_TABLE="MTProtoL"
-ZAPRET2_RELEASE="v1.0.3"
+ZAPRET2_RELEASE="v1.0.5.2"
 ZAPRET2_CACHE_DIR="${ZAPRET2_DIR}/cache"
 
 zapret2_bundle_cache_file() {
