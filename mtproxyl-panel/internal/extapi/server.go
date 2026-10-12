@@ -435,7 +435,7 @@ func toInfo(r rec, v *mtproxylctl.APIView) UserInfo {
 		if live.RecentUniqueIPsList != nil {
 			u.RecentUniqueIPsList = live.RecentUniqueIPsList
 		}
-	} else if v.Live != nil && len(v.Live) > 0 {
+	} else if len(v.Live) > 0 {
 		u.InRuntime = false
 	}
 	return u
