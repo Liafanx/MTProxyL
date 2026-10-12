@@ -6,7 +6,7 @@
 
 ---
 
-## v1.7.0 — 11.10.2026
+## v1.7.0 — 12.10.2026
 
 - Selfmask и WEB Proxy: заглушку и публичный TLS теперь может держать не только nginx, но и Caddy или HAProxy — с теми же раскладками портов, заголовками, страницей 404, доступом к панели на домене и постквантовым обменом ключами X25519MLKEM768. Выбор — `mtproxyl front set nginx|caddy|haproxy`, текущий — `mtproxyl front status`. Если подходящего Caddy (с модулем layer4) или HAProxy (с OpenSSL 3.5+) в системе нет, MTProxyL ставит свою сборку: Caddy с layer4, HAProxy 3.2 с OpenSSL 3.5.7. Файлы сайта за HAProxy раздаёт небольшой `mtproxyl-static` на loopback. Свой конфиг поддерживается у каждого: `mtproxyl selfmask nginx-config on|write|edit` работает с конфигом выбранного держателя. Выбор — перед первой установкой Selfmask или WEB в меню, «Selfmask → Держатель заглушки», «WEB Proxy → Frontend», в панели — карточка «Держатель заглушки» на страницах Selfmask и WEB Proxy, при установке — `--front nginx|caddy|haproxy`, в мастере первой установки — вместе с выбором frontend WEB (в том числе для «Только WEB»). Сообщения, статус и меню показывают выбранный держатель, а не nginx.
 
