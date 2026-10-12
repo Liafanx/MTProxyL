@@ -357,24 +357,25 @@ _telemt_api_bridge_hint() {
 # Строки «пользователь|tg-ссылка» из ответа API цели, только IPv4.
 # Ссылки отдаёт telemt — вручную их собирать нельзя, поэтому берём как есть.
 _target_links_ipv4() {
-    local _json="$1"
-    printf '%s' "$_json" | tr -d '\n' \
-        | awk '{gsub(/"username"/, "\n\"username\""); print}' \
-        | while IFS= read -r _chunk; do
-            case "$_chunk" in *'"username"'*) ;; *) continue ;; esac
-            local _u _links _l _srv
-            _u=$(sed -nE 's/.*"username"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' <<< "$_chunk")
-            _links=$(grep -oE 'tg://proxy\?[^"]+' <<< "$_chunk" | sort -u)
-            [ -z "$_links" ] && continue
-            while IFS= read -r _l; do
-                [ -z "$_l" ] && continue
-                _srv=$(sed -nE 's/.*[?&]server=([^&]*).*/\1/p' <<< "$_l")
-                case "$_srv" in
-                    ""|*:*|0.0.0.0) continue ;;
-                esac
-                printf '%s|%s\n' "${_u:-?}" "$_l"
-            done <<< "$_links"
-        done
+    # Один проход awk: раньше на каждую ссылку каждого пользователя шло
+    # по несколько форков — на 60 пользователях это секунды.
+    printf '%s' "$1" | tr -d '\n' | awk '
+        {
+            n = split($0, ch, /"username"[[:space:]]*:[[:space:]]*"/)
+            for (i = 2; i <= n; i++) {
+                c = ch[i]; q = index(c, "\""); if (!q) continue
+                u = substr(c, 1, q - 1); if (u == "") u = "?"
+                c = substr(c, q)
+                while (match(c, /tg:\/\/proxy\?[^"]+/)) {
+                    l = substr(c, RSTART, RLENGTH); c = substr(c, RSTART + RLENGTH)
+                    if (seen[u SUBSEP l]++) continue
+                    srv = ""
+                    if (match(l, /[?&]server=[^&]*/)) srv = substr(l, RSTART + 8, RLENGTH - 8)
+                    if (srv == "" || srv == "0.0.0.0" || index(srv, ":")) continue
+                    print u "|" l
+                }
+            }
+        }'
 }
 
 # Печатает ссылки цели (IPv4). Используется и в меню «Ссылки на прокси»,
@@ -2014,7 +2015,6 @@ run_reanimator_installer() {
     else
         CUSTOM_IP="$_det_ip"
     fi
-    NFT_SERVER_IP="$CUSTOM_IP"
 
     prompt_bridge_mode
 

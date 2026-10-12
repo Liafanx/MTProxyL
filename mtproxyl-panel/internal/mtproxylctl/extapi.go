@@ -92,6 +92,8 @@ type EngineUser struct {
 type APIView struct {
 	Links map[string][]string
 	Live  map[string]EngineUser
+	// Users — то же, что ListSecrets; nil, если скрипт старше 1.7.3.
+	Users []Secret
 }
 
 func (c *Client) APIView(ctx context.Context, label string) (*APIView, error) {
@@ -111,11 +113,12 @@ func (c *Client) APIView(ctx context.Context, label string) (*APIView, error) {
 		Live  *struct {
 			Data []EngineUser `json:"data"`
 		} `json:"live"`
+		Users []Secret `json:"users"`
 	}
 	if err := json.Unmarshal([]byte(firstJSONLine(out)), &raw); err != nil {
 		return nil, fmt.Errorf("api-view: неожиданный ответ")
 	}
-	v := &APIView{Links: raw.Links, Live: map[string]EngineUser{}}
+	v := &APIView{Links: raw.Links, Live: map[string]EngineUser{}, Users: raw.Users}
 	if v.Links == nil {
 		v.Links = map[string][]string{}
 	}

@@ -489,17 +489,34 @@ func logViewErr(err error) {
 
 // info — пользователь после операции в виде UserInfo и текущая ревизия.
 func (s *Server) info(ctx context.Context, name string) (*UserInfo, string, error) {
-	u, rev, err := s.findUser(ctx, name)
-	if err != nil || u == nil {
-		return nil, rev, err
+	list, view, err := s.snapshot(ctx, name)
+	if err != nil {
+		return nil, "", err
 	}
-	view, err := s.cli.APIView(ctx, name)
+	rev := revisionOf(list)
+	for _, sec := range list {
+		if sec.Label == name {
+			i := toInfo(fromSecret(sec), view)
+			return &i, rev, nil
+		}
+	}
+	return nil, rev, nil
+}
+
+// snapshot — список пользователей и ссылки одним запуском скрипта: каждый
+// запуск — это sudo и загрузка MTProxyL. Скрипт старше 1.7.3 список в
+// api-view не кладёт — тогда отдельный secret list.
+func (s *Server) snapshot(ctx context.Context, label string) ([]mtproxylctl.Secret, *mtproxylctl.APIView, error) {
+	view, err := s.cli.APIView(ctx, label)
 	if err != nil {
 		logViewErr(err)
 		view = nil
 	}
-	i := toInfo(*u, view)
-	return &i, rev, nil
+	if view != nil && view.Users != nil {
+		return view.Users, view, nil
+	}
+	list, err := s.cli.ListSecrets(ctx)
+	return list, view, err
 }
 
 func (s *Server) writeUser(w http.ResponseWriter, r *http.Request, name string, code int, wrap func(*UserInfo) any) {
@@ -554,15 +571,10 @@ func (s *Server) restart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
-	list, err := s.cli.ListSecrets(r.Context())
+	list, view, err := s.snapshot(r.Context(), "")
 	if err != nil {
 		cliErr(w, err)
 		return
-	}
-	view, err := s.cli.APIView(r.Context(), "")
-	if err != nil {
-		logViewErr(err)
-		view = nil
 	}
 	out := make([]UserInfo, 0, len(list))
 	for _, sec := range list {

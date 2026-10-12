@@ -20,7 +20,7 @@ export LC_NUMERIC=C
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="1.7.2"
+VERSION="1.7.3"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -153,6 +153,7 @@ cli_main() {
             restart_target
             ;;
         status)
+            [ "${1:-}" = "--json" ] && _SETTINGS_READ_ONLY=1
             load_settings; load_secrets; load_detect_settings
             if [ "$1" = "--json" ]; then
                 show_status_json
@@ -162,6 +163,7 @@ cli_main() {
             ;;
 
         secret)
+            case "${1:-}" in list|api-view|link|qr|limits) _SETTINGS_READ_ONLY=1 ;; esac
             load_settings; load_secrets
             # В реаниматоре пользователи живут в конфиге цели, а путь к нему
             # знает только обнаружение.

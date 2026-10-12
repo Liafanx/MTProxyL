@@ -17,6 +17,9 @@ import (
 type fakeCLI struct {
 	users map[string]*mtproxylctl.Secret
 	calls []string
+	// viewUsers — api-view отдаёт и список (скрипт 1.7.3+).
+	viewUsers bool
+	listCalls int
 }
 
 func newFake() *fakeCLI {
@@ -26,6 +29,7 @@ func newFake() *fakeCLI {
 }
 
 func (f *fakeCLI) ListSecrets(context.Context) ([]mtproxylctl.Secret, error) {
+	f.listCalls++
 	out := []mtproxylctl.Secret{}
 	for _, u := range f.users {
 		out = append(out, *u)
@@ -100,6 +104,12 @@ func (f *fakeCLI) APIView(_ context.Context, l string) (*mtproxylctl.APIView, er
 		}
 		v.Live[name] = mtproxylctl.EngineUser{Username: name, InRuntime: true, CurrentConnections: 2,
 			ActiveUniqueIPs: 1, ActiveUniqueIPsList: []string{"192.0.2.1"}, TotalOctets: 42}
+	}
+	if f.viewUsers {
+		v.Users = []mtproxylctl.Secret{}
+		for _, u := range f.users {
+			v.Users = append(v.Users, *u)
+		}
 	}
 	return v, nil
 }
@@ -263,6 +273,33 @@ func TestUserInfoFormat(t *testing.T) {
 	list := out["data"].([]any)
 	if len(list) != 2 || list[0].(map[string]any)["username"] != "aaa" || list[1].(map[string]any)["links"] == nil {
 		t.Fatalf("список: %v", list)
+	}
+}
+
+// Скрипт 1.7.3+ отдаёт список в api-view: чтение — один запуск скрипта,
+// ответ и ревизия те же, что через secret list.
+func TestSnapshotFromAPIView(t *testing.T) {
+	old, cur := newFake(), newFake()
+	cur.viewUsers = true
+	for _, path := range []string{"/v1/users/alice", "/v1/users", "/v1/users/alice/links", "/v1/users/nobody"} {
+		c1, o1 := do(t, New(old, HashKey(key), nil, "t"), "GET", path, "", key)
+		c2, o2 := do(t, New(cur, HashKey(key), nil, "t"), "GET", path, "", key)
+		delete(o1, "request_id")
+		delete(o2, "request_id")
+		if e1, ok := o1["error"].(map[string]any); ok {
+			delete(e1, "request_id")
+		}
+		if e2, ok := o2["error"].(map[string]any); ok {
+			delete(e2, "request_id")
+		}
+		j1, _ := json.Marshal(o1)
+		j2, _ := json.Marshal(o2)
+		if c1 != c2 || string(j1) != string(j2) {
+			t.Fatalf("%s: %d %s\n!= %d %s", path, c1, j1, c2, j2)
+		}
+	}
+	if cur.listCalls != 0 {
+		t.Fatalf("secret list вызван %d раз", cur.listCalls)
 	}
 }
 
