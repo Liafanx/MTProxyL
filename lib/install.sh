@@ -711,30 +711,10 @@ run_fix_arsenal_wizard() {
       fi
 
       if [ "$_nft_applied" = "true" ]; then
-        # По умолчанию ограничиваем по IP сервера
-        if [ -n "${CUSTOM_IP:-}" ] && validate_ip_literal "${CUSTOM_IP}"; then
-            NFT_SERVER_IP="${CUSTOM_IP}"
-            log_info "Используем IP из настроек ссылок: ${NFT_SERVER_IP}"
-        elif [ -n "${CUSTOM_IP:-}" ]; then
-            log_warn "В настройках ссылок указан домен '${CUSTOM_IP}' — для NFT нужен IPv4"
-            # CUSTOM_IP="" — иначе get_public_ip вернёт тот же домен.
-            NFT_SERVER_IP="$(CUSTOM_IP="" get_public_ip)"
-            if [ -n "$NFT_SERVER_IP" ]; then
-                log_info "Автоматически определён IP для NFT: ${NFT_SERVER_IP}"
-            else
-                log_warn "Не удалось определить IP — NFT правило без привязки к IP"
-                NFT_SERVER_IP=""
-            fi
-        else
-            NFT_SERVER_IP="$(get_public_ip)"
-            if [ -n "$NFT_SERVER_IP" ]; then
-                log_info "Автоматически определён IP для NFT: ${NFT_SERVER_IP}"
-            else
-                log_warn "Не удалось автоматически определить IP сервера"
-                log_warn "NFT правило будет создано без IP-привязки"
-                NFT_SERVER_IP=""
-            fi
-        fi
+        # Без привязки к IP: правило для всех адресов сервера. Сузить до
+        # одного — в настройках NFT.
+        NFT_SERVER_IP=""
+        log_info "Правило NFT — для всех IP сервера (привязка к IP — в настройках NFT)"
 
         save_nft_settings
         apply_nft_rules || log_warn "Не удалось применить NFT правила"

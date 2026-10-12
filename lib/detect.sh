@@ -2015,7 +2015,6 @@ run_reanimator_installer() {
     else
         CUSTOM_IP="$_det_ip"
     fi
-    NFT_SERVER_IP="$CUSTOM_IP"
 
     prompt_bridge_mode
 

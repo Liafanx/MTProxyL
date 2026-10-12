@@ -1016,7 +1016,7 @@ tui_zapret2_settings() {
         [ -n "${ZAPRET2_PORT:-}" ] && _mport_note="задан вручную"
         echo -e "  ${DIM}[13]${NC} Основной порт [$(zapret2_main_port)]  ${DIM}— ${_mport_note}${NC}"
         local _ipf="${DIM}выключен${NC}"
-        [ "${ZAPRET2_FILTER_IP_ENABLED:-true}" = "true" ] && [ -n "${ZAPRET2_FILTER_IP:-}" ] \
+        [ "${ZAPRET2_FILTER_IP_ENABLED:-false}" = "true" ] && [ -n "${ZAPRET2_FILTER_IP:-}" ] \
             && _ipf="${ZAPRET2_FILTER_IP}"
         echo -e "  ${DIM}[14]${NC} Фильтр по IP  [${_ipf}]  ${DIM}— правила только для этого адреса${NC}"
         echo -e "  ${DIM}[15]${NC} Мимо очереди  [${ZAPRET2_EXCLUDE_IFACES:-нет}]  ${DIM}— интерфейсы VPN${NC}"

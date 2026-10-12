@@ -136,9 +136,9 @@ ZAPRET2_EXTRA_PORTS=""
 # порт, а до клиентов доходит другой (проброс, балансировщик, свой DNAT).
 ZAPRET2_PORT=""
 # Сузить правила до конкретного адреса сервера: без этого очередь ловит весь
-# трафик на этом порту, включая чужой транзитный. Пусто — определяем сам
-# адрес при установке; выключено — правила без фильтра по IP, как раньше.
-ZAPRET2_FILTER_IP_ENABLED="true"
+# трафик на этом порту, включая чужой транзитный. По умолчанию выключено —
+# правила для всех IP сервера; адрес задаётся в настройках zapret2.
+ZAPRET2_FILTER_IP_ENABLED="false"
 ZAPRET2_FILTER_IP=""
 # Интерфейсы, чей трафик проходит мимо очереди: список через пробел, можно с
 # «*». Туннели (AmneziaWG, WireGuard, OpenVPN) несут чужой HTTPS, и десинк по
@@ -1551,7 +1551,7 @@ zapret2_main_port() {
 # строки правила, дальше подставляется остальное условие.
 zapret2_ip_match() {
     local _dir="$1"
-    [ "${ZAPRET2_FILTER_IP_ENABLED:-true}" = "true" ] || return 0
+    [ "${ZAPRET2_FILTER_IP_ENABLED:-false}" = "true" ] || return 0
     [ -n "${ZAPRET2_FILTER_IP:-}" ] || return 0
     printf 'ip %s %s ' "$_dir" "$ZAPRET2_FILTER_IP"
 }
@@ -2370,26 +2370,12 @@ zapret2_update_config() {
     fi
 }
 
-# Область действия правил при установке: адрес сервера и туннели, которые
-# трогать нельзя. Спрашивать про это нечего — значения видны из системы, а
-# поменять их можно в настройках zapret2.
+# Область действия правил при установке: туннели, которые трогать нельзя.
+# Спрашивать про это нечего — они видны из системы, а поменять можно в
+# настройках zapret2.
 zapret2_autoconfigure_scope() {
-    if [ "${ZAPRET2_FILTER_IP_ENABLED:-true}" = "true" ] && [ -z "${ZAPRET2_FILTER_IP:-}" ]; then
-        local _ip; _ip=$(zapret2_detect_local_ip 2>/dev/null)
-        if zapret2_validate_ipv4 "${_ip:-}"; then
-            ZAPRET2_FILTER_IP="$_ip"
-            log_info "Правила сузим до адреса сервера: ${_ip}"
-            local _pub; _pub=$(get_public_ip 2>/dev/null)
-            if zapret2_validate_ipv4 "${_pub:-}" && [ "$_pub" != "$_ip" ]; then
-                log_info "Снаружи сервер виден как ${_pub} — в пакетах стоит ${_ip}, правила по нему"
-            fi
-        else
-            # Без адреса фильтр смысла не имеет, но и молча ронять установку
-            # из-за него нельзя: правила по портам работают и так.
-            ZAPRET2_FILTER_IP_ENABLED="false"
-            log_warn "Не удалось определить IPv4 сервера — правила будут без фильтра по адресу"
-        fi
-    fi
+    # Адрес сервера сами не подставляем: правила по умолчанию для всех IP.
+    # Сузить до одного адреса можно в настройках zapret2.
 
     # Исключаем ровно те туннели, что есть сейчас, а не шаблоны на всё сразу:
     # маска awg* задевает и интерфейсы, которые появятся позже без ведома хозяина.
@@ -2793,7 +2779,7 @@ _NFT_SETTABLE=(
     "ZAPRET2_EXTRA_PORTS|custom:_validate_nft_ports|Дополнительные порты/диапазоны"
     "ZAPRET2_PORT|custom:_validate_nft_optional_port|Основной порт (пусто = порт прокси)"
     "ZAPRET2_FILTER_IP_ENABLED|bool|Сужать правила до адреса сервера"
-    "ZAPRET2_FILTER_IP|custom:_validate_nft_optional_ipv4|IPv4 сервера для правил (пусто = определить самим)"
+    "ZAPRET2_FILTER_IP|custom:_validate_nft_optional_ipv4|IPv4 сервера для правил (пусто — без привязки к IP)"
     "ZAPRET2_EXCLUDE_IFACES|custom:_validate_nft_ifaces|Интерфейсы мимо очереди, через пробел (wg* tun*)"
     "ZAPRET2_HOOK|enum:auto,host,forward|Цепочка NFT: auto, host (pre/postrouting) или forward (цель в контейнере)"
     "ZAPRET2_UID|range:0:65535|UID, под который nfqws2 сбрасывает привилегии"
@@ -2835,7 +2821,7 @@ _validate_nft_ports() {
     return 0
 }
 
-# Пусто — «определить самим». Домен не годится: в правило nft он не встанет.
+# Пусто — без привязки к IP. Домен не годится: в правило nft он не встанет.
 _validate_nft_optional_ipv4() {
     [ -z "$1" ] && return 0
     zapret2_validate_ipv4 "$1" && return 0
