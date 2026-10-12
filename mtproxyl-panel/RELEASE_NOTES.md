@@ -7,7 +7,10 @@
 - «Обновление», карточка движка: имя службы движка — случайное или стандартное
   `mtproxyl-telemt`, смена одной кнопкой. Установщик панели берёт имя службы
   из MTProxyL, а не считает его всегда `mtproxyl-telemt`.
-- «API управления»: пояснение к PATCH — имя берётся из адреса.
+- `mtproxyl-api` отвечает в формате API telemt: `UserInfo` с `null` вместо
+  «без ограничения», ссылки объектом `{classic, secure, tls, tls_domains, web}`,
+  срок с `+00:00`, `{user, secret}` при создании, `user_exists`, `revision` и
+  `If-Match`, PATCH по JSON Merge Patch. Нужен MTProxyL 1.7.1 (`secret api-view`).
 - Нужен MTProxyL 1.7.1. После обновления панели выполните `mtproxyl panel install`,
   чтобы панель получила права на `mtproxyl web frontend` и `mtproxyl engine service-name`.
 

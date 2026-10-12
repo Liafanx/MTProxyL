@@ -84,8 +84,27 @@ func (f *fakeCLI) SetSecretRate(_ context.Context, l string, up, down int64) (st
 }
 func (f *fakeCLI) ResetQuota(context.Context, string) (string, error)       { return "", nil }
 func (f *fakeCLI) ResetUserTraffic(context.Context, string) (string, error) { return "", nil }
-func (f *fakeCLI) Links(_ context.Context, l string) ([]string, error) {
-	return []string{"tg://proxy?server=x&port=443&secret=" + f.users[l].Secret}, nil
+// Ссылки как у MTProxyL: ee с доменом example.com, dd и WEB.
+func (f *fakeCLI) APIView(_ context.Context, l string) (*mtproxylctl.APIView, error) {
+	v := &mtproxylctl.APIView{Links: map[string][]string{}, Live: map[string]mtproxylctl.EngineUser{}}
+	for name, u := range f.users {
+		if l != "" && name != l {
+			continue
+		}
+		v.Links[name] = []string{
+			"tg://proxy?server=x&port=443&secret=ee" + u.Secret + "6578616d706c652e636f6d",
+			"tg://proxy?server=x&port=443&secret=ee" + u.Secret + "6f746865722e6f7267",
+			"tg://proxy?server=x&port=443&secret=dd" + u.Secret,
+			"tg://webproxy?server=web.x&secret=dd" + u.Secret,
+		}
+		v.Live[name] = mtproxylctl.EngineUser{Username: name, InRuntime: true, CurrentConnections: 2,
+			ActiveUniqueIPs: 1, ActiveUniqueIPsList: []string{"192.0.2.1"}, TotalOctets: 42}
+	}
+	return v, nil
+}
+func (f *fakeCLI) RotateSecretTo(_ context.Context, l, s string) (string, error) {
+	f.users[l].Secret = s
+	return "", nil
 }
 func (f *fakeCLI) StatusRaw(context.Context) (json.RawMessage, error) {
 	return json.RawMessage(`{"mode":"manager"}`), nil
@@ -140,7 +159,7 @@ func TestAllowAndLockout(t *testing.T) {
 func TestUserLifecycle(t *testing.T) {
 	f := newFake()
 	s := New(f, HashKey(key), nil, "t")
-	c, out := do(t, s, "POST", "/v1/users", `{"username":"bob","max_tcp_conns":5,"data_quota_bytes":1000,"rate_limit_down_bps":2000000,"enabled":false}`, key)
+	c, out := do(t, s, "POST", "/v1/users", `{"username":"bob","max_tcp_conns":5,"data_quota_bytes":1000,"rate_limit_down_bps":2000000,"enabled":false,"unknown_field":1}`, key)
 	if c != 201 {
 		t.Fatalf("создание: %d %v", c, out)
 	}
@@ -148,9 +167,14 @@ func TestUserLifecycle(t *testing.T) {
 	if u.MaxConns != 5 || u.QuotaBytes != 1000 || u.RateDownBps != 2000000 || u.Enabled {
 		t.Fatalf("лимиты не применены: %+v", u)
 	}
+	// CreateUserResponse telemt: {user, secret}.
 	data := out["data"].(map[string]any)
-	if data["links"] == nil || data["max_tcp_conns"].(float64) != 5 {
-		t.Fatalf("ответ: %v", data)
+	user := data["user"].(map[string]any)
+	if data["secret"] != u.Secret || user["max_tcp_conns"].(float64) != 5 {
+		t.Fatalf("ответ создания: %v", data)
+	}
+	if out["revision"] == nil {
+		t.Fatal("нет revision")
 	}
 
 	// Частичная правка: остальные лимиты не обнуляются.
@@ -160,12 +184,12 @@ func TestUserLifecycle(t *testing.T) {
 	if u := f.users["bob"]; u.MaxIPs != 3 || u.MaxConns != 5 || u.QuotaBytes != 1000 {
 		t.Fatalf("правка затёрла лимиты: %+v", u)
 	}
-	// Скорость правится отдельно от лимитов, второе направление сохраняется.
-	if c, _ := do(t, s, "PATCH", "/v1/users/bob", `{"rate_limit_up_bps":500}`, key); c != 200 {
-		t.Fatal("скорость")
+	// null снимает ограничение, как JSON Merge Patch у telemt.
+	if c, _ := do(t, s, "PATCH", "/v1/users/bob", `{"max_tcp_conns":null,"rate_limit_up_bps":500}`, key); c != 200 {
+		t.Fatal("null")
 	}
-	if u := f.users["bob"]; u.RateUpBps != 500 || u.RateDownBps != 2000000 {
-		t.Fatalf("скорость: %+v", u)
+	if u := f.users["bob"]; u.MaxConns != 0 || u.MaxIPs != 3 || u.RateUpBps != 500 || u.RateDownBps != 2000000 {
+		t.Fatalf("null/скорость: %+v", u)
 	}
 	if c, _ := do(t, s, "PATCH", "/v1/users/bob", `{"username":"bobby"}`, key); c != 200 {
 		t.Fatal("переименование")
@@ -173,17 +197,26 @@ func TestUserLifecycle(t *testing.T) {
 	if _, ok := f.users["bobby"]; !ok {
 		t.Fatal("имя не сменилось")
 	}
+	// secret в PATCH ставит этот секрет.
+	if c, _ := do(t, s, "PATCH", "/v1/users/bobby", `{"secret":"`+strings.Repeat("d", 32)+`"}`, key); c != 200 || f.users["bobby"].Secret != strings.Repeat("d", 32) {
+		t.Fatal("секрет через PATCH")
+	}
 	if c, _ := do(t, s, "PATCH", "/v1/users/bobby", `{"secret":"x"}`, key); c != 400 {
-		t.Fatal("секрет через PATCH должен отклоняться")
+		t.Fatal("кривой секрет должен отклоняться")
 	}
-	if c, _ := do(t, s, "PATCH", "/v1/users/bobby", `{"bogus":1}`, key); c != 400 {
-		t.Fatal("неизвестное поле должно отклоняться")
+	if c, out := do(t, s, "POST", "/v1/users", `{"username":"alice"}`, key); c != 409 || out["error"].(map[string]any)["code"] != "user_exists" {
+		t.Fatalf("дубликат: %d %v", c, out)
 	}
-	if c, _ := do(t, s, "POST", "/v1/users", `{"username":"alice"}`, key); c != 409 {
-		t.Fatal("дубликат должен давать 409")
+	c, out = do(t, s, "POST", "/v1/users/bobby/rotate-secret", `{"secret":"`+strings.Repeat("e", 32)+`"}`, key)
+	if c != 200 || out["data"].(map[string]any)["secret"] != strings.Repeat("e", 32) {
+		t.Fatalf("rotate: %d %v", c, out)
 	}
-	if c, _ := do(t, s, "DELETE", "/v1/users/bobby", "", key); c != 200 {
-		t.Fatal("удаление")
+	c, out = do(t, s, "POST", "/v1/users/bobby/reset-quota", "", key)
+	if c != 200 || out["data"].(map[string]any)["used_bytes"].(float64) != 0 {
+		t.Fatalf("reset-quota: %v", out)
+	}
+	if c, out := do(t, s, "DELETE", "/v1/users/bobby", "", key); c != 200 || out["data"].(map[string]any)["in_runtime"] != false {
+		t.Fatalf("удаление: %v", out)
 	}
 	if c, _ := do(t, s, "DELETE", "/v1/users/bobby", "", key); c != 404 {
 		t.Fatal("повторное удаление должно давать 404")
@@ -193,27 +226,66 @@ func TestUserLifecycle(t *testing.T) {
 	}
 }
 
-// Клиенты шлют объект пользователя целиком: пустое или прежнее имя, тот же
-// секрет и поля только для чтения не должны давать ошибку после правки.
-func TestPatchFullObject(t *testing.T) {
+// Формат UserInfo telemt: null вместо «без ограничения», ссылки объектом,
+// срок с +00:00, живые данные движка.
+func TestUserInfoFormat(t *testing.T) {
+	f := newFake()
+	f.users["alice"].Expires = "2026-10-22T20:59:59Z"
+	s := New(f, HashKey(key), nil, "t")
+	c, out := do(t, s, "GET", "/v1/users/alice", "", key)
+	if c != 200 {
+		t.Fatalf("%d %v", c, out)
+	}
+	u := out["data"].(map[string]any)
+	for _, k := range []string{"max_tcp_conns", "max_unique_ips", "data_quota_bytes", "user_ad_tag", "rate_limit_up_bps", "rate_limit_down_bps"} {
+		if v, ok := u[k]; !ok || v != nil {
+			t.Fatalf("%s: ждали null, получили %v", k, v)
+		}
+	}
+	if u["expiration_rfc3339"] != "2026-10-22T20:59:59+00:00" {
+		t.Fatalf("срок: %v", u["expiration_rfc3339"])
+	}
+	if u["current_connections"].(float64) != 2 || u["total_octets"].(float64) != 42 || u["in_runtime"] != true {
+		t.Fatalf("живые данные: %v", u)
+	}
+	links := u["links"].(map[string]any)
+	if len(links["tls"].([]any)) != 2 || len(links["secure"].([]any)) != 1 || len(links["classic"].([]any)) != 0 || len(links["web"].([]any)) != 1 {
+		t.Fatalf("ссылки: %v", links)
+	}
+	td := links["tls_domains"].([]any)
+	if len(td) != 1 || td[0].(map[string]any)["domain"] != "other.org" {
+		t.Fatalf("tls_domains: %v", td)
+	}
+	// Список — массив UserInfo, отсортированный по имени.
+	do(t, s, "POST", "/v1/users", `{"username":"aaa"}`, key)
+	_, out = do(t, s, "GET", "/v1/users", "", key)
+	list := out["data"].([]any)
+	if len(list) != 2 || list[0].(map[string]any)["username"] != "aaa" || list[1].(map[string]any)["links"] == nil {
+		t.Fatalf("список: %v", list)
+	}
+}
+
+// If-Match как у telemt: чужая ревизия даёт 409 и ничего не меняет.
+func TestIfMatch(t *testing.T) {
 	f := newFake()
 	s := New(f, HashKey(key), nil, "t")
-	body := `{"username":"","secret":"` + strings.Repeat("a", 32) + `","expiration_rfc3339":"2027-01-01","notes":"","created":1,"traffic":{"total_bytes":0},"links":[]}`
-	if c, out := do(t, s, "PATCH", "/v1/users/alice", body, key); c != 200 {
-		t.Fatalf("полный объект: %d %v", c, out)
+	_, out := do(t, s, "GET", "/v1/users/alice", "", key)
+	rev := out["revision"].(string)
+	req := httptest.NewRequest("PATCH", "/v1/users/alice", strings.NewReader(`{"max_tcp_conns":7}`))
+	req.Header.Set("Authorization", key)
+	req.Header.Set("If-Match", "deadbeef")
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	if rec.Code != 409 || f.users["alice"].MaxConns != 0 {
+		t.Fatalf("чужая ревизия: %d", rec.Code)
 	}
-	if f.users["alice"].Expires != "2027-01-01" {
-		t.Fatalf("срок не применён: %+v", f.users["alice"])
-	}
-	if c, _ := do(t, s, "PATCH", "/v1/users/alice", `{"username":"alice","max_tcp_conns":2}`, key); c != 200 {
-		t.Fatal("прежнее имя")
-	}
-	// Плохое имя отклоняется до записи остальных полей.
-	if c, _ := do(t, s, "PATCH", "/v1/users/alice", `{"username":"плохое","max_tcp_conns":9}`, key); c != 400 {
-		t.Fatal("плохое имя должно отклоняться")
-	}
-	if f.users["alice"].MaxConns != 2 {
-		t.Fatalf("правка прошла при плохом имени: %+v", f.users["alice"])
+	req = httptest.NewRequest("PATCH", "/v1/users/alice", strings.NewReader(`{"max_tcp_conns":7}`))
+	req.Header.Set("Authorization", key)
+	req.Header.Set("If-Match", `"`+rev+`"`)
+	rec = httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	if rec.Code != 200 || f.users["alice"].MaxConns != 7 {
+		t.Fatalf("своя ревизия: %d", rec.Code)
 	}
 }
 

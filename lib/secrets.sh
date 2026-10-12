@@ -330,15 +330,19 @@ secret_remove() {
 
 # Ротация секрета
 secret_rotate() {
-    local label="$1"
+    local label="$1" _want="${2:-}"
+    if [ -n "$_want" ] && ! [[ "$_want" =~ ^[0-9a-fA-F]{32}$ ]]; then
+        log_error "Секрет: ровно 32 шестнадцатеричных символа"
+        return 1
+    fi
     local idx=-1 i
     for i in "${!SECRETS_LABELS[@]}"; do
         [ "${SECRETS_LABELS[$i]}" = "$label" ] && { idx=$i; break; }
     done
     [ $idx -eq -1 ] && { log_error "Секрет '${label}' не найден"; return 1; }
 
-    local new_secret
-    new_secret=$(generate_secret)
+    local new_secret="${_want,,}"
+    [ -n "$new_secret" ] || new_secret=$(generate_secret)
     SECRETS_KEYS[$idx]="$new_secret"
     SECRETS_CREATED[$idx]="$(date +%s)"
 
@@ -1363,12 +1367,17 @@ target_user_remove() {
 }
 
 target_user_rotate() {
-    local _label="$1"
+    local _label="$1" _want="${2:-}"
+    if [ -n "$_want" ] && ! [[ "$_want" =~ ^[0-9a-fA-F]{32}$ ]]; then
+        log_error "Секрет: ровно 32 шестнадцатеричных символа"
+        return 1
+    fi
     _target_users_ready || return 1
     local _state; _state=$(_target_user_state "$_label")
     [ -n "$_state" ] || { log_error "Пользователь '${_label}' не найден у цели"; return 1; }
 
-    local _raw; _raw=$(generate_secret)
+    local _raw="${_want,,}"
+    [ -n "$_raw" ] || _raw=$(generate_secret)
     backup_target_config "users" "true" || true
     if [ "$_state" = "off" ]; then
         # У выключенного правим закомментированную строку: включать её здесь
@@ -1717,7 +1726,7 @@ handle_target_user_command() {
             else
                 target_users_list
             fi ;;
-        rotate)   check_root; target_user_rotate "$1" ;;
+        rotate)   check_root; target_user_rotate "$1" "${2:-}" ;;
         enable)   check_root; target_user_toggle "$1" enable ;;
         disable)  check_root; target_user_toggle "$1" disable ;;
         rename)   check_root; target_user_rename "$1" "$2" ;;
@@ -1729,6 +1738,7 @@ handle_target_user_command() {
         adtag)    check_root; target_user_adtag "${1:-}" "${2:-}" ;;
         setrate)  check_root; target_user_setrate "${1:-}" "${2:-0}" "${3:-0}" ;;
         reset-quota) check_root; secret_reset_quota "${1:-}" ;;
+        api-view) secret_api_view_json true "${1:-}" ;;
         export)   check_root; target_users_export "${1:--}" ;;
         import)   check_root; target_users_import "${1:-}" ;;
         link)
@@ -1792,6 +1802,48 @@ target_user_show_limits() {
 }
 
 # CLI обработчик
+# Всё, что нужно API управления для ответов в формате API telemt, одним
+# вызовом: ссылки каждого пользователя и ответ движка на /v1/users (живые
+# подключения и IP). live = null, если API движка не отвечает.
+secret_api_view_json() {
+    local _target="${1:-false}" _only="${2:-}" _cfg _l _first=1 _link _lfirst
+    local -a _labels=()
+    if [ "$_target" = "true" ]; then
+        _cfg="${DETECTED_CONFIG_PATH:-}"
+        local _st _nm _vl
+        while IFS='|' read -r _st _nm _vl; do
+            [ -n "$_nm" ] && _labels+=("$_nm")
+        done < <(_target_section_pairs "access.users")
+    else
+        load_secrets
+        _cfg=$(_engine_config_path)
+        _labels=("${SECRETS_LABELS[@]}")
+    fi
+    printf '{"links":{'
+    for _l in "${_labels[@]}"; do
+        [ -z "$_only" ] || [ "$_l" = "$_only" ] || continue
+        [ "$_first" = 1 ] || printf ','
+        _first=0
+        json_escape_fast "$_l"; printf '"%s":[' "$_JSON_ESCAPE_OUT"
+        _lfirst=1
+        while IFS= read -r _link; do
+            [[ "$_link" == tg://* ]] || continue
+            [ "$_lfirst" = 1 ] || printf ','
+            _lfirst=0
+            json_escape_fast "$_link"; printf '"%s"' "$_JSON_ESCAPE_OUT"
+        done < <(if [ "$_target" = "true" ]; then target_user_link "$_l"; else get_proxy_links "$_l"; fi 2>/dev/null)
+        printf ']'
+    done
+    printf '},"live":'
+    local _json
+    if _json=$(_get_telemt_users_json "$_cfg" 2>/dev/null); then
+        printf '%s' "$_json" | tr -d '\n'
+    else
+        printf 'null'
+    fi
+    printf '}\n'
+}
+
 handle_secret_command() {
     local subcmd="${1:-list}"; shift 2>/dev/null || true
     # В реаниматоре у пользователей своё хранилище — конфиг цели, и общий гвард
@@ -1805,7 +1857,7 @@ handle_secret_command() {
     # 'secret list --json' (запрос панели) попадал в ветку пишущих команд и в
     # режиме супер эксперта отказывал, хотя ничего не пишет.
     case "$subcmd" in
-        list|link|qr|export|"") ;;
+        list|link|qr|export|api-view|"") ;;
         *) _require_no_superexpert || return 1 ;;
     esac
     case "$subcmd" in
@@ -1817,7 +1869,7 @@ handle_secret_command() {
             else
                 secret_list
             fi ;;
-        rotate)   check_root; secret_rotate "$1" ;;
+        rotate)   check_root; secret_rotate "$1" "${2:-}" ;;
         enable)   check_root; secret_toggle "$1" enable ;;
         disable)  check_root; secret_toggle "$1" disable ;;
         limits)   secret_show_limits "$1" ;;
@@ -1829,6 +1881,7 @@ handle_secret_command() {
             local l="$1"; shift 2>/dev/null || true
             secret_set_limits "$l" "${1:-0}" "${2:-0}" "${3:-0}" "${4:-}" ;;
         link)     get_proxy_links "${1:-}"; echo "" ;;
+        api-view) secret_api_view_json false "${1:-}" ;;
         clone)    check_root; secret_clone "$1" "$2" ;;
         rename)   check_root; secret_rename "$1" "$2" ;;
         export)   check_root; secret_export_file "${1:--}" ;;
@@ -1843,7 +1896,7 @@ handle_secret_command() {
             echo -e "    ${GREEN}secret add${NC} <метка>        Добавить"
             echo -e "    ${GREEN}secret remove${NC} <метка>     Удалить"
             echo -e "    ${GREEN}secret list${NC}               Список"
-            echo -e "    ${GREEN}secret rotate${NC} <метка>     Обновить ключ"
+            echo -e "    ${GREEN}secret rotate${NC} <метка> [32hex]  Обновить ключ (свой или случайный)"
             echo -e "    ${GREEN}secret enable${NC} <метка>     Включить"
             echo -e "    ${GREEN}secret disable${NC} <метка>    Выключить"
             echo -e "    ${GREEN}secret limits${NC} [метка]     Лимиты"
