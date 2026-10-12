@@ -7,6 +7,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { OperationProgress } from '@/components/OperationProgress';
 import { ParamField } from '@/components/ParamField';
 import { NginxCustomConfigCard } from '@/components/NginxCustomConfigCard';
+import { FrontServerCard } from '@/components/FrontServerCard';
 import { HttpsHeadersCard } from '@/components/HttpsHeadersCard';
 import { SiteSourcePicker, siteSourceLabel } from '@/components/SiteSourcePicker';
 import { mtproxylApi, type SelfmaskParam, type SelfmaskStatus, type WebStatus } from '@/lib/api';
@@ -53,7 +54,7 @@ export function SelfmaskPage() {
     }
   }, []);
 
-  const { operation, start, dismiss, running } = useMtproxylOperation(load, ['selfmask:']);
+  const { operation, start, dismiss, running } = useMtproxylOperation(load, ['selfmask:', 'front:']);
 
   useEffect(() => {
     void load();
@@ -209,12 +210,12 @@ export function SelfmaskPage() {
                   <Row label="Автопродление" value={status.auto_renew ? 'включено' : 'выключено'} />
                 )}
                 <Row
-                  label="Конфиг nginx"
+                  label={`Конфиг ${status.front_title || 'nginx'}`}
                   value={status.nginx_conf_exists ? status.nginx_conf : 'не найден'}
                   mono
                 />
                 <Row label="Сертификат" value={status.cert_found ? 'найден' : 'не найден'} />
-                <Row label="PQ nginx" value={status.pq_nginx_active ? 'активен' : 'не запущен'} />
+                <Row label={status.front_title || 'PQ nginx'} value={status.pq_nginx_active ? 'активен' : 'не запущен'} />
               </CardContent>
             </Card>
             {status.enabled && webStatus?.enabled && !webUsesSameSite && (
@@ -316,6 +317,12 @@ export function SelfmaskPage() {
               </CardContent>
             </Card>
 
+            <FrontServerCard
+              running={running}
+              onStart={start}
+              onError={setError}
+              refreshKey={operation?.phase}
+            />
             <NginxCustomConfigCard
               status={status}
               running={running}

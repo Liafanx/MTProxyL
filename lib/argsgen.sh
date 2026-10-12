@@ -25,6 +25,7 @@ _AG_ITEMS=(
     "web|WEB Proxy|yes"
     "shaping|Шейпинг по IPv4|no"
     "geoip|База GeoIP|no"
+    "api|API управления (новый ключ)|no"
     "block|Список блокировок|no"
     "dcrestart|Перезапуск при падении DC|no"
     "force|Ставить поверх существующей|no"
@@ -102,6 +103,8 @@ _argsgen_defaults() {
         _AG_ON[shaping]="no"; _AG_VAL[shaping]="выключен"
     fi
 
+    _AG_ON[api]="$(api_is_enabled 2>/dev/null && echo yes || echo no)"
+    _AG_VAL[api]="$(api_is_enabled 2>/dev/null && echo "${API_LISTEN:-127.0.0.1:9190}" || echo "выключен")"
     _AG_ON[geoip]="$(geoip_installed 2>/dev/null && echo yes || echo no)"
     _AG_VAL[geoip]="$(geoip_installed 2>/dev/null && echo "установлена" || echo "нет")"
 
@@ -190,9 +193,14 @@ _argsgen_build() {
         [ -n "${SELFMASK_NGINX_BACKEND_PORT:-}" ] && _a+=(--selfmask-backend-port "$SELFMASK_NGINX_BACKEND_PORT")
     fi
 
+    if { [ "${_AG_ON[selfmask]}" = "yes" ] && [ -n "${SELFMASK_DOMAIN:-}" ]; } || [ "${_AG_ON[web]}" = "yes" ]; then
+        [ "${FRONT_SERVER:-nginx}" != "nginx" ] && _a+=(--front "$FRONT_SERVER")
+    fi
+
     if [ "${_AG_ON[web]}" = "yes" ]; then
         _a+=(--web yes --web-layout "${WEB_LAYOUT:-shared}")
         _a+=(--web-frontend "${WEB_FRONTEND:-nginx}")
+        [ "${WEB_DNS_CHECK:-true}" = "false" ] && _a+=(--web-dns-check no)
         if [ "${WEB_FRONTEND:-nginx}" = "haproxy" ] && [ -n "${WEB_HAPROXY_CERT:-}" ]; then
             _a+=(--web-haproxy-cert "$WEB_HAPROXY_CERT")
         fi
@@ -240,6 +248,11 @@ _argsgen_build() {
     fi
 
     [ "${_AG_ON[geoip]}" = "yes" ] && _a+=(--geoip yes)
+    if [ "${_AG_ON[api]:-no}" = "yes" ]; then
+        _a+=(--api yes --api-listen "${API_LISTEN:-127.0.0.1:9190}")
+        [ -n "${API_ALLOW:-}" ] && _a+=(--api-allow "$API_ALLOW")
+        [ "${API_TLS:-off}" = "selfmask" ] && _a+=(--api-tls selfmask)
+    fi
 
     if [ "${_AG_ON[block]}" = "yes" ]; then
         local _bl; _bl=$(ipblock_entries 2>/dev/null | paste -sd, -)

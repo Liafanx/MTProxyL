@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, ToggleLeft, Globe, Globe2, Archive, ShieldAlert, MapPin, Route, SlidersHorizontal, Gauge, FileCode, Puzzle, Radar, Wrench, Bot, Waypoints, ShieldBan, PanelTop, Cable } from 'lucide-react';
+import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, ToggleLeft, Globe, Globe2, Archive, ShieldAlert, MapPin, Route, SlidersHorizontal, Gauge, FileCode, Puzzle, Radar, Wrench, Bot, Waypoints, ShieldBan, PanelTop, Cable, KeyRound } from 'lucide-react';
 
 export interface NavItem {
   to: string;
@@ -42,6 +42,7 @@ export const MTPROXYL_NAV_ITEMS: NavItem[] = [
   { to: '/expert', icon: SlidersHorizontal, label: 'Экспертные параметры', managerOnly: true },
   { to: '/superexpert', icon: FileCode, label: 'Супер эксперт', managerOnly: true },
   { to: '/maintenance', icon: Wrench, label: 'Обслуживание' },
+  { to: '/control-api', icon: KeyRound, label: 'API управления' },
   { to: '/tgbot', icon: Bot, label: 'Телеграм-бот' },
   { to: '/addons', icon: Puzzle, label: 'Дополнения' },
 ];

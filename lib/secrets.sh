@@ -14,6 +14,41 @@ declare -a SECRETS_NOTES=()
 # Рекламная метка на пользователя ([access.user_ad_tags] у движка). Пусто —
 # метки нет; общая метка из настроек остаётся в [general] и не отменяется.
 declare -a SECRETS_ADTAG=()
+# Скорость на пользователя ([access.user_rate_limits], telemt 3.4.1+):
+# «вверх:вниз» в бит/с, 0 — без ограничения в этом направлении.
+declare -a SECRETS_RATE=()
+
+# «up:down» → строка для TOML или пусто, если ограничений нет.
+_rate_toml() {
+    local _up="${1%%:*}" _down="${1##*:}"
+    [[ "$1" =~ ^[0-9]+:[0-9]+$ ]] || return 1
+    [ "$_up" = 0 ] && [ "$_down" = 0 ] && return 1
+    printf '{ up_bps = %s, down_bps = %s }' "$_up" "$_down"
+}
+
+# Обратно из TOML цели: «{ up_bps = 1, down_bps = 2 }» → «1:2».
+_rate_from_toml() {
+    local _v="$1" _up=0 _down=0
+    [[ "$_v" =~ up_bps[[:space:]]*=[[:space:]]*([0-9]+) ]] && _up="${BASH_REMATCH[1]}"
+    [[ "$_v" =~ down_bps[[:space:]]*=[[:space:]]*([0-9]+) ]] && _down="${BASH_REMATCH[1]}"
+    [ "$_up" = 0 ] && [ "$_down" = 0 ] && return 0
+    echo "${_up}:${_down}"
+}
+
+# Скорость из «10M», «512k», «0» (бит/с) с проверкой потолка движка.
+_parse_rate_bps() {
+    local _v="${1,,}" _n _m=1
+    case "$_v" in
+        ""|0|none|-) echo 0; return 0 ;;
+        *g) _m=1000000000; _v="${_v%g}" ;;
+        *m) _m=1000000; _v="${_v%m}" ;;
+        *k) _m=1000; _v="${_v%k}" ;;
+    esac
+    [[ "$_v" =~ ^[0-9]+$ ]] || return 1
+    _n=$(( _v * _m ))
+    [ "$_n" -le 100000000000 ] || return 1
+    echo "$_n"
+}
 
 save_secrets() {
     mkdir -p "$INSTALL_DIR"
@@ -21,7 +56,7 @@ save_secrets() {
     tmp=$(_mktemp "$INSTALL_DIR") || { log_error "Не удалось создать временный файл"; return 1; }
 
     echo "# MTProxyL — база секретов v${VERSION}" > "$tmp"
-    echo "# Формат: LABEL|SECRET|CREATED_TS|ENABLED|MAX_CONNS|MAX_IPS|QUOTA_BYTES|EXPIRES|NOTES|AD_TAG" >> "$tmp"
+    echo "# Формат: LABEL|SECRET|CREATED_TS|ENABLED|MAX_CONNS|MAX_IPS|QUOTA_BYTES|EXPIRES|NOTES|AD_TAG|RATE_UP:RATE_DOWN" >> "$tmp"
 
     if [ ${#SECRETS_LABELS[@]} -gt 0 ]; then
         local i
@@ -29,7 +64,7 @@ save_secrets() {
             # Заметка идёт не последней, поэтому «|» в ней сдвинул бы поля —
             # вырезаем разделитель, а не ломаем строку.
             local _note="${SECRETS_NOTES[$i]:-}"; _note="${_note//|/ }"
-            echo "${SECRETS_LABELS[$i]}|${SECRETS_KEYS[$i]}|${SECRETS_CREATED[$i]}|${SECRETS_ENABLED[$i]}|${SECRETS_MAX_CONNS[$i]:-0}|${SECRETS_MAX_IPS[$i]:-0}|${SECRETS_QUOTA[$i]:-0}|${SECRETS_EXPIRES[$i]:-0}|${_note}|${SECRETS_ADTAG[$i]:-}" >> "$tmp"
+            echo "${SECRETS_LABELS[$i]}|${SECRETS_KEYS[$i]}|${SECRETS_CREATED[$i]}|${SECRETS_ENABLED[$i]}|${SECRETS_MAX_CONNS[$i]:-0}|${SECRETS_MAX_IPS[$i]:-0}|${SECRETS_QUOTA[$i]:-0}|${SECRETS_EXPIRES[$i]:-0}|${_note}|${SECRETS_ADTAG[$i]:-}|${SECRETS_RATE[$i]:-}" >> "$tmp"
         done
     fi
 
@@ -40,11 +75,11 @@ save_secrets() {
 load_secrets() {
     SECRETS_LABELS=(); SECRETS_KEYS=(); SECRETS_CREATED=(); SECRETS_ENABLED=()
     SECRETS_MAX_CONNS=(); SECRETS_MAX_IPS=(); SECRETS_QUOTA=()
-    SECRETS_EXPIRES=(); SECRETS_NOTES=(); SECRETS_ADTAG=()
+    SECRETS_EXPIRES=(); SECRETS_NOTES=(); SECRETS_ADTAG=(); SECRETS_RATE=()
 
     [ -f "$SECRETS_FILE" ] || return 0
 
-    while IFS='|' read -r label secret created enabled max_conns max_ips quota expires notes adtag; do
+    while IFS='|' read -r label secret created enabled max_conns max_ips quota expires notes adtag rate; do
         [[ "$label" =~ ^[[:space:]]*# ]] && continue
         [[ "$label" =~ ^[[:space:]]*$ ]] && continue
         [ -z "$secret" ] && continue
@@ -76,6 +111,9 @@ load_secrets() {
         local _at="${adtag:-}"
         [[ "$_at" =~ ^[0-9a-fA-F]{32}$ ]] || _at=""
         SECRETS_ADTAG+=("$_at")
+        local _rt="${rate:-}"
+        [[ "$_rt" =~ ^[0-9]+:[0-9]+$ ]] || _rt=""
+        SECRETS_RATE+=("$_rt")
     done < "$SECRETS_FILE"
 }
 
@@ -90,9 +128,11 @@ _secret_parse_line() {
     if [[ "${_f[2]:-}" =~ ^[0-9]{9,}$ ]]; then
         _IMP_CR="${_f[2]}";     _IMP_EN="${_f[3]:-true}"; _IMP_MC="${_f[4]:-0}"; _IMP_MI="${_f[5]:-0}"
         _IMP_Q="${_f[6]:-0}";   _IMP_EX="${_f[7]:-0}";    _IMP_N="${_f[8]:-}";   _IMP_AT="${_f[9]:-}"
+        _IMP_RT="${_f[10]:-}"
     else
         _IMP_CR="$(date +%s)";  _IMP_EN="${_f[2]:-true}"; _IMP_MC="${_f[3]:-0}"; _IMP_MI="${_f[4]:-0}"
         _IMP_Q="${_f[5]:-0}";   _IMP_EX="${_f[6]:-0}";    _IMP_N="${_f[7]:-}";   _IMP_AT="${_f[8]:-}"
+        _IMP_RT="${_f[9]:-}"
     fi
     # Те же проверки, что в load_secrets: чужой файл приносит что угодно.
     [[ "$_IMP_MC" =~ ^[0-9]+$ ]] || _IMP_MC="0"
@@ -104,6 +144,7 @@ _secret_parse_line() {
         _IMP_EX="0"
     fi
     [[ "$_IMP_AT" =~ ^[0-9a-fA-F]{32}$ ]] || _IMP_AT=""
+    [[ "$_IMP_RT" =~ ^[0-9]+:[0-9]+$ ]] || _IMP_RT=""
     _IMP_N="${_IMP_N//|/ }"
     return 0
 }
@@ -124,7 +165,7 @@ secret_import_file() {
     local _file; _file=$(_secret_import_source "${1:-}") || return 1
 
     local _added=0 _dup=0 _bad=0 _line
-    local _IMP_L _IMP_K _IMP_CR _IMP_EN _IMP_MC _IMP_MI _IMP_Q _IMP_EX _IMP_N _IMP_AT
+    local _IMP_L _IMP_K _IMP_CR _IMP_EN _IMP_MC _IMP_MI _IMP_Q _IMP_EX _IMP_N _IMP_AT _IMP_RT
     while IFS= read -r _line || [ -n "$_line" ]; do
         [[ "$_line" =~ ^[[:space:]]*# ]] && continue
         [[ "$_line" =~ ^[[:space:]]*$ ]] && continue
@@ -141,6 +182,7 @@ secret_import_file() {
         SECRETS_MAX_CONNS+=("$_IMP_MC"); SECRETS_MAX_IPS+=("$_IMP_MI")
         SECRETS_QUOTA+=("$_IMP_Q");    SECRETS_EXPIRES+=("$_IMP_EX")
         SECRETS_NOTES+=("$_IMP_N");    SECRETS_ADTAG+=("$_IMP_AT")
+        SECRETS_RATE+=("$_IMP_RT")
         _added=$((_added + 1))
     done < "$_file"
     [ "${1:-}" != "-" ] || rm -f "$_file"
@@ -153,7 +195,7 @@ secret_import_file() {
     return 0
 }
 
-_SECRET_EXPORT_HEADER="# label|key|enabled|max_conns|max_ips|quota|expires|notes|ad_tag"
+_SECRET_EXPORT_HEADER="# label|key|enabled|max_conns|max_ips|quota|expires|notes|ad_tag|rate_up:rate_down"
 
 # Экспорт в формате, который читает импорт. «-» — в стандартный вывод.
 _secret_export_write() {
@@ -175,7 +217,7 @@ secret_export_file() {
     for _i in "${!SECRETS_LABELS[@]}"; do
         # «|» в заметке сдвинул бы поля при обратном импорте.
         _note="${SECRETS_NOTES[$_i]:-}"; _note="${_note//|/ }"
-        _rows+="${SECRETS_LABELS[$_i]}|${SECRETS_KEYS[$_i]}|${SECRETS_ENABLED[$_i]}|${SECRETS_MAX_CONNS[$_i]:-0}|${SECRETS_MAX_IPS[$_i]:-0}|${SECRETS_QUOTA[$_i]:-0}|${SECRETS_EXPIRES[$_i]:-0}|${_note}|${SECRETS_ADTAG[$_i]:-}"$'\n'
+        _rows+="${SECRETS_LABELS[$_i]}|${SECRETS_KEYS[$_i]}|${SECRETS_ENABLED[$_i]}|${SECRETS_MAX_CONNS[$_i]:-0}|${SECRETS_MAX_IPS[$_i]:-0}|${SECRETS_QUOTA[$_i]:-0}|${SECRETS_EXPIRES[$_i]:-0}|${_note}|${SECRETS_ADTAG[$_i]:-}|${SECRETS_RATE[$_i]:-}"$'\n'
     done
     _secret_export_write "${1:-}" "$_rows" "${#SECRETS_LABELS[@]}"
 }
@@ -206,6 +248,7 @@ secret_add() {
     SECRETS_EXPIRES+=("0")
     SECRETS_NOTES+=("")
     SECRETS_ADTAG+=("")
+    SECRETS_RATE+=("")
 
     save_secrets
     [ "$no_restart" != "true" ] && reload_proxy_config 2>/dev/null || true
@@ -263,7 +306,7 @@ secret_remove() {
         [ "$confirm" != "yes" ] && { log_info "Отменено"; return 0; }
     fi
 
-    local -a nl=() nk=() nc=() ne=() nmc=() nmi=() nq=() nex=() nn=() nat=()
+    local -a nl=() nk=() nc=() ne=() nmc=() nmi=() nq=() nex=() nn=() nat=() nrt=()
     for i in "${!SECRETS_LABELS[@]}"; do
         [ "$i" -eq "$idx" ] && continue
         nl+=("${SECRETS_LABELS[$i]}"); nk+=("${SECRETS_KEYS[$i]}")
@@ -271,12 +314,14 @@ secret_remove() {
         nmc+=("${SECRETS_MAX_CONNS[$i]:-0}"); nmi+=("${SECRETS_MAX_IPS[$i]:-0}")
         nq+=("${SECRETS_QUOTA[$i]:-0}"); nex+=("${SECRETS_EXPIRES[$i]:-0}")
         nn+=("${SECRETS_NOTES[$i]:-}"); nat+=("${SECRETS_ADTAG[$i]:-}")
+        nrt+=("${SECRETS_RATE[$i]:-}")
     done
     SECRETS_LABELS=("${nl[@]}"); SECRETS_KEYS=("${nk[@]}")
     SECRETS_CREATED=("${nc[@]}"); SECRETS_ENABLED=("${ne[@]}")
     SECRETS_MAX_CONNS=("${nmc[@]}"); SECRETS_MAX_IPS=("${nmi[@]}")
     SECRETS_QUOTA=("${nq[@]}"); SECRETS_EXPIRES=("${nex[@]}")
     SECRETS_NOTES=("${nn[@]}"); SECRETS_ADTAG=("${nat[@]}")
+    SECRETS_RATE=("${nrt[@]}")
 
     save_secrets
     [ "$no_restart" != "true" ] && reload_proxy_config 2>/dev/null || true
@@ -437,6 +482,80 @@ secret_set_adtag() {
     log_success "Метка задана для '${label}'"
 }
 
+_rate_up()   { [[ "$1" =~ ^([0-9]+):[0-9]+$ ]] && echo "${BASH_REMATCH[1]}" || echo 0; }
+_rate_down() { [[ "$1" =~ ^[0-9]+:([0-9]+)$ ]] && echo "${BASH_REMATCH[1]}" || echo 0; }
+
+# Скорость пользователя: вверх и вниз в бит/с, «0» — без ограничения.
+_secret_rate_value() {
+    local _up _down
+    _up=$(_parse_rate_bps "${1:-0}") || { log_error "Скорость вверх: число бит/с, можно 10M, 512k; не больше 100G"; return 1; }
+    _down=$(_parse_rate_bps "${2:-0}") || { log_error "Скорость вниз: число бит/с, можно 10M, 512k; не больше 100G"; return 1; }
+    if [ "$_up" = 0 ] && [ "$_down" = 0 ]; then echo ""; else echo "${_up}:${_down}"; fi
+}
+
+secret_set_rate() {
+    local label="$1" _rt
+    local idx=-1 i
+    for i in "${!SECRETS_LABELS[@]}"; do
+        [ "${SECRETS_LABELS[$i]}" = "$label" ] && { idx=$i; break; }
+    done
+    [ $idx -eq -1 ] && { log_error "Секрет '${label}' не найден"; return 1; }
+    _rt=$(_secret_rate_value "${2:-0}" "${3:-0}") || return 1
+    SECRETS_RATE[$idx]="$_rt"
+    save_secrets
+    reload_proxy_config 2>/dev/null || true
+    if [ -n "$_rt" ]; then
+        log_success "Скорость '${label}': вверх $(_rate_human "$(_rate_up "$_rt")"), вниз $(_rate_human "$(_rate_down "$_rt")")"
+    else
+        log_success "Ограничение скорости снято с '${label}'"
+    fi
+}
+
+_rate_human() {
+    local _b="${1:-0}"
+    [ "$_b" = 0 ] && { echo "без ограничения"; return; }
+    if [ "$_b" -ge 1000000 ]; then
+        awk -v b="$_b" 'BEGIN { printf "%.1f Мбит/с", b / 1000000 }'
+    else
+        awk -v b="$_b" 'BEGIN { printf "%.0f кбит/с", b / 1000 }'
+    fi
+}
+
+# Израсходованную квоту считает сам движок, поэтому и сбрасывает её он —
+# через свой API. Трафик в статистике MTProxyL при этом не трогаем.
+secret_reset_quota() {
+    local _label="$1" _cfg _port _host _auth _resp _code
+    [[ "$_label" =~ ^[a-zA-Z0-9_-]+$ ]] || { log_error "Требуется метка"; return 1; }
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        _target_users_ready || return 1
+        [ -n "$(_target_user_state "$_label")" ] || { log_error "Пользователь '${_label}' не найден у цели"; return 1; }
+        _cfg="$DETECTED_CONFIG_PATH"
+    else
+        local _i _found=""
+        for _i in "${!SECRETS_LABELS[@]}"; do
+            [ "${SECRETS_LABELS[$_i]}" = "$_label" ] && { _found=1; break; }
+        done
+        [ -n "$_found" ] || { log_error "Секрет '${_label}' не найден"; return 1; }
+        _cfg=$(_engine_config_path)
+    fi
+    _telemt_api_enabled "$_cfg" || { log_error "API движка выключен — сбросить квоту нечем"; return 1; }
+    _port=$(_get_telemt_api_port "$_cfg")
+    _host=$(_telemt_api_host "$_cfg")
+    _auth=$(_get_telemt_auth_header "$_cfg")
+    local -a _auth_h=()
+    [ -n "$_auth" ] && _auth_h=(-H "Authorization: ${_auth}")
+    _resp=$(curl -s --max-time 10 --connect-timeout 3 -X POST "${_auth_h[@]}" \
+        -w $'\n%{http_code}' "http://${_host}:${_port}/v1/users/${_label}/reset-quota" 2>/dev/null) || {
+        log_error "API движка не отвечает"; return 1; }
+    _code="${_resp##*$'\n'}"
+    if [ "$_code" = "200" ]; then
+        log_success "Квота '${_label}' сброшена"
+        return 0
+    fi
+    log_error "Движок не сбросил квоту (HTTP ${_code}): $(printf '%s' "${_resp%$'\n'*}" | head -c 300)"
+    return 1
+}
+
 # Список секретов
 # Человекочитаемые лимиты секрета: соединения, IP, квота трафика, срок.
 # Пустые (0) не показываем — иначе колонка превращается в шум.
@@ -462,6 +581,11 @@ _secret_limits_text() {
         else
             _out+="квота $(format_bytes "$_q")"
         fi
+    fi
+    local _rt="${SECRETS_RATE[$_i]:-}"
+    if [ -n "$_rt" ]; then
+        [ -n "$_out" ] && _out+=" · "
+        _out+="↑$(_rate_human "$(_rate_up "$_rt")") ↓$(_rate_human "$(_rate_down "$_rt")")"
     fi
     if [ "$_ex" != "0" ] && [ -n "$_ex" ]; then
         [ -n "$_out" ] && _out+=" · "
@@ -601,7 +725,7 @@ secret_list_json() {
         json_escape_fast "${SECRETS_NOTES[$_i]:-}";        _notes_esc="$_JSON_ESCAPE_OUT"
         if [ "${SECRETS_ENABLED[$_i]}" = "true" ]; then _enabled_str=true; else _enabled_str=false; fi
 
-        printf '{"label":"%s","secret":"%s","created":%s,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"%s","ad_tag":"%s","total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":[%s]}' \
+        printf '{"label":"%s","secret":"%s","created":%s,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"%s","ad_tag":"%s","rate_limit_up_bps":%s,"rate_limit_down_bps":%s,"total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":[%s]}' \
             "$_label_esc" \
             "$_secret_esc" \
             "${SECRETS_CREATED[$_i]:-0}" \
@@ -612,6 +736,7 @@ secret_list_json() {
             "$_expires_esc" \
             "$_notes_esc" \
             "${SECRETS_ADTAG[$_i]:-}" \
+            "$(_rate_up "${SECRETS_RATE[$_i]:-}")" "$(_rate_down "${SECRETS_RATE[$_i]:-}")" \
             "${_uin:-0}" "${_uout:-0}" "$(( ${_uin:-0} + ${_uout:-0} ))" \
             "${_IP_HIST_JSON[$_label]:-}"
     done
@@ -740,6 +865,7 @@ secret_clone() {
     SECRETS_EXPIRES+=("${SECRETS_EXPIRES[$idx]:-0}")
     SECRETS_NOTES+=("${SECRETS_NOTES[$idx]:-}")
     SECRETS_ADTAG+=("${SECRETS_ADTAG[$idx]:-}")
+    SECRETS_RATE+=("${SECRETS_RATE[$idx]:-}")
 
     save_secrets
     reload_proxy_config 2>/dev/null || true
@@ -821,6 +947,8 @@ secret_show_limits() {
         echo -e "  Макс. уникальных IP:  $([ "$p" = "0" ] && echo "без ограничений" || echo "$p")"
         echo -e "  Квота трафика:        $([ "$q" = "0" ] && echo "без ограничений" || echo "$(format_bytes "$q")")"
         echo -e "  Срок действия:        $([ "$e" = "0" ] && echo "бессрочно" || echo "$e")"
+        local _rt="${SECRETS_RATE[$idx]:-}"
+        echo -e "  Скорость:             $([ -n "$_rt" ] && echo "вверх $(_rate_human "$(_rate_up "$_rt")"), вниз $(_rate_human "$(_rate_down "$_rt")")" || echo "без ограничений")"
         echo ""
     fi
 }
@@ -834,7 +962,7 @@ _TARGET_USER_MARK='#mtproxyl-off '
 
 # Секции цели, где пользователь упоминается по метке. Порядок важен только для
 # вывода — удаляем и переименовываем во всех.
-_TARGET_LIMIT_SECTIONS='access.user_max_tcp_conns access.user_max_unique_ips access.user_data_quota access.user_expirations access.user_ad_tags'
+_TARGET_LIMIT_SECTIONS='access.user_max_tcp_conns access.user_max_unique_ips access.user_data_quota access.user_expirations access.user_ad_tags access.user_rate_limits'
 
 _target_users_ready() {
     if [ -z "${DETECTED_CONFIG_PATH:-}" ] || [ ! -f "$DETECTED_CONFIG_PATH" ]; then
@@ -1362,6 +1490,22 @@ _target_users_set_limit() {
     fi
 }
 
+target_user_setrate() {
+    local _label="$1" _rt _t
+    _target_users_ready || return 1
+    [ -n "$(_target_user_state "$_label")" ] || { log_error "Пользователь '${_label}' не найден у цели"; return 1; }
+    _rt=$(_secret_rate_value "${2:-0}" "${3:-0}") || return 1
+    backup_target_config "users" "true" || true
+    _t=$(_rate_toml "$_rt") || _t=""
+    _target_users_set_limit "$_label" "access.user_rate_limits" "$_t" num
+    if [ -n "$_rt" ]; then
+        log_success "Скорость '${_label}': вверх $(_rate_human "$(_rate_up "$_rt")"), вниз $(_rate_human "$(_rate_down "$_rt")")"
+    else
+        log_success "Ограничение скорости снято с '${_label}'"
+    fi
+    _target_users_apply
+}
+
 # Рекламная метка пользователя цели — та же секция, что и у менеджера.
 target_user_adtag() {
     local _label="$1" _tag="${2:-}"
@@ -1403,7 +1547,7 @@ target_users_list_json() {
     local _TDB_SRC=""
     _load_target_db
 
-    declare -A _LIM_CONNS=() _LIM_IPS=() _LIM_QUOTA=() _LIM_EXPIRES=() _LIM_ADTAG=()
+    declare -A _LIM_CONNS=() _LIM_IPS=() _LIM_QUOTA=() _LIM_EXPIRES=() _LIM_ADTAG=() _LIM_RATE=()
     local _st _nm _vl
     while IFS='|' read -r _st _nm _vl; do
         [ -n "$_nm" ] && _LIM_CONNS["$_nm"]="$_vl"
@@ -1420,6 +1564,9 @@ target_users_list_json() {
     while IFS='|' read -r _st _nm _vl; do
         [ -n "$_nm" ] && _LIM_ADTAG["$_nm"]="$_vl"
     done < <(_target_section_pairs "access.user_ad_tags")
+    while IFS='|' read -r _st _nm _vl; do
+        [ -n "$_nm" ] && _LIM_RATE["$_nm"]=$(_rate_from_toml "$_vl")
+    done < <(_target_section_pairs "access.user_rate_limits")
 
     declare -A _IP_HIST=()
     if [ -f "$_TARGET_USER_IPS_DB" ]; then
@@ -1458,9 +1605,10 @@ target_users_list_json() {
         json_escape_fast "$_expires";  _expires_esc="$_JSON_ESCAPE_OUT"
         if [ "$_state" = "on" ]; then _enabled_str=true; else _enabled_str=false; fi
 
-        printf '{"label":"%s","secret":"%s","created":0,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"","ad_tag":"%s","total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":[%s]}' \
+        printf '{"label":"%s","secret":"%s","created":0,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"","ad_tag":"%s","rate_limit_up_bps":%s,"rate_limit_down_bps":%s,"total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":[%s]}' \
             "$_label_esc" "$_secret_esc" "$_enabled_str" \
             "$_conns" "$_ips" "$_quota" "$_expires_esc" "$_adtag" \
+            "$(_rate_up "${_LIM_RATE[$_label]:-}")" "$(_rate_down "${_LIM_RATE[$_label]:-}")" \
             "${_TDB_IN[$_label]:-0}" "${_TDB_OUT[$_label]:-0}" "${_TDB_TOTAL[$_label]:-0}" \
             "${_IP_HIST[$_label]:-}"
     done < <(_target_section_pairs "access.users")
@@ -1506,7 +1654,7 @@ target_users_list() {
 # менеджера (или на другую цель) обычным импортом.
 target_users_export() {
     _target_users_ready || return 1
-    local _rows="" _n=0 _st _lb _key _c _i _q _e _a
+    local _rows="" _n=0 _st _lb _key _c _i _q _e _a _r
     while IFS='|' read -r _st _lb _key; do
         [ -n "$_lb" ] || continue
         _c=$(_target_user_limit "$_lb" "access.user_max_tcp_conns")
@@ -1514,7 +1662,8 @@ target_users_export() {
         _q=$(_target_user_limit "$_lb" "access.user_data_quota")
         _e=$(_target_user_limit "$_lb" "access.user_expirations")
         _a=$(_target_user_limit "$_lb" "access.user_ad_tags")
-        _rows+="${_lb}|${_key}|$([ "$_st" = on ] && echo true || echo false)|${_c:-0}|${_i:-0}|${_q:-0}|${_e:-0}||${_a}"$'\n'
+        _r=$(_rate_from_toml "$(_target_user_limit "$_lb" "access.user_rate_limits")")
+        _rows+="${_lb}|${_key}|$([ "$_st" = on ] && echo true || echo false)|${_c:-0}|${_i:-0}|${_q:-0}|${_e:-0}||${_a}|${_r}"$'\n'
         _n=$((_n + 1))
     done < <(_target_section_pairs "access.users")
     _secret_export_write "${1:-}" "$_rows" "$_n"
@@ -1526,7 +1675,7 @@ target_users_import() {
     _target_users_ready || return 1
     local _file; _file=$(_secret_import_source "${1:-}") || return 1
     local _added=0 _dup=0 _bad=0 _line _ex _backed=""
-    local _IMP_L _IMP_K _IMP_CR _IMP_EN _IMP_MC _IMP_MI _IMP_Q _IMP_EX _IMP_N _IMP_AT
+    local _IMP_L _IMP_K _IMP_CR _IMP_EN _IMP_MC _IMP_MI _IMP_Q _IMP_EX _IMP_N _IMP_AT _IMP_RT
     while IFS= read -r _line || [ -n "$_line" ]; do
         [[ "$_line" =~ ^[[:space:]]*# ]] && continue
         [[ "$_line" =~ ^[[:space:]]*$ ]] && continue
@@ -1540,6 +1689,7 @@ target_users_import() {
         _target_users_set_limit "$_IMP_L" "access.user_data_quota" "$_IMP_Q" num
         _target_users_set_limit "$_IMP_L" "access.user_expirations" "$_ex" str
         _target_users_set_limit "$_IMP_L" "access.user_ad_tags" "$_IMP_AT" str
+        _target_users_set_limit "$_IMP_L" "access.user_rate_limits" "$(_rate_toml "$_IMP_RT" || true)" num
         if [ "$_IMP_EN" = "true" ]; then
             web_target_add_profile "$_IMP_L" >/dev/null 2>&1 || true
         else
@@ -1577,6 +1727,8 @@ handle_target_user_command() {
             target_user_setlimits "$_l" "${1:-0}" "${2:-0}" "${3:-0}" "${4:-}" ;;
         limits)   target_user_show_limits "${1:-}" ;;
         adtag)    check_root; target_user_adtag "${1:-}" "${2:-}" ;;
+        setrate)  check_root; target_user_setrate "${1:-}" "${2:-0}" "${3:-0}" ;;
+        reset-quota) check_root; secret_reset_quota "${1:-}" ;;
         export)   check_root; target_users_export "${1:--}" ;;
         import)   check_root; target_users_import "${1:-}" ;;
         link)
@@ -1609,6 +1761,9 @@ handle_target_user_command() {
             echo -e "    ${GREEN}secret setlimits${NC} <метка> <соед> <ip> <квота> [срок]"
             echo -e "    ${GREEN}secret adtag${NC} <метка> <32hex|remove>"
             echo -e "                              Рекламная метка пользователя"
+            echo -e "    ${GREEN}secret setrate${NC} <метка> <вверх> <вниз>"
+            echo -e "                              Скорость, бит/с (10M, 512k, 0 — без)"
+            echo -e "    ${GREEN}secret reset-quota${NC} <метка> Обнулить израсходованную квоту"
             echo -e "    ${GREEN}secret link${NC} <метка>        Ссылка"
             echo -e "    ${GREEN}secret qr${NC} <метка>          Ссылки (устар., = link)"
             echo -e "    ${GREEN}secret export${NC} [файл|-]     Экспорт с лимитами (по умолчанию в вывод)"
@@ -1631,6 +1786,8 @@ target_user_show_limits() {
     echo -e "    Уникальных IP: $(_target_user_limit "$_label" "access.user_max_unique_ips" | grep . || echo '—')"
     echo -e "    Квота, байт: $(_target_user_limit "$_label" "access.user_data_quota" | grep . || echo '—')"
     echo -e "    Истекает   : $(_target_user_limit "$_label" "access.user_expirations" | grep . || echo '—')"
+    local _trt; _trt=$(_rate_from_toml "$(_target_user_limit "$_label" "access.user_rate_limits")")
+    echo -e "    Скорость   : $([ -n "$_trt" ] && echo "↑$(_rate_human "$(_rate_up "$_trt")") ↓$(_rate_human "$(_rate_down "$_trt")")" || echo '—')"
     echo ""
 }
 
@@ -1665,6 +1822,8 @@ handle_secret_command() {
         disable)  check_root; secret_toggle "$1" disable ;;
         limits)   secret_show_limits "$1" ;;
         adtag)    check_root; secret_set_adtag "$1" "${2:-}" ;;
+        setrate)  check_root; secret_set_rate "$1" "${2:-0}" "${3:-0}" ;;
+        reset-quota) check_root; secret_reset_quota "${1:-}" ;;
         setlimits)
             check_root
             local l="$1"; shift 2>/dev/null || true
@@ -1689,6 +1848,9 @@ handle_secret_command() {
             echo -e "    ${GREEN}secret disable${NC} <метка>    Выключить"
             echo -e "    ${GREEN}secret limits${NC} [метка]     Лимиты"
             echo -e "    ${GREEN}secret setlimits${NC} <метка> <соед> <ip> <квота> [срок]"
+            echo -e "    ${GREEN}secret setrate${NC} <метка> <вверх> <вниз>  Скорость, бит/с (10M, 512k, 0 — без)"
+            echo -e "    ${GREEN}secret adtag${NC} <метка> <32hex|remove>  Рекламная метка"
+            echo -e "    ${GREEN}secret reset-quota${NC} <метка>  Обнулить израсходованную квоту"
             echo -e "    ${GREEN}secret link${NC} [метка]       Ссылка"
             echo -e "    ${GREEN}secret qr${NC} [метка]         Ссылки (устар., = link)"
             echo -e "    ${GREEN}secret clone${NC} <из> <в>     Клонировать"

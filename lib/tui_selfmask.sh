@@ -3,16 +3,16 @@
 
 tui_https_headers_menu() {
     while true; do
-        echo "  Общие настройки nginx для Selfmask и WEB"
+        echo "  Общие HTTPS-настройки Selfmask и WEB ($(front_title))"
         echo "  [1] HSTS: ${HTTPS_HSTS_ENABLED:-true} (кроме самоподписанных сертификатов)"
         echo "  [2] Permissions-Policy: ${HTTPS_PERMISSIONS_ENABLED:-true}"
-        echo "  [3] Журнал запросов nginx: ${NGINX_ACCESS_LOG:-false} (/var/log/mtproxyl-nginx/access.log)"
-        echo "  [0] Назад. Свой nginx и внешний HAProxy настраиваются вручную."
+        front_is nginx && echo "  [3] Журнал запросов nginx: ${NGINX_ACCESS_LOG:-false} (/var/log/mtproxyl-nginx/access.log)"
+        echo "  [0] Назад. Свой конфиг и внешний HAProxy настраиваются вручную."
         local _c _key _v; _c=$(read_choice "выбор" "0")
         case "$_c" in
             1) _key=HTTPS_HSTS_ENABLED ;;
             2) _key=HTTPS_PERMISSIONS_ENABLED ;;
-            3) _key=NGINX_ACCESS_LOG ;;
+            3) front_is nginx || return 0; _key=NGINX_ACCESS_LOG ;;
             *) return 0 ;;
         esac
         _v=true; [ "${!_key}" = true ] && _v=false
@@ -25,9 +25,9 @@ tui_selfmask_menu() {
     while true; do
         clear_screen
         if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "selfsigned" ]; then
-            draw_header "SELFMASK (PQ NGINX + САМОПОДПИСАННЫЙ CERT)"
+            draw_header "SELFMASK ($(front_title | tr '[:lower:]' '[:upper:]') + САМОПОДПИСАННЫЙ CERT)"
         else
-            draw_header "SELFMASK (PQ NGINX + LET'S ENCRYPT)"
+            draw_header "SELFMASK ($(front_title | tr '[:lower:]' '[:upper:]') + LET'S ENCRYPT)"
         fi
         echo ""
 
@@ -38,7 +38,7 @@ tui_selfmask_menu() {
         echo -e "  ${BOLD}Тип cert:${NC}  ${SELFMASK_CERT_MODE:-letsencrypt}"
         echo -e "  ${BOLD}Backend:${NC}   127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT:-8444}"
         echo -e "  ${BOLD}TLS:${NC}       $(_selfmask_get_tls_info)"
-        echo -e "  ${BOLD}PQ nginx:${NC}  $([ -x "$(_selfmask_pq_nginx_bin)" ] && echo -e "${GREEN}установлен${NC}" || echo -e "${DIM}не установлен${NC}")"
+        echo -e "  ${BOLD}Держатель:${NC} $(front_title) — $(front_source 2>/dev/null)"
         echo -e "  ${BOLD}Свой conf:${NC}  $(nginx_custom_status_line)"
 
         if [ -n "${SELFMASK_DOMAIN:-}" ] && [ -f "$(_selfmask_cert_dir)/fullchain.pem" ]; then
@@ -47,7 +47,7 @@ tui_selfmask_menu() {
             echo -e "  ${BOLD}Сертификат:${NC} ${DIM}не найден${NC}"
         fi
 
-        if systemctl is-active "${SELFMASK_PQ_SERVICE}" &>/dev/null; then
+        if systemctl is-active "$(front_service)" &>/dev/null; then
             echo -e "  ${BOLD}Служба:${NC}    ${GREEN}активна${NC}"
         else
             echo -e "  ${BOLD}Служба:${NC}    ${DIM}не запущена${NC}"
@@ -69,10 +69,10 @@ tui_selfmask_menu() {
         echo -e "  ${CYAN}[2]${NC}  Настроить / переустановить selfmask"
         echo -e "  ${CYAN}[3]${NC}  Проверка selfmask (verify)"
         echo -e "  ${CYAN}[4]${NC}  Отключить selfmask"
-        echo -e "  ${CYAN}[5]${NC}  Показать конфиг PQ nginx"
-        echo -e "  ${CYAN}[6]${NC}  Пользовательский конфиг nginx"
-        echo -e "  ${RED}[7]${NC}  Полностью удалить PQ nginx"
-        echo -e "  ${CYAN}[8]${NC}  HTTPS-заголовки и журнал запросов nginx"
+        echo -e "  ${CYAN}[5]${NC}  Показать конфиг $(front_title)"
+        echo -e "  ${CYAN}[6]${NC}  Свой конфиг $(front_title)"
+        echo -e "  ${RED}[7]${NC}  Полностью удалить сборку PQ nginx"
+        echo -e "  ${CYAN}[8]${NC}  HTTPS-заголовки$(front_is nginx && echo " и журнал запросов nginx")\n  ${CYAN}[9]${NC}  Держатель заглушки  ${DIM}$(front_title)${NC}"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -80,6 +80,7 @@ tui_selfmask_menu() {
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
             8) tui_https_headers_menu ;;
+            9) tui_front_menu ;;
             1) selfmask_show_status; press_any_key ;;
             2) selfmask_setup; press_any_key ;;
             3) selfmask_verify; press_any_key ;;
@@ -88,7 +89,7 @@ tui_selfmask_menu() {
                 local _conf="$(_selfmask_pq_conf)"
                 if [ -f "$_conf" ]; then
                     echo ""
-                    draw_header "КОНФИГ PQ NGINX"
+                    draw_header "КОНФИГ $(front_title | tr '[:lower:]' '[:upper:]')"
                     echo ""
                     sed 's/^/  /' "$_conf"
                 else
@@ -106,13 +107,13 @@ tui_selfmask_menu() {
 tui_nginx_custom_menu() {
     while true; do
         clear_screen
-        draw_header "ПОЛЬЗОВАТЕЛЬСКИЙ КОНФИГ NGINX"
+        draw_header "СВОЙ КОНФИГ $(front_title | tr '[:lower:]' '[:upper:]')"
         echo ""
         echo -e "  ${BOLD}Статус:${NC} $(nginx_custom_status_line)"
-        echo -e "  ${BOLD}Файл:${NC}   ${NGINX_CUSTOM_FILE}"
+        echo -e "  ${BOLD}Файл:${NC}   $(front_custom_file)"
         echo ""
         echo -e "  ${DIM}При включённом режиме MTProxyL не перезаписывает этот файл.${NC}"
-        echo -e "  ${DIM}Изменения настроек nginx нужно переносить в него вручную.${NC}"
+        echo -e "  ${DIM}Изменения настроек нужно переносить в него вручную.${NC}"
         echo ""
         if nginx_custom_active; then
             echo -e "  ${CYAN}[1]${NC}  Выключить режим"
@@ -121,7 +122,7 @@ tui_nginx_custom_menu() {
         fi
         echo -e "  ${CYAN}[2]${NC}  Редактировать"
         echo -e "  ${CYAN}[3]${NC}  Показать конфиг"
-        echo -e "  ${CYAN}[4]${NC}  Проверить nginx -t"
+        echo -e "  ${CYAN}[4]${NC}  Проверить конфиг"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -139,7 +140,7 @@ tui_nginx_custom_menu() {
             2) nginx_custom_edit; press_any_key ;;
             3)
                 echo ""
-                draw_header "ПОЛЬЗОВАТЕЛЬСКИЙ NGINX.CONF"
+                draw_header "СВОЙ КОНФИГ"
                 echo ""
                 nginx_custom_show | sed 's/^/  /'
                 press_any_key
@@ -148,4 +149,27 @@ tui_nginx_custom_menu() {
             0|"") return ;;
         esac
     done
+}
+
+tui_front_menu() {
+    clear_screen
+    draw_header "ДЕРЖАТЕЛЬ ЗАГЛУШКИ"
+    front_show_status
+    echo -e "  ${DIM}Держит сайт Selfmask, публичный TLS WEB Proxy и порт 80 для сертификата.${NC}"
+    echo ""
+    echo -e "  ${CYAN}[1]${NC}  nginx   ${DIM}OpenSSL 3.5.7${NC}"
+    echo -e "  ${CYAN}[2]${NC}  Caddy   ${DIM}с модулем layer4${NC}"
+    echo -e "  ${CYAN}[3]${NC}  HAProxy ${DIM}OpenSSL 3.5.7 + mtproxyl-static${NC}"
+    echo -e "  ${CYAN}[4]${NC}  Переустановить сборку $(front_title)"
+    echo -e "  ${DIM}[0]${NC}  Назад"
+    echo ""
+    local _c; _c=$(read_choice "выбор" "0")
+    case "$_c" in
+        1) front_switch nginx ;;
+        2) front_switch caddy ;;
+        3) front_switch haproxy ;;
+        4) front_update ;;
+        *) return 0 ;;
+    esac
+    press_any_key
 }

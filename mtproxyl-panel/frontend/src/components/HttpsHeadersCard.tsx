@@ -27,11 +27,11 @@ export function HttpsHeadersCard({ disabled = false }: { disabled?: boolean }) {
     <Card className="p-4 space-y-3">
       <div className="font-medium">HTTPS-заголовки Selfmask и WEB</div>
       <p className="text-xs text-text-secondary">
-        Общие настройки управляемого nginx. HSTS действует только для текущего домена,
+        Общие настройки держателя заглушки. HSTS действует только для текущего домена,
         кроме самоподписанных сертификатов, и переводит HTTP на HTTPS на всех его портах.
         Отключение отправляет max-age=0.
         Permissions-Policy запрещает камеру, микрофон и геолокацию.
-        Собственный nginx-конфиг и внешний HAProxy нужно обновить вручную.
+        Свой конфиг держателя и внешний HAProxy нужно обновить вручную.
       </p>
       {error && <ErrorAlert message={error} />}
       {params.map(p => (

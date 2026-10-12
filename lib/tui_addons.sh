@@ -43,6 +43,7 @@ tui_addons_menu() {
         echo -e "  ${CYAN}[7]${NC}  $([ "$_geoip_installed" = "true" ] && echo "Переустановить" || echo "Установить") базу GeoIP"
         echo -e "  ${CYAN}[8]${NC}  Доступность из России  ${DIM}$(availability_status_line)${NC}"
         echo -e "  ${CYAN}[9]${NC}  Дата-центры Telegram  ${DIM}(доходим ли мы до DC)${NC}"
+        echo -e "  ${CYAN}[10]${NC} API управления  ${DIM}$(api_is_enabled && echo "включён" || echo "выключен")${NC}"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -101,6 +102,7 @@ tui_addons_menu() {
             9)
                 tui_dc_menu
                 ;;
+            10) tui_api_menu ;;
             0|"") return ;;
         esac
     done
@@ -453,4 +455,33 @@ _pq_negotiated_group() {
         _val="${_val%%,*}"
     fi
     echo "$_val"
+}
+
+tui_api_menu() {
+    while true; do
+        clear_screen
+        draw_header "API УПРАВЛЕНИЯ"
+        api_show_status
+        echo -e "  ${DIM}Пользователи и их лимиты из других проектов по HTTP. Описание: api.md в репозитории.${NC}"
+        echo ""
+        echo -e "  ${CYAN}[1]${NC}  $(api_is_enabled && echo "Выключить" || echo "Включить")"
+        echo -e "  ${CYAN}[2]${NC}  Новый ключ"
+        echo -e "  ${CYAN}[3]${NC}  Адрес и порт ${DIM}(${API_LISTEN:-127.0.0.1:9190})${NC}"
+        echo -e "  ${CYAN}[4]${NC}  Разрешённые адреса ${DIM}(${API_ALLOW:-любые})${NC}"
+        echo -e "  ${CYAN}[5]${NC}  HTTPS на сертификате Selfmask ${DIM}(${API_TLS:-off})${NC}"
+        echo ""
+        echo -e "  ${DIM}[0]${NC}  Назад"
+        local _c _v; _c=$(read_choice "выбор" "0")
+        case "$_c" in
+            1) if api_is_enabled; then api_disable; else api_enable; fi; press_any_key ;;
+            2) api_rotate_key; press_any_key ;;
+            3) read_line _v "  ${BOLD}Адрес:порт, например 0.0.0.0:9190:${NC} "
+               [ -n "$_v" ] && api_set_param API_LISTEN "$_v"; press_any_key ;;
+            4) read_line _v "  ${BOLD}IP/подсети через запятую, «-» — любые:${NC} "
+               [ -n "$_v" ] && api_set_param API_ALLOW "$_v"; press_any_key ;;
+            5) if [ "${API_TLS:-off}" = "selfmask" ]; then api_set_param API_TLS off
+               else api_set_param API_TLS selfmask; fi; press_any_key ;;
+            0|"") return ;;
+        esac
+    done
 }

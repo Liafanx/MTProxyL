@@ -162,7 +162,7 @@ _backup_apply_restored_runtime() {
     if [ "${SELFMASK_ENABLED:-false}" = "true" ]; then
         _selfmask_configure_nginx || return 1
     else
-        systemctl stop "${SELFMASK_PQ_SERVICE}" >/dev/null 2>&1 || true
+        front_stop
     fi
     restart_proxy_container
 }

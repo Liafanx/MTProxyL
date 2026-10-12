@@ -8,6 +8,7 @@ INSTALL_DIR="$test_dir"
 source "$repo/lib/utils.sh"
 source "$repo/lib/settings.sh"
 source "$repo/lib/selfmask.sh"
+source "$repo/lib/front.sh"
 
 SELFMASK_LOG_DIR="$test_dir/log"
 SELFMASK_LOGROTATE="$test_dir/logrotate"

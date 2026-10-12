@@ -52,6 +52,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	// уводит минуты на разведку, и параллельная правка настроек ему помешала бы.
 	s.registerWarpRoutes(mux, jwtSecret, client, runner)
 	s.registerDonorRoutes(mux, jwtSecret, client, runner)
+	s.registerFrontRoutes(mux, jwtSecret, client, runner)
 
 	// ── Availability ────────────────────────────────────────────────────────
 	// Mode travels with the probe: several features are manager-only, and the UI
@@ -664,6 +665,42 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 			return
 		}
 		out, err := client.SetSecretLimits(r.Context(), r.PathValue("label"), limits)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		invalidateUsersCache()
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	// Скорость на пользователя ([access.user_rate_limits]), бит/с.
+	mux.Handle("POST /api/mtproxyl/users/{label}/rate", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			Up   int64 `json:"up_bps"`
+			Down int64 `json:"down_bps"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		out, err := client.SetSecretRate(r.Context(), r.PathValue("label"), req.Up, req.Down)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		invalidateUsersCache()
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	// Израсходованную квоту считает движок — сбрасывает её тоже он.
+	mux.Handle("POST /api/mtproxyl/users/{label}/reset-quota", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		out, err := client.ResetQuota(r.Context(), r.PathValue("label"))
 		if err != nil {
 			writeCLIError(w, "mtproxyl_error", err)
 			return
@@ -1752,6 +1789,20 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 			return
 		}
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"lines": out}})
+	}))
+
+	// Готовые SOCKS5 для бота: туннель WARP и донор, с проверкой до Telegram.
+	mux.Handle("GET /api/tgbot/proxy-candidates", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		list, err := client.TgbotProxyCandidates(r.Context())
+		if err != nil {
+			// Старый MTProxyL или правило sudo не обновлено — просто без подсказок.
+			writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: []mtproxylctl.TgbotSocksCandidate{}})
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: list})
 	}))
 
 	// Установка тянет venv и aiogram — это минуты, поэтому она уходит в тот же

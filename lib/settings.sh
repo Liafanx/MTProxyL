@@ -89,6 +89,11 @@ WARP_DISABLED_UPSTREAMS=""
 # менеджер только копирует его файл на место config.toml
 SUPEREXPERT_ENABLED="false"
 NGINX_CUSTOM_ENABLED="false"
+FRONT_SERVER="nginx"          # nginx|caddy|haproxy — держатель заглушки Selfmask и WEB
+API_ENABLED="false"           # mtproxyl-api — внешний API управления
+API_LISTEN="127.0.0.1:9190"
+API_ALLOW=""
+API_TLS="off"                 # off|selfmask
 HTTPS_HSTS_ENABLED="true"
 HTTPS_PERMISSIONS_ENABLED="true"
 # Журнал запросов nginx: по умолчанию не пишется, растёт на гигабайты
@@ -144,6 +149,7 @@ WEB_DECOY_DIR=""
 WEB_DECOY_UPSTREAM=""
 WEB_DEBUG="false"           # [web.debug].enabled, страница /web-status
 WEB_DEBUG_SIDEBAND="false"  # [web.debug].sideband: отчёты bridge-страницы (telemt 3.5.8+)
+WEB_DNS_CHECK="true"        # false — не сверять A-запись WEB-домена (CDN, балансировщик)
 WEB_BASE_PATH=""            # [[web.vhosts]].base_path: WEB под путём (telemt 3.5.8+)
 WEB_FP_SEED=""              # своя строка на установку: из неё берётся CSP заглушки
 WEB_ONLY_PREV_NFT="false"
@@ -300,6 +306,7 @@ WEB_DECOY_DIR='${WEB_DECOY_DIR}'
 WEB_DECOY_UPSTREAM='${WEB_DECOY_UPSTREAM}'
 WEB_DEBUG='${WEB_DEBUG}'
 WEB_DEBUG_SIDEBAND='${WEB_DEBUG_SIDEBAND}'
+WEB_DNS_CHECK='${WEB_DNS_CHECK}'
 WEB_BASE_PATH='${WEB_BASE_PATH}'
 WEB_FP_SEED='${WEB_FP_SEED}'
 WEB_ONLY_PREV_NFT='${WEB_ONLY_PREV_NFT}'
@@ -310,6 +317,11 @@ SUPEREXPERT_ENABLED='${SUPEREXPERT_ENABLED}'
 
 # Пользовательский конфиг nginx
 NGINX_CUSTOM_ENABLED='${NGINX_CUSTOM_ENABLED}'
+FRONT_SERVER='${FRONT_SERVER}'
+API_ENABLED='${API_ENABLED}'
+API_LISTEN='${API_LISTEN}'
+API_ALLOW='${API_ALLOW}'
+API_TLS='${API_TLS}'
 HTTPS_HSTS_ENABLED='${HTTPS_HSTS_ENABLED}'
 HTTPS_PERMISSIONS_ENABLED='${HTTPS_PERMISSIONS_ENABLED}'
 NGINX_ACCESS_LOG='${NGINX_ACCESS_LOG}'
@@ -551,9 +563,9 @@ load_settings() {
                 WEB_TLS_PORT|WEB_MTPROXY_PORT|\
                 WEB_HAPROXY_CERT|\
                 WEB_DECOY_MODE|WEB_DECOY_DIR|WEB_DECOY_UPSTREAM|WEB_DEBUG|WEB_FP_SEED|\
-                WEB_DEBUG_SIDEBAND|WEB_BASE_PATH|\
+                WEB_DEBUG_SIDEBAND|WEB_BASE_PATH|WEB_DNS_CHECK|\
                 WEB_ONLY_PREV_NFT|WEB_ONLY_PREV_ZAPRET2|\
-                SUPEREXPERT_ENABLED|NGINX_CUSTOM_ENABLED|HTTPS_HSTS_ENABLED|HTTPS_PERMISSIONS_ENABLED|NGINX_ACCESS_LOG|\
+                SUPEREXPERT_ENABLED|NGINX_CUSTOM_ENABLED|FRONT_SERVER|API_ENABLED|API_LISTEN|API_ALLOW|API_TLS|HTTPS_HSTS_ENABLED|HTTPS_PERMISSIONS_ENABLED|NGINX_ACCESS_LOG|\
                 IPBLOCK_ENABLED|IPBLOCK_ACTION|IPBLOCK_LIST|IPBLOCK_LIST6|\
                 PORT_PROFILE_MANAGER|PORT_PROFILE_REANIMATOR)
                     printf -v "$key" '%s' "$val"
@@ -637,6 +649,7 @@ load_settings() {
     [[ "$ENGINE_CUSTOM_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?/[^[:space:]\"\'\`\\\$]+$ ]] || ENGINE_CUSTOM_URL=""
     [[ "$ENGINE_CUSTOM_SHA256" =~ ^[0-9a-f]{64}$ ]] || ENGINE_CUSTOM_SHA256=""
     [ "$WEB_DEBUG_SIDEBAND" = "true" ] || WEB_DEBUG_SIDEBAND="false"
+    [ "$WEB_DNS_CHECK" = "false" ] || WEB_DNS_CHECK="true"
     [ -z "$WEB_BASE_PATH" ] || { [ "${#WEB_BASE_PATH}" -le 128 ] \
         && [[ "$WEB_BASE_PATH" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*(/[A-Za-z0-9][A-Za-z0-9_-]*)*$ ]]; } || WEB_BASE_PATH=""
     case "$WEB_CARRIER" in
@@ -665,6 +678,11 @@ load_settings() {
 
     [ "$SUPEREXPERT_ENABLED" = "true" ] || SUPEREXPERT_ENABLED="false"
     [ "$NGINX_CUSTOM_ENABLED" = "true" ] || NGINX_CUSTOM_ENABLED="false"
+    case "$FRONT_SERVER" in nginx|caddy|haproxy) ;; *) FRONT_SERVER="nginx" ;; esac
+    [ "$API_ENABLED" = "true" ] || API_ENABLED="false"
+    [[ "$API_LISTEN" =~ ^(\[[0-9a-fA-F:]+\]|[0-9.]+):[0-9]+$ ]] || API_LISTEN="127.0.0.1:9190"
+    [[ "$API_ALLOW" =~ ^[0-9a-fA-F:.,/]*$ ]] || API_ALLOW=""
+    case "$API_TLS" in off|selfmask) ;; *) API_TLS="off" ;; esac
     [[ "$IP_HISTORY_INTERVAL" =~ ^[0-9]+$ ]] || IP_HISTORY_INTERVAL="5"
 
     [ "$AVAILABILITY_ENABLED" = "false" ] || AVAILABILITY_ENABLED="true"

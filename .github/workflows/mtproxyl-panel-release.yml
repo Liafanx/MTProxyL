@@ -55,6 +55,17 @@ jobs:
       - name: Build binaries
         run: make release-binaries VERSION=${{ steps.version.outputs.value }}
 
+      # Внешний API — отдельный бинарник того же модуля: MTProxyL ставит его
+      # командой `mtproxyl api on`, панель для этого не нужна.
+      - name: Build mtproxyl-api
+        run: |
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
+              -ldflags "-s -w -X main.version=${{ steps.version.outputs.value }}" \
+              -o "release/mtproxyl-api-linux-$arch" ./cmd/mtproxyl-api
+            (cd release && sha256sum "mtproxyl-api-linux-$arch" > "mtproxyl-api-linux-$arch.sha256")
+          done
+
       # Установщик распаковывает архив и передаёт install(1) путь
       # mtproxyl-panel-<arch>-linux, то есть внутри должен лежать ФАЙЛ с этим
       # именем, а не каталог. Бинарник статический (CGO отключён), поэтому одна
@@ -87,6 +98,8 @@ jobs:
         with:
           files: |
             mtproxyl-panel/release/*.tar.gz
+            mtproxyl-panel/release/mtproxyl-api-linux-amd64
+            mtproxyl-panel/release/mtproxyl-api-linux-arm64
             mtproxyl-panel/release/*.sha256
             mtproxyl-panel/release/checksums.txt
           body_path: mtproxyl-panel/RELEASE_NOTES.md

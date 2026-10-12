@@ -26,6 +26,10 @@ type Secret struct {
 	// AdTag is the per-user ad tag ([access.user_ad_tags]); empty means the
 	// user falls back to the shared tag from [general].
 	AdTag string `json:"ad_tag"`
+	// RateUpBps and RateDownBps are per-user speed caps in bits per second
+	// ([access.user_rate_limits]); 0 means no cap in that direction.
+	RateUpBps   int64 `json:"rate_limit_up_bps"`
+	RateDownBps int64 `json:"rate_limit_down_bps"`
 	// TotalIn and TotalOut are 0 when the traffic source cannot tell
 	// direction apart (the reanimator's API-only path) — TotalBytes stays
 	// authoritative in that case, same as on the Traffic page.
@@ -254,5 +258,19 @@ func (c *Client) SetSecretAdTag(ctx context.Context, label, tag string) (string,
 		arg = tag
 	}
 	out, err := c.run(ctx, "secret", "adtag", label, arg)
+	return stripANSI(out), err
+}
+
+// SetSecretRate sets per-user speed caps in bits per second; 0 lifts the cap
+// in that direction, both 0 remove the entry.
+func (c *Client) SetSecretRate(ctx context.Context, label string, up, down int64) (string, error) {
+	if err := ValidateSecretLabel(label); err != nil {
+		return "", err
+	}
+	const maxBps = 100_000_000_000
+	if up < 0 || down < 0 || up > maxBps || down > maxBps {
+		return "", fmt.Errorf("скорость: от 0 до 100 Гбит/с")
+	}
+	out, err := c.run(ctx, "secret", "setrate", label, strconv.FormatInt(up, 10), strconv.FormatInt(down, 10))
 	return stripANSI(out), err
 }

@@ -213,6 +213,10 @@ export interface SelfmaskStatus {
   prev_saved?: boolean;
   /** Fake SNI, который стоял до Selfmask; пусто, если его не было. */
   prev_domain?: string;
+  /** Держатель заглушки (MTProxyL 1.7.0+). */
+  front?: 'nginx' | 'caddy' | 'haproxy';
+  front_title?: string;
+  front_source?: string;
 }
 
 export interface WebStatus {
@@ -254,6 +258,8 @@ export interface WebStatus {
   owner?: 'mtproxyl' | 'target';
   reanimator?: boolean;
   engine_version?: string;
+  front?: 'nginx' | 'caddy' | 'haproxy';
+  front_title?: string;
 }
 
 export interface WebParam {
@@ -536,6 +542,59 @@ export interface MtproxylSetting {
   value: string;
 }
 
+export type FrontServer = 'nginx' | 'caddy' | 'haproxy';
+
+/** Кто держит заглушку Selfmask и публичный TLS WEB Proxy. */
+export interface FrontStatus {
+  server: FrontServer;
+  title: string;
+  source: string;
+  service: string;
+  active: boolean;
+  custom: boolean;
+  custom_file: string;
+  choices: FrontServer[];
+}
+
+export const mtproxylFrontApi = {
+  get: () =>
+    request<{ supported: boolean; status?: FrontStatus }>(MTPROXYL_BASE, '/front'),
+  set: (server: FrontServer) =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/front', {
+      method: 'POST',
+      body: JSON.stringify({ server }),
+    }),
+};
+
+/** Внешний API управления MTProxyL (mtproxyl-api). */
+export interface ControlApiStatus {
+  enabled: boolean;
+  active: boolean;
+  installed: boolean;
+  has_key: boolean;
+  listen: string;
+  allow: string;
+  tls: 'off' | 'selfmask';
+  url: string;
+  version: string;
+}
+
+export const mtproxylControlApi = {
+  get: () =>
+    request<{ supported: boolean; status?: ControlApiStatus }>(MTPROXYL_BASE, '/api'),
+  toggle: (enabled: boolean) =>
+    request<{ output: string; key: string }>(MTPROXYL_BASE, '/api/toggle', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+    }),
+  rotateKey: () => request<{ key: string }>(MTPROXYL_BASE, '/api/key', { method: 'POST' }),
+  set: (key: 'API_LISTEN' | 'API_ALLOW' | 'API_TLS', value: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/api/set', {
+      method: 'POST',
+      body: JSON.stringify({ key, value }),
+    }),
+};
+
 export const mtproxylApiAuthApi = {
   get: () => request<{ set: boolean }>(MTPROXYL_BASE, '/api-auth'),
   set: (value: string) =>
@@ -618,6 +677,15 @@ export const mtproxylUsersApi = {
     request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/adtag`, {
       method: 'POST',
       body: JSON.stringify({ ad_tag: adTag }),
+    }),
+  setRate: (label: string, upBps: number, downBps: number) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/rate`, {
+      method: 'POST',
+      body: JSON.stringify({ up_bps: upBps, down_bps: downBps }),
+    }),
+  resetQuota: (label: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/reset-quota`, {
+      method: 'POST',
     }),
   toggle: (label: string, enabled: boolean) =>
     request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/toggle`, {
@@ -1100,6 +1168,14 @@ export interface TgbotStatusResponse {
 
 const TGBOT_BASE = `${BASE}/api/tgbot`;
 
+/** SOCKS5, поднятый самим MTProxyL (WARP, донор), и доходит ли он до Telegram. */
+export interface TgbotSocksCandidate {
+  name: string;
+  url: string;
+  label: string;
+  works: boolean;
+}
+
 export const tgbotApi = {
   status: () => request<TgbotStatusResponse>(TGBOT_BASE, '/status'),
   logs: (lines = 100) =>
@@ -1122,6 +1198,8 @@ export const tgbotApi = {
       method: 'POST',
       body: JSON.stringify({ id, remove }),
     }),
+  proxyCandidates: () =>
+    request<TgbotSocksCandidate[]>(TGBOT_BASE, '/proxy-candidates'),
   set: (key: string, value: string) =>
     request<TgbotStatusResponse>(TGBOT_BASE, '/settings', {
       method: 'PUT',

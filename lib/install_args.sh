@@ -19,12 +19,14 @@ _IA_MASK=""; _IA_SNI_POLICY=""
 _IA_CPUS=""; _IA_MEMORY=""
 _IA_SECRETS=()
 _IA_SELFMASK_DOMAIN=""; _IA_SELFMASK_CERT=""; _IA_SELFMASK_EMAIL=""
-_IA_SELFMASK_TEMPLATE=""; _IA_SELFMASK_BACKEND_PORT=""
+_IA_SELFMASK_TEMPLATE=""; _IA_SELFMASK_BACKEND_PORT=""; _IA_FRONT=""
 _IA_WEB=""; _IA_WEB_DOMAIN=""; _IA_WEB_CARRIER=""; _IA_WEB_CARRIERS=""; _IA_WEB_LAYOUT=""; _IA_WEB_FRONTEND=""
 _IA_WEB_HAPROXY_CERT=""
 _IA_WEB_PORT=""; _IA_WEB_SECRET_MODE=""; _IA_WEB_PATH=""
 _IA_WEB_DECOY=""; _IA_WEB_DECOY_UPSTREAM=""
 _IA_GEOIP=""
+_IA_WEB_DNS_CHECK=""
+_IA_API=""; _IA_API_LISTEN=""; _IA_API_ALLOW=""; _IA_API_TLS=""
 _IA_BLOCK_FILE=""
 _IA_BLOCK_LIST=""
 _IA_BLOCK_ACTION=""
@@ -95,7 +97,10 @@ install_args_help() {
     --selfmask-cert letsencrypt|selfsigned
     --selfmask-email <email>   почта для Let's Encrypt (необязательна)
     --selfmask-template stub|filemanager|catrunner|mekorunner|<url>|</path>
-    --selfmask-backend-port N  локальный порт nginx (по умолчанию 8444)
+    --selfmask-backend-port N  локальный порт заглушки (по умолчанию 8444)
+    --front nginx|caddy|haproxy
+                               чем держать заглушку и TLS Selfmask/WEB
+                               (по умолчанию nginx)
 
   WEB Proxy
     --web yes|no               включить WEB Proxy
@@ -108,6 +113,7 @@ install_args_help() {
     --web-carrier https|https-lanes|websocket|websocket-lanes
     --web-carriers <список>    перебор carrier через запятую (telemt 3.5.4+)
     --web-port N               публичный порт WEB для WEB-only и split
+    --web-dns-check yes|no     сверять A-запись WEB-домена (no — CDN, балансировщик)
     --web-secret-mode plain|dd
     --web-path <путь>          WEB под путём, например app/sync (telemt 3.5.8+)
     --web-decoy empty|site|upstream
@@ -116,6 +122,12 @@ install_args_help() {
 
   Дополнения
     --geoip yes|no             база GeoIP: страна, город и ASN в истории IP
+
+  API управления (описание — api.md)
+    --api yes|no               включить mtproxyl-api; ключ выводится в конце
+    --api-listen АДРЕС:ПОРТ    где слушать (по умолчанию 127.0.0.1:9190)
+    --api-allow СПИСОК         разрешённые IP/подсети через запятую
+    --api-tls off|selfmask     HTTPS на сертификате Selfmask
     --block-file ПУТЬ          список заблокированных адресов из файла (# — комментарии)
     --block СПИСОК             заблокированные адреса через запятую
     --block-action drop|reject что делать с заблокированными, по умолчанию drop
@@ -231,6 +243,12 @@ _install_args_parse() {
             --web-frontend)    _IA_WEB_FRONTEND="${_v,,}" ;;
             --web-haproxy-cert) _IA_WEB_HAPROXY_CERT="$_v" ;;
             --web-port)        _IA_WEB_PORT="$_v" ;;
+            --web-dns-check)
+                case "${_v,,}" in
+                    yes|y|да|true|on)   _IA_WEB_DNS_CHECK="true" ;;
+                    no|n|нет|false|off) _IA_WEB_DNS_CHECK="false" ;;
+                    *) log_error "--web-dns-check: yes или no"; return 1 ;;
+                esac ;;
             --web-secret-mode) _IA_WEB_SECRET_MODE="$_v" ;;
             --web-path)        _IA_WEB_PATH="${_v#/}"; _IA_WEB_PATH="${_IA_WEB_PATH%/}" ;;
             --web-decoy)       _IA_WEB_DECOY="${_v,,}" ;;
@@ -240,6 +258,7 @@ _install_args_parse() {
             --selfmask-email)        _IA_SELFMASK_EMAIL="$_v" ;;
             --selfmask-template)     _IA_SELFMASK_TEMPLATE="$_v" ;;
             --selfmask-backend-port) _IA_SELFMASK_BACKEND_PORT="$_v" ;;
+            --front)           _IA_FRONT="${_v,,}" ;;
             --block-file)   _IA_BLOCK_FILE="$_v" ;;
             --block)        _IA_BLOCK_LIST="$_v" ;;
             --block-action)
@@ -247,6 +266,15 @@ _install_args_parse() {
                     drop|reject) _IA_BLOCK_ACTION="${_v,,}" ;;
                     *) log_error "--block-action: drop или reject"; return 1 ;;
                 esac ;;
+            --api)
+                case "${_v,,}" in
+                    yes|y|да|true|on)   _IA_API="yes" ;;
+                    no|n|нет|false|off) _IA_API="no" ;;
+                    *) log_error "--api: yes или no"; return 1 ;;
+                esac ;;
+            --api-listen) _IA_API_LISTEN="$_v" ;;
+            --api-allow)  _IA_API_ALLOW="$_v" ;;
+            --api-tls)    _IA_API_TLS="${_v,,}" ;;
             --geoip)
                 case "${_v,,}" in
                     yes|y|да|true|on)   _IA_GEOIP="yes" ;;
@@ -506,6 +534,30 @@ _install_args_validate() {
             *) log_error "--web-frontend: nginx, haproxy или haproxy-nginx"; _ok=false ;;
         esac
     fi
+    if [ -n "$_IA_API_LISTEN$_IA_API_ALLOW$_IA_API_TLS" ] && [ "$_IA_API" != "yes" ]; then
+        log_error "Параметры API заданы без --api yes"; _ok=false
+    fi
+    [ -z "$_IA_API_LISTEN" ] || _api_validate_listen "$_IA_API_LISTEN" \
+        || { log_error "--api-listen: адрес:порт, например 0.0.0.0:9190"; _ok=false; }
+    [ -z "$_IA_API_ALLOW" ] || _api_validate_allow "$_IA_API_ALLOW" \
+        || { log_error "--api-allow: IP или подсети через запятую"; _ok=false; }
+    case "$_IA_API_TLS" in ""|off) ;;
+        selfmask) [ -n "$_IA_SELFMASK_DOMAIN" ] || { log_error "--api-tls selfmask требует --selfmask"; _ok=false; } ;;
+        *) log_error "--api-tls: off или selfmask"; _ok=false ;;
+    esac
+    if [ -n "$_IA_FRONT" ]; then
+        case "$_IA_FRONT" in
+            nginx|caddy|haproxy) ;;
+            *) log_error "--front: nginx, caddy или haproxy"; _ok=false ;;
+        esac
+        [ -n "$_IA_SELFMASK_DOMAIN" ] || [ "$_IA_WEB" = "yes" ] \
+            || { log_error "--front задан без Selfmask и WEB"; _ok=false; }
+        case "$_IA_WEB_FRONTEND" in
+            haproxy|haproxy-nginx)
+                [ "$_IA_FRONT" = "nginx" ] \
+                    || { log_error "--web-frontend ${_IA_WEB_FRONTEND} работает только с --front nginx"; _ok=false; } ;;
+        esac
+    fi
     if [ -n "$_IA_WEB_HAPROXY_CERT" ] \
        && [[ ! "$_IA_WEB_HAPROXY_CERT" =~ ^/[A-Za-z0-9_./+-]+$ ]]; then
         log_error "--web-haproxy-cert: нужен безопасный абсолютный путь без пробелов"; _ok=false
@@ -548,7 +600,7 @@ _install_args_validate() {
         log_error "--web yes требует --web-domain <домен> либо --selfmask <домен>"; _ok=false
     fi
     if [ "$_IA_WEB" != "yes" ] && { [ -n "$_IA_WEB_DOMAIN" ] || [ -n "$_IA_WEB_CARRIER" ] || [ -n "$_IA_WEB_CARRIERS" ] || \
-       [ -n "$_IA_WEB_LAYOUT" ] || [ -n "$_IA_WEB_PORT" ] || [ -n "$_IA_WEB_SECRET_MODE" ] || \
+       [ -n "$_IA_WEB_LAYOUT" ] || [ -n "$_IA_WEB_PORT" ] || [ -n "$_IA_WEB_SECRET_MODE" ] || [ -n "$_IA_WEB_DNS_CHECK" ] || \
        [ -n "$_IA_WEB_FRONTEND" ] || [ -n "$_IA_WEB_HAPROXY_CERT" ] || \
        [ -n "$_IA_WEB_DECOY" ] || [ -n "$_IA_WEB_DECOY_UPSTREAM" ] || [ -n "$_IA_WEB_PATH" ]; }; then
         log_error "Параметры WEB заданы без --web yes"; _ok=false
@@ -724,6 +776,11 @@ run_installer_args() {
 
     _install_args_autostart
 
+    if [ -n "$_IA_FRONT" ]; then
+        FRONT_SERVER="$_IA_FRONT"
+        save_settings >/dev/null 2>&1 || true
+    fi
+
     if [ -n "$_IA_SELFMASK_DOMAIN" ]; then
         _install_args_selfmask || log_warn "Selfmask не настроен — остальное установлено"
     fi
@@ -738,6 +795,15 @@ run_installer_args() {
     if [ "$_IA_GEOIP" = "yes" ]; then
         echo ""
         geoip_install || log_warn "База GeoIP не установлена — поставьте позже: меню «Дополнения»"
+    fi
+
+    if [ "$_IA_API" = "yes" ]; then
+        echo ""
+        draw_header "API УПРАВЛЕНИЯ"
+        [ -n "$_IA_API_LISTEN" ] && API_LISTEN="$_IA_API_LISTEN"
+        [ -n "$_IA_API_ALLOW" ] && API_ALLOW="${_IA_API_ALLOW// /}"
+        [ -n "$_IA_API_TLS" ] && API_TLS="$_IA_API_TLS"
+        api_enable || log_warn "API не включён — включите позже: mtproxyl api on"
     fi
 
     if [ -n "${_IA_BLOCK_ACTION}" ]; then
@@ -918,6 +984,7 @@ _install_args_web() {
         log_info "MTProto: :${PROXY_PORT}, WEB: :443 — автоматически выбрана раскладка split"
     fi
     WEB_FRONTEND="${_IA_WEB_FRONTEND:-nginx}"
+    [ -n "$_IA_WEB_DNS_CHECK" ] && WEB_DNS_CHECK="$_IA_WEB_DNS_CHECK"
     WEB_HAPROXY_CERT="${_IA_WEB_HAPROXY_CERT:-}"
     case "${_IA_WEB_DECOY:-}" in
         site) WEB_DECOY_MODE="static_directory" ;;

@@ -19,6 +19,7 @@ import { SettingsPage } from '@/pages/SettingsPage';
 import { MaintenancePage } from '@/pages/MaintenancePage';
 import { SelfmaskPage } from '@/pages/SelfmaskPage';
 import { WebPage } from '@/pages/WebPage';
+import { ControlApiPage } from '@/pages/ControlApiPage';
 import { BackupsPage } from '@/pages/BackupsPage';
 import { NftPage } from '@/pages/NftPage';
 import { GeoblockPage } from '@/pages/GeoblockPage';
@@ -74,6 +75,7 @@ function AuthenticatedApp() {
           <Route path="/maintenance" element={<MaintenancePage />} />
           <Route path="/selfmask" element={<SelfmaskPage />} />
           <Route path="/web" element={<WebPage />} />
+          <Route path="/control-api" element={<ControlApiPage />} />
           <Route path="/backups" element={<BackupsPage />} />
           <Route path="/nft" element={<NftPage />} />
           <Route path="/geoblock" element={<GeoblockPage />} />

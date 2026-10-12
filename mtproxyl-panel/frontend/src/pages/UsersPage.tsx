@@ -31,6 +31,8 @@ interface UserInfo {
   expiration_rfc3339?: string;
   data_quota_bytes?: number;
   max_unique_ips?: number;
+  rate_limit_up_bps?: number | null;
+  rate_limit_down_bps?: number | null;
   current_connections: number;
   active_unique_ips: number;
   recent_unique_ips: number;
@@ -62,6 +64,9 @@ async function applyMtproxylLimits(label: string, data: Record<string, unknown>)
   // очистили, — это снятие метки.
   if ('user_ad_tag' in data) {
     await mtproxylUsersApi.setAdTag(label, data.user_ad_tag ? String(data.user_ad_tag) : '');
+  }
+  if ('rate_limit_up_bps' in data || 'rate_limit_down_bps' in data) {
+    await mtproxylUsersApi.setRate(label, Number(data.rate_limit_up_bps ?? 0), Number(data.rate_limit_down_bps ?? 0));
   }
 }
 
@@ -181,6 +186,11 @@ export function UsersPage() {
   const usersOwnedByMtproxyl = mtproxylEnabled && mtproxylMode === 'manager';
 
   const [editUser, setEditUser] = useState<UserInfo | null>(null);
+  // Один объект на открытие формы: иначе её useEffect сбрасывал бы ввод.
+  const editRate = useMemo(
+    () => ({ up: editUser?.rate_limit_up_bps ?? 0, down: editUser?.rate_limit_down_bps ?? 0 }),
+    [editUser],
+  );
   const [deleteUser, setDeleteUser] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [resetUser, setResetUser] = useState<string | null>(null);
@@ -614,6 +624,7 @@ export function UsersPage() {
         currentSecret={extractSecret(editUser?.links)}
         secretRotateOnly={usersOwnedByMtproxyl}
         usernameEditable={mtproxylEnabled}
+        initialRate={editRate}
       />
 
       <ConfirmDialog

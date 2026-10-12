@@ -168,8 +168,8 @@ _mig_check_local() {
     if _superexpert_active 2>/dev/null; then
         log_info "Включён режим супер эксперта — ваш конфиг движка поедет вместе с остальным"
     fi
-    if [ -f "${NGINX_CUSTOM_FILE:-/opt/mtproxyl/nginx-custom.conf}" ]; then
-        log_info "Пользовательский конфиг nginx поедет вместе с остальным"
+    if [ -f "$(front_custom_file)" ]; then
+        log_info "Свой конфиг $(front_title) поедет вместе с остальным"
     fi
     return 0
 }
@@ -456,37 +456,37 @@ _mig_push_superexpert() {
 }
 
 _mig_snapshot_nginx_custom() {
-    [ -f "$NGINX_CUSTOM_FILE" ] || return 0
+    [ -f "$(front_custom_file)" ] || return 0
     _MIG_NGINX_CUSTOM_SNAPSHOT=$(mktemp /tmp/.mtproxyl-migrate-nginx.XXXXXX) || {
         _MIG_NGINX_CUSTOM_SNAPSHOT=""
         return 0
     }
     chmod 600 "$_MIG_NGINX_CUSTOM_SNAPSHOT"
-    cat "$NGINX_CUSTOM_FILE" > "$_MIG_NGINX_CUSTOM_SNAPSHOT"
+    cat "$(front_custom_file)" > "$_MIG_NGINX_CUSTOM_SNAPSHOT"
     nginx_custom_active 2>/dev/null && _MIG_NGINX_CUSTOM_WAS_ACTIVE="true"
 }
 
 _mig_push_nginx_custom() {
     [ -n "$_MIG_NGINX_CUSTOM_SNAPSHOT" ] && [ -f "$_MIG_NGINX_CUSTOM_SNAPSHOT" ] || return 0
-    log_info "Переносим пользовательский конфиг nginx..."
-    if ! _mig_scp "$_MIG_NGINX_CUSTOM_SNAPSHOT" "/tmp/mtproxyl-nginx-custom.conf"; then
-        log_warn "Пользовательский конфиг nginx не доехал"
+    log_info "Переносим свой конфиг $(front_title)..."
+    if ! _mig_scp "$_MIG_NGINX_CUSTOM_SNAPSHOT" "/tmp/mtproxyl-front-custom.conf"; then
+        log_warn "Свой конфиг $(front_title) не доехал"
         return 0
     fi
-    if ! _mig_ssh "install -m 600 -o root -g root /tmp/mtproxyl-nginx-custom.conf ${NGINX_CUSTOM_FILE} && rm -f /tmp/mtproxyl-nginx-custom.conf" \
+    if ! _mig_ssh "install -m 600 -o root -g root /tmp/mtproxyl-front-custom.conf $(front_custom_file) && rm -f /tmp/mtproxyl-front-custom.conf" \
         </dev/null >/dev/null 2>&1; then
-        log_warn "Не удалось положить пользовательский конфиг nginx"
+        log_warn "Не удалось положить свой конфиг $(front_title)"
         return 0
     fi
     if [ "$_MIG_NGINX_CUSTOM_WAS_ACTIVE" = "true" ]; then
         if _mig_ssh "MTPROXYL_ASSUME_YES=1 mtproxyl selfmask nginx-config on" </dev/null >/dev/null 2>&1; then
-            log_success "Пользовательский конфиг nginx включён"
+            log_success "Свой конфиг $(front_title) включён"
             log_warn "Проверьте в нём домены, адреса и пути на новом сервере"
         else
-            log_warn "Конфиг перенесён, но режим не включился — проверьте nginx -t на новом сервере"
+            log_warn "Конфиг перенесён, но режим не включился — проверьте конфиг на новом сервере"
         fi
     else
-        log_success "Пользовательский конфиг nginx перенесён и оставлен выключенным"
+        log_success "Свой конфиг $(front_title) перенесён и оставлен выключенным"
     fi
 }
 
@@ -656,8 +656,8 @@ migrate_run() {
     echo -e "  ${BOLD}Selfmask:${NC}   $([ "${SELFMASK_ENABLED:-false}" = "true" ] && echo "${SELFMASK_DOMAIN} (${SELFMASK_CERT_MODE:-letsencrypt})" || echo "${DIM}выключен${NC}")"
     _superexpert_active 2>/dev/null && \
         echo -e "  ${BOLD}Супер эксперт:${NC} свой конфиг движка едет вместе с остальным"
-    [ -f "$NGINX_CUSTOM_FILE" ] && \
-        echo -e "  ${BOLD}Свой nginx:${NC}  конфиг едет вместе с остальным$([ "$_MIG_NGINX_CUSTOM_WAS_ACTIVE" = "true" ] || echo " ${DIM}(выключен)${NC}")"
+    [ -f "$(front_custom_file)" ] && \
+        echo -e "  ${BOLD}Свой $(front_title):${NC}  конфиг едет вместе с остальным$([ "$_MIG_NGINX_CUSTOM_WAS_ACTIVE" = "true" ] || echo " ${DIM}(выключен)${NC}")"
     echo -e "  ${BOLD}Панель:${NC}     $(if ! panel_installed 2>/dev/null; then echo "${DIM}не установлена${NC}"; elif [ "$_MIG_WITH_PANEL" = "no" ]; then echo "${DIM}пропускаем${NC}"; else echo "переносим"; fi)"
     echo -e "  ${BOLD}Бот:${NC}        $(if ! tgbot_installed 2>/dev/null; then echo "${DIM}не установлен${NC}"; elif [ "$_MIG_WITH_TGBOT" = "no" ]; then echo "${DIM}пропускаем${NC}"; else echo "переносим"; fi)"
     echo ""

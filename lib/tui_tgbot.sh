@@ -125,11 +125,32 @@ _tui_tgbot_proxy_line() {
 # Локальный SOCKS5 на случай, когда серверы Telegram с хоста недоступны.
 _tui_tgbot_proxy() {
     echo ""
-    echo -e "  ${DIM}Бот пойдёт к Telegram через локальный SOCKS5. Поднимаете его вы —${NC}"
-    echo -e "  ${DIM}MTProxyL прокси не ставит и за ним не следит.${NC}"
-    echo -e "  ${DIM}Формат: socks5://[логин:пароль@]хост:порт, 'off' — напрямую.${NC}"
-    local _v; read_line _v "  ${BOLD}Прокси:${NC} "
-    [ -n "$_v" ] || return 0
+    echo -e "  ${DIM}Если Telegram с сервера недоступен, бот может ходить через SOCKS5.${NC}"
+    local -a _urls=() _labels=()
+    local _name _url _label _i=0 _st
+    while IFS='|' read -r _name _url _label; do
+        [ -n "$_url" ] || continue
+        _urls+=("$_url"); _labels+=("$_label")
+    done < <(tgbot_socks_candidates)
+    if [ ${#_urls[@]} -gt 0 ]; then
+        echo -e "  ${DIM}Поднятые MTProxyL (проверяем, доходят ли до Telegram):${NC}"
+        for _i in "${!_urls[@]}"; do
+            _tgbot_socks_works "${_urls[$_i]}" && _st="${GREEN}Telegram доступен${NC}" || _st="${RED}Telegram не отвечает${NC}"
+            echo -e "  ${CYAN}[$((_i + 1))]${NC}  ${_labels[$_i]}  ${DIM}${_urls[$_i]}${NC}  ${_st}"
+        done
+    fi
+    local _own=$(( ${#_urls[@]} + 1 ))
+    echo -e "  ${CYAN}[${_own}]${NC}  Свой адрес ${DIM}socks5://[логин:пароль@]хост:порт${NC}"
+    echo -e "  ${CYAN}[0]${NC}  Напрямую, без прокси"
+    local _c _v; _c=$(read_choice "выбор" "")
+    case "$_c" in
+        "") return 0 ;;
+        0) _v="off" ;;
+        "$_own") read_line _v "  ${BOLD}Прокси:${NC} "; [ -n "$_v" ] || return 0 ;;
+        *)
+            [[ "$_c" =~ ^[0-9]+$ ]] && [ "$_c" -ge 1 ] && [ "$_c" -le ${#_urls[@]} ] || return 0
+            _v="${_urls[$((_c - 1))]}" ;;
+    esac
     # Перезапуск делает сам tgbot_set_param — настройка живёт только в сессии.
     tgbot_set_param proxy "$_v" || return 1
 }
