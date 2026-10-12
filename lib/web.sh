@@ -1009,6 +1009,35 @@ web_format_link() {
     printf 'tg://webproxy?server=%s&secret=%s\n' "${_host}%2F${_base//\//%2F}" "$_b64"
 }
 
+# base64url без «=» из hex — без форков, для списков из десятков ссылок.
+_hex_b64url() {
+    local _h="$1" _a="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    local _o="" _n _i _l=${#1}
+    for ((_i = 0; _i + 6 <= _l; _i += 6)); do
+        _n=$((16#${_h:_i:6}))
+        _o+="${_a:$(((_n >> 18) & 63)):1}${_a:$(((_n >> 12) & 63)):1}${_a:$(((_n >> 6) & 63)):1}${_a:$((_n & 63)):1}"
+    done
+    case $((_l - _i)) in
+        2) _n=$((16#${_h:_i:2} << 16)); _o+="${_a:$(((_n >> 18) & 63)):1}${_a:$(((_n >> 12) & 63)):1}" ;;
+        4) _n=$((16#${_h:_i:4} << 8)); _o+="${_a:$(((_n >> 18) & 63)):1}${_a:$(((_n >> 12) & 63)):1}${_a:$(((_n >> 6) & 63)):1}" ;;
+    esac
+    _B64_OUT="$_o"
+}
+
+# То же, что web_format_link, но в _WEB_LINK_OUT и без форков.
+_web_format_link_fast() {
+    local _host="$1" _base="$2" _mode="$3" _raw="$4" _dd=""
+    _WEB_LINK_OUT=""
+    [ -n "$_host" ] && [[ "$_raw" =~ ^[0-9a-fA-F]{32}$ ]] || return 1
+    [ "$_mode" = "dd" ] && _dd="dd"
+    if [ -z "$_base" ]; then
+        _WEB_LINK_OUT="tg://webproxy?server=${_host}&secret=${_dd}${_raw}"
+        return 0
+    fi
+    _hex_b64url "70${_dd}${_raw}"
+    _WEB_LINK_OUT="tg://webproxy?server=${_host}%2F${_base//\//%2F}&secret=${_B64_OUT}"
+}
+
 # API движка WEB-ссылки не отдаёт: в /v1/users есть только classic, secure,
 # tls и tls_domains. Поэтому собираем сами.
 web_link_for_secret() {

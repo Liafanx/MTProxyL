@@ -488,6 +488,14 @@ secret_set_adtag() {
 
 _rate_up()   { [[ "$1" =~ ^([0-9]+):[0-9]+$ ]] && echo "${BASH_REMATCH[1]}" || echo 0; }
 _rate_down() { [[ "$1" =~ ^[0-9]+:([0-9]+)$ ]] && echo "${BASH_REMATCH[1]}" || echo 0; }
+# То же без подшелла — для циклов по всем пользователям: кладёт в _RATE_UP/_RATE_DOWN.
+_rate_split() {
+    if [[ "$1" =~ ^([0-9]+):([0-9]+)$ ]]; then
+        _RATE_UP="${BASH_REMATCH[1]}"; _RATE_DOWN="${BASH_REMATCH[2]}"
+    else
+        _RATE_UP=0; _RATE_DOWN=0
+    fi
+}
 
 # Скорость пользователя: вверх и вниз в бит/с, «0» — без ограничения.
 _secret_rate_value() {
@@ -629,8 +637,8 @@ secret_list_json() {
     # Раз увиденный IP остаётся в истории и после того, как сессия
     # закончилась — сначала копим свежие данные из API движка (если он
     # отвечает), потом читаем историю уже из файла.
-    local _json
-    if _json=$(_get_telemt_users_json "$(_engine_config_path)" 2>/dev/null); then
+    local _json="${1:-}"
+    if [ -n "$_json" ] || _json=$(_get_telemt_users_json "$(_engine_config_path)" 2>/dev/null); then
         _target_user_ip_lists "$_json" | _flush_user_ip_history "$_USER_IPS_DB"
     fi
 
@@ -695,7 +703,7 @@ secret_list_json() {
     # Дальше ни одного "$(...)": подстановка форкает подшелл на каждый вызов.
     # json_escape_fast кладёт результат в переменную вместо stdout.
     local _i _first=1 _label _uin _uout _cur_in _cur_out _snap_in _snap_out _unsaved_in _unsaved_out
-    local _label_esc _secret_esc _expires_esc _notes_esc _enabled_str
+    local _label_esc _secret_esc _expires_esc _notes_esc _enabled_str _RATE_UP _RATE_DOWN
     printf '['
     for _i in "${!SECRETS_LABELS[@]}"; do
         [ $_first -eq 1 ] || printf ','
@@ -728,6 +736,7 @@ secret_list_json() {
         json_escape_fast "${SECRETS_EXPIRES[$_i]:-0}";     _expires_esc="$_JSON_ESCAPE_OUT"
         json_escape_fast "${SECRETS_NOTES[$_i]:-}";        _notes_esc="$_JSON_ESCAPE_OUT"
         if [ "${SECRETS_ENABLED[$_i]}" = "true" ]; then _enabled_str=true; else _enabled_str=false; fi
+        _rate_split "${SECRETS_RATE[$_i]:-}"
 
         printf '{"label":"%s","secret":"%s","created":%s,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"%s","ad_tag":"%s","rate_limit_up_bps":%s,"rate_limit_down_bps":%s,"total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":[%s]}' \
             "$_label_esc" \
@@ -740,7 +749,7 @@ secret_list_json() {
             "$_expires_esc" \
             "$_notes_esc" \
             "${SECRETS_ADTAG[$_i]:-}" \
-            "$(_rate_up "${SECRETS_RATE[$_i]:-}")" "$(_rate_down "${SECRETS_RATE[$_i]:-}")" \
+            "$_RATE_UP" "$_RATE_DOWN" \
             "${_uin:-0}" "${_uout:-0}" "$(( ${_uin:-0} + ${_uout:-0} ))" \
             "${_IP_HIST_JSON[$_label]:-}"
     done
@@ -1544,8 +1553,9 @@ target_user_adtag() {
 
 target_users_list_json() {
     _target_users_ready || { printf '[]\n'; return 1; }
-    local _json
-    if _json=$(_get_telemt_users_json "$DETECTED_CONFIG_PATH" 2>/dev/null); then
+    # Ответ API цели можно передать готовым (api-view его уже получил).
+    local _json="${1:-}"
+    if [ -n "$_json" ] || _json=$(_get_telemt_users_json "$DETECTED_CONFIG_PATH" 2>/dev/null); then
         _target_user_ip_lists "$_json" | _flush_user_ip_history "$_TARGET_USER_IPS_DB"
     fi
 
@@ -1594,7 +1604,7 @@ target_users_list_json() {
     fi
 
     local _first=1 _state _label _secret _label_esc _secret_esc _expires_esc
-    local _enabled_str _conns _ips _quota _expires
+    local _enabled_str _conns _ips _quota _expires _RATE_UP _RATE_DOWN
     printf '['
     while IFS='|' read -r _state _label _secret; do
         [ -n "$_label" ] || continue
@@ -1613,11 +1623,12 @@ target_users_list_json() {
         json_escape_fast "$_secret";   _secret_esc="$_JSON_ESCAPE_OUT"
         json_escape_fast "$_expires";  _expires_esc="$_JSON_ESCAPE_OUT"
         if [ "$_state" = "on" ]; then _enabled_str=true; else _enabled_str=false; fi
+        _rate_split "${_LIM_RATE[$_label]:-}"
 
         printf '{"label":"%s","secret":"%s","created":0,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"","ad_tag":"%s","rate_limit_up_bps":%s,"rate_limit_down_bps":%s,"total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":[%s]}' \
             "$_label_esc" "$_secret_esc" "$_enabled_str" \
             "$_conns" "$_ips" "$_quota" "$_expires_esc" "$_adtag" \
-            "$(_rate_up "${_LIM_RATE[$_label]:-}")" "$(_rate_down "${_LIM_RATE[$_label]:-}")" \
+            "$_RATE_UP" "$_RATE_DOWN" \
             "${_TDB_IN[$_label]:-0}" "${_TDB_OUT[$_label]:-0}" "${_TDB_TOTAL[$_label]:-0}" \
             "${_IP_HIST[$_label]:-}"
     done < <(_target_section_pairs "access.users")
@@ -1806,11 +1817,15 @@ target_user_show_limits() {
 # вызовом: ссылки каждого пользователя и ответ движка на /v1/users (живые
 # подключения и IP). live = null, если API движка не отвечает.
 secret_api_view_json() {
-    local _target="${1:-false}" _only="${2:-}" _cfg _l _first=1 _link _lfirst
+    local _target="${1:-false}" _only="${2:-}" _cfg _l _first=1 _link _lfirst _json="" _have_json=0
     local -a _labels=()
+    # Ответ API движка берём один раз: из него и живые данные, и ссылки цели.
+    # Раньше на каждого пользователя цели шёл свой запрос и разбор всего
+    # ответа — на 60 пользователях больше минуты.
+    declare -A _TLINKS=()
     if [ "$_target" = "true" ]; then
         _cfg="${DETECTED_CONFIG_PATH:-}"
-        local _st _nm _vl
+        local _st _nm _vl _u
         while IFS='|' read -r _st _nm _vl; do
             [ -n "$_nm" ] && _labels+=("$_nm")
         done < <(_target_section_pairs "access.users")
@@ -1819,6 +1834,34 @@ secret_api_view_json() {
         _cfg=$(_engine_config_path)
         _labels=("${SECRETS_LABELS[@]}")
     fi
+    _json=$(_get_telemt_users_json "$_cfg" 2>/dev/null) && _have_json=1
+    local _ulinks _web=0
+    [ "$_target" = "true" ] && web_target_enabled 2>/dev/null && _web=1
+    # Менеджер: ссылки у всех одинаковы с точностью до секрета — шаблон
+    # собираем один раз, секрет подставляем. get_proxy_links на каждого
+    # стоил десятки форков: 63 пользователя — 19 секунд.
+    declare -A _MKEY=()
+    local _tpl="" _wd="" _wb="" _wm="" _k _sec _dom _i
+    if [ "$_target" != "true" ]; then
+        for _i in "${!SECRETS_LABELS[@]}"; do _MKEY["${SECRETS_LABELS[$_i]}"]="${SECRETS_KEYS[$_i]}"; done
+        if mtproto_is_enabled 2>/dev/null; then
+            local _host _port
+            _host=$(proxy_link_host); _port=$(proxy_link_port)
+            while IFS='|' read -r _k _sec _dom; do
+                [ -n "$_sec" ] && _tpl+="tg://proxy?server=${_host}&port=${_port}&secret=${_sec}"$'\n'
+            done <<< "$(build_link_secrets "@RAW@")"
+        fi
+        if web_is_enabled 2>/dev/null; then
+            _wd=$(web_domain 2>/dev/null) || _wd=""
+            _wb=$(web_base_path 2>/dev/null)
+            _wm="${WEB_SECRET_MODE:-dd}"
+        fi
+    fi
+    if [ "$_target" = "true" ] && [ "$_have_json" = 1 ]; then
+        while IFS='|' read -r _u _link; do
+            [ -n "$_u" ] && _TLINKS["$_u"]+="${_link}"$'\n'
+        done < <(_target_links_ipv4 "$_json")
+    fi
     printf '{"links":{'
     for _l in "${_labels[@]}"; do
         [ -z "$_only" ] || [ "$_l" = "$_only" ] || continue
@@ -1826,22 +1869,34 @@ secret_api_view_json() {
         _first=0
         json_escape_fast "$_l"; printf '"%s":[' "$_JSON_ESCAPE_OUT"
         _lfirst=1
+        if [ "$_target" != "true" ]; then
+            _ulinks="${_tpl//@RAW@/${_MKEY[$_l]:-}}"
+            [ -n "$_wd" ] && _web_format_link_fast "$_wd" "$_wb" "$_wm" "${_MKEY[$_l]:-}" \
+                && _ulinks+="$_WEB_LINK_OUT"
+        elif [ -n "${_TLINKS[$_l]:-}" ]; then
+            _ulinks="${_TLINKS[$_l]}"
+            [ "$_web" = 1 ] && _ulinks+=$(_target_web_link "$_l" 2>/dev/null)
+        else
+            _ulinks=$(target_user_link "$_l" 2>/dev/null)
+        fi
         while IFS= read -r _link; do
             [[ "$_link" == tg://* ]] || continue
             [ "$_lfirst" = 1 ] || printf ','
             _lfirst=0
             json_escape_fast "$_link"; printf '"%s"' "$_JSON_ESCAPE_OUT"
-        done < <(if [ "$_target" = "true" ]; then target_user_link "$_l"; else get_proxy_links "$_l"; fi 2>/dev/null)
+        done <<< "$_ulinks"
         printf ']'
     done
     printf '},"live":'
-    local _json
-    if _json=$(_get_telemt_users_json "$_cfg" 2>/dev/null); then
+    if [ "$_have_json" = 1 ]; then
         printf '%s' "$_json" | tr -d '\n'
     else
         printf 'null'
     fi
-    printf '}\n'
+    # Список целиком (как secret list --json): API берёт всё одним запуском.
+    local _list
+    if [ "$_target" = "true" ]; then _list=$(target_users_list_json "$_json" 2>/dev/null); else _list=$(secret_list_json "$_json" 2>/dev/null); fi
+    printf ',"users":%s}\n' "${_list:-null}"
 }
 
 handle_secret_command() {

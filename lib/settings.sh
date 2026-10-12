@@ -705,6 +705,9 @@ load_settings() {
     [[ "$AVAILABILITY_HISTORY_LIMIT" =~ ^[0-9]+$ ]] && [ "$AVAILABILITY_HISTORY_LIMIT" -ge 1 ] && [ "$AVAILABILITY_HISTORY_LIMIT" -le 100000 ] || AVAILABILITY_HISTORY_LIMIT="1000"
 
     _fix_settings_perms
+    # Команды только на чтение (их зовут панель и API на каждый запрос) не
+    # чинят таймеры и логи — это десятки форков на каждый вызов.
+    [ "${_SETTINGS_READ_ONLY:-}" = 1 ] && return 0
     _ensure_ip_history_timer
     _ensure_availability_timer
     if declare -F _ensure_dc_watch_timer >/dev/null; then _ensure_dc_watch_timer; fi
