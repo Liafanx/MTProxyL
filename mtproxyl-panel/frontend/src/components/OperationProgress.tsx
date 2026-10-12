@@ -7,6 +7,7 @@ const OPERATION_LABELS: Record<string, string> = {
   'selfmask:apply': 'Настройка Selfmask',
   'selfmask:nginx-custom-on': 'Включение своего конфига держателя',
   'selfmask:nginx-custom-off': 'Возврат стандартного конфига держателя',
+  'selfmask:nginx-custom-reset': 'Перезапись своего конфига держателя актуальным',
   'web:enable': 'Включение WEB Proxy',
   'front:nginx': 'Перенос заглушки на nginx',
   'front:caddy': 'Перенос заглушки на Caddy',

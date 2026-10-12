@@ -94,6 +94,13 @@ func (c *Client) SetSelfmaskNginxCustom(ctx context.Context, enabled bool) (stri
 	return stripANSI(out), err
 }
 
+// ResetSelfmaskNginxCustom переписывает свой конфиг держателя актуальным
+// сгенерированным; прежний остаётся рядом с .bak.
+func (c *Client) ResetSelfmaskNginxCustom(ctx context.Context) (string, error) {
+	out, err := c.run(ctx, "selfmask", "nginx-config", "reset")
+	return stripANSI(out), err
+}
+
 // TestSelfmaskNginxConfig runs nginx -t against the saved custom file.
 func (c *Client) TestSelfmaskNginxConfig(ctx context.Context) (string, error) {
 	out, err := c.run(ctx, "selfmask", "nginx-config", "test")

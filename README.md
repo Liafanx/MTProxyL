@@ -858,7 +858,7 @@ mtproxyl block import list.txt append     # добавить к текущему
   при установке — `--front caddy`. Держатель и внешний HAProxy выбираются одной командой
   `mtproxyl web frontend nginx|caddy|haproxy|external|external-nginx` — то же в меню
   «WEB Proxy → Frontend» и в панели в поле «Frontend публичного WEB»
-- Свой конфиг у каждого: `mtproxyl selfmask nginx-config on|write|edit|test`
+- Свой конфиг у каждого: `mtproxyl selfmask nginx-config on|write|edit|test|reset`
 
 ### API управления *(новое в v1.7.0)*
 - HTTP API для внешних проектов: создание, правка и удаление пользователей, все лимиты
@@ -1135,7 +1135,7 @@ mtproxyl web links            # Ссылки tg://webproxy
 mtproxyl web sync             # Свести профили WEB со списком пользователей
 mtproxyl web haproxy-config   # Готовый фрагмент внешнего HAProxy
 mtproxyl web frontend caddy   # Кто принимает WEB: nginx|caddy|haproxy|external|external-nginx
-mtproxyl web nginx-config on|off|edit|show|test
+mtproxyl web nginx-config on|off|edit|show|test|reset
 mtproxyl web nginx-config write < nginx.conf
 mtproxyl web set WEB_DECOY_MODE empty
 mtproxyl web set WEB_DECOY_SOURCE mekorunner
@@ -1161,6 +1161,7 @@ mtproxyl selfmask nginx-config off      # Вернуть автоматичес�
 mtproxyl selfmask nginx-config edit     # Редактировать с проверкой nginx -t
 mtproxyl selfmask nginx-config show     # Показать файл
 mtproxyl selfmask nginx-config test     # Проверить файл
+mtproxyl selfmask nginx-config reset    # Переписать актуальным из настроек (копия в .bak)
 mtproxyl selfmask nginx-config write < nginx.conf
 ```
 
@@ -2369,7 +2370,11 @@ TCP-маршруты, включите пользовательский конф
 Сохранение из TUI и панели проходит только после успешного `nginx -t`; если
 служба не запустилась, прежняя версия файла возвращается. При изменении домена,
 порта, сертификата или раскладки WEB соответствующие строки нужно обновлять в
-пользовательском файле вручную. Выключение режима возвращает автоматическую
+пользовательском файле вручную — или переписать файл актуальным конфигом:
+`mtproxyl selfmask nginx-config reset`, пункт «Переписать актуальным» в меню
+своего конфига или одноимённая кнопка в панели. Это нужно и после обновлений
+MTProxyL, которые меняют конфиг держателя. Прежний файл остаётся рядом с
+суффиксом `.bak`, включённый режим сразу применяет новый. Выключение режима возвращает автоматическую
 генерацию, но сам файл сохраняется для следующего включения. Он входит в
 обычные и зашифрованные бэкапы, экспорт и переезд на другой сервер.
 Если конфиг содержит блок `stream`, а в системном nginx нет нужного модуля,

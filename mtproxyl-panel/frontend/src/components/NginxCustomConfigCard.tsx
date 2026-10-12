@@ -24,9 +24,13 @@ export function NginxCustomConfigCard({ status, running, onStart, onError }: Pro
   const [testing, setTesting] = useState(false);
   const [output, setOutput] = useState<string | null>(null);
   const [confirmToggle, setConfirmToggle] = useState<boolean | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
 
+  // Перечитываем и после операции (running → false): «Переписать актуальным»
+  // меняет файл, не меняя его имени.
   useEffect(() => {
     let cancelled = false;
+    if (running) return;
     if (!status.nginx_custom_file_exists) {
       setContent('');
       setSavedContent('');
@@ -47,7 +51,7 @@ export function NginxCustomConfigCard({ status, running, onStart, onError }: Pro
     return () => {
       cancelled = true;
     };
-  }, [status.nginx_custom_file, status.nginx_custom_file_exists, onError]);
+  }, [status.nginx_custom_file, status.nginx_custom_file_exists, running, onError]);
 
   const toggle = async () => {
     const enabled = confirmToggle;
@@ -58,6 +62,16 @@ export function NginxCustomConfigCard({ status, running, onStart, onError }: Pro
       onStart(await mtproxylApi.toggleSelfmaskNginxConfig(enabled));
     } catch (e) {
       onError(e instanceof Error ? e.message : `Не удалось переключить конфиг ${fr}`);
+    }
+  };
+
+  const reset = async () => {
+    setConfirmReset(false);
+    setOutput(null);
+    try {
+      onStart(await mtproxylApi.resetSelfmaskNginxConfig());
+    } catch (e) {
+      onError(e instanceof Error ? e.message : `Не удалось переписать конфиг ${fr}`);
     }
   };
 
@@ -105,6 +119,8 @@ export function NginxCustomConfigCard({ status, running, onStart, onError }: Pro
           <p className="text-sm text-text-secondary">
             При включении текущий рабочий конфиг копируется один раз. После этого MTProxyL не
             перезаписывает его: домены, порты и дополнительные маршруты вы поддерживаете вручную.
+            После обновлений MTProxyL или смены настроек файл можно переписать актуальным
+            конфигом — прежний останется рядом с суффиксом .bak.
           </p>
           <div className="flex items-start justify-between gap-4">
             <span className="shrink-0 text-sm text-text-secondary">Файл</span>
@@ -126,6 +142,11 @@ export function NginxCustomConfigCard({ status, running, onStart, onError }: Pro
             >
               {status.nginx_custom_enabled ? 'Вернуть стандартный конфиг' : 'Включить свой конфиг'}
             </Button>
+            {status.nginx_custom_file_exists && (
+              <Button variant="outline" onClick={() => setConfirmReset(true)} disabled={running || saving}>
+                Переписать актуальным
+              </Button>
+            )}
             {status.nginx_custom_file_exists && (
               <Button
                 variant="outline"
@@ -182,6 +203,16 @@ export function NginxCustomConfigCard({ status, running, onStart, onError }: Pro
             : `MTProxyL снова начнёт генерировать конфиг ${fr} из своих настроек. Пользовательский файл сохранится, но дополнительные маршруты из него перестанут применяться.`
         }
         confirmLabel={confirmToggle ? 'Включить' : 'Вернуть стандартный'}
+      />
+      <ConfirmDialog
+        open={confirmReset}
+        title={`Переписать свой конфиг ${fr}?`}
+        message={`Файл будет заменён конфигом, который MTProxyL собирает из текущих настроек. Ваши правки пропадут — копия останется в ${status.nginx_custom_file || 'файле'}.bak.${status.nginx_custom_active ? ` ${fr} сразу перечитает новый конфиг.` : ''}`}
+        confirmLabel="Переписать"
+        loadingLabel="Переписываем…"
+        confirmVariant="danger"
+        onConfirm={() => void reset()}
+        onClose={() => setConfirmReset(false)}
       />
     </>
   );

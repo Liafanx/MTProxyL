@@ -113,7 +113,8 @@ tui_nginx_custom_menu() {
         echo -e "  ${BOLD}Файл:${NC}   $(front_custom_file)"
         echo ""
         echo -e "  ${DIM}При включённом режиме MTProxyL не перезаписывает этот файл.${NC}"
-        echo -e "  ${DIM}Изменения настроек нужно переносить в него вручную.${NC}"
+        echo -e "  ${DIM}Изменения настроек нужно переносить в него вручную или${NC}"
+        echo -e "  ${DIM}переписать его актуальным конфигом — пункт [5].${NC}"
         echo ""
         if nginx_custom_active; then
             echo -e "  ${CYAN}[1]${NC}  Выключить режим"
@@ -123,6 +124,7 @@ tui_nginx_custom_menu() {
         echo -e "  ${CYAN}[2]${NC}  Редактировать"
         echo -e "  ${CYAN}[3]${NC}  Показать конфиг"
         echo -e "  ${CYAN}[4]${NC}  Проверить конфиг"
+        echo -e "  ${CYAN}[5]${NC}  Переписать актуальным  ${DIM}из текущих настроек MTProxyL, копия в .bak${NC}"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
@@ -146,6 +148,7 @@ tui_nginx_custom_menu() {
                 press_any_key
                 ;;
             4) nginx_custom_test; press_any_key ;;
+            5) nginx_custom_reset; press_any_key ;;
             0|"") return ;;
         esac
     done

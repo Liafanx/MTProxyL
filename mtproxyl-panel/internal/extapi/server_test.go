@@ -84,6 +84,7 @@ func (f *fakeCLI) SetSecretRate(_ context.Context, l string, up, down int64) (st
 }
 func (f *fakeCLI) ResetQuota(context.Context, string) (string, error)       { return "", nil }
 func (f *fakeCLI) ResetUserTraffic(context.Context, string) (string, error) { return "", nil }
+
 // Ссылки как у MTProxyL: ee с доменом example.com, dd и WEB.
 func (f *fakeCLI) APIView(_ context.Context, l string) (*mtproxylctl.APIView, error) {
 	v := &mtproxylctl.APIView{Links: map[string][]string{}, Live: map[string]mtproxylctl.EngineUser{}}

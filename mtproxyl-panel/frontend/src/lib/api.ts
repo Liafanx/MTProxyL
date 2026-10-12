@@ -502,6 +502,9 @@ export const mtproxylApi = {
       method: 'POST',
       body: JSON.stringify({ enabled }),
     }),
+  /** Переписать свой конфиг держателя актуальным сгенерированным (.bak рядом). */
+  resetSelfmaskNginxConfig: () =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/selfmask/nginx-config/reset', { method: 'POST' }),
   testSelfmaskNginxConfig: () =>
     request<{ output: string }>(MTPROXYL_BASE, '/selfmask/nginx-config/test', { method: 'POST' }),
 

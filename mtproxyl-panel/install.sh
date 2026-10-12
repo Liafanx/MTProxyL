@@ -537,6 +537,7 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask nginx-config write
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask nginx-config on
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask nginx-config off
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask nginx-config test
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script selfmask nginx-config reset
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script web json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script web settable
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script web links

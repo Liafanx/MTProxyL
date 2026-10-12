@@ -2912,6 +2912,61 @@ nginx_custom_write() {
     log_success "Свой конфиг $(front_title) сохранён"
 }
 
+# Переписать свой конфиг актуальным сгенерированным: после обновлений
+# MTProxyL меняет конфиг держателя, а свой файл остаётся прежним. Как
+# пересоздание файла супер эксперта; прежний файл остаётся рядом с .bak.
+nginx_custom_reset() {
+    check_root
+    if [ "${SELFMASK_ENABLED:-false}" != "true" ] && ! web_is_enabled 2>/dev/null; then
+        log_error "Сначала включите Selfmask или WEB Proxy"
+        return 1
+    fi
+    echo ""
+    if [ -f "$(front_custom_file)" ]; then
+        log_warn "Свой конфиг $(front_title) будет перезаписан актуальным из настроек MTProxyL"
+        echo -e "  ${DIM}Ваши правки пропадут; копия останется в $(front_custom_file).bak${NC}"
+    else
+        echo -e "  ${DIM}Свой конфиг $(front_title) будет создан из настроек MTProxyL.${NC}"
+    fi
+    local _yn; read_line _yn "  ${BOLD}Переписать свой конфиг? [y/N]:${NC} "
+    [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
+
+    local _was="${NGINX_CUSTOM_ENABLED:-false}"
+    # Сгенерированный конфиг собирается только при выключенном своём.
+    NGINX_CUSTOM_ENABLED="false"
+    if ! _selfmask_configure_nginx; then
+        NGINX_CUSTOM_ENABLED="$_was"
+        _selfmask_configure_nginx >/dev/null 2>&1 || true
+        _selfmask_restore_port80_holders
+        log_error "Не удалось собрать конфиг $(front_title)"
+        return 1
+    fi
+    mkdir -p "$INSTALL_DIR"
+    local _had=false
+    [ -f "$(front_custom_file)" ] && { _had=true; cp -f "$(front_custom_file)" "$(front_custom_file).bak"; }
+    if ! cp "$(front_generated_conf)" "$(front_custom_file)"; then
+        NGINX_CUSTOM_ENABLED="$_was"
+        _selfmask_restore_port80_holders
+        log_error "Не удалось записать $(front_custom_file)"
+        return 1
+    fi
+    chmod 600 "$(front_custom_file)"
+    NGINX_CUSTOM_ENABLED="$_was"
+    if [ "$_was" = "true" ] && ! _selfmask_configure_nginx; then
+        _selfmask_restore_port80_holders
+        log_error "$(front_title) не принял новый конфиг — остался сгенерированный"
+        return 1
+    fi
+    _selfmask_restore_port80_holders
+    if [ "$_had" = true ]; then
+        log_success "Свой конфиг $(front_title) переписан актуальным"
+    else
+        log_success "Свой конфиг $(front_title) создан из текущих настроек"
+    fi
+    [ "$_was" = "true" ] || log_info "Он выключен — включить: mtproxyl selfmask nginx-config on"
+    echo -e "  ${BOLD}Файл:${NC} $(front_custom_file)"
+}
+
 nginx_custom_edit() {
     check_root
     [ -f "$(front_custom_file)" ] || {
@@ -2946,8 +3001,9 @@ handle_nginx_custom_command() {
         write) nginx_custom_write ;;
         edit) nginx_custom_edit ;;
         test) nginx_custom_test ;;
+        reset|recreate) nginx_custom_reset ;;
         *)
-            log_error "Использование: mtproxyl selfmask nginx-config {status|on|off|show|write|edit|test}"
+            log_error "Использование: mtproxyl selfmask nginx-config {status|on|off|show|write|edit|test|reset}"
             return 1
             ;;
     esac

@@ -341,6 +341,19 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
 	}))
 
+	mux.Handle("POST /api/mtproxyl/selfmask/nginx-config/reset", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		if !runner.Start("selfmask:nginx-custom-reset", func(ctx context.Context) (string, error) {
+			return client.ResetSelfmaskNginxCustom(ctx)
+		}) {
+			writeError(w, http.StatusConflict, "operation_busy", "Другая операция MTProxyL уже выполняется")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
+	}))
+
 	mux.Handle("POST /api/mtproxyl/selfmask/nginx-config/test", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) || busy(w) {
 			return

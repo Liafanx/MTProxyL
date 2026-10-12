@@ -1340,9 +1340,9 @@ tui_panel_menu() {
             fi
             if [ "${SELFMASK_ENABLED:-false}" = "true" ] || web_is_enabled ||
                [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ]; then
-                local _selfmask_action="Открыть через Selfmask / WEB"
+                local _selfmask_action="Открыть через Selfmask / WEB  ${DIM}— задать путь панели на домене (https://домен/путь/)${NC}"
                 [ "${PANEL_SELFMASK_ENABLED:-false}" = "true" ] && \
-                    _selfmask_action="Общий путь панели: управление"
+                    _selfmask_action="Путь панели на домене Selfmask / WEB  ${DIM}— сменить или выключить${NC}"
                 echo -e "  ${CYAN}[8]${NC}  ${_selfmask_action}"
             fi
             echo -e "  ${CYAN}[9]${NC}  Порт REST API движка [$(api_port_current)] ${DIM}— через него панель работает с движком${NC}"
