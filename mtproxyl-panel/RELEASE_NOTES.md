@@ -1,4 +1,4 @@
-# MTProxyL-Panel 1.3.3 — в работе
+# MTProxyL-Panel 1.3.3
 
 - `mtproxyl-api`: список пользователей, ссылки и живые данные берутся одним
   запуском `mtproxyl secret api-view` вместо двух — запрос на чтение вдвое
