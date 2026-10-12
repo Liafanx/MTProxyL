@@ -137,6 +137,8 @@ _argsgen_build() {
             binary)   _a+=(--engine binary) ;;
             *)        _a+=(--engine docker) ;;
         esac
+        [ "${_AG_VAL[engine]}" != "docker" ] && [ -n "${ENGINE_SERVICE_NAMING:-}" ] \
+            && _a+=(--service-name "$ENGINE_SERVICE_NAMING")
     fi
     [ "${_AG_ON[proxy_mode]}" = "yes" ] && _a+=(--proxy-mode "${_AG_VAL[proxy_mode]}")
     [ "${_AG_ON[port]}" = "yes" ] && _a+=(--port "${_AG_VAL[port]}")

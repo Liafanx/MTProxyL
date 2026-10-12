@@ -1206,6 +1206,31 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
 	}))
 
+	mux.Handle("POST /api/mtproxyl/engine/service-name", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			Naming string `json:"naming"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		if req.Naming != "random" && req.Naming != "standard" {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Имя службы: random или standard")
+			return
+		}
+		naming := req.Naming
+		if !runner.Start("engine:service-name:"+naming, func(ctx context.Context) (string, error) {
+			return client.EngineServiceName(ctx, naming)
+		}) {
+			writeError(w, http.StatusConflict, "operation_busy", "Другая операция MTProxyL уже выполняется")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, jsonResponse{OK: true, Data: runner.Status()})
+	}))
+
 	mux.Handle("POST /api/mtproxyl/engine/rollback", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) || busy(w) {
 			return

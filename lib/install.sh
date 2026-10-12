@@ -439,6 +439,31 @@ installer_pick_web_site() {
     esac
 }
 
+# Имя службы бинарника: случайное прячет прокси в списке служб и процессов.
+# При переустановке по Enter остаётся текущее.
+installer_pick_service_name() {
+    local _def=1
+    if [ "${ENGINE_SERVICE_NAMING:-}" = "standard" ] \
+        || { [ -z "${ENGINE_SERVICE_NAMING:-}" ] && [ -f "/etc/systemd/system/${ENGINE_SERVICE_STANDARD}.service" ]; }; then
+        _def=2
+    fi
+    echo ""
+    echo -e "  ${BOLD}Имя службы движка${NC}"
+    echo -e "  ${BOLD}[1]${NC} Случайное ${DIM}— обычное на вид имя, по списку служб и процессов не видно прокси$([ "$_def" = 1 ] && echo " (по умолчанию)")${NC}"
+    echo -e "  ${BOLD}[2]${NC} Стандартное ${DIM}— ${ENGINE_SERVICE_STANDARD}$([ "$_def" = 2 ] && echo " (сейчас)")${NC}"
+    echo -e "  ${DIM}Сменить можно позже: главное меню → Движок → Имя службы.${NC}"
+    local _nc; _nc=$(_fix_read_choice "выбор" "$_def" "${_FIX_ANS_ENGINE_NAMING-}")
+    if [ "$_nc" = "2" ]; then
+        ENGINE_SERVICE_NAMING="standard"
+    else
+        [ "${ENGINE_SERVICE_NAMING:-}" = "random" ] && [ -n "${ENGINE_SERVICE_NAME:-}" ] \
+            || ENGINE_SERVICE_NAME=$(binengine_random_name)
+        ENGINE_SERVICE_NAMING="random"
+    fi
+    binengine_apply_names
+    log_success "Служба движка: ${ENGINE_SERVICE}"
+}
+
 # Чем менеджер будет держать движок. По умолчанию бинарник: он экономит время
 # установки и память, сам Docker тогда не ставится вовсе. Docker — вторым.
 installer_pick_engine_backend() {
@@ -489,6 +514,7 @@ installer_pick_engine_backend() {
         [ -z "$_cs" ] || [[ "$_cs" =~ ^[0-9a-fA-F]{64}$ ]] || { log_warn "sha256 не похож на хеш — проверка по нему пропущена"; _cs=""; }
         ENGINE_CUSTOM_URL="$_cu"; ENGINE_CUSTOM_SHA256="${_cs,,}"
         log_success "Движок: свой бинарник telemt"
+        installer_pick_service_name
         return 0
     elif [ "$_ec" = "2" ]; then
         ENGINE_BACKEND="docker"
@@ -499,6 +525,7 @@ installer_pick_engine_backend() {
     fi
 
     [ "$ENGINE_BACKEND" = "binary" ] || return 0
+    installer_pick_service_name
 
     echo ""
     echo -e "  ${BOLD}Версия telemt${NC}"
@@ -512,7 +539,7 @@ installer_pick_engine_backend() {
         || log_info "Версия движка: последняя"
 }
 
-# Автозапуск. У бинарного движка он свой — mtproxyl-telemt.service стартует
+# Автозапуск. У бинарного движка он свой — служба движка стартует
 # сам; оболочка mtproxyl.service тогда лишняя и вдобавок опасна: её ExecStart
 # дёргал бы systemctl restart на юнит, который systemd поднимает в этот же миг.
 install_autostart_unit() {
@@ -524,6 +551,7 @@ install_autostart_unit() {
             rm -f /etc/systemd/system/mtproxyl.service
         fi
         systemctl daemon-reload 2>/dev/null || true
+        binengine_resolve_naming
         systemctl enable "$ENGINE_SERVICE" &>/dev/null || true
         log_success "Автозапуск: ${ENGINE_SERVICE}.service"
         # Панель читает журнал движка по имени юнита, и права ей выписаны под

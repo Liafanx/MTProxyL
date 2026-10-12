@@ -30,7 +30,7 @@ _IA_API=""; _IA_API_LISTEN=""; _IA_API_ALLOW=""; _IA_API_TLS=""
 _IA_BLOCK_FILE=""
 _IA_BLOCK_LIST=""
 _IA_BLOCK_ACTION=""
-_IA_ENGINE=""; _IA_ENGINE_VERSION=""; _IA_ENGINE_URL=""; _IA_ENGINE_SHA256=""
+_IA_ENGINE=""; _IA_ENGINE_VERSION=""; _IA_ENGINE_URL=""; _IA_ENGINE_SHA256=""; _IA_SERVICE_NAME=""
 _IA_TGBOT_TOKEN=""; _IA_TGBOT_ADMIN=""
 _IA_DC_RESTART=""; _IA_DC_RESTART_COOLDOWN=""
 _IA_SHAPING_MODE=""; _IA_SHAPING_CHANNEL=""; _IA_SHAPING_RESERVE=""
@@ -52,6 +52,9 @@ install_args_help() {
     --engine-url <ссылка>      свой бинарник telemt или архив .tar.gz по https,
                                ставится бинарным движком
     --engine-sha256 <хеш>      sha256 файла по ссылке (без него — без проверки)
+    --service-name random|standard
+                               имя службы и бинарника движка: случайное
+                               (по умолчанию) или mtproxyl-telemt
 
   Прокси
     --proxy-mode mtproto|web|combined
@@ -192,6 +195,12 @@ _install_args_parse() {
             --engine-version) _IA_ENGINE_VERSION="$_v" ;;
             --engine-url)    _IA_ENGINE_URL="$_v" ;;
             --engine-sha256) _IA_ENGINE_SHA256="${_v,,}" ;;
+            --service-name)
+                case "${_v,,}" in
+                    random|случайное) _IA_SERVICE_NAME="random" ;;
+                    standard|стандартное) _IA_SERVICE_NAME="standard" ;;
+                    *) log_error "--service-name: random или standard"; return 1 ;;
+                esac ;;
             --port)          _IA_PORT="$_v" ;;
             --proxy-mode)    _IA_PROXY_MODE="${_v,,}" ;;
             --metrics-port)  _IA_METRICS_PORT="$_v" ;;
@@ -454,6 +463,10 @@ _install_args_validate() {
         log_error "--engine-version имеет смысл только с --engine binary"
         _ok=false
     fi
+    if [ -n "$_IA_SERVICE_NAME" ] && [ "$_IA_ENGINE" = "docker" ]; then
+        log_error "--service-name имеет смысл только с --engine binary"
+        _ok=false
+    fi
     if [ "$_IA_ENGINE" = "binary" ] && ! command -v systemctl &>/dev/null; then
         log_error "--engine binary: движок работает службой systemd, а systemd на этой машине нет"
         _ok=false
@@ -676,6 +689,17 @@ run_installer_args() {
     fi
     ENGINE_BACKEND="${ENGINE_BACKEND:-docker}"
     ENGINE_VERSION=""
+    if [ "$ENGINE_BACKEND" = "binary" ] && [ -n "$_IA_SERVICE_NAME" ]; then
+        if [ "$_IA_SERVICE_NAME" = "random" ]; then
+            [ "${ENGINE_SERVICE_NAMING:-}" = "random" ] && [ -n "${ENGINE_SERVICE_NAME:-}" ] \
+                || ENGINE_SERVICE_NAME=$(binengine_random_name)
+        fi
+        ENGINE_SERVICE_NAMING="$_IA_SERVICE_NAME"
+    fi
+    if [ "$ENGINE_BACKEND" = "binary" ]; then
+        binengine_resolve_naming
+        log_info "Служба движка: ${ENGINE_SERVICE}"
+    fi
     if [ "$ENGINE_BACKEND" = "binary" ] && [ -n "$_IA_ENGINE_URL" ]; then
         log_info "Движок: свой бинарник telemt"
         binengine_install_custom "$_IA_ENGINE_URL" "$_IA_ENGINE_SHA256" || return 1

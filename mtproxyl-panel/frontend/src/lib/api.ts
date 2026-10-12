@@ -375,6 +375,9 @@ export interface MtproxylEngineVersions {
   reason?: string;
   bin_path?: string;
   config_path?: string;
+  /** Имя службы бинарного движка и как оно выбрано (MTProxyL 1.7.1+). */
+  service?: string;
+  service_naming?: 'random' | 'standard';
 }
 
 /** Перезапуск движка при падении DC: настройки и что уже случилось. */
@@ -438,6 +441,13 @@ export const mtproxylApi = {
     request<MtproxylOperation>(MTPROXYL_BASE, '/engine/rollback', {
       method: 'POST',
       body: JSON.stringify({ tag }),
+    }),
+
+  /** random — новое случайное имя службы движка, standard — mtproxyl-telemt. */
+  engineServiceName: (naming: 'random' | 'standard') =>
+    request<MtproxylOperation>(MTPROXYL_BASE, '/engine/service-name', {
+      method: 'POST',
+      body: JSON.stringify({ naming }),
     }),
 
   dcStatus: () => request<MtproxylDCStatus>(MTPROXYL_BASE, '/dc'),

@@ -133,10 +133,10 @@ mtproxyl
 
 | | **Бинарник MTProxyL-Telemt** *(по умолчанию)* | **Docker-образ** |
 | --- | --- | --- |
-| Что ставится | `/opt/mtproxyl/engine/mtproxyl-telemt` | контейнер `mtproxyl`, сеть `host` |
-| Чем управляется | служба `mtproxyl-telemt.service` | Docker |
+| Что ставится | `/opt/mtproxyl/engine/<имя службы>` | контейнер `mtproxyl`, сеть `host` |
+| Чем управляется | служба со случайным именем или `mtproxyl-telemt.service` | Docker |
 | Конфиг | `/opt/mtproxyl/mtproxy/telemt.toml` | `/opt/mtproxyl/mtproxy/config.toml` |
-| Логи | `journalctl -u mtproxyl-telemt` | `docker logs mtproxyl` |
+| Логи | `journalctl -u <имя службы>` | `docker logs mtproxyl` |
 | Нужен Docker | **нет, он вообще не ставится** | да |
 | Установка на чистой машине | секунды | несколько минут |
 | Лимиты CPU и памяти | `--cpus`, `--memory` → `CPUQuota`, `MemoryMax` | `--cpus`, `--memory` |
@@ -154,9 +154,26 @@ mtproxyl
 Бинарник берётся из [релизов telemt](https://github.com/telemt/telemt/releases):
 архитектура и libc определяются автоматически (`x86_64`, `x86_64-v3`,
 `aarch64`; `gnu` или `musl`), контрольная сумма sha256 сверяется. По умолчанию
-ставится последняя версия, но можно выбрать любую из списка. Служба называется
-`mtproxyl-telemt`, а не `telemt`: так она не путается с оригинальной установкой
-telemt, которую чинит режим Reanimator.
+ставится последняя версия, но можно выбрать любую из списка.
+
+**Имя службы.** По умолчанию служба и бинарник получают случайное обычное на вид
+имя (например, `coreflowd`), и по списку служб и процессов не видно, что это
+прокси. Стандартное имя — `mtproxyl-telemt`; так служба не путается с
+оригинальной установкой telemt, которую чинит режим Reanimator. Имя хранится в
+`settings.conf` (`ENGINE_SERVICE_NAMING`, `ENGINE_SERVICE_NAME`). Его выбирают в
+мастере первой установки или аргументом `--service-name random|standard`, а
+меняют в меню «Движок → Имя службы движка», в панели на странице «Обновление»
+или командой:
+
+```bash
+mtproxyl engine service-name               # текущее имя
+mtproxyl engine service-name random        # новое случайное имя
+mtproxyl engine service-name standard      # mtproxyl-telemt
+```
+
+Переименование перезапускает движок и само обновляет права панели на журнал.
+У установок, где служба `mtproxyl-telemt` уже была, имя при обновлении не
+меняется.
 
 Всё остальное одинаково: меню, настройки, секреты, панель, телеграм-бот,
 Zapret2 и лимитер, Selfmask, бэкапы, переезд. Меняется только то, чем запущен
@@ -284,6 +301,7 @@ mtproxyl install --help          # полный список аргументо�
 | `--engine-version` | тег релиза telemt, например `3.5.5` | последняя | Версия бинарника. Имеет смысл только с `--engine binary`. |
 | `--engine-url` | ссылка `https` на бинарник или `.tar.gz` | — | Свой бинарник telemt, ставится бинарным движком. См. [Свой бинарник telemt](#свой-бинарник-telemt). |
 | `--engine-sha256` | 64 hex-символа | без проверки | sha256 файла по `--engine-url`. Необязателен: без него файл не проверяется. |
+| `--service-name` | `random`, `standard` | `random` | Имя службы и бинарника движка: случайное или `mtproxyl-telemt`. Только с бинарным движком. На переустановке без аргумента остаётся прежнее. |
 
 **Прокси**
 
@@ -1028,6 +1046,7 @@ mtproxyl engine cleanup --dry-run      # Показать неиспользуе
 mtproxyl engine cleanup                # Очистить после подтверждения
 mtproxyl engine backend binary         # Перевести движок на бинарник, без Docker
 mtproxyl engine backend docker         # Вернуть движок в контейнер
+mtproxyl engine service-name random    # Случайное имя службы движка (standard — mtproxyl-telemt)
 mtproxyl engine custom <ссылка>        # Свой бинарник telemt по ссылке https
 ```
 
@@ -3298,7 +3317,7 @@ selfmask, гео-блокировка, бэкапы) работают как о�
 │   ├── tui_donor.sh             # Подменю: туннель AWG до донора
 │   ├── tui_detect.sh            # Подменю: цель / режим (Reanimator)
 │   └── install.sh               # Установщик + деинсталлятор
-├── engine/                      # Движок-бинарник: mtproxyl-telemt и .prev
+├── engine/                      # Движок-бинарник: <имя службы> и .prev
 ├── mtproxy/config.toml          # Конфиг telemt (у бинарника — telemt.toml)
 ├── settings.conf                # Настройки MTProxyL
 ├── secrets.conf                 # Секреты
@@ -3323,7 +3342,7 @@ selfmask, гео-блокировка, бэкапы) работают как о�
 |-----------|--------|
 | **ОС** | Ubuntu 20.04+, Debian 11+, CentOS, RHEL, Fedora, Rocky, AlmaLinux, Alpine |
 | **Docker** | Устанавливается автоматически. С движком-бинарником (`--engine binary`) не нужен и не ставится |
-| **systemd** | Обязателен для движка-бинарника: он работает службой `mtproxyl-telemt` |
+| **systemd** | Обязателен для движка-бинарника: он работает службой со случайным именем или `mtproxyl-telemt` |
 | **nftables** | Устанавливается автоматически |
 | **curl** | Устанавливается автоматически если отсутствует |
 | **Selfmask** | Только Debian/Ubuntu. Домен с A-записью нужен только для Let's Encrypt; для самоподписанного — не нужен |

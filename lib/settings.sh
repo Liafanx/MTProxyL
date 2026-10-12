@@ -10,6 +10,10 @@ ENGINE_VERSION=""
 # Свой бинарник telemt: ссылка https и sha256, если его указали. Пусто — релиз.
 ENGINE_CUSTOM_URL=""
 ENGINE_CUSTOM_SHA256=""
+# Имя службы и бинарника движка-бинарника: random — случайное (по умолчанию
+# для новых установок), standard — mtproxyl-telemt. Пусто — ещё не выбрано.
+ENGINE_SERVICE_NAMING=""
+ENGINE_SERVICE_NAME=""
 PROXY_PORT=443
 # Какие клиентские транспорты поднимает менеджер: обычный MTProto, WEB или оба.
 # Для старых settings.conf значение выводится из WEB_ENABLED при загрузке.
@@ -199,6 +203,8 @@ ENGINE_BACKEND='${ENGINE_BACKEND}'
 ENGINE_VERSION='${ENGINE_VERSION}'
 ENGINE_CUSTOM_URL='${ENGINE_CUSTOM_URL}'
 ENGINE_CUSTOM_SHA256='${ENGINE_CUSTOM_SHA256}'
+ENGINE_SERVICE_NAMING='${ENGINE_SERVICE_NAMING}'
+ENGINE_SERVICE_NAME='${ENGINE_SERVICE_NAME}'
 
 # Конфигурация прокси
 PROXY_MODE='${PROXY_MODE}'
@@ -539,6 +545,7 @@ load_settings() {
 
             case "$key" in
                 MTPROXYL_MODE|ENGINE_BACKEND|ENGINE_VERSION|ENGINE_CUSTOM_URL|ENGINE_CUSTOM_SHA256|\
+                ENGINE_SERVICE_NAMING|ENGINE_SERVICE_NAME|\
                 PROXY_MODE|PROXY_PORT|PROXY_METRICS_PORT|PROXY_API_PORT|PROXY_DOMAIN|PROXY_CONCURRENCY|\
                 PROXY_CPUS|PROXY_MEMORY|CUSTOM_IP|FAKE_CERT_LEN|\
                 PROXY_PROTOCOL|PROXY_PROTOCOL_TRUSTED_CIDRS|\
@@ -588,6 +595,9 @@ load_settings() {
         docker|binary) ;;
         *) ENGINE_BACKEND="docker" ;;
     esac
+    case "$ENGINE_SERVICE_NAMING" in random|standard|"") ;; *) ENGINE_SERVICE_NAMING="" ;; esac
+    [[ "$ENGINE_SERVICE_NAME" =~ ^[a-z][a-z0-9-]{2,31}$ ]] || ENGINE_SERVICE_NAME=""
+    declare -F binengine_apply_names >/dev/null && binengine_apply_names
     [[ "$PROXY_PORT" =~ ^[0-9]+$ ]] && [ "$PROXY_PORT" -ge 1 ] && [ "$PROXY_PORT" -le 65535 ] || PROXY_PORT=443
     [[ "$PROXY_METRICS_PORT" =~ ^[0-9]+$ ]] && [ "$PROXY_METRICS_PORT" -ge 1 ] && [ "$PROXY_METRICS_PORT" -le 65535 ] || PROXY_METRICS_PORT=9090
     [[ "$PROXY_API_PORT" =~ ^[0-9]+$ ]] && [ "$PROXY_API_PORT" -ge 1 ] && [ "$PROXY_API_PORT" -le 65535 ] || PROXY_API_PORT=9091

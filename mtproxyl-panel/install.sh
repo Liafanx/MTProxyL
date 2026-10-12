@@ -114,7 +114,7 @@ detect_telemt() {
   # Свой бинарник MTProxyL ищем первым только в режиме Manager: в Reanimator
   # цель чужая, и подсунуть вместо неё движок менеджера нельзя.
   _own_first=""
-  [ "${MTPROXYL_MODE_DETECTED:-}" = "manager" ] && _own_first="$MTPROXYL_INSTALL_DIR/engine/mtproxyl-telemt"
+  [ "${MTPROXYL_MODE_DETECTED:-}" = "manager" ] && _own_first="$MTPROXYL_INSTALL_DIR/engine/${ENGINE_SERVICE_DETECTED:-mtproxyl-telemt}"
   for _candidate in \
     $_own_first \
     "$BIN_DIR/telemt" \
@@ -135,7 +135,7 @@ detect_telemt() {
 # здесь значит получить нерабочую кнопку перезапуска.
 detect_telemt_service() {
   _units="telemt mtproxy-telemt telemt-server"
-  [ "${MTPROXYL_MODE_DETECTED:-}" = "manager" ] && _units="mtproxyl-telemt $_units"
+  [ "${MTPROXYL_MODE_DETECTED:-}" = "manager" ] && _units="${ENGINE_SERVICE_DETECTED:-mtproxyl-telemt} $_units"
   for _unit in $_units; do
     if systemctl list-unit-files "${_unit}.service" 2>/dev/null | grep -q "^${_unit}.service"; then
       echo "$_unit"
@@ -177,7 +177,7 @@ engine_looks_running() {
     # что именно, говорит сам MTProxyL в 'mode --json'.
     if [ "${LOG_KIND_DETECTED:-docker}" = "service" ]; then
       command -v systemctl >/dev/null 2>&1 || return 2
-      $SUDO systemctl is-active --quiet "${LOG_TARGET_DETECTED:-mtproxyl-telemt}" 2>/dev/null && return 0
+      $SUDO systemctl is-active --quiet "${LOG_TARGET_DETECTED:-${ENGINE_SERVICE_DETECTED:-mtproxyl-telemt}}" 2>/dev/null && return 0
       return 1
     fi
     command -v docker >/dev/null 2>&1 || return 2
@@ -435,15 +435,17 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_journalctl -u $_telemt_service -f --since * 
 EOF
 
   # Движок Manager'а можно переключить с Docker на бинарник уже после
-  # установки панели — тогда логи придут из mtproxyl-telemt.service.
-  if [ "$_telemt_service" != "mtproxyl-telemt" ]; then
+  # установки панели — тогда логи придут из службы движка. Её имя бывает
+  # случайным; после переименования права обновляет сам MTProxyL.
+  _engine_unit="${ENGINE_SERVICE_DETECTED:-mtproxyl-telemt}"
+  if [ "$_telemt_service" != "$_engine_unit" ]; then
     cat >>"$_tmp" <<EOF
-$SYSTEM_USER ALL=(root) NOPASSWD: $_systemctl restart mtproxyl-telemt
-$SYSTEM_USER ALL=(root) NOPASSWD: $_systemctl start mtproxyl-telemt
-$SYSTEM_USER ALL=(root) NOPASSWD: $_journalctl -u mtproxyl-telemt -n * --no-pager -o short-iso
-$SYSTEM_USER ALL=(root) NOPASSWD: $_journalctl -u mtproxyl-telemt -n * --since * --no-pager -o short-iso
-$SYSTEM_USER ALL=(root) NOPASSWD: $_journalctl -u mtproxyl-telemt -f --no-pager -o short-iso
-$SYSTEM_USER ALL=(root) NOPASSWD: $_journalctl -u mtproxyl-telemt -f --since * --no-pager -o short-iso
+$SYSTEM_USER ALL=(root) NOPASSWD: $_systemctl restart $_engine_unit
+$SYSTEM_USER ALL=(root) NOPASSWD: $_systemctl start $_engine_unit
+$SYSTEM_USER ALL=(root) NOPASSWD: $_journalctl -u $_engine_unit -n * --no-pager -o short-iso
+$SYSTEM_USER ALL=(root) NOPASSWD: $_journalctl -u $_engine_unit -n * --since * --no-pager -o short-iso
+$SYSTEM_USER ALL=(root) NOPASSWD: $_journalctl -u $_engine_unit -f --no-pager -o short-iso
+$SYSTEM_USER ALL=(root) NOPASSWD: $_journalctl -u $_engine_unit -f --since * --no-pager -o short-iso
 EOF
   fi
 
@@ -666,6 +668,8 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script engine cleanup --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script engine cleanup --yes
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script engine update [A-Za-z0-9._-]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script engine rollback --yes
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script engine service-name random
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script engine service-name standard
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script engine rollback [A-Za-z0-9._-]*
 # Сброс накопленной статистики. Настройки и пользователи не затрагиваются.
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script stats --json
@@ -879,6 +883,8 @@ detect_from_mtproxyl() {
   ENGINE_CONFIG_DETECTED=$(printf '%s' "$_json" | sed -n 's/.*"engine_config"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
   LOG_KIND_DETECTED=$(printf '%s' "$_json" | sed -n 's/.*"log_kind"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
   LOG_TARGET_DETECTED=$(printf '%s' "$_json" | sed -n 's/.*"log_target"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  # Имя службы движка-бинарника: у новых установок оно случайное.
+  ENGINE_SERVICE_DETECTED=$(printf '%s' "$_json" | sed -n 's/.*"engine_service"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 
   # Заголовок авторизации читаем прямо из конфига движка, а не из вывода
   # 'mode --json': панель опрашивает его постоянно, и секрету незачем

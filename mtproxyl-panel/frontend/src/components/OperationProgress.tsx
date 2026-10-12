@@ -11,6 +11,8 @@ const OPERATION_LABELS: Record<string, string> = {
   'front:nginx': 'Перенос заглушки на nginx',
   'front:caddy': 'Перенос заглушки на Caddy',
   'front:haproxy': 'Перенос заглушки на HAProxy',
+  'engine:service-name:random': 'Случайное имя службы движка',
+  'engine:service-name:standard': 'Стандартное имя службы движка',
   'web:frontend:nginx': 'Frontend WEB: nginx MTProxyL',
   'web:frontend:caddy': 'Frontend WEB: Caddy MTProxyL',
   'web:frontend:haproxy': 'Frontend WEB: HAProxy MTProxyL',

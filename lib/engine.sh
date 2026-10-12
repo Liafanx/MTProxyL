@@ -64,6 +64,8 @@ engine_versions_json() {
         "$(engine_is_binary && echo true || echo false)" \
         "$(command -v docker >/dev/null && echo true || echo false)" \
         "$([ -n "$_src" ] && echo true || echo false)" "$(json_escape "$_src")"
+    printf '"service":"%s","service_naming":"%s",' \
+        "$(json_escape "$ENGINE_SERVICE")" "$([ "${ENGINE_SERVICE_NAMING:-}" = "random" ] && echo random || echo standard)"
 
     printf '"local":['
     local _v _first=1
@@ -586,7 +588,7 @@ handle_engine_command() {
             echo -e "  ${DIM}Установлен:${NC}  v$(engine_current_version)"
             if engine_is_binary; then
                 echo -e "  ${DIM}Бинарник:${NC}    ${ENGINE_BIN_PATH}"
-                echo -e "  ${DIM}Служба:${NC}      ${ENGINE_SERVICE}.service"
+                echo -e "  ${DIM}Служба:${NC}      ${ENGINE_SERVICE}.service — имя $(binengine_naming_title)"
                 binengine_is_custom && echo -e "  ${DIM}Источник:${NC}    свой бинарник — $(binengine_source)"
             else
                 echo -e "  ${DIM}Закреплён:${NC}   commit ${TELEMT_COMMIT}"
@@ -597,6 +599,14 @@ handle_engine_command() {
             ;;
         custom)
             engine_install_custom "$@"
+            ;;
+        service-name)
+            if [ -z "${1:-}" ]; then
+                echo -e "  ${DIM}Имя службы движка:${NC} $(binengine_naming_title)"
+                return 0
+            fi
+            check_root
+            binengine_set_naming "$1"
             ;;
         list)
             echo ""
@@ -690,6 +700,8 @@ handle_engine_command() {
             echo -e "  ${DIM}cleanup${NC}         Очистить неиспользуемые Docker-образы (с просмотром списка)"
             echo -e "  ${DIM}rebuild${NC}         Пересобрать образ / перекачать бинарник"
             echo -e "  ${DIM}backend <тип>${NC}   Сменить носитель движка: docker | binary"
+            echo -e "  ${DIM}service-name random|standard${NC}"
+            echo -e "                  Имя службы и бинарника: случайное или mtproxyl-telemt"
             echo -e "  ${DIM}custom <ссылка> [--sha256 <хеш>] [--yes]${NC}"
             echo -e "                  Поставить свой бинарник telemt по ссылке https"
             echo ""
