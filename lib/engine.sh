@@ -138,9 +138,8 @@ except: print('?')
         echo "$version_tag" > "${INSTALL_DIR}/.telemt_version"
         log_success "Загружен telemt v${version_tag}"
     else
-        # Стратегия 2: Source build (без fallback на latest)
-        log_warn "Готовый образ не найден — сборка из исходников..."
-        log_info "Это может занять несколько минут..."
+        # Стратегия 2: релизный бинарник, исходники — последним шансом (без latest)
+        log_warn "Готовый образ не найден — собираем из релизного бинарника telemt..."
 
         local old_commit="${TELEMT_COMMIT}"
         local old_version="${TELEMT_MIN_VERSION}"
@@ -149,7 +148,7 @@ except: print('?')
 
 
         docker rmi "${DOCKER_IMAGE_BASE}:${version_tag}" >/dev/null 2>&1 || true
-        if build_telemt_image source; then
+        if build_telemt_image true; then
             log_success "Движок собран: v${version_tag}"
         else
             log_error "Сборка не удалась"

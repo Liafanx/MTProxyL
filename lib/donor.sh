@@ -351,7 +351,7 @@ _mtpd_setup() {
 
     local _fw=""
     if ! _mtpd_ufw_active && ! systemctl is-active --quiet firewalld 2>/dev/null \
-        && iptables -S INPUT 2>/dev/null | grep -q '^-P INPUT DROP'; then
+        && iptables -S INPUT 2>/dev/null | grep -qE '^-P INPUT DROP|-j (DROP|REJECT)'; then
         _fw="PostUp = iptables -I INPUT -p udp --dport ${_port} -j ACCEPT; iptables -I INPUT -i %i -p tcp --dport ${MTPD_SOCKS_PORT} -j ACCEPT
 PostDown = iptables -D INPUT -p udp --dport ${_port} -j ACCEPT; iptables -D INPUT -i %i -p tcp --dport ${MTPD_SOCKS_PORT} -j ACCEPT"
     fi
@@ -400,13 +400,14 @@ Restart=always
 RestartSec=3
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=multi-user.target awg-quick@%i.service
 EOF
     systemctl daemon-reload
     systemctl enable "awg-quick@${MTPD_IFACE}" >/dev/null 2>&1
     systemctl restart "awg-quick@${MTPD_IFACE}" \
         || _mtpd_fail 17 "Интерфейс не поднялся: journalctl -u awg-quick@${MTPD_IFACE}"
-    systemctl enable "mtproxyl-donor-socks@${MTPD_IFACE}" >/dev/null 2>&1
+    # reenable: у настроенных раньше нет связи «туннель поднялся — SOCKS тоже».
+    systemctl reenable "mtproxyl-donor-socks@${MTPD_IFACE}" >/dev/null 2>&1
     systemctl restart "mtproxyl-donor-socks@${MTPD_IFACE}" \
         || _mtpd_fail 17 "SOCKS5 не запустился: journalctl -u mtproxyl-donor-socks@${MTPD_IFACE}"
     local _i
@@ -817,6 +818,8 @@ _donor_socks_curl() {
     shift 2 2>/dev/null || shift $#
     curl -s -m "$_t" --socks5 "$(_donor_socks_addr)" "$@" "$_url" 2>/dev/null
 }
+
+_donor_socks_open() { timeout 5 bash -c "exec 3<>/dev/tcp/$(_donor_remote_ip)/${DONOR_SOCKS_PORT}" 2>/dev/null; }
 
 # Выход через донора: IP и живой ответ Telegram.
 _donor_probe() {
@@ -1310,11 +1313,14 @@ _donor_finish_local() {
     if ! _donor_probe; then
         log_error "Через SOCKS5 донора Telegram не ответил (код ${_DONOR_PROBE_TG:-нет})"
         # Мелкий ответ проходит, крупный — нет: между серверами путь уже MTU туннеля.
-        if [ "$(_donor_socks_curl http://example.com 8 -o /dev/null -w '%{http_code}')" = 200 ]; then
+        if ! _donor_socks_open; then
+            echo -e "  ${DIM}SOCKS5 $(_donor_socks_addr) не принимает соединения: служба на доноре или его фаервол.${NC}"
+            echo -e "  ${DIM}На доноре: systemctl status mtproxyl-donor-socks@${DONOR_REMOTE_IFACE}${NC}"
+        elif [ "$(_donor_socks_curl http://example.com 8 -o /dev/null -w '%{http_code}')" = 200 ]; then
             echo -e "  ${DIM}Мелкие ответы проходят, крупные теряются — похоже на MTU пути между серверами.${NC}"
             echo -e "  ${DIM}Повторите настройку с меньшим MTU: --mtu $(( ${DONOR_MTU:-1280} - 80 ))${NC}"
         else
-            echo -e "  ${DIM}Служба на доноре: systemctl status mtproxyl-donor-socks@${DONOR_REMOTE_IFACE}${NC}"
+            echo -e "  ${DIM}SOCKS5 отвечает, но наружу донор не выпускает: journalctl -u mtproxyl-donor-socks@${DONOR_REMOTE_IFACE} на доноре${NC}"
         fi
         return 1
     fi
@@ -1444,6 +1450,7 @@ donor_check() {
         _res="down"; _err="нет рукопожатия с донором"
     elif ! _donor_probe; then
         _res="degraded"; _err="через SOCKS5 донора Telegram не отвечает"
+        _donor_socks_open || _err="SOCKS5 на доноре не принимает соединения (mtproxyl-donor-socks@${DONOR_REMOTE_IFACE})"
     fi
     DONOR_CHECK_AT=$(date +%s); DONOR_CHECK_RESULT="$_res"; DONOR_CHECK_ERROR="$_err"
     DONOR_CHECK_EGRESS="${_DONOR_PROBE_EGRESS:-}"; DONOR_CHECK_RTT="${_DONOR_PROBE_RTT:-}"
