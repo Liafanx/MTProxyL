@@ -380,11 +380,28 @@ socksmethod: none
 clientmethod: none
 user.privileged: root
 user.unprivileged: nobody
-client pass { from: ${_peer}/32 to: 0.0.0.0/0 }
-client block { from: 0.0.0.0/0 to: 0.0.0.0/0 }
-socks pass { from: ${_peer}/32 to: 0.0.0.0/0 command: connect }
-socks pass { from: ${_peer}/32 to: ::/0 command: connect }
-socks block { from: 0.0.0.0/0 to: 0.0.0.0/0 }
+client pass {
+    from: ${_peer}/32 to: 0.0.0.0/0
+    log: error
+}
+client block {
+    from: 0.0.0.0/0 to: 0.0.0.0/0
+    log: connect
+}
+socks pass {
+    from: ${_peer}/32 to: 0.0.0.0/0
+    command: connect
+    log: error
+}
+socks pass {
+    from: ${_peer}/32 to: ::/0
+    command: connect
+    log: error
+}
+socks block {
+    from: 0.0.0.0/0 to: 0.0.0.0/0
+    log: connect
+}
 EOF
     chmod 644 "/etc/mtproxyl-donor/${MTPD_IFACE}/danted.conf"
     cat > /etc/systemd/system/mtproxyl-donor-socks@.service <<'EOF'
@@ -816,7 +833,7 @@ _donor_tunnel_down() {
 _donor_socks_curl() {
     local _url="$1" _t="${2:-10}"
     shift 2 2>/dev/null || shift $#
-    curl -s -m "$_t" --socks5 "$(_donor_socks_addr)" "$@" "$_url" 2>/dev/null
+    curl -s -m "$_t" --socks5-hostname "$(_donor_socks_addr)" "$@" "$_url" 2>/dev/null
 }
 
 _donor_socks_open() { timeout 5 bash -c "exec 3<>/dev/tcp/$(_donor_remote_ip)/${DONOR_SOCKS_PORT}" 2>/dev/null; }
@@ -828,7 +845,8 @@ _donor_probe() {
         | awk -F'/' '/^rtt|^round-trip/ {printf "%.0f", $5}')
     _DONOR_PROBE_EGRESS=$(_donor_socks_curl https://api.ipify.org 10)
     _donor_valid_ipv4 "$_DONOR_PROBE_EGRESS" || _DONOR_PROBE_EGRESS=""
-    _DONOR_PROBE_TG=$(curl -s -m 15 -o /dev/null -w '%{http_code}' --socks5 "$(_donor_socks_addr)" \
+    # Имя разрешает донор: здешний DNS может отдать для Telegram не тот адрес.
+    _DONOR_PROBE_TG=$(curl -s -m 15 -o /dev/null -w '%{http_code}' --socks5-hostname "$(_donor_socks_addr)" \
         https://core.telegram.org/getProxyConfig 2>/dev/null)
     [ "$_DONOR_PROBE_TG" = 200 ]
 }
@@ -1449,8 +1467,14 @@ donor_check() {
     elif ! _age=$(_donor_handshake_age) || [ "$_age" -gt 180 ]; then
         _res="down"; _err="нет рукопожатия с донором"
     elif ! _donor_probe; then
-        _res="degraded"; _err="через SOCKS5 донора Telegram не отвечает"
-        _donor_socks_open || _err="SOCKS5 на доноре не принимает соединения (mtproxyl-donor-socks@${DONOR_REMOTE_IFACE})"
+        _res="degraded"
+        if ! _donor_socks_open; then
+            _err="SOCKS5 на доноре не принимает соединения (mtproxyl-donor-socks@${DONOR_REMOTE_IFACE})"
+        elif [ -z "$_DONOR_PROBE_EGRESS" ]; then
+            _err="SOCKS5 донора принимает соединения, но не выпускает наружу — на доноре: journalctl -u mtproxyl-donor-socks@${DONOR_REMOTE_IFACE}"
+        else
+            _err="через SOCKS5 донора (выход ${_DONOR_PROBE_EGRESS}) Telegram не отвечает, код ${_DONOR_PROBE_TG:-нет}"
+        fi
     fi
     DONOR_CHECK_AT=$(date +%s); DONOR_CHECK_RESULT="$_res"; DONOR_CHECK_ERROR="$_err"
     DONOR_CHECK_EGRESS="${_DONOR_PROBE_EGRESS:-}"; DONOR_CHECK_RTT="${_DONOR_PROBE_RTT:-}"

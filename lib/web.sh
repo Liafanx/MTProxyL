@@ -1654,6 +1654,18 @@ web_engine_supports() {
     _version_ge "$_v" "$WEB_MIN_ENGINE_VERSION"
 }
 
+# Движок-бинарник со случайным именем службы по имени процесса не узнать:
+# сверяем имя (comm обрезан до 15 символов) и путь бинарника.
+_web_listener_is_engine() {
+    local _who="$1" _pid _exe
+    [ -n "${ENGINE_BIN_NAME:-}" ] && [[ "$_who" == *"((\"${ENGINE_BIN_NAME:0:15}\","* ]] && return 0
+    for _pid in $(grep -o 'pid=[0-9]*' <<< "$_who" | cut -d= -f2); do
+        _exe=$(readlink "/proc/${_pid}/exe" 2>/dev/null) || continue
+        [[ "${_exe% (deleted)}" == "${ENGINE_BIN_DIR:-/nonexistent}/"* ]] && return 0
+    done
+    return 1
+}
+
 # Порты движка и nginx должны быть свободны до того, как мы уведём движок
 # с публичного порта: иначе он не поднимется, а 443 останется без хозяина.
 web_busy_ports() {
@@ -1676,6 +1688,7 @@ web_busy_ports() {
         # Свои же процессы помехой не считаем: после неудачного включения
         # nginx или движок могли остаться на приватном порту, и порт числился
         # занятым навсегда — кнопка «Включить» больше не срабатывала.
+        _web_listener_is_engine "$_who" && continue
         case "$_who" in
             *nginx*|*telemt*|*mtproxyl*) continue ;;
             *caddy*) front_is caddy && continue ;;
