@@ -128,7 +128,7 @@ export function LoadChart({ connections, activeUsers, windowSecs = 1800, label, 
       <svg
         viewBox={`0 0 ${W} ${H}`}
         preserveAspectRatio="none"
-        className="h-[190px] w-full md:h-[230px]"
+        className="block h-[190px] w-full md:h-[230px]"
         role="img"
         aria-label={`${label}. 0–${formatNumber(maximum)}`}
       >
@@ -187,13 +187,11 @@ export function LoadChart({ connections, activeUsers, windowSecs = 1800, label, 
           <g pointerEvents="none" aria-hidden="true">
             <line x1={selectedX} x2={selectedX} y1={PAD} y2={baseline}
               stroke="rgb(var(--text-muted))" strokeWidth={1} strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />
-            {selectedConn && <circle cx={selectedX} cy={pointY(selectedConn.v)} r={5}
-              fill="rgb(var(--accent))" stroke="rgb(var(--surface))" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
-            {selectedUsers && <circle cx={selectedX} cy={pointY(selectedUsers.v)} r={5}
-              fill="rgb(var(--ok))" stroke="rgb(var(--surface))" strokeWidth={2} vectorEffect="non-scaling-stroke" />}
           </g>
         )}
       </svg>
+      {selectedX !== null && selectedConn && <EndDot point={{ x: selectedX, y: pointY(selectedConn.v) }} tone="accent" size={10} />}
+      {selectedX !== null && selectedUsers && <EndDot point={{ x: selectedX, y: pointY(selectedUsers.v) }} tone="ok" size={10} />}
       {selectedTs !== null && (
         <div aria-hidden="true" className={`pointer-events-none absolute top-2 z-10 w-[190px] max-w-[calc(100%-1rem)] rounded-lg border border-border-strong bg-surface px-3 py-2 text-[11px] text-text shadow-lg ${selectedX !== null && selectedX > W / 2 ? 'left-2' : 'right-2'}`}>
           <div className="mb-1 font-mono tabular-nums text-text-muted">{pointTime(selectedTs)}</div>
@@ -221,7 +219,7 @@ function EndDot({ point, tone, size }: { point: { x: number; y: number }; tone: 
   return (
     <span
       aria-hidden="true"
-      className={tone === 'accent' ? 'absolute rounded-full bg-accent' : 'absolute rounded-full bg-ok'}
+      className={`pointer-events-none absolute rounded-full ${tone === 'accent' ? 'bg-accent' : 'bg-ok'}`}
       style={{
         width: size,
         height: size,

@@ -51,7 +51,7 @@ export function InitializationSection({ data }: InitializationSectionProps) {
           <KV label="Этап" value={data.me.current_stage} mono />
           <KV label="Прогресс" value={`${Math.round(data.me.progress_pct)}%`} mono />
           <KV label="Попытка" value={`${data.me.init_attempt} из ${data.me.retry_limit}`} mono />
-          {data.me.last_error && <KV label="Последняя ошибка" value={<span className="text-error">{data.me.last_error}</span>} />}
+          {data.me.last_error && <KV label="Последняя ошибка" value={<span className="text-error">{data.me.last_error}</span>} stacked />}
         </Panel>
       </div>
       {data.components.length > 0 && (

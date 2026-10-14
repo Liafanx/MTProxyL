@@ -6,18 +6,19 @@ interface KVProps {
   value: ReactNode;
   hint?: string;
   mono?: boolean;
+  stacked?: boolean;
   className?: string;
 }
 
 /** Строка «подпись — значение» внутри карточки. */
-export function KV({ label, value, hint, mono = false, className }: KVProps) {
+export function KV({ label, value, hint, mono = false, stacked = false, className }: KVProps) {
   return (
-    <div className={cn('flex items-start justify-between gap-3 py-1', className)}>
+    <div className={cn('grid items-start gap-x-3 gap-y-1 py-1', stacked ? 'grid-cols-1' : 'grid-cols-[minmax(0,1fr)_minmax(0,2fr)]', className)}>
       <div className="min-w-0">
         <span className="text-meta text-text-muted">{label}</span>
         {hint && <div className="text-micro text-text-faint">{hint}</div>}
       </div>
-      <span className={cn('shrink-0 text-right text-meta font-semibold text-text', mono && 'font-mono tabular-nums')}>{value}</span>
+      <span className={cn('min-w-0 text-meta text-text [overflow-wrap:anywhere]', stacked ? 'text-left' : 'text-right font-semibold', mono && 'font-mono tabular-nums')}>{value}</span>
     </div>
   );
 }
