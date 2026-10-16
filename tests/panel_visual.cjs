@@ -26,17 +26,52 @@ const wsData = {
   '/v1/stats/summary': { uptime_seconds: 600, configured_users: 1, connections_total: 100,
     connections_bad_total: 0, current_connections: 2, active_users: 1, total_octets: 1000 },
 };
+const branding = {
+  panel_name: 'Тестовая панель', login_title: 'Личный вход', login_subtitle: 'Сохранённый текст',
+  has_background: false, panel_background_mode: 'none', has_panel_background: false,
+};
+const users = ['short', 'long_username_'.repeat(4), 'other'].map((username, index) => ({
+  username, current_connections: index + 1, active_unique_ips: index + 1,
+  recent_unique_ips: 0, total_octets: (index + 1) * 123456789, max_unique_ips: 5,
+  expiration_rfc3339: '2027-10-08T00:00:00Z',
+  links: { tls: [`tg://proxy?server=example.com&port=443&secret=ee${'a'.repeat(32)}${'b'.repeat(20)}`] },
+}));
 
 async function mock(page) {
+  const state = { brandingWait: null, statsWait: null, failBranding: false, writes: [] };
   await page.addInitScript(() => localStorage.setItem('mtproxyl-panel-theme', 'light'));
   await page.route('**/api/**', async (route) => {
     const url = new URL(route.request().url());
+    if (route.request().method() !== 'GET') state.writes.push(url.pathname);
     let data = {};
     if (url.pathname.endsWith('/auth/me')) data = { username: 'admin' };
-    else if (url.pathname.endsWith('/theme')) data = null;
+    else if (url.pathname.endsWith('/theme')) data = { theme: 'light', colors: {}, configured: true };
     else if (url.pathname.endsWith('/theme/custom')) data = null;
+    else if (url.pathname.endsWith('/history/storage')) data = {
+      traffic: { enabled: false }, fingerprints: { enabled: false },
+      limits: { traffic_max_users: 0, fingerprints_max_records: 2000, fingerprints_retention_days: 30 },
+    };
     else if (url.pathname.endsWith('/mtproxyl/status')) data = { enabled: false };
-    else if (url.pathname.endsWith('/v1/users')) data = [];
+    else if (url.pathname.endsWith('/branding')) {
+      if (state.brandingWait) await state.brandingWait;
+      if (state.failBranding) {
+        await route.fulfill({ status: 503, contentType: 'application/json',
+          body: JSON.stringify({ ok: false, error: { message: 'Настройки временно недоступны' } }) });
+        return;
+      }
+      data = branding;
+    }
+    else if (url.pathname.endsWith('/v1/users')) data = users;
+    else if (url.pathname.endsWith('/v1/stats/users/quota')) data = {
+      users: [{ username: 'short', data_quota_bytes: 1e12, used_bytes: 7e9, last_reset_epoch_secs: now }],
+    };
+    else if (url.pathname.endsWith('/mtproxyl/users')) {
+      if (state.statsWait) await state.statsWait;
+      data = users.map((user) => ({ label: user.username, total_bytes: 7e9, ip_history: [] }));
+    }
+    else if (url.pathname.endsWith('/mtproxyl/web')) data = {
+      enabled: true, domain: 'web.example.com', secret_mode: 'dd', mtproto_enabled: true,
+    };
     else if (url.pathname.endsWith('/availability/status')) data = { supported: false };
     else if (url.pathname.endsWith('/history')) {
       data = { range: '30m', requested_from_epoch_secs: now - 1800, retention_secs: 7200,
@@ -55,6 +90,73 @@ async function mock(page) {
       }
     });
   });
+  return state;
+}
+
+async function checkSettings(page, state, width) {
+  let release;
+  state.brandingWait = new Promise((resolve) => { release = resolve; });
+  await page.goto(`${base}/panel-settings`);
+  await page.getByText('Загрузка настроек панели…', { exact: true }).waitFor();
+  assert.equal(await page.locator('#panel-name').count(), 0, 'default form shown before loading');
+  release();
+  state.brandingWait = null;
+  await page.waitForFunction(() => document.querySelector('#panel-name')?.value === 'Тестовая панель');
+  assert.equal(await page.locator('#login-title').inputValue(), branding.login_title);
+  assert.equal(await page.locator('#login-subtitle').inputValue(), branding.login_subtitle);
+  await page.locator('#panel-name').fill('Черновик');
+  assert.equal(await page.locator('#panel-name').inputValue(), 'Черновик');
+  await page.screenshot({ path: path.join(output, `settings-${width}.png`), fullPage: true });
+  state.failBranding = true;
+  await page.reload();
+  await page.getByRole('button', { name: 'Повторить загрузку', exact: true }).waitFor();
+  assert.equal(await page.locator('#panel-name').count(), 0, 'editable defaults shown after error');
+  state.failBranding = false;
+  await page.getByRole('button', { name: 'Повторить загрузку', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('#panel-name')?.value === 'Тестовая панель');
+  assert.deepEqual(state.writes, [], 'settings changed during loading test');
+  console.log(`panel settings ${width}: ok`);
+}
+
+async function checkUsers(page, state, width) {
+  let release;
+  state.statsWait = new Promise((resolve) => { release = resolve; });
+  await page.goto(`${base}/users`);
+  const table = page.locator('table').first();
+  if (width < 1024) {
+    await page.getByText('short', { exact: true }).filter({ visible: true }).waitFor();
+    release();
+    state.statsWait = null;
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `mobile users overflow at ${width}`);
+  } else {
+    const row = table.locator('tbody tr').filter({ has: page.getByRole('link', { name: 'short', exact: true }) });
+    await row.waitFor();
+    const widths = () => table.locator('thead th').evaluateAll((cells) => cells.map((cell) => cell.getBoundingClientRect().width));
+    const initial = await widths();
+    release();
+    state.statsWait = null;
+    await page.waitForFunction(() => [...document.querySelectorAll('tbody tr')].some((row) =>
+      row.querySelector('a')?.textContent === 'short' && row.children[5].textContent !== '-'), null, { timeout: 2000 });
+    assert.deepEqual(await widths(), initial, 'columns changed after statistics loaded');
+    await page.getByPlaceholder('Поиск пользователей…').fill('short');
+    assert.equal(await table.locator('tbody tr').count(), 1);
+    assert.deepEqual(await widths(), initial, 'columns changed after filtering');
+    await page.getByPlaceholder('Поиск пользователей…').fill('');
+    await table.getByText('Активные IP', { exact: true }).click();
+    assert.deepEqual(await widths(), initial, 'columns changed after sorting');
+    await table.getByText('Соединения', { exact: true }).click();
+    assert.deepEqual(await widths(), initial, 'columns changed after sorting connections');
+    const overflowing = await table.locator('th, td').evaluateAll((cells) =>
+      cells.filter((cell) => cell.scrollWidth > cell.clientWidth + 1).map((cell) => cell.textContent));
+    assert.deepEqual(overflowing, [], 'table cell content overflows');
+    const links = row.locator('button[title="TLS"], button[title="t.me"], button[title="WEB"]');
+    const tops = await links.evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().top));
+    assert.equal(tops.length, 3);
+    assert(Math.max(...tops) - Math.min(...tops) < 1, 'links wrap unexpectedly');
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `users page overflow at ${width}`);
+  }
+  await page.screenshot({ path: path.join(output, `users-${width}.png`), fullPage: true });
+  console.log(`panel users ${width}: ok`);
 }
 
 async function checkLayout(page, width) {
@@ -133,8 +235,10 @@ async function checkLayout(page, width) {
         const page = await context.newPage();
         const errors = [];
         page.on('pageerror', (error) => errors.push(error.message));
-        await mock(page);
+        const state = await mock(page);
         await checkLayout(page, width);
+        await checkSettings(page, state, width);
+        await checkUsers(page, state, width);
         assert.deepEqual(errors, [], `browser errors at ${width}`);
       } finally { await context.close(); }
     }
