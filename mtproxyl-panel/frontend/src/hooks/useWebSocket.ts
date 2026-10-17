@@ -37,6 +37,9 @@ export function useWsProvider(): WsContextValue {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const subscribers = useRef<Map<string, Subscriber>>(new Map());
+  const active = useRef(false);
+  const connectionStarted = useRef(0);
+  const responses = useRef<Map<string, number>>(new Map());
 
   const getAggregated = useCallback(() => {
     const endpointIntervals = new Map<string, number>();
@@ -56,20 +59,10 @@ export function useWsProvider(): WsContextValue {
     if (ws?.readyState !== WebSocket.OPEN) return;
 
     const agg = getAggregated();
-    if (agg.size === 0) return;
-
-    // Group by interval
-    const byInterval = new Map<number, string[]>();
-    for (const [ep, interval] of agg) {
-      const list = byInterval.get(interval) || [];
-      list.push(ep);
-      byInterval.set(interval, list);
-    }
-
-    // Send subscription for the smallest interval with all endpoints
-    // (server handles one subscription at a time, so merge into one)
+    // Пустая подписка тоже отправляется: сервер должен остановить старые опросы.
     const allEndpoints = [...agg.keys()];
-    const minInterval = Math.min(...agg.values());
+    const minInterval = agg.size ? Math.min(...agg.values()) : 5;
+    responses.current = new Map(allEndpoints.map(endpoint => [endpoint, Date.now()]));
 
     ws.send(JSON.stringify({
       type: 'subscribe',
@@ -79,20 +72,28 @@ export function useWsProvider(): WsContextValue {
   }, [getAggregated]);
 
   const connect = useCallback(() => {
+    if (!active.current || document.hidden) return;
     if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return;
+    clearTimeout(reconnectTimer.current);
 
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const base = (window as any).__BASE_PATH__ || '';
     const ws = new WebSocket(`${proto}//${window.location.host}${base}/api/ws`);
     wsRef.current = ws;
+    connectionStarted.current = Date.now();
 
     ws.onopen = () => {
+      if (!active.current || wsRef.current !== ws) return;
       setConnected(true);
       sendSubscriptions();
     };
 
     ws.onmessage = (event) => {
-      const msg: ServerMessage = JSON.parse(event.data);
+      if (!active.current || wsRef.current !== ws) return;
+      let msg: ServerMessage;
+      try { msg = JSON.parse(event.data); } catch { return; }
+      if (!msg || typeof msg.endpoint !== 'string' || (msg.type !== 'data' && msg.type !== 'error')) return;
+      if (responses.current.has(msg.endpoint)) responses.current.set(msg.endpoint, Date.now());
       if (msg.type === 'data') {
         setData(prev => ({ ...prev, [msg.endpoint]: msg.data }));
         setErrors(prev => {
@@ -107,22 +108,57 @@ export function useWsProvider(): WsContextValue {
     };
 
     ws.onclose = () => {
+      if (!active.current || wsRef.current !== ws) return;
       setConnected(false);
       wsRef.current = null;
-      reconnectTimer.current = setTimeout(connect, 3000);
+      if (!document.hidden) reconnectTimer.current = setTimeout(connect, 3000);
     };
 
-    ws.onerror = () => ws.close();
+    ws.onerror = () => { if (wsRef.current === ws) ws.close(); };
   }, [sendSubscriptions]);
 
-  // Connect once on mount
-  useEffect(() => {
+  const restart = useCallback(() => {
+    clearTimeout(reconnectTimer.current);
+    const previous = wsRef.current;
+    wsRef.current = null;
+    previous?.close();
+    setConnected(false);
     connect();
-    return () => {
-      clearTimeout(reconnectTimer.current);
-      wsRef.current?.close();
-    };
   }, [connect]);
+
+  useEffect(() => {
+    active.current = true;
+    connect();
+    const onVisible = () => { if (!document.hidden) restart(); };
+    const onPageShow = (event: PageTransitionEvent) => { if (event.persisted) onVisible(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('pageshow', onPageShow);
+    window.addEventListener('online', onVisible);
+    // Мобильный браузер может оставить зависший сокет в состоянии OPEN.
+    const watchdog = setInterval(() => {
+      if (document.hidden) return;
+      const ws = wsRef.current;
+      if (!ws) { connect(); return; }
+      const now = Date.now();
+      const agg = getAggregated();
+      const timeout = Math.max(30000, (agg.size ? Math.min(...agg.values()) : 5) * 1000 + 15000);
+      if (ws.readyState === WebSocket.CONNECTING && now - connectionStarted.current > 30000
+        || ws.readyState === WebSocket.OPEN && [...responses.current.values()].some(time => now - time > timeout)) {
+        restart();
+      }
+    }, 5000);
+    return () => {
+      active.current = false;
+      clearInterval(watchdog);
+      clearTimeout(reconnectTimer.current);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('pageshow', onPageShow);
+      window.removeEventListener('online', onVisible);
+      const previous = wsRef.current;
+      wsRef.current = null;
+      previous?.close();
+    };
+  }, [connect, restart, getAggregated]);
 
   const subscribe = useCallback((id: string, endpoints: string[], interval = 5) => {
     subscribers.current.set(id, { endpoints, interval });
@@ -134,11 +170,7 @@ export function useWsProvider(): WsContextValue {
     sendSubscriptions();
   }, [sendSubscriptions]);
 
-  const refresh = useCallback(() => {
-    sendSubscriptions();
-  }, [sendSubscriptions]);
-
-  return { data, errors, connected, subscribe, unsubscribe, refresh };
+  return { data, errors, connected, subscribe, unsubscribe, refresh: restart };
 }
 
 // Hook for pages to subscribe to specific endpoints
@@ -153,8 +185,9 @@ export function useWsSubscription(id: string, endpoints: string[], interval = 5)
   }, [id, endpointsKey, interval]);
 
   return {
-    data: ctx.data,
-    errors: ctx.errors,
+    data: Object.fromEntries(endpoints.filter(endpoint => endpoint in ctx.data).map(endpoint => [endpoint, ctx.data[endpoint]])),
+    errors: Object.fromEntries(endpoints.filter(endpoint => endpoint in ctx.errors).map(endpoint => [endpoint, ctx.errors[endpoint]])),
+    loading: endpoints.some(endpoint => !(endpoint in ctx.data) && !(endpoint in ctx.errors)),
     connected: ctx.connected,
     refresh: ctx.refresh,
   };

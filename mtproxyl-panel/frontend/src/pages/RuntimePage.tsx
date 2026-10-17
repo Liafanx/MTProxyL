@@ -41,7 +41,7 @@ const ENDPOINTS = [
 ];
 
 export function RuntimePage() {
-  const { data: wsData, errors, connected, refresh } = useWsSubscription('runtime', ENDPOINTS, 5);
+  const { data: wsData, errors, loading, connected, refresh } = useWsSubscription('runtime', ENDPOINTS, 5);
 
   const gates = useEndpoint<Record<string, unknown>>(wsData, '/v1/runtime/gates');
   const initialization = useEndpoint<InitializationData>(wsData, '/v1/runtime/initialization');
@@ -56,7 +56,6 @@ export function RuntimePage() {
   const minimalAll = useEndpoint<MinimalAllResponse>(wsData, '/v1/stats/minimal/all');
 
   const firstError = Object.values(errors)[0];
-  const loading = Object.keys(wsData).length === 0 && !firstError;
 
   return (
     <div>
