@@ -745,6 +745,25 @@ shaping_home_summary() {
     '
 }
 
+_shaping_read_number() {
+    local flag="$1" prompt="$2" default="${3:-}" ceiling="${4:-}" value
+    while true; do
+        read -r -p "$prompt" value || return 1
+        value="${value:-$default}"
+        if [ -z "$value" ]; then
+            log_error 'Обязательное поле: введите число' >&2
+            continue
+        fi
+        shaping_cli_check_number "$flag" "$value" >&2 || continue
+        if [ -n "$ceiling" ] && ! awk -v v="$value" -v max="$ceiling" 'BEGIN { exit !(v <= max) }'; then
+            log_error 'Лимит одного IP не может превышать общий потолок' >&2
+            continue
+        fi
+        printf '%s\n' "$value"
+        return 0
+    done
+}
+
 shaping_menu() {
     local cfg mode channel reserve expected ip_limit total answer profiles ips
     cfg=$(shaping_config)
@@ -763,17 +782,17 @@ shaping_menu() {
         *) return 0 ;;
     esac
     if [ "$mode" = manual ]; then
-        read -r -p 'Общий потолок, Мбит/с: ' total
-        read -r -p 'Лимит одного IPv4, Мбит/с: ' ip_limit
+        total=$(_shaping_read_number --total 'Общий потолок, Мбит/с (обязательно): ') || return 1
+        ip_limit=$(_shaping_read_number --ip 'Лимит одного IPv4, Мбит/с (обязательно): ' '' "$total") || return 1
         cfg=$(printf '%s\n' "$cfg" | jq --argjson total "$total" --argjson ip_limit "$ip_limit" '.manual_total_mbps=$total | .manual_ip_mbps=$ip_limit') || return 1
     else
-        read -r -p 'Ширина канала, Мбит/с (1 Гбит/с = 1000): ' channel
-        read -r -p 'Резерв канала, % [10]: ' reserve
-        read -r -p 'Ожидаемое / минимальное число пользователей [10]: ' expected
+        channel=$(_shaping_read_number --channel 'Ширина канала, Мбит/с (1 Гбит/с = 1000, обязательно): ') || return 1
+        reserve=$(_shaping_read_number --reserve 'Резерв канала, % [10]: ' 10) || return 1
+        expected=$(_shaping_read_number --users 'Ожидаемое / минимальное число пользователей [10]: ' 10) || return 1
         cfg=$(printf '%s\n' "$cfg" | jq --argjson channel "$channel" --argjson reserve "${reserve:-10}" --argjson expected "${expected:-10}" '.channel_mbps=$channel | .reserve_percent=$reserve | .expected_users=$expected') || return 1
     fi
-    read -r -p 'Профили без персонального лимита (через запятую, пусто — нет): ' profiles
-    read -r -p 'IPv4/CIDR без общего потолка (через запятую, пусто — нет): ' ips
+    read -r -p 'Профили без персонального лимита (через запятую, пусто — нет): ' profiles || return 1
+    read -r -p 'IPv4/CIDR без общего потолка (через запятую, пусто — нет): ' ips || return 1
     cfg=$(printf '%s\n' "$cfg" | jq --arg mode "$mode" --arg profiles "$profiles" --arg ips "$ips" \
         '.enabled=true | .mode=$mode | .profile_exempt=($profiles|split(",")|map(gsub("^ +| +$";"")|select(length>0))) | .ip_exempt=($ips|split(",")|map(gsub("^ +| +$";"")|select(length>0)))') || return 1
     printf '%s\n' "$cfg" | shaping_apply

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Image, RotateCcw, Save, Trash2, Upload } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Chip } from '@/components/ui/chip';
@@ -42,7 +42,7 @@ interface TextSettings {
 }
 
 export function PanelSettingsPage() {
-  const { branding, apply } = useBranding();
+  const { branding, loading, error: loadError, apply, refresh } = useBranding();
   const { theme, setTheme, customColors, copyThemeColors, syncStatus, syncError, retrySave } = useTheme();
   const { layout, setLayout } = useNavLayout();
   const [form, setForm] = useState<TextSettings>({
@@ -62,7 +62,7 @@ export function PanelSettingsPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const panelInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setForm({
       panel_name: branding.panel_name,
       login_title: branding.login_title,
@@ -210,6 +210,20 @@ export function PanelSettingsPage() {
     });
     setNotice('');
   };
+
+  if (loading || loadError) {
+    return (
+      <div className="min-h-screen">
+        <Header title="Настройки панели" />
+        <div className="p-4 lg:p-6 space-y-4 max-w-4xl">
+          {loadError ? <>
+            <ErrorAlert message={loadError} />
+            <Button onClick={() => void refresh()}>Повторить загрузку</Button>
+          </> : <p role="status" className="text-text-secondary">Загрузка настроек панели…</p>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen">

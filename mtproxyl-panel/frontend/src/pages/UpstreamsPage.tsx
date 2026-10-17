@@ -149,7 +149,7 @@ function WriterState({ w }: { w: MeWriter }) {
 }
 
 export function UpstreamsPage() {
-  const { data: wsData, errors, connected, refresh } = useWsSubscription('upstreams', ENDPOINTS, 5);
+  const { data: wsData, errors, loading, connected, refresh } = useWsSubscription('upstreams', ENDPOINTS, 5);
 
   const upstreams = useEndpoint<UpstreamsData>(wsData, '/v1/stats/upstreams');
   const dcs = useEndpoint<DcStatusData>(wsData, '/v1/stats/dcs');
@@ -157,7 +157,6 @@ export function UpstreamsPage() {
   const minimalAll = useEndpoint<MinimalAllResponse>(wsData, '/v1/stats/minimal/all');
 
   const firstError = Object.values(errors)[0];
-  const loading = Object.keys(wsData).length === 0 && !firstError;
   const pathByDc = useMemo(() => {
     const map = new Map<number, NetworkPathEntry>();
     for (const p of minimalAll?.data?.network_path ?? []) map.set(p.dc, p);

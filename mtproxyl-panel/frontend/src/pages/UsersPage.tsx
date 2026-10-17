@@ -126,7 +126,7 @@ export function UsersPage() {
     if (!search.trim()) return mergedUsers;
     const q = search.trim().toLowerCase();
     return mergedUsers.filter((u) => u.username.toLowerCase().includes(q));
-  }, [users, search]);
+  }, [users, mergedUsers, search]);
 
   const sortedUsers = useMemo(() => {
     return [...filteredUsers].sort((a, b) => {
@@ -406,7 +406,12 @@ export function UsersPage() {
         {/* Desktop Table */}
         <div className="hidden lg:block border border-border rounded-lg overflow-hidden">
           <div className="overflow-x-auto">
-            <Table>
+            <Table className="table-fixed min-w-[1320px] [&_th]:whitespace-nowrap [&_td]:tabular-nums">
+              <colgroup>
+                {[165, 220, 130, 130, 160, 115, 150, 150, 100].map((width, index) => (
+                  <col key={index} style={{ width }} />
+                ))}
+              </colgroup>
               <TableHeader className="[&_th]:font-medium [&_th]:normal-case [&_th]:tracking-normal [&_th]:text-text-secondary">
                 <TableRow>
                   <TableHead className="cursor-pointer select-none" onClick={() => toggleSort('username')}>
@@ -464,7 +469,7 @@ export function UsersPage() {
                     return (
                       <TableRow key={u.username} className={hasConns ? 'bg-success/5 hover:bg-success/10' : ''}>
                         <TableCell className="font-medium">
-                          <Link to={`/users/${u.username}`} className="text-accent hover:underline">{u.username}</Link>
+                          <Link to={`/users/${u.username}`} title={u.username} className="block truncate text-accent hover:underline">{u.username}</Link>
                         </TableCell>
                         <TableCell>
                           {linksPending

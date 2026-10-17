@@ -7,28 +7,44 @@ import {
 
 interface BrandingContextValue {
   branding: PanelBranding;
+  loading: boolean;
+  error: string;
   apply: (branding: PanelBranding) => void;
   refresh: () => Promise<void>;
 }
 
 export const BrandingContext = createContext<BrandingContextValue>({
   branding: DEFAULT_PANEL_BRANDING,
+  loading: true,
+  error: '',
   apply: () => {},
   refresh: async () => {},
 });
 
 export function useBrandingProvider(): BrandingContextValue {
   const [branding, setBranding] = useState<PanelBranding>(DEFAULT_PANEL_BRANDING);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const apply = useCallback((updated: PanelBranding) => {
+    setBranding(updated);
+    setError('');
+    setLoading(false);
+  }, []);
 
   const refresh = useCallback(async () => {
+    setLoading(true);
+    setError('');
     try {
-      setBranding(await brandingApi.get());
+      apply(await brandingApi.get());
     } catch (error) {
-      // The public endpoint may be unavailable during a rolling update. Keep
-      // the built-in labels so a failed decoration never blocks login.
+      // Ошибка оформления не блокирует вход; форму настроек защищаем отдельно.
       console.warn('Failed to load panel branding:', error);
+      setError(error instanceof Error ? error.message : 'Не удалось загрузить настройки панели');
+    } finally {
+      setLoading(false);
     }
-  }, []);
+  }, [apply]);
 
   useEffect(() => {
     void refresh();
@@ -59,7 +75,7 @@ export function useBrandingProvider(): BrandingContextValue {
     };
   }, [branding.has_icon, branding.icon_revision]);
 
-  return { branding, apply: setBranding, refresh };
+  return { branding, loading, error, apply, refresh };
 }
 
 export function useBranding() {
