@@ -985,6 +985,11 @@ self_update() {
             || log_warn "WARP требует обновления: mtproxyl warp refresh"
     fi
 
+    # Новая раскладка zapret2 (экземпляр nfqws2 на ядро) — только у
+    # работающего и только если она изменилась.
+    "${INSTALL_DIR}/mtproxyl.sh" nft zapret2-refresh \
+        || log_warn "Zapret2 не перезапустился — проверьте: mtproxyl nft zapret2-start"
+
     # Панель ходит к нам через список разрешённых подкоманд. Новая версия
     # приносит новые — без перевыпуска они у панели отказывают с sudo.
     if panel_installed 2>/dev/null; then

@@ -433,6 +433,7 @@ cli_main() {
                 zapret2)       check_root; load_nft_settings; zapret2_install ;;
                 zapret2-start) check_root; load_nft_settings; zapret2_start_existing ;;
                 zapret2-stop)  check_root; load_nft_settings; zapret2_stop ;;
+                zapret2-refresh) check_root; load_nft_settings; zapret2_refresh_if_needed ;;
                 zapret2-rm)    check_root; load_nft_settings; zapret2_remove ;;
                 zapret2-wscale) load_nft_settings; zapret2_check_wscale "true" ;;
                 set)      check_root; nft_set_param "$2" "$3" ;;

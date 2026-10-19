@@ -790,7 +790,7 @@ tui_zapret2_menu() {
             echo -e "    split len:   ${ZAPRET2_SPLIT_LEN}"
             echo -e "    win SYN+ACK: ${ZAPRET2_WIN_SYNACK}"
             echo -e "    win ACK:     ${ZAPRET2_WIN_ACK}"
-            echo -e "    NFQUEUE:     ${ZAPRET2_QNUM}"
+            echo -e "    NFQUEUE:     $(zapret2_queue_spec)  (экземпляров nfqws2: $(zapret2_instance_count))"
             echo -e "    fwmark:      ${ZAPRET2_FWMARK}"
             echo -e "    UID:GID:     ${ZAPRET2_UID}:${ZAPRET2_GID}"
             echo -e "    Порт:        ${PROXY_PORT:-не задан}"
@@ -827,7 +827,7 @@ tui_zapret2_menu() {
             echo -e "    split len:   ${ZAPRET2_SPLIT_LEN}"
             echo -e "    win SYN+ACK: ${ZAPRET2_WIN_SYNACK}"
             echo -e "    win ACK:     ${ZAPRET2_WIN_ACK}"
-            echo -e "    NFQUEUE:     ${ZAPRET2_QNUM}"
+            echo -e "    NFQUEUE:     $(zapret2_queue_spec)  (экземпляров nfqws2: $(zapret2_instance_count))"
             echo -e "    Порт:        ${PROXY_PORT:-не задан}"
             echo ""
         fi
@@ -907,12 +907,15 @@ tui_zapret2_menu() {
                     echo ""
                     echo -e "  ${BOLD}=== NFQUEUE ===${NC}"
                     modprobe nfnetlink_queue 2>/dev/null || true
-                    echo -e "  ${DIM}Используемая очередь: ${ZAPRET2_QNUM}${NC}"
-                    if grep -q "^ *${ZAPRET2_QNUM} " /proc/net/netfilter/nfnetlink_queue 2>/dev/null; then
-                        echo -e "  ${GREEN}Очередь ${ZAPRET2_QNUM} активна${NC}"
-                    else
-                        echo -e "  ${YELLOW}Очередь ${ZAPRET2_QNUM} не найдена в системе${NC}"
-                    fi
+                    echo -e "  ${DIM}Используемые очереди: $(zapret2_queue_spec)${NC}"
+                    local _zq _zn; _zn=$(zapret2_instance_count)
+                    for ((_zq = ZAPRET2_QNUM; _zq < ZAPRET2_QNUM + _zn; _zq++)); do
+                        if grep -q "^ *${_zq} " /proc/net/netfilter/nfnetlink_queue 2>/dev/null; then
+                            echo -e "  ${GREEN}Очередь ${_zq} активна${NC}"
+                        else
+                            echo -e "  ${YELLOW}Очередь ${_zq} не найдена в системе${NC}"
+                        fi
+                    done
                     echo -e "  ${DIM}Все очереди:${NC}"
                     cat /proc/net/netfilter/nfnetlink_queue 2>/dev/null || echo "  unavailable"
                     echo ""
@@ -1001,7 +1004,7 @@ tui_zapret2_settings() {
         echo -e "  ${DIM}[3]${NC} win SYN+ACK [${ZAPRET2_WIN_SYNACK}]  ${DIM}— окно в SYN+ACK${NC}"
         echo -e "  ${DIM}[4]${NC} win ACK     [${ZAPRET2_WIN_ACK}]  ${DIM}— окно в пустых ACK${NC}"
         echo -e "  ${DIM}[5]${NC} in-range    [${ZAPRET2_IN_RANGE}]  ${DIM}— входящие пакеты${NC}"
-        echo -e "  ${DIM}[6]${NC} NFQUEUE     [${ZAPRET2_QNUM}]  ${DIM}— номер очереди${NC}"
+        echo -e "  ${DIM}[6]${NC} NFQUEUE     [${ZAPRET2_QNUM}]  ${DIM}— номер первой очереди${NC}"
         echo -e "  ${DIM}[7]${NC} fwmark      [${ZAPRET2_FWMARK}]"
         echo -e "  ${DIM}[8]${NC} Проверка wscale / win ACK"
         echo ""
@@ -1027,6 +1030,9 @@ tui_zapret2_settings() {
             *) zapret2_is_bridge_target && _z_hook_note="авто → forward" || _z_hook_note="авто → хост" ;;
         esac
         echo -e "  ${DIM}[16]${NC} Цепочка NFT  [${_z_hook_note}]  ${DIM}— forward нужен, если цель в контейнере${NC}"
+        local _z_inst="${ZAPRET2_INSTANCES:-auto}"
+        [ "$_z_inst" = "auto" ] && _z_inst="авто → $(zapret2_instance_count)"
+        echo -e "  ${DIM}[17]${NC} Экземпляры nfqws2 [${_z_inst}]  ${DIM}— по одному на ядро, очереди $(zapret2_queue_spec)${NC}"
         local _z_bridge="false"
         if zapret2_is_bridge_target; then
             _z_bridge="true"
@@ -1150,6 +1156,18 @@ tui_zapret2_settings() {
                        log_success "Docker bridge: precise (фильтр по IP контейнера)"
                        zapret2_update_config ;;
                 esac
+                press_any_key ;;
+            17)
+                echo ""
+                echo -e "  ${DIM}nfqws2 однопоточный: один экземпляр — одно ядро. Ядро делит${NC}"
+                echo -e "  ${DIM}соединения между экземплярами по адресам клиента и сервера.${NC}"
+                echo -e "  ${DIM}auto — по числу ядер (не больше 8), число — вручную (1..16).${NC}"
+                local _v; read_line _v "  Экземпляры [${ZAPRET2_INSTANCES:-auto}]: "
+                if [ "$_v" = "auto" ] || { [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 1 ] && [ "$_v" -le 16 ]; }; then
+                    ZAPRET2_INSTANCES="$_v"; save_nft_settings
+                    log_success "Экземпляров nfqws2: $(zapret2_instance_count) (очереди $(zapret2_queue_spec))"
+                    zapret2_update_config
+                elif [ -n "$_v" ]; then log_error "auto или число 1..16"; fi
                 press_any_key ;;
             16)
                 echo ""
