@@ -61,6 +61,8 @@ type Server struct {
 	// snap — пользователи, ссылки и живые данные одним вызовом CLI, из кэша:
 	// запуск bash — около секунды на сотнях пользователей.
 	snap *mtproxylctl.SnapCache[view]
+	// stat — status --json, тоже из кэша: его опрашивают для мониторинга.
+	stat *mtproxylctl.SnapCache[json.RawMessage]
 }
 
 type failWindow struct {
@@ -78,6 +80,7 @@ const (
 func New(cli CLI, keyHash [32]byte, allow []*net.IPNet, version string) *Server {
 	s := &Server{cli: cli, keyHash: keyHash, allow: allow, version: version, fails: map[string]*failWindow{}}
 	s.snap = &mtproxylctl.SnapCache[view]{Load: s.loadView, Fresh: viewFresh}
+	s.stat = &mtproxylctl.SnapCache[json.RawMessage]{Load: cli.StatusRaw, Fresh: statusFresh}
 	m := http.NewServeMux()
 	m.HandleFunc("GET /v1/health", s.health)
 	m.HandleFunc("GET /v1/status", s.status)
@@ -522,7 +525,9 @@ const viewFresh = 10 * time.Second
 
 // WatchFiles — файлы, правка которых делает снимок устаревшим: секреты и
 // настройки меняют и меню, и панель, не только этот API.
-func (s *Server) WatchFiles(paths ...string) { s.snap.Watch = paths }
+func (s *Server) WatchFiles(paths ...string) { s.snap.Watch, s.stat.Watch = paths, paths }
+
+const statusFresh = 5 * time.Second
 
 // loadView — список пользователей и ссылки одним запуском скрипта. Скрипт
 // старше 1.7.3 список в api-view не кладёт — тогда отдельный secret list.
@@ -591,7 +596,7 @@ func (w writer) RestartProxy(ctx context.Context) (string, error) {
 }
 
 // changed — после любой записи: следующее чтение ждёт свежий снимок.
-func (s *Server) changed() { s.snap.Invalidate() }
+func (s *Server) changed() { s.snap.Invalidate(); s.stat.Invalidate() }
 
 // writePatched отвечает на запись, которая меняет только поля пользователя
 // (не секрет и не имя — от них зависят ссылки): берёт снимок до записи и
@@ -654,7 +659,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
-	raw, err := s.cli.StatusRaw(r.Context())
+	raw, err := s.stat.Get(r.Context())
 	if err != nil {
 		cliErr(w, err)
 		return
