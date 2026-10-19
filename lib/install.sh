@@ -624,10 +624,9 @@ run_fix_arsenal_wizard() {
         zapret2_download_bundle
         if [ $? -eq 0 ]; then
             # Проверяем занятость NFQUEUE
-            if zapret2_queue_in_use "${ZAPRET2_QNUM}"; then
+            if zapret2_range_in_use "${ZAPRET2_QNUM}"; then
                 local _new_q
-                _new_q=$(zapret2_find_free_queue 250 299)
-                [ -z "$_new_q" ] && _new_q=$(zapret2_find_free_queue 201 249)
+                _new_q=$(zapret2_find_free_range)
 
                 if [ -n "$_new_q" ]; then
                     log_warn "NFQUEUE ${ZAPRET2_QNUM} занята — используем ${_new_q}"

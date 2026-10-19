@@ -5,6 +5,9 @@ test_dir=$(mktemp -d)
 trap 'rm -rf "$test_dir"' EXIT
 INSTALL_DIR="$test_dir"
 source lib/shaping.sh
+SHAPING_TICK_ENDPOINT="$test_dir/tick.endpoint"
+SHAPING_TICK_SUM="$test_dir/tick.sum"
+SHAPING_TICK_SCRIPT="$test_dir/tick.sh"
 source lib/detect.sh
 source lib/secrets.sh
 

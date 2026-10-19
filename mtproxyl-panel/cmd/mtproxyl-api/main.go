@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -57,9 +58,11 @@ func main() {
 		Enabled: true, ScriptPath: *script, InstallDir: *installDir,
 		UseSudo: *useSudo, CommandTimeout: *timeout,
 	})
+	api := extapi.New(cli, hash, nets, version)
+	api.WatchFiles(filepath.Join(*installDir, "secrets.conf"), filepath.Join(*installDir, "settings.conf"))
 	srv := &http.Server{
 		Addr:              *listen,
-		Handler:           extapi.LogRequests(extapi.New(cli, hash, nets, version)),
+		Handler:           extapi.LogRequests(api),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      6 * time.Minute,

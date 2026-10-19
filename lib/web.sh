@@ -271,8 +271,26 @@ web_public_ip() {
 }
 
 web_public_addr() {
-    local _ip; _ip=$(web_public_ip) || return 1
+    local _ip; _ip=$(web_public_ip_cached) || return 1
     printf '%s:%s\n' "$_ip" "$(web_public_port)"
+}
+
+# Для сборки конфига: адрес держим 10 минут. Каждая правка пользователя
+# пересобирает конфиг, а web_public_ip ходит в DoH и внешние сервисы IP —
+# на медленной сети это секунды на каждое действие API.
+_WEB_IP_CACHE="${INSTALL_DIR}/.web-public-ip"
+web_public_ip_cached() {
+    local _key _t _k _ip
+    _key="$(web_domain 2>/dev/null)|${CUSTOM_IP:-}|${WEB_DNS_CHECK:-}"
+    if IFS=' ' read -r _t _k _ip < "$_WEB_IP_CACHE" 2>/dev/null \
+       && [ "$_k" = "$_key" ] && [[ "$_t" =~ ^[0-9]+$ ]] \
+       && [ $(( ${EPOCHSECONDS:-0} - _t )) -ge 0 ] && [ $(( ${EPOCHSECONDS:-0} - _t )) -lt 600 ] \
+       && validate_ip_literal "$_ip" 2>/dev/null; then
+        echo "$_ip"; return 0
+    fi
+    _ip=$(web_public_ip) || return 1
+    [ "${EUID:-1}" -eq 0 ] && printf '%s %s %s\n' "${EPOCHSECONDS:-0}" "$_key" "$_ip" > "$_WEB_IP_CACHE" 2>/dev/null
+    echo "$_ip"
 }
 
 # Клиент ходит в WEB только на 443 и порт в ссылку не пишет.

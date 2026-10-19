@@ -57,6 +57,12 @@ type Server struct {
 
 	failMu sync.Mutex
 	fails  map[string]*failWindow
+
+	// snap — пользователи, ссылки и живые данные одним вызовом CLI, из кэша:
+	// запуск bash — около секунды на сотнях пользователей.
+	snap *mtproxylctl.SnapCache[view]
+	// stat — status --json, тоже из кэша: его опрашивают для мониторинга.
+	stat *mtproxylctl.SnapCache[json.RawMessage]
 }
 
 type failWindow struct {
@@ -73,6 +79,8 @@ const (
 // New собирает сервер. keyHash — SHA-256 ключа: сам ключ на диске не лежит.
 func New(cli CLI, keyHash [32]byte, allow []*net.IPNet, version string) *Server {
 	s := &Server{cli: cli, keyHash: keyHash, allow: allow, version: version, fails: map[string]*failWindow{}}
+	s.snap = &mtproxylctl.SnapCache[view]{Load: s.loadView, Fresh: viewFresh}
+	s.stat = &mtproxylctl.SnapCache[json.RawMessage]{Load: cli.StatusRaw, Fresh: statusFresh}
 	m := http.NewServeMux()
 	m.HandleFunc("GET /v1/health", s.health)
 	m.HandleFunc("GET /v1/status", s.status)
@@ -457,7 +465,7 @@ var usernameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 const usernameRule = "username: латиница, цифры, дефис и подчёркивание, до 32 символов, первый — буква или цифра"
 
 func (s *Server) findUser(ctx context.Context, name string) (*rec, string, error) {
-	list, err := s.cli.ListSecrets(ctx)
+	list, _, err := s.snapshot(ctx, name)
 	if err != nil {
 		return nil, "", err
 	}
@@ -503,20 +511,119 @@ func (s *Server) info(ctx context.Context, name string) (*UserInfo, string, erro
 	return nil, rev, nil
 }
 
-// snapshot — список пользователей и ссылки одним запуском скрипта: каждый
-// запуск — это sudo и загрузка MTProxyL. Скрипт старше 1.7.3 список в
-// api-view не кладёт — тогда отдельный secret list.
-func (s *Server) snapshot(ctx context.Context, label string) ([]mtproxylctl.Secret, *mtproxylctl.APIView, error) {
-	view, err := s.cli.APIView(ctx, label)
+// view — снимок для ответов: список пользователей и api-view (ссылки и живые
+// данные движка; nil, если api-view не ответил).
+type view struct {
+	list []mtproxylctl.Secret
+	api  *mtproxylctl.APIView
+}
+
+// viewFresh — сколько снимок считается свежим. Правки замечаем сразу (по
+// файлам и сбросу после своих записей), по времени меняются только трафик
+// и живые подключения.
+const viewFresh = 10 * time.Second
+
+// WatchFiles — файлы, правка которых делает снимок устаревшим: секреты и
+// настройки меняют и меню, и панель, не только этот API.
+func (s *Server) WatchFiles(paths ...string) { s.snap.Watch, s.stat.Watch = paths, paths }
+
+const statusFresh = 5 * time.Second
+
+// loadView — список пользователей и ссылки одним запуском скрипта. Скрипт
+// старше 1.7.3 список в api-view не кладёт — тогда отдельный secret list.
+func (s *Server) loadView(ctx context.Context) (view, error) {
+	v, err := s.cli.APIView(ctx, "")
 	if err != nil {
 		logViewErr(err)
-		view = nil
+		v = nil
 	}
-	if view != nil && view.Users != nil {
-		return view.Users, view, nil
+	if v != nil && v.Users != nil {
+		return view{list: v.Users, api: v}, nil
 	}
 	list, err := s.cli.ListSecrets(ctx)
-	return list, view, err
+	return view{list: list, api: v}, err
+}
+
+// snapshot — снимок из кэша.
+func (s *Server) snapshot(ctx context.Context, _ string) ([]mtproxylctl.Secret, *mtproxylctl.APIView, error) {
+	v, err := s.snap.Get(ctx)
+	return v.list, v.api, err
+}
+
+// w — CLI для записей: после каждой команды снимок сбрасывается, и ответ
+// с пользователем строится уже по новому состоянию.
+func (s *Server) w() writer { return writer{s} }
+
+type writer struct{ s *Server }
+
+func (w writer) done(out string, err error) (string, error) { w.s.changed(); return out, err }
+
+func (w writer) AddSecret(ctx context.Context, label, secret string) (string, error) {
+	return w.done(w.s.cli.AddSecret(ctx, label, secret))
+}
+func (w writer) RemoveSecret(ctx context.Context, label string) (string, error) {
+	return w.done(w.s.cli.RemoveSecret(ctx, label))
+}
+func (w writer) RotateSecret(ctx context.Context, label string) (string, error) {
+	return w.done(w.s.cli.RotateSecret(ctx, label))
+}
+func (w writer) RotateSecretTo(ctx context.Context, label, secret string) (string, error) {
+	return w.done(w.s.cli.RotateSecretTo(ctx, label, secret))
+}
+func (w writer) ToggleSecret(ctx context.Context, label string, enable bool) (string, error) {
+	return w.done(w.s.cli.ToggleSecret(ctx, label, enable))
+}
+func (w writer) RenameSecret(ctx context.Context, from, to string) (string, error) {
+	return w.done(w.s.cli.RenameSecret(ctx, from, to))
+}
+func (w writer) SetLimitsFull(ctx context.Context, label string, conns, ips, quota int64, expires string) (string, error) {
+	return w.done(w.s.cli.SetLimitsFull(ctx, label, conns, ips, quota, expires))
+}
+func (w writer) SetSecretAdTag(ctx context.Context, label, tag string) (string, error) {
+	return w.done(w.s.cli.SetSecretAdTag(ctx, label, tag))
+}
+func (w writer) SetSecretRate(ctx context.Context, label string, up, down int64) (string, error) {
+	return w.done(w.s.cli.SetSecretRate(ctx, label, up, down))
+}
+func (w writer) ResetQuota(ctx context.Context, label string) (string, error) {
+	return w.done(w.s.cli.ResetQuota(ctx, label))
+}
+func (w writer) ResetUserTraffic(ctx context.Context, label string) (string, error) {
+	return w.done(w.s.cli.ResetUserTraffic(ctx, label))
+}
+func (w writer) RestartProxy(ctx context.Context) (string, error) {
+	return w.done(w.s.cli.RestartProxy(ctx))
+}
+
+// changed — после любой записи: следующее чтение ждёт свежий снимок.
+func (s *Server) changed() { s.snap.Invalidate(); s.stat.Invalidate() }
+
+// writePatched отвечает на запись, которая меняет только поля пользователя
+// (не секрет и не имя — от них зависят ссылки): берёт снимок до записи и
+// применяет правку сам, а свежий снимок грузится в фоне. Иначе каждая запись
+// ждала бы ещё один полный запуск скрипта.
+func (s *Server) writePatched(w http.ResponseWriter, r *http.Request, before view, name string, mut func(*mtproxylctl.Secret)) {
+	list := append([]mtproxylctl.Secret(nil), before.list...)
+	idx := -1
+	for i := range list {
+		if list[i].Label == name {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		s.writeUser(w, r, name, http.StatusOK, nil)
+		return
+	}
+	mut(&list[idx])
+	info := toInfo(fromSecret(list[idx]), before.api)
+	// Движок подхватит включение и выключение при перезагрузке конфига.
+	if before.api != nil && len(before.api.Live) > 0 {
+		info.InRuntime = list[idx].Enabled
+	}
+	// Следующие чтения и записи получают уже исправленный снимок, не ожидая.
+	s.snap.Put(view{list: list, api: before.api})
+	writeRev(w, http.StatusOK, info, revisionOf(list))
 }
 
 func (s *Server) writeUser(w http.ResponseWriter, r *http.Request, name string, code int, wrap func(*UserInfo) any) {
@@ -552,7 +659,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
-	raw, err := s.cli.StatusRaw(r.Context())
+	raw, err := s.stat.Get(r.Context())
 	if err != nil {
 		cliErr(w, err)
 		return
@@ -563,7 +670,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 func (s *Server) restart(w http.ResponseWriter, r *http.Request) {
 	s.write.Lock()
 	defer s.write.Unlock()
-	if _, err := s.cli.RestartProxy(r.Context()); err != nil {
+	if _, err := s.w().RestartProxy(r.Context()); err != nil {
 		cliErr(w, err)
 		return
 	}
@@ -674,20 +781,20 @@ func pickStr(o opt[string], cur string) string {
 // текущего состояния, null снимает ограничение.
 func (s *Server) apply(ctx context.Context, cur *rec, f *userReq) error {
 	if f.MaxTCPConns.Set || f.MaxUniqueIPs.Set || f.DataQuotaBytes.Set || f.Expiration.Set {
-		if _, err := s.cli.SetLimitsFull(ctx, cur.Username,
+		if _, err := s.w().SetLimitsFull(ctx, cur.Username,
 			pick64(f.MaxTCPConns, cur.MaxTCPConns), pick64(f.MaxUniqueIPs, cur.MaxUniqueIPs),
 			pick64(f.DataQuotaBytes, cur.DataQuotaBytes), pickStr(f.Expiration, cur.Expiration)); err != nil {
 			return err
 		}
 	}
 	if f.RateLimitUpBps.Set || f.RateLimitDownBps.Set {
-		if _, err := s.cli.SetSecretRate(ctx, cur.Username,
+		if _, err := s.w().SetSecretRate(ctx, cur.Username,
 			pick64(f.RateLimitUpBps, cur.RateLimitUpBps), pick64(f.RateLimitDownBps, cur.RateLimitDownBps)); err != nil {
 			return err
 		}
 	}
 	if tag := pickStr(f.UserAdTag, cur.UserAdTag); f.UserAdTag.Set && !strings.EqualFold(tag, cur.UserAdTag) {
-		if _, err := s.cli.SetSecretAdTag(ctx, cur.Username, tag); err != nil {
+		if _, err := s.w().SetSecretAdTag(ctx, cur.Username, tag); err != nil {
 			return err
 		}
 	}
@@ -695,7 +802,7 @@ func (s *Server) apply(ctx context.Context, cur *rec, f *userReq) error {
 	if f.Enabled.Set {
 		want := f.Enabled.Null || f.Enabled.V
 		if want != cur.Enabled {
-			if _, err := s.cli.ToggleSecret(ctx, cur.Username, want); err != nil {
+			if _, err := s.w().ToggleSecret(ctx, cur.Username, want); err != nil {
 				return err
 			}
 		}
@@ -721,7 +828,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	secret := pickStr(f.Secret, "")
 	s.write.Lock()
 	defer s.write.Unlock()
-	if _, err := s.cli.AddSecret(r.Context(), name, strings.ToLower(secret)); err != nil {
+	if _, err := s.w().AddSecret(r.Context(), name, strings.ToLower(secret)); err != nil {
 		cliErr(w, err)
 		return
 	}
@@ -732,7 +839,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.apply(r.Context(), cur, &f); err != nil {
 		// Наполовину настроенный пользователь хуже отсутствующего.
-		_, _ = s.cli.RemoveSecret(r.Context(), name)
+		_, _ = s.w().RemoveSecret(r.Context(), name)
 		cliErr(w, err)
 		return
 	}
@@ -782,20 +889,41 @@ func (s *Server) patchUser(w http.ResponseWriter, r *http.Request) {
 	if !checkRevision(w, r, rev) {
 		return
 	}
+	before, err := s.snap.Get(r.Context())
+	if err != nil {
+		cliErr(w, err)
+		return
+	}
 	if err := s.apply(r.Context(), cur, &f); err != nil {
 		cliErr(w, err)
 		return
 	}
+	// Только числовые лимиты и включение: их CLI сохраняет как есть. Срок он
+	// приводит к своему виду, секрет и имя меняют ссылки — там полный снимок.
+	sec := pickStr(f.Secret, "")
+	if rename == "" && !f.Expiration.Set && !f.UserAdTag.Set && (sec == "" || strings.EqualFold(sec, cur.Secret)) {
+		s.writePatched(w, r, before, name, func(u *mtproxylctl.Secret) {
+			u.MaxConns = int(pick64(f.MaxTCPConns, cur.MaxTCPConns))
+			u.MaxIPs = int(pick64(f.MaxUniqueIPs, cur.MaxUniqueIPs))
+			u.QuotaBytes = pick64(f.DataQuotaBytes, cur.DataQuotaBytes)
+			u.RateUpBps = pick64(f.RateLimitUpBps, cur.RateLimitUpBps)
+			u.RateDownBps = pick64(f.RateLimitDownBps, cur.RateLimitDownBps)
+			if f.Enabled.Set {
+				u.Enabled = f.Enabled.Null || f.Enabled.V
+			}
+		})
+		return
+	}
 	// secret в PATCH ставит этот секрет, как у telemt.
 	if sec := pickStr(f.Secret, ""); sec != "" && !strings.EqualFold(sec, cur.Secret) {
-		if _, err := s.cli.RotateSecretTo(r.Context(), name, sec); err != nil {
+		if _, err := s.w().RotateSecretTo(r.Context(), name, sec); err != nil {
 			cliErr(w, err)
 			return
 		}
 	}
 	// Переименование последним: если другая правка не прошла, имя прежнее.
 	if rename != "" {
-		if _, err := s.cli.RenameSecret(r.Context(), name, rename); err != nil {
+		if _, err := s.w().RenameSecret(r.Context(), name, rename); err != nil {
 			cliErr(w, err)
 			return
 		}
@@ -809,7 +937,7 @@ func (s *Server) guardRev(w http.ResponseWriter, r *http.Request) bool {
 	if r.Header.Get("If-Match") == "" {
 		return true
 	}
-	list, err := s.cli.ListSecrets(r.Context())
+	list, _, err := s.snapshot(r.Context(), "")
 	if err != nil {
 		cliErr(w, err)
 		return false
@@ -827,14 +955,25 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 	if !s.guardRev(w, r) {
 		return
 	}
-	if _, err := s.cli.RemoveSecret(r.Context(), name); err != nil {
+	before, err := s.snap.Get(r.Context())
+	if err != nil {
 		cliErr(w, err)
 		return
 	}
-	rev := ""
-	if list, err := s.cli.ListSecrets(r.Context()); err == nil {
-		rev = revisionOf(list)
+	if _, err := s.w().RemoveSecret(r.Context(), name); err != nil {
+		cliErr(w, err)
+		return
 	}
+	// Ревизия — по снимку до удаления без этого пользователя: полный запуск
+	// скрипта ради неё не нужен.
+	rest := make([]mtproxylctl.Secret, 0, len(before.list))
+	for _, u := range before.list {
+		if u.Label != name {
+			rest = append(rest, u)
+		}
+	}
+	rev := revisionOf(rest)
+	s.snap.Put(view{list: rest, api: before.api})
 	writeRev(w, http.StatusOK, map[string]any{"username": name, "in_runtime": false}, rev)
 }
 
@@ -849,11 +988,16 @@ func (s *Server) toggle(enable bool) http.HandlerFunc {
 		if !s.guardRev(w, r) {
 			return
 		}
-		if _, err := s.cli.ToggleSecret(r.Context(), name, enable); err != nil {
+		before, err := s.snap.Get(r.Context())
+		if err != nil {
 			cliErr(w, err)
 			return
 		}
-		s.writeUser(w, r, name, http.StatusOK, nil)
+		if _, err := s.w().ToggleSecret(r.Context(), name, enable); err != nil {
+			cliErr(w, err)
+			return
+		}
+		s.writePatched(w, r, before, name, func(u *mtproxylctl.Secret) { u.Enabled = enable })
 	}
 }
 
@@ -880,9 +1024,9 @@ func (s *Server) rotate(w http.ResponseWriter, r *http.Request) {
 	}
 	var err error
 	if f.Secret != "" {
-		_, err = s.cli.RotateSecretTo(r.Context(), name, f.Secret)
+		_, err = s.w().RotateSecretTo(r.Context(), name, f.Secret)
 	} else {
-		_, err = s.cli.RotateSecret(r.Context(), name)
+		_, err = s.w().RotateSecret(r.Context(), name)
 	}
 	if err != nil {
 		cliErr(w, err)
@@ -898,7 +1042,7 @@ func (s *Server) resetQuota(w http.ResponseWriter, r *http.Request) {
 	}
 	s.write.Lock()
 	defer s.write.Unlock()
-	if _, err := s.cli.ResetQuota(r.Context(), name); err != nil {
+	if _, err := s.w().ResetQuota(r.Context(), name); err != nil {
 		cliErr(w, err)
 		return
 	}
@@ -912,7 +1056,7 @@ func (s *Server) resetTraffic(w http.ResponseWriter, r *http.Request) {
 	}
 	s.write.Lock()
 	defer s.write.Unlock()
-	if _, err := s.cli.ResetUserTraffic(r.Context(), name); err != nil {
+	if _, err := s.w().ResetUserTraffic(r.Context(), name); err != nil {
 		cliErr(w, err)
 		return
 	}

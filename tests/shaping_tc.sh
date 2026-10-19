@@ -56,6 +56,9 @@ shaping_tc_disable
 SHAPING_BOOT_UNIT="$test_dir/boot.service"
 SHAPING_TICK_UNIT="$test_dir/tick.service"
 SHAPING_TIMER_UNIT="$test_dir/tick.timer"
+SHAPING_TICK_SCRIPT="$test_dir/tick.sh"
+SHAPING_TICK_ENDPOINT="$test_dir/tick.endpoint"
+SHAPING_TICK_SUM="$test_dir/tick.sum"
 _superexpert_active() { return 1; }
 engine_config_path() { echo "$test_dir/config.toml"; }
 shaping_reload_telemt() { :; }

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/Liafanx/mtproxyl-panel/internal/config"
@@ -39,6 +40,15 @@ func (c *Client) Enabled() bool { return c.cfg.Enabled }
 // BackupDir exposes the configured backup directory to handlers that need to
 // resolve archive names against it.
 func (c *Client) BackupDir() string { return c.cfg.BackupDir() }
+
+// UserFiles — файлы, по которым видно правку пользователей и настроек: их
+// хватает stat, читать содержимое не нужно.
+func (c *Client) UserFiles() []string {
+	if c.cfg.InstallDir == "" {
+		return nil
+	}
+	return []string{filepath.Join(c.cfg.InstallDir, "secrets.conf"), filepath.Join(c.cfg.InstallDir, "settings.conf")}
+}
 
 // CommandError carries a failed command's output so handlers can surface the
 // script's own message instead of a bare exit status.

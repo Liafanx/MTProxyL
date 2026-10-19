@@ -20,6 +20,7 @@ type fakeCLI struct {
 	// viewUsers — api-view отдаёт и список (скрипт 1.7.3+).
 	viewUsers bool
 	listCalls int
+	viewCalls int
 }
 
 func newFake() *fakeCLI {
@@ -91,6 +92,7 @@ func (f *fakeCLI) ResetUserTraffic(context.Context, string) (string, error) { re
 
 // Ссылки как у MTProxyL: ee с доменом example.com, dd и WEB.
 func (f *fakeCLI) APIView(_ context.Context, l string) (*mtproxylctl.APIView, error) {
+	f.viewCalls++
 	v := &mtproxylctl.APIView{Links: map[string][]string{}, Live: map[string]mtproxylctl.EngineUser{}}
 	for name, u := range f.users {
 		if l != "" && name != l {
@@ -345,3 +347,40 @@ func (f *failingLimits) SetLimitsFull(context.Context, string, int64, int64, int
 }
 
 func nowForTest() time.Time { return time.Now() }
+
+// Чтения берут снимок из кэша. Выключение правит снимок само: ответ и
+// следующее чтение видят новое состояние без ещё одного запуска скрипта.
+func TestReadsShareSnapshotWritesRefresh(t *testing.T) {
+	f := newFake()
+	f.viewUsers = true
+	s := New(f, HashKey(key), nil, "t")
+	for i := 0; i < 5; i++ {
+		if c, _ := do(t, s, "GET", "/v1/users", "", key); c != 200 {
+			t.Fatalf("GET /v1/users: %d", c)
+		}
+		if c, _ := do(t, s, "GET", "/v1/users/alice", "", key); c != 200 {
+			t.Fatalf("GET /v1/users/alice: %d", c)
+		}
+	}
+	if f.viewCalls != 1 || f.listCalls != 0 {
+		t.Fatalf("10 чтений: api-view %d раз, list %d — ждали 1 и 0", f.viewCalls, f.listCalls)
+	}
+	c, out := do(t, s, "POST", "/v1/users/alice/disable", "", key)
+	if c != 200 || out["data"].(map[string]any)["enabled"] != false {
+		t.Fatalf("disable: %d %v", c, out)
+	}
+	_, out = do(t, s, "GET", "/v1/users/alice", "", key)
+	if out["data"].(map[string]any)["enabled"] != false {
+		t.Fatalf("чтение после записи вернуло старое: %v", out)
+	}
+	if f.viewCalls != 1 {
+		t.Fatalf("после выключения api-view %d раз, ждали 1", f.viewCalls)
+	}
+	// Ротация меняет ссылки — здесь нужен полный снимок.
+	if c, _ := do(t, s, "POST", "/v1/users/alice/rotate-secret", "", key); c != 200 {
+		t.Fatalf("rotate: %d", c)
+	}
+	if f.viewCalls != 2 {
+		t.Fatalf("после ротации api-view %d раз, ждали 2", f.viewCalls)
+	}
+}

@@ -20,7 +20,7 @@ export LC_NUMERIC=C
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="1.7.6"
+VERSION="1.7.7"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -154,7 +154,10 @@ cli_main() {
             ;;
         status)
             [ "${1:-}" = "--json" ] && _SETTINGS_READ_ONLY=1
+            _RUNNING_CACHE_OK=1
             load_settings; load_secrets; load_detect_settings
+            # Состояние и метрики — один раз в этом процессе, подшеллы берут готовое.
+            is_proxy_running 2>/dev/null && _fetch_metrics >/dev/null 2>&1
             if [ "$1" = "--json" ]; then
                 show_status_json
             else
@@ -163,7 +166,7 @@ cli_main() {
             ;;
 
         secret)
-            case "${1:-}" in list|api-view|link|qr|limits) _SETTINGS_READ_ONLY=1 ;; esac
+            case "${1:-}" in list|api-view|link|qr|limits) _SETTINGS_READ_ONLY=1; _RUNNING_CACHE_OK=1 ;; esac
             load_settings; load_secrets
             # В реаниматоре пользователи живут в конфиге цели, а путь к нему
             # знает только обнаружение.
@@ -202,6 +205,7 @@ cli_main() {
             ;;
 
         traffic)
+            _RUNNING_CACHE_OK=1
             load_settings; load_secrets; load_detect_settings
             if [ "${1:-}" = "--json" ]; then
                 traffic_list_json
@@ -429,6 +433,7 @@ cli_main() {
                 zapret2)       check_root; load_nft_settings; zapret2_install ;;
                 zapret2-start) check_root; load_nft_settings; zapret2_start_existing ;;
                 zapret2-stop)  check_root; load_nft_settings; zapret2_stop ;;
+                zapret2-refresh) check_root; load_nft_settings; zapret2_refresh_if_needed ;;
                 zapret2-rm)    check_root; load_nft_settings; zapret2_remove ;;
                 zapret2-wscale) load_nft_settings; zapret2_check_wscale "true" ;;
                 set)      check_root; nft_set_param "$2" "$3" ;;

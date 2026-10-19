@@ -711,8 +711,24 @@ load_settings() {
     _ensure_ip_history_timer
     _ensure_availability_timer
     if declare -F _ensure_dc_watch_timer >/dev/null; then _ensure_dc_watch_timer; fi
+    # Починка юнитов и логов — десятки форков; хватает раза в 10 минут
+    # и сразу после смены версии.
+    local _stamp="${INSTALL_DIR}/.maint-stamp" _st_t=0 _st_v=""
+    read -r _st_t _st_v < "$_stamp" 2>/dev/null || true
+    [[ "$_st_t" =~ ^[0-9]+$ ]] || _st_t=0
+    if [ "$_st_v" = "${VERSION:-}" ] && [ $(( ${EPOCHSECONDS:-0} - _st_t )) -ge 0 ] \
+       && [ $(( ${EPOCHSECONDS:-0} - _st_t )) -lt 600 ]; then
+        return 0
+    fi
     _ensure_quiet_timers
     if declare -F _selfmask_ensure_log_limits >/dev/null; then _selfmask_ensure_log_limits; fi
+    if declare -F shaping_ensure_tick_script >/dev/null; then shaping_ensure_tick_script || true; fi
+    # Новая версия может поменять раскладку zapret2 — один раз после обновления.
+    if [ "$_st_v" != "${VERSION:-}" ] && declare -F zapret2_refresh_if_needed >/dev/null; then
+        ( load_nft_settings && zapret2_refresh_if_needed ) >/dev/null 2>&1 || true
+    fi
+    [ "${EUID:-1}" -eq 0 ] && printf '%s %s\n' "${EPOCHSECONDS:-0}" "${VERSION:-}" > "$_stamp" 2>/dev/null
+    return 0
 }
 
 # Юниты по таймеру пишут «Starting/Finished» на каждый запуск. Старые установки
