@@ -34,9 +34,7 @@ func countingSecretList(t *testing.T, delay time.Duration) (script, counter stri
 // он глобальный, и без сброса результат одного теста утекал бы в следующий.
 func resetUsersCache() {
 	usersCache.mu.Lock()
-	usersCache.at = time.Time{}
-	usersCache.val, usersCache.err = nil, nil
-	usersCache.inFlight = nil
+	usersCache.c, usersCache.snap = nil, nil
 	usersCache.mu.Unlock()
 }
 

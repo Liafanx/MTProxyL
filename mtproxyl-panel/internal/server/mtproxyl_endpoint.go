@@ -117,63 +117,44 @@ func invalidateModeCache() {
 	modeCache.mu.Unlock()
 }
 
-// usersCache coalesces concurrent GET /api/mtproxyl/users into one CLI call and
-// also dedupes callers arriving while a call is in flight: `secret list --json`
-// starts bash and calls the engine API, so tabs pile up dozens of processes.
+// usersCache — список пользователей из кэша: `secret list --json` запускает
+// bash под sudo (на сотнях пользователей около секунды), а вкладки опрашивают
+// его постоянно. Одновременные запросы ждут один вызов; правка secrets.conf
+// или settings.conf (из меню, API или панели) видна сразу, трафик обновляется
+// в фоне раз в usersFresh.
 var usersCache struct {
-	mu       sync.Mutex
-	at       time.Time
-	val      []mtproxylctl.Secret
-	err      error
-	inFlight chan struct{}
+	mu   sync.Mutex
+	c    *mtproxylctl.Client
+	snap *mtproxylctl.SnapCache[[]mtproxylctl.Secret]
 }
 
-const usersCacheTTL = 3 * time.Second
+const usersFresh = 10 * time.Second
+
+func usersSnap(c *mtproxylctl.Client) *mtproxylctl.SnapCache[[]mtproxylctl.Secret] {
+	usersCache.mu.Lock()
+	defer usersCache.mu.Unlock()
+	if usersCache.snap == nil || usersCache.c != c {
+		usersCache.c = c
+		usersCache.snap = &mtproxylctl.SnapCache[[]mtproxylctl.Secret]{
+			Load: c.ListSecrets, Watch: c.UserFiles(), Fresh: usersFresh,
+		}
+	}
+	return usersCache.snap
+}
 
 func cachedUsers(ctx context.Context, c *mtproxylctl.Client) ([]mtproxylctl.Secret, error) {
-	usersCache.mu.Lock()
-	if time.Since(usersCache.at) < usersCacheTTL && (usersCache.val != nil || usersCache.err != nil) {
-		v, e := usersCache.val, usersCache.err
-		usersCache.mu.Unlock()
-		return v, e
-	}
-	if ch := usersCache.inFlight; ch != nil {
-		usersCache.mu.Unlock()
-		select {
-		case <-ch:
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-		usersCache.mu.Lock()
-		v, e := usersCache.val, usersCache.err
-		usersCache.mu.Unlock()
-		return v, e
-	}
-	ch := make(chan struct{})
-	usersCache.inFlight = ch
-	usersCache.mu.Unlock()
-
-	// context.Background(), не ctx запроса: если один из клиентов отменит
-	// запрос (закрыл вкладку), опрос всё равно должен доехать и заполнить
-	// кэш для тех, кто его ждёт. c.run сам ограничивает время выполнения.
-	list, err := c.ListSecrets(context.Background())
-
-	usersCache.mu.Lock()
-	usersCache.at = time.Now()
-	usersCache.val, usersCache.err = list, err
-	usersCache.inFlight = nil
-	usersCache.mu.Unlock()
-	close(ch)
-	return list, err
+	return usersSnap(c).Get(ctx)
 }
 
 // invalidateUsersCache is called after any write to users so the next read
 // (including one already waiting on a stale in-flight result) sees it.
 func invalidateUsersCache() {
 	usersCache.mu.Lock()
-	usersCache.at = time.Time{}
-	usersCache.val, usersCache.err = nil, nil
+	snap := usersCache.snap
 	usersCache.mu.Unlock()
+	if snap != nil {
+		snap.Invalidate()
+	}
 }
 
 // updateCache holds the last MTProxyL version check. The dashboard shows the

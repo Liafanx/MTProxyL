@@ -495,6 +495,12 @@ for (const u of expired) await call('POST', `/v1/users/${u.username}/disable`);
 | `/etc/mtproxyl-api/tls/` | Копия сертификата Selfmask для HTTPS |
 | `/etc/sudoers.d/mtproxyl-api` | Разрешённые команды |
 
+Чтение (`GET /v1/users`, `GET /v1/users/{username}`, `/links`) отвечает из
+кэша: список с ссылками и живыми данными берётся одним запуском MTProxyL и
+держится, пока не изменились `secrets.conf` и `settings.conf`. Правки из меню,
+панели и других клиентов видны сразу. Трафик и живые подключения обновляются
+в фоне раз в 10 секунд, поэтому могут отставать на это время.
+
 Те же операции доступны и из командной строки сервера:
 
 | API | CLI |
