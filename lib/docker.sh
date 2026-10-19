@@ -629,19 +629,28 @@ run_proxy_container() {
         local server_ip; server_ip=$(get_public_ip)
         [ -n "$server_ip" ] && {
             echo ""
-            local i
+            # Ссылки у всех одинаковы с точностью до секрета: виды и домены
+            # считаем один раз — по разу на пользователя это были минуты.
+            local i _kind _fs _dom _tpl="" _wd="" _wb="" _wm="${WEB_SECRET_MODE:-dd}" _out="" _l
+            if mtproto_is_enabled 2>/dev/null; then
+                while IFS='|' read -r _kind _fs _dom; do
+                    [ -n "$_fs" ] || continue
+                    _tpl+="${DIM}($(link_kind_title "$_kind" "$_dom")):${NC} ${CYAN}tg://proxy?server=${server_ip}&port=${PROXY_PORT}&secret=${_fs}${NC}"$'\n'
+                done <<< "$(build_link_secrets "@RAW@")"
+            fi
+            if web_is_enabled 2>/dev/null; then
+                _wd=$(web_domain 2>/dev/null) || _wd=""
+                _wb=$(web_base_path 2>/dev/null)
+            fi
             for i in "${!SECRETS_LABELS[@]}"; do
                 [ "${SECRETS_ENABLED[$i]}" = "true" ] || continue
-                local _kind _fs _dom
-                while mtproto_is_enabled 2>/dev/null && IFS='|' read -r _kind _fs _dom; do
-                    [ -n "$_fs" ] || continue
-                    echo -e "  ${BOLD}${SECRETS_LABELS[$i]}${NC} ${DIM}($(link_kind_title "$_kind" "$_dom")):${NC} ${CYAN}tg://proxy?server=${server_ip}&port=${PROXY_PORT}&secret=${_fs}${NC}"
-                done <<< "$(build_link_secrets "${SECRETS_KEYS[$i]}")"
-                if web_is_enabled 2>/dev/null; then
-                    local _wl; _wl=$(web_link_for_secret "${SECRETS_KEYS[$i]}" 2>/dev/null)
-                    [ -n "$_wl" ] && echo -e "  ${BOLD}${SECRETS_LABELS[$i]}${NC} ${DIM}(WEB):${NC} ${CYAN}${_wl}${NC}"
-                fi
+                while IFS= read -r _l; do
+                    [ -n "$_l" ] && _out+="  ${BOLD}${SECRETS_LABELS[$i]}${NC} ${_l}"$'\n'
+                done <<< "${_tpl//@RAW@/${SECRETS_KEYS[$i]}}"
+                [ -n "$_wd" ] && _web_format_link_fast "$_wd" "$_wb" "$_wm" "${SECRETS_KEYS[$i]}" \
+                    && _out+="  ${BOLD}${SECRETS_LABELS[$i]}${NC} ${DIM}(WEB):${NC} ${CYAN}${_WEB_LINK_OUT}${NC}"$'\n'
             done
+            printf '%b' "$_out"
             echo ""
         }
         return 0

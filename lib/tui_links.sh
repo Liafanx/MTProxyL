@@ -38,14 +38,30 @@ tui_links_menu() {
         return
     fi
 
-    local i; for i in "${!SECRETS_LABELS[@]}"; do
+    # Виды ссылок и домены одни на всех — считаем один раз и подставляем
+    # секрет: по разу на пользователя на больших базах это были минуты.
+    local i _kind _sec _dom _title _tpl="" _wd="" _wb="" _out="" _line
+    _line="  ${DIM}$(_repeat '─' 40)${NC}"
+    if mtproto_is_enabled 2>/dev/null; then
+        while IFS='|' read -r _kind _sec _dom; do
+            [ -z "$_sec" ] && continue
+            _title="$(link_kind_title "$_kind" "$_dom")"
+            _tpl+="  ${BOLD}TG${NC} ${DIM}(${_title})${NC}  ${CYAN}tg://proxy?server=${server_ip}&port=${server_port}&secret=${_sec}${NC}"$'\n'
+            _tpl+="  ${BOLD}Веб${NC} ${DIM}(${_title})${NC} ${CYAN}https://t.me/proxy?server=${server_ip}&port=${server_port}&secret=${_sec}${NC}"$'\n'
+        done <<< "$(build_link_secrets "@RAW@")"
+    fi
+    if web_is_enabled 2>/dev/null; then
+        _wd=$(web_domain 2>/dev/null) || _wd=""
+        _wb=$(web_base_path 2>/dev/null)
+    fi
+    for i in "${!SECRETS_LABELS[@]}"; do
         [ "${SECRETS_ENABLED[$i]}" = "true" ] || continue
-        echo ""
-        echo -e "  ${BRIGHT_GREEN}${BOLD}${SECRETS_LABELS[$i]}${NC}"
-        echo -e "  ${DIM}$(_repeat '─' 40)${NC}"
-        _tui_print_links "$server_ip" "$server_port" \
-            "$(build_link_secrets "${SECRETS_KEYS[$i]}")" "true" "${SECRETS_KEYS[$i]}"
+        _out+=$'\n'"  ${BRIGHT_GREEN}${BOLD}${SECRETS_LABELS[$i]}${NC}"$'\n'"${_line}"$'\n'
+        _out+="${_tpl//@RAW@/${SECRETS_KEYS[$i]}}"
+        [ -n "$_wd" ] && _web_format_link_fast "$_wd" "$_wb" "${WEB_SECRET_MODE:-dd}" "${SECRETS_KEYS[$i]}" \
+            && _out+="  ${BOLD}WEB${NC} ${DIM}(WEB)${NC} ${CYAN}${_WEB_LINK_OUT}${NC}"$'\n'
     done
+    printf '%b' "$_out"
     press_any_key
 }
 
