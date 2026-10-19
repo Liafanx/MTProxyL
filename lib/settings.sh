@@ -722,6 +722,7 @@ load_settings() {
     fi
     _ensure_quiet_timers
     if declare -F _selfmask_ensure_log_limits >/dev/null; then _selfmask_ensure_log_limits; fi
+    if declare -F shaping_ensure_tick_script >/dev/null; then shaping_ensure_tick_script || true; fi
     [ "${EUID:-1}" -eq 0 ] && printf '%s %s\n' "${EPOCHSECONDS:-0}" "${VERSION:-}" > "$_stamp" 2>/dev/null
     return 0
 }

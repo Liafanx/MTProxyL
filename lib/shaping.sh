@@ -9,6 +9,10 @@ SHAPING_LOCK_FILE="${INSTALL_DIR}/.shaping.lock"
 SHAPING_BOOT_UNIT=/etc/systemd/system/mtproxyl-shaping.service
 SHAPING_TICK_UNIT=/etc/systemd/system/mtproxyl-shaping-update.service
 SHAPING_TIMER_UNIT=/etc/systemd/system/mtproxyl-shaping-update.timer
+# Предпроверка тика: без смены активных IP полный запуск MTProxyL не нужен.
+SHAPING_TICK_SCRIPT=/usr/local/sbin/mtproxyl-shaping-tick
+SHAPING_TICK_ENDPOINT=/run/mtproxyl-shaping.endpoint
+SHAPING_TICK_SUM=/run/mtproxyl-shaping.sum
 
 shaping_default_config() {
     printf '%s\n' '{"enabled":false,"mode":"manual","channel_mbps":1000,"reserve_percent":10,"expected_users":10,"manual_total_mbps":900,"manual_ip_mbps":90,"profile_exempt":[],"ip_exempt":[]}'
@@ -420,7 +424,48 @@ shaping_uninstall() {
     systemctl daemon-reload >/dev/null 2>&1 || true
 }
 
+# Тик раз в 30 секунд — это полный запуск MTProxyL (на 1 vCPU больше
+# секунды). Скрипт сверяет ответ движка с прошлым тиком и запускает
+# MTProxyL, только если активные IP изменились, ждёт подтверждения рост
+# лимита, изменились настройки или прошло 5 минут.
+shaping_write_tick_script() {
+    mkdir -p "$(dirname "$SHAPING_TICK_SCRIPT")" || return 1
+    {
+    printf '%s\n' '#!/bin/sh' '# MTProxyL: предпроверка тика ограничения скорости (создан shaping_write_tick_script).'
+    printf 'ep=%q; sum=%q; dir=%q; bin=%q\n' "$SHAPING_TICK_ENDPOINT" "$SHAPING_TICK_SUM" "$INSTALL_DIR" \
+        "${SHAPING_TICK_MTPROXYL:-/usr/local/bin/mtproxyl}"
+    cat <<'SCRIPT'
+full() { exec "$bin" shaping tick; }
+[ -s "$ep" ] && [ -s "$sum" ] || full
+[ "$dir/shaping.json" -nt "$sum" ] && full
+grep -q '"pending_ips":null' "$dir/shaping-state.json" 2>/dev/null || full
+age=$(( $(date +%s) - $(stat -c %Y "$sum" 2>/dev/null || echo 0) ))
+[ "$age" -lt 300 ] || full
+url=$(sed -n 1p "$ep"); auth=$(sed -n 2p "$ep")
+if [ -n "$auth" ]; then
+    resp=$(curl -fsS --max-time 5 --connect-timeout 2 -H "Authorization: $auth" "$url") || full
+else
+    resp=$(curl -fsS --max-time 5 --connect-timeout 2 "$url") || full
+fi
+[ "$(printf '%s' "$resp" | cksum)" = "$(cat "$sum")" ] || full
+exit 0
+SCRIPT
+    } > "$SHAPING_TICK_SCRIPT" || return 1
+    chmod 755 "$SHAPING_TICK_SCRIPT"
+}
+
+# Установки до предпроверки: юнит тика звал MTProxyL напрямую.
+shaping_ensure_tick_script() {
+    [ -f "$SHAPING_TICK_UNIT" ] || return 0
+    if grep -q "^ExecStart=${SHAPING_TICK_SCRIPT}\$" "$SHAPING_TICK_UNIT" 2>/dev/null; then
+        [ -x "$SHAPING_TICK_SCRIPT" ] || shaping_write_tick_script
+        return 0
+    fi
+    shaping_write_units && systemctl daemon-reload >/dev/null 2>&1
+}
+
 shaping_write_units() {
+    shaping_write_tick_script || return 1
     cat > "$SHAPING_BOOT_UNIT" <<'UNIT' || return 1
 [Unit]
 Description=MTProxyL traffic shaping
@@ -435,7 +480,7 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 UNIT
-    cat > "$SHAPING_TICK_UNIT" <<'UNIT' || return 1
+    cat > "$SHAPING_TICK_UNIT" <<UNIT || return 1
 [Unit]
 Description=MTProxyL per-IP traffic shaping update
 After=mtproxyl-shaping.service
@@ -444,7 +489,7 @@ After=mtproxyl-shaping.service
 Type=oneshot
 LogLevelMax=notice
 SyslogLevel=notice
-ExecStart=/usr/local/bin/mtproxyl shaping tick
+ExecStart=${SHAPING_TICK_SCRIPT}
 UNIT
     cat > "$SHAPING_TIMER_UNIT" <<'UNIT' || return 1
 [Unit]
@@ -606,6 +651,10 @@ shaping_fetch_active_map() {
     [ -n "$auth" ] && headers=(-H "Authorization: $auth")
     response=$(curl -fsS --max-time 5 --connect-timeout 2 "${headers[@]}" \
         "http://${host}:${port}/v1/stats/users/active-ips") || return 1
+    # Адрес и отпечаток ответа — для предпроверки следующего тика.
+    ( umask 077
+      printf '%s\n%s\n' "http://${host}:${port}/v1/stats/users/active-ips" "$auth" > "$SHAPING_TICK_ENDPOINT"
+      printf '%s' "$response" | cksum > "${SHAPING_TICK_SUM}.new" ) 2>/dev/null
     exempt=$(printf '%s\n' "$cfg" | jq -c '.profile_exempt') || return 1
     printf '%s\n' "$response" | jq -ce --argjson exempt "$exempt" '
         if .ok == true and (.data | type == "array") then
@@ -665,6 +714,7 @@ shaping_tick() (
     shaping_atomic_json "$SHAPING_STATE_FILE" "$(printf '%s\n' "$state" | jq -c \
         --argjson n "$active" --argjson pending "$pending" --argjson now "$now" --argjson updated "$last_update" \
         '. + {active_ips:$n,pending_ips:(if $pending == -1 then null else $pending end),last_sample_epoch:$now,last_update_epoch:$updated,last_error:null}')"
+    mv -f "${SHAPING_TICK_SUM}.new" "$SHAPING_TICK_SUM" 2>/dev/null || true
 )
 
 shaping_restore() (
