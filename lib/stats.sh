@@ -37,12 +37,19 @@ _stats_known_labels() {
     fi
 }
 
+# Набор меток строится один раз: раньше список собирался заново на каждую
+# запись — 300 пользователей и 1400 IP давали десятки секунд.
+declare -gA _STATS_KNOWN=()
+_STATS_KNOWN_READY=0
 _stats_label_known() {
-    local _l="$1" _k
-    while IFS= read -r _k; do
-        [ "$_k" = "$_l" ] && return 0
-    done <<< "$(_stats_known_labels)"
-    return 1
+    if [ "$_STATS_KNOWN_READY" != 1 ]; then
+        local _k
+        while IFS= read -r _k; do
+            [ -n "$_k" ] && _STATS_KNOWN["$_k"]=1
+        done < <(_stats_known_labels)
+        _STATS_KNOWN_READY=1
+    fi
+    [ -n "${_STATS_KNOWN[$1]+x}" ]
 }
 
 # Снимок сессии должен указывать на «сейчас», иначе следующий опрос вернёт

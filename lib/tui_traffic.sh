@@ -178,16 +178,17 @@ tui_traffic_menu() {
                 [ "${SECRETS_ENABLED[$i]}" = "true" ] && _labels+=("${SECRETS_LABELS[$i]}")
             done
         fi
-        local label
+        local label _a _b _rows=""
+        _user_stats_bulk
         for label in "${_labels[@]}"; do
-            local u_in u_out u_conns
-            read -r u_in u_out u_conns <<< "$(get_persistent_user_stats "$label")"
-            local su_in su_out su_conns
-            read -r su_in su_out su_conns <<< "$(get_user_stats "$label")"
-            echo -e "  ${GREEN}${SYM_OK}${NC} ${BOLD}${label}${NC}"
-            echo -e "    Всего: ${SYM_DOWN} $(format_bytes "$u_in")  ${SYM_UP} $(format_bytes "$u_out")"
-            echo -e "    Сессия: ${SYM_DOWN} $(format_bytes "$su_in")  ${SYM_UP} $(format_bytes "$su_out")  соед: ${su_conns}  уник. IP: ${_UIPS[$label]:-0}"
+            _fmt_bytes_v "${_US_TOT_IN[$label]:-0}"; _a="$_FB_OUT"
+            _fmt_bytes_v "${_US_TOT_OUT[$label]:-0}"; _b="$_FB_OUT"
+            _rows+="  ${GREEN}${SYM_OK}${NC} ${BOLD}${label}${NC}"$'\n'"    Всего: ${SYM_DOWN} ${_a}  ${SYM_UP} ${_b}"$'\n'
+            _fmt_bytes_v "${_US_CUR_IN[$label]:-0}"; _a="$_FB_OUT"
+            _fmt_bytes_v "${_US_CUR_OUT[$label]:-0}"; _b="$_FB_OUT"
+            _rows+="    Сессия: ${SYM_DOWN} ${_a}  ${SYM_UP} ${_b}  соед: ${_US_CUR_CONNS[$label]:-0}  уник. IP: ${_UIPS[$label]:-0}"$'\n'
         done
+        printf '%b' "$_rows"
         echo ""
         echo -e "  ${DIM}[1]${NC} Потоковые логи"
         echo -e "  ${DIM}[2]${NC} Метрики движка"

@@ -97,16 +97,24 @@ count_lines() {
 }
 
 format_bytes() {
-    local bytes=$1
-    [[ "$bytes" =~ ^[0-9]+$ ]] || bytes=0
-    if [ "$bytes" -lt 1024 ] 2>/dev/null; then
-        echo "${bytes} Б"
-    elif [ "$bytes" -lt 1048576 ] 2>/dev/null; then
-        echo "$(awk -v b="$bytes" 'BEGIN {printf "%.1f", b/1024}') КБ"
-    elif [ "$bytes" -lt 1073741824 ] 2>/dev/null; then
-        echo "$(awk -v b="$bytes" 'BEGIN {printf "%.2f", b/1048576}') МБ"
+    _fmt_bytes_v "$1"
+    echo "$_FB_OUT"
+}
+
+# То же без форков, результат в _FB_OUT — для циклов по пользователям.
+_fmt_bytes_v() {
+    local _b="$1" _u _d _s _x
+    [[ "$_b" =~ ^[0-9]+$ ]] || _b=0
+    _b=$((10#$_b))
+    if [ "$_b" -lt 1024 ]; then _FB_OUT="${_b} Б"; return; fi
+    if [ "$_b" -lt 1048576 ]; then _u=1024; _d=10; _s="КБ"
+    elif [ "$_b" -lt 1073741824 ]; then _u=1048576; _d=100; _s="МБ"
+    else _u=1073741824; _d=100; _s="ГБ"; fi
+    _x=$(( (_b * _d * 2 + _u) / (2 * _u) ))
+    if [ "$_d" = 10 ]; then
+        _FB_OUT="$(( _x / 10 )).$(( _x % 10 )) ${_s}"
     else
-        echo "$(awk -v b="$bytes" 'BEGIN {printf "%.2f", b/1073741824}') ГБ"
+        printf -v _FB_OUT '%d.%02d %s' $(( _x / 100 )) $(( _x % 100 )) "$_s"
     fi
 }
 
@@ -578,6 +586,16 @@ _pad() {
         printf '%s' "$_s"
     else
         printf '%s%*s' "$_s" $(( _w - _len )) ''
+    fi
+}
+
+# То же без подшелла — результат в _PAD_OUT.
+_pad_v() {
+    local _plain="${1//[$'\x80'-$'\xbf']/}" _w="${2:-0}"
+    if [ "${#_plain}" -ge "$_w" ]; then
+        _PAD_OUT="$1"
+    else
+        printf -v _PAD_OUT '%s%*s' "$1" $(( _w - ${#_plain} )) ''
     fi
 }
 

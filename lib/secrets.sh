@@ -72,12 +72,58 @@ save_secrets() {
     mv "$tmp" "$SECRETS_FILE"
 }
 
+# Те же правила, что в цикле load_secrets ниже. Печатает присваивания
+# массивов для eval; строки берутся в одинарные кавычки.
+_load_secrets_awk() {
+    awk -F'|' -v now="$2" '
+        function q(s,    n, i, p, r) {
+            n = split(s, p, "\047"); r = p[1]
+            for (i = 2; i <= n; i++) r = r "\047\\\047\047" p[i]
+            return "\047" r "\047"
+        }
+        function add(name, v) { out[name] = out[name] " " q(v) }
+        {
+            lab = $1
+            if (lab ~ /^[[:space:]]*#/ || lab ~ /^[[:space:]]*$/) next
+            sec = $2
+            if (sec == "") next
+            if (lab !~ /^[a-zA-Z0-9_-]+$/) next
+            if (sec !~ /^[0-9a-fA-F]+$/ || length(sec) != 32) next
+            mc = ($5 == "" ? "0" : $5); if (mc !~ /^[0-9]+$/) mc = "0"
+            mi = ($6 == "" ? "0" : $6); if (mi !~ /^[0-9]+$/) mi = "0"
+            qt = ($7 == "" ? "0" : $7); if (qt !~ /^[0-9]+$/) qt = "0"
+            en = ($4 == "" ? "true" : $4); if (en != "true" && en != "false") en = "true"
+            cr = ($3 == "" ? now : $3); if (cr !~ /^[0-9]+$/) cr = now
+            ex = ($8 == "" ? "0" : $8)
+            if (ex != "0" && ex !~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9](T[0-9:Z+.-]+)?$/) ex = "0"
+            at = $10; if (at !~ /^[0-9a-fA-F]+$/ || length(at) != 32) at = ""
+            rt = $11; if (NF > 11 || rt !~ /^[0-9]+:[0-9]+$/) rt = ""
+            add("LABELS", lab); add("KEYS", sec); add("CREATED", cr); add("ENABLED", en)
+            add("MAX_CONNS", mc); add("MAX_IPS", mi); add("QUOTA", qt); add("EXPIRES", ex)
+            add("NOTES", $9); add("ADTAG", at); add("RATE", rt)
+        }
+        END {
+            n = split("LABELS KEYS CREATED ENABLED MAX_CONNS MAX_IPS QUOTA EXPIRES NOTES ADTAG RATE", f, " ")
+            for (i = 1; i <= n; i++) printf "SECRETS_%s=(%s)\n", f[i], out[f[i]]
+        }
+    ' "$1"
+}
+
 load_secrets() {
     SECRETS_LABELS=(); SECRETS_KEYS=(); SECRETS_CREATED=(); SECRETS_ENABLED=()
     SECRETS_MAX_CONNS=(); SECRETS_MAX_IPS=(); SECRETS_QUOTA=()
     SECRETS_EXPIRES=(); SECRETS_NOTES=(); SECRETS_ADTAG=(); SECRETS_RATE=()
 
     [ -f "$SECRETS_FILE" ] || return 0
+
+    # Разбор и проверки — одним awk, массивы — одним eval: цикл bash по
+    # строкам с регулярками стоил ~0.15 с на 300 пользователей и звался
+    # по нескольку раз за команду.
+    local _decl
+    if _decl=$(_load_secrets_awk "$SECRETS_FILE" "${EPOCHSECONDS:-$(date +%s)}") && [ -n "$_decl" ]; then
+        eval "$_decl"
+        return 0
+    fi
 
     while IFS='|' read -r label secret created enabled max_conns max_ips quota expires notes adtag rate; do
         [[ "$label" =~ ^[[:space:]]*# ]] && continue
@@ -524,12 +570,19 @@ secret_set_rate() {
 }
 
 _rate_human() {
-    local _b="${1:-0}"
-    [ "$_b" = 0 ] && { echo "без ограничения"; return; }
-    if [ "$_b" -ge 1000000 ]; then
-        awk -v b="$_b" 'BEGIN { printf "%.1f Мбит/с", b / 1000000 }'
+    _rate_human_v "$1"
+    printf '%s' "$_RH_OUT"
+}
+
+_rate_human_v() {
+    local _b="${1:-0}" _x
+    [[ "$_b" =~ ^[0-9]+$ ]] || _b=0
+    if [ "$_b" = 0 ]; then _RH_OUT="без ограничения"
+    elif [ "$_b" -ge 1000000 ]; then
+        _x=$(( (_b * 2 + 100000) / 200000 ))
+        _RH_OUT="$(( _x / 10 )).$(( _x % 10 )) Мбит/с"
     else
-        awk -v b="$_b" 'BEGIN { printf "%.0f кбит/с", b / 1000 }'
+        _RH_OUT="$(( (_b * 2 + 1000) / 2000 )) кбит/с"
     fi
 }
 
@@ -572,6 +625,12 @@ secret_reset_quota() {
 # Человекочитаемые лимиты секрета: соединения, IP, квота трафика, срок.
 # Пустые (0) не показываем — иначе колонка превращается в шум.
 _secret_limits_text() {
+    _secret_limits_text_v "$@"
+    echo "$_SLT_OUT"
+}
+
+# Без форков, результат в _SLT_OUT: таблица зовёт это на каждого пользователя.
+_secret_limits_text_v() {
     local _i="$1" _used="${2:-0}"
     local _mc="${SECRETS_MAX_CONNS[$_i]:-0}"
     local _mi="${SECRETS_MAX_IPS[$_i]:-0}"
@@ -586,31 +645,39 @@ _secret_limits_text() {
     fi
     if [ "$_q" != "0" ] && [ -n "$_q" ] && [[ "$_q" =~ ^[0-9]+$ ]]; then
         [ -n "$_out" ] && _out+=" · "
-        local _pct=""
+        _fmt_bytes_v "$_q"
         if [ "${_used:-0}" -gt 0 ] 2>/dev/null; then
-            _pct=$(awk -v u="$_used" -v q="$_q" 'BEGIN{printf "%.0f", (u*100)/q}')
-            _out+="квота $(format_bytes "$_q") (${_pct}%)"
+            _out+="квота ${_FB_OUT} ($(( (_used * 200 + _q) / (2 * _q) ))%)"
         else
-            _out+="квота $(format_bytes "$_q")"
+            _out+="квота ${_FB_OUT}"
         fi
     fi
     local _rt="${SECRETS_RATE[$_i]:-}"
     if [ -n "$_rt" ]; then
         [ -n "$_out" ] && _out+=" · "
-        _out+="↑$(_rate_human "$(_rate_up "$_rt")") ↓$(_rate_human "$(_rate_down "$_rt")")"
+        _rate_split "$_rt"
+        _rate_human_v "$_RATE_UP"; _out+="↑${_RH_OUT}"
+        _rate_human_v "$_RATE_DOWN"; _out+=" ↓${_RH_OUT}"
     fi
     if [ "$_ex" != "0" ] && [ -n "$_ex" ]; then
         [ -n "$_out" ] && _out+=" · "
-        local _ex_epoch; _ex_epoch=$(_iso_to_epoch "$_ex")
-        local _ex_fmt="${_ex%%T*}"
-        if [ "${_ex_epoch:-0}" -gt 0 ] 2>/dev/null && [ "$_ex_epoch" -lt "$(date +%s)" ]; then
+        local _ex_fmt="${_ex%%T*}" _now _expired=0
+        # Срок в UTC с Z сравниваем строкой с текущим временем — без date.
+        if [[ "$_ex" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+            TZ=UTC printf -v _now '%(%Y-%m-%dT%H:%M:%SZ)T' -1
+            [[ "$_ex" < "$_now" ]] && _expired=1
+        else
+            local _ex_epoch; _ex_epoch=$(_iso_to_epoch "$_ex")
+            [ "${_ex_epoch:-0}" -gt 0 ] 2>/dev/null && [ "$_ex_epoch" -lt "${EPOCHSECONDS:-$(date +%s)}" ] && _expired=1
+        fi
+        if [ "$_expired" = 1 ]; then
             _out+="истёк ${_ex_fmt}"
         else
             _out+="до ${_ex_fmt}"
         fi
     fi
 
-    [ -n "$_out" ] && echo "$_out" || echo "—"
+    _SLT_OUT="${_out:-—}"
 }
 
 # Машинный список секретов для панели. В менеджере движок записать
@@ -642,118 +709,46 @@ secret_list_json() {
         _target_user_ip_lists "$_json" | _flush_user_ip_history "$_USER_IPS_DB"
     fi
 
-    # Статистика собирается один раз на весь список: раньше is_proxy_running
-    # (реальный docker inspect) и метрики считались на каждого пользователя.
-    declare -A _DB_USER_IN _DB_USER_OUT
-    local _DB_TOTAL_IN=0 _DB_TOTAL_OUT=0
-    _load_traffic_db
-
-    local _running=false
-    is_proxy_running 2>/dev/null && _running=true
-
-    declare -A _CUR_USER_IN _CUR_USER_OUT
-    if $_running; then
-        local _m
-        if _m=$(_fetch_metrics); then
-            local _pu _pi _po
-            while IFS='|' read -r _pu _pi _po; do
-                [ -n "$_pu" ] || continue
-                _CUR_USER_IN["$_pu"]="${_pi:-0}"
-                _CUR_USER_OUT["$_pu"]="${_po:-0}"
-            done < <(echo "$_m" | awk '
-                function lbl(s, k,    p, q) {
-                    p = index(s, k "=\""); if (!p) return ""
-                    s = substr(s, p + length(k) + 2)
-                    q = index(s, "\""); return q ? substr(s, 1, q-1) : ""
-                }
-                /^telemt_user_octets_from_client\{/ { u=lbl($0,"user"); if(u) { rx[u]+=$NF; seen[u]=1 } }
-                /^telemt_user_octets_to_client\{/   { u=lbl($0,"user"); if(u) { tx[u]+=$NF; seen[u]=1 } }
-                END { for (u in seen) printf "%s|%.0f|%.0f\n", u, rx[u]+0, tx[u]+0 }
-            ')
-        fi
-    fi
-
-    declare -A _SNAP_USER_IN _SNAP_USER_OUT
-    local _user_snap_file="${INSTALL_DIR}/relay_stats/user_session_snapshot"
-    if [ -f "$_user_snap_file" ]; then
-        local _spu _spi _spo
-        while IFS='|' read -r _spu _spi _spo; do
-            [ -n "$_spu" ] || continue
-            _SNAP_USER_IN["$_spu"]="${_spi:-0}"
-            _SNAP_USER_OUT["$_spu"]="${_spo:-0}"
-        done < "$_user_snap_file"
-    fi
-
-    declare -A _IP_HIST_JSON
-    if [ -f "$_USER_IPS_DB" ]; then
-        local _ht _hu _hip _hfs _hls _entry
-        while IFS='|' read -r _ht _hu _hip _hfs _hls; do
-            [ "$_ht" = "USER" ] || continue
-            [ -n "$_hu" ] && [ -n "$_hip" ] || continue
-            json_escape_fast "$_hip"
-            _entry="{\"ip\":\"${_JSON_ESCAPE_OUT}\",\"first_seen\":${_hfs:-0},\"last_seen\":${_hls:-0}}"
-            if [ -z "${_IP_HIST_JSON[$_hu]+x}" ]; then
-                _IP_HIST_JSON["$_hu"]="$_entry"
-            else
-                _IP_HIST_JSON["$_hu"]="${_IP_HIST_JSON[$_hu]},$_entry"
-            fi
-        done < "$_USER_IPS_DB"
-    fi
-
-    # Дальше ни одного "$(...)": подстановка форкает подшелл на каждый вызов.
-    # json_escape_fast кладёт результат в переменную вместо stdout.
-    local _i _first=1 _label _uin _uout _cur_in _cur_out _snap_in _snap_out _unsaved_in _unsaved_out
-    local _label_esc _secret_esc _expires_esc _notes_esc _enabled_str _RATE_UP _RATE_DOWN
-    printf '['
+    # Статистика — одним проходом (_user_stats_bulk), JSON — одним awk:
+    # цикл bash с экранированием каждого поля и каждого IP стоил ~1 с на
+    # 300 пользователей.
+    _user_stats_bulk
+    local _i _l _rows=""
     for _i in "${!SECRETS_LABELS[@]}"; do
-        [ $_first -eq 1 ] || printf ','
-        _first=0
-        _label="${SECRETS_LABELS[$_i]}"
-
-        _cur_in="${_CUR_USER_IN[$_label]:-0}"
-        _cur_out="${_CUR_USER_OUT[$_label]:-0}"
-        _snap_in="${_SNAP_USER_IN[$_label]:-0}"
-        _snap_out="${_SNAP_USER_OUT[$_label]:-0}"
-        [[ "$_snap_in" =~ ^[0-9]+$ ]] || _snap_in=0
-        [[ "$_snap_out" =~ ^[0-9]+$ ]] || _snap_out=0
-
-        if [ "${_cur_in:-0}" -ge "$_snap_in" ] 2>/dev/null; then
-            _unsaved_in=$(( ${_cur_in:-0} - _snap_in ))
-        else
-            _unsaved_in="${_cur_in:-0}"
-        fi
-        if [ "${_cur_out:-0}" -ge "$_snap_out" ] 2>/dev/null; then
-            _unsaved_out=$(( ${_cur_out:-0} - _snap_out ))
-        else
-            _unsaved_out="${_cur_out:-0}"
-        fi
-
-        _uin=$(( ${_DB_USER_IN[$_label]:-0} + _unsaved_in ))
-        _uout=$(( ${_DB_USER_OUT[$_label]:-0} + _unsaved_out ))
-
-        json_escape_fast "$_label";                       _label_esc="$_JSON_ESCAPE_OUT"
-        json_escape_fast "${SECRETS_KEYS[$_i]}";           _secret_esc="$_JSON_ESCAPE_OUT"
-        json_escape_fast "${SECRETS_EXPIRES[$_i]:-0}";     _expires_esc="$_JSON_ESCAPE_OUT"
-        json_escape_fast "${SECRETS_NOTES[$_i]:-}";        _notes_esc="$_JSON_ESCAPE_OUT"
-        if [ "${SECRETS_ENABLED[$_i]}" = "true" ]; then _enabled_str=true; else _enabled_str=false; fi
-        _rate_split "${SECRETS_RATE[$_i]:-}"
-
-        printf '{"label":"%s","secret":"%s","created":%s,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"%s","ad_tag":"%s","rate_limit_up_bps":%s,"rate_limit_down_bps":%s,"total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":[%s]}' \
-            "$_label_esc" \
-            "$_secret_esc" \
-            "${SECRETS_CREATED[$_i]:-0}" \
-            "$_enabled_str" \
-            "${SECRETS_MAX_CONNS[$_i]:-0}" \
-            "${SECRETS_MAX_IPS[$_i]:-0}" \
-            "${SECRETS_QUOTA[$_i]:-0}" \
-            "$_expires_esc" \
-            "$_notes_esc" \
-            "${SECRETS_ADTAG[$_i]:-}" \
-            "$_RATE_UP" "$_RATE_DOWN" \
-            "${_uin:-0}" "${_uout:-0}" "$(( ${_uin:-0} + ${_uout:-0} ))" \
-            "${_IP_HIST_JSON[$_label]:-}"
+        _l="${SECRETS_LABELS[$_i]}"
+        _rows+="${_l}|${SECRETS_KEYS[$_i]}|${SECRETS_CREATED[$_i]:-0}|${SECRETS_ENABLED[$_i]}|${SECRETS_MAX_CONNS[$_i]:-0}|${SECRETS_MAX_IPS[$_i]:-0}|${SECRETS_QUOTA[$_i]:-0}|${SECRETS_EXPIRES[$_i]:-0}|${SECRETS_NOTES[$_i]:-}|${SECRETS_ADTAG[$_i]:-}|${SECRETS_RATE[$_i]:-}|${_US_TOT_IN[$_l]:-0}|${_US_TOT_OUT[$_l]:-0}"$'\n'
     done
-    printf ']\n'
+    printf '%s' "$_rows" | awk -F'|' -v ipdb="$_USER_IPS_DB" '
+        # Как json_escape: \ и ", табуляция, перевод строки; CR выкидываем.
+        function rep(s, a, b,    n, i, p, r) {
+            n = split(s, p, a); r = p[1]
+            for (i = 2; i <= n; i++) r = r b p[i]
+            return r
+        }
+        function esc(s) {
+            s = rep(s, "\\", "\\\\"); s = rep(s, "\"", "\\\"")
+            s = rep(s, "\t", "\\t"); s = rep(s, "\r", ""); return rep(s, "\n", "\\n")
+        }
+        BEGIN {
+            while ((getline line < ipdb) > 0) {
+                n = split(line, f, "|")
+                if (f[1] != "USER" || f[2] == "" || f[3] == "") continue
+                ls = f[5]; for (i = 6; i <= n; i++) ls = ls "|" f[i]
+                e = "{\"ip\":\"" esc(f[3]) "\",\"first_seen\":" (f[4] == "" ? 0 : f[4]) ",\"last_seen\":" (ls == "" ? 0 : ls) "}"
+                if (f[2] in hist) hist[f[2]] = hist[f[2]] "," e; else hist[f[2]] = e
+            }
+            close(ipdb)
+            printf "["
+        }
+        {
+            up = 0; down = 0
+            if ($11 ~ /^[0-9]+:[0-9]+$/) { split($11, r, ":"); up = r[1]; down = r[2] }
+            printf "%s{\"label\":\"%s\",\"secret\":\"%s\",\"created\":%s,\"enabled\":%s,\"max_conns\":%s,\"max_ips\":%s,\"quota_bytes\":%s,\"expires\":\"%s\",\"notes\":\"%s\",\"ad_tag\":\"%s\",\"rate_limit_up_bps\":%s,\"rate_limit_down_bps\":%s,\"total_in\":%s,\"total_out\":%s,\"total_bytes\":%s,\"ip_history\":[%s]}", \
+                (NR > 1 ? "," : ""), esc($1), esc($2), $3, ($4 == "true" ? "true" : "false"), $5, $6, $7, \
+                esc($8), esc($9), $10, up, down, $12, $13, sprintf("%.0f", $12 + $13), hist[$1]
+        }
+        END { printf "]\n" }
+    ' 
 }
 
 secret_list() {
@@ -772,32 +767,29 @@ secret_list() {
     echo -e "  ${BOLD}$(_pad '#' 3) $(_pad 'МЕТКА' 16) $(_pad 'СТАТУС' 9) $(_pad 'СОЗДАН' 11) $(_pad 'СКАЧАНО' 11) $(_pad 'ОТПРАВЛЕНО' 11) ЛИМИТЫ${NC}"
     echo -e "  ${DIM}$(_repeat '─' 100)${NC}"
 
-    local i
+    # Строки собираем без подшеллов: статистика всех пользователей — одним
+    # проходом, форматирование — в переменные.
+    _user_stats_bulk
+    local i label status_plain status_color created_fmt u_in u_out _num _lbl _fin _fout _out=""
     for i in "${!SECRETS_LABELS[@]}"; do
-        local label="${SECRETS_LABELS[$i]}"
-        local enabled="${SECRETS_ENABLED[$i]}"
-        local created="${SECRETS_CREATED[$i]}"
-
-        local status_plain status_color
-        if [ "$enabled" = "true" ]; then
-            status_plain="активен"; status_color="$GREEN"
+        label="${SECRETS_LABELS[$i]}"
+        if [ "${SECRETS_ENABLED[$i]}" = "true" ]; then
+            status_plain="активен  "; status_color="$GREEN"
         else
-            status_plain="выключен"; status_color="$RED"
+            status_plain="выключен "; status_color="$RED"
         fi
-
-        local created_fmt
-        created_fmt=$(printf '%(%Y-%m-%d)T' "$created" 2>/dev/null) || \
-            created_fmt=$(date -d "@${created}" '+%Y-%m-%d' 2>/dev/null || echo "?")
-
-        local u_in=0 u_out=0 u_conns=0
-        read -r u_in u_out u_conns <<< "$(get_persistent_user_stats "$label" 2>/dev/null)" || true
-
-        local _limits; _limits=$(_secret_limits_text "$i" "$(( ${u_in:-0} + ${u_out:-0} ))")
-
-        echo -e "  $(_pad "$((i+1))" 3) $(_pad "$(_ellipsis "$label" 16)" 16) ${status_color}$(_pad "$status_plain" 9)${NC} $(_pad "$created_fmt" 11) $(_pad "$(format_bytes "${u_in:-0}")" 11) $(_pad "$(format_bytes "${u_out:-0}")" 11) ${DIM}${_limits}${NC}"
-
-        [ -n "${SECRETS_NOTES[$i]:-}" ] && echo -e "      ${DIM}📝 ${SECRETS_NOTES[$i]}${NC}"
+        printf -v created_fmt '%-11(%Y-%m-%d)T' "${SECRETS_CREATED[$i]}" 2>/dev/null || created_fmt="?          "
+        u_in="${_US_TOT_IN[$label]:-0}"; u_out="${_US_TOT_OUT[$label]:-0}"
+        _secret_limits_text_v "$i" "$(( u_in + u_out ))"
+        _lbl="$label"; [ "${#_lbl}" -gt 16 ] && _lbl="${_lbl:0:15}…"
+        _pad_v "$_lbl" 16; _lbl="$_PAD_OUT"
+        printf -v _num '%-3s' "$((i+1))"
+        _fmt_bytes_v "$u_in"; _pad_v "$_FB_OUT" 11; _fin="$_PAD_OUT"
+        _fmt_bytes_v "$u_out"; _pad_v "$_FB_OUT" 11; _fout="$_PAD_OUT"
+        _out+="  ${_num} ${_lbl} ${status_color}${status_plain}${NC} ${created_fmt} ${_fin} ${_fout} ${DIM}${_SLT_OUT}${NC}"$'\n'
+        [ -n "${SECRETS_NOTES[$i]:-}" ] && _out+="      ${DIM}📝 ${SECRETS_NOTES[$i]}${NC}"$'\n'
     done
+    printf '%b' "$_out"
     echo ""
 }
 # Все рабочие ссылки секрета — по одной в строке. С выключенной маскировкой
@@ -1812,6 +1804,64 @@ target_user_show_limits() {
     echo ""
 }
 
+# Ссылки менеджера для api-view из строк «метка|секрет» на stdin: шаблоны
+# tg:// с @RAW@ ($1), WEB — домен ($2), путь с %2F ($3), режим ($4).
+# Вывод — тот же, что давал цикл с _web_format_link_fast и json_escape_fast.
+_api_view_manager_links() {
+    awk -F'|' -v tpl="$1" -v wd="$2" -v wb="$3" -v wm="$4" '
+        function rep(s, a, b,    n, i, p, r) {
+            n = split(s, p, a); r = p[1]
+            for (i = 2; i <= n; i++) r = r b p[i]
+            return r
+        }
+        function esc(s) {
+            s = rep(s, "\\", "\\\\"); s = rep(s, "\"", "\\\"")
+            s = rep(s, "\t", "\\t"); s = rep(s, "\r", ""); return rep(s, "\n", "\\n")
+        }
+        function b64url(h,    o, i, n, l) {
+            o = ""; l = length(h)
+            for (i = 1; i + 5 <= l; i += 6) {
+                n = HX[substr(h, i, 2)] * 65536 + HX[substr(h, i + 2, 2)] * 256 + HX[substr(h, i + 4, 2)]
+                o = o substr(A, int(n / 262144) % 64 + 1, 1) substr(A, int(n / 4096) % 64 + 1, 1) substr(A, int(n / 64) % 64 + 1, 1) substr(A, n % 64 + 1, 1)
+            }
+            if (l - i + 1 == 2) {
+                n = HX[substr(h, i, 2)] * 65536
+                o = o substr(A, int(n / 262144) % 64 + 1, 1) substr(A, int(n / 4096) % 64 + 1, 1)
+            } else if (l - i + 1 == 4) {
+                n = HX[substr(h, i, 2)] * 65536 + HX[substr(h, i + 2, 2)] * 256
+                o = o substr(A, int(n / 262144) % 64 + 1, 1) substr(A, int(n / 4096) % 64 + 1, 1) substr(A, int(n / 64) % 64 + 1, 1)
+            }
+            return o
+        }
+        BEGIN {
+            A = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+            D = "0123456789abcdef"
+            for (i = 0; i < 256; i++) {
+                x = substr(D, int(i / 16) + 1, 1) substr(D, i % 16 + 1, 1)
+                HX[x] = i; HX[toupper(x)] = i
+                HX[substr(x, 1, 1) toupper(substr(x, 2, 1))] = i; HX[toupper(substr(x, 1, 1)) substr(x, 2, 1)] = i
+            }
+            nt = split(tpl, T, "\n")
+            dd = (wm == "dd") ? "dd" : ""
+        }
+        {
+            lab = $1; key = $2; out = ""
+            for (i = 1; i <= nt; i++) {
+                if (T[i] == "") continue
+                ln = rep(T[i], "@RAW@", key)
+                if (substr(ln, 1, 5) != "tg://") continue
+                out = out (out == "" ? "" : ",") "\"" esc(ln) "\""
+            }
+            if (wd != "" && key ~ /^[0-9a-fA-F]+$/ && length(key) == 32) {
+                if (wb == "") ln = "tg://webproxy?server=" wd "&secret=" dd key
+                else ln = "tg://webproxy?server=" wd "%2F" wb "&secret=" b64url("70" dd key)
+                out = out (out == "" ? "" : ",") "\"" esc(ln) "\""
+            }
+            printf "%s\"%s\":[%s]", (NR > 1 ? "," : ""), esc(lab), out
+        }
+    '
+}
+
 # CLI обработчик
 # Всё, что нужно API управления для ответов в формате API telemt, одним
 # вызовом: ссылки каждого пользователя и ответ движка на /v1/users (живые
@@ -1863,6 +1913,16 @@ secret_api_view_json() {
         done < <(_target_links_ipv4 "$_json")
     fi
     printf '{"links":{'
+    if [ "$_target" != "true" ]; then
+        # Менеджер: подстановка секрета и WEB-ссылка — одним awk на всех.
+        local _rows=""
+        for _l in "${_labels[@]}"; do
+            [ -z "$_only" ] || [ "$_l" = "$_only" ] || continue
+            _rows+="${_l}|${_MKEY[$_l]:-}"$'\n'
+        done
+        printf '%s' "$_rows" | _api_view_manager_links "$_tpl" "$_wd" "${_wb//\//%2F}" "$_wm"
+        _labels=()
+    fi
     for _l in "${_labels[@]}"; do
         [ -z "$_only" ] || [ "$_l" = "$_only" ] || continue
         [ "$_first" = 1 ] || printf ','

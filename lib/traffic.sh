@@ -17,8 +17,10 @@ _normalize_metrics() {
     '
 }
 
+# Кэш живёт в переменных процесса: чтобы им пользовались и подшеллы
+# "$(...)", первый раз зовите без подстановки — _fetch_metrics >/dev/null.
 _fetch_metrics() {
-    local now; now=$(date +%s)
+    local now="${EPOCHSECONDS:-$(date +%s)}"
     if [ -n "$_METRICS_CACHE" ] && [ $((now - _METRICS_CACHE_AGE)) -lt 2 ]; then
         echo "$_METRICS_CACHE"; return 0
     fi
@@ -393,6 +395,62 @@ get_persistent_stats() {
     echo "${_total_in} ${_total_out} ${_cur_conns:-0}"
 }
 
+# Статистика всех пользователей за один проход: база + несохранённая дельта
+# метрик. Списки звали get_persistent_user_stats на каждого — docker inspect
+# и curl метрик на пользователя, на 300 пользователях больше минуты.
+# Заполняет _US_TOT_IN/_US_TOT_OUT (накоплено) и _US_CUR_IN/_US_CUR_OUT/
+# _US_CUR_CONNS (текущая сессия).
+declare -gA _US_TOT_IN=() _US_TOT_OUT=() _US_CUR_IN=() _US_CUR_OUT=() _US_CUR_CONNS=()
+_user_stats_bulk() {
+    _US_TOT_IN=(); _US_TOT_OUT=(); _US_CUR_IN=(); _US_CUR_OUT=(); _US_CUR_CONNS=()
+    declare -A _DB_USER_IN=() _DB_USER_OUT=()
+    local _DB_TOTAL_IN=0 _DB_TOTAL_OUT=0
+    _load_traffic_db
+
+    local _m _pu _pi _po _pc
+    if is_proxy_running 2>/dev/null && _fetch_metrics >/dev/null; then
+        _m="$_METRICS_CACHE"
+        while IFS='|' read -r _pu _pi _po _pc; do
+            [ -n "$_pu" ] || continue
+            _US_CUR_IN["$_pu"]="$_pi"; _US_CUR_OUT["$_pu"]="$_po"; _US_CUR_CONNS["$_pu"]="$_pc"
+        done < <(printf '%s\n' "$_m" | awk '
+            function lbl(s, k,    p, q) {
+                p = index(s, k "=\""); if (!p) return ""
+                s = substr(s, p + length(k) + 2)
+                q = index(s, "\""); return q ? substr(s, 1, q-1) : ""
+            }
+            /^telemt_user_octets_from_client\{/  { u=lbl($0,"user"); if(u) { rx[u]+=$NF; seen[u]=1 } }
+            /^telemt_user_octets_to_client\{/    { u=lbl($0,"user"); if(u) { tx[u]+=$NF; seen[u]=1 } }
+            /^telemt_user_connections_current\{/ { u=lbl($0,"user"); if(u) { cc[u]+=$NF; seen[u]=1 } }
+            END { for (u in seen) printf "%s|%.0f|%.0f|%.0f\n", u, rx[u]+0, tx[u]+0, cc[u]+0 }
+        ')
+    fi
+
+    declare -A _snap_in=() _snap_out=()
+    local _user_snap_file="${INSTALL_DIR}/relay_stats/user_session_snapshot"
+    if [ -f "$_user_snap_file" ]; then
+        while IFS='|' read -r _pu _pi _po; do
+            [ -n "$_pu" ] || continue
+            [[ "$_pi" =~ ^[0-9]+$ ]] || _pi=0
+            [[ "$_po" =~ ^[0-9]+$ ]] || _po=0
+            _snap_in["$_pu"]="$_pi"; _snap_out["$_pu"]="$_po"
+        done < "$_user_snap_file"
+    fi
+
+    local _u _ci _co _si _so
+    declare -A _all=()
+    for _u in "${!_DB_USER_IN[@]}" "${!_US_CUR_IN[@]}"; do _all["$_u"]=1; done
+    for _u in "${!_all[@]}"; do
+        _ci="${_US_CUR_IN[$_u]:-0}"; _co="${_US_CUR_OUT[$_u]:-0}"
+        _si="${_snap_in[$_u]:-0}"; _so="${_snap_out[$_u]:-0}"
+        # Дельта после перезапуска движка — сами текущие счётчики.
+        [ "$_ci" -ge "$_si" ] && _ci=$(( _ci - _si ))
+        [ "$_co" -ge "$_so" ] && _co=$(( _co - _so ))
+        _US_TOT_IN["$_u"]=$(( ${_DB_USER_IN[$_u]:-0} + _ci ))
+        _US_TOT_OUT["$_u"]=$(( ${_DB_USER_OUT[$_u]:-0} + _co ))
+    done
+}
+
 get_persistent_user_stats() {
     local user="$1"
     declare -A _DB_USER_IN _DB_USER_OUT
@@ -536,13 +594,14 @@ show_traffic() {
             [ "${SECRETS_ENABLED[$i]}" = "true" ] && _labels+=("${SECRETS_LABELS[$i]}")
         done
     fi
+    _user_stats_bulk
+    local _fi _rows=""
     for label in "${_labels[@]}"; do
-        local u_in u_out u_conns
-        read -r u_in u_out u_conns <<< "$(get_persistent_user_stats "$label")"
-        local su_in su_out su_conns
-        read -r su_in su_out su_conns <<< "$(get_user_stats "$label")"
-        echo -e "  ${GREEN}${SYM_OK}${NC} ${BOLD}${label}${NC}: ${SYM_DOWN} $(format_bytes "$u_in")  ${SYM_UP} $(format_bytes "$u_out")  соед: ${su_conns}"
+        _fmt_bytes_v "${_US_TOT_IN[$label]:-0}"; _fi="$_FB_OUT"
+        _fmt_bytes_v "${_US_TOT_OUT[$label]:-0}"
+        _rows+="  ${GREEN}${SYM_OK}${NC} ${BOLD}${label}${NC}: ${SYM_DOWN} ${_fi}  ${SYM_UP} ${_FB_OUT}  соед: ${_US_CUR_CONNS[$label]:-0}"$'\n'
     done
+    printf '%b' "$_rows"
 
     # Удалённые пользователи из списка выпадают, а их трафик остаётся в итоге:
     # без этой строки сумма по пользователям не сходится с «всего».
@@ -758,6 +817,7 @@ _metrics_user_table() {
 
 _traffic_json_manager() {
     local t_in t_out conns s_in s_out s_conns
+    is_proxy_running 2>/dev/null && _fetch_metrics >/dev/null 2>&1
     read -r t_in t_out conns <<< "$(get_persistent_stats)"
     read -r s_in s_out s_conns <<< "$(get_proxy_stats)"
 

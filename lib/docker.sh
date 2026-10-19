@@ -267,7 +267,19 @@ get_docker_image() {
     [ "$ver" = "unknown" ] && echo "${DOCKER_IMAGE_BASE}:latest" || echo "${DOCKER_IMAGE_BASE}:${ver}"
 }
 
+# Команды только на просмотр (_RUNNING_CACHE_OK=1) спрашивают состояние
+# один раз: каждый docker inspect — десятки миллисекунд, а status звал его
+# шесть раз. Запуск и остановка кэш не включают.
 is_proxy_running() {
+    [ "${_RUNNING_CACHE_OK:-}" = 1 ] || { _is_proxy_running_raw; return; }
+    if [ -z "${_RUNNING_CACHE:-}" ]; then
+        _is_proxy_running_raw
+        _RUNNING_CACHE=$?
+    fi
+    return "$_RUNNING_CACHE"
+}
+
+_is_proxy_running_raw() {
     if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
         case "${DETECTED_MODE:-unknown}" in
             docker|mtproxymax)

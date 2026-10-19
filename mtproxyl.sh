@@ -154,7 +154,10 @@ cli_main() {
             ;;
         status)
             [ "${1:-}" = "--json" ] && _SETTINGS_READ_ONLY=1
+            _RUNNING_CACHE_OK=1
             load_settings; load_secrets; load_detect_settings
+            # Состояние и метрики — один раз в этом процессе, подшеллы берут готовое.
+            is_proxy_running 2>/dev/null && _fetch_metrics >/dev/null 2>&1
             if [ "$1" = "--json" ]; then
                 show_status_json
             else
@@ -163,7 +166,7 @@ cli_main() {
             ;;
 
         secret)
-            case "${1:-}" in list|api-view|link|qr|limits) _SETTINGS_READ_ONLY=1 ;; esac
+            case "${1:-}" in list|api-view|link|qr|limits) _SETTINGS_READ_ONLY=1; _RUNNING_CACHE_OK=1 ;; esac
             load_settings; load_secrets
             # В реаниматоре пользователи живут в конфиге цели, а путь к нему
             # знает только обнаружение.
@@ -202,6 +205,7 @@ cli_main() {
             ;;
 
         traffic)
+            _RUNNING_CACHE_OK=1
             load_settings; load_secrets; load_detect_settings
             if [ "${1:-}" = "--json" ]; then
                 traffic_list_json
