@@ -154,6 +154,12 @@ ZAPRET2_HOOK="auto"
 # auto — по числу ядер (не больше 8), очереди QNUM..QNUM+N-1; ядро делит
 # пакеты по хэшу адресов, оба направления соединения попадают в один.
 ZAPRET2_INSTANCES="auto"
+# Сколько пакетов соединения (в обе стороны) идёт в очередь. Стратегии нужны
+# только первые: рукопожатие, начало данных клиента. Соединение, которое так
+# и не отпустили (клиент прислал меньше 1400 байт — сканер, зонд, зависший
+# клиент), иначе гнало бы в nfqws2 все свои пакеты. FIN/SYN/RST идут в
+# очередь всегда — по ним nfqws2 закрывает свои записи. 0 — без потолка.
+ZAPRET2_QUEUE_LIMIT="64"
 ZAPRET2_APPLIED="false"
 ZAPRET2_SERVICE_ENABLED="false"
 
@@ -233,6 +239,7 @@ ZAPRET2_GID='${ZAPRET2_GID}'
 ZAPRET2_DEBUG='${ZAPRET2_DEBUG}'
 ZAPRET2_HOOK='${ZAPRET2_HOOK}'
 ZAPRET2_INSTANCES='${ZAPRET2_INSTANCES}'
+ZAPRET2_QUEUE_LIMIT='${ZAPRET2_QUEUE_LIMIT}'
 EOF
     local _i
     for _i in $(seq 1 "$NFT_EXTRA_COUNT"); do
@@ -277,7 +284,7 @@ load_nft_settings() {
                 ZAPRET2_PORT|ZAPRET2_FILTER_IP_ENABLED|ZAPRET2_FILTER_IP|\
                 ZAPRET2_EXCLUDE_IFACES|\
                 ZAPRET2_QNUM|ZAPRET2_FWMARK|ZAPRET2_DEBUG|ZAPRET2_ORIG_TW_REUSE|\
-                ZAPRET2_UID|ZAPRET2_GID|ZAPRET2_HOOK|ZAPRET2_INSTANCES)
+                ZAPRET2_UID|ZAPRET2_GID|ZAPRET2_HOOK|ZAPRET2_INSTANCES|ZAPRET2_QUEUE_LIMIT)
                     printf -v "$_key" '%s' "$_val"
                     [ "$_key" = "NFT_IOS_DETECT" ] && _have_ios_detect="true"
                     ;;
@@ -1374,6 +1381,13 @@ zapret2_instance_count() {
     echo "$_n"
 }
 
+# Правило потолка пакетов перед очередью; пусто — потолок выключен.
+zapret2_limit_match() {
+    local _l="${ZAPRET2_QUEUE_LIMIT:-64}"
+    [[ "$_l" =~ ^[0-9]+$ ]] && [ "$_l" -gt 0 ] || return 0
+    echo "tcp flags & (fin | syn | rst) == 0 ct packets > ${_l}"
+}
+
 # Очереди для nft: «200» или «200-203».
 zapret2_queue_spec() {
     local _n; _n=$(zapret2_instance_count)
@@ -1846,6 +1860,8 @@ COMBINED_MARK="${_combined_mark}"
 # Мимо очереди — только пакеты с данными: FIN/SYN/RST нужны самому nfqws2,
 # иначе его conntrack держит закрытые соединения живыми (см. lib/nft.sh).
 BYPASS_MATCH="${ZAPRET2_BYPASS_MATCH}"
+# Потолок пакетов соединения в очереди (ZAPRET2_QUEUE_LIMIT); пусто — нет.
+LIMIT_MATCH="$(zapret2_limit_match)"
 IS_BRIDGE="${_is_bridge}"
 IS_PRECISE="${_is_precise}"
 CONTAINER="${DETECTED_CONTAINER}"
@@ -1910,18 +1926,21 @@ if [ "\$IS_BRIDGE" = "true" ]; then
     iface_accept forward iifname
     iface_accept forward oifname
     nft "add rule ip \$TABLE forward \$BYPASS_MATCH ct mark \$CT_MARK counter accept"
+    [ -z "\$LIMIT_MATCH" ] || nft "add rule ip \$TABLE forward \$LIMIT_MATCH counter accept"
     nft "add rule ip \$TABLE forward \${DADDR_MATCH}meta mark and \$FWMARK == 0x00000000 tcp dport \$PORT counter queue num \$QNUM bypass"
     nft "add rule ip \$TABLE forward \${SADDR_MATCH}meta mark and \$FWMARK == 0x00000000 tcp sport \$PORT counter queue num \$QNUM bypass"
 else
     nft "add chain ip \$TABLE postrouting { type filter hook postrouting priority srcnat + 1; policy accept; }"
     iface_accept postrouting oifname
     nft "add rule ip \$TABLE postrouting \$BYPASS_MATCH ct mark \$CT_MARK counter accept"
+    [ -z "\$LIMIT_MATCH" ] || nft "add rule ip \$TABLE postrouting \$LIMIT_MATCH counter accept"
     nft "add rule ip \$TABLE postrouting meta mark and \$FWMARK == 0x00000000 \${SADDR}tcp sport \$PORT counter queue num \$QNUM bypass"
 
     nft "add chain ip \$TABLE prerouting { type filter hook prerouting priority mangle; policy accept; }"
     nft "add rule ip \$TABLE prerouting ct state invalid counter drop"
     iface_accept prerouting iifname
     nft "add rule ip \$TABLE prerouting \$BYPASS_MATCH ct mark \$CT_MARK counter accept"
+    [ -z "\$LIMIT_MATCH" ] || nft "add rule ip \$TABLE prerouting \$LIMIT_MATCH counter accept"
     nft "add rule ip \$TABLE prerouting meta mark and \$FWMARK == 0x00000000 \${DADDR}tcp dport \$PORT counter queue num \$QNUM bypass"
 fi
 
@@ -2248,6 +2267,7 @@ zapret2_apply_nft() {
         _zapret2_iface_accept "$_table" forward iifname
         _zapret2_iface_accept "$_table" forward oifname
         nft "add rule ip $_table forward ${ZAPRET2_BYPASS_MATCH} ct mark ${_ct_mark} counter accept"
+        [ -z "$(zapret2_limit_match)" ] || nft "add rule ip $_table forward $(zapret2_limit_match) counter accept"
         nft "add rule ip $_table forward ${_daddr_match}meta mark and $_fwmark == 0x00000000 tcp dport ${_port} counter queue num $(zapret2_queue_spec) bypass"
         nft "add rule ip $_table forward ${_saddr_match}meta mark and $_fwmark == 0x00000000 tcp sport ${_port} counter queue num $(zapret2_queue_spec) bypass"
         local _why="цель в Docker bridge"
@@ -2265,12 +2285,14 @@ zapret2_apply_nft() {
     nft "add chain ip $_table postrouting { type filter hook postrouting priority srcnat + 1; policy accept; }"
     _zapret2_iface_accept "$_table" postrouting oifname
     nft "add rule ip $_table postrouting ${ZAPRET2_BYPASS_MATCH} ct mark ${_ct_mark} counter accept"
+    [ -z "$(zapret2_limit_match)" ] || nft "add rule ip $_table postrouting $(zapret2_limit_match) counter accept"
     nft "add rule ip $_table postrouting meta mark and $_fwmark == 0x00000000 ${_sa}tcp sport ${_port} counter queue num $(zapret2_queue_spec) bypass"
 
     nft "add chain ip $_table prerouting { type filter hook prerouting priority mangle; policy accept; }"
     nft "add rule ip $_table prerouting ct state invalid counter drop"
     _zapret2_iface_accept "$_table" prerouting iifname
     nft "add rule ip $_table prerouting ${ZAPRET2_BYPASS_MATCH} ct mark ${_ct_mark} counter accept"
+    [ -z "$(zapret2_limit_match)" ] || nft "add rule ip $_table prerouting $(zapret2_limit_match) counter accept"
     nft "add rule ip $_table prerouting meta mark and $_fwmark == 0x00000000 ${_da}tcp dport ${_port} counter queue num $(zapret2_queue_spec) bypass"
 
     local _ip_note=" ip=все"
@@ -2457,7 +2479,8 @@ zapret2_refresh_if_needed() {
     [ "${ZAPRET2_APPLIED:-false}" = "true" ] || return 0
     systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null || return 0
     local _script="/usr/local/sbin/mtproxyl-zapret2-start.sh"
-    grep -qx "QNUM=\"$(zapret2_queue_spec)\"" "$_script" 2>/dev/null && return 0
+    grep -qxF "QNUM=\"$(zapret2_queue_spec)\"" "$_script" 2>/dev/null \
+        && grep -qxF "LIMIT_MATCH=\"$(zapret2_limit_match)\"" "$_script" 2>/dev/null && return 0
     log_info "Zapret2: экземпляров nfqws2 — $(zapret2_instance_count), очереди $(zapret2_queue_spec)"
     zapret2_update_config
 }
@@ -2867,6 +2890,7 @@ _NFT_SETTABLE=(
     "ZAPRET2_WIN_ACK|range:1:65535|Окно в ACK"
     "ZAPRET2_QNUM|range:0:65535|Номер первой очереди NFQUEUE"
     "ZAPRET2_INSTANCES|custom:_validate_zapret2_instances|Экземпляры nfqws2: auto (по ядрам) или 1..16"
+    "ZAPRET2_QUEUE_LIMIT|range:0:100000|Пакетов соединения в очереди (0 — без потолка)"
     "ZAPRET2_FWMARK|custom:_validate_nft_fwmark|fwmark для пропуска обработанных пакетов"
     "ZAPRET2_EXTRA_PORTS|custom:_validate_nft_ports|Дополнительные порты/диапазоны"
     "ZAPRET2_PORT|custom:_validate_nft_optional_port|Основной порт (пусто = порт прокси)"
@@ -2968,7 +2992,7 @@ nft_set_param() {
     log_success "${_key} = ${_val}"
     # Цепочка меняет саму раскладку правил, а не число внутри них — оставить
     # её только в файле значило бы соврать про применённую настройку.
-    if { [ "$_key" = "ZAPRET2_HOOK" ] || [ "$_key" = "ZAPRET2_INSTANCES" ]; } && zapret2_is_running; then
+    if { [ "$_key" = "ZAPRET2_HOOK" ] || [ "$_key" = "ZAPRET2_INSTANCES" ] || [ "$_key" = "ZAPRET2_QUEUE_LIMIT" ]; } && zapret2_is_running; then
         zapret2_update_config
         return 0
     fi

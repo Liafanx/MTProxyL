@@ -33,4 +33,8 @@ ok "лишние конфиги убраны" '[ ! -e "$d/etc/mtproto-2.conf" ] 
 zapret2_queue_in_use() { [ "$1" = 251 ]; }
 ok "ряд очередей обходит занятую" '[ "$(zapret2_find_free_range 2)" = 252 ]'
 ok "занятость ряда" 'zapret2_range_in_use 250 2 && ! zapret2_range_in_use 252 2'
+ZAPRET2_QUEUE_LIMIT=64
+ok "потолок пакетов в очереди" '[ "$(zapret2_limit_match)" = "tcp flags & (fin | syn | rst) == 0 ct packets > 64" ]'
+ZAPRET2_QUEUE_LIMIT=0
+ok "потолок выключается нулём" '[ -z "$(zapret2_limit_match)" ]'
 exit "$fail"
