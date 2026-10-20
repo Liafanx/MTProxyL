@@ -727,6 +727,11 @@ load_settings() {
     _ensure_quiet_timers
     if declare -F _selfmask_ensure_log_limits >/dev/null; then _selfmask_ensure_log_limits; fi
     if declare -F shaping_ensure_tick_script >/dev/null; then shaping_ensure_tick_script || true; fi
+    # Реаниматор: вторая [web.limits] от ручной правки хозяина уронит цель на
+    # следующем старте — чиним, не дожидаясь своих операций с ней.
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && declare -F web_target_heal_tables >/dev/null; then
+        ( load_detect_settings && web_target_heal_tables ) >/dev/null 2>&1 || true
+    fi
     # Новая версия может поменять раскладку zapret2 — один раз после обновления.
     if [ "$_st_v" != "${VERSION:-}" ] && declare -F zapret2_refresh_if_needed >/dev/null; then
         ( load_nft_settings && zapret2_refresh_if_needed ) >/dev/null 2>&1 || true

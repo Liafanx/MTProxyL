@@ -78,6 +78,23 @@ _web_target_write
 printf '\n[web]\nenabled = true\n' >> "$DETECTED_CONFIG_PATH"
 web_target_foreign_web
 
+# 2б. Хозяин дописал свою таблицу уже после включения: в конфиге две, цель
+# не поднимется. Починка переносит наши ключи к нему, его значения целы.
+make_target 40
+_web_target_write
+printf '\n[web.limits]\nmax_vhosts = 2\n' >> "$DETECTED_CONFIG_PATH"
+[ "$(limits_tables "$DETECTED_CONFIG_PATH")" = 2 ]
+[ "$(web_target_dup_tables)" = web.limits ]
+web_target_heal_tables >/dev/null 2>&1
+[ "$(limits_tables "$DETECTED_CONFIG_PATH")" = 1 ]
+[ -z "$(web_target_dup_tables)" ]
+[ "$(_toml_get_string_in_section web.limits max_vhosts "$DETECTED_CONFIG_PATH")" = 2 ]
+[ "$(_toml_get_string_in_section web.limits max_profiles "$DETECTED_CONFIG_PATH")" = 64 ]
+# Без дубля — ничего не трогаем.
+cp "$DETECTED_CONFIG_PATH" "$test_dir/before"
+web_target_heal_tables >/dev/null 2>&1
+cmp -s "$DETECTED_CONFIG_PATH" "$test_dir/before"
+
 # 3. include с [web.limits]: лимит профилей поднимается в нём, а не второй
 # таблицей в конфиге (иначе telemt: duplicate key).
 make_target 32 'include = "web-limits.toml"'
@@ -108,5 +125,21 @@ handle_expert_command preset web-reset --no-apply >/dev/null
 fails grep -q 'memory_envelope_bytes' "$EXPERT_TARGET_OVERRIDES_FILE"
 handle_expert_command clear web.limits max_sessions_global --no-apply >/dev/null
 fails grep -q 'max_sessions_global' "$EXPERT_TARGET_OVERRIDES_FILE"
+
+# 5. Лимиты, которые движок не примет: правка откатывается.
+make_target 4
+fails handle_expert_command set web.limits memory_envelope_bytes 268435456 --no-apply
+fails grep -q 'memory_envelope_bytes' "$EXPERT_TARGET_OVERRIDES_FILE"
+fails handle_expert_command set web.limits pending_bytes_per_session 999999999 --no-apply
+handle_expert_command preset web-small --no-apply >/dev/null 2>&1
+[ -z "$(web_limits_check)" ]
+# Снять envelope при урезанном остальном можно (умолчание 1280 МиБ вмещает),
+# а поднять pending_bytes_global выше envelope пресета — нет.
+fails handle_expert_command set web.limits pending_bytes_global 805306368 --no-apply
+grep -qx 'web.limits|pending_bytes_global|134217728' "$EXPERT_TARGET_OVERRIDES_FILE"
+handle_expert_command preset web-reset --no-apply >/dev/null 2>&1
+# Таблица хозяина тоже учитывается.
+printf '\n[web.limits]\nmemory_envelope_bytes = 268_435_456\n' >> "$DETECTED_CONFIG_PATH"
+web_limits_check | grep -q 'memory_envelope_bytes 256 МиБ'
 
 echo "web target limits: ok"

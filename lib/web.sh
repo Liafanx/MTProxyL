@@ -1665,6 +1665,8 @@ web_preflight_problems() {
             _p+="пользователей ${_pn}, а web.limits.max_profiles = ${_pl} — движок откажется стартовать"$'\n'
         fi
     fi
+    local _lp; _lp=$(web_limits_check 2>/dev/null)
+    [ -z "$_lp" ] || _p+="${_lp}"$'\n'
     # Свои процессы web_busy_ports пропускает. Чужой HAProxy при возврате к
     # nginx надо заметить и на повторном применении, пока мы ничего не сломали.
     local _busy; _busy=$(web_busy_ports)
@@ -2412,6 +2414,7 @@ web_target_sync_profiles() {
     web_target_enabled 2>/dev/null || { log_info "У цели WEB Proxy не включён — синхронизировать нечего"; return 0; }
     local _f="${DETECTED_CONFIG_PATH:-}"
     [ -f "$_f" ] || { log_error "Конфиг цели не найден"; return 1; }
+    web_target_heal_tables || true
     backup_target_config "web-profiles" "true" || true
 
     local _added=0 _removed=0 _st _lb _u _m
@@ -2594,6 +2597,109 @@ _web_target_merge_tuning() {
             }
         done < <(_web_target_tuning_lines "$_s")
     done
+}
+
+# ── Проверка лимитов WEB по формуле движка (telemt 3.5.13+) ───
+# Движок отвергает конфиг, если резервы не помещаются в memory_envelope_bytes
+# или лимит владельца больше общего, — а узнаётся это только перезапуском.
+WEB_LIMITS_DEFAULTS="pending_bytes_global=536870912 max_body_bytes_global=67108864 \
+max_static_bytes=67108864 debug_records_capacity=65536 debug_bytes_global=67108864 \
+max_carrier_learning_entries=4096 max_profiles=32 max_streams_per_session=128 \
+max_tombstones_per_session=4096 max_sessions_global=128 max_http_connections=1024 \
+max_header_bytes=16384 max_http_overload_connections=64 memory_envelope_bytes=1342177280 \
+max_body_readers=32 max_body_bytes=2097152 pending_bytes_per_session=33554432 \
+pending_bytes_per_lane=8388608 max_sessions_per_ip=16 max_streams_global=4096 \
+max_stream_handshakes=256 max_bootstraps_per_ip=64 max_bootstraps_global=512 \
+max_http_handlers=512 max_static_file_bytes=8388608"
+
+# Вход — строки «ключ=значение» (позднее перекрывает раннее), выход — проблемы.
+web_limits_problems() {
+    awk -F= -v defs="$WEB_LIMITS_DEFAULTS" '
+        function m(x) { return int((x + 1048575) / 1048576) }
+        function le(a, b) { if (v[a] > v[b]) printf "%s (%s) больше %s (%s)\n", a, v[a], b, v[b] }
+        BEGIN { n = split(defs, d, " "); for (i = 1; i <= n; i++) { split(d[i], kv, "="); v[kv[1]] = kv[2] + 0 } }
+        { gsub(/[[:space:]_]/, "", $2) } $1 != "" && $2 ~ /^[0-9]+$/ { v[$1] = $2 + 0 }
+        END {
+            lane = (v["max_streams_per_session"] + v["max_tombstones_per_session"] + 1) * v["max_sessions_global"] * 1024
+            ring = v["debug_records_capacity"] * 8
+            res = v["pending_bytes_global"] + v["max_body_bytes_global"] + v["max_static_bytes"] \
+                + ring + 2 * 8388608 + v["debug_bytes_global"] + 2 * ring + 2 * 4194304 \
+                + v["max_carrier_learning_entries"] * 512 + v["max_profiles"] * 64 + lane \
+                + v["max_http_connections"] * v["max_header_bytes"] + v["max_http_overload_connections"] * 4096
+            if (res > v["memory_envelope_bytes"])
+                printf "резервы WEB %d МиБ не помещаются в memory_envelope_bytes %d МиБ (состояние потоков %d МиБ = (max_streams_per_session + max_tombstones_per_session + 1) × max_sessions_global × 1 КиБ) — поднимите memory_envelope_bytes до %d или уменьшите лимиты\n", \
+                    m(res), m(v["memory_envelope_bytes"]), m(lane), m(res) * 1048576
+            if (v["memory_envelope_bytes"] > 4294967296) print "memory_envelope_bytes больше 4 ГиБ"
+            if (v["max_body_readers"] * v["max_body_bytes"] > v["max_body_bytes_global"])
+                printf "max_body_readers × max_body_bytes (%d МиБ) больше max_body_bytes_global (%d МиБ)\n", \
+                    m(v["max_body_readers"] * v["max_body_bytes"]), m(v["max_body_bytes_global"])
+            le("pending_bytes_per_session", "pending_bytes_global")
+            le("pending_bytes_per_lane", "pending_bytes_per_session")
+            le("max_sessions_per_ip", "max_sessions_global")
+            le("max_streams_per_session", "max_streams_global")
+            le("max_stream_handshakes", "max_streams_global")
+            le("max_bootstraps_per_ip", "max_bootstraps_global")
+            le("max_http_handlers", "max_http_connections")
+            le("max_body_readers", "max_http_handlers")
+            le("max_static_file_bytes", "max_static_bytes")
+        }'
+}
+
+# Числовые ключи таблицы из файла — «ключ=значение».
+_toml_section_numbers() {
+    awk -v s="[$1]" '
+        { t = $0; sub(/^[[:space:]]+/, "", t); h = t; sub(/[[:space:]]*#.*$/, "", h); sub(/[[:space:]]+$/, "", h) }
+        h ~ /^\[/ { ins = (h == s); next }
+        ins && t ~ /^[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*[0-9_]+[[:space:]]*(#.*)?$/ {
+            k = t; sub(/[[:space:]]*=.*/, "", k); val = t; sub(/^[^=]*=[[:space:]]*/, "", val)
+            sub(/[[:space:]]*#.*$/, "", val); gsub(/_/, "", val); print k "=" val
+        }' "$2" 2>/dev/null
+}
+
+# Действующие web.limits: наш max_profiles, значения хозяина цели, оверрайды.
+_web_limits_effective() {
+    local _f
+    if web_is_reanimator; then
+        local EXPERT_OVERRIDES_FILE="$EXPERT_TARGET_OVERRIDES_FILE"
+    fi
+    [ -n "$(get_expert_override_value web.limits max_profiles)" ] || echo "max_profiles=$(web_profiles_limit 2>/dev/null || echo 32)"
+    if web_is_reanimator; then
+        _f=$(_web_target_table_file web.limits 2>/dev/null) && _toml_section_numbers web.limits "$_f"
+    fi
+    awk -F'|' '$1 == "web.limits" && $2 != "" { print $2 "=" $3 }' "$EXPERT_OVERRIDES_FILE" 2>/dev/null
+}
+
+# Проблемы лимитов WEB, если кто-то их задавал и движок считает по этой формуле.
+web_limits_check() {
+    local _eff _ver
+    _eff=$(_web_limits_effective)
+    grep -qv '^max_profiles=' <<< "$_eff" || return 0
+    _ver=$(web_engine_version 2>/dev/null)
+    [[ "$_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] && ! _version_ge "${BASH_REMATCH[0]}" 3.5.13 && return 0
+    web_limits_problems <<< "$_eff"
+}
+
+# Хозяин мог завести свою [web.limits]/[web.timeouts] уже после включения
+# WEB: таблица тогда и у него, и в нашем блоке — цель не поднимется с
+# «duplicate key». Пересборка блока переносит наши ключи в его таблицу.
+web_target_dup_tables() {
+    local _s _blk
+    _web_target_has_block || return 0
+    _blk=$(awk -v b="$WEB_TARGET_BEGIN" -v e="$WEB_TARGET_END" '
+        index($0, b) == 1 { f = 1; next } index($0, e) == 1 { f = 0 }
+        f { t = $0; gsub(/^[[:space:]]+|[[:space:]]*(#.*)?$/, "", t); print t }' "$DETECTED_CONFIG_PATH")
+    for _s in $WEB_TARGET_TUNING_SECTIONS; do
+        grep -qxF "[$_s]" <<< "$_blk" && _web_target_table_file "$_s" >/dev/null && echo "$_s"
+    done
+    return 0
+}
+
+web_target_heal_tables() {
+    web_target_managed || return 0
+    local _d; _d=$(web_target_dup_tables)
+    [ -n "$_d" ] || return 0
+    _web_target_write || { log_error "В конфиге цели две таблицы ${_d//$'\n'/, } — пересобрать блок WEB не удалось"; return 1; }
+    log_warn "В конфиге цели была вторая таблица ${_d//$'\n'/, } — наши ключи перенесены в таблицу хозяина"
 }
 
 # max_profiles цели: из таблицы хозяина или include, иначе из нашего блока.

@@ -150,7 +150,7 @@ _catalog "web.limits" "pending_bytes_per_session" "usize" "33554432"  "✘" "ran
 _catalog "web.limits" "pending_bytes_global"      "usize" "536870912" "✘" "range:65536:4294967296" "укладывается в memory_envelope_bytes" "Байты в очередях всего процесса"
 _catalog "web.limits" "max_bootstraps_global"     "usize" "512"       "✘" "range:1:1048576"        "1..1048576"         "Активные bootstrap-учётки на процесс"
 _catalog "web.limits" "max_bootstraps_per_ip"     "usize" "64"        "✘" "range:1:65536"          "1..65536"           "Активные bootstrap-учётки на адрес"
-_catalog "web.limits" "memory_envelope_bytes"     "usize" "805306368" "✘" "range:1048576:4294967296" "максимум 4 ГиБ"   "Заявленный envelope памяти WEB"
+_catalog "web.limits" "memory_envelope_bytes"     "usize" "1342177280" "✘" "range:1048576:4294967296" "максимум 4 ГиБ"   "Заявленный envelope памяти WEB"
 _catalog "web.limits" "new_sessions_per_minute"   "u32"   "600"       "✘" "range:1:1000000"        "1..1000000"         "Устойчивая скорость создания сессий"
 _catalog "web.limits" "new_streams_per_minute"    "u32"   "6000"      "✘" "range:1:10000000"       "1..10000000"        "Устойчивая скорость создания streams"
 _catalog "web.limits" "debug_records_capacity"    "usize" "65536"     "✘" "range:1:1048576"        "1..1048576"         "Сколько debug-записей хранит /web-status"

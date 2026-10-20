@@ -711,6 +711,19 @@ _expert_generate_and_apply() {
     fi
 }
 
+# Правка web.limits, которую движок не примет (резервы больше envelope,
+# лимит владельца больше общего), откатывается: узнали бы только при старте.
+_expert_web_limits_guard() {
+    local _sec="$1" _key="$2" _prev="$3" _lp
+    [ "$_sec" = "web.limits" ] || return 0
+    _lp=$(web_limits_check 2>/dev/null)
+    [ -n "$_lp" ] || return 0
+    if [ -n "$_prev" ]; then save_expert_override "$_sec" "$_key" "$_prev"; else delete_expert_override "$_sec" "$_key"; fi
+    log_error "Движок не примет такие лимиты WEB — правка не сохранена:"
+    printf '%s\n' "$_lp" | sed 's/^/    • /'
+    return 1
+}
+
 # Память WEB для VPS до 1 ГБ: по умолчанию буферы движка больше всей памяти
 # сервера. memory_envelope_bytes вмещает сумму резервов — иначе движок
 # отвергнет конфиг. Проверено на telemt 3.5.13–3.5.14.
@@ -823,7 +836,9 @@ handle_expert_command() {
                     return 1
                 fi
             fi
+            local _prev; _prev=$(get_expert_override_value "$_sec" "$_key")
             save_expert_override "$_sec" "$_key" "$_val" || return 1
+            _expert_web_limits_guard "$_sec" "$_key" "$_prev" || return 1
             log_success "Override сохранён: [${_sec}] ${_key} = ${_val}"
             [ -z "$_entry" ] && log_warn "Параметра нет в каталоге — значение не проверялось"
             [ "$_apply" = "true" ] || return 0
@@ -849,7 +864,9 @@ handle_expert_command() {
                         log_info "Override [${_what}] ${_key} не задан"
                         return 0
                     fi
+                    local _prev; _prev=$(get_expert_override_value "$_what" "$_key")
                     delete_expert_override "$_what" "$_key" || return 1
+                    _expert_web_limits_guard "$_what" "$_key" "$_prev" || return 1
                     log_success "Override удалён: [${_what}] ${_key}"
                     [ "${3:-}" = "--no-apply" ] && return 0
                     _expert_apply_prompt ;;
@@ -860,6 +877,8 @@ handle_expert_command() {
         preset)
             check_root
             expert_preset "${1:-}" || return 1
+            local _lp; _lp=$(web_limits_check 2>/dev/null)
+            [ -z "$_lp" ] || { log_warn "Движок не примет такие лимиты WEB:"; printf '%s\n' "$_lp" | sed 's/^/    • /'; }
             [ "${2:-}" = "--no-apply" ] && return 0
             _expert_apply_prompt ;;
         edit)
