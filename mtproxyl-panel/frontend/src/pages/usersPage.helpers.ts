@@ -4,6 +4,8 @@ export interface UserStats {
   /** undefined — у MTProxyL нет записи об этом пользователе (superexpert). */
   total_bytes?: number;
   ip_history: MtproxylUserIP[];
+  /** false — выключен в MTProxyL (`secret disable`); без записи считаем включённым. */
+  enabled: boolean;
 }
 
 /**
@@ -21,8 +23,20 @@ export function mergeUserStats<T extends { username: string }>(
   const byLabel = new Map((mtproxylUsers ?? []).map((u) => [u.label, u]));
   return liveUsers.map((u) => {
     const m = byLabel.get(u.username);
-    return { ...u, total_bytes: m?.total_bytes, ip_history: m?.ip_history ?? [] };
+    return { ...u, total_bytes: m?.total_bytes, ip_history: m?.ip_history ?? [], enabled: m?.enabled !== false };
   });
+}
+
+/**
+ * Выключенных движок не знает, и в его /v1/users их нет — иначе их нечем
+ * было бы включить обратно. Отдаёт таких из списка MTProxyL.
+ */
+export function disabledOnlyUsers(
+  liveUsers: { username: string }[],
+  mtproxylUsers: MtproxylUser[] | null | undefined
+): MtproxylUser[] {
+  const live = new Set(liveUsers.map((u) => u.username));
+  return (mtproxylUsers ?? []).filter((u) => u.enabled === false && !live.has(u.label));
 }
 
 export interface TlsDomainLink {

@@ -655,6 +655,9 @@ export interface MtproxylUser {
   /** "0" — бессрочно, иначе RFC3339. */
   expires: string;
   notes: string;
+  ad_tag?: string;
+  rate_limit_up_bps?: number | null;
+  rate_limit_down_bps?: number | null;
   /** 0, если источник не разделяет направления — тогда актуален total_bytes. */
   total_in: number;
   total_out: number;

@@ -1,4 +1,4 @@
-import { Pencil, Trash2, RotateCcw } from 'lucide-react';
+import { Pencil, Trash2, RotateCcw, Power, PowerOff } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { QuotaBar } from '@/components/QuotaBar';
@@ -13,12 +13,15 @@ export interface UserCardProps {
   /** Накопленное за всё время (переживает рестарт); undefined — MTProxyL об этом пользователе не знает. */
   accumulatedTraffic?: number;
   online: boolean;
+  /** Выключен в MTProxyL: без ссылки на подробности, с кнопкой «Включить». */
+  disabled?: boolean;
   expiration?: string;
   links?: ProxyLinkGroup[];
   quotaUsed?: number;
   quotaLimit?: number;
-  onEdit: () => void;
+  onEdit?: () => void;
   onDelete: () => void;
+  onToggle?: () => void;
   onResetQuota?: () => void;
   className?: string;
 }
@@ -57,11 +60,13 @@ export function UserCard({
   totalTraffic,
   accumulatedTraffic,
   online,
+  disabled,
   links,
   quotaUsed,
   quotaLimit,
   onEdit,
   onDelete,
+  onToggle,
   onResetQuota,
   className,
 }: UserCardProps) {
@@ -70,6 +75,7 @@ export function UserCard({
       className={cn(
         'bg-surface border border-border rounded-lg p-3 flex items-start gap-3',
         'hover:border-border-hi hover:bg-surface-hover transition-colors',
+        disabled && 'opacity-60',
         className,
       )}
     >
@@ -94,9 +100,18 @@ export function UserCard({
       {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
-          <Link to={detailHref} className="text-sm font-medium text-accent hover:underline truncate">
-            {username}
-          </Link>
+          {disabled ? (
+            <span className="text-sm font-medium text-text-primary truncate">{username}</span>
+          ) : (
+            <Link to={detailHref} className="text-sm font-medium text-accent hover:underline truncate">
+              {username}
+            </Link>
+          )}
+          {disabled && (
+            <span className="rounded-full px-1.5 py-0.5 text-[10px] leading-none shrink-0 bg-surface-hover text-text-secondary">
+              выкл
+            </span>
+          )}
           <span
             className={cn(
               'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-mono leading-none shrink-0',
@@ -142,13 +157,24 @@ export function UserCard({
             <RotateCcw size={14} />
           </button>
         )}
-        <button
-          onClick={onEdit}
-          className="p-2.5 text-text-secondary hover:text-text-primary hover:bg-surface-hover rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
-          title="Изменить"
-        >
-          <Pencil size={14} />
-        </button>
+        {onToggle && (
+          <button
+            onClick={onToggle}
+            className="p-2.5 text-text-secondary hover:text-accent hover:bg-surface-hover rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
+            title={disabled ? 'Включить' : 'Выключить'}
+          >
+            {disabled ? <Power size={14} /> : <PowerOff size={14} />}
+          </button>
+        )}
+        {onEdit && (
+          <button
+            onClick={onEdit}
+            className="p-2.5 text-text-secondary hover:text-text-primary hover:bg-surface-hover rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
+            title="Изменить"
+          >
+            <Pencil size={14} />
+          </button>
+        )}
         <button
           onClick={onDelete}
           className="p-2.5 text-text-secondary hover:text-danger hover:bg-danger/10 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"

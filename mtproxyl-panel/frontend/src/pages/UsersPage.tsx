@@ -14,12 +14,12 @@ import { usePolling } from '@/hooks/usePolling';
 import { telemt, panelApi, ApiError, mtproxylUsersApi, mtproxylApi } from '@/lib/api';
 import { useMtproxyl } from '@/hooks/useMtproxyl';
 import { Link } from 'react-router-dom';
-import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, ArrowUpDown, Search, ChevronLeft, ChevronRight, RotateCcw, ArrowLeftRight } from 'lucide-react';
+import { Plus, Pencil, Trash2, ArrowUp, ArrowDown, ArrowUpDown, Search, ChevronLeft, ChevronRight, RotateCcw, ArrowLeftRight, Power, PowerOff } from 'lucide-react';
 import { UsersTransfer } from '@/components/UsersTransfer';
 import { formatBytes } from '@/lib/utils';
 import { useQuota, resetUserQuota, type QuotaEntry } from '@/hooks/useQuota';
 import { QuotaBar } from '@/components/QuotaBar';
-import { buildProxyLinks, extractSecret, loadWebLinkConfig, mergeUserStats, saveWebLinkConfig, type UserLinks, type WebLinkConfig } from './usersPage.helpers';
+import { buildProxyLinks, disabledOnlyUsers, extractSecret, loadWebLinkConfig, mergeUserStats, saveWebLinkConfig, type UserLinks, type UserStats, type WebLinkConfig } from './usersPage.helpers';
 
 type SortKey = 'username' | 'current_connections' | 'active_unique_ips' | 'total_octets' | 'total_bytes' | 'expiration_rfc3339';
 type SortDir = 'asc' | 'desc';
@@ -101,7 +101,27 @@ export function UsersPage() {
   }, [webLive]);
   const webStatus: WebLinkConfig | null = webLive ?? (webError ? null : webCached);
   const linksPending = !webLive && !webError && webLoading && !webCached;
-  const mergedUsers = useMemo(() => mergeUserStats(users ?? [], mtproxylUsers), [users, mtproxylUsers]);
+  const mergedUsers = useMemo(() => {
+    const live = mergeUserStats(users ?? [], mtproxylUsers);
+    const off = disabledOnlyUsers(users ?? [], mtproxylUsers).map((m): UserInfo & UserStats => ({
+      username: m.label,
+      user_ad_tag: m.ad_tag || undefined,
+      max_tcp_conns: m.max_conns,
+      max_unique_ips: m.max_ips,
+      data_quota_bytes: m.quota_bytes,
+      expiration_rfc3339: m.expires && m.expires !== '0' ? m.expires : undefined,
+      rate_limit_up_bps: m.rate_limit_up_bps ?? null,
+      rate_limit_down_bps: m.rate_limit_down_bps ?? null,
+      current_connections: 0,
+      active_unique_ips: 0,
+      recent_unique_ips: 0,
+      total_octets: 0,
+      total_bytes: m.total_bytes,
+      ip_history: m.ip_history ?? [],
+      enabled: false,
+    }));
+    return [...live, ...off];
+  }, [users, mtproxylUsers]);
   const { quotaByUser, supported: quotaSupported, refresh: refreshQuota } = useQuota(10000);
 
   const [sortKey, setSortKey] = useState<SortKey>('username');
@@ -193,6 +213,8 @@ export function UsersPage() {
   );
   const [deleteUser, setDeleteUser] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [disableUser, setDisableUser] = useState<string | null>(null);
+  const [toggling, setToggling] = useState(false);
   const [resetUser, setResetUser] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
   const [resetAllOpen, setResetAllOpen] = useState(false);
@@ -270,7 +292,8 @@ export function UsersPage() {
     try {
       // Профиль WEB, ссылающийся на пользователя, движок снять не даст:
       // MTProxyL убирает профиль раньше пользователя.
-      if (usersOwnedByMtproxyl || (mtproxylEnabled && webStatus?.enabled)) {
+      const isOff = mergedUsers.some((u) => u.username === deleteUser && !u.enabled);
+      if (usersOwnedByMtproxyl || isOff || (mtproxylEnabled && webStatus?.enabled)) {
         await mtproxylUsersApi.remove(deleteUser);
       } else {
         await telemt.delete(`/v1/users/${deleteUser}`);
@@ -286,7 +309,23 @@ export function UsersPage() {
     } finally {
       setDeleting(false);
     }
-  }, [deleteUser, refresh, usersOwnedByMtproxyl, mtproxylEnabled, webStatus?.enabled, syncWebProfiles]);
+  }, [deleteUser, mergedUsers, refresh, usersOwnedByMtproxyl, mtproxylEnabled, webStatus?.enabled, syncWebProfiles]);
+
+  // Выключает и включает MTProxyL в обоих режимах: движок про выключенных
+  // не знает, их секрет и лимиты хранятся у MTProxyL.
+  const handleToggle = useCallback(async (label: string, enabled: boolean) => {
+    setToggling(true);
+    setActionError('');
+    try {
+      await mtproxylUsersApi.toggle(label, enabled);
+      setDisableUser(null);
+      refresh();
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : 'Не удалось изменить состояние пользователя');
+    } finally {
+      setToggling(false);
+    }
+  }, [refresh]);
 
   const handleResetQuota = useCallback(async () => {
     if (!resetUser) return;
@@ -465,14 +504,24 @@ export function UsersPage() {
                 ) : (
                   pagedUsers.map((u) => {
                     const hasConns = u.current_connections > 0;
+                    const off = !u.enabled;
 
                     return (
-                      <TableRow key={u.username} className={hasConns ? 'bg-success/5 hover:bg-success/10' : ''}>
+                      <TableRow key={u.username} className={off ? 'opacity-60' : hasConns ? 'bg-success/5 hover:bg-success/10' : ''}>
                         <TableCell className="font-medium">
-                          <Link to={`/users/${u.username}`} title={u.username} className="block truncate text-accent hover:underline">{u.username}</Link>
+                          {off ? (
+                            <span title={u.username} className="flex items-center gap-1.5 min-w-0">
+                              <span className="truncate">{u.username}</span>
+                              <Badge variant="outline">выкл</Badge>
+                            </span>
+                          ) : (
+                            <Link to={`/users/${u.username}`} title={u.username} className="block truncate text-accent hover:underline">{u.username}</Link>
+                          )}
                         </TableCell>
                         <TableCell>
-                          {linksPending
+                          {off
+                            ? <span className="text-xs text-text-secondary">выключен</span>
+                            : linksPending
                             ? <span className="text-xs text-text-secondary">…</span>
                             : <ProxyLinkButtons links={buildProxyLinks(u.links, webStatus ?? undefined)} />}
                         </TableCell>
@@ -518,14 +567,28 @@ export function UsersPage() {
                                 <RotateCcw size={14} />
                               </button>
                             )}
-                            <button
-                              onClick={() => setEditUser(u)}
-                              className="p-1.5 rounded text-text-secondary hover:text-accent hover:bg-surface-hover"
-                            >
-                              <Pencil size={14} />
-                            </button>
+                            {mtproxylEnabled && (
+                              <button
+                                onClick={() => (off ? handleToggle(u.username, true) : setDisableUser(u.username))}
+                                disabled={toggling}
+                                title={off ? 'Включить' : 'Выключить'}
+                                className="p-1.5 rounded text-text-secondary hover:text-accent hover:bg-surface-hover disabled:opacity-40"
+                              >
+                                {off ? <Power size={14} /> : <PowerOff size={14} />}
+                              </button>
+                            )}
+                            {(!off || usersOwnedByMtproxyl) && (
+                              <button
+                                onClick={() => setEditUser(u)}
+                                title="Изменить"
+                                className="p-1.5 rounded text-text-secondary hover:text-accent hover:bg-surface-hover"
+                              >
+                                <Pencil size={14} />
+                              </button>
+                            )}
                             <button
                               onClick={() => setDeleteUser(u.username)}
+                              title="Удалить"
                               className="p-1.5 rounded text-text-secondary hover:text-danger hover:bg-surface-hover"
                             >
                               <Trash2 size={14} />
@@ -559,8 +622,12 @@ export function UsersPage() {
                   totalTraffic={u.total_octets}
                   accumulatedTraffic={u.total_bytes}
                   online={u.current_connections > 0}
-                  links={linksPending ? [] : buildProxyLinks(u.links, webStatus ?? undefined)}
-                  onEdit={() => setEditUser(u)}
+                  disabled={!u.enabled}
+                  links={linksPending || !u.enabled ? [] : buildProxyLinks(u.links, webStatus ?? undefined)}
+                  onEdit={!u.enabled && !usersOwnedByMtproxyl ? undefined : () => setEditUser(u)}
+                  onToggle={mtproxylEnabled
+                    ? () => (u.enabled ? setDisableUser(u.username) : handleToggle(u.username, true))
+                    : undefined}
                   onDelete={() => setDeleteUser(u.username)}
                   quotaUsed={quotaByUser.get(u.username)?.used_bytes}
                   quotaLimit={quotaByUser.get(u.username)?.data_quota_bytes}
@@ -639,6 +706,17 @@ export function UsersPage() {
         title="Удаление пользователя"
         message={`Удалить пользователя «${deleteUser}»? Действие необратимо.`}
         loading={deleting}
+      />
+
+      <ConfirmDialog
+        open={!!disableUser}
+        onClose={() => setDisableUser(null)}
+        onConfirm={() => disableUser && handleToggle(disableUser, false)}
+        title="Выключение пользователя"
+        message={`Выключить «${disableUser}»? Его подключения оборвутся, ссылки перестанут работать до включения. Секрет и лимиты сохранятся.`}
+        confirmLabel="Выключить"
+        loadingLabel="Выключение…"
+        loading={toggling}
       />
 
       <ConfirmDialog

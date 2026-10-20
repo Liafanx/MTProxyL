@@ -1,4 +1,4 @@
-import { buildProxyLinks, buildWebLink, extractSecret, loadWebLinkConfig, mergeUserStats, saveWebLinkConfig } from './usersPage.helpers';
+import { buildProxyLinks, buildWebLink, disabledOnlyUsers, extractSecret, loadWebLinkConfig, mergeUserStats, saveWebLinkConfig } from './usersPage.helpers';
 import type { MtproxylUser } from '@/lib/api';
 
 
@@ -99,8 +99,8 @@ const mtproxylUsers: MtproxylUser[] = [
 assertDeepEqual(
   mergeUserStats([{ username: 'alice' }, { username: 'bob' }], mtproxylUsers),
   [
-    { username: 'alice', total_bytes: 300, ip_history: [{ ip: '1.2.3.4', first_seen: 10, last_seen: 20 }] },
-    { username: 'bob', total_bytes: undefined, ip_history: [] },
+    { username: 'alice', total_bytes: 300, ip_history: [{ ip: '1.2.3.4', first_seen: 10, last_seen: 20 }], enabled: true },
+    { username: 'bob', total_bytes: undefined, ip_history: [], enabled: true },
   ],
 );
 
@@ -109,13 +109,20 @@ assertDeepEqual(
 // иначе страница пользователей не собирается (tsc: TS2345).
 assertDeepEqual(
   mergeUserStats([{ username: 'alice' }], undefined),
-  [{ username: 'alice', total_bytes: undefined, ip_history: [] }],
+  [{ username: 'alice', total_bytes: undefined, ip_history: [], enabled: true }],
 );
 
 assertDeepEqual(
   mergeUserStats([{ username: 'alice' }], null),
-  [{ username: 'alice', total_bytes: undefined, ip_history: [] }],
+  [{ username: 'alice', total_bytes: undefined, ip_history: [], enabled: true }],
 );
+
+// Выключенный: флаг из MTProxyL, а если движок его уже не отдаёт — строка
+// берётся из списка MTProxyL, чтобы было чем включить обратно.
+const withOff: MtproxylUser[] = [...mtproxylUsers, { ...mtproxylUsers[0], label: 'carol', enabled: false }, { ...mtproxylUsers[0], label: 'dave', enabled: false }];
+assertDeepEqual(mergeUserStats([{ username: 'dave' }], withOff).map((u) => u.enabled), [false]);
+assertDeepEqual(disabledOnlyUsers([{ username: 'alice' }, { username: 'dave' }], withOff).map((u) => u.label), ['carol']);
+assertDeepEqual(disabledOnlyUsers([{ username: 'alice' }], null), []);
 
 // ── WEB-ссылки ──────────────────────────────────────────────────────────────
 // Движок их не отдаёт, поэтому собираем из секрета: у ee-ссылки он лежит между
