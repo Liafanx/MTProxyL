@@ -340,7 +340,11 @@ prompt_apply_nft_rules() {
 
 # ── Генерация NFT скрипта ─────────────────────────────────────
 generate_nft_script() {
-    local _ip="${NFT_SERVER_IP:-}"
+    local _ip=""
+    if [ -n "${NFT_SERVER_IP:-}" ] && ! _ip=$(nft_addr_spec "$NFT_SERVER_IP"); then
+        _ip=""
+        log_warn "NFT: список адресов SERVER_IPS пуст — правило для всех IP сервера"
+    fi
     local _port="${PROXY_PORT:-443}"
     local _timeout="${NFT_METER_TIMEOUT:-60s}"
     local _table="${NFT_TABLE:-mtproxyl_limit}"
@@ -532,7 +536,16 @@ apply_nft_rules() {
     fi
     ensure_nftables_installed || return 1
 
-    generate_nft_script
+    # Сначала прогон в пустом сетевом пространстве: скрипт снимает таблицу
+    # целиком, и правило с ошибкой оставило бы сервер без рабочих.
+    local _new; _new=$(_mktemp "$(dirname "$NFT_SCRIPT_FILE")") || return 1
+    NFT_SCRIPT_FILE="$_new" generate_nft_script
+    if unshare -n true 2>/dev/null && ! unshare -n /bin/sh "$_new" >/dev/null 2>&1; then
+        rm -f "$_new"
+        log_error "Новые NFT правила не прошли проверку — оставлены прежние"
+        return 1
+    fi
+    chmod 755 "$_new" && mv -f "$_new" "$NFT_SCRIPT_FILE" || { rm -f "$_new"; return 1; }
     if /bin/sh "$NFT_SCRIPT_FILE"; then
         log_success "NFT правила применены (режим: ${NFT_MODE})"
     else
@@ -1611,10 +1624,10 @@ zapret2_main_port() {
 # или пусто, если фильтр выключен либо адрес не задан. Пробел на конце — часть
 # строки правила, дальше подставляется остальное условие.
 zapret2_ip_match() {
-    local _dir="$1"
+    local _dir="$1" _set
     [ "${ZAPRET2_FILTER_IP_ENABLED:-false}" = "true" ] || return 0
-    [ -n "${ZAPRET2_FILTER_IP:-}" ] || return 0
-    printf 'ip %s %s ' "$_dir" "$ZAPRET2_FILTER_IP"
+    _set=$(nft_addr_spec "${ZAPRET2_FILTER_IP:-}") || return 0
+    printf 'ip %s %s ' "$_dir" "$_set"
 }
 
 # Адрес, который реально стоит в заголовках наших пакетов. Публичный адрес
@@ -2878,6 +2891,7 @@ _NFT_SETTABLE=(
     "NFT_OTHER_LIMIT_ENABLED|bool|Ограничивать прочих"
     "NFT_IOS_DETECT|enum:fingerprint,ttl|Способ определения iOS"
     "NFT_OTHER_ACTION|enum:icmp-host-unreachable,reject,drop|Действие при превышении"
+    "NFT_SERVER_IP|custom:_validate_nft_addr_list|Адреса назначения правил: IPv4, список через запятую или server (SERVER_IPS); пусто — все IP сервера"
     "NFT_REJECT_MODE|enum:reset,icmp|Вид отказа"
     "IOS_KA_TIME|range:1:86400|tcp_keepalive_time (сек)"
     "IOS_KA_INTVL|range:1:3600|tcp_keepalive_intvl (сек)"
@@ -2895,7 +2909,7 @@ _NFT_SETTABLE=(
     "ZAPRET2_EXTRA_PORTS|custom:_validate_nft_ports|Дополнительные порты/диапазоны"
     "ZAPRET2_PORT|custom:_validate_nft_optional_port|Основной порт (пусто = порт прокси)"
     "ZAPRET2_FILTER_IP_ENABLED|bool|Сужать правила до адреса сервера"
-    "ZAPRET2_FILTER_IP|custom:_validate_nft_optional_ipv4|IPv4 сервера для правил (пусто — без привязки к IP)"
+    "ZAPRET2_FILTER_IP|custom:_validate_nft_addr_list|Адреса сервера для правил: IPv4, список через запятую или server (SERVER_IPS); пусто — без привязки"
     "ZAPRET2_EXCLUDE_IFACES|custom:_validate_nft_ifaces|Интерфейсы мимо очереди, через пробел (wg* tun*)"
     "ZAPRET2_HOOK|enum:auto,host,forward|Цепочка NFT: auto, host (pre/postrouting) или forward (цель в контейнере)"
     "ZAPRET2_UID|range:0:65535|UID, под который nfqws2 сбрасывает привилегии"

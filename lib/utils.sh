@@ -381,6 +381,81 @@ get_public_ip() {
     echo ""
 }
 
+# ── Несколько публичных IP ────────────────────────────────────
+# SERVER_IPS — адреса, на которых работает прокси: пусто — один, как раньше;
+# all — все публичные IPv4 с интерфейсов; иначе список через запятую.
+# Слушают MTProto и WEB на всех адресах сразу, список сужает только правила
+# (NFT, Zapret2) и сверку A-записи WEB. Ссылки остаются на одном адресе.
+
+ipv4_is_public() {
+    validate_ip_literal "$1" 2>/dev/null || return 1
+    case "$1" in
+        0.*|10.*|127.*|169.254.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*) return 1 ;;
+        100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) return 1 ;;
+        22[4-9].*|2[3-5][0-9].*) return 1 ;;
+    esac
+    return 0
+}
+
+# Публичные IPv4 на интерфейсах сервера, мимо туннелей и мостов: адрес
+# VPN или docker-сети прокси не обслуживает.
+server_detect_public_ips() {
+    ip -4 -o addr show scope global 2>/dev/null | awk '
+        $2 ~ /^(docker|br-|veth|virbr|wg|awg|tun|tap|warp|tailscale|zt|lxc|cni|flannel|cali|kube)/ { next }
+        { split($4, a, "/"); print a[1] }' | while IFS= read -r _a; do
+        ipv4_is_public "$_a" && printf '%s\n' "$_a"
+    done | awk '!seen[$0]++'
+}
+
+# Выбранные адреса, по одному в строке; пусто — список не задан.
+server_ips() {
+    case "${SERVER_IPS:-}" in
+        "") return 0 ;;
+        all) server_detect_public_ips ;;
+        *) tr ',' '\n' <<< "$SERVER_IPS" | sed '/^$/d' ;;
+    esac
+}
+
+_validate_server_ips() {
+    [ -z "$1" ] || [ "$1" = "all" ] && return 0
+    local _ip _seen=","
+    if [[ "$1" =~ ^[0-9.]+(,[0-9.]+)*$ ]]; then
+        for _ip in ${1//,/ }; do
+            validate_ip_literal "$_ip" || break
+            case "$_seen" in *",$_ip,"*) break ;; esac
+            _seen+="$_ip,"
+        done
+        [ "$_seen" = ",${1}," ] && return 0
+    fi
+    echo "all, список IPv4 через запятую без повторов (1.2.3.4,1.2.3.5) или пусто"; return 1
+}
+
+# Список адресов для правила nft: «a» или «{ a, b }».
+nft_addr_set() {
+    local _l; _l=$(sed '/^$/d' | paste -sd, - | sed 's/,/, /g')
+    [ -n "$_l" ] || return 1
+    case "$_l" in *,*) printf '{ %s }' "$_l" ;; *) printf '%s' "$_l" ;; esac
+}
+
+# Адреса правила по настройке: server — SERVER_IPS; список или старая
+# запись «{ a, b }» — как есть. Пусто — правило без привязки к адресу.
+nft_addr_spec() {
+    local _v="${1:-}"
+    _v="${_v//[\{\} ]/}"
+    case "$_v" in
+        "") return 1 ;;
+        server) server_ips | nft_addr_set ;;
+        *) tr ',' '\n' <<< "$_v" | nft_addr_set ;;
+    esac
+}
+
+_validate_nft_addr_list() {
+    local _v="${1//[\{\} ]/}"
+    [ -z "$_v" ] || [ "$_v" = "server" ] && return 0
+    _validate_server_ips "$_v" >/dev/null && [ "$_v" != "all" ] && return 0
+    echo "server (адреса из SERVER_IPS), IPv4 или список через запятую, либо пусто — все адреса"; return 1
+}
+
 # ── Публичные host/port для tg://-ссылок ───────────────────────
 # [general.links] public_host/public_port — что идёт в ссылку, отдельно от
 # того, где движок слушает. Источник зависит от режима.
@@ -1227,7 +1302,7 @@ show_cli_help() {
     echo ""
     echo -e "  ${BOLD}Прокси:${NC}         start | stop | restart | status [--json]"
     echo -e "  ${BOLD}Секреты:${NC}        secret add|remove|list|rotate|enable|disable|limits|link|qr|clone|rename"
-    echo -e "  ${BOLD}Настройки:${NC}      port | ip | domain | mask-backend | config | settings list|set"
+    echo -e "  ${BOLD}Настройки:${NC}      port | ip | ips | domain | mask-backend | config | settings list|set"
     echo -e "  ${BOLD}Движок:${NC}         engine status|list|update|rollback|rebuild|backend"
     echo -e "  ${BOLD}Эксперт:${NC}        expert list|set|clear|edit"
     echo -e "  ${BOLD}Супер эксперт:${NC}  superexpert status|on|off|edit|show|write"

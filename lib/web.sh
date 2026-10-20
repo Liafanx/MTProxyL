@@ -264,6 +264,9 @@ web_public_ip() {
         echo "$_server"
         return 0
     fi
+    # Домен на другом выбранном адресе сервера (SERVER_IPS) — он и есть public_addr.
+    _ip=$(grep -Fx -f <(server_ips) <<< "$_ips" 2>/dev/null | sed -n '1p')
+    [ -n "$_ip" ] && { echo "$_ip"; return 0; }
     _ip=$(sed -n '1p' <<< "$_ips")
     validate_ip_literal "$_ip" 2>/dev/null && { echo "$_ip"; return 0; }
     [ -n "$_server" ] && { echo "$_server"; return 0; }
@@ -281,7 +284,7 @@ web_public_addr() {
 _WEB_IP_CACHE="${INSTALL_DIR}/.web-public-ip"
 web_public_ip_cached() {
     local _key _t _k _ip
-    _key="$(web_domain 2>/dev/null)|${CUSTOM_IP:-}|${WEB_DNS_CHECK:-}"
+    _key="$(web_domain 2>/dev/null)|${CUSTOM_IP:-}|${WEB_DNS_CHECK:-}|${SERVER_IPS:-}"
     if IFS=' ' read -r _t _k _ip < "$_WEB_IP_CACHE" 2>/dev/null \
        && [ "$_k" = "$_key" ] && [[ "$_t" =~ ^[0-9]+$ ]] \
        && [ $(( ${EPOCHSECONDS:-0} - _t )) -ge 0 ] && [ $(( ${EPOCHSECONDS:-0} - _t )) -lt 600 ] \
@@ -289,7 +292,7 @@ web_public_ip_cached() {
         echo "$_ip"; return 0
     fi
     _ip=$(web_public_ip) || return 1
-    [ "${EUID:-1}" -eq 0 ] && printf '%s %s %s\n' "${EPOCHSECONDS:-0}" "$_key" "$_ip" > "$_WEB_IP_CACHE" 2>/dev/null
+    [ "${EUID:-1}" -eq 0 ] && printf '%s %s %s\n' "${EPOCHSECONDS:-0}" "$_key" "$_ip" 2>/dev/null > "$_WEB_IP_CACHE"
     echo "$_ip"
 }
 
@@ -1586,9 +1589,11 @@ web_preflight_problems() {
     # При HAProxy на отдельном узле он закономерно ведёт на frontend, а не на
     # backend MTProxyL: там проверяем только наличие публичной A-записи.
     if [ -n "$_d" ] && ! web_dns_check_disabled; then
-        local _dips _dip_label _sip
+        local _dips _dip_label _sip _sips
         _dips=$(web_domain_ips 2>/dev/null)
         _sip=$(web_server_ip 2>/dev/null)
+        # Любой из выбранных адресов сервера годится.
+        _sips=$( { printf '%s\n' "$_sip"; server_ips; } | sed '/^$/d' | awk '!s[$0]++')
         if [ -z "$_dips" ]; then
             if web_dns_must_point_to_this_server; then
                 _p+="у домена ${_d} нет A-записи — заведите её у регистратора на ${_sip:-IP этого сервера}"$'\n'
@@ -1597,9 +1602,10 @@ web_preflight_problems() {
             fi
         elif web_dns_must_point_to_this_server && [ -z "$_sip" ]; then
             _p+="не удалось определить публичный адрес сервера — задайте его: mtproxyl ip set <IP>"$'\n'
-        elif web_dns_must_point_to_this_server && ! grep -Fxq "$_sip" <<< "$_dips"; then
+        elif web_dns_must_point_to_this_server && ! grep -Fxq -f <(printf '%s\n' "$_sips") <<< "$_dips"; then
             _dip_label=$(paste -sd, <<< "$_dips")
-            _p+="публичная A-запись ${_d} ведёт на ${_dip_label}, а сервер — ${_sip}: исправьте её у регистратора на ${_sip} (если домен за прокси CDN, отключите проксирование)"$'\n'
+            _sip=$(paste -sd, <<< "$_sips" | sed 's/,/, /g')
+            _p+="публичная A-запись ${_d} ведёт на ${_dip_label}, а сервер — ${_sip}: исправьте её у регистратора на адрес сервера (если домен за прокси CDN, отключите проксирование)"$'\n'
         fi
     fi
     case "${WEB_DECOY_MODE:-empty}" in

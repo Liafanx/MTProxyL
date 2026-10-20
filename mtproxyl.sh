@@ -189,6 +189,11 @@ cli_main() {
             handle_ip_command "$@"
             ;;
 
+        ips)
+            load_settings; load_detect_settings
+            handle_ips_command "$@"
+            ;;
+
         domain)
             load_settings; load_secrets; load_upstreams
             handle_domain_command "$@"

@@ -211,6 +211,28 @@ run_installer() {
         CUSTOM_IP=""
     fi
 
+    # Несколько публичных адресов: слушаем на всех, а правила NFT и Zapret2
+    # сужаем до выбранных — тогда прочие адреса (VPN и т.п.) они не трогают.
+    local _pubs; _pubs=$(server_detect_public_ips)
+    if [ "$(grep -c . <<< "$_pubs")" -gt 1 ]; then
+        echo ""
+        echo -e "  ${BOLD}Найдено несколько публичных IPv4:${NC} $(paste -sd, - <<< "$_pubs" | sed 's/,/, /g')"
+        echo -e "  ${DIM}Enter — прокси на всех, или перечислите нужные через запятую.${NC}"
+        echo -e "  ${DIM}Потом: mtproxyl ips set all | <ip,ip>${NC}"
+        echo -en "  ${BOLD}Адреса [все]:${NC} "
+        local _ips_in=""; _fix_read _ips_in "${_FIX_ANS_SERVER_IPS-}"
+        _ips_in="${_ips_in// /}"
+        if [ -z "$_ips_in" ] || [ "$_ips_in" = "all" ]; then
+            SERVER_IPS="all"
+        elif _validate_server_ips "$_ips_in" >/dev/null; then
+            SERVER_IPS="$_ips_in"
+        else
+            log_warn "Некорректный список '${_ips_in}' — берём все адреса"
+            SERVER_IPS="all"
+        fi
+        log_success "Адреса прокси: $(server_ips | paste -sd, - | sed 's/,/, /g')"
+    fi
+
     # Домен обычного FakeTLS
     if mtproto_is_enabled; then
     echo ""
@@ -710,10 +732,15 @@ run_fix_arsenal_wizard() {
       fi
 
       if [ "$_nft_applied" = "true" ]; then
-        # Без привязки к IP: правило для всех адресов сервера. Сузить до
-        # одного — в настройках NFT.
-        NFT_SERVER_IP=""
-        log_info "Правило NFT — для всех IP сервера (привязка к IP — в настройках NFT)"
+        # Без привязки к IP: правило для всех адресов сервера. Выбраны адреса
+        # прокси — только для них. Изменить — в настройках NFT.
+        if [ -n "${SERVER_IPS:-}" ]; then
+            NFT_SERVER_IP="server"
+            log_info "Правило NFT — для адресов прокси: $(server_ips | paste -sd, - | sed 's/,/, /g')"
+        else
+            NFT_SERVER_IP=""
+            log_info "Правило NFT — для всех IP сервера (привязка к IP — в настройках NFT)"
+        fi
 
         save_nft_settings
         apply_nft_rules || log_warn "Не удалось применить NFT правила"
