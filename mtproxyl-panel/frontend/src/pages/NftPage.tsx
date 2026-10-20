@@ -7,6 +7,7 @@ import { ErrorAlert } from '@/components/ErrorAlert';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { OperationProgress } from '@/components/OperationProgress';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
+import { ServerIpsCard } from '@/components/ServerIpsCard';
 import { mtproxylNetApi, type NftAction, type NftParam, type NftStatus } from '@/lib/api';
 import { useMtproxylOperation } from '@/hooks/useMtproxyl';
 
@@ -242,6 +243,8 @@ export function NftPage() {
                 <StateRow label="iOS Fix v2 (устар.)" on={status.ios_fix_v2.enabled} />
               </CardContent>
             </Card>
+
+            {status.server_ips && <ServerIpsCard info={status.server_ips} />}
 
             <DefenseCard
               title="Zapret2"

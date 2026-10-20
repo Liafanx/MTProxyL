@@ -2,6 +2,8 @@
 # MTProxyL — интерактивный режим эксперта
 
 EXPERT_OVERRIDES_FILE="${INSTALL_DIR}/expert.conf"
+# Reanimator: web.limits и web.timeouts для блока WEB цели.
+EXPERT_TARGET_OVERRIDES_FILE="${INSTALL_DIR}/expert-target.conf"
 
 # ── Загрузка / сохранение overrides ──────────────────────────
 load_expert_overrides() {
@@ -69,6 +71,64 @@ validate_expert_file() {
     return "$_errors"
 }
 
+# Значение оверрайда в виде TOML — по типу из каталога.
+_expert_toml_value() {
+    local section="$1" key="$2" value="$3" fv
+    local _entry=""
+    if _entry=$(_expert_find "$section" "$key" 2>/dev/null); then
+        _expert_parse "$_entry"
+        case "$EXPERT_P_TYPE" in
+            bool|u8|u16|u32|u64|usize|f32)
+                fv="$value"
+                ;;
+            string)
+                fv="\"$value\""
+                ;;
+            "string[]"|"carrier_list")
+                # web.carriers = false выключает автосогласование, и это
+                # не список из одного слова «false», а именно булево.
+                if [ "$EXPERT_P_TYPE" = "carrier_list" ] && [ "$value" = "false" ]; then
+                    fv="false"
+                else
+                local oldIFS="$IFS"
+                IFS=','
+                read -ra _vals <<< "$value"
+                IFS="$oldIFS"
+
+                local _out="" _v
+                for _v in "${_vals[@]}"; do
+                    _v="${_v#"${_v%%[![:space:]]*}"}"
+                    _v="${_v%"${_v##*[![:space:]]}"}"
+                    [ -z "$_v" ] && continue
+                    [ -n "$_out" ] && _out+=", "
+                    _out+="\"$_v\""
+                done
+                fv="[${_out}]"
+                fi
+                ;;
+            *)
+                if [[ "$value" =~ ^(true|false)$ ]]; then
+                    fv="$value"
+                elif [[ "$value" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
+                    fv="$value"
+                else
+                    fv="\"$value\""
+                fi
+                ;;
+        esac
+    else
+        # fallback для неизвестных параметров
+        if [[ "$value" =~ ^(true|false)$ ]]; then
+            fv="$value"
+        elif [[ "$value" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
+            fv="$value"
+        else
+            fv="\"$value\""
+        fi
+    fi
+    printf '%s' "$fv"
+}
+
 # ── Применение expert overrides в config.toml ────────────────
 _apply_expert_overrides() {
     local config_file="$1"
@@ -83,60 +143,7 @@ _apply_expert_overrides() {
         [[ "$section" =~ ^[[:space:]]*$ ]] && continue
         [ -z "$key" ] && continue
 
-        # Форматирование значения по типу из каталога
-        local fv
-        local _entry=""
-        if _entry=$(_expert_find "$section" "$key" 2>/dev/null); then
-            _expert_parse "$_entry"
-            case "$EXPERT_P_TYPE" in
-                bool|u8|u16|u32|u64|usize|f32)
-                    fv="$value"
-                    ;;
-                string)
-                    fv="\"$value\""
-                    ;;
-                "string[]"|"carrier_list")
-                    # web.carriers = false выключает автосогласование, и это
-                    # не список из одного слова «false», а именно булево.
-                    if [ "$EXPERT_P_TYPE" = "carrier_list" ] && [ "$value" = "false" ]; then
-                        fv="false"
-                    else
-                    local oldIFS="$IFS"
-                    IFS=','
-                    read -ra _vals <<< "$value"
-                    IFS="$oldIFS"
-
-                    local _out="" _v
-                    for _v in "${_vals[@]}"; do
-                        _v="${_v#"${_v%%[![:space:]]*}"}"
-                        _v="${_v%"${_v##*[![:space:]]}"}"
-                        [ -z "$_v" ] && continue
-                        [ -n "$_out" ] && _out+=", "
-                        _out+="\"$_v\""
-                    done
-                    fv="[${_out}]"
-                    fi
-                    ;;
-                *)
-                    if [[ "$value" =~ ^(true|false)$ ]]; then
-                        fv="$value"
-                    elif [[ "$value" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
-                        fv="$value"
-                    else
-                        fv="\"$value\""
-                    fi
-                    ;;
-            esac
-        else
-            # fallback для неизвестных параметров
-            if [[ "$value" =~ ^(true|false)$ ]]; then
-                fv="$value"
-            elif [[ "$value" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
-                fv="$value"
-            else
-                fv="\"$value\""
-            fi
-        fi
+        local fv; fv=$(_expert_toml_value "$section" "$key" "$value")
 
         # Ключ с точкой TOML читает как путь до вложенной таблицы: без
         # кавычек «a.b = x» превращается в [a] b = x, а не в ключ «a.b».

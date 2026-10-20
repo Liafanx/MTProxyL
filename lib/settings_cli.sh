@@ -12,6 +12,7 @@ _SETTINGS_SETTABLE=(
     "PROXY_PORT|range:1:65535|Порт прокси"
     "PROXY_DOMAIN|custom:_validate_settings_domain|Домен FakeTLS (SNI)"
     "CUSTOM_IP|custom:_validate_settings_ip|IP или домен для ссылок (пусто — автоопределение)"
+    "SERVER_IPS|custom:_validate_server_ips|Публичные IPv4 прокси: all — все с интерфейсов, список через запятую или пусто — один адрес"
     "AD_TAG|custom:_validate_settings_adtag|Рекламная метка от @MTProxybot (пусто — выключена)"
     "MASKING_ENABLED|bool|Маскировка: отдавать настоящий сайт при неудачном рукопожатии"
     "MASKING_HOST|custom:_validate_settings_mask_host|Хост маскировки (пусто — совпадает с доменом)"
@@ -187,6 +188,11 @@ settings_set_param() {
             handle_ip_command "${_val:-auto}"
             return $?
             ;;
+        SERVER_IPS)
+            check_root
+            server_ips_set "$_val"
+            return $?
+            ;;
         MASKING_HOST|MASKING_PORT)
             # Пересчитывает длину поддельного сертификата под новый хост.
             local _host="${MASKING_HOST:-${PROXY_DOMAIN}}" _port="${MASKING_PORT:-443}"
@@ -250,6 +256,127 @@ settings_set_param() {
             ;;
     esac
     return 0
+}
+
+# ── Несколько публичных IP ────────────────────────────────────
+# Сохраняет SERVER_IPS и переприменяет правила, которые на него ссылаются.
+server_ips_set() {
+    local _val="$1" _err
+    _err=$(_validate_server_ips "$_val") || { log_error "SERVER_IPS: ${_err}"; return 1; }
+    if [ "$_val" = "all" ] && [ -z "$(server_detect_public_ips)" ]; then
+        log_error "На интерфейсах нет публичных IPv4 (сервер за NAT?) — перечислите адреса вручную"
+        return 1
+    fi
+    SERVER_IPS="$_val"
+    save_settings || return 1
+    log_success "SERVER_IPS = ${_val:-<пусто>}${_val:+ ($(server_ips | paste -sd, - | sed 's/,/, /g'))}"
+    load_nft_settings 2>/dev/null || true
+    if [ "${NFT_ENABLED:-false}" = "true" ] && [ "${NFT_SERVER_IP:-}" = "server" ]; then
+        apply_nft_rules >/dev/null 2>&1 && log_success "SYN-лимитер: правила обновлены" \
+            || log_warn "SYN-лимитер: не удалось применить правила — mtproxyl nft apply"
+    fi
+    if [ "${ZAPRET2_APPLIED:-false}" = "true" ] && [ "${ZAPRET2_FILTER_IP_ENABLED:-false}" = "true" ] \
+       && [ "${ZAPRET2_FILTER_IP:-}" = "server" ]; then
+        zapret2_update_config >/dev/null 2>&1 && log_success "Zapret2: правила обновлены" \
+            || log_warn "Zapret2: не удалось обновить правила"
+    fi
+    web_is_enabled 2>/dev/null && ! web_dns_check_disabled \
+        && log_info "WEB: A-запись домена сверяется с новым списком при следующем web enable / restart"
+    return 0
+}
+
+# Что и на каких адресах работает. Сетевые проверки DNS — только в выводе
+# для человека: JSON зовёт панель.
+_server_ips_rule_text() {
+    local _v="${1:-}" _set
+    [ -n "$_v" ] || { echo "все IP сервера"; return 0; }
+    _set=$(nft_addr_spec "$_v") || { echo "все IP сервера (SERVER_IPS пуст)"; return 0; }
+    [ "$_v" = "server" ] && echo "SERVER_IPS: ${_set}" || echo "$_set"
+}
+
+server_ips_show() {
+    load_nft_settings 2>/dev/null || true
+    local _sel _det _nft _z _links
+    _sel=$(server_ips | paste -sd, - | sed 's/,/, /g')
+    _det=$(server_detect_public_ips | paste -sd, - | sed 's/,/, /g')
+    if [ "${NFT_ENABLED:-false}" = "true" ]; then _nft=$(_server_ips_rule_text "${NFT_SERVER_IP:-}"); else _nft="выключен"; fi
+    if [ "${ZAPRET2_APPLIED:-false}" != "true" ]; then _z="не установлен"
+    elif [ "${ZAPRET2_FILTER_IP_ENABLED:-false}" = "true" ]; then _z=$(_server_ips_rule_text "${ZAPRET2_FILTER_IP:-}")
+    else _z="все IP сервера"; fi
+    if [ "${1:-}" = "--json" ]; then
+        # Без сетевых запросов: JSON входит в nft status, его опрашивает панель.
+        printf '{"server_ips":"%s","selected":[%s],"detected":[%s],"listen_port":%s,"nft":"%s","zapret2":"%s","links_host":"%s"}\n' \
+            "$(json_escape "${SERVER_IPS:-}")" \
+            "$(server_ips | sed 's/.*/"&"/' | paste -sd, -)" \
+            "$(server_detect_public_ips | sed 's/.*/"&"/' | paste -sd, -)" \
+            "${PROXY_PORT:-443}" "$(json_escape "$_nft")" "$(json_escape "$_z")" "$(json_escape "${CUSTOM_IP:-}")"
+        return 0
+    fi
+    _links=$(proxy_link_host 2>/dev/null)
+    echo ""
+    echo -e "  ${BOLD}Публичные IP прокси${NC}"
+    case "${SERVER_IPS:-}" in
+        "")  echo -e "  Выбрано:          ${DIM}не задано — один адрес${NC}" ;;
+        all) echo -e "  Выбрано:          ${GREEN}все с интерфейсов${NC} (${_sel:-нет})" ;;
+        *)   echo -e "  Выбрано:          ${GREEN}${_sel}${NC}" ;;
+    esac
+    echo -e "  На интерфейсах:   ${_det:-${DIM}публичных IPv4 нет (NAT)${NC}}"
+    echo ""
+    echo -e "  MTProto и WEB:    все адреса сервера, порт $(web_public_port 2>/dev/null || echo "${PROXY_PORT:-443}")"
+    echo -e "  SYN-лимитер:      ${_nft}"
+    echo -e "  Zapret2:          ${_z}"
+    if web_is_enabled 2>/dev/null; then
+        if web_dns_check_disabled; then
+            echo -e "  WEB A-запись:     ${DIM}не сверяется (WEB_DNS_CHECK=false)${NC}"
+        else
+            echo -e "  WEB A-запись:     $(web_domain 2>/dev/null) → $(web_domain_ips 2>/dev/null | paste -sd, - | sed 's/,/, /g')"
+        fi
+    fi
+    echo -e "  Ссылки:           ${_links:-${DIM}автоопределение${NC}} ${DIM}(один адрес; клиенты могут ходить на любой выбранный)${NC}"
+    echo -e "  Панель и API:     ${DIM}не меняются${NC}"
+    echo ""
+}
+
+# Ссылки пользователя на каждый выбранный адрес: секрет тот же, меняется
+# только server=. WEB-ссылки идут по домену — их не размножаем.
+server_ips_links() {
+    local _label="${1:-}" _ips _out _l _ip
+    [ -n "$_label" ] || { log_error "Использование: mtproxyl ips links <пользователь>"; return 1; }
+    _ips=$(server_ips)
+    [ -n "$_ips" ] || { log_error "Адреса не выбраны: mtproxyl ips set all | <ip,ip>"; return 1; }
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        _out=$(handle_target_user_command link "$_label" 2>/dev/null)
+    else
+        _out=$(get_proxy_links "$_label" 2>/dev/null)
+    fi
+    _out=$(grep -o 'tg://proxy?[^[:space:]]*' <<< "$_out" | awk '!s[$0]++')
+    [ -n "$_out" ] || { log_error "У '${_label}' нет ссылок MTProto (пользователь не найден или выключен?)"; return 1; }
+    while IFS= read -r _ip; do
+        echo -e "  ${BOLD}${_ip}${NC}"
+        while IFS= read -r _l; do
+            printf '    %s\n' "$(sed "s/\([?&]server=\)[^&]*/\1${_ip}/" <<< "$_l")"
+        done <<< "$_out"
+    done <<< "$_ips"
+}
+
+handle_ips_command() {
+    case "${1:-show}" in
+        show|"")  server_ips_show ;;
+        --json)   server_ips_show --json ;;
+        detect)   server_detect_public_ips ;;
+        links)    server_ips_links "${2:-}" ;;
+        set)      check_root; server_ips_set "${2:-}" ;;
+        none|clear) check_root; server_ips_set "" ;;
+        *)
+            echo -e "  ${BOLD}Публичные IP:${NC}"
+            echo -e "    ${GREEN}ips${NC}                          Выбранные адреса и охват модулей"
+            echo -e "    ${GREEN}ips --json${NC}                   То же в JSON"
+            echo -e "    ${GREEN}ips detect${NC}                   Публичные IPv4 на интерфейсах"
+            echo -e "    ${GREEN}ips links${NC} <пользователь>       Ссылки на каждый выбранный адрес"
+            echo -e "    ${GREEN}ips set${NC} all | <ip,ip>        Выбрать адреса"
+            echo -e "    ${GREEN}ips none${NC}                     Один адрес, как раньше"
+            echo -e "    ${DIM}NFT и Zapret2 берут список при значении «server»: mtproxyl nft set NFT_SERVER_IP server${NC}" ;;
+    esac
 }
 
 # Порт REST API движка: в менеджере — наша настройка, в реаниматоре —

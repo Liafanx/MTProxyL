@@ -20,10 +20,10 @@ type Setting struct {
 // settingKeyRe matches the SHOUTY_SNAKE names MTProxyL uses for settings.
 var settingKeyRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
-// settingValueRe covers ports, domains, hex tags, booleans and enum words.
-// Brackets, quotes and whitespace stay out; empty is allowed — that is how an
-// ad tag or a pinned IP is cleared.
-var settingValueRe = regexp.MustCompile(`^[A-Za-z0-9_.:@%+-]*$`)
+// settingValueRe covers ports, domains, hex tags, booleans, enum words and
+// comma-separated address lists (SERVER_IPS). Brackets, quotes and whitespace
+// stay out; empty is allowed — that is how an ad tag or a pinned IP is cleared.
+var settingValueRe = regexp.MustCompile(`^[A-Za-z0-9_.:@%+,-]*$`)
 
 // ValidateSetting checks a key/value pair before it reaches the CLI. MTProxyL
 // validates again against its own catalog; this is the near-side guard.

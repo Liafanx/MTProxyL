@@ -14,7 +14,7 @@ create_backup() {
     rm -f "$meta_tmp"
 
     local files=()
-    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf shaping.json expert.conf tunings.conf \
+    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf shaping.json expert.conf expert-target.conf tunings.conf \
              superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf backup_meta.txt; do
         [ -f "${INSTALL_DIR}/$f" ] && files+=("$f")
     done
@@ -273,7 +273,7 @@ migrate_export() {
     local out="${1:-/tmp/mtproxyl-migrate-$(date +%Y%m%d-%H%M%S).tar.gz}"
     local tmp; tmp=$(mktemp -d) || { log_error "Не удалось создать временную директорию"; return 1; }
     local count=0
-    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf shaping.json expert.conf tunings.conf \
+    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf shaping.json expert.conf expert-target.conf tunings.conf \
              superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf; do
         [ -f "${INSTALL_DIR}/$f" ] && { cp "${INSTALL_DIR}/$f" "$tmp/" && count=$((count + 1)); }
     done
@@ -306,7 +306,7 @@ migrate_import() {
     tar -xzf "$file" -C "$tmp" 2>/dev/null || { log_error "Некорректный архив"; rm -rf "$tmp"; return 1; }
 
     local restored=0 base
-    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf shaping.json expert.conf tunings.conf \
+    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf shaping.json expert.conf expert-target.conf tunings.conf \
              superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf; do
         [ -f "${tmp}/${f}" ] && { cp "${tmp}/${f}" "${INSTALL_DIR}/$f" && chmod 600 "${INSTALL_DIR}/$f" && restored=$((restored + 1)); }
     done

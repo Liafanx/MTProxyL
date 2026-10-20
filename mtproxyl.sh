@@ -20,7 +20,7 @@ export LC_NUMERIC=C
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="1.7.7"
+VERSION="1.7.8"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -189,6 +189,12 @@ cli_main() {
             handle_ip_command "$@"
             ;;
 
+        ips)
+            load_settings; load_detect_settings
+            [ "${1:-}" = "links" ] && load_secrets
+            handle_ips_command "$@"
+            ;;
+
         domain)
             load_settings; load_secrets; load_upstreams
             handle_domain_command "$@"
@@ -234,7 +240,7 @@ cli_main() {
             ;;
 
         expert)
-            load_settings; load_secrets; load_upstreams
+            load_settings; load_secrets; load_upstreams; load_detect_settings
             handle_expert_command "$@"
             ;;
 

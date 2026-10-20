@@ -1282,6 +1282,7 @@ _target_api_user_limits() {
 # Общий хвост всех правок: у движка, который читает конфиг только при старте,
 # без перезапуска ничего не изменится.
 _target_users_apply() {
+    web_target_heal_tables || true
     if ! is_proxy_running; then
         log_info "Цель не запущена — изменения применятся при её запуске"
         return 0

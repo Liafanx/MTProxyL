@@ -381,6 +381,88 @@ get_public_ip() {
     echo ""
 }
 
+# ── Несколько публичных IP ────────────────────────────────────
+# SERVER_IPS — адреса, на которых работает прокси: пусто — один, как раньше;
+# all — все публичные IPv4 с интерфейсов; иначе список через запятую.
+# Слушают MTProto и WEB на всех адресах сразу, список сужает только правила
+# (NFT, Zapret2) и сверку A-записи WEB. Ссылки остаются на одном адресе.
+
+# Публичные IPv4 на интерфейсах сервера, мимо туннелей и мостов: адрес
+# VPN или docker-сети прокси не обслуживает.
+# Тот же отбор встраивается в скрипты правил (server_ips_sh) — держим одну копию.
+_SERVER_IPS_AWK='$2 ~ /^(docker|br-|veth|virbr|wg|awg|tun|tap|warp|tailscale|zt|lxc|cni|flannel|cali|kube)/ { next }
+{ split($4, a, "/"); ip = a[1]; if (split(ip, o, ".") != 4) next
+  if (o[1] == 0 || o[1] == 10 || o[1] == 127 || o[1] >= 224) next
+  if ((o[1] == 169 && o[2] == 254) || (o[1] == 192 && o[2] == 168)) next
+  if ((o[1] == 172 && o[2] >= 16 && o[2] <= 31) || (o[1] == 100 && o[2] >= 64 && o[2] <= 127)) next
+  if (!seen[ip]++) print ip }'
+
+server_detect_public_ips() {
+    ip -4 -o addr show scope global 2>/dev/null | awk "$_SERVER_IPS_AWK"
+}
+
+# Кусок sh для скриптов правил: при SERVER_IPS=all адреса определяются при
+# каждом запуске (после перезагрузки их могло стать больше); не нашлось —
+# берётся список на момент записи скрипта.
+server_ips_sh() {
+    local _var="$1" _fb
+    _fb=$(server_ips | nft_addr_set)
+    printf '%s=$(ip -4 -o addr show scope global 2>/dev/null | awk '"'"'%s'"'"' | paste -sd, - | sed "s/,/, /g")\n' "$_var" "$_SERVER_IPS_AWK"
+    printf 'case "$%s" in *,*) %s="{ $%s }" ;; "") %s='"'"'%s'"'"' ;; esac\n' "$_var" "$_var" "$_var" "$_var" "$_fb"
+}
+
+# Правила берут адреса при запуске: «server» при SERVER_IPS=all.
+server_ips_dynamic() { [ "${1:-}" = "server" ] && [ "${SERVER_IPS:-}" = "all" ]; }
+
+# Выбранные адреса, по одному в строке; пусто — список не задан.
+server_ips() {
+    case "${SERVER_IPS:-}" in
+        "") return 0 ;;
+        all) server_detect_public_ips ;;
+        *) tr ',' '\n' <<< "$SERVER_IPS" | sed '/^$/d' ;;
+    esac
+}
+
+_validate_server_ips() {
+    [ -z "$1" ] || [ "$1" = "all" ] && return 0
+    local _ip _seen=","
+    if [[ "$1" =~ ^[0-9.]+(,[0-9.]+)*$ ]]; then
+        for _ip in ${1//,/ }; do
+            validate_ip_literal "$_ip" || break
+            case "$_seen" in *",$_ip,"*) break ;; esac
+            _seen+="$_ip,"
+        done
+        [ "$_seen" = ",${1}," ] && return 0
+    fi
+    echo "all, список IPv4 через запятую без повторов (1.2.3.4,1.2.3.5) или пусто"; return 1
+}
+
+# Список адресов для правила nft: «a» или «{ a, b }».
+nft_addr_set() {
+    local _l; _l=$(sed '/^$/d' | paste -sd, - | sed 's/,/, /g')
+    [ -n "$_l" ] || return 1
+    case "$_l" in *,*) printf '{ %s }' "$_l" ;; *) printf '%s' "$_l" ;; esac
+}
+
+# Адреса правила по настройке: server — SERVER_IPS; список или старая
+# запись «{ a, b }» — как есть. Пусто — правило без привязки к адресу.
+nft_addr_spec() {
+    local _v="${1:-}"
+    _v="${_v//[\{\} ]/}"
+    case "$_v" in
+        "") return 1 ;;
+        server) server_ips | nft_addr_set ;;
+        *) tr ',' '\n' <<< "$_v" | nft_addr_set ;;
+    esac
+}
+
+_validate_nft_addr_list() {
+    local _v="${1//[\{\} ]/}"
+    [ -z "$_v" ] || [ "$_v" = "server" ] && return 0
+    _validate_server_ips "$_v" >/dev/null && [ "$_v" != "all" ] && return 0
+    echo "server (адреса из SERVER_IPS), IPv4 или список через запятую, либо пусто — все адреса"; return 1
+}
+
 # ── Публичные host/port для tg://-ссылок ───────────────────────
 # [general.links] public_host/public_port — что идёт в ссылку, отдельно от
 # того, где движок слушает. Источник зависит от режима.
@@ -1227,7 +1309,7 @@ show_cli_help() {
     echo ""
     echo -e "  ${BOLD}Прокси:${NC}         start | stop | restart | status [--json]"
     echo -e "  ${BOLD}Секреты:${NC}        secret add|remove|list|rotate|enable|disable|limits|link|qr|clone|rename"
-    echo -e "  ${BOLD}Настройки:${NC}      port | ip | domain | mask-backend | config | settings list|set"
+    echo -e "  ${BOLD}Настройки:${NC}      port | ip | ips | domain | mask-backend | config | settings list|set"
     echo -e "  ${BOLD}Движок:${NC}         engine status|list|update|rollback|rebuild|backend"
     echo -e "  ${BOLD}Эксперт:${NC}        expert list|set|clear|edit"
     echo -e "  ${BOLD}Супер эксперт:${NC}  superexpert status|on|off|edit|show|write"

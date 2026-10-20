@@ -28,6 +28,8 @@ PROXY_CONCURRENCY=8192
 PROXY_CPUS=""
 PROXY_MEMORY=""
 CUSTOM_IP=""
+# Публичные IPv4 прокси: пусто — один адрес, как раньше; all — все с интерфейсов.
+SERVER_IPS=""
 FAKE_CERT_LEN=2048
 PROXY_PROTOCOL="false"
 PROXY_PROTOCOL_TRUSTED_CIDRS=""
@@ -216,6 +218,7 @@ PROXY_CONCURRENCY='${PROXY_CONCURRENCY}'
 PROXY_CPUS='${PROXY_CPUS}'
 PROXY_MEMORY='${PROXY_MEMORY}'
 CUSTOM_IP='${CUSTOM_IP}'
+SERVER_IPS='${SERVER_IPS}'
 FAKE_CERT_LEN='${FAKE_CERT_LEN}'
 PROXY_PROTOCOL='${PROXY_PROTOCOL}'
 PROXY_PROTOCOL_TRUSTED_CIDRS='${PROXY_PROTOCOL_TRUSTED_CIDRS}'
@@ -547,7 +550,7 @@ load_settings() {
                 MTPROXYL_MODE|ENGINE_BACKEND|ENGINE_VERSION|ENGINE_CUSTOM_URL|ENGINE_CUSTOM_SHA256|\
                 ENGINE_SERVICE_NAMING|ENGINE_SERVICE_NAME|\
                 PROXY_MODE|PROXY_PORT|PROXY_METRICS_PORT|PROXY_API_PORT|PROXY_DOMAIN|PROXY_CONCURRENCY|\
-                PROXY_CPUS|PROXY_MEMORY|CUSTOM_IP|FAKE_CERT_LEN|\
+                PROXY_CPUS|PROXY_MEMORY|CUSTOM_IP|SERVER_IPS|FAKE_CERT_LEN|\
                 PROXY_PROTOCOL|PROXY_PROTOCOL_TRUSTED_CIDRS|\
                 AD_TAG|GEOBLOCK_MODE|BLOCKLIST_COUNTRIES|\
                 MASKING_ENABLED|MASKING_HOST|MASKING_PORT|MASKING_RELAY_MAX_BYTES|\
@@ -700,6 +703,7 @@ load_settings() {
     [[ "$AVAILABILITY_PROBES" =~ ^[0-9]+$ ]] && [ "$AVAILABILITY_PROBES" -ge 1 ] && [ "$AVAILABILITY_PROBES" -le 50 ] || AVAILABILITY_PROBES="20"
     [[ "$AVAILABILITY_THRESHOLD" =~ ^[0-9]+$ ]] && [ "$AVAILABILITY_THRESHOLD" -le 100 ] || AVAILABILITY_THRESHOLD="50"
     [ "$DC_RESTART_ENABLED" = "true" ] || DC_RESTART_ENABLED="false"
+    _validate_server_ips "${SERVER_IPS:-}" >/dev/null || SERVER_IPS=""
     [[ "$DC_RESTART_THRESHOLD" =~ ^[0-9]+$ ]] && [ "$DC_RESTART_THRESHOLD" -ge 1 ] && [ "$DC_RESTART_THRESHOLD" -le 100 ] || DC_RESTART_THRESHOLD="50"
     [[ "$DC_RESTART_COOLDOWN" =~ ^[0-9]+$ ]] && [ "$DC_RESTART_COOLDOWN" -ge 1 ] && [ "$DC_RESTART_COOLDOWN" -le 1440 ] || DC_RESTART_COOLDOWN="5"
     [[ "$AVAILABILITY_HISTORY_LIMIT" =~ ^[0-9]+$ ]] && [ "$AVAILABILITY_HISTORY_LIMIT" -ge 1 ] && [ "$AVAILABILITY_HISTORY_LIMIT" -le 100000 ] || AVAILABILITY_HISTORY_LIMIT="1000"
@@ -723,11 +727,16 @@ load_settings() {
     _ensure_quiet_timers
     if declare -F _selfmask_ensure_log_limits >/dev/null; then _selfmask_ensure_log_limits; fi
     if declare -F shaping_ensure_tick_script >/dev/null; then shaping_ensure_tick_script || true; fi
+    # Реаниматор: вторая [web.limits] от ручной правки хозяина уронит цель на
+    # следующем старте — чиним, не дожидаясь своих операций с ней.
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && declare -F web_target_heal_tables >/dev/null; then
+        ( load_detect_settings && web_target_heal_tables ) >/dev/null 2>&1 || true
+    fi
     # Новая версия может поменять раскладку zapret2 — один раз после обновления.
     if [ "$_st_v" != "${VERSION:-}" ] && declare -F zapret2_refresh_if_needed >/dev/null; then
         ( load_nft_settings && zapret2_refresh_if_needed ) >/dev/null 2>&1 || true
     fi
-    [ "${EUID:-1}" -eq 0 ] && printf '%s %s\n' "${EPOCHSECONDS:-0}" "${VERSION:-}" > "$_stamp" 2>/dev/null
+    [ "${EUID:-1}" -eq 0 ] && printf '%s %s\n' "${EPOCHSECONDS:-0}" "${VERSION:-}" 2>/dev/null > "$_stamp"
     return 0
 }
 

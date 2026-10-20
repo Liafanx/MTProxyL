@@ -15,6 +15,7 @@ _FIX_ANS_ENGINE_VERSION=""
 _IA_PORT=""; _IA_METRICS_PORT=""; _IA_API_PORT=""
 _IA_PROXY_MODE=""
 _IA_HOST=""; _IA_SNI=""; _IA_AD_TAG=""
+_IA_SERVER_IPS=""
 _IA_MASK=""; _IA_SNI_POLICY=""
 _IA_CPUS=""; _IA_MEMORY=""
 _IA_SECRETS=()
@@ -63,6 +64,7 @@ install_args_help() {
     --metrics-port N           порт метрик Prometheus (по умолчанию свободный)
     --api-port N               порт REST API движка (по умолчанию свободный)
     --host <ip|домен>          что подставлять в ссылки (по умолчанию свой IP)
+    --server-ips all|<ip,ip>   публичные IPv4 прокси: правила NFT только для них
     --sni <домен>              FakeTLS домен (по умолчанию autoscout24.ru)
     --secret [метка:]<32 hex>  секрет; можно повторять; без него сгенерируем
     --ad-tag <32 hex>          рекламная метка
@@ -206,6 +208,7 @@ _install_args_parse() {
             --metrics-port)  _IA_METRICS_PORT="$_v" ;;
             --api-port)      _IA_API_PORT="$_v" ;;
             --host|--ip)     _IA_HOST="$_v" ;;
+            --server-ips)    _IA_SERVER_IPS="$_v" ;;
             --sni|--domain)  _IA_SNI="$_v" ;;
             --ad-tag|--tag)  _IA_AD_TAG="$_v" ;;
             --mask)          _IA_MASK="$_v" ;;
@@ -416,6 +419,9 @@ _install_args_validate() {
         validate_port "$_p" || { log_error "Порт '${_p}': 1..65535"; _ok=false; }
     done
 
+    if [ -n "$_IA_SERVER_IPS" ] && ! _validate_server_ips "$_IA_SERVER_IPS" >/dev/null; then
+        log_error "--server-ips: all или IPv4 через запятую, получили '${_IA_SERVER_IPS}'"; _ok=false
+    fi
     if [ -n "$_IA_HOST" ] && ! validate_ip_literal "$_IA_HOST" && ! validate_domain "$_IA_HOST"; then
         log_error "--host: IPv4 или домен, получили '${_IA_HOST}'"; _ok=false
     fi
@@ -740,6 +746,8 @@ run_installer_args() {
         CUSTOM_IP=""
         log_info "В ссылках: определяем адрес сам ($(CUSTOM_IP="" get_public_ip 2>/dev/null || echo "?"))"
     fi
+    SERVER_IPS="$_IA_SERVER_IPS"
+    [ -z "$SERVER_IPS" ] || log_success "Адреса прокси: $(server_ips | paste -sd, - | sed 's/,/, /g')"
 
     PROXY_DOMAIN="${_IA_SNI:-${PROXY_DOMAIN:-autoscout24.ru}}"
     auto_set_fake_cert_len "$PROXY_DOMAIN" 2>/dev/null || \

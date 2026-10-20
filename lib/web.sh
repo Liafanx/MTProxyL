@@ -264,6 +264,9 @@ web_public_ip() {
         echo "$_server"
         return 0
     fi
+    # Домен на другом выбранном адресе сервера (SERVER_IPS) — он и есть public_addr.
+    _ip=$(grep -Fx -f <(server_ips) <<< "$_ips" 2>/dev/null | sed -n '1p')
+    [ -n "$_ip" ] && { echo "$_ip"; return 0; }
     _ip=$(sed -n '1p' <<< "$_ips")
     validate_ip_literal "$_ip" 2>/dev/null && { echo "$_ip"; return 0; }
     [ -n "$_server" ] && { echo "$_server"; return 0; }
@@ -281,7 +284,7 @@ web_public_addr() {
 _WEB_IP_CACHE="${INSTALL_DIR}/.web-public-ip"
 web_public_ip_cached() {
     local _key _t _k _ip
-    _key="$(web_domain 2>/dev/null)|${CUSTOM_IP:-}|${WEB_DNS_CHECK:-}"
+    _key="$(web_domain 2>/dev/null)|${CUSTOM_IP:-}|${WEB_DNS_CHECK:-}|${SERVER_IPS:-}"
     if IFS=' ' read -r _t _k _ip < "$_WEB_IP_CACHE" 2>/dev/null \
        && [ "$_k" = "$_key" ] && [[ "$_t" =~ ^[0-9]+$ ]] \
        && [ $(( ${EPOCHSECONDS:-0} - _t )) -ge 0 ] && [ $(( ${EPOCHSECONDS:-0} - _t )) -lt 600 ] \
@@ -289,7 +292,7 @@ web_public_ip_cached() {
         echo "$_ip"; return 0
     fi
     _ip=$(web_public_ip) || return 1
-    [ "${EUID:-1}" -eq 0 ] && printf '%s %s %s\n' "${EPOCHSECONDS:-0}" "$_key" "$_ip" > "$_WEB_IP_CACHE" 2>/dev/null
+    [ "${EUID:-1}" -eq 0 ] && printf '%s %s %s\n' "${EPOCHSECONDS:-0}" "$_key" "$_ip" 2>/dev/null > "$_WEB_IP_CACHE"
     echo "$_ip"
 }
 
@@ -489,6 +492,10 @@ web_sections_toml() {
     _web_profiles_toml || log_warn "WEB: нет включённых пользователей — движок не примет vhost без профилей" >&2
     # Профилей больше, чем движок разрешает по умолчанию, — поднимаем лимит
     # сами, иначе он откажется стартовать с «WEB profiles exceed».
+    if web_is_reanimator; then
+        _web_target_tuning_toml
+        return 0
+    fi
     local _lim; _lim=$(web_profiles_limit)
     [ "${_lim:-32}" -gt "$WEB_PROFILES_STEP" ] && printf '\n[web.limits]\nmax_profiles = %s\n' "$_lim"
     return 0
@@ -1582,9 +1589,11 @@ web_preflight_problems() {
     # При HAProxy на отдельном узле он закономерно ведёт на frontend, а не на
     # backend MTProxyL: там проверяем только наличие публичной A-записи.
     if [ -n "$_d" ] && ! web_dns_check_disabled; then
-        local _dips _dip_label _sip
+        local _dips _dip_label _sip _sips
         _dips=$(web_domain_ips 2>/dev/null)
         _sip=$(web_server_ip 2>/dev/null)
+        # Любой из выбранных адресов сервера годится.
+        _sips=$( { printf '%s\n' "$_sip"; server_ips; } | sed '/^$/d' | awk '!s[$0]++')
         if [ -z "$_dips" ]; then
             if web_dns_must_point_to_this_server; then
                 _p+="у домена ${_d} нет A-записи — заведите её у регистратора на ${_sip:-IP этого сервера}"$'\n'
@@ -1593,9 +1602,10 @@ web_preflight_problems() {
             fi
         elif web_dns_must_point_to_this_server && [ -z "$_sip" ]; then
             _p+="не удалось определить публичный адрес сервера — задайте его: mtproxyl ip set <IP>"$'\n'
-        elif web_dns_must_point_to_this_server && ! grep -Fxq "$_sip" <<< "$_dips"; then
+        elif web_dns_must_point_to_this_server && ! grep -Fxq -f <(printf '%s\n' "$_sips") <<< "$_dips"; then
             _dip_label=$(paste -sd, <<< "$_dips")
-            _p+="публичная A-запись ${_d} ведёт на ${_dip_label}, а сервер — ${_sip}: исправьте её у регистратора на ${_sip} (если домен за прокси CDN, отключите проксирование)"$'\n'
+            _sip=$(paste -sd, <<< "$_sips" | sed 's/,/, /g')
+            _p+="публичная A-запись ${_d} ведёт на ${_dip_label}, а сервер — ${_sip}: исправьте её у регистратора на адрес сервера (если домен за прокси CDN, отключите проксирование)"$'\n'
         fi
     fi
     case "${WEB_DECOY_MODE:-empty}" in
@@ -1655,6 +1665,8 @@ web_preflight_problems() {
             _p+="пользователей ${_pn}, а web.limits.max_profiles = ${_pl} — движок откажется стартовать"$'\n'
         fi
     fi
+    local _lp; _lp=$(web_limits_check 2>/dev/null)
+    [ -z "$_lp" ] || _p+="${_lp}"$'\n'
     # Свои процессы web_busy_ports пропускает. Чужой HAProxy при возврате к
     # nginx надо заметить и на повторном применении, пока мы ничего не сломали.
     local _busy; _busy=$(web_busy_ports)
@@ -2306,7 +2318,7 @@ web_target_add_profile() {
     # движок на старте — сказать об этом надо здесь, а не в логах падения.
     local _n _lim
     _n=$(web_target_profiles 2>/dev/null | grep -c .)
-    _lim=$(_toml_get_string_in_section "web.limits" "max_profiles" "$_f" 2>/dev/null)
+    _lim=$(_web_target_max_profiles)
     [ -n "$_lim" ] || _lim=32
     if [ "${_n:-0}" -gt "${_lim:-32}" ] && web_target_managed; then
         # Блок наш — лимит поднимаем сами, но применится он только перезапуском.
@@ -2402,6 +2414,7 @@ web_target_sync_profiles() {
     web_target_enabled 2>/dev/null || { log_info "У цели WEB Proxy не включён — синхронизировать нечего"; return 0; }
     local _f="${DETECTED_CONFIG_PATH:-}"
     [ -f "$_f" ] || { log_error "Конфиг цели не найден"; return 1; }
+    web_target_heal_tables || true
     backup_target_config "web-profiles" "true" || true
 
     local _added=0 _removed=0 _st _lb _u _m
@@ -2482,6 +2495,7 @@ web_target_foreign_web() {
     _web_target_outside_block | awk '
         { t = $0; sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]*#.*$/, "", t) }
         t ~ /^\[\[web\.vhosts\.profiles\]\]$/ { next }
+        t ~ /^\[web\.(limits|timeouts)\]$/ { next }
         t ~ /^\[+web[].]/ { found = 1 }
         END { exit !found }'
 }
@@ -2506,6 +2520,193 @@ _web_target_has_section() {
     _web_target_outside_block | awk -v s="[$1]" '
         { t = $0; sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]*#.*$/, "", t); sub(/[[:space:]]+$/, "", t) }
         t == s { f = 1 } END { exit !f }'
+}
+
+# ── Лимиты и таймауты WEB у цели ──────────────────────────────
+# Свои оверрайды цели — отдельно от expert.conf своего движка: при смене
+# режима они не должны попасть в чужой конфиг.
+WEB_TARGET_TUNING_SECTIONS="web.limits web.timeouts"
+
+# Файлы, подключённые к конфигу цели через include = "…" (путь от его каталога).
+_web_target_includes() {
+    local _dir _p
+    _dir=$(dirname "${DETECTED_CONFIG_PATH:-.}")
+    _web_target_outside_block | sed -n 's/^[[:space:]]*include[[:space:]]*=[[:space:]]*["'"'"']\([^"'"'"']*\)["'"'"'].*/\1/p' |
+    while IFS= read -r _p; do
+        [ "${_p#/}" = "$_p" ] && _p="${_dir}/${_p}"
+        [ -f "$_p" ] && printf '%s\n' "$_p"
+    done
+}
+
+# Где у цели вне нашего блока объявлена таблица: сам конфиг или include.
+# Вторая такая же таблица в нашем блоке — «duplicate key», цель не стартует.
+_web_target_table_file() {
+    local _s="$1" _f
+    _web_target_has_section "$_s" && { printf '%s\n' "$DETECTED_CONFIG_PATH"; return 0; }
+    while IFS= read -r _f; do
+        [ -n "$_f" ] || continue
+        awk -v s="[$_s]" '
+            { t = $0; sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]*#.*$/, "", t); sub(/[[:space:]]+$/, "", t) }
+            t == s { f = 1 } END { exit !f }' "$_f" && { printf '%s\n' "$_f"; return 0; }
+    done < <(_web_target_includes)
+    return 1
+}
+
+# Ключи секции для цели: «auto|max_profiles|N», если лимит надо поднять под
+# число профилей, и «set|ключ|значение» — оверрайды эксперта.
+_web_target_tuning_lines() {
+    local _s="$1" _lim
+    local EXPERT_OVERRIDES_FILE="$EXPERT_TARGET_OVERRIDES_FILE"
+    if [ "$_s" = "web.limits" ] && [ -z "$(get_expert_override_value web.limits max_profiles)" ]; then
+        _lim=$(web_profiles_limit)
+        [ "${_lim:-32}" -gt "$WEB_PROFILES_STEP" ] && printf 'auto|max_profiles|%s\n' "$_lim"
+    fi
+    [ -f "$EXPERT_OVERRIDES_FILE" ] || return 0
+    awk -F'|' -v s="$_s" '$1 == s && $2 != "" { print "set|" $2 "|" $3 }' "$EXPERT_OVERRIDES_FILE"
+}
+
+# Таблицы, которых у цели нет, — внутрь нашего блока.
+_web_target_tuning_toml() {
+    local _s _src _k _v _hdr
+    for _s in $WEB_TARGET_TUNING_SECTIONS; do
+        _web_target_table_file "$_s" >/dev/null && continue
+        _hdr=""
+        while IFS='|' read -r _src _k _v; do
+            [ -n "$_k" ] || continue
+            [ -n "$_hdr" ] || { _hdr=1; printf '\n[%s]\n' "$_s"; }
+            printf '%s = %s\n' "$_k" "$(_expert_toml_value "$_s" "$_k" "$_v")"
+        done < <(_web_target_tuning_lines "$_s")
+    done
+}
+
+# Таблицу хозяина (в конфиге или include) не дублируем, а дописываем в неё.
+# Его max_profiles не понижаем: поднимаем, только если профилей больше.
+_web_target_merge_tuning() {
+    local _s _f _src _k _v _cur
+    for _s in $WEB_TARGET_TUNING_SECTIONS; do
+        _f=$(_web_target_table_file "$_s") || continue
+        while IFS='|' read -r _src _k _v; do
+            [ -n "$_k" ] || continue
+            if [ "$_src" = "auto" ]; then
+                _cur=$(_toml_get_string_in_section "$_s" "$_k" "$_f" 2>/dev/null)
+                [[ "$_cur" =~ ^[0-9]+$ ]] && [ "$_cur" -ge "$_v" ] && continue
+            fi
+            _toml_safe_set "$_k" "$(_expert_toml_value "$_s" "$_k" "$_v")" "$_s" "$_f" || {
+                log_error "Не удалось записать ${_k} в [${_s}] (${_f})"
+                return 1
+            }
+        done < <(_web_target_tuning_lines "$_s")
+    done
+}
+
+# ── Проверка лимитов WEB по формуле движка (telemt 3.5.13+) ───
+# Движок отвергает конфиг, если резервы не помещаются в memory_envelope_bytes
+# или лимит владельца больше общего, — а узнаётся это только перезапуском.
+WEB_LIMITS_DEFAULTS="pending_bytes_global=536870912 max_body_bytes_global=67108864 \
+max_static_bytes=67108864 debug_records_capacity=65536 debug_bytes_global=67108864 \
+max_carrier_learning_entries=4096 max_profiles=32 max_streams_per_session=128 \
+max_tombstones_per_session=4096 max_sessions_global=128 max_http_connections=1024 \
+max_header_bytes=16384 max_http_overload_connections=64 memory_envelope_bytes=1342177280 \
+max_body_readers=32 max_body_bytes=2097152 pending_bytes_per_session=33554432 \
+pending_bytes_per_lane=8388608 max_sessions_per_ip=16 max_streams_global=4096 \
+max_stream_handshakes=256 max_bootstraps_per_ip=64 max_bootstraps_global=512 \
+max_http_handlers=512 max_static_file_bytes=8388608"
+
+# Вход — строки «ключ=значение» (позднее перекрывает раннее), выход — проблемы.
+web_limits_problems() {
+    awk -F= -v defs="$WEB_LIMITS_DEFAULTS" '
+        function m(x) { return int((x + 1048575) / 1048576) }
+        function le(a, b) { if (v[a] > v[b]) printf "%s (%s) больше %s (%s)\n", a, v[a], b, v[b] }
+        BEGIN { n = split(defs, d, " "); for (i = 1; i <= n; i++) { split(d[i], kv, "="); v[kv[1]] = kv[2] + 0 } }
+        { gsub(/[[:space:]_]/, "", $2) } $1 != "" && $2 ~ /^[0-9]+$/ { v[$1] = $2 + 0 }
+        END {
+            lane = (v["max_streams_per_session"] + v["max_tombstones_per_session"] + 1) * v["max_sessions_global"] * 1024
+            ring = v["debug_records_capacity"] * 8
+            res = v["pending_bytes_global"] + v["max_body_bytes_global"] + v["max_static_bytes"] \
+                + ring + 2 * 8388608 + v["debug_bytes_global"] + 2 * ring + 2 * 4194304 \
+                + v["max_carrier_learning_entries"] * 512 + v["max_profiles"] * 64 + lane \
+                + v["max_http_connections"] * v["max_header_bytes"] + v["max_http_overload_connections"] * 4096
+            if (res > v["memory_envelope_bytes"])
+                printf "резервы WEB %d МиБ не помещаются в memory_envelope_bytes %d МиБ (состояние потоков %d МиБ = (max_streams_per_session + max_tombstones_per_session + 1) × max_sessions_global × 1 КиБ) — поднимите memory_envelope_bytes до %d или уменьшите лимиты\n", \
+                    m(res), m(v["memory_envelope_bytes"]), m(lane), m(res) * 1048576
+            if (v["memory_envelope_bytes"] > 4294967296) print "memory_envelope_bytes больше 4 ГиБ"
+            if (v["max_body_readers"] * v["max_body_bytes"] > v["max_body_bytes_global"])
+                printf "max_body_readers × max_body_bytes (%d МиБ) больше max_body_bytes_global (%d МиБ)\n", \
+                    m(v["max_body_readers"] * v["max_body_bytes"]), m(v["max_body_bytes_global"])
+            le("pending_bytes_per_session", "pending_bytes_global")
+            le("pending_bytes_per_lane", "pending_bytes_per_session")
+            le("max_sessions_per_ip", "max_sessions_global")
+            le("max_streams_per_session", "max_streams_global")
+            le("max_stream_handshakes", "max_streams_global")
+            le("max_bootstraps_per_ip", "max_bootstraps_global")
+            le("max_http_handlers", "max_http_connections")
+            le("max_body_readers", "max_http_handlers")
+            le("max_static_file_bytes", "max_static_bytes")
+        }'
+}
+
+# Числовые ключи таблицы из файла — «ключ=значение».
+_toml_section_numbers() {
+    awk -v s="[$1]" '
+        { t = $0; sub(/^[[:space:]]+/, "", t); h = t; sub(/[[:space:]]*#.*$/, "", h); sub(/[[:space:]]+$/, "", h) }
+        h ~ /^\[/ { ins = (h == s); next }
+        ins && t ~ /^[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*[0-9_]+[[:space:]]*(#.*)?$/ {
+            k = t; sub(/[[:space:]]*=.*/, "", k); val = t; sub(/^[^=]*=[[:space:]]*/, "", val)
+            sub(/[[:space:]]*#.*$/, "", val); gsub(/_/, "", val); print k "=" val
+        }' "$2" 2>/dev/null
+}
+
+# Действующие web.limits: наш max_profiles, значения хозяина цели, оверрайды.
+_web_limits_effective() {
+    local _f
+    if web_is_reanimator; then
+        local EXPERT_OVERRIDES_FILE="$EXPERT_TARGET_OVERRIDES_FILE"
+    fi
+    [ -n "$(get_expert_override_value web.limits max_profiles)" ] || echo "max_profiles=$(web_profiles_limit 2>/dev/null || echo 32)"
+    if web_is_reanimator; then
+        _f=$(_web_target_table_file web.limits 2>/dev/null) && _toml_section_numbers web.limits "$_f"
+    fi
+    awk -F'|' '$1 == "web.limits" && $2 != "" { print $2 "=" $3 }' "$EXPERT_OVERRIDES_FILE" 2>/dev/null
+}
+
+# Проблемы лимитов WEB, если кто-то их задавал и движок считает по этой формуле.
+web_limits_check() {
+    local _eff _ver
+    _eff=$(_web_limits_effective)
+    grep -qv '^max_profiles=' <<< "$_eff" || return 0
+    _ver=$(web_engine_version 2>/dev/null)
+    [[ "$_ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] && ! _version_ge "${BASH_REMATCH[0]}" 3.5.13 && return 0
+    web_limits_problems <<< "$_eff"
+}
+
+# Хозяин мог завести свою [web.limits]/[web.timeouts] уже после включения
+# WEB: таблица тогда и у него, и в нашем блоке — цель не поднимется с
+# «duplicate key». Пересборка блока переносит наши ключи в его таблицу.
+web_target_dup_tables() {
+    local _s _blk
+    _web_target_has_block || return 0
+    _blk=$(awk -v b="$WEB_TARGET_BEGIN" -v e="$WEB_TARGET_END" '
+        index($0, b) == 1 { f = 1; next } index($0, e) == 1 { f = 0 }
+        f { t = $0; gsub(/^[[:space:]]+|[[:space:]]*(#.*)?$/, "", t); print t }' "$DETECTED_CONFIG_PATH")
+    for _s in $WEB_TARGET_TUNING_SECTIONS; do
+        grep -qxF "[$_s]" <<< "$_blk" && _web_target_table_file "$_s" >/dev/null && echo "$_s"
+    done
+    return 0
+}
+
+web_target_heal_tables() {
+    web_target_managed || return 0
+    local _d; _d=$(web_target_dup_tables)
+    [ -n "$_d" ] || return 0
+    _web_target_write || { log_error "В конфиге цели две таблицы ${_d//$'\n'/, } — пересобрать блок WEB не удалось"; return 1; }
+    log_warn "В конфиге цели была вторая таблица ${_d//$'\n'/, } — наши ключи перенесены в таблицу хозяина"
+}
+
+# max_profiles цели: из таблицы хозяина или include, иначе из нашего блока.
+_web_target_max_profiles() {
+    local _f
+    _f=$(_web_target_table_file web.limits) || _f="${DETECTED_CONFIG_PATH:-}"
+    _toml_get_string_in_section "web.limits" "max_profiles" "$_f" 2>/dev/null
 }
 
 # Включённые пользователи цели с уникальным секретом — по профилю на каждого.
@@ -2677,6 +2878,7 @@ _web_target_write_now() {
             "$(web_trusted_proxy_cidrs_toml "${WEB_TRUSTED_PROXY_CIDRS:-127.0.0.1/32}")" server WEB_TARGET_PREV_PP_CIDRS
         WEB_TARGET_PREV_SAVED="true"
     fi
+    _web_target_merge_tuning || return 1
     local _block
     _block=$(
         echo ""

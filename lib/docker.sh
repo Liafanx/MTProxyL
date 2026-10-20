@@ -397,6 +397,7 @@ get_proxy_uptime() {
 
 restart_target() {
     if [ "${MTPROXYL_MODE:-manager}" != "manager" ]; then
+        web_target_heal_tables || true
         case "${DETECTED_MODE:-unknown}" in
             docker)
                 log_info "Перезапуск контейнера ${DETECTED_CONTAINER}..."

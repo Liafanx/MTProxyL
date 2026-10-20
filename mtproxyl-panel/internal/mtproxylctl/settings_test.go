@@ -19,6 +19,7 @@ func TestValidateSetting(t *testing.T) {
 		{"UNKNOWN_SNI_ACTION", "reject_handshake"},
 		{"CUSTOM_IP", "203.0.113.10"},
 		{"PROXY_API_PORT", "9091"},
+		{"SERVER_IPS", "203.0.113.10,203.0.113.11"},
 	}
 	for _, c := range ok {
 		if err := ValidateSetting(c[0], c[1]); err != nil {

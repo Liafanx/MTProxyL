@@ -427,11 +427,13 @@ tui_nft_ip_settings() {
     echo ""
     echo -e "  ${DIM}Если указан IP — правило будет работать только для трафика${NC}"
     echo -e "  ${DIM}на этот адрес и порт. Если не указывать — для всех IP сервера.${NC}"
+    echo -e "  ${DIM}Счётчик по адресу клиента общий: два IP не удваивают квоту.${NC}"
     echo ""
     echo -e "  ${DIM}Enter  — оставить текущее значение${NC}"
     echo -e "  ${DIM}none   — убрать привязку к IP${NC}"
     echo -e "  ${DIM}auto   — автоопределить публичный IPv4${NC}"
-    echo -e "  ${DIM}или введите свой IPv4 вручную${NC}"
+    echo -e "  ${DIM}server — адреса прокси из SERVER_IPS (сейчас: $(server_ips | paste -sd, - | sed 's/^$/не заданы/'))${NC}"
+    echo -e "  ${DIM}или введите IPv4 вручную, несколько — через запятую${NC}"
     echo ""
 
     while true; do
@@ -460,14 +462,14 @@ tui_nft_ip_settings() {
                     log_error "Не удалось определить корректный IPv4"
                 fi ;;
             *)
-                if validate_ip_literal "$_val"; then
-                    NFT_SERVER_IP="$_val"
+                if _validate_nft_addr_list "$_val" >/dev/null; then
+                    NFT_SERVER_IP="${_val//[\{\} ]/}"
                     save_nft_settings
                     log_success "IP установлен: ${NFT_SERVER_IP}"
                     prompt_apply_nft_rules
                     break
                 else
-                    log_error "Некорректный IPv4. Введите IPv4, Enter, none, clear, - или auto"
+                    log_error "Некорректный адрес. Введите IPv4 или список через запятую, server, Enter, none, clear, - или auto"
                 fi ;;
         esac
     done
@@ -1236,6 +1238,7 @@ tui_zapret2_settings() {
                 echo -e "  ${DIM}Только IPv4: домен в правило nft подставить нельзя.${NC}"
                 echo -e "  ${DIM}Нужен адрес из пакетов: за NAT это частный адрес сервера,${NC}"
                 echo -e "  ${DIM}а не тот, под которым он виден снаружи.${NC}"
+                echo -e "  ${DIM}Несколько адресов — через запятую; «server» — список SERVER_IPS.${NC}"
                 echo -e "  ${DIM}«off» — выключить фильтр, «auto» — определить адрес заново.${NC}"
                 local _fip; read_line _fip "  IP [${ZAPRET2_FILTER_IP:-не задан}]: "
                 case "${_fip,,}" in
@@ -1255,13 +1258,13 @@ tui_zapret2_settings() {
                             log_error "Не удалось определить IPv4 сервера — задайте адрес вручную"
                         fi ;;
                     *)
-                        if zapret2_validate_ipv4 "$_fip"; then
+                        if _validate_nft_addr_list "$_fip" >/dev/null; then
                             ZAPRET2_FILTER_IP="$_fip"; ZAPRET2_FILTER_IP_ENABLED="true"
                             save_nft_settings
                             log_success "Фильтр по IP = ${_fip}"
                             zapret2_update_config
                         else
-                            log_error "Нужен IPv4-адрес, например 1.2.3.4 (домен не подойдёт)"
+                            log_error "Нужен IPv4-адрес или список через запятую, например 1.2.3.4,1.2.3.5 (домен не подойдёт)"
                         fi ;;
                 esac
                 press_any_key ;;

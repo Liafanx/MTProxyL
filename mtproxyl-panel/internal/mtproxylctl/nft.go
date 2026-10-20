@@ -36,7 +36,21 @@ type NftStatus struct {
 	MekoOpt struct {
 		Applied bool `json:"applied"`
 	} `json:"meko_opt"`
-	Params []NftParam `json:"params"`
+	// ServerIPs — выбранные публичные адреса и охват правил; nil у MTProxyL
+	// до 1.7.8.
+	ServerIPs *NftServerIPs `json:"server_ips,omitempty"`
+	Params    []NftParam    `json:"params"`
+}
+
+// NftServerIPs mirrors `mtproxyl ips --json`.
+type NftServerIPs struct {
+	ServerIPs  string   `json:"server_ips"`
+	Selected   []string `json:"selected"`
+	Detected   []string `json:"detected"`
+	ListenPort int      `json:"listen_port"`
+	Nft        string   `json:"nft"`
+	Zapret2    string   `json:"zapret2"`
+	LinksHost  string   `json:"links_host"`
 }
 
 // nftParamKeyRe bounds what may be passed as a parameter name: the key becomes
