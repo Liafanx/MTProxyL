@@ -489,6 +489,10 @@ web_sections_toml() {
     _web_profiles_toml || log_warn "WEB: нет включённых пользователей — движок не примет vhost без профилей" >&2
     # Профилей больше, чем движок разрешает по умолчанию, — поднимаем лимит
     # сами, иначе он откажется стартовать с «WEB profiles exceed».
+    if web_is_reanimator; then
+        _web_target_tuning_toml
+        return 0
+    fi
     local _lim; _lim=$(web_profiles_limit)
     [ "${_lim:-32}" -gt "$WEB_PROFILES_STEP" ] && printf '\n[web.limits]\nmax_profiles = %s\n' "$_lim"
     return 0
@@ -2306,7 +2310,7 @@ web_target_add_profile() {
     # движок на старте — сказать об этом надо здесь, а не в логах падения.
     local _n _lim
     _n=$(web_target_profiles 2>/dev/null | grep -c .)
-    _lim=$(_toml_get_string_in_section "web.limits" "max_profiles" "$_f" 2>/dev/null)
+    _lim=$(_web_target_max_profiles)
     [ -n "$_lim" ] || _lim=32
     if [ "${_n:-0}" -gt "${_lim:-32}" ] && web_target_managed; then
         # Блок наш — лимит поднимаем сами, но применится он только перезапуском.
@@ -2482,6 +2486,7 @@ web_target_foreign_web() {
     _web_target_outside_block | awk '
         { t = $0; sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]*#.*$/, "", t) }
         t ~ /^\[\[web\.vhosts\.profiles\]\]$/ { next }
+        t ~ /^\[web\.(limits|timeouts)\]$/ { next }
         t ~ /^\[+web[].]/ { found = 1 }
         END { exit !found }'
 }
@@ -2506,6 +2511,90 @@ _web_target_has_section() {
     _web_target_outside_block | awk -v s="[$1]" '
         { t = $0; sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]*#.*$/, "", t); sub(/[[:space:]]+$/, "", t) }
         t == s { f = 1 } END { exit !f }'
+}
+
+# ── Лимиты и таймауты WEB у цели ──────────────────────────────
+# Свои оверрайды цели — отдельно от expert.conf своего движка: при смене
+# режима они не должны попасть в чужой конфиг.
+WEB_TARGET_TUNING_SECTIONS="web.limits web.timeouts"
+
+# Файлы, подключённые к конфигу цели через include = "…" (путь от его каталога).
+_web_target_includes() {
+    local _dir _p
+    _dir=$(dirname "${DETECTED_CONFIG_PATH:-.}")
+    _web_target_outside_block | sed -n 's/^[[:space:]]*include[[:space:]]*=[[:space:]]*["'"'"']\([^"'"'"']*\)["'"'"'].*/\1/p' |
+    while IFS= read -r _p; do
+        [ "${_p#/}" = "$_p" ] && _p="${_dir}/${_p}"
+        [ -f "$_p" ] && printf '%s\n' "$_p"
+    done
+}
+
+# Где у цели вне нашего блока объявлена таблица: сам конфиг или include.
+# Вторая такая же таблица в нашем блоке — «duplicate key», цель не стартует.
+_web_target_table_file() {
+    local _s="$1" _f
+    _web_target_has_section "$_s" && { printf '%s\n' "$DETECTED_CONFIG_PATH"; return 0; }
+    while IFS= read -r _f; do
+        [ -n "$_f" ] || continue
+        awk -v s="[$_s]" '
+            { t = $0; sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]*#.*$/, "", t); sub(/[[:space:]]+$/, "", t) }
+            t == s { f = 1 } END { exit !f }' "$_f" && { printf '%s\n' "$_f"; return 0; }
+    done < <(_web_target_includes)
+    return 1
+}
+
+# Ключи секции для цели: «auto|max_profiles|N», если лимит надо поднять под
+# число профилей, и «set|ключ|значение» — оверрайды эксперта.
+_web_target_tuning_lines() {
+    local _s="$1" _lim
+    local EXPERT_OVERRIDES_FILE="$EXPERT_TARGET_OVERRIDES_FILE"
+    if [ "$_s" = "web.limits" ] && [ -z "$(get_expert_override_value web.limits max_profiles)" ]; then
+        _lim=$(web_profiles_limit)
+        [ "${_lim:-32}" -gt "$WEB_PROFILES_STEP" ] && printf 'auto|max_profiles|%s\n' "$_lim"
+    fi
+    [ -f "$EXPERT_OVERRIDES_FILE" ] || return 0
+    awk -F'|' -v s="$_s" '$1 == s && $2 != "" { print "set|" $2 "|" $3 }' "$EXPERT_OVERRIDES_FILE"
+}
+
+# Таблицы, которых у цели нет, — внутрь нашего блока.
+_web_target_tuning_toml() {
+    local _s _src _k _v _hdr
+    for _s in $WEB_TARGET_TUNING_SECTIONS; do
+        _web_target_table_file "$_s" >/dev/null && continue
+        _hdr=""
+        while IFS='|' read -r _src _k _v; do
+            [ -n "$_k" ] || continue
+            [ -n "$_hdr" ] || { _hdr=1; printf '\n[%s]\n' "$_s"; }
+            printf '%s = %s\n' "$_k" "$(_expert_toml_value "$_s" "$_k" "$_v")"
+        done < <(_web_target_tuning_lines "$_s")
+    done
+}
+
+# Таблицу хозяина (в конфиге или include) не дублируем, а дописываем в неё.
+# Его max_profiles не понижаем: поднимаем, только если профилей больше.
+_web_target_merge_tuning() {
+    local _s _f _src _k _v _cur
+    for _s in $WEB_TARGET_TUNING_SECTIONS; do
+        _f=$(_web_target_table_file "$_s") || continue
+        while IFS='|' read -r _src _k _v; do
+            [ -n "$_k" ] || continue
+            if [ "$_src" = "auto" ]; then
+                _cur=$(_toml_get_string_in_section "$_s" "$_k" "$_f" 2>/dev/null)
+                [[ "$_cur" =~ ^[0-9]+$ ]] && [ "$_cur" -ge "$_v" ] && continue
+            fi
+            _toml_safe_set "$_k" "$(_expert_toml_value "$_s" "$_k" "$_v")" "$_s" "$_f" || {
+                log_error "Не удалось записать ${_k} в [${_s}] (${_f})"
+                return 1
+            }
+        done < <(_web_target_tuning_lines "$_s")
+    done
+}
+
+# max_profiles цели: из таблицы хозяина или include, иначе из нашего блока.
+_web_target_max_profiles() {
+    local _f
+    _f=$(_web_target_table_file web.limits) || _f="${DETECTED_CONFIG_PATH:-}"
+    _toml_get_string_in_section "web.limits" "max_profiles" "$_f" 2>/dev/null
 }
 
 # Включённые пользователи цели с уникальным секретом — по профилю на каждого.
@@ -2677,6 +2766,7 @@ _web_target_write_now() {
             "$(web_trusted_proxy_cidrs_toml "${WEB_TRUSTED_PROXY_CIDRS:-127.0.0.1/32}")" server WEB_TARGET_PREV_PP_CIDRS
         WEB_TARGET_PREV_SAVED="true"
     fi
+    _web_target_merge_tuning || return 1
     local _block
     _block=$(
         echo ""

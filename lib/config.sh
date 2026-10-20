@@ -692,6 +692,10 @@ TOML_EOF
 # полном старте, поэтому здесь честно говорим о restart, а не рапортуем
 # успех, которого не было.
 _expert_generate_and_apply() {
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        _expert_target_apply
+        return $?
+    fi
     generate_telemt_config || { log_error "Ошибка генерации конфига"; return 1; }
     log_success "Конфиг обновлён"
     if ! is_proxy_running; then
@@ -707,6 +711,45 @@ _expert_generate_and_apply() {
     fi
 }
 
+# Память WEB для VPS до 1 ГБ: по умолчанию буферы движка больше всей памяти
+# сервера. memory_envelope_bytes вмещает сумму резервов — иначе движок
+# отвергнет конфиг. Проверено на telemt 3.5.13–3.5.14.
+EXPERT_PRESET_WEB_SMALL="pending_bytes_global=134217728 pending_bytes_per_session=16777216 \
+pending_bytes_per_lane=4194304 websocket_bytes_global=67108864 max_body_readers=16 \
+max_body_bytes_global=33554432 debug_bytes_global=16777216 max_sessions_global=64 \
+memory_envelope_bytes=671088640"
+
+expert_preset() {
+    local _kv
+    case "$1" in
+        web-small)
+            for _kv in $EXPERT_PRESET_WEB_SMALL; do
+                save_expert_override web.limits "${_kv%%=*}" "${_kv#*=}" || return 1
+            done
+            log_success "Пресет web-small: web.limits для VPS до 1 ГБ" ;;
+        web-reset)
+            for _kv in $EXPERT_PRESET_WEB_SMALL; do
+                delete_expert_override web.limits "${_kv%%=*}" || return 1
+            done
+            log_success "Лимиты пресета web-small сняты — движок берёт свои по умолчанию" ;;
+        *)
+            log_error "Использование: mtproxyl expert preset web-small | web-reset"
+            return 1 ;;
+    esac
+}
+
+# Reanimator: оверрайды живут только в блоке WEB цели — пересобираем его.
+_expert_target_apply() {
+    if ! web_target_managed; then
+        log_info "Цель получит значения при включении WEB: mtproxyl web enable"
+        return 0
+    fi
+    _web_target_write || { log_error "Не удалось пересобрать блок WEB в конфиге цели"; return 1; }
+    log_success "Блок WEB в конфиге цели обновлён"
+    log_warn "Лимиты и таймауты WEB цель читает только при старте"
+    log_info "Чтобы вступили в силу: mtproxyl restart"
+}
+
 expert_apply_now() {
     _expert_generate_and_apply
 }
@@ -719,8 +762,25 @@ _expert_apply_prompt() {
 
 handle_expert_command() {
     local subcmd="${1:-list}"; shift 2>/dev/null || true
-    [ "$subcmd" = "list" ] || _require_manager_mode || return 1
-    [ "$subcmd" = "list" ] || _require_no_superexpert || return 1
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        # Конфигом цели владеет её хозяин: из оверрайдов ей достаются только
+        # лимиты и таймауты WEB — их пишем в наш блок.
+        local EXPERT_OVERRIDES_FILE="$EXPERT_TARGET_OVERRIDES_FILE"
+        case "$subcmd" in
+            list|apply|preset|help|-h|--help) ;;
+            set|clear)
+                local _a _sec=""
+                for _a in "$@"; do [ "${_a#--}" = "$_a" ] && { _sec="$_a"; break; }; done
+                if [ -n "$_sec" ] && [ "$_sec" != "all" ] && ! [[ " $WEB_TARGET_TUNING_SECTIONS " == *" $_sec "* ]]; then
+                    log_error "В режиме reanimator доступны только секции: ${WEB_TARGET_TUNING_SECTIONS// /, }"
+                    log_info "Они попадают в блок WEB в конфиге цели"
+                    return 1
+                fi ;;
+            *) _require_manager_mode || return 1 ;;
+        esac
+    else
+        [ "$subcmd" = "list" ] || _require_no_superexpert || return 1
+    fi
     case "$subcmd" in
         list)
             case "${1:-}" in
@@ -797,6 +857,11 @@ handle_expert_command() {
         apply)
             check_root
             expert_apply_now ;;
+        preset)
+            check_root
+            expert_preset "${1:-}" || return 1
+            [ "${2:-}" = "--no-apply" ] && return 0
+            _expert_apply_prompt ;;
         edit)
             check_root
             local config; config=$(engine_config_path)
@@ -815,6 +880,7 @@ handle_expert_command() {
             echo -e "    ${GREEN}expert set --raw${NC} <секция> <ключ> <знач>  Параметр вне каталога, без проверки"
             echo -e "    ${GREEN}expert clear${NC} <секция> <ключ> | all      Удалить"
             echo -e "    ${GREEN}expert apply${NC}                           Пересобрать конфиг и применить"
+            echo -e "    ${GREEN}expert preset${NC} web-small | web-reset     Память WEB для VPS до 1 ГБ / вернуть"
             echo -e "    ${DIM}У set/clear есть --no-apply: отложить применение${NC}"
             echo -e "    ${GREEN}expert edit${NC}                            Редактор" ;;
     esac

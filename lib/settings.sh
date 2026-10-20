@@ -727,7 +727,7 @@ load_settings() {
     if [ "$_st_v" != "${VERSION:-}" ] && declare -F zapret2_refresh_if_needed >/dev/null; then
         ( load_nft_settings && zapret2_refresh_if_needed ) >/dev/null 2>&1 || true
     fi
-    [ "${EUID:-1}" -eq 0 ] && printf '%s %s\n' "${EPOCHSECONDS:-0}" "${VERSION:-}" > "$_stamp" 2>/dev/null
+    [ "${EUID:-1}" -eq 0 ] && printf '%s %s\n' "${EPOCHSECONDS:-0}" "${VERSION:-}" 2>/dev/null > "$_stamp"
     return 0
 }
 

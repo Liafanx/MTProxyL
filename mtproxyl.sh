@@ -234,7 +234,7 @@ cli_main() {
             ;;
 
         expert)
-            load_settings; load_secrets; load_upstreams
+            load_settings; load_secrets; load_upstreams; load_detect_settings
             handle_expert_command "$@"
             ;;
 
