@@ -61,6 +61,24 @@ fi
         ' _ "$PWD" "$d"
     }
     ok "лимитер: правило с ошибкой не снимает рабочие" 'nft_apply_bad'
+    # all: адреса — при запуске скрипта (после перезагрузки их могло стать больше).
+    nft_dyn() {
+        unshare -n bash -c '
+            cd "$1"; INSTALL_DIR="$2"
+            source lib/colors.sh; source lib/utils.sh; source lib/nft.sh
+            ip() { printf "2: eth0    inet 203.0.113.10/24 scope global eth0\n"; }
+            NFT_SCRIPT_FILE="$2/dyn.sh"; NFT_MODE=smart; NFT_EXTRA_COUNT=0; NFT_SERVER_IP=server; SERVER_IPS=all
+            generate_nft_script; unset -f ip
+            grep -qF "\${SERVER_SET:+ip daddr \$SERVER_SET }tcp dport" "$NFT_SCRIPT_FILE" || exit 2
+            sh "$NFT_SCRIPT_FILE" >/dev/null 2>&1 || exit 3
+            nft list ruleset | grep -q "ip daddr 203.0.113.10 tcp dport" || exit 4
+            ip link add d0 type dummy && ip link set d0 up
+            ip addr add 198.51.100.9/24 dev d0; ip addr add 198.51.100.10/24 dev d0; ip addr add 10.1.1.1/24 dev d0
+            sh "$NFT_SCRIPT_FILE" >/dev/null 2>&1 || exit 5
+            nft list ruleset | grep -q "ip daddr { 198.51.100.9, 198.51.100.10 } tcp dport" || exit 6
+        ' _ "$PWD" "$d"
+    }
+    ok "лимитер: all — адреса при запуске, без них — сохранённые" 'nft_dyn'
 SERVER_IPS=""
 generate_nft_script
 ok "лимитер: SERVER_IPS пуст — без привязки" '! grep -q "ip daddr" "$NFT_SCRIPT_FILE"'
@@ -70,6 +88,40 @@ ZAPRET2_FILTER_IP_ENABLED=true; ZAPRET2_FILTER_IP=server
 ok "zapret2: server → набор" '[ "$(zapret2_ip_match daddr)" = "ip daddr { 10.0.0.5, 10.0.0.6 } " ]'
 ZAPRET2_FILTER_IP=10.0.0.5
 ok "zapret2: один адрес как раньше" '[ "$(zapret2_ip_match saddr)" = "ip saddr 10.0.0.5 " ]'
+
+if command -v nft >/dev/null && command -v unshare >/dev/null && [ "$(id -u)" = 0 ]; then
+    z2_apply() {
+        unshare -n bash -c '
+            cd "$1"; INSTALL_DIR="$2"
+            source lib/colors.sh; source lib/utils.sh; source lib/nft.sh
+            ensure_nftables_installed() { :; }; zapret2_apply_sysctl() { :; }; zapret2_is_bridge_target() { return 1; }
+            ZAPRET2_FILTER_IP_ENABLED=true; PROXY_PORT=443; SERVER_IPS=203.0.113.10,203.0.113.11
+            ZAPRET2_FILTER_IP=server; zapret2_apply_nft >/dev/null 2>&1 || exit 2
+            nft list ruleset | grep -q "ip daddr { 203.0.113.10, 203.0.113.11 } tcp dport 443" || exit 3
+            ZAPRET2_FILTER_IP=999.1.1.1; zapret2_apply_nft >/dev/null 2>&1 && exit 4
+            nft list ruleset | grep -q "ip daddr { 203.0.113.10, 203.0.113.11 } tcp dport 443" || exit 5
+        ' _ "$PWD" "$d"
+    }
+    ok "zapret2: набор применяется, правило с ошибкой не снимает рабочие" 'z2_apply'
+    # Скрипт запуска zapret2 при all тоже берёт адреса при старте.
+    z2_dyn() {
+        unshare -m -n bash -c '
+            mount -t tmpfs t /usr/local/sbin; mount -t tmpfs t /etc/systemd/system
+            cd "$1"; INSTALL_DIR="$2"
+            source lib/colors.sh; source lib/utils.sh; source lib/nft.sh
+            zapret2_is_bridge_target() { return 1; }; systemctl() { :; }
+            ZAPRET2_FILTER_IP_ENABLED=true; ZAPRET2_FILTER_IP=server; SERVER_IPS=all; PROXY_PORT=443
+            zapret2_write_service >/dev/null 2>&1
+            f=/usr/local/sbin/mtproxyl-zapret2-start.sh
+            bash -n "$f" || exit 2
+            grep -qF "DADDR=\"\${Z2_SET:+ip daddr \$Z2_SET }\"" "$f" || exit 3
+            ip link add d0 type dummy && ip link set d0 up && ip addr add 198.51.100.9/24 dev d0
+            out=$(sed -n "/^Z2_SET=/,/^DADDR=/p" "$f" | bash -c "cat > /tmp/z2.$$; . /tmp/z2.$$; rm -f /tmp/z2.$$; echo \"\$DADDR\"")
+            [ "$out" = "ip daddr 198.51.100.9 " ] || { echo "got [$out]" >&2; exit 4; }
+        ' _ "$PWD" "$d"
+    }
+    ok "zapret2: all — адреса при запуске скрипта" 'z2_dyn'
+fi
 
 # WEB: домен ведёт на второй выбранный адрес — он и есть public_addr,
 # и предполёт не требует перевести A-запись на основной.

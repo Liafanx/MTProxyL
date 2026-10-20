@@ -303,15 +303,16 @@ server_ips_show() {
     if [ "${ZAPRET2_APPLIED:-false}" != "true" ]; then _z="не установлен"
     elif [ "${ZAPRET2_FILTER_IP_ENABLED:-false}" = "true" ]; then _z=$(_server_ips_rule_text "${ZAPRET2_FILTER_IP:-}")
     else _z="все IP сервера"; fi
-    _links=$(proxy_link_host 2>/dev/null)
     if [ "${1:-}" = "--json" ]; then
-        printf '{"server_ips":"%s","selected":[%s],"detected":[%s],"nft":"%s","zapret2":"%s","links_host":"%s"}\n' \
+        # Без сетевых запросов: JSON входит в nft status, его опрашивает панель.
+        printf '{"server_ips":"%s","selected":[%s],"detected":[%s],"listen_port":%s,"nft":"%s","zapret2":"%s","links_host":"%s"}\n' \
             "$(json_escape "${SERVER_IPS:-}")" \
             "$(server_ips | sed 's/.*/"&"/' | paste -sd, -)" \
             "$(server_detect_public_ips | sed 's/.*/"&"/' | paste -sd, -)" \
-            "$(json_escape "$_nft")" "$(json_escape "$_z")" "$(json_escape "${_links:-}")"
+            "${PROXY_PORT:-443}" "$(json_escape "$_nft")" "$(json_escape "$_z")" "$(json_escape "${CUSTOM_IP:-}")"
         return 0
     fi
+    _links=$(proxy_link_host 2>/dev/null)
     echo ""
     echo -e "  ${BOLD}Публичные IP прокси${NC}"
     case "${SERVER_IPS:-}" in
@@ -336,11 +337,34 @@ server_ips_show() {
     echo ""
 }
 
+# Ссылки пользователя на каждый выбранный адрес: секрет тот же, меняется
+# только server=. WEB-ссылки идут по домену — их не размножаем.
+server_ips_links() {
+    local _label="${1:-}" _ips _out _l _ip
+    [ -n "$_label" ] || { log_error "Использование: mtproxyl ips links <пользователь>"; return 1; }
+    _ips=$(server_ips)
+    [ -n "$_ips" ] || { log_error "Адреса не выбраны: mtproxyl ips set all | <ip,ip>"; return 1; }
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        _out=$(handle_target_user_command link "$_label" 2>/dev/null)
+    else
+        _out=$(get_proxy_links "$_label" 2>/dev/null)
+    fi
+    _out=$(grep -o 'tg://proxy?[^[:space:]]*' <<< "$_out" | awk '!s[$0]++')
+    [ -n "$_out" ] || { log_error "У '${_label}' нет ссылок MTProto (пользователь не найден или выключен?)"; return 1; }
+    while IFS= read -r _ip; do
+        echo -e "  ${BOLD}${_ip}${NC}"
+        while IFS= read -r _l; do
+            printf '    %s\n' "$(sed "s/\([?&]server=\)[^&]*/\1${_ip}/" <<< "$_l")"
+        done <<< "$_out"
+    done <<< "$_ips"
+}
+
 handle_ips_command() {
     case "${1:-show}" in
         show|"")  server_ips_show ;;
         --json)   server_ips_show --json ;;
         detect)   server_detect_public_ips ;;
+        links)    server_ips_links "${2:-}" ;;
         set)      check_root; server_ips_set "${2:-}" ;;
         none|clear) check_root; server_ips_set "" ;;
         *)
@@ -348,6 +372,7 @@ handle_ips_command() {
             echo -e "    ${GREEN}ips${NC}                          Выбранные адреса и охват модулей"
             echo -e "    ${GREEN}ips --json${NC}                   То же в JSON"
             echo -e "    ${GREEN}ips detect${NC}                   Публичные IPv4 на интерфейсах"
+            echo -e "    ${GREEN}ips links${NC} <пользователь>       Ссылки на каждый выбранный адрес"
             echo -e "    ${GREEN}ips set${NC} all | <ip,ip>        Выбрать адреса"
             echo -e "    ${GREEN}ips none${NC}                     Один адрес, как раньше"
             echo -e "    ${DIM}NFT и Zapret2 берут список при значении «server»: mtproxyl nft set NFT_SERVER_IP server${NC}" ;;

@@ -341,7 +341,9 @@ prompt_apply_nft_rules() {
 # ── Генерация NFT скрипта ─────────────────────────────────────
 generate_nft_script() {
     local _ip=""
-    if [ -n "${NFT_SERVER_IP:-}" ] && ! _ip=$(nft_addr_spec "$NFT_SERVER_IP"); then
+    if server_ips_dynamic "${NFT_SERVER_IP:-}"; then
+        _ip='$SERVER_SET'
+    elif [ -n "${NFT_SERVER_IP:-}" ] && ! _ip=$(nft_addr_spec "$NFT_SERVER_IP"); then
         _ip=""
         log_warn "NFT: список адресов SERVER_IPS пуст — правило для всех IP сервера"
     fi
@@ -368,6 +370,13 @@ nft delete table inet "\$IOS2_TABLE" 2>/dev/null || true
 nft add table inet "\$TABLE"
 nft "add chain inet \$TABLE input { type filter hook input priority 0; policy accept; }"
 NFTEOF
+
+    # SERVER_IPS=all: адреса — при запуске скрипта, а не на момент записи.
+    # Пусто и при запуске — правило без привязки к адресу.
+    if server_ips_dynamic "${NFT_SERVER_IP:-}"; then
+        server_ips_sh SERVER_SET >> "$NFT_SCRIPT_FILE"
+        _ip_match='${SERVER_SET:+ip daddr $SERVER_SET }'
+    fi
 
     if [ "$NFT_MODE" = "smart" ]; then
         _generate_smart_rules "$_ip_match" "$_port" "$_timeout"
@@ -414,8 +423,8 @@ IOS2EOF
 
         if [ -n "$_ip" ]; then
             cat >> "$NFT_SCRIPT_FILE" << IOS2IPEOF
-nft "add rule inet \$IOS2_TABLE mangle_pre ip daddr ${_ip} tcp dport ${_ios2_ext} tcp flags & (syn | rst) == syn tcp option maxseg size set ${_ios2_mss} counter comment \\"mtproxyl_ios2_mss\\""
-nft "add rule inet \$IOS2_TABLE nat_pre ip daddr ${_ip} tcp dport ${_ios2_ext} counter redirect to :${_ios2_target} comment \\"mtproxyl_ios2_redirect\\""
+nft "add rule inet \$IOS2_TABLE mangle_pre ${_ip_match}tcp dport ${_ios2_ext} tcp flags & (syn | rst) == syn tcp option maxseg size set ${_ios2_mss} counter comment \\"mtproxyl_ios2_mss\\""
+nft "add rule inet \$IOS2_TABLE nat_pre ${_ip_match}tcp dport ${_ios2_ext} counter redirect to :${_ios2_target} comment \\"mtproxyl_ios2_redirect\\""
 IOS2IPEOF
         else
             cat >> "$NFT_SCRIPT_FILE" << IOS2NIPEOF
@@ -1860,9 +1869,17 @@ zapret2_write_service() {
     local _is_precise="false"
     [ "${DETECT_BRIDGE_STRATEGY:-simple}" = "precise" ] && _is_precise="true"
 
+    local _z2_dyn="" _z2_sa _z2_da
+    _z2_sa=$(zapret2_ip_match saddr); _z2_da=$(zapret2_ip_match daddr)
+    if [ "${ZAPRET2_FILTER_IP_ENABLED:-false}" = "true" ] && server_ips_dynamic "${ZAPRET2_FILTER_IP:-}"; then
+        _z2_dyn=$(server_ips_sh Z2_SET)
+        _z2_sa='${Z2_SET:+ip saddr $Z2_SET }'; _z2_da='${Z2_SET:+ip daddr $Z2_SET }'
+    fi
+
     cat > "$_nft_script" << NFTSTART
 #!/bin/bash
 set -e
+${_z2_dyn}
 
 TABLE="${ZAPRET2_NFT_TABLE}"
 FWMARK="${ZAPRET2_FWMARK}"
@@ -1880,8 +1897,8 @@ IS_PRECISE="${_is_precise}"
 CONTAINER="${DETECTED_CONTAINER}"
 # Адрес сервера в правилах: очередь берёт трафик только нашего прокси.
 # Пусто — фильтра по IP нет.
-SADDR="$(zapret2_ip_match saddr)"
-DADDR="$(zapret2_ip_match daddr)"
+SADDR="${_z2_sa}"
+DADDR="${_z2_da}"
 # Интерфейсы, чей трафик проходит мимо очереди (туннели VPN).
 EXCLUDE_IFACES="${ZAPRET2_EXCLUDE_IFACES}"
 
@@ -2229,8 +2246,29 @@ _zapret2_iface_accept() {
     done
 }
 
+# Сначала те же команды прогоняются в пустом сетевом пространстве: таблица
+# снимается целиком, и правило с ошибкой оставило бы очередь без правил.
 zapret2_apply_nft() {
     ensure_nftables_installed || return 1
+    if unshare -n true 2>/dev/null; then
+        local _rec; _rec=$(mktemp) || return 1
+        (
+            zapret2_apply_sysctl() { :; }
+            log_success() { :; }; log_info() { :; }; log_warn() { :; }
+            nft() { [ "$1" = delete ] && return 0; { printf '%q ' nft "$@"; echo; } >> "$_rec"; }
+            _zapret2_apply_nft_now
+        ) >/dev/null 2>&1
+        if ! unshare -n bash -e "$_rec" >/dev/null 2>&1; then
+            rm -f "$_rec"
+            log_error "Новые правила Zapret2 не прошли проверку — оставлены прежние"
+            return 1
+        fi
+        rm -f "$_rec"
+    fi
+    _zapret2_apply_nft_now
+}
+
+_zapret2_apply_nft_now() {
     zapret2_apply_sysctl
 
     local _table="${ZAPRET2_NFT_TABLE}"
@@ -3048,6 +3086,7 @@ nft_status_json() {
         "$_zapret_active"
     printf '"meko_opt":{"applied":%s},' \
         "$([ "${MEKO_OPT_APPLIED:-false}" = "true" ] && echo true || echo false)"
+    printf '"server_ips":%s,' "$(server_ips_show --json 2>/dev/null || echo null)"
     printf '"params":'
     nft_settable_json | tr -d '\n'
     printf '}\n'

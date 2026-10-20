@@ -191,6 +191,7 @@ cli_main() {
 
         ips)
             load_settings; load_detect_settings
+            [ "${1:-}" = "links" ] && load_secrets
             handle_ips_command "$@"
             ;;
 

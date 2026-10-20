@@ -387,25 +387,32 @@ get_public_ip() {
 # Слушают MTProto и WEB на всех адресах сразу, список сужает только правила
 # (NFT, Zapret2) и сверку A-записи WEB. Ссылки остаются на одном адресе.
 
-ipv4_is_public() {
-    validate_ip_literal "$1" 2>/dev/null || return 1
-    case "$1" in
-        0.*|10.*|127.*|169.254.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*) return 1 ;;
-        100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) return 1 ;;
-        22[4-9].*|2[3-5][0-9].*) return 1 ;;
-    esac
-    return 0
-}
-
 # Публичные IPv4 на интерфейсах сервера, мимо туннелей и мостов: адрес
 # VPN или docker-сети прокси не обслуживает.
+# Тот же отбор встраивается в скрипты правил (server_ips_sh) — держим одну копию.
+_SERVER_IPS_AWK='$2 ~ /^(docker|br-|veth|virbr|wg|awg|tun|tap|warp|tailscale|zt|lxc|cni|flannel|cali|kube)/ { next }
+{ split($4, a, "/"); ip = a[1]; if (split(ip, o, ".") != 4) next
+  if (o[1] == 0 || o[1] == 10 || o[1] == 127 || o[1] >= 224) next
+  if ((o[1] == 169 && o[2] == 254) || (o[1] == 192 && o[2] == 168)) next
+  if ((o[1] == 172 && o[2] >= 16 && o[2] <= 31) || (o[1] == 100 && o[2] >= 64 && o[2] <= 127)) next
+  if (!seen[ip]++) print ip }'
+
 server_detect_public_ips() {
-    ip -4 -o addr show scope global 2>/dev/null | awk '
-        $2 ~ /^(docker|br-|veth|virbr|wg|awg|tun|tap|warp|tailscale|zt|lxc|cni|flannel|cali|kube)/ { next }
-        { split($4, a, "/"); print a[1] }' | while IFS= read -r _a; do
-        ipv4_is_public "$_a" && printf '%s\n' "$_a"
-    done | awk '!seen[$0]++'
+    ip -4 -o addr show scope global 2>/dev/null | awk "$_SERVER_IPS_AWK"
 }
+
+# Кусок sh для скриптов правил: при SERVER_IPS=all адреса определяются при
+# каждом запуске (после перезагрузки их могло стать больше); не нашлось —
+# берётся список на момент записи скрипта.
+server_ips_sh() {
+    local _var="$1" _fb
+    _fb=$(server_ips | nft_addr_set)
+    printf '%s=$(ip -4 -o addr show scope global 2>/dev/null | awk '"'"'%s'"'"' | paste -sd, - | sed "s/,/, /g")\n' "$_var" "$_SERVER_IPS_AWK"
+    printf 'case "$%s" in *,*) %s="{ $%s }" ;; "") %s='"'"'%s'"'"' ;; esac\n' "$_var" "$_var" "$_var" "$_var" "$_fb"
+}
+
+# Правила берут адреса при запуске: «server» при SERVER_IPS=all.
+server_ips_dynamic() { [ "${1:-}" = "server" ] && [ "${SERVER_IPS:-}" = "all" ]; }
 
 # Выбранные адреса, по одному в строке; пусто — список не задан.
 server_ips() {

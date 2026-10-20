@@ -742,7 +742,22 @@ export interface NftStatus {
   ios_fix_v2: { enabled: boolean };
   zapret2: { applied: boolean; service_active: boolean };
   meko_opt: { applied: boolean };
+  /** Нет у MTProxyL до 1.7.8. */
+  server_ips?: NftServerIPs;
   params: NftParam[];
+}
+
+/** `mtproxyl ips --json`: выбранные публичные адреса и охват правил. */
+export interface NftServerIPs {
+  /** "" — один адрес, как раньше; "all" — все с интерфейсов; иначе список. */
+  server_ips: string;
+  selected: string[];
+  detected: string[];
+  listen_port: number;
+  nft: string;
+  zapret2: string;
+  /** CUSTOM_IP; пусто — адрес определяется сам. */
+  links_host: string;
 }
 
 export type NftAction =
