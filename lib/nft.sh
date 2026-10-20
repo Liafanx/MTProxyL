@@ -1974,6 +1974,9 @@ else
     nft "add rule ip \$TABLE prerouting meta mark and \$FWMARK == 0x00000000 \${DADDR}tcp dport \$PORT counter queue num \$QNUM bypass"
 fi
 
+# Потолку нужен учёт пакетов conntrack; новые ядра включают его сами.
+[ -z "\$LIMIT_MATCH" ] || sysctl -w net.netfilter.nf_conntrack_acct=1 >/dev/null 2>&1 || true
+
 echo "MTProxyL: NFT table \$TABLE applied (ports=\$PORT qnum=\$QNUM bridge=\$IS_BRIDGE precise=\$IS_PRECISE ip=\${SADDR:-any} skip=\${EXCLUDE_IFACES:-none})"
 
 $(zapret2_start_exec_lines)
@@ -2346,6 +2349,8 @@ _zapret2_apply_nft_now() {
     [ -z "$(zapret2_limit_match)" ] || nft "add rule ip $_table prerouting $(zapret2_limit_match) counter accept"
     nft "add rule ip $_table prerouting meta mark and $_fwmark == 0x00000000 ${_da}tcp dport ${_port} counter queue num $(zapret2_queue_spec) bypass"
 
+    zapret2_conntrack_acct
+
     local _ip_note=" ip=все"
     [ -n "$_sa" ] && _ip_note=" ip=${ZAPRET2_FILTER_IP}"
     local _if_note=""
@@ -2524,11 +2529,19 @@ zapret2_update_config() {
     fi
 }
 
+# Потолку пакетов (ct packets) нужен учёт conntrack: без него правило
+# молча не срабатывает. Новые ядра включают учёт сами, старые — нет.
+zapret2_conntrack_acct() {
+    [ -n "$(zapret2_limit_match)" ] || return 0
+    sysctl -w net.netfilter.nf_conntrack_acct=1 >/dev/null 2>&1 || true
+}
+
 # После обновления MTProxyL: работающий zapret2 со старой раскладкой
 # очередей (один экземпляр на многоядерном сервере) пересобираем.
 zapret2_refresh_if_needed() {
     [ "${ZAPRET2_APPLIED:-false}" = "true" ] || return 0
     systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null || return 0
+    zapret2_conntrack_acct
     local _script="/usr/local/sbin/mtproxyl-zapret2-start.sh"
     grep -qxF "QNUM=\"$(zapret2_queue_spec)\"" "$_script" 2>/dev/null \
         && grep -qxF "LIMIT_MATCH=\"$(zapret2_limit_match)\"" "$_script" 2>/dev/null && return 0

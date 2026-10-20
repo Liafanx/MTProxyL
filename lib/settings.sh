@@ -718,7 +718,7 @@ load_settings() {
     # Починка юнитов и логов — десятки форков; хватает раза в 10 минут
     # и сразу после смены версии.
     local _stamp="${INSTALL_DIR}/.maint-stamp" _st_t=0 _st_v=""
-    read -r _st_t _st_v < "$_stamp" 2>/dev/null || true
+    read -r _st_t _st_v 2>/dev/null < "$_stamp" || true
     [[ "$_st_t" =~ ^[0-9]+$ ]] || _st_t=0
     if [ "$_st_v" = "${VERSION:-}" ] && [ $(( ${EPOCHSECONDS:-0} - _st_t )) -ge 0 ] \
        && [ $(( ${EPOCHSECONDS:-0} - _st_t )) -lt 600 ]; then
