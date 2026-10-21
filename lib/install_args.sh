@@ -67,6 +67,9 @@ install_args_help() {
     --server-ips all|<ip,ip>   публичные IPv4 прокси: правила NFT только для них
     --sni <домен>              FakeTLS домен (по умолчанию autoscout24.ru)
     --secret [метка:]<32 hex>  секрет; можно повторять; без него сгенерируем
+    --user 'метка|ключ|создан|вкл|соед|IP|квота|срок|заметка|метка|скорость'
+                               пользователь с лимитами — строка secrets.conf;
+                               можно повторять, вместе с --secret
     --ad-tag <32 hex>          рекламная метка
     --mask on|off              маскировка трафика (по умолчанию on)
     --sni-policy <политика>    mask, drop, accept или reject_handshake
@@ -216,6 +219,7 @@ _install_args_parse() {
             --cpus)          _IA_CPUS="$_v" ;;
             --memory|--ram)  _IA_MEMORY="$_v" ;;
             --secret)        _IA_SECRETS+=("$_v") ;;
+            --user)          _IA_SECRETS+=("$_v") ;;
             --zapret2)
                 case "${_v,,}" in
                     yes|y|да|true|on)   _FIX_ANS_ZAPRET2="" ;;
@@ -371,8 +375,7 @@ _ia_shaping_validate() {
             [ "$name" = default ] && known=true
         else
             for secret in "${_IA_SECRETS[@]}"; do
-                [ "${secret%:*}" = "$secret" ] && value=default || value="${secret%:*}"
-                [ "$name" = "$value" ] && known=true
+                [ "$name" = "$(_ia_secret_label "$secret")" ] && known=true
             done
         fi
         [ "$known" = true ] || { log_error "Профиля $name нет среди --secret"; return 1; }
@@ -495,8 +498,19 @@ _install_args_validate() {
         _ok=false
     fi
 
-    local _s _label _key
+    local _s _label _key _labels=" "
+    local _IMP_L _IMP_K _IMP_CR _IMP_EN _IMP_MC _IMP_MI _IMP_Q _IMP_EX _IMP_N _IMP_AT _IMP_RT
     for _s in "${_IA_SECRETS[@]}"; do
+        _label=$(_ia_secret_label "$_s")
+        if [[ "$_labels" == *" ${_label} "* ]]; then
+            log_error "Пользователь ${_label} задан дважды"; _ok=false
+        fi
+        _labels+="${_label} "
+        if [[ "$_s" == *"|"* ]]; then
+            _secret_parse_line "$_s" \
+                || { log_error "--user '${_s%%|*}': формат «метка|ключ|…» как в secrets.conf, ключ — 32 hex"; _ok=false; }
+            continue
+        fi
         _key="${_s##*:}"; _label="${_s%:*}"
         [ "$_label" = "$_s" ] && _label="default"
         if ! [[ "$_key" =~ ^[0-9a-fA-F]{32}$ ]]; then
@@ -952,22 +966,40 @@ _install_args_deps() {
 
 # Секреты из аргументов сохраняем как есть — в этом весь смысл переезда:
 # у клиентов ссылки не меняются.
+# Метка из --secret «метка:ключ» / «ключ» или из --user «метка|ключ|…».
+_ia_secret_label() {
+    local _s="$1"
+    if [[ "$_s" == *"|"* ]]; then echo "${_s%%|*}"; return 0; fi
+    [ "${_s%:*}" = "$_s" ] && echo default || echo "${_s%:*}"
+}
+
 _install_args_secrets() {
     SECRETS_LABELS=(); SECRETS_KEYS=(); SECRETS_CREATED=(); SECRETS_ENABLED=()
     SECRETS_MAX_CONNS=(); SECRETS_MAX_IPS=(); SECRETS_QUOTA=(); SECRETS_EXPIRES=(); SECRETS_NOTES=()
+    SECRETS_ADTAG=(); SECRETS_RATE=()
 
     local _s _label _key _now; _now=$(date +%s)
+    local _IMP_L _IMP_K _IMP_CR _IMP_EN _IMP_MC _IMP_MI _IMP_Q _IMP_EX _IMP_N _IMP_AT _IMP_RT
     if [ ${#_IA_SECRETS[@]} -eq 0 ]; then
         _IA_SECRETS=("default:$(generate_secret)")
         log_info "Секрет не задан — сгенерировали новый"
     fi
     for _s in "${_IA_SECRETS[@]}"; do
+        if [[ "$_s" == *"|"* ]] && _secret_parse_line "$_s"; then
+            SECRETS_LABELS+=("$_IMP_L"); SECRETS_KEYS+=("${_IMP_K,,}")
+            SECRETS_CREATED+=("$_IMP_CR"); SECRETS_ENABLED+=("$_IMP_EN")
+            SECRETS_MAX_CONNS+=("$_IMP_MC"); SECRETS_MAX_IPS+=("$_IMP_MI")
+            SECRETS_QUOTA+=("$_IMP_Q"); SECRETS_EXPIRES+=("$_IMP_EX"); SECRETS_NOTES+=("$_IMP_N")
+            SECRETS_ADTAG+=("$_IMP_AT"); SECRETS_RATE+=("$_IMP_RT")
+            continue
+        fi
         _key="${_s##*:}"; _label="${_s%:*}"
         [ "$_label" = "$_s" ] && _label="default"
         SECRETS_LABELS+=("$_label"); SECRETS_KEYS+=("${_key,,}")
         SECRETS_CREATED+=("$_now"); SECRETS_ENABLED+=("true")
         SECRETS_MAX_CONNS+=("0"); SECRETS_MAX_IPS+=("0")
         SECRETS_QUOTA+=("0"); SECRETS_EXPIRES+=("0"); SECRETS_NOTES+=("")
+        SECRETS_ADTAG+=(""); SECRETS_RATE+=("")
     done
     log_success "Секретов перенесено: ${#SECRETS_LABELS[@]}"
 }

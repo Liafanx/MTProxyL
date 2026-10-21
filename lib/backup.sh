@@ -38,7 +38,11 @@ restore_backup() {
     [ -z "$backup_file" ] && { log_error "Использование: mtproxyl restore <файл>"; return 1; }
     [ ! -f "$backup_file" ] && { log_error "Файл не найден: ${backup_file}"; return 1; }
 
-    if ! tar tzf "$backup_file" 2>/dev/null | grep -q "settings.conf"; then
+    # Список целиком, без конвейера: grep -q выходил на первой строке, tar
+    # получал SIGPIPE, и под pipefail годный бэкап считался негодным.
+    local _list
+    _list=$(tar tzf "$backup_file" 2>/dev/null) || { log_error "Архив повреждён или не tar.gz: ${backup_file}"; return 1; }
+    if ! grep -qxE '(\./)?settings\.conf' <<< "$_list"; then
         log_error "Некорректный бэкап (нет settings.conf)"
         return 1
     fi
@@ -67,7 +71,10 @@ restore_backup() {
 
     # Распаковка
     if [ "${WARP_ENABLED:-false}" = true ]; then _warp_stop_runtime; fi
-    tar xzf "$backup_file" -C "$INSTALL_DIR" --exclude='backup_meta.txt' 2>/dev/null
+    if ! tar xzf "$backup_file" -C "$INSTALL_DIR" --exclude='backup_meta.txt' 2>/dev/null; then
+        log_error "Не удалось распаковать бэкап; прежние настройки — в самом свежем бэкапе"
+        return 1
+    fi
     # settings.conf намеренно читаем всем (см. lib/settings.sh) — восстановление
     # из бэкапа не должно возвращать ему старые 600.
     chmod "${_SETTINGS_FILE_MODE:-644}" "${SETTINGS_FILE}" 2>/dev/null

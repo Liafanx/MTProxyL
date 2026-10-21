@@ -16,7 +16,7 @@ _AG_ITEMS=(
     "ports|Порты метрик и API|no"
     "host|Домен в ссылках|yes"
     "sni|FakeTLS SNI|yes"
-    "secrets|Секреты|no"
+    "secrets|Пользователи и лимиты|no"
     "adtag|Рекламная метка|no"
     "mask|Маскировка и SNI-политика|no"
     "fixes|Zapret2 или SYN-лимитер|no"
@@ -125,6 +125,15 @@ _argsgen_defaults() {
 }
 
 # Аргументы одной строкой на stdout.
+# Пользователь без лимитов и прочего — хватает короткого --secret.
+_ag_user_plain() {
+    local _i="$1"
+    [ "${SECRETS_ENABLED[$_i]:-true}" = true ] && [ "${SECRETS_MAX_CONNS[$_i]:-0}" = 0 ] \
+        && [ "${SECRETS_MAX_IPS[$_i]:-0}" = 0 ] && [ "${SECRETS_QUOTA[$_i]:-0}" = 0 ] \
+        && [ "${SECRETS_EXPIRES[$_i]:-0}" = 0 ] && [ -z "${SECRETS_NOTES[$_i]:-}" ] \
+        && [ -z "${SECRETS_ADTAG[$_i]:-}" ] && [ -z "${SECRETS_RATE[$_i]:-}" ]
+}
+
 _argsgen_build() {
     local -a _a=(--mode manager)
     [ "${_AG_ON[force]}" = "yes" ] && _a+=(--force)
@@ -151,7 +160,13 @@ _argsgen_build() {
     if [ "${_AG_ON[secrets]}" = "yes" ]; then
         local _i
         for _i in "${!SECRETS_LABELS[@]}"; do
-            _a+=(--secret "${SECRETS_LABELS[$_i]}:${SECRETS_KEYS[$_i]}")
+            if _ag_user_plain "$_i"; then
+                _a+=(--secret "${SECRETS_LABELS[$_i]}:${SECRETS_KEYS[$_i]}")
+            else
+                # Лимиты, квота, срок, заметка, метка, скорость, выключен —
+                # строкой базы, как в secrets.conf.
+                _a+=(--user "${SECRETS_LABELS[$_i]}|${SECRETS_KEYS[$_i]}|${SECRETS_CREATED[$_i]:-${EPOCHSECONDS:-$(date +%s)}}|${SECRETS_ENABLED[$_i]:-true}|${SECRETS_MAX_CONNS[$_i]:-0}|${SECRETS_MAX_IPS[$_i]:-0}|${SECRETS_QUOTA[$_i]:-0}|${SECRETS_EXPIRES[$_i]:-0}|${SECRETS_NOTES[$_i]:-}|${SECRETS_ADTAG[$_i]:-}|${SECRETS_RATE[$_i]:-}")
+            fi
         done
     fi
     [ "${_AG_ON[adtag]}" = "yes" ] && [ -n "${AD_TAG:-}" ] && _a+=(--ad-tag "$AD_TAG")
