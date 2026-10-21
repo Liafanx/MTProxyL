@@ -341,7 +341,8 @@ mtproxyl install --help          # полный список аргументо�
 | `--selfmask-cert` | `letsencrypt`, `selfsigned` | `letsencrypt` | Тип сертификата. `letsencrypt` требует A-записи домена на этот сервер, `selfsigned` — нет. |
 | `--selfmask-email` | почта | пусто | Адрес для писем Let's Encrypt об истечении сертификата. **Необязателен:** без него сертификат выпускается так же, просто напоминаний не будет. |
 | `--selfmask-template` | `stub`, `filemanager`, `catrunner`, `mekorunner`, URL на `index.html` или путь к папке | `stub` | Что показывать на сайте-маске. |
-| `--selfmask-backend-port` | 1–65535 | `8444` | Локальный порт nginx, куда прокси отправляет замаскированные запросы. |
+| `--selfmask-backend-port` | 1–65535 | `8444` | Локальный порт заглушки, куда прокси отправляет замаскированные запросы. |
+| `--front` | `nginx`, `caddy`, `haproxy` | `nginx` | Чем держать заглушку и TLS Selfmask и WEB, см. [Держатель заглушки](#держатель-заглушки-nginx-caddy-или-haproxy-новое-в-v170). Нужен `--selfmask` или WEB. Внешний HAProxy (`--web-frontend haproxy`, `haproxy-nginx`) — только с `nginx`. |
 
 **WEB Proxy**
 
