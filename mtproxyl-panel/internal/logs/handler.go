@@ -6,28 +6,16 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/Liafanx/mtproxyl-panel/internal/wsorigin"
 )
 
-// checkOrigin validates the WebSocket origin header.
-func checkOrigin(r *http.Request) bool {
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		return true
-	}
-	host := r.Host
-	if fwd := r.Header.Get("X-Forwarded-Host"); fwd != "" {
-		host = fwd
-	}
-	return strings.Contains(origin, host)
-}
-
 var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: checkOrigin,
+	CheckOrigin: wsorigin.Allowed,
 }
 
 // ClientMsg is a message from the client.

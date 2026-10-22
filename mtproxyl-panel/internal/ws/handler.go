@@ -5,36 +5,16 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/Liafanx/mtproxyl-panel/internal/wsorigin"
 )
 
-func removeProtocol(rawURL string) (string, error) {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return "", err
-	}
-	return parsed.Host, nil
-}
-
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
-		if origin == "" {
-			return true
-		}
-		host := r.Host
-		if fwdHost := r.Header.Get("X-Forwarded-Host"); fwdHost != "" {
-			host = fwdHost
-		}
-
-		origin, _ = removeProtocol(origin)
-
-		return origin == host
-	},
+	CheckOrigin: wsorigin.Allowed,
 }
 
 // ClientMessage is sent by the browser to subscribe to endpoints.
