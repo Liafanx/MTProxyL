@@ -202,12 +202,12 @@ tui_settings_menu() {
             8)
                 echo -e "  ${DIM}[1] Mask (перенаправлять)      [2] Drop (закрывать)${NC}"
                 echo -e "  ${DIM}[3] Accept (пропускать как есть) [4] Reject handshake (TLS-отказ)${NC}"
-                local sc; sc=$(read_choice "выбор" "1")
+                local sc; sc=$(read_choice "выбор" "4")
                 case "$sc" in
+                    1) UNKNOWN_SNI_ACTION="mask" ;;
                     2) UNKNOWN_SNI_ACTION="drop" ;;
                     3) UNKNOWN_SNI_ACTION="accept" ;;
-                    4) UNKNOWN_SNI_ACTION="reject_handshake" ;;
-                    *) UNKNOWN_SNI_ACTION="mask" ;;
+                    *) UNKNOWN_SNI_ACTION="reject_handshake" ;;
                 esac
                 save_settings; reload_proxy_config 2>/dev/null || true
                 log_success "SNI-политика: ${UNKNOWN_SNI_ACTION}"

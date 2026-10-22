@@ -388,6 +388,20 @@ handle_superexpert_command() {
     esac
 }
 
+# reject_handshake появился в telemt 3.4.4: старый движок с ним не стартует.
+SNI_REJECT_MIN_ENGINE_VERSION="3.4.4"
+
+# Политика чужого SNI под версию движка ($2; пусто или unknown — свежий).
+sni_action_for_engine() {
+    local _a="${1:-reject_handshake}" _v="${2:-}"
+    _v="${_v#v}"; _v="${_v%%-*}"
+    if [ "$_a" = "reject_handshake" ] && [[ "$_v" =~ ^[0-9]+\.[0-9] ]] \
+        && ! _version_ge "$_v" "$SNI_REJECT_MIN_ENGINE_VERSION"; then
+        _a="mask"
+    fi
+    echo "$_a"
+}
+
 # ── Генерация config.toml ────────────────────────────────────
 generate_telemt_config() {
     mkdir -p "$CONFIG_DIR"; chmod 700 "$CONFIG_DIR"
@@ -484,7 +498,7 @@ client_ack = 90
 
 [censorship]
 tls_domain = "${domain}"
-unknown_sni_action = "${UNKNOWN_SNI_ACTION:-mask}"
+unknown_sni_action = "$(sni_action_for_engine "${UNKNOWN_SNI_ACTION:-}" "$(engine_current_version 2>/dev/null)")"
 mask = ${mask_enabled}
 mask_port = ${mask_port}
 fake_cert_len = ${FAKE_CERT_LEN:-2048}

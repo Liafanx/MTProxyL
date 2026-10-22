@@ -72,7 +72,7 @@ install_args_help() {
                                можно повторять, вместе с --secret
     --ad-tag <32 hex>          рекламная метка
     --mask on|off              маскировка трафика (по умолчанию on)
-    --sni-policy <политика>    mask, drop, accept или reject_handshake
+    --sni-policy <политика>    reject_handshake (по умолчанию), mask, drop или accept
     --cpus N                   лимит CPU: ядра контейнера либо CPUQuota службы
     --memory 512m              лимит памяти: контейнера либо MemoryMax службы
     --dc-restart on|off|N      перезапуск движка в случае падения DC: при

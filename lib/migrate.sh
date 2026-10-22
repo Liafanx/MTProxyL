@@ -335,7 +335,7 @@ _mig_build_args() {
     _a+=(--metrics-port "${PROXY_METRICS_PORT:-9090}")
     _a+=(--api-port "${PROXY_API_PORT:-9091}")
     _a+=(--sni "${PROXY_DOMAIN:-autoscout24.ru}")
-    _a+=(--sni-policy "${UNKNOWN_SNI_ACTION:-mask}")
+    _a+=(--sni-policy "${UNKNOWN_SNI_ACTION:-reject_handshake}")
     [ "${MASKING_ENABLED:-true}" = "false" ] && _a+=(--mask off) || _a+=(--mask on)
     [ -n "${AD_TAG:-}" ] && _a+=(--ad-tag "$AD_TAG")
     if [ "${DC_RESTART_ENABLED:-false}" = "true" ]; then
