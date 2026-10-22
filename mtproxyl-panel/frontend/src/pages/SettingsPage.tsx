@@ -30,11 +30,12 @@ const GROUPS: { title: string; description: string; keys: string[] }[] = [
     keys: ['PROXY_CONCURRENCY', 'PROXY_PROTOCOL', 'PROXY_LOG_LEVEL'],
   },
   {
-    title: 'Метрики',
+    title: 'Метрики и API',
     description:
-      'Слушается только на localhost. Меняется не на лету — движок открывает сокет ' +
-      'при старте, так что нужен перезапуск. Порт API — в «Настройках панели».',
-    keys: ['PROXY_METRICS_PORT'],
+      'Слушаются только на localhost. Меняются не на лету — движок открывает сокеты ' +
+      'при старте, так что нужен перезапуск. Через порт API с движком работает панель: ' +
+      'после его смены она переключится на новый порт сама.',
+    keys: ['PROXY_METRICS_PORT', 'PROXY_API_PORT'],
   },
 ];
 
@@ -43,14 +44,18 @@ const GROUPS: { title: string; description: string; keys: string[] }[] = [
  * оно доступно в обоих режимах, и дублировать их здесь незачем. Всё остальное
  * показываем блоком «Прочее», чтобы новая настройка не пропала молча.
  */
-const GROUPED_KEYS = new Set([...GROUPS.flatMap((g) => g.keys), ...MAINTENANCE_KEYS, 'PROXY_API_PORT']);
+const GROUPED_KEYS = new Set([...GROUPS.flatMap((g) => g.keys), ...MAINTENANCE_KEYS]);
 
 /** Ключи, смена которых рвёт активные соединения или требует действий от вас. */
 const WARNINGS: Record<string, string> = {
   PROXY_PORT: 'Прокси перезапустится, ссылки изменятся, правила гео-блокировки переедут на новый порт.',
   PROXY_DOMAIN: 'Ссылки изменятся — старые перестанут работать.',
   PROXY_METRICS_PORT: 'Применится только после перезапуска прокси.',
+  PROXY_API_PORT: 'Прокси перезапустится, панель переподключится к движку — страница обновится сама.',
 };
+
+/** После смены порта API панель перезапускается — страницу перечитываем. */
+const API_PORT_RELOAD_MS = 8000;
 
 export function SettingsPage() {
   const [params, setParams] = useState<MtproxylSetting[]>([]);
@@ -105,6 +110,11 @@ export function SettingsPage() {
       }
       setNotice(`Сохранено настроек: ${dirty.length}`);
       setError(null);
+      if (dirty.includes('PROXY_API_PORT')) {
+        setNotice(`Сохранено настроек: ${dirty.length}. Панель переключается на новый порт API — страница обновится сама.`);
+        window.setTimeout(() => window.location.reload(), API_PORT_RELOAD_MS);
+        return;
+      }
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось сохранить настройки');

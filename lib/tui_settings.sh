@@ -33,6 +33,7 @@ tui_settings_menu() {
         echo -e "  ${BOLD}Память:${NC}            ${PROXY_MEMORY:-без ограничений}"
         echo -e "  ${BOLD}Маскировка:${NC}        ${MASKING_ENABLED}$([ "$MASKING_ENABLED" = "true" ] && echo " → ${MASKING_HOST:-${PROXY_DOMAIN}}:${MASKING_PORT:-443}")"
         echo -e "  ${BOLD}Метрики:${NC}           127.0.0.1:${PROXY_METRICS_PORT}"
+        echo -e "  ${BOLD}API движка:${NC}        127.0.0.1:$(api_port_current 2>/dev/null)"
         echo -e "  ${BOLD}Рекл. метка:${NC}       ${AD_TAG:-${DIM}не задана${NC}}"
         echo -e "  ${BOLD}SNI-полит.:${NC}        ${UNKNOWN_SNI_ACTION}"
         echo -e "  ${BOLD}PROXY proto:${NC}       ${PROXY_PROTOCOL}"
@@ -54,10 +55,18 @@ tui_settings_menu() {
         echo -e "  ${DIM}[13]${NC} Тюнинг движка (tune) Telemt"
         echo -e "  ${DIM}[14]${NC} Пользовательские URL Telegram"
         echo -e "  ${DIM}[15]${NC} Selfmask (заглушка + сертификат)"
+        echo -e "  ${DIM}[16]${NC} Изменить порт API движка [$(api_port_current 2>/dev/null)]"
         echo -e "  ${DIM}[17]${NC} Уровень логирования [$(proxy_log_level)]"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
+            16)
+                echo ""
+                echo -e "  ${DIM}REST API движка (только localhost). Через него работает веб-панель.${NC}"
+                echo -e "  ${DIM}Прокси перезапустится, панель переключится на новый порт сама.${NC}"
+                local _ap; read_line _ap "  ${BOLD}Новый порт API [$(api_port_current)]:${NC} "
+                [ -n "$_ap" ] && { api_port_set "$_ap" || true; }
+                press_any_key ;;
             17)
                 echo "  [1] Тихий  [2] Обычный  [3] Подробный  [4] Отладка  [0] Назад"
                 local _log; _log=$(read_choice "выбор" "0")

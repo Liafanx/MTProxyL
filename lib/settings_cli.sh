@@ -507,7 +507,10 @@ handle_settings_command() {
     case "$_sub" in
         list)
             # В реаниматоре показываем порт цели; save_settings здесь не зовётся.
-            local PROXY_API_PORT; PROXY_API_PORT=$(api_port_current)
+            # Значение берём до local: иначе api_port_current видит пустую
+            # переменную и всегда отвечает 9091.
+            local _api_port; _api_port=$(api_port_current)
+            local PROXY_API_PORT="$_api_port"
             if [ "${1:-}" = "--json" ]; then
                 settings_settable_json
             else
