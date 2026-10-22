@@ -40,7 +40,7 @@ MASKING_ENABLED="true"
 MASKING_HOST=""
 MASKING_PORT=443
 MASKING_RELAY_MAX_BYTES=""
-UNKNOWN_SNI_ACTION="mask"
+UNKNOWN_SNI_ACTION="reject_handshake"
 PROXY_SECRET_URL=""
 PROXY_CONFIG_V4_URL=""
 PROXY_CONFIG_V6_URL=""
@@ -615,7 +615,7 @@ load_settings() {
     [[ "$GEOBLOCK_MODE" == "whitelist" ]] || GEOBLOCK_MODE="blacklist"
     case "$UNKNOWN_SNI_ACTION" in
         mask|drop|accept|reject_handshake) ;;
-        *) UNKNOWN_SNI_ACTION="mask" ;;
+        *) UNKNOWN_SNI_ACTION="reject_handshake" ;;
     esac
 
     [[ "$SELFMASK_NGINX_BACKEND_PORT" =~ ^[0-9]+$ ]] && [ "$SELFMASK_NGINX_BACKEND_PORT" -ge 1 ] && [ "$SELFMASK_NGINX_BACKEND_PORT" -le 65535 ] || SELFMASK_NGINX_BACKEND_PORT="8444"

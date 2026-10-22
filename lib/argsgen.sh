@@ -64,7 +64,7 @@ _argsgen_defaults() {
     _AG_VAL[adtag]="${AD_TAG:-нет}"
 
     _AG_ON[mask]="yes"
-    _AG_VAL[mask]="$([ "${MASKING_ENABLED:-true}" = "false" ] && echo "выкл" || echo "вкл"), ${UNKNOWN_SNI_ACTION:-mask}"
+    _AG_VAL[mask]="$([ "${MASKING_ENABLED:-true}" = "false" ] && echo "выкл" || echo "вкл"), ${UNKNOWN_SNI_ACTION:-reject_handshake}"
 
     _AG_ON[fixes]="yes"
     if zapret2_in_effect; then
@@ -173,7 +173,7 @@ _argsgen_build() {
 
     if [ "${_AG_ON[mask]}" = "yes" ]; then
         [ "${MASKING_ENABLED:-true}" = "false" ] && _a+=(--mask off) || _a+=(--mask on)
-        _a+=(--sni-policy "${UNKNOWN_SNI_ACTION:-mask}")
+        _a+=(--sni-policy "${UNKNOWN_SNI_ACTION:-reject_handshake}")
     fi
 
     if [ "${_AG_ON[fixes]}" = "yes" ]; then

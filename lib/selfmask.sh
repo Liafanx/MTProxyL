@@ -1926,7 +1926,7 @@ _selfmask_restore_manager_settings() {
     MASKING_ENABLED="${SELFMASK_PREV_MASKING_ENABLED:-true}"
     MASKING_HOST="${SELFMASK_PREV_MASK_HOST}"
     MASKING_PORT="${SELFMASK_PREV_MASK_PORT:-443}"
-    UNKNOWN_SNI_ACTION="${SELFMASK_PREV_UNKNOWN_SNI:-mask}"
+    UNKNOWN_SNI_ACTION="${SELFMASK_PREV_UNKNOWN_SNI:-reject_handshake}"
     [ -n "${SELFMASK_PREV_FAKE_CERT_LEN}" ] && FAKE_CERT_LEN="${SELFMASK_PREV_FAKE_CERT_LEN}"
 
     SELFMASK_PREV_SAVED="false"
@@ -2018,7 +2018,11 @@ _selfmask_apply_mtproxyl_settings() {
     MASKING_ENABLED="true"
     MASKING_HOST="127.0.0.1"
     MASKING_PORT="${SELFMASK_NGINX_BACKEND_PORT}"
-    UNKNOWN_SNI_ACTION="mask"
+    # Чужой SNI — TLS-отказ, как у nginx без такого сайта; свой домен и
+    # вход без SNI по-прежнему ведут на заглушку.
+    UNKNOWN_SNI_ACTION="reject_handshake"
+    # Свой конфиг держателя может обслуживать и другие домены — им нужен mask.
+    nginx_custom_active && UNKNOWN_SNI_ACTION="mask"
 
     # Длину берём из своего же сертификата: по сети на 443 этого домена
     # отвечает прокси, а не nginx Selfmask, и замер никогда не удавался.
@@ -2047,13 +2051,15 @@ _selfmask_apply_target_settings() {
     save_settings
 
     local _old_domain; _old_domain=$(_target_tls_domain 2>/dev/null)
+    local _sni; _sni=$(sni_action_for_engine reject_handshake "$(target_engine_version 2>/dev/null)")
+    nginx_custom_active && _sni="mask"
 
     echo ""
     echo -e "  ${BOLD}Нужно применить в конфиге цели, секция [censorship]:${NC}"
     echo -e "    tls_domain = \"${SELFMASK_DOMAIN}\"${_old_domain:+  ${DIM}(было: ${_old_domain})${NC}}"
     echo -e "    mask_host = \"127.0.0.1\""
     echo -e "    mask_port = ${SELFMASK_NGINX_BACKEND_PORT}"
-    echo -e "    unknown_sni_action = \"mask\""
+    echo -e "    unknown_sni_action = \"${_sni}\""
     echo -e "  ${BOLD}и в секции [general.links]:${NC}"
     echo -e "    public_host = \"${SELFMASK_DOMAIN}\"  ${DIM}(иначе ссылки будут с IP, а не с доменом)${NC}"
     echo ""
@@ -2083,7 +2089,7 @@ _selfmask_apply_target_settings() {
     apply_target_tuning "tls_domain" "${SELFMASK_DOMAIN}" "censorship" true || _ok=false
     apply_target_tuning "mask_host" "127.0.0.1" "censorship" true || _ok=false
     apply_target_tuning "mask_port" "${SELFMASK_NGINX_BACKEND_PORT}" "censorship" true || _ok=false
-    apply_target_tuning "unknown_sni_action" "mask" "censorship" true || _ok=false
+    apply_target_tuning "unknown_sni_action" "${_sni}" "censorship" true || _ok=false
     # Домен selfmask — заведомо наш, с проверенной A-записью сюда. Без
     # public_host движок подставляет в ссылки определённый им IP, и клиент
     # получает адрес, по которому FakeTLS-домен не совпадает с именем хоста.
@@ -2847,6 +2853,10 @@ nginx_custom_enable() {
     _selfmask_restore_port80_holders
     log_success "Свой конфиг $(front_title) включён"
     echo -e "  ${BOLD}Файл:${NC} $(front_custom_file)"
+    # Другие сайты этого конфига получают :443 через маскировку движка.
+    if [ "${UNKNOWN_SNI_ACTION:-}" = "reject_handshake" ]; then
+        echo -e "  ${DIM}Другим доменам на :443 нужна SNI-политика mask: mtproxyl sni-policy mask${NC}"
+    fi
 }
 
 nginx_custom_disable() {
