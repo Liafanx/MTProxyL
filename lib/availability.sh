@@ -76,8 +76,9 @@ availability_history_limit() {
     echo "$_v"
 }
 
+# По умолчанию выключена: включает сам пользователь (on, меню, панель, бот).
 availability_enabled() {
-    [ "${AVAILABILITY_ENABLED:-true}" != "false" ]
+    [ "${AVAILABILITY_ENABLED:-false}" = "true" ]
 }
 
 # Токен живёт отдельным файлом с правами 600: settings.conf читаем всем миром.

@@ -62,7 +62,7 @@ BACKUP_RETENTION_DAYS="30"
 
 # Доступность из России (Globalping). Токен лежит отдельно, в
 # ${INSTALL_DIR}/availability/token: settings.conf читается всем миром.
-AVAILABILITY_ENABLED="true"
+AVAILABILITY_ENABLED="false"
 AVAILABILITY_INTERVAL="15"
 AVAILABILITY_PROBES="20"
 AVAILABILITY_THRESHOLD="50"
@@ -698,7 +698,7 @@ load_settings() {
     case "$API_TLS" in off|selfmask) ;; *) API_TLS="off" ;; esac
     [[ "$IP_HISTORY_INTERVAL" =~ ^[0-9]+$ ]] || IP_HISTORY_INTERVAL="5"
 
-    [ "$AVAILABILITY_ENABLED" = "false" ] || AVAILABILITY_ENABLED="true"
+    [ "$AVAILABILITY_ENABLED" = "true" ] || AVAILABILITY_ENABLED="false"
     [[ "$AVAILABILITY_INTERVAL" =~ ^[0-9]+$ ]] && [ "$AVAILABILITY_INTERVAL" -ge 1 ] || AVAILABILITY_INTERVAL="15"
     [[ "$AVAILABILITY_PROBES" =~ ^[0-9]+$ ]] && [ "$AVAILABILITY_PROBES" -ge 1 ] && [ "$AVAILABILITY_PROBES" -le 50 ] || AVAILABILITY_PROBES="20"
     [[ "$AVAILABILITY_THRESHOLD" =~ ^[0-9]+$ ]] && [ "$AVAILABILITY_THRESHOLD" -le 100 ] || AVAILABILITY_THRESHOLD="50"

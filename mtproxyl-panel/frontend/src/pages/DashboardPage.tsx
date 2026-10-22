@@ -132,7 +132,10 @@ export function DashboardPage() {
   const startupStatus = gates?.startup_status?.toLowerCase();
   const starting = startupStatus !== undefined && startupStatus !== 'ready' && startupStatus !== 'done';
 
-  const hero = describeHealth({ health, connected, hasData: Boolean(summary), starting, dcOk: dcSummary?.ok ?? true, availability: availability?.status?.level });
+  // Неудавшаяся проверка (квота, сеть) — не вердикт: зонды ничего не измерили.
+  const availStatus = availability?.status;
+  const availVerdict = availStatus && !availStatus.error && availStatus.total_probes > 0 ? availStatus : null;
+  const hero = describeHealth({ health, connected, hasData: Boolean(summary), starting, dcOk: dcSummary?.ok ?? true, availability: availVerdict?.level });
 
   const facts: HealthFact[] = [];
   if (typeof system?.version === 'string') facts.push({ key: 'version', label: 'Версия', value: system.version });
@@ -169,12 +172,20 @@ export function DashboardPage() {
   if (badRecent > 0) {
     problems.push({ key: 'bad', severity: 'info', label: `Ошибочных соединений за 15 минут: ${formatNumber(badRecent)}`, detail: 'Разбивка по классам — в блоке «Ошибки соединений» ниже.' });
   }
-  if (availability?.enabled && availability.status && availability.status.level !== 'green') {
+  if (availability?.enabled && availVerdict && availVerdict.level !== 'green') {
     problems.push({
       key: 'availability',
-      severity: availability.status.level === 'red' ? 'error' : 'warn',
-      label: availability.status.level === 'red' ? 'Прокси не виден из России' : 'Прокси виден из России частично',
-      detail: `${availability.status.percentage.toFixed(0)}% зондов дошли (${availability.status.success_probes}/${availability.status.total_probes})`,
+      severity: availVerdict.level === 'red' ? 'error' : 'warn',
+      label: availVerdict.level === 'red' ? 'Прокси не виден из России' : 'Прокси виден из России частично',
+      detail: `${availVerdict.percentage.toFixed(0)}% зондов дошли (${availVerdict.success_probes}/${availVerdict.total_probes})`,
+      to: '/availability',
+    });
+  } else if (availability?.enabled && availStatus?.error) {
+    problems.push({
+      key: 'availability',
+      severity: 'info',
+      label: 'Проверка доступности не выполнена',
+      detail: availStatus.error,
       to: '/availability',
     });
   }
