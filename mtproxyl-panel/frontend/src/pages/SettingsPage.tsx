@@ -7,6 +7,7 @@ import { ManagerOnlyNotice } from '@/components/ManagerOnlyNotice';
 import { useManagerOnly } from '@/hooks/useMtproxyl';
 import { mtproxylSettingsApi, type MtproxylSetting } from '@/lib/api';
 import { MAINTENANCE_KEYS } from '@/pages/MaintenancePage';
+import { AVAILABILITY_KEYS } from '@/pages/AvailabilityPage';
 
 /**
  * Настройки сгруппированы по смыслу, а не свалены одним списком из 16 полей.
@@ -40,11 +41,11 @@ const GROUPS: { title: string; description: string; keys: string[] }[] = [
 ];
 
 /**
- * Ключи, разложенные по группам выше, плюс те, что живут в «Обслуживании»:
- * оно доступно в обоих режимах, и дублировать их здесь незачем. Всё остальное
+ * Ключи, разложенные по группам выше, плюс те, что живут в «Обслуживании»
+ * и «Доступности»: они доступны в обоих режимах, дублировать их незачем. Всё остальное
  * показываем блоком «Прочее», чтобы новая настройка не пропала молча.
  */
-const GROUPED_KEYS = new Set([...GROUPS.flatMap((g) => g.keys), ...MAINTENANCE_KEYS]);
+const GROUPED_KEYS = new Set([...GROUPS.flatMap((g) => g.keys), ...MAINTENANCE_KEYS, ...AVAILABILITY_KEYS]);
 
 /** Ключи, смена которых рвёт активные соединения или требует действий от вас. */
 const WARNINGS: Record<string, string> = {
