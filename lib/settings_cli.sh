@@ -229,8 +229,11 @@ settings_set_param() {
             log_info "Порт применится после перезапуска: mtproxyl restart"
             ;;
         BACKUP_RETENTION_DAYS|IP_HISTORY_LIMIT|DC_THRESHOLD|DC_RESTART_THRESHOLD|DC_RESTART_COOLDOWN|\
-        AVAILABILITY_THRESHOLD|AVAILABILITY_HOST|AVAILABILITY_PORT|AVAILABILITY_SNI|AVAILABILITY_PROBES)
+        AVAILABILITY_THRESHOLD|AVAILABILITY_HOST|AVAILABILITY_PORT|AVAILABILITY_SNI)
             # Настройки самого MTProxyL — в конфиг движка не попадают.
+            ;;
+        AVAILABILITY_PROBES)
+            _avail_schedule_warn
             ;;
         AVAILABILITY_HISTORY_LIMIT)
             # Уменьшенный лимит применяется сразу, а не после новой проверки.
@@ -242,6 +245,7 @@ settings_set_param() {
             install_availability_timer
             [ "$_key" = "AVAILABILITY_ENABLED" ] && [ "$_val" = "false" ] && \
                 log_info "Проверка по расписанию выключена: остаётся ручная, mtproxyl availability check"
+            _avail_schedule_warn
             ;;
         DC_RESTART_ENABLED)
             dc_install_watch || { log_error "Не удалось поставить таймер ${DC_WATCH_UNIT}"; return 1; }

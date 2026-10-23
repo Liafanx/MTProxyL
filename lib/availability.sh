@@ -12,7 +12,7 @@ AVAILABILITY_API="https://api.globalping.io/v1"
 AVAILABILITY_SERVICE="mtproxyl-availability.service"
 AVAILABILITY_TIMER="mtproxyl-availability.timer"
 
-# Кредиты Globalping: один зонд — один кредит, окно скользящее, час.
+# Кредиты Globalping: один зонд — один кредит, окно — час с первой траты.
 _AVAIL_CREDITS_ANON=250
 _AVAIL_CREDITS_TOKEN=500
 _AVAIL_CREDIT_WINDOW=3600
@@ -133,7 +133,18 @@ availability_quota_block() {
     _avail_quota_append "BLOCK $(( $(date +%s) + _secs ))"
 }
 
-# Выкидываем траты, вышедшие из скользящего часа, и истёкшую блокировку.
+# Остаток со слов сервиса: "REAL ts limit remaining reset_at". Без токена
+# лимит общий на IP, и чужие траты с того же адреса видны только так.
+availability_quota_real() {
+    local _lim="$1" _rem="$2" _reset="$3" _now
+    [[ "$_lim" =~ ^[0-9]+$ ]] && [[ "$_rem" =~ ^[0-9]+$ ]] || return 0
+    [[ "$_reset" =~ ^[0-9]+$ ]] || _reset=0
+    _now=$(date +%s)
+    _avail_quota_append "REAL ${_now} ${_lim} ${_rem} $(( _now + _reset ))"
+    _avail_quota_compact
+}
+
+# Выкидываем траты, вышедшие из часа, истёкшую блокировку и старые REAL.
 _avail_quota_compact() {
     local _f _now _tmp
     _f=$(_avail_quota_file)
@@ -141,34 +152,94 @@ _avail_quota_compact() {
     _now=$(date +%s)
     _tmp="${_f}.tmp"
     awk -v now="$_now" -v win="$_AVAIL_CREDIT_WINDOW" '
+        $1 == "REAL" && ($2 + win) > now { last = $0 }
         $1 == "SPEND" && ($2 + win) > now { print }
         $1 == "BLOCK" && $2 > now { print }
+        END { if (last != "") print last }
     ' "$_f" > "$_tmp" 2>/dev/null && mv -f "$_tmp" "$_f" 2>/dev/null
     rm -f "$_tmp" 2>/dev/null
 }
 
-# "budget spent remaining reset_in blocked" одной строкой.
+# "budget spent remaining reset_in blocked" одной строкой. Есть свежий REAL —
+# считаем от него, иначе по своим тратам за час.
 _avail_quota_state() {
     local _f _now _budget
     _f=$(_avail_quota_file)
     _now=$(date +%s)
     _budget=$(_avail_budget)
     awk -v now="$_now" -v win="$_AVAIL_CREDIT_WINDOW" -v budget="$_budget" '
-        $1 == "SPEND" && ($2 + win) > now {
-            spent += $3
-            if (oldest == 0 || $2 < oldest) oldest = $2
-        }
+        $1 == "SPEND" { ts[++n] = $2; cost[n] = $3 }
+        $1 == "REAL" && $2 >= rts { rts = $2; rlim = $3; rrem = $4; rreset = $5 }
         $1 == "BLOCK" && $2 > now && $2 > blocked { blocked = $2 }
         END {
-            remaining = budget - spent
+            if (rts > 0 && rreset > now) {
+                # Окно сервиса ещё идёт: остаток минус траты после замера.
+                budget = rlim; remaining = rrem
+                for (i = 1; i <= n; i++) if (ts[i] > rts) remaining -= cost[i]
+                reset = rreset - now
+            } else {
+                # Окно кончилось — всё, что было до его конца, прощено.
+                from = (rts > 0) ? rreset : 0
+                if (rts > 0 && rlim > 0) budget = rlim
+                for (i = 1; i <= n; i++) if (ts[i] > from && ts[i] + win > now) {
+                    spent += cost[i]
+                    if (oldest == 0 || ts[i] < oldest) oldest = ts[i]
+                }
+                remaining = budget - spent
+                reset = (oldest > 0) ? oldest + win - now : 0
+            }
             if (remaining < 0) remaining = 0
-            reset = 0
             if (blocked > 0) { remaining = 0; reset = blocked - now }
-            else if (oldest > 0) { reset = oldest + win - now }
             if (reset < 0) reset = 0
-            printf "%d %d %d %d %d\n", budget, spent, remaining, reset, (blocked > 0 ? 1 : 0)
+            printf "%d %d %d %d %d\n", budget, budget - remaining, remaining, reset, (blocked > 0 ? 1 : 0)
         }
     ' "$_f" 2>/dev/null || echo "$_budget 0 $_budget 0 0"
+}
+
+# Семейство адресов для запросов к Globalping: без токена лимит считается на
+# IPv4-адрес, а у IPv6 — на всю /64, которую у многих VPS делят соседи.
+_AVAIL_IPFLAG=""
+
+# Спросить у сервиса настоящий остаток. Запрос бесплатный.
+_avail_sync_limits() {
+    local _body="" _auth=() _tok
+    _tok=$(availability_token)
+    [ -n "$_tok" ] && _auth=(-H "Authorization: Bearer ${_tok}")
+    if _body=$(curl -4 -sS --max-time 15 "${_auth[@]}" "${AVAILABILITY_API}/limits" 2>/dev/null) \
+        && [ -n "$_body" ]; then
+        _AVAIL_IPFLAG="-4"
+    else
+        _AVAIL_IPFLAG=""
+        _body=$(curl -sS --max-time 15 "${_auth[@]}" "${AVAILABILITY_API}/limits" 2>/dev/null) || return 1
+    fi
+    local _lim _rem _reset _cred
+    read -r _lim _rem _reset _cred < <(jq -r '
+        .rateLimit.measurements.create as $c
+        | "\($c.limit // "") \($c.remaining // "") \($c.reset // 0) \(.credits.remaining // 0)"
+    ' <<< "$_body" 2>/dev/null)
+    [[ "$_cred" =~ ^[0-9]+$ ]] || _cred=0
+    [[ "$_rem" =~ ^[0-9]+$ ]] || return 1
+    # Купленные кредиты тратятся, когда часовой лимит кончился.
+    availability_quota_real "$_lim" "$(( _rem + _cred ))" "$_reset"
+}
+
+# Сколько кредитов в час съедает расписание.
+_avail_schedule_cost() {
+    local _min _probes
+    _min=$(availability_interval_minutes); _probes=$(availability_probe_limit)
+    [ "$_min" -gt 0 ] || { echo 0; return; }
+    echo $(( (60 + _min - 1) / _min * _probes ))
+}
+
+# Предупредить, если расписание не влезает в квоту.
+_avail_schedule_warn() {
+    availability_enabled || return 0
+    local _cost _budget; _cost=$(_avail_schedule_cost); _budget=$(_avail_budget)
+    if [ "$_cost" -gt "$_budget" ]; then
+        log_warn "Расписание тратит ${_cost} кредитов в час при квоте ${_budget}: квота будет кончаться. Реже проверка или меньше зондов"
+    elif [ $(( _cost * 100 )) -gt $(( _budget * 80 )) ]; then
+        log_warn "Расписание тратит ${_cost} кредитов в час из ${_budget}: на ручные проверки почти не останется"
+    fi
 }
 
 availability_quota_json() {
@@ -483,6 +554,7 @@ availability_check() {
     local _label="${_host}:${_port}"
     [ -n "$_sni" ] && _label="${_label} (SNI: ${_sni})"
 
+    _avail_sync_limits || true
     local _b _s _r _reset _blocked
     read -r _b _s _r _reset _blocked <<< "$(_avail_quota_state)"
     if [ "${_r:-0}" -le 0 ]; then
@@ -520,7 +592,7 @@ availability_check() {
     _tok=$(availability_token)
     [ -n "$_tok" ] && _auth=(-H "Authorization: Bearer ${_tok}")
 
-    _code=$(curl -sS --max-time 30 -o "$_tmp_body" -D "$_tmp_head" -w '%{http_code}' \
+    _code=$(curl ${_AVAIL_IPFLAG:+"$_AVAIL_IPFLAG"} -sS --max-time 30 -o "$_tmp_body" -D "$_tmp_head" -w '%{http_code}' \
         -X POST "${AVAILABILITY_API}/measurements" \
         -H "Content-Type: application/json" "${_auth[@]}" \
         --data-binary "$_req" 2>/dev/null) || _code="000"
@@ -557,11 +629,17 @@ availability_check() {
     # сколько попросили, и списание по запрошенному занижало бы остаток.
     [[ "$_count" =~ ^[0-9]+$ ]] && [ "$_count" -gt 0 ] || _count="$_limit"
     availability_quota_record "$_count"
+    # Остаток после списания сервис сам кладёт в заголовки.
+    local _hrem _hreset _hlim
+    _hrem=$(awk 'BEGIN{IGNORECASE=1} /^x-ratelimit-remaining:/ {gsub(/[^0-9]/,"",$2); print $2; exit}' "$_tmp_head" 2>/dev/null)
+    _hreset=$(awk 'BEGIN{IGNORECASE=1} /^x-ratelimit-reset:/ {gsub(/[^0-9]/,"",$2); print $2; exit}' "$_tmp_head" 2>/dev/null)
+    _hlim=$(awk 'BEGIN{IGNORECASE=1} /^x-ratelimit-limit:/ {gsub(/[^0-9]/,"",$2); print $2; exit}' "$_tmp_head" 2>/dev/null)
+    [ -n "$_hrem" ] && availability_quota_real "$_hlim" "$_hrem" "$_hreset"
 
     local _deadline=$(( $(date +%s) + _AVAIL_MEASURE_WAIT )) _status=""
     while :; do
         sleep "$_AVAIL_POLL"
-        _code=$(curl -sS --max-time 30 -o "$_tmp_body" -w '%{http_code}' \
+        _code=$(curl ${_AVAIL_IPFLAG:+"$_AVAIL_IPFLAG"} -sS --max-time 30 -o "$_tmp_body" -w '%{http_code}' \
             "${AVAILABILITY_API}/measurements/${_id}" \
             -H "Accept: application/json" "${_auth[@]}" 2>/dev/null) || _code="000"
         if [ "$_code" != "200" ]; then
@@ -901,10 +979,11 @@ _avail_set_interval() {
     fi
     local _probes; _probes=$(availability_probe_limit)
     if [ "$_min" -le 60 ]; then
-        log_info "Расход: ${_probes} кредитов за проверку, $(( 60 / _min * _probes )) в час при квоте $(_avail_budget) в час"
+        log_info "Расход: ${_probes} кредитов за проверку, $(_avail_schedule_cost) в час при квоте $(_avail_budget) в час"
     else
         log_info "Расход: ${_probes} кредитов за проверку, $(( 1440 / _min * _probes )) в сутки при квоте $(_avail_budget) в час"
     fi
+    _avail_schedule_warn
 }
 
 handle_availability_command() {
@@ -949,7 +1028,8 @@ handle_availability_command() {
             [ "$(availability_interval_minutes)" -gt 0 ] || AVAILABILITY_INTERVAL="15"
             save_settings
             install_availability_timer
-            log_success "Автопроверка доступности: каждые $(availability_interval_minutes) мин" ;;
+            log_success "Автопроверка доступности: каждые $(availability_interval_minutes) мин"
+            _avail_schedule_warn ;;
         off|disable)
             check_root
             AVAILABILITY_ENABLED="false"

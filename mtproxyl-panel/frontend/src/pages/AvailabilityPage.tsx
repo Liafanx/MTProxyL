@@ -8,6 +8,7 @@ import { Chip } from '@/components/ui/chip';
 import { Input } from '@/components/ui/input';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { ErrorAlert } from '@/components/ErrorAlert';
+import { ParamField } from '@/components/ParamField';
 import {
   availabilityApi,
   type AvailabilityResult,
@@ -18,8 +19,33 @@ import {
   type AvailabilityTargetResponse,
   type AvailabilityHistoryPoint,
   type AvailabilityHistoryResponse,
+  mtproxylSettingsApi,
+  type MtproxylSetting,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
+
+/**
+ * Все настройки проверки живут здесь, а не в «Настройках прокси»: в конфиг
+ * движка они не попадают. Вкл/выкл и цель — свои формы ниже.
+ */
+export const AVAILABILITY_KEYS = [
+  'AVAILABILITY_ENABLED',
+  'AVAILABILITY_INTERVAL',
+  'AVAILABILITY_PROBES',
+  'AVAILABILITY_THRESHOLD',
+  'AVAILABILITY_HISTORY_LIMIT',
+  'AVAILABILITY_HOST',
+  'AVAILABILITY_PORT',
+  'AVAILABILITY_SNI',
+];
+
+/** Поля общей формы; остальное — переключатель и «Что проверять». */
+const PARAM_KEYS = [
+  'AVAILABILITY_INTERVAL',
+  'AVAILABILITY_PROBES',
+  'AVAILABILITY_THRESHOLD',
+  'AVAILABILITY_HISTORY_LIMIT',
+];
 
 const LEVEL_TEXT_CLASS: Record<AvailabilityLevel, string> = {
   green: 'text-success',
@@ -143,6 +169,8 @@ export function AvailabilityPage() {
             }}
           />
         )}
+
+        {enabled && <ParamsForm budget={quota?.budget ?? 250} autoCheck={autoCheck} onSaved={load} />}
 
         {enabled && <TokenForm hasToken={quota?.has_token ?? false} onSaved={load} />}
 
@@ -327,6 +355,117 @@ function QuotaBanner({ quota }: { quota?: AvailabilityQuota }) {
       {quota.spent > 0 && resetMin > 0 && <span>• обновление через {resetMin} мин</span>}
       <span>• лимит держит сам сервис: закончится — скажет ответом на проверку</span>
     </div>
+  );
+}
+
+/** Сколько кредитов в час съедает расписание — как считает MTProxyL. */
+function scheduleCost(interval: number, probes: number): number {
+  if (!(interval > 0) || !(probes > 0)) return 0;
+  return Math.ceil(60 / interval) * probes;
+}
+
+/**
+ * Период, число зондов, порог и размер истории. Сохраняются по одному через
+ * CLI, как в «Настройках прокси».
+ */
+function ParamsForm({
+  budget,
+  autoCheck,
+  onSaved,
+}: {
+  budget: number;
+  autoCheck: boolean;
+  onSaved: () => void;
+}) {
+  const [params, setParams] = useState<MtproxylSetting[]>([]);
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const all = await mtproxylSettingsApi.list();
+      setParams(PARAM_KEYS.map((k) => all.find((p) => p.key === k)).filter((p): p is MtproxylSetting => !!p));
+      setEdits({});
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось загрузить настройки');
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const valueOf = (key: string) => edits[key] ?? params.find((p) => p.key === key)?.value ?? '';
+  const dirty = Object.keys(edits).filter((k) => edits[k] !== params.find((p) => p.key === k)?.value);
+  const cost = scheduleCost(Number(valueOf('AVAILABILITY_INTERVAL')), Number(valueOf('AVAILABILITY_PROBES')));
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      for (const key of dirty) {
+        await mtproxylSettingsApi.set(key, edits[key]);
+      }
+      setSaved(true);
+      await load();
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось сохранить');
+      await load();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (params.length === 0 && !error) return null;
+
+  return (
+    <CollapsibleSection title="Параметры проверки" defaultOpen={false}>
+      <div className="space-y-3">
+        {params.map((p) => (
+          <div key={p.key} className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-4">
+            <div className="sm:w-1/2 min-w-0">
+              <div className="text-sm text-text-primary">{p.description}</div>
+              <div className="text-xs text-text-secondary font-mono truncate">{p.key}</div>
+            </div>
+            <ParamField
+              param={p}
+              value={valueOf(p.key)}
+              onChange={(v) => setEdits((prev) => ({ ...prev, [p.key]: v }))}
+            />
+          </div>
+        ))}
+      </div>
+      {autoCheck && cost > 0 && (
+        <p className={cn('text-xs mt-3', cost > budget * 0.8 ? 'text-warning' : 'text-text-secondary')}>
+          Расписание тратит {cost} {plural(cost, 'кредит', 'кредита', 'кредитов')} в час из {budget}.
+          {cost > budget
+            ? ' Квота будет кончаться — проверяйте реже или меньшим числом зондов.'
+            : cost > budget * 0.8
+              ? ' На ручные проверки почти не останется.'
+              : ''}
+        </p>
+      )}
+      <div className="flex items-center gap-2 mt-3 flex-wrap">
+        <Button onClick={save} disabled={saving || dirty.length === 0} size="sm">
+          {saving ? 'Сохраняем…' : 'Сохранить'}
+        </Button>
+        {dirty.length > 0 && (
+          <Button onClick={() => setEdits({})} disabled={saving} size="sm" variant="outline">
+            Отменить
+          </Button>
+        )}
+        {saved && !error && <span className="text-xs text-success">Сохранено</span>}
+      </div>
+      {error && (
+        <div className="mt-2">
+          <ErrorAlert message={error} />
+        </div>
+      )}
+    </CollapsibleSection>
   );
 }
 
