@@ -1480,12 +1480,84 @@ export const donorApi = {
     }),
 };
 
+// ── Telegram через свой AWG ───────────────────────────────────────────────
+// Клиентский конфиг уходит в MTProxyL через stdin; ключи обратно не отдаются.
+const AWG_BASE = `${BASE}/api/awg`;
+
+export interface AwgConfigInfo {
+  name: string;
+  endpoint: string;
+  address: string;
+  obfuscation: boolean;
+}
+
+export interface AwgStatus {
+  enabled: boolean;
+  active: string;
+  mtu: number | null;
+  iface: string;
+  awg_installed: boolean;
+  tunnel_up: boolean;
+  rules: boolean;
+  handshake_age: number | null;
+  rx_bytes: number;
+  tx_bytes: number;
+  egress_ip: string;
+  ipv6: boolean;
+  /** natip — ME через адрес выхода туннеля. */
+  me_mode: '' | 'natip';
+  me_disabled: boolean;
+  engine_mode: 'manager' | 'target' | 'manual';
+  engine_routed: '' | 'manager' | 'target';
+  warp_enabled: boolean;
+  donor_enabled: boolean;
+  enabled_at: number;
+  check: { at: number; result: string; error: string };
+  configs: AwgConfigInfo[];
+}
+
+export interface AwgStatusResponse {
+  supported: boolean;
+  message?: string;
+  status?: AwgStatus;
+}
+
+export interface AwgScanFile {
+  path: string;
+  name: string;
+  valid: boolean;
+  endpoint: string;
+  address: string;
+  obfuscation: boolean;
+  ipv6: boolean;
+  error: string;
+}
+
+export const awgApi = {
+  status: () => request<AwgStatusResponse>(AWG_BASE, '/status'),
+  scan: () => request<{ files: AwgScanFile[] }>(AWG_BASE, '/scan'),
+  importBody: (name: string, body: string) =>
+    request<{ output: string }>(AWG_BASE, '/import', { method: 'POST', body: JSON.stringify({ name, body }) }),
+  importPath: (name: string, path: string) =>
+    request<{ output: string }>(AWG_BASE, '/import', { method: 'POST', body: JSON.stringify({ name, path }) }),
+  enable: (name: string, mtu: number, allowDisableMe: boolean) =>
+    request<MtproxylOperation>(AWG_BASE, '/enable', {
+      method: 'POST',
+      body: JSON.stringify({ name, mtu, allow_disable_me: allowDisableMe }),
+    }),
+  disable: () => request<MtproxylOperation>(AWG_BASE, '/disable', { method: 'POST' }),
+  check: () => request<AwgStatusResponse>(AWG_BASE, '/check', { method: 'POST' }),
+  remove: (name: string) =>
+    request<{ output: string }>(AWG_BASE, '/remove', { method: 'POST', body: JSON.stringify({ name }) }),
+};
+
 // ── История метрик (память панели, 2 часа) ────────────────────────────────
 
 export type HistoryRange = '15m' | '30m' | '1h' | '2h';
 export type HistoryMetric =
   | 'connections'
   | 'refusals'
+  | 'probes'
   | 'available'
   | 'current_connections'
   | 'active_users'

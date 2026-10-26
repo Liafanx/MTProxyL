@@ -1390,6 +1390,10 @@ show_metrics() {
         /^telemt_uptime_seconds[{ ]/                       { uptime = $NF }
         /^telemt_connections_total[{ ]/                     { c_tot  = $NF }
         /^telemt_connections_bad_total[{ ]/                 { c_bad  = $NF }
+        /^telemt_connections_bad_by_class_total\{/ {
+            k=lbl($0,"class")
+            if (k ~ /^(direct_modes_disabled|tls_clienthello_.*|tls_handshake_bad_client|unknown_tls_sni)$/) c_probe += $NF
+        }
         /^telemt_connections_current[{ ]/                   { c_cur  = $NF }
         /^telemt_connections_me_current[{ ]/                { c_me   = $NF }
         /^telemt_connections_direct_current[{ ]/            { c_dir  = $NF }
@@ -1413,10 +1417,10 @@ show_metrics() {
         /^telemt_user_octets_to_client\{/     { u=lbl($0,"user"); if(u) tx[u]+=$NF }
         /^telemt_user_unique_ips_current\{/   { u=lbl($0,"user"); if(u) ui[u]+=$NF }
         END {
-            printf "S|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f\n",
+            printf "S|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f|%.0f\n",
                 uptime+0,c_tot+0,c_bad+0,c_cur+0,c_me+0,c_dir+0,
                 up_att+0,up_ok+0,up_fail+0,me_att+0,me_ok+0,
-                me_wa+0,me_ww+0,me_quar+0,me_crc+0,pool+0,desync+0,padinv+0
+                me_wa+0,me_ww+0,me_quar+0,me_crc+0,pool+0,desync+0,padinv+0,c_probe+0
             bkeys[1]="le_100ms";   bnames[1]="<=100ms"
             bkeys[2]="101_500ms";  bnames[2]="101-500ms"
             bkeys[3]="501_1000ms"; bnames[3]="501ms-1s"
@@ -1434,12 +1438,15 @@ show_metrics() {
         }
     ')
 
-    local uptime c_tot c_bad c_cur c_me c_dir up_att up_ok up_fail me_att me_ok me_wa me_ww me_quar me_crc pool desync padinv
+    local uptime c_tot c_bad c_cur c_me c_dir up_att up_ok up_fail me_att me_ok me_wa me_ww me_quar me_crc pool desync padinv c_probe
     IFS='|' read -r _ uptime c_tot c_bad c_cur c_me c_dir up_att up_ok up_fail \
-                       me_att me_ok me_wa me_ww me_quar me_crc pool desync padinv \
+                       me_att me_ok me_wa me_ww me_quar me_crc pool desync padinv c_probe \
         <<< "$(echo "$parsed" | grep '^S|')"
 
     local c_good=$(( ${c_tot:-0} - ${c_bad:-0} ))
+    # Пробы и сканеры — не ошибки прокси, показываются отдельно.
+    [ "${c_probe:-0}" -gt "${c_bad:-0}" ] && c_probe=${c_bad:-0}
+    local c_err=$(( ${c_bad:-0} - ${c_probe:-0} ))
     local up_rate=0 me_rate=0
     [ "${up_att:-0}" -gt 0 ] && up_rate=$(awk -v a="$up_att" -v b="$up_ok" 'BEGIN{printf "%.1f", b/a*100}')
     [ "${me_att:-0}" -gt 0 ] && me_rate=$(awk -v a="$me_att" -v b="$me_ok" 'BEGIN{printf "%.1f", b/a*100}')
@@ -1465,7 +1472,7 @@ show_metrics() {
 
     # Соединения
     echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}  ${BOLD}Соединения${NC}$(printf '%*s' $((W - 12)))${BRIGHT_CYAN}${BOX_V}${NC}"
-    echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}    ${DIM}Всего:${NC} ${c_tot:-0}   ${DIM}Авториз.:${NC} ${BRIGHT_GREEN}${c_good}${NC}   ${DIM}Отклонено:${NC} ${BRIGHT_RED}${c_bad:-0}${NC}$(printf '%*s' 1)${BRIGHT_CYAN}${BOX_V}${NC}"
+    echo -e "  ${BRIGHT_CYAN}${BOX_V}${NC}    ${DIM}Всего:${NC} ${c_tot:-0}   ${DIM}Авториз.:${NC} ${BRIGHT_GREEN}${c_good}${NC}   ${DIM}Ошибки:${NC} ${BRIGHT_RED}${c_err}${NC}   ${DIM}Отбито проб:${NC} ${c_probe:-0}$(printf '%*s' 1)${BRIGHT_CYAN}${BOX_V}${NC}"
     # Разбивку ME/Direct движок отдаёт не всегда — с 3.5.x этих счётчиков нет.
     local c_split=""
     [ $(( ${c_me:-0} + ${c_dir:-0} )) -gt 0 ] && c_split="  (ME: ${c_me:-0}  Direct: ${c_dir:-0})"

@@ -33,6 +33,7 @@ import { AddonsPage } from '@/pages/AddonsPage';
 import { AvailabilityPage } from '@/pages/AvailabilityPage';
 import { WarpPage } from '@/pages/WarpPage';
 import { DonorPage } from '@/pages/DonorPage';
+import { AwgPage } from '@/pages/AwgPage';
 import { TgbotPage } from '@/pages/TgbotPage';
 import { MtproxylContext, useMtproxylAvailability } from '@/hooks/useMtproxyl';
 import { BrandingContext, useBrandingProvider } from '@/hooks/useBranding';
@@ -89,6 +90,7 @@ function AuthenticatedApp() {
           <Route path="/availability" element={<AvailabilityPage />} />
           <Route path="/warp" element={<WarpPage />} />
           <Route path="/donor" element={<DonorPage />} />
+          <Route path="/awg" element={<AwgPage />} />
           <Route path="/tgbot" element={<TgbotPage />} />
         </Route>
       </Routes>

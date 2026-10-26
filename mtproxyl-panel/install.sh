@@ -739,6 +739,17 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script donor on --yes --allow-disable-defaul
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script donor off
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script donor remove --yes
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script donor remove --yes --remote --password-stdin
+# Выход через свой AWG. Конфиг с ключом идёт через stdin; имена и пути
+# строго проверяет сам MTProxyL, ключи он не печатает.
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script awg status --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script awg scan --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script awg import - --name [A-Za-z0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script awg import /* --name [A-Za-z0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script awg on [A-Za-z0-9]* --yes
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script awg on [A-Za-z0-9]* --yes --*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script awg off
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script awg check --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script awg remove [A-Za-z0-9]*
 # Телеграм-бот. Токен передаётся аргументом установки, поэтому правило на неё
 # отдельное и с ним же ограничен формат: только то, что похоже на токен.
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script tgbot status --json

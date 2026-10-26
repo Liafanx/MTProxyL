@@ -15,6 +15,7 @@ type fakeTelemt struct {
 	srv       *httptest.Server
 	total     atomic.Uint64
 	bad       atomic.Uint64
+	probes    atomic.Uint64
 	uptime    atomic.Int64
 	fail      atomic.Bool
 	gated     atomic.Bool
@@ -37,6 +38,10 @@ func newFakeTelemt(t *testing.T) *fakeTelemt {
 			data = map[string]any{
 				"uptime_seconds": f.uptime.Load(), "connections_total": f.total.Load(),
 				"connections_bad_total": f.bad.Load(), "handshake_timeouts_total": 1,
+				"connections_bad_by_class": []map[string]any{
+					{"class": "direct_modes_disabled", "total": f.probes.Load()},
+					{"class": "tls_mtproto_bad_client", "total": f.bad.Load() - f.probes.Load()},
+				},
 				"configured_users": 3,
 			}
 		case "/v1/runtime/connections/summary":
@@ -95,7 +100,8 @@ func newTestRecorder(t *testing.T, f *fakeTelemt, start time.Time) (*Recorder, *
 func TestRecorderStats(t *testing.T) {
 	f := newFakeTelemt(t)
 	f.total.Store(100)
-	f.bad.Store(4)
+	f.bad.Store(14)
+	f.probes.Store(10)
 	f.uptime.Store(1000)
 	f.current.Store(7)
 	start := time.Unix(1_700_000_000, 0)
@@ -105,7 +111,8 @@ func TestRecorderStats(t *testing.T) {
 	rec.PollStats(ctx)
 	*clock = start.Add(5 * time.Second)
 	f.total.Store(130)
-	f.bad.Store(6)
+	f.bad.Store(26)
+	f.probes.Store(20)
 	f.uptime.Store(1005)
 	f.current.Store(9)
 	rec.PollStats(ctx)
@@ -117,6 +124,9 @@ func TestRecorderStats(t *testing.T) {
 	ref := rec.Ring().Range(MetricRefusals, 0)
 	if len(ref) != 2 || ref[1].V != 2 {
 		t.Fatalf("refusals = %+v", ref)
+	}
+	if prb := rec.Ring().Range(MetricProbes, 0); len(prb) != 2 || prb[1].V != 10 {
+		t.Fatalf("probes = %+v", prb)
 	}
 	cur := rec.Ring().Range(MetricCurrentConnections, 0)
 	if len(cur) != 2 || cur[1].V != 9 {
