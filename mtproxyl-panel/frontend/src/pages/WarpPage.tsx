@@ -10,6 +10,8 @@ import { ErrorAlert } from '@/components/ErrorAlert';
 import { OperationProgress } from '@/components/OperationProgress';
 import { useMtproxylOperation } from '@/hooks/useMtproxyl';
 import {
+  egressApi,
+  otherEgress,
   warpApi,
   type MtproxylOperation,
   type WarpPreflight,
@@ -24,6 +26,8 @@ type EnableReview = {
   preflight: WarpPreflight;
   disableMiddleProxy: boolean;
   disableDefaultUpstreams: boolean;
+  /** Выключить донор или свой AWG — пользователь согласился. */
+  replace: boolean;
 };
 
 /** Маршрут до Telegram через WARP. */
@@ -96,6 +100,10 @@ export function WarpPage() {
     setBusy(true);
     setError(null);
     try {
+      const eg = await egressApi.get().catch(() => null);
+      const other = otherEgress(eg?.egress, 'warp');
+      if (other && !window.confirm(`Сейчас включён ${other}. Выключить его и включить WARP?`)) return;
+      const replace = Boolean(other);
       const preflight = await warpApi.preflight(mode);
       if (preflight.middle_proxy_enabled || preflight.default_upstreams.length || preflight.manual_engine_config) {
         setEnableReview({
@@ -103,9 +111,10 @@ export function WarpPage() {
           preflight,
           disableMiddleProxy: false,
           disableDefaultUpstreams: false,
+          replace,
         });
       } else {
-        start(await warpApi.enable(mode));
+        start(await warpApi.enable(mode, { replace }));
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось проверить условия включения WARP');
@@ -272,6 +281,7 @@ export function WarpPage() {
                     void act(() => warpApi.enable(review.mode, {
                       disableMiddleProxy: review.disableMiddleProxy,
                       disableDefaultUpstreams: review.disableDefaultUpstreams,
+                      replace: review.replace,
                     }));
                   }}
                 />

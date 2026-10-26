@@ -23,7 +23,8 @@ _awg_quick_unit() { echo "awg-quick@${AWG_IFACE}.service"; }
 _AWG_KEYS="AWG_ENABLED AWG_ACTIVE AWG_MTU AWG_EGRESS_IP AWG_EGRESS_AT AWG_IPV6 AWG_ME_MODE AWG_ME_DISABLED
 AWG_ENGINE_ROUTED AWG_TARGET_ORIG_NATIP AWG_TARGET_ORIG_PROBE AWG_TARGET_ORIG_USEME AWG_ENABLED_AT
 AWG_CHECK_AT AWG_CHECK_RESULT AWG_CHECK_ERROR AWG_ORDER AWG_FAIL_SINCE AWG_PRIMARY_AT
-AWG_SWITCH_AT AWG_SWITCH_FROM AWG_SWITCH_TO AWG_SWITCH_REASON"
+AWG_SWITCH_AT AWG_SWITCH_FROM AWG_SWITCH_TO AWG_SWITCH_REASON AWG_PRIMARY_RESULT
+AWG_FAILOVER_SEC AWG_FAILBACK_SEC"
 
 awg_load() {
     local _k
@@ -46,6 +47,8 @@ awg_load() {
     for _n in AWG_EGRESS_AT AWG_ENABLED_AT AWG_CHECK_AT AWG_FAIL_SINCE AWG_PRIMARY_AT AWG_SWITCH_AT; do
         [[ "${!_n}" =~ ^[0-9]{1,12}$ ]] || printf -v "$_n" '%s' ""
     done
+    _awg_valid_failover "$AWG_FAILOVER_SEC" || AWG_FAILOVER_SEC=""
+    _awg_valid_failback "$AWG_FAILBACK_SEC" || AWG_FAILBACK_SEC=""
     return 0
 }
 
@@ -68,6 +71,8 @@ awg_is_enabled() {
 
 _awg_valid_name() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$ ]]; }
 _awg_valid_mtu()  { [[ "$1" =~ ^[0-9]{4}$ ]] && [ "$1" -ge 1200 ] && [ "$1" -le 1500 ]; }
+_awg_valid_failover() { [[ "$1" =~ ^[0-9]{2,4}$ ]] && [ "$1" -ge 60 ] && [ "$1" -le 3600 ]; }
+_awg_valid_failback() { [[ "$1" =~ ^[0-9]{2,5}$ ]] && [ "$1" -ge 60 ] && [ "$1" -le 86400 ]; }
 
 # Имя из имени файла: латиница, цифры, «-» и «_», до 32 символов.
 _awg_name_from_path() {
@@ -717,21 +722,6 @@ _awg_update_egress() {
 
 # ── Команды ────────────────────────────────────────────────────────────────
 
-_awg_guard_conflicts() {
-    if [ "${WARP_ENABLED:-false}" = "true" ]; then
-        log_error "Включён маршрут через WARP — сначала выключите его: mtproxyl warp off"
-        return 1
-    fi
-    if declare -F donor_load >/dev/null; then
-        donor_load
-        if [ "$DONOR_ENABLED" = "true" ]; then
-            log_error "Включён туннель до донора — сначала выключите его: mtproxyl donor off"
-            return 1
-        fi
-    fi
-    return 0
-}
-
 _awg_ensure_installed() {
     if command -v awg-quick >/dev/null 2>&1 && modprobe amneziawg 2>/dev/null; then
         return 0
@@ -784,8 +774,20 @@ _awg_need_v3() {
 # ── Несколько выходов ───────────────────────────────────────────────────────
 
 AWG_TEST_IFACE="mtpawgt"
-AWG_FAILOVER_AFTER="${AWG_FAILOVER_AFTER:-180}"
-AWG_FAILBACK_EVERY="${AWG_FAILBACK_EVERY:-600}"
+AWG_FAILOVER_DEFAULT=180
+AWG_FAILBACK_DEFAULT=120
+
+# Сторож запускается раз в минуту с дрожанием в секунды: без запаса порог 60 с
+# срабатывал бы только через два запуска.
+AWG_TIMER_SLACK=10
+
+# Через сколько секунд сбоя уходить на запасной и как часто проверять основной.
+_awg_failover_after() { echo "${AWG_FAILOVER_SEC:-$AWG_FAILOVER_DEFAULT}"; }
+_awg_failback_every() { echo "${AWG_FAILBACK_SEC:-$AWG_FAILBACK_DEFAULT}"; }
+
+_awg_human_sec() {
+    if [ $(( $1 % 60 )) -eq 0 ]; then echo "$(( $1 / 60 )) мин"; else echo "$1 с"; fi
+}
 
 # Порядок выходов; у состояний до 1.7.15 — один активный.
 _awg_order_list() {
@@ -793,6 +795,12 @@ _awg_order_list() {
     tr ',' '\n' <<< "${AWG_ORDER:-$AWG_ACTIVE}" | while IFS= read -r _n; do
         _awg_valid_name "$_n" && [ -f "$(_awg_store)/${_n}.conf" ] && echo "$_n"
     done
+}
+
+# Основной — первый в порядке; без «| head»: под pipefail цикл ловит обрыв канала.
+_awg_primary() {
+    local -a _o=(); mapfile -t _o < <(_awg_order_list)
+    echo "${_o[0]:-}"
 }
 
 # Кандидаты после активного, по кругу.
@@ -887,6 +895,9 @@ _awg_switch_to() {
 
 _awg_failover() {
     local _reason="$1" _c
+    if [ "$AWG_ACTIVE" = "$(_awg_primary)" ]; then
+        AWG_PRIMARY_AT=$(date +%s); AWG_PRIMARY_RESULT="fail"; awg_save
+    fi
     while IFS= read -r _c; do
         [ -n "$_c" ] || continue
         _awg_test_config "$_c" || { log_info "«${_c}» тоже не отвечает"; continue; }
@@ -897,15 +908,30 @@ _awg_failover() {
     return 1
 }
 
+# Основной снова отвечает — возвращаемся на него.
+_awg_try_primary() {
+    local _primary; _primary=$(_awg_primary)
+    [ -n "$_primary" ] && [ "$_primary" != "$AWG_ACTIVE" ] || return 1
+    AWG_PRIMARY_AT=$(date +%s)
+    if _awg_test_config "$_primary"; then
+        AWG_PRIMARY_RESULT="ok"; awg_save
+        _awg_switch_to "$_primary" "основной снова отвечает"
+        return
+    fi
+    AWG_PRIMARY_RESULT="fail"; awg_save
+    return 1
+}
+
 awg_enable() (
     check_root
-    local _mtu="" _allow=false _arg
+    local _mtu="" _allow=false _replace=false _arg
     local -a _targets=()
     while [ $# -gt 0 ]; do
         _arg="$1"; shift
         case "$_arg" in
             --mtu) _mtu="${1:-}"; shift ;;
             --allow-disable-me) _allow=true ;;
+            --replace) _replace=true ;;
             --yes) MTPROXYL_ASSUME_YES=1 ;;
             -*) log_error "Неизвестный параметр: ${_arg}"; return 1 ;;
             *) _targets+=("$_arg") ;;
@@ -914,8 +940,6 @@ awg_enable() (
     if [ -n "$_mtu" ] && [ "$_mtu" != auto ] && ! _awg_valid_mtu "$_mtu"; then
         log_error "MTU: число от 1200 до 1500 или auto"; return 1
     fi
-    _awg_guard_conflicts || return 1
-
     awg_load
     if [ ${#_targets[@]} -eq 0 ]; then
         mapfile -t _targets < <(_awg_order_list)
@@ -925,6 +949,10 @@ awg_enable() (
     [ ${#_AWG_NAMES[@]} -le 8 ] || { log_error "Не больше 8 выходов"; return 1; }
 
     _awg_ensure_installed || return 1
+    # Другой выход выключаем; если AWG не поднимется — возвращаем.
+    egress_take_over awg "$_replace" || return 1
+    local _done=false
+    trap '[ "$_done" = true ] || egress_restore' EXIT
 
     # Смена конфига на ходу: старый маршрут снимаем целиком.
     local _was_enabled="$AWG_ENABLED"
@@ -970,8 +998,9 @@ awg_enable() (
     AWG_EGRESS_IP="$_AWG_PROBE_EGRESS"; AWG_EGRESS_AT=$(date +%s)
     _awg_tunnel_has_v6 && AWG_IPV6="yes" || AWG_IPV6="no"
     AWG_CHECK_AT=$(date +%s); AWG_CHECK_RESULT="ok"; AWG_CHECK_ERROR=""
-    AWG_FAIL_SINCE=""; AWG_PRIMARY_AT=$(date +%s)
+    AWG_FAIL_SINCE=""; AWG_PRIMARY_AT=$(date +%s); AWG_PRIMARY_RESULT=""
     awg_save
+    _done=true
     log_success "Подсети Telegram идут через ${AWG_IFACE}, остальной трафик сервера — напрямую"
     [ ${#_AWG_NAMES[@]} -gt 1 ] && log_info "Порядок выходов: ${AWG_ORDER//,/ → }"
     _awg_route_engine "$_allow"
@@ -1001,6 +1030,28 @@ awg_order() (
         log_warn "Ни один выход из списка не отвечает — остаёмся на «${AWG_ACTIVE}»"
     fi
     return 0
+)
+
+# Пороги: через сколько секунд сбоя уходить на запасной, как часто проверять основной.
+awg_timers() (
+    awg_load
+    if [ $# -gt 0 ]; then
+        check_root
+        local _fo="${1:-}" _fb="${2:-}"
+        [ "$_fo" = default ] && _fo="$AWG_FAILOVER_DEFAULT"
+        [ "$_fb" = default ] && _fb="$AWG_FAILBACK_DEFAULT"
+        _awg_valid_failover "$_fo" || { log_error "Переход на запасной: от 60 до 3600 секунд"; return 1; }
+        if [ -n "$_fb" ] && ! _awg_valid_failback "$_fb"; then
+            log_error "Проверка основного: от 60 до 86400 секунд"; return 1
+        fi
+        AWG_FAILOVER_SEC="$_fo"
+        [ -n "$_fb" ] && AWG_FAILBACK_SEC="$_fb"
+        [ "$AWG_FAILOVER_SEC" = "$AWG_FAILOVER_DEFAULT" ] && AWG_FAILOVER_SEC=""
+        [ "$AWG_FAILBACK_SEC" = "$AWG_FAILBACK_DEFAULT" ] && AWG_FAILBACK_SEC=""
+        awg_save
+    fi
+    log_info "Переход на запасной — после $(_awg_human_sec "$(_awg_failover_after)") сбоя, основной проверяется раз в $(_awg_human_sec "$(_awg_failback_every)")"
+    echo -e "  ${DIM}Сторож запускается раз в минуту — точность около минуты.${NC}"
 )
 
 awg_disable() (
@@ -1034,6 +1085,11 @@ awg_check() {
     fi
     if [ "$_res" = ok ] && [ -n "${_AWG_PROBE_EGRESS:-}" ]; then
         _awg_update_egress "$_AWG_PROBE_EGRESS" >/dev/null 2>&1 || true
+    fi
+    # Ручная проверка из консоли не ждёт сторожа: живой основной возвращаем сразу.
+    if [ "$_json" != true ] && [ "$_res" != off ] && [ "$(id -u)" = 0 ] \
+        && [ "$AWG_ACTIVE" != "$(_awg_primary)" ]; then
+        _awg_try_primary && _res="ok" && _err="" && _AWG_PROBE_EGRESS="$AWG_EGRESS_IP"
     fi
     if [ "$_res" != off ]; then
         AWG_CHECK_AT=$(date +%s); AWG_CHECK_RESULT="$_res"; AWG_CHECK_ERROR="$_err"
@@ -1071,7 +1127,7 @@ awg_watch() {
     if [ "$_healthy" != true ]; then
         [ -n "$AWG_FAIL_SINCE" ] || { AWG_FAIL_SINCE="$_now"; awg_save; }
         logger -t mtproxyl-awg "exit ${AWG_ACTIVE} unhealthy since ${AWG_FAIL_SINCE}" 2>/dev/null || true
-        if [ $(( _now - AWG_FAIL_SINCE )) -ge "$AWG_FAILOVER_AFTER" ] && [ "$(_awg_next_candidates | wc -l)" -gt 0 ]; then
+        if [ $(( _now - AWG_FAIL_SINCE + AWG_TIMER_SLACK )) -ge "$(_awg_failover_after)" ] && [ "$(_awg_next_candidates | wc -l)" -gt 0 ]; then
             _awg_failover "«${AWG_ACTIVE}» не отвечает" >/dev/null 2>&1 && return 0
         fi
         systemctl restart "$(_awg_quick_unit)" >/dev/null 2>&1 || true
@@ -1081,13 +1137,8 @@ awg_watch() {
     _awg_route_ready || systemctl restart "$AWG_ROUTE_UNIT" >/dev/null 2>&1 || true
 
     # Возврат на основной, когда он снова отвечает.
-    local _primary; _primary=$(_awg_order_list | head -1)
-    if [ -n "$_primary" ] && [ "$_primary" != "$AWG_ACTIVE" ] \
-        && [ $(( _now - ${AWG_PRIMARY_AT:-0} )) -ge "$AWG_FAILBACK_EVERY" ]; then
-        AWG_PRIMARY_AT="$_now"; awg_save
-        if _awg_test_config "$_primary"; then
-            _awg_switch_to "$_primary" "основной снова отвечает" >/dev/null 2>&1 && return 0
-        fi
+    if [ $(( _now - ${AWG_PRIMARY_AT:-0} + AWG_TIMER_SLACK )) -ge "$(_awg_failback_every)" ]; then
+        _awg_try_primary >/dev/null 2>&1 && return 0
     fi
 
     if [ $(( _now - ${AWG_EGRESS_AT:-0} )) -ge 600 ]; then
@@ -1194,6 +1245,8 @@ awg_status_json() {
     printf '"order":[%s],"fail_since":%s,"last_switch":{"at":%s,"from":"%s","to":"%s","reason":"%s"},' \
         "${_order_json%,}" "${AWG_FAIL_SINCE:-0}" "${AWG_SWITCH_AT:-0}" "$(json_escape "$AWG_SWITCH_FROM")" \
         "$(json_escape "$AWG_SWITCH_TO")" "$(json_escape "$AWG_SWITCH_REASON")"
+    printf '"failover_after":%s,"failback_every":%s,"primary_check":{"at":%s,"result":"%s"},' \
+        "$(_awg_failover_after)" "$(_awg_failback_every)" "${AWG_PRIMARY_AT:-0}" "$(json_escape "$AWG_PRIMARY_RESULT")"
     printf '"check":{"at":%s,"result":"%s","error":"%s"},"configs":[%s]}\n' \
         "${AWG_CHECK_AT:-0}" "$(json_escape "$AWG_CHECK_RESULT")" "$(json_escape "$AWG_CHECK_ERROR")" "$_configs"
 }
@@ -1212,7 +1265,13 @@ awg_status() {
     IFS='|' read -r _ep _addr _obf _v6 _lvl < <(_awg_conf_info "$(_awg_store)/${AWG_ACTIVE}.conf")
     echo -e "  ${BOLD}Активный:${NC}     ${AWG_ACTIVE} — ${_ep}, ${_addr}$(_awg_kind "$_obf" "$_lvl")${AWG_MTU:+, MTU ${AWG_MTU}}"
     local _ord; _ord=$(_awg_order_list | paste -sd, -)
-    [[ "$_ord" == *,* ]] && echo -e "  ${BOLD}Порядок:${NC}      ${_ord//,/ → } ${DIM}(запасной — через $((AWG_FAILOVER_AFTER / 60)) мин сбоя)${NC}"
+    if [[ "$_ord" == *,* ]]; then
+        echo -e "  ${BOLD}Порядок:${NC}      ${_ord//,/ → } ${DIM}(запасной — через $(_awg_human_sec "$(_awg_failover_after)") сбоя, основной проверяется раз в $(_awg_human_sec "$(_awg_failback_every)"))${NC}"
+        local _primary="${_ord%%,*}"
+        if [ "$_primary" != "$AWG_ACTIVE" ] && [ "${AWG_PRIMARY_AT:-0}" != 0 ] && [ -n "$AWG_PRIMARY_RESULT" ]; then
+            echo -e "  ${BOLD}Основной:${NC}     «${_primary}» проверен $(date -d "@${AWG_PRIMARY_AT}" '+%d.%m %H:%M' 2>/dev/null) — $([ "$AWG_PRIMARY_RESULT" = ok ] && echo "отвечает" || echo "${YELLOW}не отвечает${NC}")"
+        fi
+    fi
     if [ -n "$AWG_SWITCH_AT" ] && [ "$AWG_SWITCH_AT" != 0 ]; then
         echo -e "  ${BOLD}Переключение:${NC} ${AWG_SWITCH_FROM} → ${AWG_SWITCH_TO} ($(date -d "@${AWG_SWITCH_AT}" '+%d.%m %H:%M' 2>/dev/null)) — ${AWG_SWITCH_REASON}"
     fi
@@ -1249,26 +1308,29 @@ awg_help() {
     echo -e "    ${GREEN}awg on${NC} <имя|файл> [запасной ...] [--mtu N|auto] [--allow-disable-me]"
     echo -e "                                        Включить: Telegram через туннель"
     echo -e "    ${GREEN}awg order${NC} <основной> [запасной ...]  Порядок выходов без перезапуска"
+    echo -e "    ${GREEN}awg timers${NC} [сбой_с [проверка_с]]     Когда уходить на запасной и проверять основной"
     echo -e "    ${GREEN}awg off${NC}                             Выключить"
     echo -e "    ${GREEN}awg check${NC} [--json]                  Проверить туннель и выход"
     echo -e "    ${GREEN}awg remove${NC} <имя>                    Удалить импортированный конфиг"
 }
 
 handle_awg_command() (
+    local _ro=false
     case "${1:-status}" in
-        status|scan|list|help|-h|--help) ;;
-        *)
-            check_root
-            install -d -m 700 "$(_awg_dir)" || return 1
-            local _lock
-            exec {_lock}>"$(_awg_dir)/.lock" || return 1
-            if ! flock -n "$_lock"; then
-                [ "${1:-}" = watch ] && return 0
-                log_error "Другая операция с AWG уже выполняется"
-                return 1
-            fi
-            ;;
+        status|scan|list|help|-h|--help) _ro=true ;;
+        timers) [ $# -gt 1 ] || _ro=true ;;
     esac
+    if [ "$_ro" != true ]; then
+        check_root
+        install -d -m 700 "$(_awg_dir)" || return 1
+        local _lock
+        exec {_lock}>"$(_awg_dir)/.lock" || return 1
+        if ! flock -n "$_lock"; then
+            [ "${1:-}" = watch ] && return 0
+            log_error "Другая операция с AWG уже выполняется"
+            return 1
+        fi
+    fi
     local _sub="${1:-status}"; shift 2>/dev/null || true
     case "$_sub" in
         status)
@@ -1278,6 +1340,7 @@ handle_awg_command() (
         list)          _awg_list_names ;;
         on|enable)     awg_enable "$@" ;;
         order)         awg_order "$@" ;;
+        timers)        awg_timers "$@" ;;
         off|disable)   awg_disable ;;
         check)         awg_check "$@" ;;
         remove)        awg_remove "$@" ;;

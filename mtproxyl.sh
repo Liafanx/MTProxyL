@@ -20,7 +20,7 @@ export LC_NUMERIC=C
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="1.7.15"
+VERSION="1.7.16"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -71,7 +71,7 @@ fi
 
 # Загрузка библиотек
 LIB_DIR="${INSTALL_DIR}/lib"
-for _lib in colors utils settings detect secrets config docker binengine engine traffic stats availability dc warp donor awg geoblock geoip upstream backup nft ipblock shaping selfmask front api web panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_donor tui_awg tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
+for _lib in colors utils settings detect secrets config docker binengine engine traffic stats availability dc warp donor awg egress geoblock geoip upstream backup nft ipblock shaping selfmask front api web panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_donor tui_awg tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
     if [ -f "${LIB_DIR}/${_lib}.sh" ]; then
         # shellcheck source=/dev/null
         source "${LIB_DIR}/${_lib}.sh"
@@ -525,6 +525,11 @@ cli_main() {
             load_settings; load_secrets; load_upstreams; load_detect_settings
             handle_donor_command "$@"
             ;;
+        egress)
+            load_settings
+            handle_egress_command "$@"
+            ;;
+
         awg)
             # Для ME правится конфиг менеджера или цели — нужны оба набора.
             load_settings; load_secrets; load_upstreams; load_detect_settings

@@ -222,6 +222,69 @@ async def check_proxy(bot: Bot, state: dict) -> None:
     await broadcast(bot, text)
 
 
+# ── Выход к Telegram ─────────────────────────────────────────────────────────
+
+_VIA = {"direct": "напрямую", "warp": "WARP", "donor": "донор", "awg": "свой AWG"}
+
+
+def _egress_name(report: dict) -> str:
+    via = report.get("via") or "direct"
+    name = report.get("name") or ""
+    if via == "awg" and name:
+        return f"AWG «{esc(name)}»"
+    if via == "donor" and name:
+        return f"донор {esc(name)}"
+    return _VIA.get(via, esc(via))
+
+
+async def check_egress(bot: Bot, state: dict) -> None:
+    """Смена выхода сторожем AWG и сбой текущего выхода — по одному разу."""
+    try:
+        report = await cli.egress()
+    except CliError as exc:
+        log.debug("выход недоступен: %s", exc)
+        return
+    awg = report.get("awg") or {}
+    switch = awg.get("last_switch") or {}
+    at = int(switch.get("at") or 0)
+    # Переключения до запуска бота новостью не считаем.
+    if "egress_switch_at" not in state:
+        state["egress_switch_at"] = at
+    elif at > int(state.get("egress_switch_at") or 0):
+        state["egress_switch_at"] = at
+        text = (f"🔀 <b>Выход к Telegram переключён</b>\n\n"
+                f"«{esc(switch.get('from') or '?')}» → «{esc(switch.get('to') or '?')}»\n"
+                f"Причина: {esc(switch.get('reason') or '—')}")
+        if report.get("egress_ip"):
+            text += f"\nАдрес выхода: <code>{esc(report['egress_ip'])}</code>"
+        await broadcast(bot, text)
+        # Переключились — значит, прежний сбой закрыт этим же сообщением.
+        state["egress_bad"] = report.get("ok") is False
+        return
+
+    ok = report.get("ok")
+    if ok is None:
+        state.pop("egress_bad", None)
+        return
+    bad = ok is False
+    was_bad = state.get("egress_bad")
+    state["egress_bad"] = bad
+    if was_bad is None or was_bad == bad:
+        return
+    if bad:
+        text = f"🔴 <b>Выход к Telegram не отвечает</b>\n\n{_egress_name(report)}"
+        if report.get("error"):
+            text += f": {esc(report['error'])}"
+        order = awg.get("order") or []
+        if len(order) > 1:
+            secs = int(awg.get("failover_after") or 180)
+            wait = f"{secs // 60} мин" if secs % 60 == 0 else f"{secs} с"
+            text += f"\nЗапасной включится после {wait} сбоя, если ответит."
+    else:
+        text = f"🟢 <b>Выход к Telegram снова работает</b>\n\n{_egress_name(report)}"
+    await broadcast(bot, text)
+
+
 # ── Лимиты пользователей ─────────────────────────────────────────────────────
 
 def _limit_reason(user: dict) -> str | None:
@@ -350,6 +413,8 @@ async def run(bot: Bot) -> None:
             if cfg.notify_on("proxy") and _due(state, "proxy", cfg.interval("proxy")):
                 _mark(state, "proxy")
                 await check_proxy(bot, state)
+            if cfg.notify_on("egress"):
+                await check_egress(bot, state)
             if cfg.notify_on("limits") and _due(state, "limits", cfg.interval("limits")):
                 _mark(state, "limits")
                 await check_limits(bot, state)

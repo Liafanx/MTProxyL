@@ -106,6 +106,7 @@ func (s *Server) registerDonorRoutes(
 			Mtu                          int    `json:"mtu"`
 			HostKey                      string `json:"host_key"`
 			AllowDisableDefaultUpstreams bool   `json:"allow_disable_default_upstreams"`
+			Replace                      bool   `json:"replace"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -120,6 +121,7 @@ func (s *Server) registerDonorRoutes(
 			Host: req.Host, SSHPort: req.SSHPort, User: req.User, Password: req.Password,
 			AwgPort: req.AwgPort, Mtu: req.Mtu, HostKey: req.HostKey,
 			AllowDisableDefaultUpstreams: req.AllowDisableDefaultUpstreams,
+			Replace:                      req.Replace,
 		}
 		// Проверяем до запуска: ошибка ввода — это 400, а не упавшая операция.
 		if err := setup.Validate(); err != nil {
@@ -177,6 +179,7 @@ func (s *Server) registerDonorRoutes(
 		var req struct {
 			Key                          string `json:"key"`
 			AllowDisableDefaultUpstreams bool   `json:"allow_disable_default_upstreams"`
+			Replace                      bool   `json:"replace"`
 		}
 		if !decode(w, r, &req) {
 			return
@@ -186,7 +189,7 @@ func (s *Server) registerDonorRoutes(
 			return
 		}
 		start(w, "donor:finish", func(ctx context.Context) (string, error) {
-			return client.DonorFinish(ctx, req.Key, req.AllowDisableDefaultUpstreams)
+			return client.DonorFinish(ctx, req.Key, req.AllowDisableDefaultUpstreams, req.Replace)
 		})
 	}))
 
@@ -211,13 +214,14 @@ func (s *Server) registerDonorRoutes(
 		}
 		var req struct {
 			AllowDisableDefaultUpstreams bool `json:"allow_disable_default_upstreams"`
+			Replace                      bool `json:"replace"`
 		}
 		if !decode(w, r, &req) {
 			return
 		}
-		allow := req.AllowDisableDefaultUpstreams
+		allow, replace := req.AllowDisableDefaultUpstreams, req.Replace
 		start(w, "donor:on", func(ctx context.Context) (string, error) {
-			return client.DonorEnable(ctx, allow)
+			return client.DonorEnable(ctx, allow, replace)
 		})
 	}))
 

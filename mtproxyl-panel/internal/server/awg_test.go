@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -121,5 +122,61 @@ func TestAwgRejectsBadInput(t *testing.T) {
 	}
 	if _, err := os.Stat(argsFile); err == nil {
 		t.Fatal("скрипт вызван при неверном вводе")
+	}
+}
+
+// Чужой выход выключается только по явному replace.
+func TestAwgEnableReplace(t *testing.T) {
+	script, argsFile, _ := recordingScript(t)
+	mux, runner := newAwgMux(t, script)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, authedRequest(t, http.MethodPost, "/api/awg/enable", `{"names":["main"],"replace":true}`))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("enable: %d %s", rec.Code, rec.Body.String())
+	}
+	waitRunner(runner)
+	if args, _ := os.ReadFile(argsFile); string(args) != "awg\non\nmain\n--yes\n--replace\n" {
+		t.Fatalf("args: %q", args)
+	}
+}
+
+func TestAwgTimersAndEgress(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls")
+	script := filepath.Join(dir, "cli")
+	body := `#!/bin/sh
+echo "$*" >> "` + log + `"
+case "$1" in
+  egress) echo '{"via":"awg","label":"x","name":"main","egress_ip":"203.0.113.7","ok":false,"error":"","fail_since":5,"awg":{"order":["main","spare"],"failover_after":60,"failback_every":120,"last_switch":{"at":0,"from":"","to":"","reason":""},"primary_check":{"at":0,"result":""}}}' ;;
+  awg) [ "$2" = status ] && echo '{"enabled":true,"active":"main","failover_after":60,"failback_every":300,"configs":[]}' ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(script, []byte(body), 0700); err != nil {
+		t.Fatal(err)
+	}
+	mux, _ := newAwgMux(t, script)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, authedRequest(t, http.MethodPost, "/api/awg/timers", `{"failover_after":60,"failback_every":300}`))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"failback_every":300`) {
+		t.Fatalf("timers: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, bad := range []string{`{"failover_after":30,"failback_every":300}`, `{"failover_after":60,"failback_every":100000}`} {
+		rec = httptest.NewRecorder()
+		mux.ServeHTTP(rec, authedRequest(t, http.MethodPost, "/api/awg/timers", bad))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("timers %s: %d", bad, rec.Code)
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, authedRequest(t, http.MethodGet, "/api/egress", ""))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"via":"awg"`) || !strings.Contains(rec.Body.String(), `"ok":false`) {
+		t.Fatalf("egress: %d %s", rec.Code, rec.Body.String())
+	}
+	calls, _ := os.ReadFile(log)
+	if !strings.Contains(string(calls), "awg timers 60 300\n") || !strings.Contains(string(calls), "egress --json\n") {
+		t.Fatalf("calls: %q", calls)
 	}
 }

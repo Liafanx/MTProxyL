@@ -352,6 +352,7 @@ def settings_text(cfg, manager: bool) -> str:
         f" · проверка каждые {cfg.interval('proxy')} мин",
         f"Лимиты пользователей: <b>{flag('limits')}</b>"
         f" · проверка каждые {cfg.interval('limits')} мин",
+        f"Выход к Telegram — смена и сбой: <b>{flag('egress')}</b>",
     ]
     if manager:
         auto = cfg.autobackup

@@ -1203,21 +1203,15 @@ _donor_wait_dc() {
 
 # ── Команды ────────────────────────────────────────────────────────────────
 
-_donor_guard_conflicts() {
-    if [ "${WARP_ENABLED:-false}" = "true" ]; then
-        log_error "Включён маршрут через WARP — сначала выключите его: mtproxyl warp off"
-        return 1
-    fi
-    if awg_is_enabled 2>/dev/null; then
-        log_error "Включён выход через свой AWG — сначала выключите его: mtproxyl awg off"
-        return 1
-    fi
-    return 0
+# Другой выход выключаем перед подъёмом донора; не поднялся — возвращаем.
+_donor_take_over() {
+    egress_take_over donor "$1" || return 1
+    trap '[ "${_DONOR_DONE:-}" = true ] || egress_restore' EXIT
 }
 
 donor_setup() (
     check_root
-    local _host="" _port="22" _user="root" _awg_port="0" _fp="" _mtu="" _pw_stdin=false _allow=false _arg
+    local _host="" _port="22" _user="root" _awg_port="0" _fp="" _mtu="" _pw_stdin=false _allow=false _replace=false _arg
     while [ $# -gt 0 ]; do
         _arg="$1"; shift
         case "$_arg" in
@@ -1228,6 +1222,7 @@ donor_setup() (
             --mtu) _mtu="${1:-}"; shift ;;
             --password-stdin) _pw_stdin=true ;;
             --allow-disable-default-upstreams) _allow=true ;;
+            --replace) _replace=true ;;
             --yes) MTPROXYL_ASSUME_YES=1 ;;
             -*) log_error "Неизвестный параметр: ${_arg}"; return 1 ;;
             *) [ -z "$_host" ] && _host="$_arg" || { log_error "Лишний аргумент: ${_arg}"; return 1; } ;;
@@ -1245,7 +1240,7 @@ donor_setup() (
         IFS= read -r _DONOR_PW || true
         _DONOR_PW="${_DONOR_PW%$'\r'}"
     fi
-    _donor_guard_conflicts || return 1
+    egress_confirm donor "$_replace" || return 1
     _donor_plan "$_host"
     local _go; read_line _go "  ${BOLD}Начинаем? [Y/n]:${NC} "
     [[ "$_go" =~ ^[nN] ]] && { log_info "Отменено"; return 1; }
@@ -1307,7 +1302,8 @@ donor_setup() (
     DONOR_SETUP_MODE="auto"
     echo ""
     log_info "Шаг 4/4: туннель и маршрут движка"
-    _donor_finish_local "$_allow"
+    _donor_take_over true || return 1
+    _donor_finish_local "$_allow" && _DONOR_DONE=true
 )
 
 _donor_plan() {
@@ -1387,7 +1383,10 @@ donor_manual() (
     else
         _awg_port=$(( 20000 + RANDOM % 40000 ))
     fi
-    _donor_guard_conflicts || return 1
+    local _o
+    for _o in $(egress_others donor); do
+        log_info "Сейчас включён $(egress_label "$_o") — на шаге donor finish он будет выключен"
+    done
     command -v awg >/dev/null 2>&1 || {
         log_info "Сначала ставим AmneziaWG на этот сервер"
         _donor_run_agent local install || { log_error "AmneziaWG на этом сервере не установлен"; return 1; }
@@ -1435,10 +1434,11 @@ _donor_manual_instructions() {
 
 donor_finish() (
     check_root
-    local _key="" _allow=false _arg
+    local _key="" _allow=false _replace=false _arg
     for _arg in "$@"; do
         case "$_arg" in
             --allow-disable-default-upstreams) _allow=true ;;
+            --replace) _replace=true ;;
             --yes) MTPROXYL_ASSUME_YES=1 ;;
             *) _key="$_arg" ;;
         esac
@@ -1446,7 +1446,7 @@ donor_finish() (
     donor_load
     [ "$DONOR_STAGE" = "pending" ] || { log_error "Ручная настройка не начата: mtproxyl donor manual <IP|домен>"; return 1; }
     _donor_valid_pubkey "$_key" || { log_error "Это не ключ AmneziaWG (44 символа base64)"; return 1; }
-    _donor_guard_conflicts || return 1
+    _donor_take_over "$_replace" || return 1
     _DONOR_PARAMS=$(grep -E '^(Jc|Jmin|Jmax|S[1-4]|H[1-4]) = ' "$(_donor_dir)/params.pending" 2>/dev/null)
     _DONOR_SIGNATURE=$(grep -E '^I[1-5] = ' "$(_donor_dir)/params.pending" 2>/dev/null)
     [ -n "$_DONOR_PARAMS" ] || { log_error "Параметры ручной настройки потерялись — начните заново"; return 1; }
@@ -1454,6 +1454,7 @@ donor_finish() (
     echo ""
     log_info "Туннель и маршрут движка"
     _donor_finish_local "$_allow" || return 1
+    _DONOR_DONE=true
     rm -f "$(_donor_dir)/params.pending"
 )
 
@@ -1492,23 +1493,25 @@ donor_check() {
 
 donor_enable() (
     check_root
-    local _allow=false _arg
+    local _allow=false _replace=false _arg
     for _arg in "$@"; do
         case "$_arg" in
             --allow-disable-default-upstreams) _allow=true ;;
+            --replace) _replace=true ;;
             --yes) MTPROXYL_ASSUME_YES=1 ;;
             *) log_error "Неизвестный параметр: ${_arg}"; return 1 ;;
         esac
     done
     donor_load
     [ "$DONOR_STAGE" = "ready" ] || { log_error "Туннель до донора не настроен: mtproxyl donor setup <IP|домен>"; return 1; }
-    _donor_guard_conflicts || return 1
+    _donor_take_over "$_replace" || return 1
     # Пока туннель лежал, домен мог переехать: сверяем адрес до подъёма.
     _donor_reresolve_now
     _donor_tunnel_up || return 1
     _donor_probe || { log_error "Через SOCKS5 донора Telegram не ответил — движок не переключаем"; return 1; }
     _donor_route_engine "$_allow" || return 1
     DONOR_ENABLED="true"; donor_save
+    _DONOR_DONE=true
     _donor_resolve_timer_sync
     [ -n "${DONOR_ENGINE_ROUTED:-}" ] && _donor_wait_dc
     log_success "Движок снова выходит через донор ${DONOR_HOST}"

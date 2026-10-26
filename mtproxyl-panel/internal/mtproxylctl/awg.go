@@ -59,11 +59,21 @@ type AwgStatus struct {
 	DonorEnabled bool   `json:"donor_enabled"`
 	EnabledAt    int64  `json:"enabled_at"`
 	// Order — выходы по приоритету: первый основной, остальные запасные.
-	Order      []string    `json:"order"`
-	FailSince  int64       `json:"fail_since"`
-	LastSwitch AwgSwitch   `json:"last_switch"`
-	Check      AwgCheck    `json:"check"`
-	Configs    []AwgConfig `json:"configs"`
+	Order      []string  `json:"order"`
+	FailSince  int64     `json:"fail_since"`
+	LastSwitch AwgSwitch `json:"last_switch"`
+	// FailoverAfter — секунд сбоя до запасного, FailbackEvery — период проверки основного.
+	FailoverAfter int             `json:"failover_after"`
+	FailbackEvery int             `json:"failback_every"`
+	PrimaryCheck  AwgPrimaryCheck `json:"primary_check"`
+	Check         AwgCheck        `json:"check"`
+	Configs       []AwgConfig     `json:"configs"`
+}
+
+// AwgPrimaryCheck — последняя проверка основного, пока работает запасной.
+type AwgPrimaryCheck struct {
+	At     int64  `json:"at"`
+	Result string `json:"result"`
 }
 
 // AwgScanFile is a candidate config found on the server.
@@ -86,6 +96,8 @@ type AwgEnableRequest struct {
 	Names          []string `json:"names"`
 	Mtu            int      `json:"mtu"`
 	AllowDisableMe bool     `json:"allow_disable_me"`
+	// Replace — выключить WARP или донор, если включены.
+	Replace bool `json:"replace"`
 }
 
 const AwgMaxExits = 8
@@ -213,6 +225,9 @@ func (r AwgEnableRequest) args() ([]string, error) {
 	if r.AllowDisableMe {
 		args = append(args, "--allow-disable-me")
 	}
+	if r.Replace {
+		args = append(args, "--replace")
+	}
 	return args, nil
 }
 
@@ -245,6 +260,33 @@ func (c *Client) AwgOrder(ctx context.Context, names []string) (string, error) {
 func ValidateAwgOrder(names []string) error {
 	_, err := awgNames("", names)
 	return err
+}
+
+// Пределы порогов — как в CLI.
+const (
+	AwgFailoverMin = 60
+	AwgFailoverMax = 3600
+	AwgFailbackMin = 60
+	AwgFailbackMax = 86400
+)
+
+func ValidateAwgTimers(failover, failback int) error {
+	if failover < AwgFailoverMin || failover > AwgFailoverMax {
+		return fmt.Errorf("переход на запасной: от %d до %d секунд", AwgFailoverMin, AwgFailoverMax)
+	}
+	if failback < AwgFailbackMin || failback > AwgFailbackMax {
+		return fmt.Errorf("проверка основного: от %d до %d секунд", AwgFailbackMin, AwgFailbackMax)
+	}
+	return nil
+}
+
+// AwgTimers sets when to switch to a backup exit and how often to retry the primary.
+func (c *Client) AwgTimers(ctx context.Context, failover, failback int) (string, error) {
+	if err := ValidateAwgTimers(failover, failback); err != nil {
+		return "", err
+	}
+	out, err := c.run(ctx, "awg", "timers", strconv.Itoa(failover), strconv.Itoa(failback))
+	return stripANSI(out), err
 }
 
 func (c *Client) AwgDisable(ctx context.Context) (string, error) {

@@ -70,7 +70,7 @@ _tui_awg_enable() {
     local -a _all=("$_TUI_AWG_PICK")
     local _primary="$_TUI_AWG_PICK"
     [[ "$_primary" == */* ]] && _primary=""
-    echo -e "  ${DIM}Запасные выходы: при сбое основного дольше 3 минут движок перейдёт на следующий.${NC}"
+    echo -e "  ${DIM}Запасные выходы: при сбое основного дольше $(_awg_human_sec "$(_awg_failover_after)") движок перейдёт на следующий.${NC}"
     _tui_awg_pick_many "Запасные — номера через пробел (пусто — без запасных):" "$_primary" && _all+=("${_TUI_AWG_NAMES[@]}")
     echo ""
     echo -e "  ${DIM}MTU: пусто — из конфига; при зависании TLS через туннель попробуйте 1280.${NC}"
@@ -78,6 +78,15 @@ _tui_awg_enable() {
     local -a _args=("${_all[@]}")
     [ -n "$_mtu" ] && _args+=(--mtu "$_mtu")
     awg_enable "${_args[@]}"
+}
+
+_tui_awg_timers() {
+    echo -e "  ${DIM}Сторож проверяет выход раз в минуту. Переход на запасной — после указанного${NC}"
+    echo -e "  ${DIM}времени сбоя (60–3600 с), основной проверяется с заданным периодом (60–86400 с).${NC}"
+    local _fo _fb
+    read_line _fo "  ${BOLD}Переход на запасной через, с [$(_awg_failover_after)]:${NC} "
+    read_line _fb "  ${BOLD}Проверять основной раз в, с [$(_awg_failback_every)]:${NC} "
+    awg_timers "${_fo:-$(_awg_failover_after)}" "${_fb:-$(_awg_failback_every)}"
 }
 
 _tui_awg_remove() {
@@ -109,7 +118,10 @@ tui_awg_menu() {
         fi
         echo -e "  ${DIM}[4]${NC} Найти конфиги на сервере"
         echo -e "  ${DIM}[5]${NC} Удалить импортированный конфиг"
-        [ "$(_awg_list_names | wc -l)" -gt 1 ] && echo -e "  ${DIM}[6]${NC} Порядок выходов — основной и запасные"
+        if [ "$(_awg_list_names | wc -l)" -gt 1 ]; then
+            echo -e "  ${DIM}[6]${NC} Порядок выходов — основной и запасные"
+            echo -e "  ${DIM}[7]${NC} Когда переключаться — сейчас $(_awg_human_sec "$(_awg_failover_after)") сбоя, проверка основного раз в $(_awg_human_sec "$(_awg_failback_every)")"
+        fi
         echo -e "  ${DIM}[0]${NC} Назад"
         local _c; _c=$(read_choice "выбор" "0")
         case "$_c" in
@@ -126,6 +138,7 @@ tui_awg_menu() {
                 echo -e "  ${DIM}Первый — основной, остальные — запасные по порядку.${NC}"
                 _tui_awg_pick_many "Выходы по порядку — номера через пробел:" && awg_order "${_TUI_AWG_NAMES[@]}"
                 press_any_key ;;
+            7) _tui_awg_timers; press_any_key ;;
             0|"") return ;;
         esac
     done

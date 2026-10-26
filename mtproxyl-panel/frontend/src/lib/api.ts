@@ -1346,7 +1346,7 @@ export const warpApi = {
     request<WarpPreflight>(WARP_BASE, `/preflight?mode=${encodeURIComponent(mode)}`),
   enable: (
     mode: 'socks' | 'iface' | 'upstream',
-    consent: { disableMiddleProxy?: boolean; disableDefaultUpstreams?: boolean } = {},
+    consent: { disableMiddleProxy?: boolean; disableDefaultUpstreams?: boolean; replace?: boolean } = {},
   ) =>
     request<MtproxylOperation>(WARP_BASE, '/enable', {
       method: 'POST',
@@ -1354,6 +1354,7 @@ export const warpApi = {
         mode,
         allow_disable_middle_proxy: Boolean(consent.disableMiddleProxy),
         allow_disable_default_upstreams: Boolean(consent.disableDefaultUpstreams),
+        replace: Boolean(consent.replace),
       }),
     }),
   disable: () => request<MtproxylOperation>(WARP_BASE, '/disable', { method: 'POST' }),
@@ -1442,6 +1443,8 @@ export interface DonorSetupRequest {
   mtu: number;
   host_key: string;
   allow_disable_default_upstreams: boolean;
+  /** Выключить WARP или свой AWG, если включены. */
+  replace?: boolean;
 }
 
 export const donorApi = {
@@ -1459,18 +1462,18 @@ export const donorApi = {
       body: JSON.stringify({ host, awg_port: awgPort, mtu }),
     }),
   manualScript: () => request<{ script: string }>(DONOR_BASE, '/manual-script'),
-  finish: (key: string, allowDisableDefaultUpstreams: boolean) =>
+  finish: (key: string, allowDisableDefaultUpstreams: boolean, replace = false) =>
     request<MtproxylOperation>(DONOR_BASE, '/finish', {
       method: 'POST',
-      body: JSON.stringify({ key, allow_disable_default_upstreams: allowDisableDefaultUpstreams }),
+      body: JSON.stringify({ key, allow_disable_default_upstreams: allowDisableDefaultUpstreams, replace }),
     }),
   check: () => request<DonorStatusResponse>(DONOR_BASE, '/check', { method: 'POST' }),
   setHost: (host: string) =>
     request<MtproxylOperation>(DONOR_BASE, '/host', { method: 'POST', body: JSON.stringify({ host }) }),
-  enable: (allowDisableDefaultUpstreams: boolean) =>
+  enable: (allowDisableDefaultUpstreams: boolean, replace = false) =>
     request<MtproxylOperation>(DONOR_BASE, '/enable', {
       method: 'POST',
-      body: JSON.stringify({ allow_disable_default_upstreams: allowDisableDefaultUpstreams }),
+      body: JSON.stringify({ allow_disable_default_upstreams: allowDisableDefaultUpstreams, replace }),
     }),
   disable: () => request<MtproxylOperation>(DONOR_BASE, '/disable', { method: 'POST' }),
   remove: (remote: boolean, password: string) =>
@@ -1518,6 +1521,10 @@ export interface AwgStatus {
   order?: string[];
   fail_since?: number;
   last_switch?: { at: number; from: string; to: string; reason: string };
+  /** Секунд сбоя до запасного и период проверки основного. */
+  failover_after?: number;
+  failback_every?: number;
+  primary_check?: { at: number; result: '' | 'ok' | 'fail' };
   check: { at: number; result: string; error: string };
   configs: AwgConfigInfo[];
 }
@@ -1547,10 +1554,15 @@ export const awgApi = {
     request<{ output: string }>(AWG_BASE, '/import', { method: 'POST', body: JSON.stringify({ name, body }) }),
   importPath: (name: string, path: string) =>
     request<{ output: string }>(AWG_BASE, '/import', { method: 'POST', body: JSON.stringify({ name, path }) }),
-  enable: (names: string[], mtu: number, allowDisableMe: boolean) =>
+  enable: (names: string[], mtu: number, allowDisableMe: boolean, replace = false) =>
     request<MtproxylOperation>(AWG_BASE, '/enable', {
       method: 'POST',
-      body: JSON.stringify({ names, mtu, allow_disable_me: allowDisableMe }),
+      body: JSON.stringify({ names, mtu, allow_disable_me: allowDisableMe, replace }),
+    }),
+  timers: (failoverAfter: number, failbackEvery: number) =>
+    request<AwgStatusResponse>(AWG_BASE, '/timers', {
+      method: 'POST',
+      body: JSON.stringify({ failover_after: failoverAfter, failback_every: failbackEvery }),
     }),
   order: (names: string[]) =>
     request<MtproxylOperation>(AWG_BASE, '/order', { method: 'POST', body: JSON.stringify({ names }) }),
@@ -1559,6 +1571,44 @@ export const awgApi = {
   remove: (name: string) =>
     request<{ output: string }>(AWG_BASE, '/remove', { method: 'POST', body: JSON.stringify({ name }) }),
 };
+
+// ── Выход к Telegram ─────────────────────────────────────────────────────
+export type EgressVia = 'direct' | 'warp' | 'donor' | 'awg';
+
+export interface Egress {
+  via: EgressVia;
+  label: string;
+  /** Имя конфига AWG, хост донора или локация WARP. */
+  name: string;
+  egress_ip: string;
+  /** null — давно не проверяли. */
+  ok: boolean | null;
+  error: string;
+  fail_since: number;
+  awg?: {
+    order: string[];
+    failover_after: number;
+    failback_every: number;
+    last_switch: { at: number; from: string; to: string; reason: string };
+    primary_check: { at: number; result: '' | 'ok' | 'fail' };
+  };
+}
+
+export const egressApi = {
+  get: () => request<{ supported: boolean; egress?: Egress }>(`${BASE}/api`, '/egress'),
+};
+
+const EGRESS_NAMES: Record<Exclude<EgressVia, 'direct'>, string> = {
+  warp: 'WARP',
+  donor: 'туннель до донора',
+  awg: 'свой AWG',
+};
+
+/** Другие включённые выходы, кроме своего: для вопроса «выключить и включить этот?». */
+export function otherEgress(e: Egress | undefined | null, self: Exclude<EgressVia, 'direct'>): string | null {
+  if (!e || e.via === 'direct' || e.via === self) return null;
+  return EGRESS_NAMES[e.via];
+}
 
 // ── История метрик (память панели, 2 часа) ────────────────────────────────
 

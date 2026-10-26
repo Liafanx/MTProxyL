@@ -20,6 +20,11 @@ export function awgNameFromFile(file: string): string {
   return name || 'awg';
 }
 
+/** Секунды по-человечески: «3 мин» или «90 с». */
+export function humanSec(sec: number): string {
+  return sec % 60 === 0 ? `${sec / 60} мин` : `${sec} с`;
+}
+
 /** Импорт клиентского конфига AmneziaWG/WireGuard: Telegram через свой сервер. */
 export function AwgPage() {
   const [status, setStatus] = useState<AwgStatus | null>(null);
@@ -54,7 +59,10 @@ export function AwgPage() {
 
   const { operation, start, dismiss, running } = useMtproxylOperation(load, ['awg:']);
   const locked = busy || running;
-  const blocked = Boolean(status && !status.enabled && (status.warp_enabled || status.donor_enabled));
+  // Другой выход при включении AWG выключается — после подтверждения.
+  const other = status && !status.enabled
+    ? status.warp_enabled ? 'маршрут через WARP' : status.donor_enabled ? 'туннель до донора' : null
+    : null;
 
   const act = async (fn: () => Promise<MtproxylOperation>) => {
     setBusy(true);
@@ -115,11 +123,10 @@ export function AwgPage() {
         {unsupported && <Card className="p-6 text-sm text-text-secondary">{unsupported}</Card>}
         {notice && <Card className="p-4 text-xs text-text-secondary whitespace-pre-wrap font-mono">{notice}</Card>}
 
-        {blocked && (
+        {other && (
           <Card className="p-4 text-sm text-warning">
-            {status?.warp_enabled
-              ? 'Включён маршрут через WARP — сначала выключите его на странице «Telegram через WARP».'
-              : 'Включён туннель до донора — сначала выключите его на странице «Туннель AWG до донора».'}
+            Сейчас включён {other}. Одновременно работает только один выход — при включении AWG он
+            будет выключен, а если AWG не поднимется, вернётся обратно.
           </Card>
         )}
 
@@ -132,11 +139,18 @@ export function AwgPage() {
           />
         )}
 
+        {status && status.configs.length > 1 && (
+          <TimersCard status={status} locked={locked} onSaved={setStatus} onError={setError} />
+        )}
+
         {status && (
           <ConfigsCard
             status={status}
-            locked={locked || blocked}
-            onEnable={(names, mtu, allowMe) => void act(() => awgApi.enable(names, mtu, allowMe))}
+            locked={locked}
+            onEnable={(names, mtu, allowMe) => {
+              if (other && !window.confirm(`Сейчас включён ${other}. Выключить его и включить AWG?`)) return;
+              void act(() => awgApi.enable(names, mtu, allowMe, Boolean(other)));
+            }}
             onOrder={(names) => void act(() => awgApi.order(names))}
             onRemove={(name) => void quick(() => awgApi.remove(name), 'Не удалось удалить конфиг')}
           />
@@ -175,6 +189,11 @@ function StateCard({ status, locked, onCheck, onDisable }: {
       ? 'конфиг движка — вручную'
       : 'менеджер';
   const checkedAt = status.check.at ? new Date(status.check.at * 1000).toLocaleString('ru-RU') : '—';
+  const primary = status.order?.[0];
+  const pc = status.primary_check;
+  const primaryLine = primary && primary !== status.active && pc?.at && pc.result
+    ? `«${primary}» проверен ${new Date(pc.at * 1000).toLocaleTimeString('ru-RU')} — ${pc.result === 'ok' ? 'отвечает' : 'не отвечает'}, следующая проверка через ${humanSec(status.failback_every ?? 120)}`
+    : null;
 
   return (
     <Card className="p-4 space-y-3">
@@ -209,10 +228,11 @@ function StateCard({ status, locked, onCheck, onDisable }: {
         ) : null}
         {status.check.error && <Cell label="Причина" value={status.check.error} />}
       </div>
+      {primaryLine && <p className="text-xs text-text-secondary">Основной: {primaryLine}</p>}
       {status.fail_since ? (
         <p className="text-xs text-warning">
           «{status.active}» не отвечает с {new Date(status.fail_since * 1000).toLocaleTimeString('ru-RU')}
-          {(status.order?.length ?? 0) > 1 ? ' — через 3 минуты сбоя движок перейдёт на запасной.' : '.'}
+          {(status.order?.length ?? 0) > 1 ? ` — через ${humanSec(status.failover_after ?? 180)} сбоя движок перейдёт на запасной.` : '.'}
         </p>
       ) : null}
 
@@ -281,7 +301,8 @@ function ConfigsCard({ status, locked, onEnable, onOrder, onRemove }: {
         <h3 className="text-sm font-medium text-text-primary">Выходы</h3>
         <p className="text-xs text-text-secondary mt-0.5">
           Отмеченные — по порядку: первый основной, остальные запасные. Если основной не отвечает
-          дольше 3 минут, движок перейдёт на следующий и вернётся, когда основной оживёт.
+          дольше {humanSec(status.failover_after ?? 180)}, движок перейдёт на следующий и вернётся, когда
+          основной оживёт.
         </p>
       </div>
       {status.configs.length === 0 ? (
@@ -373,6 +394,64 @@ function ConfigsCard({ status, locked, onEnable, onOrder, onRemove }: {
           </p>
         </div>
       )}
+    </Card>
+  );
+}
+
+function TimersCard({ status, locked, onSaved, onError }: {
+  status: AwgStatus;
+  locked: boolean;
+  onSaved: (st: AwgStatus | null) => void;
+  onError: (msg: string) => void;
+}) {
+  const [failover, setFailover] = useState(String(status.failover_after ?? 180));
+  const [failback, setFailback] = useState(String(status.failback_every ?? 120));
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    setFailover(String(status.failover_after ?? 180));
+    setFailback(String(status.failback_every ?? 120));
+  }, [status.failover_after, status.failback_every]);
+
+  const fo = Number(failover);
+  const fb = Number(failback);
+  const ok = Number.isInteger(fo) && fo >= 60 && fo <= 3600 && Number.isInteger(fb) && fb >= 60 && fb <= 86400;
+  const changed = fo !== (status.failover_after ?? 180) || fb !== (status.failback_every ?? 120);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const res = await awgApi.timers(fo, fb);
+      onSaved(res.status ?? null);
+    } catch (e) {
+      onError(errText(e, 'Не удалось сохранить'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div>
+        <h3 className="text-sm font-medium text-text-primary">Когда переключаться</h3>
+        <p className="text-xs text-text-secondary mt-0.5">
+          Сторож проверяет выход раз в минуту. По умолчанию — запасной после 3 минут сбоя, основной
+          проверяется раз в 2 минуты; когда он отвечает, движок возвращается на него.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <div className="text-xs text-text-secondary mb-1">Запасной после сбоя, с (60–3600)</div>
+          <Input className="w-32" value={failover} disabled={locked || saving} onChange={(e) => setFailover(e.target.value)} />
+        </div>
+        <div>
+          <div className="text-xs text-text-secondary mb-1">Проверять основной раз в, с (60–86400)</div>
+          <Input className="w-32" value={failback} disabled={locked || saving} onChange={(e) => setFailback(e.target.value)} />
+        </div>
+        <Button size="sm" disabled={locked || saving || !ok || !changed} onClick={() => void save()}>
+          Сохранить
+        </Button>
+      </div>
+      {!ok && <p className="text-xs text-danger">Запасной — от 60 до 3600 с, проверка основного — от 60 до 86400 с</p>}
     </Card>
   );
 }

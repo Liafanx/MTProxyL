@@ -83,7 +83,7 @@ printf '%s\n' "$@"
 	if !p.MiddleProxyEnabled || !p.CanDisableMiddleProxy || len(p.DefaultUpstreams) != 1 || p.DefaultUpstreams[0] != "direct" {
 		t.Fatalf("preflight: %+v", p)
 	}
-	out, err := c.WarpEnable(context.Background(), "upstream", true, true)
+	out, err := c.WarpEnable(context.Background(), "upstream", true, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}

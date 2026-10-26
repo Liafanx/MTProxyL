@@ -72,6 +72,7 @@ func (s *Server) registerWarpRoutes(
 			Mode                         string `json:"mode"`
 			AllowDisableMiddleProxy      bool   `json:"allow_disable_middle_proxy"`
 			AllowDisableDefaultUpstreams bool   `json:"allow_disable_default_upstreams"`
+			Replace                      bool   `json:"replace"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "Ожидается {\"mode\": \"socks\"|\"iface\"|\"upstream\"}")
@@ -86,8 +87,9 @@ func (s *Server) registerWarpRoutes(
 		mode := req.Mode
 		allowME := req.AllowDisableMiddleProxy
 		allowRoutes := req.AllowDisableDefaultUpstreams
+		replace := req.Replace
 		start(w, "warp:on:"+mode, func(ctx context.Context) (string, error) {
-			return client.WarpEnable(ctx, mode, allowME, allowRoutes)
+			return client.WarpEnable(ctx, mode, allowME, allowRoutes, replace)
 		})
 	}))
 

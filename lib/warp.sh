@@ -1150,15 +1150,19 @@ _warp_wait_socks_listener() {
 }
 
 warp_enable() (
-    local WARP_ALLOW_DISABLE_ME=false WARP_ALLOW_DISABLE_DEFAULT_UPSTREAMS=false _arg
+    local WARP_ALLOW_DISABLE_ME=false WARP_ALLOW_DISABLE_DEFAULT_UPSTREAMS=false _replace=false _arg
     local _requested_mode="${1:-}"; shift 2>/dev/null || true
+    case "$_requested_mode" in --*) set -- "$_requested_mode" "$@"; _requested_mode="" ;; esac
     for _arg in "$@"; do
         case "$_arg" in
             --allow-disable-me) WARP_ALLOW_DISABLE_ME=true ;;
             --allow-disable-default-upstreams) WARP_ALLOW_DISABLE_DEFAULT_UPSTREAMS=true ;;
+            --replace) _replace=true ;;
             *) log_error "Неизвестный параметр включения WARP: $_arg"; return 1 ;;
         esac
     done
+    # Донор или свой AWG выключаем до снимка настроек; WARP не поднимется — вернём их.
+    egress_take_over warp "$_replace" || return 1
     local _before _file _ok=false _WARP_PREVIOUS_MODE="$(_warp_mode)" _WARP_PREVIOUS_ENABLED="${WARP_ENABLED:-false}"
     _before=$(mktemp -d "$INSTALL_DIR/warp-transition.XXXXXX") || return 1
     local -a _files=(settings.conf upstreams.conf expert.conf warp/state.json "warp/$WARP_IFACE.conf")
@@ -1188,6 +1192,7 @@ warp_enable() (
                 fi
             fi
             log_error "Включение WARP отменено, прежние настройки восстановлены"
+            egress_restore
         fi
         rm -rf "$_before"
     }

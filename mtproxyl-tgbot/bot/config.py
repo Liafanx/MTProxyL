@@ -27,6 +27,7 @@ DEFAULT_NOTIFY = {
     "proxy": True,
     "backup": True,
     "limits": True,
+    "egress": True,
 }
 DEFAULT_INTERVALS = {
     "availability": 15,

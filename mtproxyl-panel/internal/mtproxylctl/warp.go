@@ -120,7 +120,8 @@ func (c *Client) WarpPreflight(ctx context.Context, mode string) (*WarpPreflight
 }
 
 // WarpEnable turns the route on after explicit consent to conflicting changes.
-func (c *Client) WarpEnable(ctx context.Context, mode string, allowDisableME, allowDisableDefaultUpstreams bool) (string, error) {
+// replace — выключить донор или свой AWG, если включены.
+func (c *Client) WarpEnable(ctx context.Context, mode string, allowDisableME, allowDisableDefaultUpstreams, replace bool) (string, error) {
 	if err := validateWarpMode(mode); err != nil {
 		return "", err
 	}
@@ -130,6 +131,9 @@ func (c *Client) WarpEnable(ctx context.Context, mode string, allowDisableME, al
 	}
 	if allowDisableDefaultUpstreams {
 		args = append(args, "--allow-disable-default-upstreams")
+	}
+	if replace {
+		args = append(args, "--replace")
 	}
 	out, err := c.run(ctx, args...)
 	return stripANSI(out), err
