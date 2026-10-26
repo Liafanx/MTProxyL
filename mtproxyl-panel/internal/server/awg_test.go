@@ -71,6 +71,29 @@ func TestAwgImportPathAndEnable(t *testing.T) {
 	}
 }
 
+func TestAwgEnableSeveralAndOrder(t *testing.T) {
+	script, argsFile, _ := recordingScript(t)
+	mux, runner := newAwgMux(t, script)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, authedRequest(t, http.MethodPost, "/api/awg/enable", `{"names":["main","spare-1"]}`))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("enable: %d %s", rec.Code, rec.Body.String())
+	}
+	waitRunner(runner)
+	if args, _ := os.ReadFile(argsFile); string(args) != "awg\non\nmain\nspare-1\n--yes\n" {
+		t.Fatalf("args: %q", args)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, authedRequest(t, http.MethodPost, "/api/awg/order", `{"names":["spare-1","main"]}`))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("order: %d %s", rec.Code, rec.Body.String())
+	}
+	waitRunner(runner)
+	if args, _ := os.ReadFile(argsFile); string(args) != "awg\norder\nspare-1\nmain\n" {
+		t.Fatalf("args: %q", args)
+	}
+}
+
 func TestAwgRejectsBadInput(t *testing.T) {
 	script, argsFile, _ := recordingScript(t)
 	mux, _ := newAwgMux(t, script)
@@ -84,6 +107,10 @@ func TestAwgRejectsBadInput(t *testing.T) {
 		{"/api/awg/import", `{"name":"ok","body":"` + strings.Repeat("a", mtproxylctl.AwgConfigMax+1) + `"}`},
 		{"/api/awg/enable", `{"name":"vpn --mtu 1"}`},
 		{"/api/awg/enable", `{"name":"vpn","mtu":9000}`},
+		{"/api/awg/enable", `{"names":["a","a"]}`},
+		{"/api/awg/enable", `{"names":["a","b","c","d","e","f","g","h","i"]}`},
+		{"/api/awg/order", `{"names":[]}`},
+		{"/api/awg/order", `{"names":["ok","--yes"]}`},
 	}
 	for _, c := range cases {
 		rec := httptest.NewRecorder()

@@ -22,7 +22,8 @@ _awg_quick_unit() { echo "awg-quick@${AWG_IFACE}.service"; }
 
 _AWG_KEYS="AWG_ENABLED AWG_ACTIVE AWG_MTU AWG_EGRESS_IP AWG_EGRESS_AT AWG_IPV6 AWG_ME_MODE AWG_ME_DISABLED
 AWG_ENGINE_ROUTED AWG_TARGET_ORIG_NATIP AWG_TARGET_ORIG_PROBE AWG_TARGET_ORIG_USEME AWG_ENABLED_AT
-AWG_CHECK_AT AWG_CHECK_RESULT AWG_CHECK_ERROR"
+AWG_CHECK_AT AWG_CHECK_RESULT AWG_CHECK_ERROR AWG_ORDER AWG_FAIL_SINCE AWG_PRIMARY_AT
+AWG_SWITCH_AT AWG_SWITCH_FROM AWG_SWITCH_TO AWG_SWITCH_REASON"
 
 awg_load() {
     local _k
@@ -42,7 +43,7 @@ awg_load() {
     _awg_valid_mtu "$AWG_MTU" || AWG_MTU=""
     validate_ip_literal "$AWG_EGRESS_IP" 2>/dev/null || AWG_EGRESS_IP=""
     local _n
-    for _n in AWG_EGRESS_AT AWG_ENABLED_AT AWG_CHECK_AT; do
+    for _n in AWG_EGRESS_AT AWG_ENABLED_AT AWG_CHECK_AT AWG_FAIL_SINCE AWG_PRIMARY_AT AWG_SWITCH_AT; do
         [[ "${!_n}" =~ ^[0-9]{1,12}$ ]] || printf -v "$_n" '%s' ""
     done
     return 0
@@ -86,10 +87,17 @@ _awg_normalize() {
         function trim(s) { sub(/^[ \t\r]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
         function iskey(v) { return length(v) == 44 && v ~ /^[A-Za-z0-9+\/]+=$/ }
         function fail(m) { if (err == "") err = m }
+        # Диапазон AWG 3.x: «N» или «N-M», u16, N <= M.
+        function isrange(v,   r) {
+            if (v !~ /^[0-9]+(-[0-9]+)?$/) return 0
+            split(v, r, "-"); if (!(2 in r)) r[2] = r[1]
+            return r[1] + 0 <= 65535 && r[2] + 0 <= 65535 && r[1] + 0 <= r[2] + 0
+        }
+        function isbool(v) { return tolower(v) ~ /^(on|off|[0-9]+)$/ }
         BEGIN {
-            split("PrivateKey Address MTU Jc Jmin Jmax S1 S2 S3 S4 H1 H2 H3 H4 I1 I2 I3 I4 I5 J1 J2 J3 Itime", a, " ")
+            split("PrivateKey Address MTU Jc Jmin Jmax S1 S2 S3 S4 H1 H2 H3 H4 I1 I2 I3 I4 I5 HeaderProtectionKey ContentPaddingAddition RekeyAfterTime RekeyTimeout RejectAfterTime KeepaliveTimeout MaxHandshakeAttempts RandomTrailers DisableCookies", a, " ")
             for (i in a) ikeys[tolower(a[i])] = a[i]
-            split("PublicKey PresharedKey Endpoint AllowedIPs PersistentKeepalive", b, " ")
+            split("PublicKey PresharedKey Endpoint AllowedIPs PersistentKeepalive AdvancedSecurity", b, " ")
             for (i in b) pkeys[tolower(b[i])] = b[i]
             sec = ""; ni = 0; np = 0; n = 0; err = ""; drop = ""
         }
@@ -123,8 +131,18 @@ _awg_normalize() {
                     addr = v
                 }
                 else if (ck == "MTU") { if (v !~ /^[0-9]+$/ || v + 0 < 576 || v + 0 > 9000) fail("MTU: " v) }
-                else if (ck ~ /^(Jc|Jmin|Jmax|S[1-4]|H[1-4])$/) { if (v !~ /^[0-9]+(-[0-9]+)?$/) fail(ck ": " v); obf = obf || (ck !~ /^H/ ? v + 0 > 0 : v !~ /^[1-4]$/) }
-                else { if (v ~ /["`$\\'\'']/) fail(ck ": недопустимые символы"); obf = 1 }
+                else if (ck ~ /^(Jc|Jmin|Jmax|S[1-4]|H[1-4])$/) {
+                    if (v !~ /^[0-9]+(-[0-9]+)?$/) fail(ck ": " v)
+                    if (ck ~ /^S[1-4]$/) sv[ck] = v + 0
+                    if (ck ~ /^H/ ? v !~ /^[1-4]$/ : v + 0 > 0) { obf = 1; if (lvl < 1) lvl = 1 }
+                    if ((ck ~ /^S[34]$/ && v + 0 > 0) || (ck ~ /^H/ && index(v, "-"))) lvl = lvl < 2 ? 2 : lvl
+                }
+                else if (ck == "HeaderProtectionKey") { if (!iskey(v)) fail(ck " не похож на ключ"); obf = 1; lvl = 3; hpk = 1 }
+                else if (ck ~ /^(RandomTrailers|DisableCookies)$/) { if (!isbool(v)) fail(ck ": " v); obf = 1; lvl = 3 }
+                else if (ck ~ /^(ContentPaddingAddition|RekeyAfterTime|RekeyTimeout|RejectAfterTime|KeepaliveTimeout|MaxHandshakeAttempts)$/) {
+                    if (!isrange(v)) fail(ck ": " v); obf = 1; lvl = 3
+                }
+                else { if (v ~ /["`$\\'\'']/) fail(ck ": недопустимые символы"); obf = 1; if (lvl < 2) lvl = 2 }
                 out[++n] = ck " = " v
             } else if (sec == "p" && (lk in pkeys)) {
                 ck = pkeys[lk]
@@ -135,7 +153,11 @@ _awg_normalize() {
                     pep[np] = 1; if (ep == "") ep = v
                 }
                 else if (ck == "AllowedIPs") { if (v !~ /^[0-9a-fA-F:.,\/ ]+$/) fail("AllowedIPs: " v) }
-                else { if (v !~ /^([0-9]+|off)$/) fail("PersistentKeepalive: " v) }
+                else if (ck == "AdvancedSecurity") { if (!isbool(v)) fail(ck ": " v); lvl = 3 }
+                else {
+                    if (v != "off" && !isrange(v)) fail("PersistentKeepalive: " v)
+                    if (index(v, "-")) lvl = 3
+                }
                 out[++n] = ck " = " v
             } else if (sec == "") {
                 fail("ключ вне секции: " k)
@@ -148,12 +170,14 @@ _awg_normalize() {
             if (np < 1) fail("нет секции [Peer]")
             if (!hk) fail("нет PrivateKey")
             if (!has4) fail("нет IPv4 в Address")
+            # Модуль AWG 3.x с защитой заголовков требует S1–S4 не меньше 12.
+            if (hpk) for (j = 1; j <= 4; j++) if (sv["S" j] + 0 < 12) { fail("с HeaderProtectionKey S1–S4 должны быть не меньше 12"); break }
             for (j = 1; j <= np; j++) {
                 if (!ppub[j]) fail("у [Peer] нет PublicKey")
                 if (!pep[j]) fail("у [Peer] нет Endpoint — это конфиг сервера, а нужен клиентский")
             }
             if (err != "") { print "ERR:" err; exit 1 }
-            print "# MTProxyL: endpoint=" ep " address=" addr " obfuscation=" (obf ? "yes" : "no") " ipv6=" (has6 ? "yes" : "no")
+            print "# MTProxyL: endpoint=" ep " address=" addr " obfuscation=" (obf ? "yes" : "no") " ipv6=" (has6 ? "yes" : "no") " awg=" (lvl ? lvl : (obf ? 1 : "wg"))
             if (drop != "") print "# DROP: " drop
             for (j = 1; j <= n; j++) print out[j]
         }
@@ -161,8 +185,23 @@ _awg_normalize() {
 }
 
 # Сводка по нормализованному конфигу: endpoint|address|obfuscation|ipv6.
+# Пятое поле — уровень AWG (wg, 1, 2, 3); у конфигов до 1.7.15 его нет.
 _awg_conf_info() {
-    sed -n '1s/^# MTProxyL: endpoint=\([^ ]*\) address=\(.*\) obfuscation=\([a-z]*\) ipv6=\([a-z]*\)$/\1|\2|\3|\4/p' "$1" 2>/dev/null
+    sed -n '1s/^# MTProxyL: endpoint=\([^ ]*\) address=\(.*\) obfuscation=\([a-z]*\) ipv6=\([a-z]*\)\( awg=\([a-z0-9]*\)\)\{0,1\}$/\1|\2|\3|\4|\6/p' "$1" 2>/dev/null
+}
+
+# Подпись уровня для людей: «AWG 3.x», «AWG 2.0», «AWG 1.0», «WireGuard».
+_awg_level_label() {
+    case "${1:-}" in
+        3) echo "AWG 3.x" ;; 2) echo "AWG 2.0" ;; 1) echo "AWG 1.0" ;; wg) echo "WireGuard" ;; *) echo "" ;;
+    esac
+}
+
+# «, AWG 3.x» для строк списка; у старых сводок уровня нет.
+_awg_kind() {
+    local _l; _l=$(_awg_level_label "${2:-}")
+    [ -z "$_l" ] && [ "${1:-}" = yes ] && _l="AWG"
+    [ -n "$_l" ] && echo ", ${_l}"
 }
 
 _awg_conf_dropped() { sed -n 's/^# DROP: //p' "$1" 2>/dev/null | head -1; }
@@ -209,13 +248,13 @@ awg_scan() {
         for _f in "${_found[@]}"; do
             [ "$_first" = true ] || printf ','; _first=false
             if _info=$(_awg_check_file "$_f"); then
-                IFS='|' read -r _ep _addr _obf _v6 <<< "$_info"
-                printf '{"path":"%s","name":"%s","valid":true,"endpoint":"%s","address":"%s","obfuscation":%s,"ipv6":%s,"error":""}' \
+                IFS='|' read -r _ep _addr _obf _v6 _lvl <<< "$_info"
+                printf '{"path":"%s","name":"%s","valid":true,"endpoint":"%s","address":"%s","obfuscation":%s,"ipv6":%s,"awg_version":"%s","error":""}' \
                     "$(json_escape "$_f")" "$(json_escape "$(_awg_name_from_path "$_f")")" "$(json_escape "$_ep")" \
                     "$(json_escape "$_addr")" "$([ "$_obf" = yes ] && echo true || echo false)" \
-                    "$([ "$_v6" = yes ] && echo true || echo false)"
+                    "$([ "$_v6" = yes ] && echo true || echo false)" "$(_awg_level_label "$_lvl")"
             else
-                printf '{"path":"%s","name":"%s","valid":false,"endpoint":"","address":"","obfuscation":false,"ipv6":false,"error":"%s"}' \
+                printf '{"path":"%s","name":"%s","valid":false,"endpoint":"","address":"","obfuscation":false,"ipv6":false,"awg_version":"","error":"%s"}' \
                     "$(json_escape "$_f")" "$(json_escape "$(_awg_name_from_path "$_f")")" "$(json_escape "$_AWG_FILE_ERR")"
             fi
         done
@@ -230,8 +269,8 @@ awg_scan() {
     fi
     for _f in "${_found[@]}"; do
         if _info=$(_awg_check_file "$_f"); then
-            IFS='|' read -r _ep _addr _obf _v6 <<< "$_info"
-            echo -e "  ${GREEN}${SYM_OK}${NC} ${_f}  ${DIM}${_ep}, ${_addr}$([ "$_obf" = yes ] && echo ", обфускация AWG")${NC}"
+            IFS='|' read -r _ep _addr _obf _v6 _lvl <<< "$_info"
+            echo -e "  ${GREEN}${SYM_OK}${NC} ${_f}  ${DIM}${_ep}, ${_addr}$(_awg_kind "$_obf" "$_lvl")${NC}"
         else
             echo -e "  ${DIM}—${NC} ${_f}  ${DIM}не подходит: ${_AWG_FILE_ERR}${NC}"
         fi
@@ -288,8 +327,8 @@ awg_import() {
     install -m 600 "$_norm" "$_dst" || { rm -f "$_norm"; return 1; }
     rm -f "$_norm"
 
-    local _ep _addr _obf _v6
-    IFS='|' read -r _ep _addr _obf _v6 < <(_awg_conf_info "$_dst")
+    local _ep _addr _obf _v6 _lvl
+    IFS='|' read -r _ep _addr _obf _v6 _lvl < <(_awg_conf_info "$_dst")
     if [ "$_json" = true ]; then
         printf '{"name":"%s","endpoint":"%s","address":"%s","obfuscation":%s,"replaced":%s,"dropped":"%s"}\n' \
             "$(json_escape "$_name")" "$(json_escape "$_ep")" "$(json_escape "$_addr")" \
@@ -297,7 +336,7 @@ awg_import() {
         return 0
     fi
     log_success "Конфиг сохранён как «${_name}»$([ "$_existed" = true ] && echo " (заменён прежний)")"
-    echo -e "  ${DIM}Сервер: ${_ep}, адрес в туннеле: ${_addr}$([ "$_obf" = yes ] && echo ", обфускация AWG")${NC}"
+    echo -e "  ${DIM}Сервер: ${_ep}, адрес в туннеле: ${_addr}$(_awg_kind "$_obf" "$_lvl")${NC}"
     local _drop; _drop=$(_awg_conf_dropped "$_dst")
     [ -n "$_drop" ] && echo -e "  ${DIM}Не используются (маршруты и DNS задаёт MTProxyL): ${_drop}${NC}"
     echo -e "  ${DIM}Включить: ${GREEN}mtproxyl awg on ${_name}${NC}"
@@ -324,7 +363,9 @@ awg_remove() {
         return 1
     fi
     rm -f "$_f"
-    [ "$AWG_ACTIVE" = "$_name" ] && { AWG_ACTIVE=""; awg_save; }
+    [ "$AWG_ACTIVE" = "$_name" ] && AWG_ACTIVE=""
+    AWG_ORDER=$(tr ',' '\n' <<< "${AWG_ORDER:-}" | grep -vxF "$_name" | paste -sd, -)
+    awg_save
     log_success "Конфиг «${_name}» удалён"
 }
 
@@ -387,7 +428,7 @@ _awg_probe() {
 }
 
 _awg_tunnel_has_v6() {
-    ip -6 addr show dev "$AWG_IFACE" scope global 2>/dev/null | grep -q inet6
+    grep -q inet6 <<< "$(ip -6 addr show dev "$AWG_IFACE" scope global 2>/dev/null)"
 }
 
 _awg_generate_nft() {
@@ -476,7 +517,7 @@ _awg_remove_units() {
 }
 
 _awg_route_ready() {
-    ip rule show 2>/dev/null | grep -q "lookup ${AWG_RT_TABLE}" \
+    grep -q "lookup ${AWG_RT_TABLE}" <<< "$(ip rule show 2>/dev/null)" \
         && nft list table inet "$AWG_NFT_TABLE" >/dev/null 2>&1
 }
 
@@ -700,9 +741,166 @@ _awg_ensure_installed() {
     command -v awg-quick >/dev/null 2>&1
 }
 
+# ── AWG 3.x ─────────────────────────────────────────────────────────────────
+
+_awg_conf_level() { _awg_conf_info "$(_awg_store)/${1}.conf" | cut -d'|' -f5; }
+
+_awg_module_v3() {
+    local _v; _v=$(cat /sys/module/amneziawg/version 2>/dev/null) || return 1
+    [[ "$_v" =~ ^([0-9]+)\.([0-9]+) ]] || return 1
+    [ $(( BASH_REMATCH[1] * 100 + BASH_REMATCH[2] )) -ge 301 ]
+}
+
+_awg_tools_v3() { grep -q 'header-protection-key' <<< "$(awg set 2>&1)"; }
+
+_awg_supports_v3() { _awg_tools_v3 && _awg_module_v3; }
+
+# Конфиг 3.x требует свежих tools и модуля: обновляем пакеты из PPA Amnezia.
+_awg_ensure_v3() {
+    _awg_supports_v3 && return 0
+    log_info "Конфиг AWG 3.x — обновляем AmneziaWG..."
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq >/dev/null 2>&1 || true
+    apt-get install -y -qq --only-upgrade amneziawg-tools amneziawg-dkms >/dev/null 2>&1 || true
+    if ! _awg_tools_v3; then
+        log_error "Установленный awg не понимает AWG 3.x — пакеты AmneziaWG не из PPA Amnezia?"
+        return 1
+    fi
+    _awg_module_v3 && return 0
+    if [ -n "$(ip -o link show type amneziawg 2>/dev/null)" ]; then
+        log_error "Модуль AmneziaWG обновлён, но загружен старый: выключите туннели AmneziaWG или перезапустите сервер"
+        return 1
+    fi
+    modprobe -r amneziawg 2>/dev/null; modprobe amneziawg 2>/dev/null
+    _awg_module_v3 || { log_error "Модуль AmneziaWG не поддерживает AWG 3.x — нужен перезапуск сервера"; return 1; }
+    log_success "AmneziaWG обновлён, AWG 3.x поддерживается"
+}
+
+_awg_need_v3() {
+    [ "$(_awg_conf_level "$1")" = 3 ] || return 0
+    _awg_ensure_v3
+}
+
+# ── Несколько выходов ───────────────────────────────────────────────────────
+
+AWG_TEST_IFACE="mtpawgt"
+AWG_FAILOVER_AFTER="${AWG_FAILOVER_AFTER:-180}"
+AWG_FAILBACK_EVERY="${AWG_FAILBACK_EVERY:-600}"
+
+# Порядок выходов; у состояний до 1.7.15 — один активный.
+_awg_order_list() {
+    local _n
+    tr ',' '\n' <<< "${AWG_ORDER:-$AWG_ACTIVE}" | while IFS= read -r _n; do
+        _awg_valid_name "$_n" && [ -f "$(_awg_store)/${_n}.conf" ] && echo "$_n"
+    done
+}
+
+# Кандидаты после активного, по кругу.
+_awg_next_candidates() {
+    local -a _o=(); mapfile -t _o < <(_awg_order_list)
+    local _i _n=${#_o[@]} _at=-1
+    for _i in "${!_o[@]}"; do [ "${_o[$_i]}" = "$AWG_ACTIVE" ] && _at=$_i; done
+    for _i in $(seq 1 "$_n"); do
+        local _c="${_o[$(( (_at + _i) % _n ))]}"
+        [ "$_c" = "$AWG_ACTIVE" ] || echo "$_c"
+    done
+}
+
+_awg_parse_names() {
+    _AWG_NAMES=()
+    local _t _nm
+    for _t in "$@"; do
+        if [[ "$_t" == */* ]]; then
+            _nm=$(_awg_name_from_path "$_t")
+            [ "$AWG_ENABLED" = true ] && [ "$AWG_ACTIVE" = "$_nm" ] && _nm="${_nm:0:28}-new"
+            awg_import "$_t" --name "$_nm" >/dev/null 2>&1 || { awg_import "$_t" --name "$_nm"; return 1; }
+            _t="$_nm"
+        fi
+        _awg_valid_name "$_t" && [ -f "$(_awg_store)/${_t}.conf" ] \
+            || { log_error "Конфига «${_t}» нет: mtproxyl awg list"; return 1; }
+        [[ " ${_AWG_NAMES[*]} " == *" ${_t} "* ]] || _AWG_NAMES+=("$_t")
+    done
+}
+
+_awg_tg_ok() {
+    [ "$(curl -4 -s -m 15 -o /dev/null -w '%{http_code}' --interface "$1" \
+        https://core.telegram.org/getProxyConfig 2>/dev/null)" = 200 ]
+}
+
+# Проверка запасного на временном интерфейсе: основной туннель не трогаем.
+_awg_test_config() {
+    local _name="$1" _src _tmp _ok=1 _a _i _ts
+    _src="$(_awg_store)/${_name}.conf"
+    [ -f "$_src" ] || return 1
+    if [ "$(_awg_conf_level "$_name")" = 3 ] && ! _awg_supports_v3; then return 1; fi
+    ip link delete "$AWG_TEST_IFACE" 2>/dev/null
+    _tmp=$(mktemp) || return 1
+    awk '/^#/ || /^(Address|MTU) = / { next } { print }' "$_src" > "$_tmp"
+    if ip link add "$AWG_TEST_IFACE" type amneziawg 2>/dev/null && awg setconf "$AWG_TEST_IFACE" "$_tmp" 2>/dev/null; then
+        for _a in $(sed -n 's/^Address = //p' "$_src" | tr ',' ' '); do
+            ip address add "$_a" dev "$AWG_TEST_IFACE" 2>/dev/null
+        done
+        ip link set mtu "${AWG_MTU:-1280}" up dev "$AWG_TEST_IFACE" 2>/dev/null
+        for _i in $(seq 1 15); do
+            _ts=$(awg show "$AWG_TEST_IFACE" latest-handshakes 2>/dev/null | awk '$2 > m {m = $2} END {print m + 0}')
+            [ "${_ts:-0}" -gt 0 ] && break
+            curl -4 -s -m 1 -o /dev/null --interface "$AWG_TEST_IFACE" http://1.1.1.1/ 2>/dev/null || true
+            sleep 1
+        done
+        [ "${_ts:-0}" -gt 0 ] && _awg_tg_ok "$AWG_TEST_IFACE" && _ok=0
+    fi
+    ip link delete "$AWG_TEST_IFACE" 2>/dev/null
+    rm -f "$_tmp"
+    return $_ok
+}
+
+# Поднять конфиг на основном интерфейсе и убедиться, что Telegram отвечает.
+_awg_bring_up() {
+    AWG_ACTIVE="$1"; awg_save
+    _awg_write_sys_conf || return 1
+    _awg_tunnel_up || return 1
+    _awg_probe || { log_warn "«$1»: через туннель не открывается Telegram (ответ: ${_AWG_PROBE_TG:-нет})"; return 1; }
+}
+
+_awg_switch_to() {
+    local _to="$1" _reason="$2" _from="$AWG_ACTIVE"
+    _awg_need_v3 "$_to" || return 1
+    log_info "Переключаем выход: ${_from:-?} → ${_to} (${_reason})"
+    if ! _awg_bring_up "$_to"; then
+        log_warn "«${_to}» не поднялся — возвращаем «${_from}»"
+        [ -n "$_from" ] && _awg_bring_up "$_from" >/dev/null 2>&1
+        return 1
+    fi
+    _awg_tunnel_has_v6 && AWG_IPV6="yes" || AWG_IPV6="no"
+    AWG_SWITCH_AT=$(date +%s); AWG_SWITCH_FROM="$_from"; AWG_SWITCH_TO="$_to"; AWG_SWITCH_REASON="$_reason"
+    AWG_FAIL_SINCE=""; AWG_CHECK_AT=$(date +%s); AWG_CHECK_RESULT="ok"; AWG_CHECK_ERROR=""
+    awg_save
+    logger -t mtproxyl-awg "switched ${_from} -> ${_to}: ${_reason}" 2>/dev/null || true
+    # Новый выход — новый адрес для ME; движок перезапускается.
+    if [ -n "$_AWG_PROBE_EGRESS" ] && [ "$_AWG_PROBE_EGRESS" != "$AWG_EGRESS_IP" ]; then
+        _awg_update_egress "$_AWG_PROBE_EGRESS"
+    elif [ "$AWG_ENGINE_ROUTED" = manager ] || [ "$AWG_ENGINE_ROUTED" = target ]; then
+        _awg_restart_engine
+    fi
+    log_success "Выход переключён на «${_to}»"
+}
+
+_awg_failover() {
+    local _reason="$1" _c
+    while IFS= read -r _c; do
+        [ -n "$_c" ] || continue
+        _awg_test_config "$_c" || { log_info "«${_c}» тоже не отвечает"; continue; }
+        _awg_switch_to "$_c" "$_reason" && return 0
+    done < <(_awg_next_candidates)
+    AWG_FAIL_SINCE=$(date +%s); AWG_CHECK_RESULT="fail"; AWG_CHECK_ERROR="ни один выход не отвечает"
+    awg_save
+    return 1
+}
+
 awg_enable() (
     check_root
-    local _target="" _mtu="" _allow=false _arg
+    local _mtu="" _allow=false _arg
+    local -a _targets=()
     while [ $# -gt 0 ]; do
         _arg="$1"; shift
         case "$_arg" in
@@ -710,7 +908,7 @@ awg_enable() (
             --allow-disable-me) _allow=true ;;
             --yes) MTPROXYL_ASSUME_YES=1 ;;
             -*) log_error "Неизвестный параметр: ${_arg}"; return 1 ;;
-            *) [ -z "$_target" ] && _target="$_arg" || { log_error "Лишний аргумент: ${_arg}"; return 1; } ;;
+            *) _targets+=("$_arg") ;;
         esac
     done
     if [ -n "$_mtu" ] && [ "$_mtu" != auto ] && ! _awg_valid_mtu "$_mtu"; then
@@ -719,45 +917,39 @@ awg_enable() (
     _awg_guard_conflicts || return 1
 
     awg_load
-    if [ -z "$_target" ]; then
-        _target="$AWG_ACTIVE"
-        [ -n "$_target" ] || { log_error "Укажите конфиг: mtproxyl awg on <имя или путь>"; return 1; }
+    if [ ${#_targets[@]} -eq 0 ]; then
+        mapfile -t _targets < <(_awg_order_list)
+        [ ${#_targets[@]} -gt 0 ] || { log_error "Укажите конфиг: mtproxyl awg on <имя или путь> [запасной ...]"; return 1; }
     fi
-    if [[ "$_target" == */* ]]; then
-        local _nm; _nm=$(_awg_name_from_path "$_target")
-        [ "$AWG_ENABLED" = true ] && [ "$AWG_ACTIVE" = "$_nm" ] && _nm="${_nm:0:28}-new"
-        awg_import "$_target" --name "$_nm" >/dev/null || { awg_import "$_target" --name "$_nm"; return 1; }
-        _target="$_nm"
-    fi
-    _awg_valid_name "$_target" && [ -f "$(_awg_store)/${_target}.conf" ] \
-        || { log_error "Конфига «${_target}» нет: mtproxyl awg list"; return 1; }
+    _awg_parse_names "${_targets[@]}" || return 1
+    [ ${#_AWG_NAMES[@]} -le 8 ] || { log_error "Не больше 8 выходов"; return 1; }
 
     _awg_ensure_installed || return 1
 
     # Смена конфига на ходу: старый маршрут снимаем целиком.
-    if [ "$AWG_ENABLED" = true ]; then
+    local _was_enabled="$AWG_ENABLED"
+    if [ "$_was_enabled" = true ]; then
         systemctl stop "$AWG_ROUTE_UNIT" >/dev/null 2>&1 || true
     fi
-    AWG_ACTIVE="$_target"
+    AWG_ORDER=$(IFS=,; echo "${_AWG_NAMES[*]}")
     case "$_mtu" in auto) AWG_MTU="" ;; "") ;; *) AWG_MTU="$_mtu" ;; esac
     awg_save
 
-    log_info "Поднимаем туннель ${AWG_IFACE} по конфигу «${AWG_ACTIVE}»..."
-    _awg_write_sys_conf || return 1
-    if ! _awg_tunnel_up; then
+    local _name _up=""
+    for _name in "${_AWG_NAMES[@]}"; do
+        _awg_need_v3 "$_name" || continue
+        log_info "Поднимаем туннель ${AWG_IFACE} по конфигу «${_name}»..."
+        if _awg_bring_up "$_name"; then _up="$_name"; break; fi
+        [ ${#_AWG_NAMES[@]} -gt 1 ] && log_warn "«${_name}» не отвечает — пробуем следующий"
+    done
+    if [ -z "$_up" ]; then
         _awg_tunnel_down
-        [ "$AWG_ENABLED" = true ] && { _awg_unroute_engine; AWG_ENABLED="false"; awg_save; _awg_remove_units; }
-        return 1
-    fi
-    log_success "Рукопожатие с сервером есть"
-    if ! _awg_probe; then
-        log_error "Через туннель не открывается Telegram (ответ: ${_AWG_PROBE_TG:-нет})"
+        [ "$_was_enabled" = true ] && { _awg_unroute_engine; AWG_ENABLED="false"; awg_save; _awg_remove_units; }
+        log_error "Ни один выход не поднялся"
         echo -e "  ${DIM}Сервер AWG должен выпускать трафик в интернет (NAT на его стороне).${NC}"
-        _awg_tunnel_down
-        [ "$AWG_ENABLED" = true ] && { _awg_unroute_engine; AWG_ENABLED="false"; awg_save; _awg_remove_units; }
         return 1
     fi
-    log_success "Telegram через туннель отвечает, адрес выхода: ${_AWG_PROBE_EGRESS:-не определён}"
+    log_success "Telegram через «${_up}» отвечает, адрес выхода: ${_AWG_PROBE_EGRESS:-не определён}"
     if [ -z "$_AWG_PROBE_EGRESS" ] && _warp_me_enabled; then
         log_warn "Адрес выхода не определён — middle proxy может не подняться"
     fi
@@ -778,9 +970,37 @@ awg_enable() (
     AWG_EGRESS_IP="$_AWG_PROBE_EGRESS"; AWG_EGRESS_AT=$(date +%s)
     _awg_tunnel_has_v6 && AWG_IPV6="yes" || AWG_IPV6="no"
     AWG_CHECK_AT=$(date +%s); AWG_CHECK_RESULT="ok"; AWG_CHECK_ERROR=""
+    AWG_FAIL_SINCE=""; AWG_PRIMARY_AT=$(date +%s)
     awg_save
     log_success "Подсети Telegram идут через ${AWG_IFACE}, остальной трафик сервера — напрямую"
+    [ ${#_AWG_NAMES[@]} -gt 1 ] && log_info "Порядок выходов: ${AWG_ORDER//,/ → }"
     _awg_route_engine "$_allow"
+)
+
+# Порядок выходов без перезапуска; активный вне списка — переключаемся сразу.
+awg_order() (
+    check_root
+    [ $# -gt 0 ] || { log_error "Укажите выходы: mtproxyl awg order <основной> [запасной ...]"; return 1; }
+    awg_load
+    _awg_parse_names "$@" || return 1
+    [ ${#_AWG_NAMES[@]} -le 8 ] || { log_error "Не больше 8 выходов"; return 1; }
+    AWG_ORDER=$(IFS=,; echo "${_AWG_NAMES[*]}")
+    if [ "$AWG_ENABLED" != true ]; then
+        AWG_ACTIVE="${_AWG_NAMES[0]}"; awg_save
+        log_success "Порядок выходов: ${AWG_ORDER//,/ → }"
+        return 0
+    fi
+    # Основной проверим при следующем запуске сторожа.
+    AWG_PRIMARY_AT=0; awg_save
+    log_success "Порядок выходов: ${AWG_ORDER//,/ → }"
+    if [[ ",${AWG_ORDER}," != *",${AWG_ACTIVE},"* ]]; then
+        local _c
+        for _c in "${_AWG_NAMES[@]}"; do
+            _awg_test_config "$_c" && _awg_switch_to "$_c" "выход убран из списка" && return 0
+        done
+        log_warn "Ни один выход из списка не отвечает — остаёмся на «${AWG_ACTIVE}»"
+    fi
+    return 0
 )
 
 awg_disable() (
@@ -824,7 +1044,7 @@ awg_check() {
             "$(json_escape "${_AWG_PROBE_EGRESS:-$AWG_EGRESS_IP}")" "${_age:-null}"
     else
         case "$_res" in
-            ok)  log_success "Туннель работает, Telegram отвечает, выход ${_AWG_PROBE_EGRESS:-$AWG_EGRESS_IP}" ;;
+            ok)  log_success "Туннель «${AWG_ACTIVE}» работает, Telegram отвечает, выход ${_AWG_PROBE_EGRESS:-$AWG_EGRESS_IP}" ;;
             off) log_info "Выход через AWG выключен" ;;
             *)   log_error "Туннель не работает: ${_err}" ;;
         esac
@@ -832,25 +1052,44 @@ awg_check() {
     [ "$_res" != fail ]
 }
 
-# Таймер раз в минуту: поднимает туннель после обрыва, следит за адресом выхода.
+# Таймер раз в минуту: чинит туннель, переключает на запасной и обратно,
+# следит за адресом выхода.
 awg_watch() {
     awg_load
     [ "$AWG_ENABLED" = true ] || return 0
-    local _age
-    if ! ip link show "$AWG_IFACE" >/dev/null 2>&1 || ! _age=$(_awg_handshake_age) || [ "$_age" -gt 300 ]; then
-        # Без трафика рукопожатие не обновляется — сначала будим туннель.
-        if ip link show "$AWG_IFACE" >/dev/null 2>&1; then
+    local _now _age _healthy=false
+    _now=$(date +%s)
+    if ip link show "$AWG_IFACE" >/dev/null 2>&1; then
+        if ! _age=$(_awg_handshake_age) || [ "$_age" -gt 180 ]; then
+            # Без трафика рукопожатие не обновляется — сначала будим туннель.
             curl -4 -s -m 3 -o /dev/null --interface "$AWG_IFACE" http://1.1.1.1/ 2>/dev/null || true
             sleep 2
-            _age=$(_awg_handshake_age) && [ "$_age" -le 300 ] && return 0
         fi
-        logger -t mtproxyl-awg "tunnel ${AWG_IFACE} stale, restarting" 2>/dev/null || true
+        _age=$(_awg_handshake_age) && [ "$_age" -le 180 ] && _awg_tg_ok "$AWG_IFACE" && _healthy=true
+    fi
+
+    if [ "$_healthy" != true ]; then
+        [ -n "$AWG_FAIL_SINCE" ] || { AWG_FAIL_SINCE="$_now"; awg_save; }
+        logger -t mtproxyl-awg "exit ${AWG_ACTIVE} unhealthy since ${AWG_FAIL_SINCE}" 2>/dev/null || true
+        if [ $(( _now - AWG_FAIL_SINCE )) -ge "$AWG_FAILOVER_AFTER" ] && [ "$(_awg_next_candidates | wc -l)" -gt 0 ]; then
+            _awg_failover "«${AWG_ACTIVE}» не отвечает" >/dev/null 2>&1 && return 0
+        fi
         systemctl restart "$(_awg_quick_unit)" >/dev/null 2>&1 || true
-        systemctl restart "$AWG_ROUTE_UNIT" >/dev/null 2>&1 || true
         return 0
     fi
+    if [ -n "$AWG_FAIL_SINCE" ]; then AWG_FAIL_SINCE=""; awg_save; fi
     _awg_route_ready || systemctl restart "$AWG_ROUTE_UNIT" >/dev/null 2>&1 || true
-    local _now; _now=$(date +%s)
+
+    # Возврат на основной, когда он снова отвечает.
+    local _primary; _primary=$(_awg_order_list | head -1)
+    if [ -n "$_primary" ] && [ "$_primary" != "$AWG_ACTIVE" ] \
+        && [ $(( _now - ${AWG_PRIMARY_AT:-0} )) -ge "$AWG_FAILBACK_EVERY" ]; then
+        AWG_PRIMARY_AT="$_now"; awg_save
+        if _awg_test_config "$_primary"; then
+            _awg_switch_to "$_primary" "основной снова отвечает" >/dev/null 2>&1 && return 0
+        fi
+    fi
+
     if [ $(( _now - ${AWG_EGRESS_AT:-0} )) -ge 600 ]; then
         local _ip; _ip=$(curl -4 -s -m 10 --interface "$AWG_IFACE" https://api.ipify.org 2>/dev/null)
         if validate_ip_literal "$_ip" 2>/dev/null; then
@@ -863,8 +1102,22 @@ awg_watch() {
     fi
 }
 
+# Сводки импортированных конфигов по текущему разбору (уровень AWG с 1.7.15).
+_awg_renormalize_store() {
+    local _f _tmp
+    for _f in "$(_awg_store)"/*.conf; do
+        [ -f "$_f" ] || continue
+        _tmp=$(mktemp) || return 0
+        if _awg_normalize "$_f" > "$_tmp" && ! cmp -s "$_f" "$_tmp"; then
+            install -m 600 "$_tmp" "$_f"
+        fi
+        rm -f "$_tmp"
+    done
+}
+
 # После mtproxyl update: юниты и правила по текущему коду.
 awg_refresh() {
+    _awg_renormalize_store
     awg_is_enabled || return 0
     awg_load
     _awg_write_sys_conf || return 0
@@ -903,7 +1156,7 @@ awg_state_label() {
 
 awg_status_json() {
     awg_load
-    local _up=false _age="null" _rx=0 _tx=0 _installed=false _ep="" _addr="" _obf=false _rules=false
+    local _up=false _age="null" _rx=0 _tx=0 _installed=false _ep="" _addr="" _obf=false _v6="" _lvl="" _rules=false
     command -v awg-quick >/dev/null 2>&1 && _installed=true
     if ip link show "$AWG_IFACE" >/dev/null 2>&1; then
         _up=true
@@ -921,11 +1174,11 @@ awg_status_json() {
     local _name _first=true _configs=""
     while IFS= read -r _name; do
         [ -n "$_name" ] || continue
-        IFS='|' read -r _ep _addr _obf _ < <(_awg_conf_info "$(_awg_store)/${_name}.conf")
+        IFS='|' read -r _ep _addr _obf _v6 _lvl < <(_awg_conf_info "$(_awg_store)/${_name}.conf")
         [ "$_first" = true ] || _configs+=","; _first=false
-        _configs+=$(printf '{"name":"%s","endpoint":"%s","address":"%s","obfuscation":%s}' \
+        _configs+=$(printf '{"name":"%s","endpoint":"%s","address":"%s","obfuscation":%s,"awg_version":"%s"}' \
             "$(json_escape "$_name")" "$(json_escape "$_ep")" "$(json_escape "$_addr")" \
-            "$([ "$_obf" = yes ] && echo true || echo false)")
+            "$([ "$_obf" = yes ] && echo true || echo false)" "$(_awg_level_label "$_lvl")")
     done < <(_awg_list_names)
     printf '{"enabled":%s,"active":"%s","mtu":%s,"iface":"%s","awg_installed":%s,"tunnel_up":%s,"rules":%s,' \
         "$([ "$AWG_ENABLED" = true ] && echo true || echo false)" "$(json_escape "$AWG_ACTIVE")" \
@@ -937,6 +1190,10 @@ awg_status_json() {
     printf '"engine_mode":"%s","engine_routed":"%s","warp_enabled":%s,"donor_enabled":%s,"enabled_at":%s,' \
         "$_mode_engine" "$(json_escape "$AWG_ENGINE_ROUTED")" \
         "$([ "${WARP_ENABLED:-false}" = true ] && echo true || echo false)" "$_donor" "${AWG_ENABLED_AT:-0}"
+    local _order_json; _order_json=$(_awg_order_list | while IFS= read -r _name; do printf '"%s",' "$(json_escape "$_name")"; done)
+    printf '"order":[%s],"fail_since":%s,"last_switch":{"at":%s,"from":"%s","to":"%s","reason":"%s"},' \
+        "${_order_json%,}" "${AWG_FAIL_SINCE:-0}" "${AWG_SWITCH_AT:-0}" "$(json_escape "$AWG_SWITCH_FROM")" \
+        "$(json_escape "$AWG_SWITCH_TO")" "$(json_escape "$AWG_SWITCH_REASON")"
     printf '"check":{"at":%s,"result":"%s","error":"%s"},"configs":[%s]}\n' \
         "${AWG_CHECK_AT:-0}" "$(json_escape "$AWG_CHECK_RESULT")" "$(json_escape "$AWG_CHECK_ERROR")" "$_configs"
 }
@@ -951,9 +1208,14 @@ awg_status() {
         echo ""
         return 0
     fi
-    local _ep _addr _obf _v6 _age
-    IFS='|' read -r _ep _addr _obf _v6 < <(_awg_conf_info "$(_awg_store)/${AWG_ACTIVE}.conf")
-    echo -e "  ${BOLD}Активный:${NC}     ${AWG_ACTIVE} — ${_ep}, ${_addr}${AWG_MTU:+, MTU ${AWG_MTU}}"
+    local _ep _addr _obf _v6 _lvl _age
+    IFS='|' read -r _ep _addr _obf _v6 _lvl < <(_awg_conf_info "$(_awg_store)/${AWG_ACTIVE}.conf")
+    echo -e "  ${BOLD}Активный:${NC}     ${AWG_ACTIVE} — ${_ep}, ${_addr}$(_awg_kind "$_obf" "$_lvl")${AWG_MTU:+, MTU ${AWG_MTU}}"
+    local _ord; _ord=$(_awg_order_list | paste -sd, -)
+    [[ "$_ord" == *,* ]] && echo -e "  ${BOLD}Порядок:${NC}      ${_ord//,/ → } ${DIM}(запасной — через $((AWG_FAILOVER_AFTER / 60)) мин сбоя)${NC}"
+    if [ -n "$AWG_SWITCH_AT" ] && [ "$AWG_SWITCH_AT" != 0 ]; then
+        echo -e "  ${BOLD}Переключение:${NC} ${AWG_SWITCH_FROM} → ${AWG_SWITCH_TO} ($(date -d "@${AWG_SWITCH_AT}" '+%d.%m %H:%M' 2>/dev/null)) — ${AWG_SWITCH_REASON}"
+    fi
     if ! ip link show "$AWG_IFACE" >/dev/null 2>&1; then
         echo -e "  ${BOLD}Состояние:${NC}    ${YELLOW}интерфейс не поднят${NC}"
     elif _age=$(_awg_handshake_age); then
@@ -984,8 +1246,9 @@ awg_help() {
     echo -e "    ${GREEN}awg scan${NC} [--json]                   Найти конфиги на сервере"
     echo -e "    ${GREEN}awg import${NC} <файл|-> [--name N]      Импортировать клиентский конфиг"
     echo -e "    ${GREEN}awg list${NC}                            Импортированные конфиги"
-    echo -e "    ${GREEN}awg on${NC} <имя|файл> [--mtu N|auto] [--allow-disable-me]"
+    echo -e "    ${GREEN}awg on${NC} <имя|файл> [запасной ...] [--mtu N|auto] [--allow-disable-me]"
     echo -e "                                        Включить: Telegram через туннель"
+    echo -e "    ${GREEN}awg order${NC} <основной> [запасной ...]  Порядок выходов без перезапуска"
     echo -e "    ${GREEN}awg off${NC}                             Выключить"
     echo -e "    ${GREEN}awg check${NC} [--json]                  Проверить туннель и выход"
     echo -e "    ${GREEN}awg remove${NC} <имя>                    Удалить импортированный конфиг"
@@ -1014,6 +1277,7 @@ handle_awg_command() (
         import)        awg_import "$@" ;;
         list)          _awg_list_names ;;
         on|enable)     awg_enable "$@" ;;
+        order)         awg_order "$@" ;;
         off|disable)   awg_disable ;;
         check)         awg_check "$@" ;;
         remove)        awg_remove "$@" ;;

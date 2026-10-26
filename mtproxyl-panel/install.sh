@@ -747,6 +747,7 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script awg import - --name [A-Za-z0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script awg import /* --name [A-Za-z0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script awg on [A-Za-z0-9]* --yes
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script awg on [A-Za-z0-9]* --yes --*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script awg order [A-Za-z0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script awg off
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script awg check --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script awg remove [A-Za-z0-9]*
