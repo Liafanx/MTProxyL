@@ -18,6 +18,7 @@ source "$repo/lib/detect.sh"
 source "$repo/lib/secrets.sh"
 source "$repo/lib/donor.sh"
 source "$repo/lib/awg.sh"
+source "$repo/lib/egress.sh"
 
 fails() { if "$@" >/dev/null 2>&1; then echo "Должно было не пройти: $*" >&2; exit 1; fi; }
 check_root() { :; }
@@ -203,4 +204,32 @@ _awg_target_restore_key middle_proxy_nat_probe "true"
 [ "$(cat "$cfg")" = "$(printf '[general]\nuse_middle_proxy = true\nmiddle_proxy_nat_probe = true\n\n[server]\nport = 443')" ] \
     || { echo "target:"; cat "$cfg"; exit 1; } >&2
 
+
+# Пороги переключения: по умолчанию 180/120, свои — в состоянии, вне диапазона — отказ.
+awg_load
+[ "$(_awg_failover_after)" = 180 ] && [ "$(_awg_failback_every)" = 120 ]
+awg_timers 60 300 >/dev/null; awg_load
+[ "$(_awg_failover_after)" = 60 ] && [ "$(_awg_failback_every)" = 300 ]
+fails awg_timers 30
+fails awg_timers 60 100000
+awg_timers default default >/dev/null; awg_load
+[ -z "$AWG_FAILOVER_SEC" ] && [ -z "$AWG_FAILBACK_SEC" ]
+printf "AWG_FAILOVER_SEC='abc'\n" >> "$(_awg_state_file)"; awg_load; [ "$(_awg_failover_after)" = 180 ]
+
+# Выход к Telegram: другой включён — без --replace из панели отказ; статус — JSON.
+ip() { return 1; }
+WARP_ENABLED=true
+[ "$(egress_others awg)" = warp ]
+MTPROXYL_ASSUME_YES=1 fails egress_confirm awg false
+MTPROXYL_ASSUME_YES=1 egress_confirm awg true >/dev/null 2>&1
+WARP_ENABLED=false
+[ -z "$(egress_others awg)" ]
+[ "$(egress_status_json | jq -r .via)" = direct ]
+awg_load; AWG_ENABLED=true; AWG_ACTIVE=My_Server; AWG_ORDER="My_Server"; AWG_FAIL_SINCE=1700000000; awg_save
+[ "$(egress_others warp)" = awg ]
+j=$(egress_status_json)
+[ "$(jq -r '[.via, .name, (.ok | tostring), .fail_since, .awg.failover_after] | join(",")' <<< "$j")" = "awg,My_Server,false,1700000000,180" ] \
+    || { echo "egress: $j" >&2; exit 1; }
+awg_load; AWG_ENABLED=false; AWG_FAIL_SINCE=""; awg_save
+unset -f ip
 echo "OK awg"

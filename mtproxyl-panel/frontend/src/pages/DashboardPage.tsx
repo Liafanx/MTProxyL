@@ -19,7 +19,8 @@ import { gaugeValues, rateValues, windowDelta } from '@/lib/history';
 import { sumProbes } from '@/lib/probes';
 import { LoadCard } from '@/components/LoadCard';
 import { useMtproxyl } from '@/hooks/useMtproxyl';
-import { telemt, mtproxylNetApi, mtproxylSettingsApi, availabilityApi, type AvailabilityStatusResponse, type ShapingStatus } from '@/lib/api';
+import { egressShort, egressText } from '@/lib/egress';
+import { egressApi, telemt, mtproxylNetApi, mtproxylSettingsApi, availabilityApi, type AvailabilityStatusResponse, type ShapingStatus } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { formatUptime, formatNumber, formatBytes, cn } from '@/lib/utils';
@@ -99,6 +100,9 @@ export function DashboardPage() {
     60000,
   );
 
+  const { data: egressData } = usePolling(() => egressApi.get(), 30000);
+  const egress = mtproxylEnabled && egressData?.supported ? egressData.egress ?? null : null;
+
   const totalTraffic = useMemo(() => {
     if (!usersData) return 0;
     return usersData.reduce((sum, u) => sum + u.total_octets, 0);
@@ -150,6 +154,9 @@ export function DashboardPage() {
   if (mtproxylEnabled && mtproxylMode) {
     facts.push({ key: 'mode', label: 'Режим', value: mtproxylMode === 'manager' ? 'Manager' : 'Reanimator' });
   }
+  if (egress) {
+    facts.push({ key: 'egress', label: 'Выход', value: <span title={egressText(egress)}>{egressShort(egress)}</span> });
+  }
 
   const problems: ProblemItem[] = [];
   if (!connected) {
@@ -163,6 +170,18 @@ export function DashboardPage() {
   }
   if (starting) {
     problems.push({ key: 'startup', severity: 'warn', label: 'Движок ещё запускается', detail: gates?.startup_stage ? `Этап: ${gates.startup_stage}` : undefined });
+  }
+  if (egress && egress.ok === false) {
+    problems.push({
+      key: 'egress',
+      severity: 'error',
+      label: `Выход к Telegram не отвечает: ${egressText(egress)}`,
+      detail: [
+        egress.error,
+        egress.fail_since ? `с ${new Date(egress.fail_since * 1000).toLocaleTimeString('ru-RU')}` : '',
+      ].filter(Boolean).join(' · ') || undefined,
+      to: `/${egress.via}`,
+    });
   }
   if (dcSummary && !dcSummary.ok) {
     problems.push({

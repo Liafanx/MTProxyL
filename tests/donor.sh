@@ -16,6 +16,7 @@ mkdir -p "$INSTALL_DIR"
 source "$repo/lib/utils.sh"
 source "$repo/lib/detect.sh"
 source "$repo/lib/donor.sh"
+source "$repo/lib/egress.sh"
 
 fails() { if "$@" >/dev/null 2>&1; then echo "Должно было не пройти: $*" >&2; exit 1; fi; }
 _mktemp() { mktemp "${1:-$test_dir}/.tmp.XXXXXX"; }
@@ -255,8 +256,9 @@ DONOR_MTU=1360; _donor_agent_env setup 0 KEY 1.2.3.4 | grep -qx "MTPD_MTU=1360"
 grep -q 'echo "MTU = ${MTPD_MTU:-1280}"' <<< "$(_donor_agent_script)"
 donor_load
 
-# WARP и донор одновременно — нельзя.
-WARP_ENABLED=true; fails _donor_guard_conflicts; WARP_ENABLED=false
+# WARP и донор одновременно — без --replace из панели нельзя.
+WARP_ENABLED=true; MTPROXYL_ASSUME_YES=1 fails egress_confirm donor false
+MTPROXYL_ASSUME_YES=1 egress_confirm donor true >/dev/null 2>&1; WARP_ENABLED=false
 
 # Статус для панели — корректный JSON.
 awg() { return 1; }; ip() { return 1; }

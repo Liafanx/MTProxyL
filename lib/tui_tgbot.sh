@@ -158,7 +158,7 @@ _tui_tgbot_proxy() {
 _tui_tgbot_notify_lines() {
     command -v jq &>/dev/null || return 0
     [ -s "$TGBOT_CONFIG" ] || return 0
-    echo -e "  ${BOLD}Уведомления:${NC} доступность $(_tgbot_flag availability), DC $(_tgbot_flag dc)$([ "$(_dc_threshold)" -eq 0 ] && echo " ${DIM}(порог выключен)${NC}"), нулевой DC $(_tgbot_flag dc_zero), прокси $(_tgbot_flag proxy), лимиты $(_tgbot_flag limits), бэкапы $(_tgbot_flag backup)"
+    echo -e "  ${BOLD}Уведомления:${NC} доступность $(_tgbot_flag availability), DC $(_tgbot_flag dc)$([ "$(_dc_threshold)" -eq 0 ] && echo " ${DIM}(порог выключен)${NC}"), нулевой DC $(_tgbot_flag dc_zero), прокси $(_tgbot_flag proxy), лимиты $(_tgbot_flag limits), бэкапы $(_tgbot_flag backup), выход $(_tgbot_flag egress)"
 }
 
 _tui_tgbot_notify() {
@@ -177,9 +177,10 @@ _tui_tgbot_notify() {
         echo -e "  ${CYAN}[4]${NC}  Прокси упал / поднялся: $(_tgbot_flag proxy)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.proxy' 5) мин)${NC}"
         echo -e "  ${CYAN}[5]${NC}  Лимиты пользователей: $(_tgbot_flag limits)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.limits' 60) мин)${NC}"
         echo -e "  ${CYAN}[6]${NC}  Итог автобэкапа: $(_tgbot_flag backup)"
+        echo -e "  ${CYAN}[7]${NC}  Выход к Telegram — смена и сбой: $(_tgbot_flag egress)"
         echo ""
-        echo -e "  ${CYAN}[7]${NC}  Изменить период проверки"
-        echo -e "  ${CYAN}[8]${NC}  Порог покрытия дата-центров: ${_dc_thr}%"
+        echo -e "  ${CYAN}[8]${NC}  Изменить период проверки"
+        echo -e "  ${CYAN}[9]${NC}  Порог покрытия дата-центров: ${_dc_thr}%"
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
         local c; c=$(read_choice "выбор" "0")
@@ -190,8 +191,9 @@ _tui_tgbot_notify() {
             4) _tgbot_cfg_set '.notify.proxy = (.notify.proxy | not)' ;;
             5) _tgbot_cfg_set '.notify.limits = (.notify.limits | not)' ;;
             6) _tgbot_cfg_set '.notify.backup = (.notify.backup | not)' ;;
-            7) _tui_tgbot_interval ;;
-            8) _tui_tgbot_dc_threshold ;;
+            7) _tgbot_cfg_set '.notify.egress = (.notify.egress == false)' ;;
+            8) _tui_tgbot_interval ;;
+            9) _tui_tgbot_dc_threshold ;;
             0|"") return ;;
         esac
     done

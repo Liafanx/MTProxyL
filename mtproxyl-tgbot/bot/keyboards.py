@@ -184,6 +184,7 @@ def settings_menu(cfg, manager: bool) -> InlineKeyboardMarkup:
         ("availability", "Доступность"),
         ("proxy", "Прокси"),
         ("limits", "Лимиты"),
+        ("egress", "Выход к Telegram"),
     ):
         mark = "🔔" if cfg.notify.get(key, True) else "🔕"
         kb.button(text=f"{mark} {title}", callback_data=f"s:toggle:{key}")
@@ -192,7 +193,7 @@ def settings_menu(cfg, manager: bool) -> InlineKeyboardMarkup:
         kb.button(text=f"{mark} Бэкапы", callback_data="s:toggle:backup")
     kb.button(text="⏱ Периоды проверок", callback_data="s:intervals")
     kb.button(text="⬅️ Меню", callback_data="m:root")
-    kb.adjust(2, 2, 1, 1)
+    kb.adjust(2, 2, 2, 1, 1, 1)
     return kb.as_markup()
 
 

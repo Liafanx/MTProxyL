@@ -11,6 +11,8 @@ import { OperationProgress } from '@/components/OperationProgress';
 import { useMtproxylOperation } from '@/hooks/useMtproxyl';
 import {
   donorApi,
+  egressApi,
+  otherEgress,
   type DonorHostKey,
   type DonorStatus,
   type MtproxylOperation,
@@ -18,6 +20,9 @@ import {
 import { formatBytes } from '@/lib/utils';
 
 const errText = (e: unknown, fallback: string) => (e instanceof Error ? e.message : fallback);
+
+/** routing — действие поднимает донор: другой выход выключается после подтверждения. */
+type OnAct = (fn: (replace: boolean) => Promise<MtproxylOperation>, routing?: boolean) => void;
 
 /** Туннель AmneziaWG до сервера-донора: движок выходит к Telegram через него. */
 export function DonorPage() {
@@ -27,9 +32,11 @@ export function DonorPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showSetup, setShowSetup] = useState(false);
+  const [other, setOther] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    void egressApi.get().then((r) => setOther(otherEgress(r.egress, 'donor'))).catch(() => setOther(null));
     try {
       const res = await donorApi.status();
       if (!res.supported) {
@@ -67,6 +74,12 @@ export function DonorPage() {
     }
   };
 
+  const run: OnAct = (fn, routing = false) => {
+    const replace = routing && other !== null;
+    if (replace && !window.confirm(`Сейчас включён ${other}. Выключить его и включить туннель до донора?`)) return;
+    void act(() => fn(replace));
+  };
+
   const check = async () => {
     setBusy(true);
     setError(null);
@@ -98,9 +111,10 @@ export function DonorPage() {
         <OperationProgress operation={operation} onDismiss={dismiss} />
         {unsupported && <Card className="p-6 text-sm text-text-secondary">{unsupported}</Card>}
 
-        {status?.warp_enabled && (
+        {other && (
           <Card className="p-4 text-sm text-warning">
-            Включён маршрут через WARP — сначала выключите его на странице «Telegram через WARP».
+            Сейчас включён {other}. Одновременно работает только один выход — при включении донора
+            он будет выключен, а если донор не поднимется, вернётся обратно.
           </Card>
         )}
 
@@ -111,7 +125,7 @@ export function DonorPage() {
               status={status}
               locked={locked}
               onCheck={() => void check()}
-              onAct={(fn) => void act(fn)}
+              onAct={run}
               onReconfigure={() => setShowSetup((v) => !v)}
               reconfiguring={showSetup}
             />
@@ -119,11 +133,11 @@ export function DonorPage() {
         )}
 
         {status?.stage === 'pending' && (
-          <ManualFinishCard status={status} locked={locked} onAct={(fn) => void act(fn)} onError={setError} />
+          <ManualFinishCard status={status} locked={locked} onAct={run} onError={setError} />
         )}
 
         {status && (!ready || showSetup) && (
-          <SetupCard status={status} locked={locked} onAct={(fn) => void act(fn)} onPrepared={load} onError={setError} />
+          <SetupCard status={status} locked={locked} onAct={run} onPrepared={load} onError={setError} />
         )}
 
         <HowItWorks />
@@ -205,7 +219,7 @@ function ControlsCard({
   status: DonorStatus;
   locked: boolean;
   onCheck: () => void;
-  onAct: (fn: () => Promise<MtproxylOperation>) => void;
+  onAct: OnAct;
   onReconfigure: () => void;
   reconfiguring: boolean;
 }) {
@@ -231,8 +245,8 @@ function ControlsCard({
         ) : (
           <Button
             size="sm"
-            disabled={locked || status.warp_enabled || (needRoutes && !allowRoutes)}
-            onClick={() => onAct(() => donorApi.enable(allowRoutes))}
+            disabled={locked || (needRoutes && !allowRoutes)}
+            onClick={() => onAct((replace) => donorApi.enable(allowRoutes, replace), true)}
           >
             Включить — движок пойдёт через донор
           </Button>
@@ -324,7 +338,7 @@ function RoutesConsent({ routes, checked, onChange, disabled }: {
 function SetupCard({ status, locked, onAct, onPrepared, onError }: {
   status: DonorStatus;
   locked: boolean;
-  onAct: (fn: () => Promise<MtproxylOperation>) => void;
+  onAct: OnAct;
   onPrepared: () => Promise<void>;
   onError: (msg: string | null) => void;
 }) {
@@ -356,7 +370,7 @@ function SetupCard({ status, locked, onAct, onPrepared, onError }: {
 function AutoSetup({ status, locked, onAct, onError }: {
   status: DonorStatus;
   locked: boolean;
-  onAct: (fn: () => Promise<MtproxylOperation>) => void;
+  onAct: OnAct;
   onError: (msg: string | null) => void;
 }) {
   const [host, setHost] = useState(status.host || '');
@@ -404,7 +418,7 @@ function AutoSetup({ status, locked, onAct, onError }: {
       allow_disable_default_upstreams: allowRoutes,
     };
     setPassword('');
-    onAct(() => donorApi.setup(req));
+    onAct((replace) => donorApi.setup({ ...req, replace }), true);
   };
 
   return (
@@ -456,7 +470,7 @@ function AutoSetup({ status, locked, onAct, onError }: {
         <RoutesConsent routes={status.default_upstreams} checked={allowRoutes} onChange={setAllowRoutes} disabled={locked} />
       )}
 
-      <Button className="gap-2" disabled={locked || !hostKey || !trusted || status.warp_enabled || (needRoutes && !allowRoutes)}
+      <Button className="gap-2" disabled={locked || !hostKey || !trusted || (needRoutes && !allowRoutes)}
         onClick={submit}>
         <Cable size={14} /> Настроить донор и туннель
       </Button>
@@ -509,7 +523,7 @@ function ManualSetup({ status, locked, onPrepared, onError }: {
 function ManualFinishCard({ status, locked, onAct, onError }: {
   status: DonorStatus;
   locked: boolean;
-  onAct: (fn: () => Promise<MtproxylOperation>) => void;
+  onAct: OnAct;
   onError: (msg: string | null) => void;
 }) {
   const [script, setScript] = useState('');
@@ -560,8 +574,8 @@ function ManualFinishCard({ status, locked, onAct, onError }: {
       {needRoutes && (
         <RoutesConsent routes={status.default_upstreams} checked={allowRoutes} onChange={setAllowRoutes} disabled={locked} />
       )}
-      <Button disabled={locked || key.length !== 44 || status.warp_enabled || (needRoutes && !allowRoutes)}
-        onClick={() => onAct(() => donorApi.finish(key, allowRoutes))}>
+      <Button disabled={locked || key.length !== 44 || (needRoutes && !allowRoutes)}
+        onClick={() => onAct((replace) => donorApi.finish(key, allowRoutes, replace), true)}>
         Завершить настройку
       </Button>
     </Card>

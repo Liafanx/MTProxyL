@@ -58,6 +58,23 @@ func (s *Server) registerAwgRoutes(
 		return false
 	}
 
+	// Через что движок выходит к Telegram — для дашборда.
+	mux.Handle("GET /api/egress", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		e, err := client.GetEgress(r.Context())
+		if err != nil {
+			if errors.Is(err, mtproxylctl.ErrEgressUnsupported) {
+				writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{"supported": false}})
+				return
+			}
+			writeCLIError(w, "egress_failed", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{"supported": true, "egress": e}})
+	}))
+
 	mux.Handle("GET /api/awg/status", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
 			return
@@ -166,6 +183,33 @@ func (s *Server) registerAwgRoutes(
 		start(w, "awg:order", func(ctx context.Context) (string, error) {
 			return client.AwgOrder(ctx, req.Names)
 		})
+	}))
+
+	mux.Handle("POST /api/awg/timers", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			FailoverAfter int `json:"failover_after"`
+			FailbackEvery int `json:"failback_every"`
+		}
+		if !decode(w, r, &req, 1<<10) {
+			return
+		}
+		if err := mtproxylctl.ValidateAwgTimers(req.FailoverAfter, req.FailbackEvery); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		if _, err := client.AwgTimers(r.Context(), req.FailoverAfter, req.FailbackEvery); err != nil {
+			writeCLIError(w, "awg_timers_failed", err)
+			return
+		}
+		st, err := client.AwgGetStatus(r.Context())
+		if err != nil {
+			writeCLIError(w, "awg_status_failed", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{"supported": true, "status": st}})
 	}))
 
 	mux.Handle("POST /api/awg/disable", protected(func(w http.ResponseWriter, r *http.Request) {

@@ -77,6 +77,8 @@ type DonorSetupRequest struct {
 	Mtu                          int
 	HostKey                      string
 	AllowDisableDefaultUpstreams bool
+	// Replace — выключить WARP или свой AWG, если включены.
+	Replace bool
 }
 
 // ErrDonorUnsupported means the installed MTProxyL has no donor tunnel yet.
@@ -199,6 +201,9 @@ func (r DonorSetupRequest) args() ([]string, error) {
 	if r.AllowDisableDefaultUpstreams {
 		args = append(args, "--allow-disable-default-upstreams")
 	}
+	if r.Replace {
+		args = append(args, "--replace")
+	}
 	return args, nil
 }
 
@@ -249,7 +254,7 @@ func (c *Client) DonorManualScript(ctx context.Context) (string, error) {
 	return c.run(ctx, "donor", "manual-script")
 }
 
-func (c *Client) DonorFinish(ctx context.Context, key string, allowDisableDefaultUpstreams bool) (string, error) {
+func (c *Client) DonorFinish(ctx context.Context, key string, allowDisableDefaultUpstreams, replace bool) (string, error) {
 	key = strings.TrimSpace(key)
 	if err := ValidateDonorKey(key); err != nil {
 		return "", err
@@ -257,6 +262,9 @@ func (c *Client) DonorFinish(ctx context.Context, key string, allowDisableDefaul
 	args := []string{"donor", "finish", key, "--yes"}
 	if allowDisableDefaultUpstreams {
 		args = append(args, "--allow-disable-default-upstreams")
+	}
+	if replace {
+		args = append(args, "--replace")
 	}
 	out, err := c.run(ctx, args...)
 	return stripANSI(out), err
@@ -279,10 +287,13 @@ func (c *Client) DonorCheck(ctx context.Context) (*DonorStatus, error) {
 	return parseDonorStatus(out)
 }
 
-func (c *Client) DonorEnable(ctx context.Context, allowDisableDefaultUpstreams bool) (string, error) {
+func (c *Client) DonorEnable(ctx context.Context, allowDisableDefaultUpstreams, replace bool) (string, error) {
 	args := []string{"donor", "on", "--yes"}
 	if allowDisableDefaultUpstreams {
 		args = append(args, "--allow-disable-default-upstreams")
+	}
+	if replace {
+		args = append(args, "--replace")
 	}
 	out, err := c.run(ctx, args...)
 	return stripANSI(out), err
