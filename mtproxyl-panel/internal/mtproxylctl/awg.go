@@ -23,6 +23,16 @@ type AwgConfig struct {
 	Endpoint    string `json:"endpoint"`
 	Address     string `json:"address"`
 	Obfuscation bool   `json:"obfuscation"`
+	// AwgVersion: «AWG 3.x», «AWG 2.0», «AWG 1.0», «WireGuard» или пусто.
+	AwgVersion string `json:"awg_version"`
+}
+
+// AwgSwitch is the last automatic or manual change of the active exit.
+type AwgSwitch struct {
+	At     int64  `json:"at"`
+	From   string `json:"from"`
+	To     string `json:"to"`
+	Reason string `json:"reason"`
 }
 
 // AwgStatus is `mtproxyl awg status --json`.
@@ -43,13 +53,17 @@ type AwgStatus struct {
 	MeMode     string `json:"me_mode"`
 	MeDisabled bool   `json:"me_disabled"`
 	// EngineMode: manager, target или manual — как у донора.
-	EngineMode   string      `json:"engine_mode"`
-	EngineRouted string      `json:"engine_routed"`
-	WarpEnabled  bool        `json:"warp_enabled"`
-	DonorEnabled bool        `json:"donor_enabled"`
-	EnabledAt    int64       `json:"enabled_at"`
-	Check        AwgCheck    `json:"check"`
-	Configs      []AwgConfig `json:"configs"`
+	EngineMode   string `json:"engine_mode"`
+	EngineRouted string `json:"engine_routed"`
+	WarpEnabled  bool   `json:"warp_enabled"`
+	DonorEnabled bool   `json:"donor_enabled"`
+	EnabledAt    int64  `json:"enabled_at"`
+	// Order — выходы по приоритету: первый основной, остальные запасные.
+	Order      []string    `json:"order"`
+	FailSince  int64       `json:"fail_since"`
+	LastSwitch AwgSwitch   `json:"last_switch"`
+	Check      AwgCheck    `json:"check"`
+	Configs    []AwgConfig `json:"configs"`
 }
 
 // AwgScanFile is a candidate config found on the server.
@@ -61,14 +75,39 @@ type AwgScanFile struct {
 	Address     string `json:"address"`
 	Obfuscation bool   `json:"obfuscation"`
 	IPv6        bool   `json:"ipv6"`
+	AwgVersion  string `json:"awg_version"`
 	Error       string `json:"error"`
 }
 
-// AwgEnableRequest — какой конфиг включить и что разрешено.
+// AwgEnableRequest — какие выходы включить (по порядку) и что разрешено.
+// Name — прежнее поле для одного выхода.
 type AwgEnableRequest struct {
-	Name           string `json:"name"`
-	Mtu            int    `json:"mtu"`
-	AllowDisableMe bool   `json:"allow_disable_me"`
+	Name           string   `json:"name"`
+	Names          []string `json:"names"`
+	Mtu            int      `json:"mtu"`
+	AllowDisableMe bool     `json:"allow_disable_me"`
+}
+
+const AwgMaxExits = 8
+
+func awgNames(name string, names []string) ([]string, error) {
+	if len(names) == 0 && name != "" {
+		names = []string{name}
+	}
+	if len(names) == 0 || len(names) > AwgMaxExits {
+		return nil, fmt.Errorf("выберите от 1 до %d выходов", AwgMaxExits)
+	}
+	seen := map[string]bool{}
+	for _, n := range names {
+		if err := ValidateAwgName(n); err != nil {
+			return nil, err
+		}
+		if seen[n] {
+			return nil, fmt.Errorf("выход «%s» указан дважды", n)
+		}
+		seen[n] = true
+	}
+	return names, nil
 }
 
 var (
@@ -159,13 +198,15 @@ func (c *Client) AwgImportPath(ctx context.Context, path, name string) (string, 
 }
 
 func (r AwgEnableRequest) args() ([]string, error) {
-	if err := ValidateAwgName(r.Name); err != nil {
+	names, err := awgNames(r.Name, r.Names)
+	if err != nil {
 		return nil, err
 	}
 	if !validAwgMtu(r.Mtu) {
 		return nil, fmt.Errorf("MTU: 1200–1500")
 	}
-	args := []string{"awg", "on", r.Name, "--yes"}
+	args := append([]string{"awg", "on"}, names...)
+	args = append(args, "--yes")
 	if r.Mtu != 0 {
 		args = append(args, "--mtu", strconv.Itoa(r.Mtu))
 	}
@@ -188,6 +229,22 @@ func (c *Client) AwgEnable(ctx context.Context, r AwgEnableRequest) (string, err
 	}
 	out, err := c.run(ctx, args...)
 	return stripANSI(out), err
+}
+
+// AwgOrder changes the priority of exits without restarting the tunnel.
+func (c *Client) AwgOrder(ctx context.Context, names []string) (string, error) {
+	names, err := awgNames("", names)
+	if err != nil {
+		return "", err
+	}
+	out, err := c.run(ctx, append([]string{"awg", "order"}, names...)...)
+	return stripANSI(out), err
+}
+
+// ValidateAwgOrder reports an input error before any operation starts.
+func ValidateAwgOrder(names []string) error {
+	_, err := awgNames("", names)
+	return err
 }
 
 func (c *Client) AwgDisable(ctx context.Context) (string, error) {

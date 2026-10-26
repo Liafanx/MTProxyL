@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FileUp, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, FileUp, RefreshCw, Search, Trash2 } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -136,7 +136,8 @@ export function AwgPage() {
           <ConfigsCard
             status={status}
             locked={locked || blocked}
-            onEnable={(name, mtu, allowMe) => void act(() => awgApi.enable(name, mtu, allowMe))}
+            onEnable={(names, mtu, allowMe) => void act(() => awgApi.enable(names, mtu, allowMe))}
+            onOrder={(names) => void act(() => awgApi.order(names))}
             onRemove={(name) => void quick(() => awgApi.remove(name), 'Не удалось удалить конфиг')}
           />
         )}
@@ -179,7 +180,10 @@ function StateCard({ status, locked, onCheck, onDisable }: {
     <Card className="p-4 space-y-3">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="text-sm">
-          <span className="text-text-primary font-medium">Telegram идёт через «{status.active}»</span>
+          <span className="text-text-primary font-medium">
+            Telegram идёт через «{status.active}»
+            {(status.order?.length ?? 0) > 1 && status.order?.[0] !== status.active ? ' (запасной)' : ''}
+          </span>
           <div className="text-xs text-text-secondary mt-0.5">
             {working ? 'Туннель поднят, маршрут применён' : 'Туннель или маршрут не подтверждён — нажмите «Проверить»'}
           </div>
@@ -188,7 +192,7 @@ function StateCard({ status, locked, onCheck, onDisable }: {
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
-        <Cell label="Сервер" value={active?.endpoint || '—'} />
+        <Cell label="Сервер" value={active ? `${active.endpoint}${active.awg_version ? ` · ${active.awg_version}` : ''}` : '—'} />
         <Cell label="Адрес в туннеле" value={active?.address || '—'} />
         <Cell label="Туннель" value={status.tunnel_up ? `${status.iface} поднят${status.mtu ? ` · MTU ${status.mtu}` : ''}` : 'не поднят'} />
         <Cell label="Рукопожатие" value={status.handshake_age !== null ? `${status.handshake_age} с назад` : 'нет'} />
@@ -198,8 +202,19 @@ function StateCard({ status, locked, onCheck, onDisable }: {
         <Cell label="Трафик туннеля" value={`↓ ${formatBytes(status.rx_bytes)} · ↑ ${formatBytes(status.tx_bytes)}`} />
         <Cell label="IPv6 до Telegram" value={status.ipv6 ? 'через туннель' : 'выключен, идёт IPv4'} />
         <Cell label="Последняя проверка" value={`${checkedAt}${status.check.result ? ` · ${status.check.result}` : ''}`} />
+        {(status.order?.length ?? 0) > 1 && <Cell label="Порядок выходов" value={(status.order ?? []).join(' → ')} />}
+        {status.last_switch?.at ? (
+          <Cell label="Последнее переключение"
+            value={`${new Date(status.last_switch.at * 1000).toLocaleString('ru-RU')} · ${status.last_switch.from} → ${status.last_switch.to} · ${status.last_switch.reason}`} />
+        ) : null}
         {status.check.error && <Cell label="Причина" value={status.check.error} />}
       </div>
+      {status.fail_since ? (
+        <p className="text-xs text-warning">
+          «{status.active}» не отвечает с {new Date(status.fail_since * 1000).toLocaleTimeString('ru-RU')}
+          {(status.order?.length ?? 0) > 1 ? ' — через 3 минуты сбоя движок перейдёт на запасной.' : '.'}
+        </p>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" size="sm" disabled={locked} onClick={onCheck}>
@@ -215,52 +230,118 @@ function StateCard({ status, locked, onCheck, onDisable }: {
   );
 }
 
-function ConfigsCard({ status, locked, onEnable, onRemove }: {
+/** Порядок выходов: сначала текущий порядок, затем остальные конфиги. */
+export function initialSelection(status: AwgStatus): string[] {
+  const names = status.configs.map((c) => c.name);
+  const order = (status.order ?? []).filter((n) => names.includes(n));
+  if (order.length > 0) return order;
+  if (status.active && names.includes(status.active)) return [status.active];
+  return names.slice(0, 1);
+}
+
+function ConfigsCard({ status, locked, onEnable, onOrder, onRemove }: {
   status: AwgStatus;
   locked: boolean;
-  onEnable: (name: string, mtu: number, allowDisableMe: boolean) => void;
+  onEnable: (names: string[], mtu: number, allowDisableMe: boolean) => void;
+  onOrder: (names: string[]) => void;
   onRemove: (name: string) => void;
 }) {
-  const [selected, setSelected] = useState('');
+  const [selected, setSelected] = useState<string[]>(() => initialSelection(status));
   const [mtu, setMtu] = useState('');
   const [allowMe, setAllowMe] = useState(false);
+  const statusKey = `${status.configs.map((c) => c.name).join(',')}|${(status.order ?? []).join(',')}|${status.active}`;
 
   useEffect(() => {
-    if (status.configs.some((c) => c.name === selected)) return;
-    setSelected(status.active || status.configs[0]?.name || '');
-  }, [status, selected]);
+    setSelected(initialSelection(status));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusKey]);
 
   const mtuNum = mtu.trim() === '' ? 0 : Number(mtu);
   const mtuOk = mtuNum === 0 || (Number.isInteger(mtuNum) && mtuNum >= 1200 && mtuNum <= 1500);
-  const switching = status.enabled && selected !== status.active;
+  const currentOrder = (status.order ?? []).join(',');
+  const orderChanged = selected.join(',') !== currentOrder;
+  const ordered = [...selected, ...status.configs.map((c) => c.name).filter((n) => !selected.includes(n))];
+  const byName = new Map(status.configs.map((c) => [c.name, c]));
+
+  const toggle = (name: string) =>
+    setSelected((cur) => (cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name]));
+  const move = (name: string, delta: number) =>
+    setSelected((cur) => {
+      const i = cur.indexOf(name);
+      const j = i + delta;
+      if (i < 0 || j < 0 || j >= cur.length) return cur;
+      const next = [...cur];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
 
   return (
     <Card className="p-4 space-y-3">
-      <h3 className="text-sm font-medium text-text-primary">Конфиги</h3>
+      <div>
+        <h3 className="text-sm font-medium text-text-primary">Выходы</h3>
+        <p className="text-xs text-text-secondary mt-0.5">
+          Отмеченные — по порядку: первый основной, остальные запасные. Если основной не отвечает
+          дольше 3 минут, движок перейдёт на следующий и вернётся, когда основной оживёт.
+        </p>
+      </div>
       {status.configs.length === 0 ? (
         <p className="text-sm text-text-secondary">Импортированных конфигов пока нет — загрузите файл или выберите найденный ниже.</p>
       ) : (
         <div className="space-y-1.5">
-          {status.configs.map((c) => (
-            <label key={c.name} className="flex items-center gap-2 text-sm">
-              <input type="radio" name="awg-config" checked={selected === c.name} disabled={locked}
-                onChange={() => setSelected(c.name)} />
-              <span className="text-text-primary">{c.name}</span>
-              <span className="text-xs text-text-secondary truncate">
-                {c.endpoint} · {c.address}{c.obfuscation ? ' · обфускация AWG' : ''}
-              </span>
-              {status.enabled && status.active === c.name && <Badge variant="success">включён</Badge>}
-              <button type="button" className="ml-auto text-text-secondary hover:text-danger disabled:opacity-40"
-                title="Удалить конфиг" disabled={locked || (status.enabled && status.active === c.name)}
-                onClick={() => { if (window.confirm(`Удалить конфиг «${c.name}»?`)) onRemove(c.name); }}>
-                <Trash2 size={14} />
-              </button>
-            </label>
-          ))}
+          {ordered.map((name) => {
+            const c = byName.get(name);
+            if (!c) return null;
+            const pos = selected.indexOf(name);
+            const isActive = status.enabled && status.active === name;
+            return (
+              <div key={name} className="flex items-center gap-2 text-sm min-w-0">
+                <input type="checkbox" checked={pos >= 0} disabled={locked} onChange={() => toggle(name)}
+                  aria-label={`Использовать ${name}`} />
+                <span className="w-20 shrink-0 text-xs text-text-secondary whitespace-nowrap">
+                  {pos === 0 ? 'основной' : pos > 0 ? `запасной ${pos}` : ''}
+                </span>
+                <span className="text-text-primary truncate">{name}</span>
+                <span className="text-xs text-text-secondary truncate hidden sm:inline">
+                  {c.endpoint} · {c.address}{c.awg_version ? ` · ${c.awg_version}` : c.obfuscation ? ' · AWG' : ''}
+                </span>
+                {isActive && <Badge variant="success">сейчас</Badge>}
+                <span className="ml-auto flex items-center gap-1 shrink-0">
+                  {pos >= 0 && (
+                    <>
+                      <button type="button" className="px-1 text-text-secondary hover:text-text-primary disabled:opacity-30"
+                        title="Выше" disabled={locked || pos === 0} onClick={() => move(name, -1)}>
+                        <ArrowUp size={14} />
+                      </button>
+                      <button type="button" className="px-1 text-text-secondary hover:text-text-primary disabled:opacity-30"
+                        title="Ниже" disabled={locked || pos === selected.length - 1} onClick={() => move(name, 1)}>
+                        <ArrowDown size={14} />
+                      </button>
+                    </>
+                  )}
+                  <button type="button" className="px-1 text-text-secondary hover:text-danger disabled:opacity-30"
+                    title="Удалить конфиг" disabled={locked || isActive}
+                    onClick={() => { if (window.confirm(`Удалить конфиг «${name}»?`)) onRemove(name); }}>
+                    <Trash2 size={14} />
+                  </button>
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {status.configs.length > 0 && (!status.enabled || switching) && (
+      {status.configs.length > 0 && status.enabled && (
+        <div className="flex flex-wrap items-center gap-3 border-t border-border pt-3">
+          <Button size="sm" disabled={locked || selected.length === 0 || !orderChanged} onClick={() => onOrder(selected)}>
+            Сохранить порядок
+          </Button>
+          <span className="text-xs text-text-secondary">
+            Туннель не перезапускается; если текущий выход убран из списка — переключится сразу.
+          </span>
+        </div>
+      )}
+
+      {status.configs.length > 0 && !status.enabled && (
         <div className="space-y-3 border-t border-border pt-3">
           <div className="flex flex-wrap items-end gap-3">
             <div>
@@ -268,9 +349,9 @@ function ConfigsCard({ status, locked, onEnable, onRemove }: {
               <Input className="w-32" value={mtu} placeholder="1280" disabled={locked}
                 onChange={(e) => setMtu(e.target.value)} />
             </div>
-            <Button size="sm" disabled={locked || !selected || !mtuOk}
+            <Button size="sm" disabled={locked || selected.length === 0 || !mtuOk}
               onClick={() => onEnable(selected, mtuNum, allowMe)}>
-              {switching ? `Переключить на «${selected}»` : `Включить «${selected}»`}
+              {selected.length > 1 ? `Включить «${selected[0]}» и ${selected.length - 1} запасн.` : `Включить «${selected[0] ?? ''}»`}
             </Button>
           </div>
           {!mtuOk && <p className="text-xs text-danger">MTU — от 1200 до 1500</p>}
@@ -287,7 +368,8 @@ function ConfigsCard({ status, locked, onEnable, onRemove }: {
             </span>
           </label>
           <p className="text-xs text-text-secondary">
-            Движок перезапустится: открытые соединения клиентов переподключатся.
+            Движок перезапустится: открытые соединения клиентов переподключатся. Так же — при
+            каждом переключении на запасной и обратно.
           </p>
         </div>
       )}
@@ -362,7 +444,7 @@ function ImportCard({ locked, onImportBody, onImportPath, onError }: {
             <div key={f.path} className="flex items-center gap-2 text-sm">
               <span className="text-text-primary truncate" title={f.path}>{f.path}</span>
               <span className="text-xs text-text-secondary truncate">
-                {f.valid ? `${f.endpoint}${f.obfuscation ? ' · обфускация AWG' : ''}` : `не подходит: ${f.error}`}
+                {f.valid ? `${f.endpoint}${f.awg_version ? ` · ${f.awg_version}` : ''}` : `не подходит: ${f.error}`}
               </span>
               {f.valid && (
                 <Button variant="outline" size="sm" className="ml-auto" disabled={locked}

@@ -60,12 +60,67 @@ grep -q '^Endpoint = vpn.example.org:51820$' <<< "$norm"
 fails grep -qiE '^(DNS|PostUp|Table)' <<< "$norm"
 grep -q '^# DROP: DNS, PostUp, Table$' <<< "$norm"
 info=$(_awg_check_file "$good")
-[ "$info" = "vpn.example.org:51820|10.66.0.2/32|yes|no" ] || { echo "info: $info" >&2; exit 1; }
+[ "$info" = "vpn.example.org:51820|10.66.0.2/32|yes|no|2" ] || { echo "info: $info" >&2; exit 1; }
 
 # Обычный WireGuard без обфускации тоже годится.
 plain="$test_dir/wg0.conf"
 printf '[Interface]\nPrivateKey = %s\nAddress = 10.0.0.2/32, fd00::2/128\n\n[Peer]\nPublicKey = %s\nEndpoint = [2001:db8::1]:51820\nAllowedIPs = 0.0.0.0/0\n' "$K1" "$K2" > "$plain"
-[ "$(_awg_check_file "$plain")" = "[2001:db8::1]:51820|10.0.0.2/32, fd00::2/128|no|yes" ]
+[ "$(_awg_check_file "$plain")" = "[2001:db8::1]:51820|10.0.0.2/32, fd00::2/128|no|yes|wg" ]
+
+# AWG 3.1: новые ключи и диапазоны; J1 и Itime из 1.5 выкидываются.
+v3="$test_dir/v3.conf"
+cat > "$v3" <<CONF
+[Interface]
+PrivateKey = $K1
+Address = 10.66.0.3/32
+Jc = 4
+Jmin = 10
+Jmax = 50
+S1 = 20
+S2 = 30
+S3 = 16
+S4 = 16
+H1 = 100000-200000
+H2 = 300000-400000
+H3 = 500000-600000
+H4 = 700000-800000
+HeaderProtectionKey = EBcEJFTE2+J1hElPzWNlVSugwxmgjBAsAffW7CvV+no=
+ContentPaddingAddition = 0-16
+RekeyAfterTime = 110-130
+RekeyTimeout = 4-6
+RejectAfterTime = 170-190
+KeepaliveTimeout = 9-11
+MaxHandshakeAttempts = 18-22
+RandomTrailers = on
+DisableCookies = off
+J1 = <r 2>
+Itime = 60
+
+[Peer]
+PublicKey = $K2
+Endpoint = 203.0.113.7:443
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 22-30
+AdvancedSecurity = on
+CONF
+norm3=$(_awg_normalize "$v3")
+grep -q '^PersistentKeepalive = 22-30$' <<< "$norm3"
+grep -q '^HeaderProtectionKey = ' <<< "$norm3"
+grep -q '^AdvancedSecurity = on$' <<< "$norm3"
+grep -q '^# DROP: J1, Itime$' <<< "$norm3"
+fails grep -qE '^(J1|Itime) ' <<< "$norm3"
+[ "$(_awg_check_file "$v3" | cut -d'|' -f5)" = 3 ]
+[ "$(_awg_level_label 3)" = "AWG 3.x" ]
+bad="$test_dir/bad.conf"
+for bad_line in 'PersistentKeepalive = 30-22' 'PersistentKeepalive = 70000' 'RekeyTimeout = a-b' \
+    'RandomTrailers = maybe' 'HeaderProtectionKey = short' 'AdvancedSecurity = yes please' 'S4 = 5'; do
+    key=${bad_line%% =*}
+    sed "s/^${key} = .*/${bad_line}/" "$v3" > "$bad"
+    fails _awg_check_file "$bad"
+done
+# Только Jc/S1/S2 — уровень 1.
+printf '[Interface]\nPrivateKey = %s\nAddress = 10.0.0.2/32\nJc = 3\n[Peer]\nPublicKey = %s\nEndpoint = 203.0.113.8:1\n' "$K1" "$K2" > "$bad"
+[ "$(_awg_check_file "$bad" | cut -d'|' -f5)" = 1 ]
 
 # Конфиг сервера (без Endpoint), мусор и подстановки — отказ.
 srv="$test_dir/srv.conf"
@@ -116,6 +171,24 @@ fails awg_remove My_Server
 AWG_ENABLED=false; awg_save
 awg_remove piped >/dev/null
 [ ! -f "$INSTALL_DIR/awg/configs/piped.conf" ]
+
+# Порядок выходов: старое состояние без AWG_ORDER, кандидаты по кругу, remove чистит порядок.
+awg_import "$plain" --name b >/dev/null
+awg_import "$plain" --name c >/dev/null
+awg_load
+AWG_ACTIVE=wg; awg_save; awg_load
+[ "$(_awg_order_list | paste -sd, -)" = "wg" ]
+AWG_ORDER="wg,b,ghost,c"; AWG_ACTIVE=b; awg_save; awg_load
+[ "$(_awg_order_list | paste -sd, -)" = "wg,b,c" ]
+[ "$(_awg_next_candidates | paste -sd, -)" = "c,wg" ]
+AWG_ACTIVE=c; [ "$(_awg_next_candidates | paste -sd, -)" = "wg,b" ]
+AWG_ACTIVE=b; awg_save
+awg_remove c >/dev/null
+awg_load
+[ "$AWG_ORDER" = "wg,b,ghost" ]
+_awg_parse_names wg b wg
+[ "${_AWG_NAMES[*]}" = "wg b" ]
+fails _awg_parse_names wg nope
 
 # Конфиг цели: исходные значения возвращаются как были.
 cfg="$test_dir/target.toml"

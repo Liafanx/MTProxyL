@@ -148,6 +148,26 @@ func (s *Server) registerAwgRoutes(
 		})
 	}))
 
+	mux.Handle("POST /api/awg/order", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		var req struct {
+			Names []string `json:"names"`
+		}
+		if !decode(w, r, &req, 4<<10) {
+			return
+		}
+		if err := mtproxylctl.ValidateAwgOrder(req.Names); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		// Смена порядка может сразу переключить выход — через runner.
+		start(w, "awg:order", func(ctx context.Context) (string, error) {
+			return client.AwgOrder(ctx, req.Names)
+		})
+	}))
+
 	mux.Handle("POST /api/awg/disable", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
 			return

@@ -1489,6 +1489,8 @@ export interface AwgConfigInfo {
   endpoint: string;
   address: string;
   obfuscation: boolean;
+  /** «AWG 3.x», «AWG 2.0», «AWG 1.0», «WireGuard» или пусто. */
+  awg_version?: string;
 }
 
 export interface AwgStatus {
@@ -1512,6 +1514,10 @@ export interface AwgStatus {
   warp_enabled: boolean;
   donor_enabled: boolean;
   enabled_at: number;
+  /** Выходы по приоритету: первый — основной, остальные — запасные. */
+  order?: string[];
+  fail_since?: number;
+  last_switch?: { at: number; from: string; to: string; reason: string };
   check: { at: number; result: string; error: string };
   configs: AwgConfigInfo[];
 }
@@ -1530,6 +1536,7 @@ export interface AwgScanFile {
   address: string;
   obfuscation: boolean;
   ipv6: boolean;
+  awg_version?: string;
   error: string;
 }
 
@@ -1540,11 +1547,13 @@ export const awgApi = {
     request<{ output: string }>(AWG_BASE, '/import', { method: 'POST', body: JSON.stringify({ name, body }) }),
   importPath: (name: string, path: string) =>
     request<{ output: string }>(AWG_BASE, '/import', { method: 'POST', body: JSON.stringify({ name, path }) }),
-  enable: (name: string, mtu: number, allowDisableMe: boolean) =>
+  enable: (names: string[], mtu: number, allowDisableMe: boolean) =>
     request<MtproxylOperation>(AWG_BASE, '/enable', {
       method: 'POST',
-      body: JSON.stringify({ name, mtu, allow_disable_me: allowDisableMe }),
+      body: JSON.stringify({ names, mtu, allow_disable_me: allowDisableMe }),
     }),
+  order: (names: string[]) =>
+    request<MtproxylOperation>(AWG_BASE, '/order', { method: 'POST', body: JSON.stringify({ names }) }),
   disable: () => request<MtproxylOperation>(AWG_BASE, '/disable', { method: 'POST' }),
   check: () => request<AwgStatusResponse>(AWG_BASE, '/check', { method: 'POST' }),
   remove: (name: string) =>
