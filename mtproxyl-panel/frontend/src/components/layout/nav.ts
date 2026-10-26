@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, ToggleLeft, Globe, Globe2, Archive, ShieldAlert, MapPin, Route, SlidersHorizontal, Gauge, FileCode, Puzzle, Radar, Wrench, Bot, Waypoints, ShieldBan, PanelTop, Cable, KeyRound } from 'lucide-react';
+import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, ToggleLeft, Globe, Globe2, Archive, ShieldAlert, MapPin, Route, SlidersHorizontal, Gauge, FileCode, Puzzle, Radar, Wrench, Bot, Waypoints, ShieldBan, PanelTop, Cable, KeyRound, Router } from 'lucide-react';
 
 export interface NavItem {
   to: string;
@@ -37,6 +37,7 @@ export const MTPROXYL_NAV_ITEMS: NavItem[] = [
   { to: '/ipblock', icon: ShieldBan, label: 'Блокировка IP адресов' },
   { to: '/warp', icon: Waypoints, label: 'Telegram через WARP' },
   { to: '/donor', icon: Cable, label: 'Туннель AWG до донора' },
+  { to: '/awg', icon: Router, label: 'Telegram через свой AWG' },
   { to: '/backups', icon: Archive, label: 'Бэкапы', managerOnly: true },
   { to: '/routes', icon: Route, label: 'Маршруты', managerOnly: true },
   { to: '/expert', icon: SlidersHorizontal, label: 'Экспертные параметры', managerOnly: true },

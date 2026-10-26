@@ -1,4 +1,5 @@
-import { formatNumber } from '@/lib/utils';
+import { formatNumber, cn } from '@/lib/utils';
+import { isProbeClass } from '@/lib/probes';
 
 export interface ClassCount {
   class: string;
@@ -16,6 +17,15 @@ const KNOWN_LABELS: Record<string, string> = {
   tls_clienthello_truncated: 'Обрезанный TLS ClientHello',
   tls_handshake_bad_client: 'TLS handshake — bad client',
   tls_mtproto_bad_client: 'TLS MTProto — bad client',
+  direct_modes_disabled: 'Отключённые режимы MTProto',
+  direct_mtproto_bad_client: 'Прямой MTProto — bad client',
+  proxy_protocol_header_timeout: 'PROXY protocol — таймаут заголовка',
+  proxy_protocol_invalid_header: 'PROXY protocol — неверный заголовок',
+  proxy_protocol_untrusted: 'PROXY protocol — недоверенный источник',
+  web_mtproto_bad_client: 'WEB MTProto — bad client',
+  web_mtproto_first_byte_timeout: 'WEB MTProto — таймаут первого байта',
+  web_mtproto_handshake_io: 'WEB MTProto — обрыв рукопожатия',
+  web_mtproto_handshake_timeout: 'WEB MTProto — таймаут рукопожатия',
   eof: 'Преждевременный EOF',
 };
 
@@ -26,7 +36,7 @@ function humanizeClass(cls: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
-function ErrorSection({ title, items }: { title: string; items: ClassCount[] }) {
+function ErrorSection({ title, items, neutral }: { title: string; items: ClassCount[]; neutral?: boolean }) {
   const sorted = items.filter((i) => i.total > 0).sort((a, b) => b.total - a.total);
   if (sorted.length === 0) return null;
 
@@ -37,7 +47,7 @@ function ErrorSection({ title, items }: { title: string; items: ClassCount[] }) 
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <span className="text-xs lg:text-sm font-medium text-text-primary">{title}</span>
-        <span className="text-xs lg:text-sm font-semibold text-warning tabular-nums">
+        <span className={cn('text-xs lg:text-sm font-semibold tabular-nums', neutral ? 'text-text-secondary' : 'text-warning')}>
           {formatNumber(total)}
         </span>
       </div>
@@ -52,7 +62,7 @@ function ErrorSection({ title, items }: { title: string; items: ClassCount[] }) 
             </span>
             <div className="h-1.5 w-16 sm:w-24 rounded-full bg-border overflow-hidden shrink-0">
               <div
-                className="h-full rounded-full bg-warning"
+                className={cn('h-full rounded-full', neutral ? 'bg-text-muted' : 'bg-warning')}
                 style={{ width: `${(item.total / max) * 100}%` }}
               />
             </div>
@@ -72,10 +82,11 @@ interface ConnectionErrorsProps {
 }
 
 export function ConnectionErrors({ badByClass, handshakeFailuresByClass }: ConnectionErrorsProps) {
-  const bad = badByClass ?? [];
+  const bad = (badByClass ?? []).filter((i) => !isProbeClass(i.class));
+  const probes = (badByClass ?? []).filter((i) => isProbeClass(i.class));
   const handshake = handshakeFailuresByClass ?? [];
 
-  const hasData = bad.some((i) => i.total > 0) || handshake.some((i) => i.total > 0);
+  const hasData = [bad, probes, handshake].some((list) => list.some((i) => i.total > 0));
   if (!hasData) return null;
 
   return (
@@ -83,6 +94,7 @@ export function ConnectionErrors({ badByClass, handshakeFailuresByClass }: Conne
       <h3 className="text-xs lg:text-sm font-medium text-text-secondary">Ошибки соединений</h3>
       <ErrorSection title="Ошибочные соединения" items={bad} />
       <ErrorSection title="Сбои рукопожатия" items={handshake} />
+      <ErrorSection title="Отбито проб — сканеры и чужие клиенты, не ошибки прокси" items={probes} neutral />
     </div>
   );
 }

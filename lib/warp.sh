@@ -1198,6 +1198,14 @@ warp_enable() (
 
 _warp_enable() {
     check_root
+    if awg_is_enabled 2>/dev/null; then
+        log_error "Включён выход через свой AWG — сначала выключите его: mtproxyl awg off"
+        return 1
+    fi
+    if declare -F donor_load >/dev/null && (donor_load; [ "$DONOR_ENABLED" = true ]); then
+        log_error "Включён туннель до донора — сначала выключите его: mtproxyl donor off"
+        return 1
+    fi
     local _mode="${1:-$(_warp_mode)}"
     case "$_mode" in
         socks|a|A) WARP_MODE="socks" ;;

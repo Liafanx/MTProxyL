@@ -1208,6 +1208,10 @@ _donor_guard_conflicts() {
         log_error "Включён маршрут через WARP — сначала выключите его: mtproxyl warp off"
         return 1
     fi
+    if awg_is_enabled 2>/dev/null; then
+        log_error "Включён выход через свой AWG — сначала выключите его: mtproxyl awg off"
+        return 1
+    fi
     return 0
 }
 

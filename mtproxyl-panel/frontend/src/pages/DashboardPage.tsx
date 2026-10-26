@@ -16,13 +16,14 @@ import { useWsSubscription, useEndpoint } from '@/hooks/useWebSocket';
 import { usePolling } from '@/hooks/usePolling';
 import { useHistorySeries } from '@/hooks/useHistorySeries';
 import { gaugeValues, rateValues, windowDelta } from '@/lib/history';
+import { sumProbes } from '@/lib/probes';
 import { LoadCard } from '@/components/LoadCard';
 import { useMtproxyl } from '@/hooks/useMtproxyl';
 import { telemt, mtproxylNetApi, mtproxylSettingsApi, availabilityApi, type AvailabilityStatusResponse, type ShapingStatus } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { formatUptime, formatNumber, formatBytes, cn } from '@/lib/utils';
-import { Activity, Clock, Users, ArrowUpDown, Globe, ShieldAlert, Gauge } from 'lucide-react';
+import { Activity, Users, ArrowUpDown, Globe, ShieldAlert, ShieldBan, Gauge } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -109,7 +110,7 @@ export function DashboardPage() {
   }, [usersData]);
 
   const history = useHistorySeries(
-    ['connections', 'refusals', 'active_ips', 'traffic', 'current_connections', 'active_users'],
+    ['connections', 'refusals', 'probes', 'active_ips', 'traffic', 'current_connections', 'active_users'],
     '30m',
     10_000,
   );
@@ -119,6 +120,8 @@ export function DashboardPage() {
   const ipsSeries = gaugeValues(history.series.active_ips);
   const connectionsDelta = windowDelta(history.series.connections);
   const badDelta = windowDelta(history.series.refusals);
+  const probeSeries = rateValues(history.series.probes);
+  const probeDelta = windowDelta(history.series.probes);
   const trafficDelta = windowDelta(history.series.traffic);
   const telemetryOff = history.series.current_connections?.state === 'disabled';
 
@@ -129,6 +132,9 @@ export function DashboardPage() {
   const dcSummary = useMemo(() => summarizeDcs(dcs, dcThreshold.value), [dcs, dcThreshold.value]);
 
   const badRecent = badDelta ?? 0;
+  // Пробы и сканеры — не ошибки прокси: считаются отдельно.
+  const probesTotal = summary ? Math.min(sumProbes(summary.connections_bad_by_class), summary.connections_bad_total) : 0;
+  const badTotal = summary ? summary.connections_bad_total - probesTotal : 0;
   const startupStatus = gates?.startup_status?.toLowerCase();
   const starting = startupStatus !== undefined && startupStatus !== 'ready' && startupStatus !== 'done';
 
@@ -218,11 +224,6 @@ export function DashboardPage() {
         {summary && (
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6 lg:gap-4">
             <MetricCard
-              label="Время работы"
-              value={formatUptime(summary.uptime_seconds)}
-              icon={<Clock size={14} />}
-            />
-            <MetricCard
               label="Всего соединений"
               value={formatNumber(summary.connections_total)}
               icon={<Activity size={14} />}
@@ -232,12 +233,19 @@ export function DashboardPage() {
             />
             <MetricCard
               label="Ошибочных соединений"
-              value={formatNumber(summary.connections_bad_total)}
+              value={formatNumber(badTotal)}
               icon={<ShieldAlert size={14} />}
-              variant={summary.connections_bad_total > 0 ? 'warning' : 'default'}
+              variant={badTotal > 0 ? 'warning' : 'default'}
               status={badRecent > 0 ? 'warn' : 'ok'}
               series={badSeries}
               caption={badDelta === null ? undefined : `+${formatNumber(badDelta)} за 15 мин`}
+            />
+            <MetricCard
+              label="Отбито проб"
+              value={formatNumber(probesTotal)}
+              icon={<ShieldBan size={14} />}
+              series={probeSeries}
+              caption={probeDelta === null ? undefined : `+${formatNumber(probeDelta)} за 15 мин`}
             />
             <MetricCard
               label="Пользователей"

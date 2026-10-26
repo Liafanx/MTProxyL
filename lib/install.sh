@@ -943,6 +943,9 @@ uninstall() {
             log_info "Туннель на доноре ${DONOR_HOST} (${DONOR_REMOTE_IFACE}) остаётся — уберите его там сами"
         donor_purge_local
     fi
+    if [ -d "$(_awg_dir)" ] || [ -f "$(_awg_sys_conf)" ]; then
+        awg_purge
+    fi
     systemctl daemon-reload >/dev/null 2>&1 || true
 
     # Гео-блокировка

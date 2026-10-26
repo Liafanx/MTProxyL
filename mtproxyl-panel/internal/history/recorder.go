@@ -11,6 +11,7 @@ import (
 const (
 	MetricConnections        = "connections"
 	MetricRefusals           = "refusals"
+	MetricProbes             = "probes"
 	MetricAvailable          = "available"
 	MetricCurrentConnections = "current_connections"
 	MetricActiveUsers        = "active_users"
@@ -23,7 +24,7 @@ const (
 )
 
 var knownMetrics = map[string]bool{
-	MetricConnections: true, MetricRefusals: true, MetricAvailable: true,
+	MetricConnections: true, MetricRefusals: true, MetricProbes: true, MetricAvailable: true,
 	MetricCurrentConnections: true, MetricActiveUsers: true,
 	MetricActiveIPs: true, MetricTraffic: true,
 }
@@ -47,6 +48,7 @@ type Recorder struct {
 	limits       Limits
 	connections  counter
 	refusals     counter
+	probes       counter
 	trafficTotal counter
 	lastLog      map[string]time.Time
 	edge         gateState
@@ -181,6 +183,7 @@ func (r *Recorder) PollFingerprints(ctx context.Context) {
 }
 
 type classCount struct {
+	Class string `json:"class"`
 	Total uint64 `json:"total"`
 }
 
@@ -188,6 +191,7 @@ type statsSummary struct {
 	UptimeSeconds            float64      `json:"uptime_seconds"`
 	ConnectionsTotal         uint64       `json:"connections_total"`
 	ConnectionsBadTotal      uint64       `json:"connections_bad_total"`
+	ConnectionsBadByClass    []classCount `json:"connections_bad_by_class"`
 	HandshakeTimeoutsTotal   uint64       `json:"handshake_timeouts_total"`
 	HandshakeFailuresByClass []classCount `json:"handshake_failures_by_class"`
 }
@@ -218,7 +222,16 @@ func (r *Recorder) PollStats(ctx context.Context) {
 		r.warn("stats", err)
 		return
 	}
-	refused := summary.ConnectionsBadTotal
+	var probed uint64
+	for _, c := range summary.ConnectionsBadByClass {
+		if IsProbeClass(c.Class) {
+			probed += c.Total
+		}
+	}
+	if probed > summary.ConnectionsBadTotal {
+		probed = summary.ConnectionsBadTotal
+	}
+	refused := summary.ConnectionsBadTotal - probed
 	if len(summary.HandshakeFailuresByClass) > 0 {
 		for _, c := range summary.HandshakeFailuresByClass {
 			refused += c.Total
@@ -229,10 +242,12 @@ func (r *Recorder) PollStats(ctx context.Context) {
 	r.mu.Lock()
 	conn := r.connections.observe(summary.ConnectionsTotal, summary.UptimeSeconds)
 	ref := r.refusals.observe(refused, summary.UptimeSeconds)
+	prb := r.probes.observe(probed, summary.UptimeSeconds)
 	r.mu.Unlock()
 	r.ring.Append(MetricAvailable, Point{TS: ts, V: 1})
 	r.ring.Append(MetricConnections, Point{TS: ts, V: conn})
 	r.ring.Append(MetricRefusals, Point{TS: ts, V: ref})
+	r.ring.Append(MetricProbes, Point{TS: ts, V: prb})
 
 	var live connectionsSummary
 	if err := r.fetch.GetJSON(ctx, "/v1/runtime/connections/summary", &live); err != nil {

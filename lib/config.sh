@@ -466,6 +466,7 @@ tg_connect = ${MTPROXYL_TG_CONNECT}
 fast_mode = true
 use_middle_proxy = true
 log_level = "silent"
+$(awg_general_toml 2>/dev/null)
 
 [general.modes]
 classic = false

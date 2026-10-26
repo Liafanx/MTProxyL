@@ -52,6 +52,7 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 	// уводит минуты на разведку, и параллельная правка настроек ему помешала бы.
 	s.registerWarpRoutes(mux, jwtSecret, client, runner)
 	s.registerDonorRoutes(mux, jwtSecret, client, runner)
+	s.registerAwgRoutes(mux, jwtSecret, client, runner)
 	s.registerFrontRoutes(mux, jwtSecret, client, runner)
 
 	// ── Availability ────────────────────────────────────────────────────────
