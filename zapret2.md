@@ -54,7 +54,7 @@ modprobe nfnetlink_queue
 
 ```bash
 ARCH=linux-x86_64            # для ARM64: linux-arm64
-VER=v1.0.3
+VER=v1.0.5.2
 
 curl -fsSL -o /tmp/zapret2.tar.gz \
   "https://github.com/bol-van/zapret2/releases/download/${VER}/zapret2-${VER}.tar.gz"
@@ -121,16 +121,14 @@ rm -rf /tmp/zapret2.tar.gz /tmp/zapret2-unpack
 function lets_resend(ctx, desync)
     -- iOS fingerprint bypass: пропускаем через fwmark без обработки
     if bitand(desync.dis.tcp.th_flags, TH_SYN + TH_ACK) == TH_SYN then
-        if desync.dis.tcp.th_win == 65535 and
-           #desync.dis.tcp.options == 8 and
-           desync.dis.tcp.options[1].kind == 2 and
-           desync.dis.tcp.options[2].kind == 1 and
-           desync.dis.tcp.options[3].kind == 3 and
-           desync.dis.tcp.options[4].kind == 1 and
-           desync.dis.tcp.options[5].kind == 1 and
-           desync.dis.tcp.options[6].kind == 8 and
-           desync.dis.tcp.options[7].kind == 4 and
-           desync.dis.tcp.options[8].kind == 0 then
+        -- nfqws2 с v1.0.5 отрезает завершающий EOL, до него — оставляет
+        local o = desync.dis.tcp.options
+        local n = #o
+        if n == 8 and o[8].kind == 0 then n = 7 end
+        if desync.dis.tcp.th_win == 65535 and n == 7 and
+           o[1].kind == 2 and o[2].kind == 1 and o[3].kind == 3 and
+           o[4].kind == 1 and o[5].kind == 1 and o[6].kind == 8 and
+           o[7].kind == 4 then
             instance_cutoff(ctx, nil)
             desync.arg.fwmark = 0x40000
             rawsend_dissect_segmented(desync)
@@ -181,6 +179,18 @@ end
 
 **1. SYN клиента — проверка fingerprint.** iOS-клиенты узнаются по набору TCP-опций
 в SYN и уходят через `fwmark` без вмешательства: описанная ниже схема им не нужна. Остальные идут дальше по сценарию.
+
+SYN от iOS приходит с окном `65535` и опциями `mss, nop, wscale, nop, nop, TS,
+sackOK, eol`. Завершающий `eol` (0x00) `nfqws2` до v1.0.4 включительно отдаёт в
+Lua отдельной опцией — их 8, а начиная с v1.0.5 отрезает как выравнивание — их 7.
+Скрипт выше понимает оба варианта.
+
+> **Если вы ставили по прежней версии этой инструкции**, в вашем `mtproto.lua`
+> стоит проверка `#desync.dis.tcp.options == 8` и `options[8].kind == 0`. С
+> `nfqws2` v1.0.5 и новее она не срабатывает: iOS-клиенты попадают под общую
+> схему, у них растёт пинг. Замените блок проверки на приведённый выше и
+> перезапустите службу: `systemctl restart mtproxyl-zapret2`. В MTProxyL
+> скрипт заменяется сам при обновлении до 1.7.17.
 
 **2. SYN+ACK — зажимаем окно.** Вместо реального окна (десятки килобайт) сервер
 объявляет `1400` байт. Одновременно запоминается `ack0` — номер, от которого
