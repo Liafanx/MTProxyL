@@ -1771,8 +1771,9 @@ EOF
 }
 
 zapret2_write_lua() {
-    mkdir -p "$ZAPRET2_LUA_DIR"
-    cat > "$ZAPRET2_LUA" << LUAEOF
+    local _dst="${1:-$ZAPRET2_LUA}"
+    mkdir -p "$(dirname "$_dst")"
+    cat > "$_dst" << LUAEOF
 -- Zapret2 MTProto fix — MTProxyL
 -- Серверный обход: disorder + badsum + window control + iOS fwmark bypass
 -- https://github.com/Liafanx/MTProxyL
@@ -1780,16 +1781,14 @@ zapret2_write_lua() {
 function lets_resend(ctx, desync)
     -- iOS fingerprint bypass: пропускаем через fwmark без обработки
     if bitand(desync.dis.tcp.th_flags, TH_SYN + TH_ACK) == TH_SYN then
-        if desync.dis.tcp.th_win == 65535 and
-           #desync.dis.tcp.options == 8 and
-           desync.dis.tcp.options[1].kind == 2 and
-           desync.dis.tcp.options[2].kind == 1 and
-           desync.dis.tcp.options[3].kind == 3 and
-           desync.dis.tcp.options[4].kind == 1 and
-           desync.dis.tcp.options[5].kind == 1 and
-           desync.dis.tcp.options[6].kind == 8 and
-           desync.dis.tcp.options[7].kind == 4 and
-           desync.dis.tcp.options[8].kind == 0 then
+        -- nfqws2 с v1.0.5 отрезает завершающий EOL, до него — оставляет
+        local o = desync.dis.tcp.options
+        local n = #o
+        if n == 8 and o[8].kind == 0 then n = 7 end
+        if desync.dis.tcp.th_win == 65535 and n == 7 and
+           o[1].kind == 2 and o[2].kind == 1 and o[3].kind == 3 and
+           o[4].kind == 1 and o[5].kind == 1 and o[6].kind == 8 and
+           o[7].kind == 4 then
             instance_cutoff(ctx, nil)
             desync.arg.fwmark = 0x40000
             rawsend_dissect_segmented(desync)
@@ -1835,7 +1834,7 @@ function lets_resend(ctx, desync)
     return VERDICT_DROP
 end
 LUAEOF
-    log_success "Lua скрипт записан: ${ZAPRET2_LUA}"
+    if [ "$_dst" = "$ZAPRET2_LUA" ]; then log_success "Lua скрипт записан: ${ZAPRET2_LUA}"; fi
 }
 
 # Хвост стартового скрипта: один экземпляр — exec, как раньше; несколько —
@@ -2538,10 +2537,22 @@ zapret2_conntrack_acct() {
 
 # После обновления MTProxyL: работающий zapret2 со старой раскладкой
 # очередей (один экземпляр на многоядерном сервере) пересобираем.
+# Скрипт Lua от прошлой версии MTProxyL меняем на текущий: перезапуск без
+# пересборки правил.
+zapret2_refresh_lua() {
+    local _tmp; _tmp=$(mktemp) || return 0
+    zapret2_write_lua "$_tmp"
+    if cmp -s "$_tmp" "$ZAPRET2_LUA"; then rm -f "$_tmp"; return 0; fi
+    install -m 644 "$_tmp" "$ZAPRET2_LUA" && rm -f "$_tmp"
+    log_info "Zapret2: обновлён скрипт Lua"
+    systemctl restart "$ZAPRET2_SERVICE" 2>/dev/null || true
+}
+
 zapret2_refresh_if_needed() {
     [ "${ZAPRET2_APPLIED:-false}" = "true" ] || return 0
     systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null || return 0
     zapret2_conntrack_acct
+    zapret2_refresh_lua
     local _script="/usr/local/sbin/mtproxyl-zapret2-start.sh"
     grep -qxF "QNUM=\"$(zapret2_queue_spec)\"" "$_script" 2>/dev/null \
         && grep -qxF "LIMIT_MATCH=\"$(zapret2_limit_match)\"" "$_script" 2>/dev/null && return 0

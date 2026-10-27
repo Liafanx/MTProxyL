@@ -830,7 +830,7 @@ mtproxyl block import list.txt append     # добавить к текущему
 
 Серверный обход через активное манипулирование TCP-пакетами:
 - disorder + badsum + TCP window control
-- iOS bypass по TCP fingerprint через `fwmark + ct mark`
+- iOS bypass по TCP fingerprint через `fwmark + ct mark` — с любой версией `nfqws2`; скрипт Lua от прошлой версии MTProxyL заменяется при обновлении
 - Автоподбор `win ACK` под конкретный сервер по формуле `wscale`
 - Заменяет SYN limiter при включении
 - Автозапуск через systemd, NFT таблица `ip MTProtoL`
