@@ -138,7 +138,13 @@ export function DashboardPage() {
   const badRecent = badDelta ?? 0;
   // Пробы и сканеры — не ошибки прокси: считаются отдельно.
   const probesTotal = summary ? Math.min(sumProbes(summary.connections_bad_by_class), summary.connections_bad_total) : 0;
-  const badTotal = summary ? summary.connections_bad_total - probesTotal : 0;
+  // Как история на бэкенде (recorder.go): плюс сбои рукопожатия.
+  const handshakeTotal = summary
+    ? summary.handshake_failures_by_class?.length
+      ? summary.handshake_failures_by_class.reduce((sum, c) => sum + c.total, 0)
+      : summary.handshake_timeouts_total ?? 0
+    : 0;
+  const badTotal = summary ? summary.connections_bad_total - probesTotal + handshakeTotal : 0;
   const startupStatus = gates?.startup_status?.toLowerCase();
   const starting = startupStatus !== undefined && startupStatus !== 'ready' && startupStatus !== 'done';
 
