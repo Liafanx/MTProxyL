@@ -210,7 +210,7 @@ _secret_import_source() {
 secret_import_file() {
     local _file; _file=$(_secret_import_source "${1:-}") || return 1
 
-    local _added=0 _dup=0 _bad=0 _line
+    local _added=0 _dup=0 _bad=0 _line _ex
     local _IMP_L _IMP_K _IMP_CR _IMP_EN _IMP_MC _IMP_MI _IMP_Q _IMP_EX _IMP_N _IMP_AT _IMP_RT
     while IFS= read -r _line || [ -n "$_line" ]; do
         [[ "$_line" =~ ^[[:space:]]*# ]] && continue
@@ -222,6 +222,10 @@ secret_import_file() {
             [ "${SECRETS_LABELS[$_i]}" = "$_IMP_L" ] && { _exists=true; break; }
         done
         if $_exists; then _dup=$((_dup + 1)); continue; fi
+        if _ex=$(_secret_key_owner "$_IMP_K"); then
+            log_warn "${_IMP_L}: ключ уже у пользователя '${_ex}' — пропущен"
+            _dup=$((_dup + 1)); continue
+        fi
 
         SECRETS_LABELS+=("$_IMP_L");   SECRETS_KEYS+=("$_IMP_K")
         SECRETS_CREATED+=("$_IMP_CR"); SECRETS_ENABLED+=("$_IMP_EN")
@@ -268,6 +272,25 @@ secret_export_file() {
     _secret_export_write "${1:-}" "$_rows" "${#SECRETS_LABELS[@]}"
 }
 
+# Чей это ключ: движок узнаёт клиента по ключу, и у второго владельца того
+# же ключа лимиты и статистика не работали бы. $2 — индекс, который не в счёт.
+_secret_key_owner() {
+    local _k="${1,,}" _skip="${2:--1}" _i
+    for _i in "${!SECRETS_KEYS[@]}"; do
+        [ "$_i" = "$_skip" ] && continue
+        [ "${SECRETS_KEYS[$_i],,}" = "$_k" ] && { echo "${SECRETS_LABELS[$_i]}"; return 0; }
+    done
+    return 1
+}
+
+_target_key_owner() {
+    local _k="${1,,}" _st _lb _key
+    while IFS='|' read -r _st _lb _key; do
+        [ -n "$_lb" ] && [ "${_key,,}" = "$_k" ] && { echo "$_lb"; return 0; }
+    done < <(_target_section_pairs "access.users")
+    return 1
+}
+
 # Добавить секрет
 secret_add() {
     local label="$1" custom_secret="${2:-}" no_restart="${3:-false}"
@@ -281,8 +304,11 @@ secret_add() {
         [ "${SECRETS_LABELS[$i]}" = "$label" ] && { log_error "Секрет '${label}' уже существует"; return 1; }
     done
 
-    local raw_secret="${custom_secret:-$(generate_secret)}"
+    local raw_secret="${custom_secret:-$(generate_secret)}" _owner
     [[ "$raw_secret" =~ ^[0-9a-fA-F]{32}$ ]] || { log_error "Секрет: ровно 32 hex-символа"; return 1; }
+    if _owner=$(_secret_key_owner "$raw_secret"); then
+        log_error "Этот ключ уже у пользователя '${_owner}'"; return 1
+    fi
 
     SECRETS_LABELS+=("$label")
     SECRETS_KEYS+=("$raw_secret")
@@ -387,8 +413,11 @@ secret_rotate() {
     done
     [ $idx -eq -1 ] && { log_error "Секрет '${label}' не найден"; return 1; }
 
-    local new_secret="${_want,,}"
+    local new_secret="${_want,,}" _owner
     [ -n "$new_secret" ] || new_secret=$(generate_secret)
+    if _owner=$(_secret_key_owner "$new_secret" "$idx"); then
+        log_error "Этот ключ уже у пользователя '${_owner}'"; return 1
+    fi
     SECRETS_KEYS[$idx]="$new_secret"
     SECRETS_CREATED[$idx]="$(date +%s)"
 
@@ -502,6 +531,31 @@ secret_set_limits() {
 # Рекламная метка отдельного пользователя — секция [access.user_ad_tags]
 # у движка. Общая метка в [general] от этого не отменяется: она остаётся для
 # всех, у кого своей нет.
+# Заметка к пользователю: кому выдан, телефон, оплата. Движку не уходит.
+# Без текста — показать, «-» — стереть.
+secret_set_note() {
+    local label="$1"; shift 2>/dev/null || true
+    local text="$*" idx=-1 i
+    for i in "${!SECRETS_LABELS[@]}"; do
+        [ "${SECRETS_LABELS[$i]}" = "$label" ] && { idx=$i; break; }
+    done
+    [ $idx -eq -1 ] && { log_error "Секрет '${label}' не найден"; return 1; }
+    if [ -z "$text" ]; then
+        echo "${SECRETS_NOTES[$idx]:-}"
+        return 0
+    fi
+    [ "$text" = "-" ] && text=""
+    # «|» и переводы строк сломали бы строку базы.
+    text="${text//[|[:cntrl:]]/ }"
+    text=$(sed 's/^ *//; s/ *$//' <<< "$text")
+    if [ "${#text}" -gt 200 ]; then
+        log_error "Заметка: не длиннее 200 символов"; return 1
+    fi
+    SECRETS_NOTES[$idx]="$text"
+    save_secrets || return 1
+    if [ -n "$text" ]; then log_success "Заметка для '${label}' сохранена"; else log_success "Заметка '${label}' стёрта"; fi
+}
+
 secret_set_adtag() {
     local label="$1" tag="${2:-}"
     local idx=-1 i
@@ -1315,8 +1369,11 @@ target_user_add() {
     [ ${#_label} -gt 32 ] && { log_error "Метка: максимум 32 символа"; return 1; }
     [ -n "$(_target_user_state "$_label")" ] && { log_error "Пользователь '${_label}' уже есть у цели"; return 1; }
 
-    local _raw="${_custom:-$(generate_secret)}"
+    local _raw="${_custom:-$(generate_secret)}" _owner
     [[ "$_raw" =~ ^[0-9a-fA-F]{32}$ ]] || { log_error "Секрет: ровно 32 hex-символа"; return 1; }
+    if _owner=$(_target_key_owner "$_raw"); then
+        log_error "Этот ключ уже у пользователя '${_owner}'"; return 1
+    fi
 
     backup_target_config "users" "true" || true
     _target_set_in_section "$_label" "\"${_raw}\"" "access.users" || {
@@ -1694,6 +1751,10 @@ target_users_import() {
         [[ "$_line" =~ ^[[:space:]]*$ ]] && continue
         _secret_parse_line "$_line" || { _bad=$((_bad + 1)); continue; }
         [ -z "$(_target_user_state "$_IMP_L")" ] || { _dup=$((_dup + 1)); continue; }
+        if _ex=$(_target_key_owner "$_IMP_K"); then
+            log_warn "${_IMP_L}: ключ уже у пользователя '${_ex}' — пропущен"
+            _dup=$((_dup + 1)); continue
+        fi
         _ex=$(_normalize_expiry "$_IMP_EX" 2>/dev/null) || _ex="0"
         [ -n "$_backed" ] || { backup_target_config "users" "true" || true; _backed=1; }
         _target_set_in_section "$_IMP_L" "\"${_IMP_K}\"" "access.users" || { _bad=$((_bad + 1)); continue; }
@@ -1740,6 +1801,7 @@ handle_target_user_command() {
             target_user_setlimits "$_l" "${1:-0}" "${2:-0}" "${3:-0}" "${4:-}" ;;
         limits)   target_user_show_limits "${1:-}" ;;
         adtag)    check_root; target_user_adtag "${1:-}" "${2:-}" ;;
+        note)     log_error "Заметки хранит только режим менеджера: в конфиге цели им нет места"; return 1 ;;
         setrate)  check_root; target_user_setrate "${1:-}" "${2:-0}" "${3:-0}" ;;
         reset-quota) check_root; secret_reset_quota "${1:-}" ;;
         api-view) secret_api_view_json true "${1:-}" ;;
@@ -1973,7 +2035,7 @@ handle_secret_command() {
     # 'secret list --json' (запрос панели) попадал в ветку пишущих команд и в
     # режиме супер эксперта отказывал, хотя ничего не пишет.
     case "$subcmd" in
-        list|link|qr|export|api-view|"") ;;
+        list|link|qr|export|api-view|note|"") ;;
         *) _require_no_superexpert || return 1 ;;
     esac
     case "$subcmd" in
@@ -1990,6 +2052,7 @@ handle_secret_command() {
         disable)  check_root; secret_toggle "$1" disable ;;
         limits)   secret_show_limits "$1" ;;
         adtag)    check_root; secret_set_adtag "$1" "${2:-}" ;;
+        note)     check_root; secret_set_note "$@" ;;
         setrate)  check_root; secret_set_rate "$1" "${2:-0}" "${3:-0}" ;;
         reset-quota) check_root; secret_reset_quota "${1:-}" ;;
         setlimits)

@@ -1,49 +1,114 @@
 name: MTProxyL Release
 
-# MTProxyL — это bash, собирать нечего: релиз нужен, чтобы у версии была
-# страница с описанием и чтобы её было видно в списке. Текст берём из
-# CHANGELOG.md, иначе он разъезжается с тем, что написано в репозитории.
+# Релиз — страница с описанием из CHANGELOG.md и архив mtproxyl-X.Y.Z.tar.gz:
+# из него `mtproxyl update` ставит любую версию и откатывается назад.
+# Запуск вручную собирает архив к уже существующему тегу (старые версии).
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Тег, к которому собрать архив (например v1.7.17)'
+        required: true
 
 permissions:
   contents: write
 
+concurrency:
+  group: mtproxyl-release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Checkout code
+      # Скрипт сборки — из текущей ветки, исходники — из тега: так архив
+      # собирается и к версиям, выпущенным до появления этого скрипта.
+      - name: Checkout tools
         uses: actions/checkout@v6
+        with:
+          path: tools
 
-      - name: Derive version from tag
+      - name: Derive version
         id: version
-        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        env:
+          TAG_INPUT: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          tag="$TAG_INPUT"
+          [[ "$tag" =~ ^v[0-9]+(\.[0-9]+){1,3}$ ]] || { echo "Тег должен быть vX.Y.Z: $tag" >&2; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "value=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "backfill=${{ github.event_name == 'workflow_dispatch' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.version.outputs.tag }}
+          path: src
 
       # Версия живёт в трёх местах, и забыть любое из них легко. Особенно
-      # ./version: по нему check_for_update решает, предлагать ли обновление,
-      # и отставший файл делает релиз невидимым для уже установленных копий.
+      # ./version: по нему check_for_update решает, предлагать ли обновление.
       - name: Check version consistency
+        working-directory: src
         run: |
           ver="${{ steps.version.outputs.value }}"
           rc=0
-
           file_ver=$(tr -d '[:space:]' < version)
-          if [ "$file_ver" != "$ver" ]; then
-            echo "./version = '$file_ver', а тег v$ver" >&2
-            rc=1
-          fi
-
+          [ "$file_ver" = "$ver" ] || { echo "./version = '$file_ver', а тег v$ver" >&2; rc=1; }
           script_ver=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' mtproxyl.sh | head -1)
-          if [ "$script_ver" != "$ver" ]; then
-            echo "mtproxyl.sh VERSION = '$script_ver', а тег v$ver" >&2
-            rc=1
-          fi
-
+          [ "$script_ver" = "$ver" ] || { echo "mtproxyl.sh VERSION = '$script_ver', а тег v$ver" >&2; rc=1; }
           [ "$rc" -eq 0 ] && echo "версия совпадает везде: $ver"
           exit "$rc"
+
+      # Одну версию дважды не выкладываем: архив с таким номером уже могли
+      # поставить, и другой файл под тем же именем сломал бы откат.
+      - name: Refuse duplicate version
+        run: |
+          ver="${{ steps.version.outputs.value }}"
+          asset="mtproxyl-$ver.tar.gz"
+          if gh release view "v$ver" -R "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' 2>/dev/null \
+              | grep -qxF "$asset"; then
+            echo "Версия $ver уже опубликована с архивом $asset — поднимите номер версии" >&2
+            exit 1
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --paginate \
+            -q '.[] | select(.draft | not) | .tag_name' \
+            | grep -E '^v[0-9]+(\.[0-9]+)+$' | sed 's/^v//' | grep -vxF "$ver" > published.txt || true
+          echo "уже опубликованы: $(wc -l < published.txt)"
+          if [ "${{ steps.version.outputs.backfill }}" != "true" ] && [ -s published.txt ]; then
+            newest=$(sort -V published.txt | tail -1)
+            if [ "$(printf '%s\n%s\n' "$newest" "$ver" | sort -V | tail -1)" != "$ver" ]; then
+              echo "Версия $ver не новее опубликованной $newest" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Build archive
+        run: |
+          tools/.github/scripts/mtproxyl-archive.sh build src "${{ steps.version.outputs.value }}" dist
+          cat dist/*.sha256
+
+      # Тот же код под новым номером — не релиз: откат на «предыдущую»
+      # версию ничего бы не менял.
+      - name: Refuse unchanged code
+        if: steps.version.outputs.backfill != 'true'
+        run: |
+          ver="${{ steps.version.outputs.value }}"
+          prev=$( { cat published.txt; echo "$ver"; } | sort -V | grep -B1 -xF "$ver" | head -1)
+          [ -n "$prev" ] && [ "$prev" != "$ver" ] || { echo "предыдущей версии нет"; exit 0; }
+          if ! gh release download "v$prev" -R "$GITHUB_REPOSITORY" -p "mtproxyl-$prev.tar.gz" -D prev 2>/dev/null; then
+            echo "у v$prev нет архива — сравнить не с чем"
+            exit 0
+          fi
+          if tools/.github/scripts/mtproxyl-archive.sh same "prev/mtproxyl-$prev.tar.gz" "dist/mtproxyl-$ver.tar.gz"; then
+            echo "Код v$ver не отличается от v$prev — релиз не нужен" >&2
+            exit 1
+          fi
+          echo "отличается от v$prev"
 
       # Секция «## vX.Y.Z — дата» до следующего заголовка; секции только
       # панели («## Панель X.Y.Z») в релиз скрипта не попадают.
@@ -53,25 +118,25 @@ jobs:
             $0 ~ "^## v" ver "( |$|—)" { found = 1; next }
             found && /^## / { exit }
             found { print }
-          ' CHANGELOG.md > release-notes.md
-
-          # Пустая секция значит, что changelog забыли — это стоит заметить
-          # сразу, а не увидеть пустой релиз на странице проекта.
+          ' src/CHANGELOG.md > release-notes.md
           if [ ! -s release-notes.md ]; then
             echo "В CHANGELOG.md нет секции для версии ${{ steps.version.outputs.value }}" >&2
             exit 1
           fi
-
           {
             echo ""
             echo "---"
             echo ""
             echo "Полный список изменений — [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/main/CHANGELOG.md)."
+            echo ""
+            echo "Установить эту версию: \`mtproxyl update --version ${{ steps.version.outputs.value }}\`"
           } >> release-notes.md
-
           cat release-notes.md
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
-        with:
-          body_path: release-notes.md
+        run: |
+          tag="${{ steps.version.outputs.tag }}"
+          if ! gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$tag" -R "$GITHUB_REPOSITORY" --title "$tag" -F release-notes.md --verify-tag
+          fi
+          gh release upload "$tag" -R "$GITHUB_REPOSITORY" dist/*

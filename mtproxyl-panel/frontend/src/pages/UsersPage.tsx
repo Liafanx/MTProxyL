@@ -65,6 +65,9 @@ async function applyMtproxylLimits(label: string, data: Record<string, unknown>)
   if ('user_ad_tag' in data) {
     await mtproxylUsersApi.setAdTag(label, data.user_ad_tag ? String(data.user_ad_tag) : '');
   }
+  if ('notes' in data) {
+    await mtproxylUsersApi.setNote(label, String(data.notes ?? ''));
+  }
   if ('rate_limit_up_bps' in data || 'rate_limit_down_bps' in data) {
     await mtproxylUsersApi.setRate(label, Number(data.rate_limit_up_bps ?? 0), Number(data.rate_limit_down_bps ?? 0));
   }
@@ -119,6 +122,7 @@ export function UsersPage() {
       total_bytes: m.total_bytes,
       ip_history: m.ip_history ?? [],
       enabled: false,
+      notes: m.notes || undefined,
     }));
     return [...live, ...off];
   }, [users, mtproxylUsers]);
@@ -145,7 +149,7 @@ export function UsersPage() {
     if (!users) return [];
     if (!search.trim()) return mergedUsers;
     const q = search.trim().toLowerCase();
-    return mergedUsers.filter((u) => u.username.toLowerCase().includes(q));
+    return mergedUsers.filter((u) => u.username.toLowerCase().includes(q) || (u.notes ?? '').toLowerCase().includes(q));
   }, [users, mergedUsers, search]);
 
   const sortedUsers = useMemo(() => {
@@ -517,6 +521,9 @@ export function UsersPage() {
                           ) : (
                             <Link to={`/users/${u.username}`} title={u.username} className="block truncate text-accent hover:underline">{u.username}</Link>
                           )}
+                          {u.notes && (
+                            <span title={u.notes} className="block truncate text-xs font-normal text-text-secondary">{u.notes}</span>
+                          )}
                         </TableCell>
                         <TableCell>
                           {off
@@ -685,6 +692,7 @@ export function UsersPage() {
         onSubmit={handleCreate}
         initialData={userDefaults}
         mode="create"
+        notesEditable={usersOwnedByMtproxyl}
       />
 
       <UserFormDialog
@@ -697,6 +705,7 @@ export function UsersPage() {
         secretRotateOnly={usersOwnedByMtproxyl}
         usernameEditable={mtproxylEnabled}
         initialRate={editRate}
+        notesEditable={usersOwnedByMtproxyl}
       />
 
       <ConfirmDialog

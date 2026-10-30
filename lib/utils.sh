@@ -835,6 +835,75 @@ fix_tty_input() {
     esac
 }
 
+# ── Один изменяющий запуск за раз ─────────────────────────────
+# Панель, бот, API и консоль правят одни и те же файлы по схеме «прочитать —
+# изменить — записать»; без очереди одна правка затирала бы другую. Замок —
+# каталог: его не унаследуют фоновые процессы, как унаследовали бы fd flock.
+MTPROXYL_LOCK_DIR="${MTPROXYL_LOCK_DIR:-/run/mtproxyl.lock}"
+_MTPROXYL_LOCK_OWNED=""
+
+# none — только чтение; tick — таймер, при занятости пропускает; wait — ждёт.
+cli_lock_kind() {
+    local _c="${1:-}" _s="${2:-}" _a
+    case "$_c" in
+        ""|menu|help|--help|-h|version|update-check|status|info|health|metrics|logs|connections|stats|egress|pq-check|report)
+            echo none; return ;;
+    esac
+    case "$_c $_s" in
+        "awg check"*) echo wait; return ;;
+    esac
+    for _a in "$@"; do
+        case "$_a" in --json|--tsv|--help) echo none; return ;; esac
+    done
+    case "$_c $_s" in
+        "awg watch"|"dc watch"|"warp watch"|"donor reresolve"|"availability check"|"block hits-sample"|"ip-history flush")
+            echo tick; return ;;
+        "update --list"|"update list"|"update --check"|"traffic "|"secret "|"port "|"ip "|"ips "|"domain "|"secret api-view"*|"secret limits"*)
+            echo none; return ;;
+    esac
+    case "$_s" in
+        status|list|show|link|links|qr|history|hits|details|export|cat|scan|key|logs|limits-show|help|--help|-h)
+            echo none; return ;;
+    esac
+    echo wait
+}
+
+cli_lock() {
+    local _wait="${1:-300}" _what="${2:-}" _pid _n=0 _age
+    [ -n "${MTPROXYL_LOCK_HELD:-}" ] && return 0
+    [ "$(id -u)" -eq 0 ] || return 0
+    while ! mkdir "$MTPROXYL_LOCK_DIR" 2>/dev/null; do
+        _pid=$(cat "${MTPROXYL_LOCK_DIR}/pid" 2>/dev/null)
+        if [ -n "$_pid" ]; then
+            kill -0 "$_pid" 2>/dev/null || { rm -rf "$MTPROXYL_LOCK_DIR"; continue; }
+        else
+            # Хозяин упал между mkdir и записью pid.
+            _age=$(( $(date +%s) - $(stat -c %Y "$MTPROXYL_LOCK_DIR" 2>/dev/null || date +%s) ))
+            [ "$_age" -gt 10 ] && { rm -rf "$MTPROXYL_LOCK_DIR"; continue; }
+        fi
+        if [ "$_n" -ge $((_wait * 2)) ]; then
+            log_error "Занято другой операцией: mtproxyl $(cat "${MTPROXYL_LOCK_DIR}/cmd" 2>/dev/null) (PID ${_pid:-?})" >&2
+            log_info "Повторите позже" >&2
+            return 1
+        fi
+        [ "$_n" -eq 4 ] && log_info "Ждём завершения: mtproxyl $(cat "${MTPROXYL_LOCK_DIR}/cmd" 2>/dev/null)..." >&2
+        sleep 0.5; _n=$((_n + 1))
+    done
+    echo "$$" > "${MTPROXYL_LOCK_DIR}/pid"
+    printf '%s\n' "${_what:0:120}" > "${MTPROXYL_LOCK_DIR}/cmd"
+    _MTPROXYL_LOCK_OWNED=1
+    # Вложенные вызовы mtproxyl.sh из этой операции замок не ждут.
+    export MTPROXYL_LOCK_HELD=$$
+}
+
+cli_unlock() {
+    [ -n "$_MTPROXYL_LOCK_OWNED" ] || return 0
+    [ "${BASHPID:-$$}" = "$$" ] || return 0
+    [ "$(cat "${MTPROXYL_LOCK_DIR}/pid" 2>/dev/null)" = "$$" ] && rm -rf "$MTPROXYL_LOCK_DIR"
+    _MTPROXYL_LOCK_OWNED=""
+    unset MTPROXYL_LOCK_HELD
+}
+
 # ── Проверка обновлений ───────────────────────────────────────
 _UPDATE_AVAILABLE=""
 
@@ -909,194 +978,6 @@ update_check_json() {
 
     printf '{"current":"%s","latest":"%s","update_available":%s,"branch":"%s","release_url":"%s","error":"%s"}\n' \
         "$VERSION" "$_latest" "$_avail" "${GITHUB_BRANCH}" "$_url" "$_err"
-}
-
-# --no-restart: не перезапускать меню в конце. Из панели exec подменил бы
-# процесс интерактивным TUI, которому неоткуда читать ввод.
-self_update() {
-    local _restart="true"
-    [ "${1:-}" = "--no-restart" ] && _restart="false"
-
-    echo ""
-    draw_header "ОБНОВЛЕНИЕ MTPROXYL"
-    echo ""
-
-    log_info "Шаг 1/4: Скачивание основного скрипта..."
-    # Рядом с целью, а не в /tmp: перенос между файловыми системами перезаписал
-    # бы файл на месте, а его в этот момент читает работающий bash.
-    local _tmp="${INSTALL_DIR}/.mtproxyl-update-$$.sh"
-
-    if ! _github_raw_download "mtproxyl.sh" "$_tmp" 30; then
-        log_error "Не удалось скачать mtproxyl.sh"
-        log_info "Проверьте интернет и доступность github.com"
-        rm -f "$_tmp"
-        return 1
-    fi
-    log_success "mtproxyl.sh скачан"
-
-    log_info "Шаг 2/4: Проверка синтаксиса..."
-    if ! bash -n "$_tmp" 2>/dev/null; then
-        log_error "Ошибка синтаксиса в скачанном скрипте — обновление отменено"
-        rm -f "$_tmp"
-        return 1
-    fi
-
-    local _new_ver
-    _new_ver=$(grep -m1 '^VERSION="' "$_tmp" | cut -d'"' -f2)
-    if [ -z "$_new_ver" ]; then
-        log_error "Не удалось определить версию нового скрипта"
-        rm -f "$_tmp"
-        return 1
-    fi
-
-    if [ "$_new_ver" = "$VERSION" ]; then
-        log_success "Версия актуальна (v${VERSION})"
-        rm -f "$_tmp"
-        return 0
-    fi
-
-    log_info "Текущая версия: v${VERSION}"
-    log_info "Новая версия:   v${_new_ver}"
-    echo ""
-
-    log_info "Шаг 3/4: Замена основного скрипта..."
-    cp "${INSTALL_DIR}/mtproxyl.sh" "${INSTALL_DIR}/mtproxyl.sh.backup-$(date +%s)" 2>/dev/null || true
-    mv "$_tmp" "${INSTALL_DIR}/mtproxyl.sh"
-    chmod +x "${INSTALL_DIR}/mtproxyl.sh"
-    log_success "mtproxyl.sh обновлён"
-    echo ""
-
-    log_info "Шаг 4/4: Обновление библиотек..."
-    mkdir -p "$LIB_DIR"
-
-    local _lib_list
-    _lib_list=$(grep -oP 'for _lib in \K[^\n;]+' "${INSTALL_DIR}/mtproxyl.sh" 2>/dev/null | head -1 | tr -d '"' | tr -d "'")
-
-    if [ -z "$_lib_list" ]; then
-        log_warn "Не удалось извлечь список библиотек из нового скрипта"
-        log_info "Используем резервный список"
-        _lib_list="colors utils settings detect secrets config docker binengine engine traffic stats availability dc warp donor awg egress geoblock geoip upstream backup nft ipblock shaping selfmask front api web panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_donor tui_awg tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen"
-    fi
-
-    local _total=0 _ok=0 _failed=0 _skipped=0
-    local _failed_list=""
-
-    for _w in $_lib_list; do _total=$((_total + 1)); done
-
-    local _current=0
-    local lib _lib_tmp
-    for lib in $_lib_list; do
-        _current=$((_current + 1))
-
-        local _lib_tmp
-        _lib_tmp=$(mktemp "${LIB_DIR}/.${lib}.sh.XXXXXX") || {
-            echo -e "  ${RED}[${_current}/${_total}]${NC} ${lib}.sh — не удалось создать временный файл"
-            _failed=$((_failed + 1))
-            _failed_list="${_failed_list} ${lib}.sh"
-            continue
-        }
-
-        if _github_raw_download "lib/${lib}.sh" "$_lib_tmp" 20; then
-            if bash -n "$_lib_tmp" 2>/dev/null; then
-                mv "$_lib_tmp" "${LIB_DIR}/${lib}.sh"
-                chmod 644 "${LIB_DIR}/${lib}.sh" 2>/dev/null || true
-                echo -e "  ${GREEN}[${_current}/${_total}]${NC} ${lib}.sh ${GREEN}✓${NC}"
-                _ok=$((_ok + 1))
-            else
-                rm -f "$_lib_tmp"
-                echo -e "  ${YELLOW}[${_current}/${_total}]${NC} ${lib}.sh — ошибка синтаксиса, оставлена старая версия"
-                _skipped=$((_skipped + 1))
-                _failed_list="${_failed_list} ${lib}.sh"
-            fi
-        else
-            rm -f "$_lib_tmp"
-            echo -e "  ${RED}[${_current}/${_total}]${NC} ${lib}.sh — не удалось скачать"
-            _failed=$((_failed + 1))
-            _failed_list="${_failed_list} ${lib}.sh"
-        fi
-
-        sleep 0.15
-    done
-
-    echo ""
-    echo -e "  ${BOLD}Итог обновления библиотек:${NC}"
-    echo -e "    ${GREEN}Обновлено:${NC}     ${_ok}/${_total}"
-    [ "$_skipped" -gt 0 ] && echo -e "    ${YELLOW}Пропущено:${NC}     ${_skipped} (ошибка синтаксиса)"
-    [ "$_failed" -gt 0 ] && echo -e "    ${RED}Не удалось:${NC}    ${_failed}"
-    echo ""
-
-    if [ "$_failed" -gt 0 ] || [ "$_skipped" -gt 0 ]; then
-        log_warn "Часть библиотек не обновилась:${_failed_list}"
-        log_info "Старые версии файлов сохранены, можно продолжать работу"
-        log_info "Повторите обновление позже: mtproxyl update"
-        echo ""
-    fi
-
-    if [ -n "${BLOCKLIST_COUNTRIES:-}" ] && [ -r "${LIB_DIR}/geoblock.sh" ]; then
-        source "${LIB_DIR}/geoblock.sh"
-        if declare -F geoblock_install_service >/dev/null; then
-            geoblock_install_service >/dev/null 2>&1 \
-                && log_success "Автовосстановление гео-блокировки включено" \
-                || log_warn "Не удалось включить службу ${GEOBLOCK_SERVICE:-mtproxyl-geoblock}"
-            if ! geoblock_rules_active || ! geoblock_rules_match_ports; then
-                geoblock_restore >/dev/null 2>&1 \
-                    && log_success "Правила гео-блокировки восстановлены" \
-                    || log_warn "Правила не восстановились — выполните: mtproxyl geoblock reapply"
-            fi
-        fi
-    fi
-
-    # Код бота живёт в том же репозитории и обновляется вместе со скриптом:
-    # иначе бот однажды позовёт подкоманду, которой в его правах ещё нет.
-    if tgbot_installed 2>/dev/null; then
-        # На диске библиотека уже новая, а в памяти — та, с которой мы
-        # стартовали. Перечитываем: обновлять бота должна новая версия.
-        [ -r "${LIB_DIR}/tgbot.sh" ] && source "${LIB_DIR}/tgbot.sh"
-        log_info "Обновляем телеграм-бота..."
-        if tgbot_update_sources; then
-            log_success "Телеграм-бот обновлён и перезапущен"
-        else
-            log_warn "Код бота обновить не удалось — повторите: mtproxyl tgbot update"
-        fi
-    fi
-
-    log_success "MTProxyL обновлён: v${VERSION} → v${_new_ver}"
-
-    if [ "${WARP_ENABLED:-false}" = true ]; then
-        "${INSTALL_DIR}/mtproxyl.sh" warp refresh \
-            || log_warn "WARP требует обновления: mtproxyl warp refresh"
-    fi
-    if awg_is_enabled 2>/dev/null; then
-        "${INSTALL_DIR}/mtproxyl.sh" awg refresh \
-            || log_warn "Выход через AWG требует обновления: mtproxyl awg refresh"
-    fi
-
-    # Новая раскладка zapret2 (экземпляр nfqws2 на ядро) — только у
-    # работающего и только если она изменилась.
-    "${INSTALL_DIR}/mtproxyl.sh" nft zapret2-refresh \
-        || log_warn "Zapret2 не перезапустился — проверьте: mtproxyl nft zapret2-start"
-
-    # Панель ходит к нам через список разрешённых подкоманд. Новая версия
-    # приносит новые — без перевыпуска они у панели отказывают с sudo.
-    if panel_installed 2>/dev/null; then
-        log_info "Обновляем права sudo у панели под новые команды..."
-        panel_grant >/dev/null 2>&1 \
-            && log_success "Панель получила права на команды v${_new_ver}" \
-            || log_warn "Права не обновились — выполните: mtproxyl panel install"
-    fi
-
-    # То же у API: права и юнит пишет уже новая версия скрипта.
-    if [ "${API_ENABLED:-false}" = true ]; then
-        "${INSTALL_DIR}/mtproxyl.sh" api sync-cert >/dev/null 2>&1 \
-            && log_success "API управления получил права на команды v${_new_ver}" \
-            || log_warn "Права API не обновились — выполните: mtproxyl api update"
-    fi
-
-    if [ "$_restart" = "false" ]; then
-        return 0
-    fi
-    log_info "Перезапуск..."
-    exec "${INSTALL_DIR}/mtproxyl.sh"
 }
 
 # ── CLI-обработчики для быстрых команд ────────────────────────
@@ -1312,9 +1193,10 @@ show_cli_help() {
     echo -e "  ${BOLD}Использование:${NC} mtproxyl <команда> [параметры]"
     echo ""
     echo -e "  ${BOLD}Прокси:${NC}         start | stop | restart | status [--json]"
-    echo -e "  ${BOLD}Секреты:${NC}        secret add|remove|list|rotate|enable|disable|limits|link|qr|clone|rename"
+    echo -e "  ${BOLD}Секреты:${NC}        secret add|remove|list|rotate|enable|disable|limits|setlimits|setrate|adtag|note|link|qr|clone|rename|export|import"
     echo -e "  ${BOLD}Настройки:${NC}      port | ip | ips | domain | mask-backend | config | settings list|set"
-    echo -e "  ${BOLD}Движок:${NC}         engine status|list|update|rollback|rebuild|backend"
+    echo -e "  ${BOLD}Движок:${NC}         engine status|list|update|rollback|rebuild|backend | tune list|set|clear"
+    echo -e "  ${BOLD}Скорость:${NC}       shaping status|set|off|exempt"
     echo -e "  ${BOLD}Эксперт:${NC}        expert list|set|clear|edit"
     echo -e "  ${BOLD}Супер эксперт:${NC}  superexpert status|on|off|edit|show|write"
     echo -e "  ${BOLD}NFT:${NC}            nft apply|remove|service|drop|preset|smart|zapret2|zapret2-stop|zapret2-rm|zapret2-wscale"
@@ -1322,8 +1204,12 @@ show_cli_help() {
     echo -e "  ${BOLD}Веб-панель:${NC}     panel status|install|restart|password|uninstall"
     echo -e "  ${BOLD}Телеграм-бот:${NC}   tgbot status|install|setup|start|stop|restart|logs|uninstall"
     echo -e "  ${BOLD}PQ проверка:${NC}    pq-check [домен[:порт]]"
-    echo -e "  ${BOLD}Безопасность:${NC}   geoblock add|remove|mode|list | upstream list|add|remove | sni-policy"
-    echo -e "  ${BOLD}Мониторинг:${NC}     traffic | connections | metrics [live] | logs | health | info"
+    echo -e "  ${BOLD}Безопасность:${NC}   geoblock add|remove|mode|list | geoip status|install|remove | upstream list|add|remove | sni-policy"
+    echo -e "  ${BOLD}Блокировка IP:${NC}  block status|on|add|del|list|import|export|hits|action"
+    echo -e "  ${BOLD}WEB Proxy:${NC}      web status|enable|disable|mode|set|links|sync | front set"
+    echo -e "  ${BOLD}Мониторинг:${NC}     traffic | connections | stats [reset] | metrics [live] | logs | health | info"
+    echo -e "  ${BOLD}Дата-центры:${NC}    dc status|threshold|autorestart"
+    echo -e "  ${BOLD}Для issue:${NC}      report [файл|--stdout] — сводка без IP и ключей"
     echo -e "  ${BOLD}История IP:${NC}     ip-history status|flush|on|off"
     echo -e "  ${BOLD}Доступность:${NC}    availability status|check|details|target|on|off|interval|token"
     echo -e "  ${BOLD}Telegram/WARP:${NC}  warp status|on socks|on iface|off|scan|location|endpoint|proto"
@@ -1331,10 +1217,12 @@ show_cli_help() {
     echo -e "  ${BOLD}Свой AWG:${NC}       awg status|scan|import <файл>|list|on <имя|файл> [--replace]|order|timers|off|check|remove <имя>"
     echo -e "  ${BOLD}Выход:${NC}          egress [--json] — через что идёт трафик к Telegram"
     echo -e "  ${BOLD}Бэкапы:${NC}         backup [--encrypt] | restore <файл>"
+    echo -e "  ${BOLD}API управления:${NC} api status|on|off|key|set"
     echo -e "  ${BOLD}Переезд:${NC}        migrate <[user@]хост[:порт]> [--dry-run] ${DIM}(только менеджер)${NC}"
     echo -e "  ${BOLD}Подкачка:${NC}       swap status|on [МБ]|off"
-    echo -e "  ${BOLD}Reanimator:${NC}     mode [manager|reanimator] | detect | edit-config\n                  install-telemt | uninstall-telemt"
-    echo -e "  ${BOLD}Система:${NC}        install [аргументы] | menu | update [--no-restart] | update-check\n                  uninstall | version | help"
+    echo -e "  ${BOLD}Reanimator:${NC}     mode [manager|reanimator] | detect | edit-config | target-config show|write\n                  install-telemt | uninstall-telemt"
+    echo -e "  ${BOLD}Система:${NC}        install [аргументы] | menu | update-check | uninstall | version | help"
+    echo -e "  ${BOLD}Обновление:${NC}     update [--version X.Y.Z | --rollback] [--yes] [--no-restart] | update --list"
     echo -e "  ${DIM}Установка без вопросов: mtproxyl install --help${NC}"
     echo ""
 }

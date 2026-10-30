@@ -702,6 +702,11 @@ export const mtproxylUsersApi = {
       method: 'POST',
       body: JSON.stringify({ ad_tag: adTag }),
     }),
+  setNote: (label: string, note: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/note`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    }),
   setRate: (label: string, upBps: number, downBps: number) =>
     request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/rate`, {
       method: 'POST',

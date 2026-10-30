@@ -71,7 +71,7 @@ fi
 
 # Загрузка библиотек
 LIB_DIR="${INSTALL_DIR}/lib"
-for _lib in colors utils settings detect secrets config docker binengine engine traffic stats availability dc warp donor awg egress geoblock geoip upstream backup nft ipblock shaping selfmask front api web panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_donor tui_awg tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
+for _lib in colors utils settings detect secrets config docker binengine engine traffic stats availability dc warp donor awg egress geoblock geoip upstream backup release report nft ipblock shaping selfmask front api web panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_donor tui_awg tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
     if [ -f "${LIB_DIR}/${_lib}.sh" ]; then
         # shellcheck source=/dev/null
         source "${LIB_DIR}/${_lib}.sh"
@@ -101,6 +101,7 @@ _cleanup() {
     # хватает любому запуску. Оборванные наши — по общему правилу, за сутки.
     find "${TMPDIR:-/tmp}" -maxdepth 1 -name '.mtproxyl.??????' -type f -mmin +60 -delete 2>/dev/null
     find "${TMPDIR:-/tmp}" -maxdepth 1 -name '.mtproxyl.*' -type f -mmin +1440 -delete 2>/dev/null
+    cli_unlock
 }
 trap _cleanup EXIT
 
@@ -399,6 +400,12 @@ cli_main() {
             health_check
             ;;
 
+        report)
+            check_root
+            load_settings; load_secrets; load_detect_settings
+            report_create "$@"
+            ;;
+
         info)
             load_settings; load_secrets; load_detect_settings
             show_server_info
@@ -493,6 +500,7 @@ cli_main() {
         update)
             case "${1:-}" in
                 --check) update_check_json ;;
+                --list|list) shift; release_list "$@" ;;
                 *)
                     check_root; load_settings
                     self_update "$@"
@@ -681,6 +689,15 @@ cli_main() {
 # ── Main ──────────────────────────────────────────────────────
 main() {
     fix_tty_input 2>/dev/null || true
+    local _lk; _lk=$(cli_lock_kind "$@")
+    # Запуск юнитом systemd (родитель — PID 1) не ждёт: юнит часто стартует
+    # команда, которая сама держит замок, — получилось бы взаимное ожидание.
+    [ "$PPID" = 1 ] && [ "$_lk" = wait ] && _lk=none
+    case "$_lk" in
+        wait) cli_lock "${MTPROXYL_LOCK_WAIT:-300}" "$*" || exit 1 ;;
+        # Тик таймера при занятом замке пропускаем: следующий придёт сам.
+        tick) cli_lock 2 "$*" 2>/dev/null || exit 0 ;;
+    esac
     cli_main "$@"
 }
 

@@ -1,6 +1,32 @@
 #!/bin/bash
 # MTProxyL — бэкапы, восстановление, миграция
 
+# Что входит в бэкап. Восстанавливается только это: архив распаковывается от
+# root прямо в каталог установки и иначе мог бы подменить сам скрипт.
+_BACKUP_FILES="settings.conf secrets.conf upstreams.conf nft-rules.conf shaping.json expert.conf expert-target.conf tunings.conf superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf backup_meta.txt availability/last.json availability/history.jsonl warp/account.json"
+_BACKUP_DIRS="relay_stats geoblock"
+
+# Имена из архива, которые можно распаковать. Остальные — в stderr.
+_backup_allowed_members() {
+    local _arc="$1" _n _t _f _ok _d
+    paste -d '\t' <(tar -tvzf "$_arc" 2>/dev/null | cut -c1) <(tar -tzf "$_arc" 2>/dev/null) \
+    | while IFS=$'\t' read -r _t _n; do
+        _f="${_n#./}"; _ok=false
+        [ -n "$_f" ] && [ "$_f" != "." ] || continue
+        case "$_f" in *..*) echo "  пропущен: ${_n}" >&2; continue ;; esac
+        if [ "$_t" = "-" ]; then
+            [[ " $_BACKUP_FILES " == *" ${_f} "* ]] && _ok=true
+            for _d in $_BACKUP_DIRS; do [[ "$_f" == "$_d/"* ]] && _ok=true; done
+        elif [ "$_t" = "d" ]; then
+            for _d in $_BACKUP_DIRS availability warp; do
+                [[ "${_f%/}" == "$_d" || "$_f" == "$_d/"* ]] && _ok=true
+            done
+            $_ok && continue
+        fi
+        if $_ok; then echo "$_n"; else echo "  пропущен: ${_n}" >&2; fi
+    done
+}
+
 create_backup() {
     mkdir -p "$BACKUP_DIR"
     local ts; ts=$(date '+%Y%m%d-%H%M%S')
@@ -13,12 +39,8 @@ create_backup() {
     cp "$meta_tmp" "${INSTALL_DIR}/backup_meta.txt"
     rm -f "$meta_tmp"
 
-    local files=()
-    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf shaping.json expert.conf expert-target.conf tunings.conf \
-             superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf backup_meta.txt; do
-        [ -f "${INSTALL_DIR}/$f" ] && files+=("$f")
-    done
-    for f in availability/last.json availability/history.jsonl; do
+    local files=() f
+    for f in $_BACKUP_FILES; do
         [ -f "${INSTALL_DIR}/$f" ] && files+=("$f")
     done
     [ -d "$STATS_DIR" ] && files+=("relay_stats")
@@ -71,7 +93,16 @@ restore_backup() {
 
     # Распаковка
     if [ "${WARP_ENABLED:-false}" = true ]; then _warp_stop_runtime; fi
-    if ! tar xzf "$backup_file" -C "$INSTALL_DIR" --exclude='backup_meta.txt' 2>/dev/null; then
+    local _members _skip
+    _skip=$(_mktemp) || return 1
+    _members=$(_backup_allowed_members "$backup_file" 2>"$_skip" | grep -vxE '(\./)?backup_meta\.txt')
+    if [ -s "$_skip" ]; then
+        log_warn "В архиве есть файлы не из бэкапа MTProxyL — они не восстанавливаются:"
+        head -5 "$_skip"
+    fi
+    rm -f "$_skip"
+    if [ -z "$_members" ] || ! xargs -d '\n' tar xzf "$backup_file" -C "$INSTALL_DIR" -- \
+            <<< "$_members" 2>/dev/null; then
         log_error "Не удалось распаковать бэкап; прежние настройки — в самом свежем бэкапе"
         return 1
     fi
@@ -294,7 +325,7 @@ migrate_export() {
         cp -a "${GEOBLOCK_CACHE_DIR}" "$tmp/geoblock" && count=$((count + 1))
     fi
     echo "v${VERSION}" > "$tmp/MIGRATE_VERSION"
-    tar -czf "$out" -C "$tmp" . 2>/dev/null && log_success "Экспортировано ${count} файлов в ${out}" || { log_error "Экспорт не удался"; rm -rf "$tmp"; return 1; }
+    (umask 077; tar -czf "$out" -C "$tmp" . 2>/dev/null) && log_success "Экспортировано ${count} файлов в ${out}" || { log_error "Экспорт не удался"; rm -rf "$tmp"; return 1; }
     rm -rf "$tmp"; chmod 600 "$out"
 }
 
@@ -311,6 +342,10 @@ migrate_import() {
 
     local tmp; tmp=$(mktemp -d) || { log_error "Не удалось создать временную директорию"; return 1; }
     tar -xzf "$file" -C "$tmp" 2>/dev/null || { log_error "Некорректный архив"; rm -rf "$tmp"; return 1; }
+    # Ссылки в архиве подменили бы файлы настроек чужим содержимым.
+    if [ -n "$(find "$tmp" ! -type f ! -type d -print -quit)" ]; then
+        log_error "В архиве ссылки или особые файлы — импорт отменён"; rm -rf "$tmp"; return 1
+    fi
 
     local restored=0 base
     for f in settings.conf secrets.conf upstreams.conf nft-rules.conf shaping.json expert.conf expert-target.conf tunings.conf \

@@ -28,6 +28,8 @@ DEFAULT_NOTIFY = {
     "backup": True,
     "limits": True,
     "egress": True,
+    "limits_soon": True,
+    "weekly": True,
 }
 DEFAULT_INTERVALS = {
     "availability": 15,

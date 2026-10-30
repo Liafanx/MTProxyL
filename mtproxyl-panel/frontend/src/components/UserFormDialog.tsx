@@ -15,6 +15,7 @@ interface UserFormData {
   /** Скорость в форме — Мбит/с; в API уходит в бит/с. */
   rate_up_mbps?: number | '';
   rate_down_mbps?: number | '';
+  notes?: string;
 }
 
 interface UserFormDialogProps {
@@ -44,6 +45,8 @@ interface UserFormDialogProps {
   usernameEditable?: boolean;
   /** Текущая скорость в бит/с — для правки. */
   initialRate?: { up: number; down: number };
+  /** Заметки хранит MTProxyL в режиме Manager; у движка такого поля нет. */
+  notesEditable?: boolean;
 }
 
 /** Байты трудно читать глазами — показываем, сколько это на самом деле. */
@@ -70,6 +73,7 @@ const emptyForm: UserFormData = {
   max_unique_ips: '',
   rate_up_mbps: '',
   rate_down_mbps: '',
+  notes: '',
 };
 
 const MBIT = 1_000_000;
@@ -90,6 +94,7 @@ export function UserFormDialog({
   secretRotateOnly,
   usernameEditable = true,
   initialRate,
+  notesEditable,
 }: UserFormDialogProps) {
   const [form, setForm] = useState<UserFormData>(emptyForm);
   const [loading, setLoading] = useState(false);
@@ -151,6 +156,11 @@ export function UserFormDialog({
       if (up !== prevUp || down !== prevDown) {
         payload.rate_limit_up_bps = up > 0 ? up : null;
         payload.rate_limit_down_bps = down > 0 ? down : null;
+      }
+
+      if (notesEditable) {
+        const notes = String(form.notes ?? '').trim();
+        if (notes !== String(initialData?.notes ?? '')) payload.notes = notes;
       }
 
       await onSubmit(payload);
@@ -337,6 +347,19 @@ export function UserFormDialog({
               Формат RFC3339: ГГГГ-ММ-ДДTЧЧ:ММ:ССZ. Пустое поле — бессрочно.
             </p>
           </div>
+
+          {notesEditable && (
+            <div className="space-y-1.5">
+              <Label htmlFor="notes">Заметка</Label>
+              <Input
+                id="notes"
+                value={form.notes}
+                onChange={set('notes')}
+                placeholder="кому выдан, оплата — видно только вам"
+                maxLength={200}
+              />
+            </div>
+          )}
 
           {error && <p className="text-sm text-danger">{error}</p>}
 

@@ -29,4 +29,15 @@ tar czf "$test_dir/nosettings.tar.gz" -C "$test_dir/src" relay_stats
 head -c 4000 "$test_dir/good.tar.gz" > "$test_dir/broken.tar.gz"
 [[ $(restore_backup "$test_dir/broken.tar.gz") == *"повреждён"* ]] || fail 'битый архив принят'
 
+# Распаковывается только то, что кладёт create_backup: скрипт, библиотеки и
+# ссылки из чужого архива не проходят.
+mkdir -p "$test_dir/evil/lib" "$test_dir/evil/relay_stats" "$test_dir/evil/availability"
+echo x > "$test_dir/evil/settings.conf"; echo x > "$test_dir/evil/mtproxyl.sh"
+echo x > "$test_dir/evil/lib/utils.sh"; echo x > "$test_dir/evil/relay_stats/a"
+echo x > "$test_dir/evil/availability/last.json"; echo x > "$test_dir/evil/availability/run.sh"
+ln -s /etc "$test_dir/evil/relay_stats/etc"
+tar czf "$test_dir/evil.tar.gz" -C "$test_dir/evil" settings.conf mtproxyl.sh lib relay_stats availability
+allowed=$(_backup_allowed_members "$test_dir/evil.tar.gz" 2>/dev/null | sort | tr '\n' ' ')
+[ "$allowed" = "availability/last.json relay_stats/a settings.conf " ] || fail "белый список: $allowed"
+
 echo "backup restore: ok"

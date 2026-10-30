@@ -1,5 +1,5 @@
 #!/bin/bash
-# Списки библиотек в mtproxyl.sh, install.sh и резервный в self_update должны
+# Списки библиотек в mtproxyl.sh и install.sh должны
 # совпадать с lib/*.sh: забытая библиотека ломает установку и обновление.
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -16,6 +16,5 @@ check() {
 }
 check mtproxyl.sh "$(grep -oP '^for _lib in \K[^;]+' mtproxyl.sh | head -1)"
 check install.sh "$(grep -oP '^for lib in \K[^;]+' install.sh | head -1)"
-check "lib/utils.sh (резерв)" "$(grep -oP '_lib_list="\K[^"]+' lib/utils.sh | head -1)"
 [ "$fail" = 0 ] && echo "OK списки библиотек совпадают"
 exit "$fail"

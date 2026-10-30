@@ -158,7 +158,7 @@ _tui_tgbot_proxy() {
 _tui_tgbot_notify_lines() {
     command -v jq &>/dev/null || return 0
     [ -s "$TGBOT_CONFIG" ] || return 0
-    echo -e "  ${BOLD}Уведомления:${NC} доступность $(_tgbot_flag availability), DC $(_tgbot_flag dc)$([ "$(_dc_threshold)" -eq 0 ] && echo " ${DIM}(порог выключен)${NC}"), нулевой DC $(_tgbot_flag dc_zero), прокси $(_tgbot_flag proxy), лимиты $(_tgbot_flag limits), бэкапы $(_tgbot_flag backup), выход $(_tgbot_flag egress)"
+    echo -e "  ${BOLD}Уведомления:${NC} доступность $(_tgbot_flag availability), DC $(_tgbot_flag dc)$([ "$(_dc_threshold)" -eq 0 ] && echo " ${DIM}(порог выключен)${NC}"), нулевой DC $(_tgbot_flag dc_zero), прокси $(_tgbot_flag proxy), лимиты $(_tgbot_flag limits), бэкапы $(_tgbot_flag backup), выход $(_tgbot_flag egress), скоро лимит $(_tgbot_flag limits_soon), отчёт за неделю $(_tgbot_flag weekly)"
 }
 
 _tui_tgbot_notify() {
@@ -178,6 +178,8 @@ _tui_tgbot_notify() {
         echo -e "  ${CYAN}[5]${NC}  Лимиты пользователей: $(_tgbot_flag limits)  ${DIM}(каждые $(_tgbot_cfg_get '.intervals.limits' 60) мин)${NC}"
         echo -e "  ${CYAN}[6]${NC}  Итог автобэкапа: $(_tgbot_flag backup)"
         echo -e "  ${CYAN}[7]${NC}  Выход к Telegram — смена и сбой: $(_tgbot_flag egress)"
+        echo -e "  ${CYAN}[10]${NC} Скоро кончится квота (80%) или срок (3 дня): $(_tgbot_flag limits_soon)"
+        echo -e "  ${CYAN}[11]${NC} Отчёт за неделю, понедельник 10:00: $(_tgbot_flag weekly)"
         echo ""
         echo -e "  ${CYAN}[8]${NC}  Изменить период проверки"
         echo -e "  ${CYAN}[9]${NC}  Порог покрытия дата-центров: ${_dc_thr}%"
@@ -185,15 +187,17 @@ _tui_tgbot_notify() {
         echo ""
         local c; c=$(read_choice "выбор" "0")
         case "$c" in
-            1) _tgbot_cfg_set '.notify.availability = (.notify.availability | not)' ;;
-            2) _tgbot_cfg_set '.notify.dc = (.notify.dc | not)' ;;
-            3) _tgbot_cfg_set '.notify.dc_zero = (.notify.dc_zero | not)' ;;
-            4) _tgbot_cfg_set '.notify.proxy = (.notify.proxy | not)' ;;
-            5) _tgbot_cfg_set '.notify.limits = (.notify.limits | not)' ;;
-            6) _tgbot_cfg_set '.notify.backup = (.notify.backup | not)' ;;
+            1) _tgbot_cfg_set '.notify.availability = (.notify.availability == false)' ;;
+            2) _tgbot_cfg_set '.notify.dc = (.notify.dc == false)' ;;
+            3) _tgbot_cfg_set '.notify.dc_zero = (.notify.dc_zero == false)' ;;
+            4) _tgbot_cfg_set '.notify.proxy = (.notify.proxy == false)' ;;
+            5) _tgbot_cfg_set '.notify.limits = (.notify.limits == false)' ;;
+            6) _tgbot_cfg_set '.notify.backup = (.notify.backup == false)' ;;
             7) _tgbot_cfg_set '.notify.egress = (.notify.egress == false)' ;;
             8) _tui_tgbot_interval ;;
             9) _tui_tgbot_dc_threshold ;;
+            10) _tgbot_cfg_set '.notify.limits_soon = (.notify.limits_soon == false)' ;;
+            11) _tgbot_cfg_set '.notify.weekly = (.notify.weekly == false)' ;;
             0|"") return ;;
         esac
     done

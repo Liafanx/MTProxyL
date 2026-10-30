@@ -17,7 +17,7 @@ tui_backup_menu() {
             echo -e "  ${GREEN}${SYM_CHECK}${NC} ${DIM}Версия актуальна (v${VERSION})${NC}"
         fi
         echo ""
-        echo -e "  ${DIM}[1]${NC} Проверить и установить обновления"
+        echo -e "  ${DIM}[1]${NC} Обновление, выбор версии и откат"
         if [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
             echo -e "  ${DIM}[2]${NC} Создать бэкап"
             echo -e "  ${DIM}[3]${NC} Восстановить бэкап"
@@ -36,7 +36,7 @@ tui_backup_menu() {
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
-            1) self_update || true; press_any_key ;;
+            1) tui_update_menu ;;
             2) _require_manager_mode && { create_backup || true; }; press_any_key ;;
             3)
                 _require_manager_mode || { press_any_key; continue; }
@@ -82,6 +82,35 @@ tui_backup_menu() {
             10) _require_manager_mode || { press_any_key; continue; }
                 _tui_migrate_ssh; press_any_key ;;
             11) tui_args_export_menu ;;
+            0|"") return ;;
+        esac
+    done
+}
+
+tui_update_menu() {
+    while true; do
+        clear_screen
+        draw_header "ОБНОВЛЕНИЕ И ОТКАТ"
+        echo ""
+        echo -e "  ${BOLD}Установлена:${NC} v${VERSION}"
+        local _prev; _prev=$(release_previous)
+        [ -n "$_prev" ] && echo -e "  ${BOLD}Прошлая:${NC}     v${_prev}"
+        [ -n "$_UPDATE_AVAILABLE" ] && echo -e "  ${YELLOW}${BOLD}⬆ Доступна:${NC}   v${_UPDATE_AVAILABLE}"
+        echo ""
+        echo -e "  ${DIM}[1]${NC} Обновить до последней"
+        echo -e "  ${DIM}[2]${NC} Установить конкретную версию"
+        echo -e "  ${DIM}[3]${NC} Откатить на прошлую${_prev:+ (v${_prev})}"
+        echo -e "  ${DIM}[4]${NC} Список версий"
+        echo -e "  ${DIM}[0]${NC} Назад"
+        local choice; choice=$(read_choice "выбор" "0")
+        case "$choice" in
+            1) self_update || true; press_any_key ;;
+            2) release_list
+               local _v; read_line _v "  ${BOLD}Версия (например 1.7.17):${NC} "
+               [ -n "$_v" ] && { self_update --version "$_v" || true; }
+               press_any_key ;;
+            3) self_update --rollback || true; press_any_key ;;
+            4) release_list; press_any_key ;;
             0|"") return ;;
         esac
     done

@@ -513,6 +513,9 @@ _install_args_validate() {
         fi
         _key="${_s##*:}"; _label="${_s%:*}"
         [ "$_label" = "$_s" ] && _label="default"
+        if _owner=$(_secret_key_owner "$_key"); then
+            log_warn "${_label}: ключ уже у '${_owner}' — пропущен"; continue
+        fi
         if ! [[ "$_key" =~ ^[0-9a-fA-F]{32}$ ]]; then
             log_error "--secret '${_s}': ключ — 32 hex-символа, формат «метка:ключ» или просто ключ"; _ok=false
         fi
@@ -978,7 +981,7 @@ _install_args_secrets() {
     SECRETS_MAX_CONNS=(); SECRETS_MAX_IPS=(); SECRETS_QUOTA=(); SECRETS_EXPIRES=(); SECRETS_NOTES=()
     SECRETS_ADTAG=(); SECRETS_RATE=()
 
-    local _s _label _key _now; _now=$(date +%s)
+    local _s _label _key _owner _now; _now=$(date +%s)
     local _IMP_L _IMP_K _IMP_CR _IMP_EN _IMP_MC _IMP_MI _IMP_Q _IMP_EX _IMP_N _IMP_AT _IMP_RT
     if [ ${#_IA_SECRETS[@]} -eq 0 ]; then
         _IA_SECRETS=("default:$(generate_secret)")
@@ -986,6 +989,9 @@ _install_args_secrets() {
     fi
     for _s in "${_IA_SECRETS[@]}"; do
         if [[ "$_s" == *"|"* ]] && _secret_parse_line "$_s"; then
+            if _owner=$(_secret_key_owner "$_IMP_K"); then
+                log_warn "${_IMP_L}: ключ уже у '${_owner}' — пропущен"; continue
+            fi
             SECRETS_LABELS+=("$_IMP_L"); SECRETS_KEYS+=("${_IMP_K,,}")
             SECRETS_CREATED+=("$_IMP_CR"); SECRETS_ENABLED+=("$_IMP_EN")
             SECRETS_MAX_CONNS+=("$_IMP_MC"); SECRETS_MAX_IPS+=("$_IMP_MI")
@@ -995,6 +1001,9 @@ _install_args_secrets() {
         fi
         _key="${_s##*:}"; _label="${_s%:*}"
         [ "$_label" = "$_s" ] && _label="default"
+        if _owner=$(_secret_key_owner "$_key"); then
+            log_warn "${_label}: ключ уже у '${_owner}' — пропущен"; continue
+        fi
         SECRETS_LABELS+=("$_label"); SECRETS_KEYS+=("${_key,,}")
         SECRETS_CREATED+=("$_now"); SECRETS_ENABLED+=("true")
         SECRETS_MAX_CONNS+=("0"); SECRETS_MAX_IPS+=("0")

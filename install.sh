@@ -12,6 +12,8 @@ REPO="Liafanx/MTProxyL"
 INSTALL_DIR="/opt/mtproxyl"
 # Ветка репозитория, из которой скачиваются скрипт и библиотеки
 BRANCH="${MTPROXYL_BRANCH:-main}"
+# Версия релиза: пусто — последняя. Ставится из архива релиза целиком.
+WANT_VERSION="${MTPROXYL_VERSION:-}"
 # Аргументы после «--» уходят установщику: переезд на новый сервер одной строкой.
 INSTALL_ARGS=()
 
@@ -21,8 +23,13 @@ while [ $# -gt 0 ]; do
             [ -n "${2:-}" ] || { echo "ОШИБКА: --branch требует имя ветки" >&2; exit 1; }
             BRANCH="$2"; shift 2 ;;
         --branch=*) BRANCH="${1#*=}"; shift ;;
+        -v|--version)
+            [ -n "${2:-}" ] || { echo "ОШИБКА: --version требует номер, например 1.7.17" >&2; exit 1; }
+            WANT_VERSION="${2#v}"; shift 2 ;;
+        --version=*) WANT_VERSION="${1#*=}"; WANT_VERSION="${WANT_VERSION#v}"; shift ;;
         -h|--help)
-            echo "Использование: install.sh [--branch <ветка>] [-- <аргументы установки>]"
+            echo "Использование: install.sh [--version X.Y.Z | --branch <ветка>] [-- <аргументы установки>]"
+            echo "  --version  поставить конкретную версию из архива релиза"
             echo "  Всё после -- уходит в 'mtproxyl install' — установка без вопросов."
             echo "  Список аргументов: mtproxyl install --help"
             exit 0 ;;
@@ -124,6 +131,66 @@ echo ""
 
 mkdir -p "${INSTALL_DIR}/lib" "${INSTALL_DIR}/mtproxy" "${INSTALL_DIR}/backups"
 
+# Архив релиза: все файлы одной версии, сверенные с опубликованной суммой.
+install_from_archive() {
+    local ver="$1" url tmp sum got root f
+    url="https://github.com/${REPO}/releases/download/v${ver}/mtproxyl-${ver}.tar.gz"
+    tmp=$(mktemp -d "${INSTALL_DIR}/.install.XXXXXX") || return 1
+    sum=$(curl -fsSL --retry 3 --max-time 30 "${url}.sha256" 2>>"$INSTALL_LOG" | awk 'NR==1{print $1}')
+    if [[ ! "$sum" =~ ^[0-9a-f]{64}$ ]] \
+        || ! curl -fsSL --retry 3 --max-time 180 "$url" -o "${tmp}/a.tar.gz" 2>>"$INSTALL_LOG"; then
+        rm -rf "$tmp"; return 1
+    fi
+    got=$(sha256sum "${tmp}/a.tar.gz" | awk '{print $1}')
+    [ "$got" = "$sum" ] || { echo "  ОШИБКА: сумма архива не совпала" >&2; rm -rf "$tmp"; return 1; }
+    if tar -tzf "${tmp}/a.tar.gz" | grep -vqE "^mtproxyl-${ver//./\\.}(/|$)" \
+        || tar -tzf "${tmp}/a.tar.gz" | grep -qE '(^|/)\.\.(/|$)' \
+        || tar -tvzf "${tmp}/a.tar.gz" | grep -vqE '^[-d]'; then
+        echo "  ОШИБКА: в архиве лишние файлы" >&2; rm -rf "$tmp"; return 1
+    fi
+    tar -xzf "${tmp}/a.tar.gz" -C "$tmp" --no-same-owner --no-same-permissions || { rm -rf "$tmp"; return 1; }
+    root="${tmp}/mtproxyl-${ver}"
+    (cd "$root" && sha256sum -c --quiet --strict SHA256SUMS >/dev/null 2>&1) \
+        || { echo "  ОШИБКА: суммы внутри архива не сходятся" >&2; rm -rf "$tmp"; return 1; }
+    for f in "${root}/mtproxyl.sh" "${root}"/lib/*.sh; do
+        bash -n "$f" 2>/dev/null || { echo "  ОШИБКА: синтаксис ${f#"${root}"/}" >&2; rm -rf "$tmp"; return 1; }
+    done
+    for f in "${root}"/lib/*.sh; do
+        install -m 644 "$f" "${INSTALL_DIR}/lib/$(basename "$f")"
+    done
+    install -m 644 "${root}/version" "${INSTALL_DIR}/version" 2>/dev/null || true
+    install -m 755 "${root}/mtproxyl.sh" "${INSTALL_DIR}/.mtproxyl.sh.new" \
+        && mv -f "${INSTALL_DIR}/.mtproxyl.sh.new" "${INSTALL_DIR}/mtproxyl.sh"
+    mkdir -p "${INSTALL_DIR}/releases"; chmod 700 "${INSTALL_DIR}/releases"
+    mv -f "${tmp}/a.tar.gz" "${INSTALL_DIR}/releases/mtproxyl-${ver}.tar.gz"
+    rm -rf "$tmp"
+}
+
+ARCHIVE_DONE=false
+if [ -n "$WANT_VERSION" ] || [ "$BRANCH" = "main" ]; then
+    ver="$WANT_VERSION"
+    if [ -z "$ver" ]; then
+        ver=$(curl -fsSL --retry 3 --max-time 15 "${SCRIPT_URL}/version" 2>>"$INSTALL_LOG" | tr -d '[:space:]')
+    fi
+    if [[ "$ver" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+        echo "  Скачивание архива v${ver}..."
+        if install_from_archive "$ver"; then
+            ARCHIVE_DONE=true
+            echo "  ✓ MTProxyL v${ver} из архива релиза"
+        elif [ -n "$WANT_VERSION" ]; then
+            echo "  ОШИБКА: архива v${ver} нет или он не прошёл проверку" >&2
+            echo "  Версии с архивом: https://github.com/${REPO}/releases" >&2
+            exit 1
+        else
+            echo "  Архива v${ver} пока нет — качаем файлы ветки"
+        fi
+    elif [ -n "$WANT_VERSION" ]; then
+        echo "ОШИБКА: неверный номер версии: ${WANT_VERSION}" >&2
+        exit 1
+    fi
+fi
+
+if [ "$ARCHIVE_DONE" != true ]; then
 echo "  Скачивание файлов..."
 
 # Главный скрипт
@@ -136,7 +203,7 @@ fi
 chmod +x "${INSTALL_DIR}/mtproxyl.sh"
 
 # Библиотеки
-for lib in colors utils settings secrets config docker binengine engine traffic stats availability dc warp donor awg egress geoblock geoip upstream backup nft ipblock shaping selfmask web panel tgbot detect api front tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_donor tui_awg tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
+for lib in colors utils settings secrets config docker binengine engine traffic stats availability dc warp donor awg egress geoblock geoip upstream backup release report nft ipblock shaping selfmask web panel tgbot detect api front tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_donor tui_awg tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
     echo "  → lib/${lib}.sh"
     if ! download_file "${SCRIPT_URL}/lib/${lib}.sh" "${INSTALL_DIR}/lib/${lib}.sh" "lib/${lib}.sh"; then
         # 404 у отдельного файла — это почти всегда несовпадение веток: список
@@ -158,6 +225,7 @@ for lib in colors utils settings secrets config docker binengine engine traffic 
     fi
     sleep 0.2
 done
+fi
 
 # Ветку запоминаем, только если она не релизная: тогда и обновления
 # продолжат приходить из неё же.
