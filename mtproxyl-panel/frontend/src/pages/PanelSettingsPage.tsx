@@ -3,6 +3,7 @@ import { Image, RotateCcw, Save, Trash2, Upload } from 'lucide-react';
 import { Header } from '@/components/layout/Header';
 import { Chip } from '@/components/ui/chip';
 import { CustomThemeEditor } from '@/components/CustomThemeEditor';
+import { AppearanceArchiveCard } from '@/components/AppearanceArchiveCard';
 import { useTheme, THEMES, THEME_LABELS } from '@/hooks/useTheme';
 import { useNavLayout, NAV_LAYOUTS, NAV_LAYOUT_LABELS } from '@/hooks/useNavLayout';
 import { ErrorAlert } from '@/components/ErrorAlert';
@@ -292,6 +293,7 @@ export function PanelSettingsPage() {
           </CardContent>
         </Card>
 
+        <AppearanceArchiveCard />
         <HistoryStorageCard onError={(msg) => { setNotice(''); setError(msg); }} onNotice={(msg) => { setError(''); setNotice(msg); }} />
         <ApiPortCard onError={(msg) => { setNotice(''); setError(msg); }} onNotice={(msg) => { setError(''); setNotice(msg); }} />
 

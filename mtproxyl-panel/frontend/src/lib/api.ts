@@ -73,6 +73,20 @@ export const themeApi = {
     }),
 };
 
+export const appearanceApi = {
+  export: async () => {
+    const res = await fetch(`${PANEL_BASE}/panel/settings/appearance`, { credentials: 'same-origin' });
+    if (!res.ok) {
+      const body = await res.json();
+      throw new Error(body.error?.message || 'Не удалось выгрузить оформление');
+    }
+    return res.blob();
+  },
+  import: (file: File) => request<{ branding: PanelBranding; theme: PanelThemeSettings }>(PANEL_BASE, '/panel/settings/appearance', {
+    method: 'POST', body: file, headers: { 'Content-Type': 'application/zip' },
+  }),
+};
+
 export interface PanelBranding {
   has_icon?: boolean;
   icon_revision?: string;
@@ -1626,6 +1640,7 @@ export type HistoryMetric =
   | 'current_connections'
   | 'active_users'
   | 'active_ips'
+  | 'unique_ips'
   | 'traffic';
 
 export interface HistoryPoint {

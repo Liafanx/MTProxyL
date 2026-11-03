@@ -4,6 +4,7 @@ import { useMtproxyl } from '@/hooks/useMtproxyl';
 import { MetricCard } from '@/components/MetricCard';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { panelApi } from '@/lib/api';
+import { panelVersionLabel, usePanelUpdate } from '@/hooks/usePanelUpdate';
 import { MtproxylUpdateCard } from '@/components/MtproxylUpdateCard';
 import { MtproxylEngineCard } from '@/components/MtproxylEngineCard';
 import { cn } from '@/lib/utils';
@@ -384,6 +385,7 @@ function ConfirmModal({
 }
 
 export function UpdatePage() {
+  const panelUpdate = usePanelUpdate();
   // Telemt update state
   const [currentVersion, setCurrentVersion] = useState('');
   const [status, setStatus] = useState<UpdateStatus | null>(null);
@@ -466,6 +468,7 @@ export function UpdatePage() {
       setPanelReleases(res.releases || []);
       const defaultRelease = (res.releases || []).find(r => !r.prerelease && !r.is_downgrade);
       setPanelSelectedRelease(defaultRelease || null);
+      void panelUpdate.load();
     } catch (e: any) {
       setPanelReleasesError(e.message || 'Ошибка загрузки релизов');
     } finally {
@@ -639,6 +642,13 @@ export function UpdatePage() {
           <div className="space-y-3 lg:space-y-4">
             <div className="grid grid-cols-2 gap-2 lg:gap-3">
               <MetricCard label="Текущая версия" value={panelCurrentVersion || '—'} />
+              <div className="self-center text-xs" role="status">
+                {panelUpdate.loading ? <span className="text-text-muted">Проверка версии…</span>
+                  : panelUpdate.error ? <span className="text-warn">Не удалось проверить версию <button className="underline" onClick={() => { void panelUpdate.load(); }}>Повторить</button></span>
+                  : panelUpdate.info?.update_available ? <span className="rounded bg-accent/15 px-2 py-1 text-accent">Доступна {panelVersionLabel(panelUpdate.info.latest_version)}</span>
+                  : panelUpdate.info && /^v?\d+\.\d+\.\d+$/.test(panelUpdate.info.current_version) ? <span className="rounded bg-ok/15 px-2 py-1 text-ok">Установлена последняя версия панели</span>
+                  : <span className="text-text-muted">Сборка из исходников</span>}
+              </div>
               <div className="flex items-center">
                 <VersionSelect
                   releases={panelReleases}

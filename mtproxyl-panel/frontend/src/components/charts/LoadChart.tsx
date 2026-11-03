@@ -10,6 +10,7 @@ const PAD = 18;
 interface LoadChartProps {
   connections: HistoryPoint[];
   activeUsers: HistoryPoint[];
+  uniqueIPs?: HistoryPoint[];
   windowSecs?: number;
   label: string;
   emptyLabel: string;
@@ -26,7 +27,7 @@ function pointTime(ts: number): string {
 }
 
 /** Две линии за окно: текущие соединения (заливка) и активные пользователи. */
-export function LoadChart({ connections, activeUsers, windowSecs = 1800, label, emptyLabel }: LoadChartProps) {
+export function LoadChart({ connections, activeUsers, uniqueIPs = [], windowSecs = 1800, label, emptyLabel }: LoadChartProps) {
   const [hoverTs, setHoverTs] = useState<number | null>(null);
   const [pinnedTs, setPinnedTs] = useState<number | null>(null);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
@@ -34,12 +35,13 @@ export function LoadChart({ connections, activeUsers, windowSecs = 1800, label, 
     0,
     connections.length ? connections[connections.length - 1].ts : 0,
     activeUsers.length ? activeUsers[activeUsers.length - 1].ts : 0,
+    uniqueIPs.length ? uniqueIPs[uniqueIPs.length - 1].ts : 0,
   );
   const startTs = latestTs - windowSecs;
-  const maxValue = Math.max(1, ...connections.map((p) => p.v), ...activeUsers.map((p) => p.v));
+  const maxValue = Math.max(1, ...connections.map((p) => p.v), ...activeUsers.map((p) => p.v), ...uniqueIPs.map((p) => p.v));
   const ticks = niceScaleTicks(maxValue);
   const maximum = ticks[0];
-  const empty = connections.length < 2 && activeUsers.length < 2;
+  const empty = connections.length < 2 && activeUsers.length < 2 && uniqueIPs.length < 2;
 
   const project = (points: HistoryPoint[]) =>
     points
@@ -51,16 +53,19 @@ export function LoadChart({ connections, activeUsers, windowSecs = 1800, label, 
 
   const connPts = project(connections);
   const userPts = project(activeUsers);
+  const ipPts = project(uniqueIPs);
   const baseline = H - PAD;
   const connPath = pathOf(connPts);
-  const timestamps = [...new Set([...connections, ...activeUsers]
+  const timestamps = [...new Set([...connections, ...activeUsers, ...uniqueIPs]
     .filter((p) => p.ts >= startTs && p.ts <= latestTs)
     .map((p) => p.ts))].sort((a, b) => a - b);
   const selectedTs = (pinnedTs !== null && timestamps.includes(pinnedTs) ? pinnedTs : null)
     ?? (hoverTs !== null && timestamps.includes(hoverTs) ? hoverTs : null);
   const selectedX = selectedTs === null ? null : ((selectedTs - startTs) / windowSecs) * W;
-  const selectedConn = selectedTs === null ? null : connections.find((p) => p.ts === selectedTs);
-  const selectedUsers = selectedTs === null ? null : activeUsers.find((p) => p.ts === selectedTs);
+  const selectedConn = selectedTs === null ? undefined : [...connections].reverse().find((p) => p.ts <= selectedTs && selectedTs - p.ts <= 10);
+  const selectedUsers = selectedTs === null ? undefined : [...activeUsers].reverse().find((p) => p.ts <= selectedTs && selectedTs - p.ts <= 10);
+  // IP опрашиваются реже соединений: берём ближайший предшествующий замер, не старше 15 с.
+  const selectedIPs = selectedTs === null ? undefined : [...uniqueIPs].reverse().find((p) => p.ts <= selectedTs && selectedTs - p.ts <= 15);
   const pointY = (value: number) => PAD + (1 - value / Math.max(1, maximum)) * (H - PAD * 2);
   const selectAt = (clientX: number, element: HTMLDivElement, pin: boolean, touch = false) => {
     if (empty || timestamps.length === 0) return;
@@ -83,7 +88,7 @@ export function LoadChart({ connections, activeUsers, windowSecs = 1800, label, 
       tabIndex={empty ? -1 : 0}
       aria-label={selectedTs === null
         ? `${label}. Наведите курсор или коснитесь графика, чтобы узнать значения; стрелки переключают точки.`
-        : `${label}. ${pointTime(selectedTs)}: соединения ${selectedConn ? formatNumber(selectedConn.v) : 'нет данных'}, пользователи ${selectedUsers ? formatNumber(selectedUsers.v) : 'нет данных'}.`}
+        : `${label}. ${pointTime(selectedTs)}: соединения ${selectedConn ? formatNumber(selectedConn.v) : 'нет данных'}, пользователи ${selectedUsers ? formatNumber(selectedUsers.v) : 'нет данных'}, уникальные IP ${selectedIPs ? formatNumber(selectedIPs.v) : 'нет данных'}.`}
       onPointerMove={(event) => {
         if ((event.pointerType === 'mouse' || event.pointerType === 'pen') && pinnedTs === null) {
           selectAt(event.clientX, event.currentTarget, false);
@@ -183,6 +188,7 @@ export function LoadChart({ connections, activeUsers, windowSecs = 1800, label, 
             vectorEffect="non-scaling-stroke"
           />
         )}
+        {ipPts.length > 1 && <path d={pathOf(ipPts)} fill="none" stroke="rgb(var(--warn))" strokeWidth={1.75} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />}
         {selectedX !== null && (
           <g pointerEvents="none" aria-hidden="true">
             <line x1={selectedX} x2={selectedX} y1={PAD} y2={baseline}
@@ -192,15 +198,18 @@ export function LoadChart({ connections, activeUsers, windowSecs = 1800, label, 
       </svg>
       {selectedX !== null && selectedConn && <EndDot point={{ x: selectedX, y: pointY(selectedConn.v) }} tone="accent" size={10} />}
       {selectedX !== null && selectedUsers && <EndDot point={{ x: selectedX, y: pointY(selectedUsers.v) }} tone="ok" size={10} />}
+      {selectedX !== null && selectedIPs && <EndDot point={{ x: selectedX, y: pointY(selectedIPs.v) }} tone="warn" size={10} />}
       {selectedTs !== null && (
         <div aria-hidden="true" className={`pointer-events-none absolute top-2 z-10 w-[190px] max-w-[calc(100%-1rem)] rounded-lg border border-border-strong bg-surface px-3 py-2 text-[11px] text-text shadow-lg ${selectedX !== null && selectedX > W / 2 ? 'left-2' : 'right-2'}`}>
           <div className="mb-1 font-mono tabular-nums text-text-muted">{pointTime(selectedTs)}</div>
           <div className="flex items-center justify-between gap-3"><span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-accent" />Соединения</span><strong className="font-mono tabular-nums">{selectedConn ? formatNumber(selectedConn.v) : '—'}</strong></div>
           <div className="flex items-center justify-between gap-3"><span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-ok" />Пользователи</span><strong className="font-mono tabular-nums">{selectedUsers ? formatNumber(selectedUsers.v) : '—'}</strong></div>
+          <div className="flex items-center justify-between gap-3"><span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-warn" />Уникальные IP</span><strong className="font-mono tabular-nums">{selectedIPs ? formatNumber(selectedIPs.v) : '—'}</strong></div>
         </div>
       )}
       {connPts.length > 1 && <EndDot point={connPts[connPts.length - 1]} tone="accent" size={7} />}
       {userPts.length > 1 && <EndDot point={userPts[userPts.length - 1]} tone="ok" size={6} />}
+      {ipPts.length > 1 && <EndDot point={ipPts[ipPts.length - 1]} tone="warn" size={6} />}
       {!empty && <div className="pointer-events-none absolute inset-y-[7.8%] left-0 flex flex-col justify-between" aria-hidden="true">
         {ticks.map((tick) => (
           <span key={tick} className="rounded bg-surface/80 px-1 font-mono text-[10px] leading-none tabular-nums text-text-faint">
@@ -215,11 +224,11 @@ export function LoadChart({ connections, activeUsers, windowSecs = 1800, label, 
   );
 }
 
-function EndDot({ point, tone, size }: { point: { x: number; y: number }; tone: 'accent' | 'ok'; size: number }) {
+function EndDot({ point, tone, size }: { point: { x: number; y: number }; tone: 'accent' | 'ok' | 'warn'; size: number }) {
   return (
     <span
       aria-hidden="true"
-      className={`pointer-events-none absolute rounded-full ${tone === 'accent' ? 'bg-accent' : 'bg-ok'}`}
+      className={`pointer-events-none absolute rounded-full ${tone === 'accent' ? 'bg-accent' : tone === 'ok' ? 'bg-ok' : 'bg-warn'}`}
       style={{
         width: size,
         height: size,
