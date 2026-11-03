@@ -965,6 +965,9 @@ secret_rename() {
 
     SECRETS_LABELS[$idx]="$new"
     save_secrets || { SECRETS_LABELS[$idx]="$old"; log_error "Не удалось сохранить новое имя"; return 1; }
+    if declare -F _expert_quota_period_move >/dev/null; then
+        _expert_quota_period_move "$old" "$new" || log_warn 'Имя изменено, но период квоты перенести не удалось: проверьте access.user_quota_periods'
+    fi
     shaping_rename_profile "$old" "$new" 2>/dev/null || true
     _rename_user_stats_files "$old" "$new" \
         "${INSTALL_DIR}/relay_stats/traffic_db" \
@@ -1021,7 +1024,7 @@ _TARGET_USER_MARK='#mtproxyl-off '
 
 # Секции цели, где пользователь упоминается по метке. Порядок важен только для
 # вывода — удаляем и переименовываем во всех.
-_TARGET_LIMIT_SECTIONS='access.user_max_tcp_conns access.user_max_unique_ips access.user_data_quota access.user_expirations access.user_ad_tags access.user_rate_limits'
+_TARGET_LIMIT_SECTIONS='access.user_max_tcp_conns access.user_max_unique_ips access.user_data_quota access.user_quota_periods access.user_expirations access.user_ad_tags access.user_rate_limits'
 
 _target_users_ready() {
     if [ -z "${DETECTED_CONFIG_PATH:-}" ] || [ ! -f "$DETECTED_CONFIG_PATH" ]; then
@@ -1477,12 +1480,14 @@ target_user_toggle() {
     # Выключенный пользователь для движка не существует, и его профиль WEB
     # сделал бы конфиг невалидным: профиль снимаем до, а возвращаем после.
     [ "$_want" = "off" ] && { web_target_remove_profile "$_label" || true; }
+    [ "$_want" != off ] || _toml_toggle_key "$_label" access.user_quota_periods "$DETECTED_CONFIG_PATH" off >/dev/null 2>&1 || true
     _toml_toggle_key "$_label" "access.users" "$DETECTED_CONFIG_PATH" "$_want" || {
         log_error "Не удалось изменить состояние пользователя в конфиге цели"
         return 1
     }
     log_success "Пользователь '${_label}' $([ "$_want" = "on" ] && echo "включён" || echo "выключен")"
     [ "$_want" = "on" ] && { web_target_add_profile "$_label" || true; }
+    [ "$_want" != on ] || _toml_toggle_key "$_label" access.user_quota_periods "$DETECTED_CONFIG_PATH" on >/dev/null 2>&1 || true
     _target_users_apply
 }
 
@@ -1504,13 +1509,14 @@ target_user_rename() {
         [ -n "$_val" ] || continue
         _toml_safe_unset "$_from" "$_sect" "$DETECTED_CONFIG_PATH" || true
         case "$_sect" in
-            access.user_expirations|access.user_ad_tags) _target_set_in_section "$_to" "\"${_val}\"" "$_sect" ;;
+            access.user_expirations|access.user_ad_tags|access.user_quota_periods) _target_set_in_section "$_to" "\"${_val}\"" "$_sect" ;;
             *)                       _target_set_in_section "$_to" "$_val" "$_sect" ;;
         esac
     done
     _toml_safe_unset "$_from" "access.users" "$DETECTED_CONFIG_PATH" || return 1
     _target_set_in_section "$_to" "\"${_secret}\"" "access.users" || return 1
     [ "$_state" = "off" ] && _toml_toggle_key "$_to" "access.users" "$DETECTED_CONFIG_PATH" "off"
+    [ "$_state" != off ] || _toml_toggle_key "$_to" access.user_quota_periods "$DETECTED_CONFIG_PATH" off >/dev/null 2>&1 || true
     web_target_rename_profile "$_from" "$_to" || {
         log_error "Не удалось переименовать WEB-профиль пользователя"
         return 1
@@ -1546,6 +1552,9 @@ target_user_setlimits() {
 
 _target_users_set_limit() {
     local _label="$1" _sect="$2" _val="$3" _kind="$4"
+    if [ "$_sect" = access.user_data_quota ] && { [ -z "$_val" ] || [ "$_val" = 0 ]; }; then
+        _toml_safe_unset "$_label" access.user_quota_periods "$DETECTED_CONFIG_PATH" >/dev/null 2>&1 || true
+    fi
     if [ -z "$_val" ] || [ "$_val" = "0" ]; then
         _toml_safe_unset "$_label" "$_sect" "$DETECTED_CONFIG_PATH" 2>/dev/null || true
         _target_drop_empty_limit_section "$_sect" 2>/dev/null || true

@@ -362,6 +362,7 @@ _front_context() {
     [ -f "${_FC_CERT_DIR}/fullchain.pem" ] || { log_error "Сертификат не найден"; return 1; }
     if [ "$_FC_WEB" = "true" ]; then
         _FC_WEB_DOMAIN=$(web_domain 2>/dev/null) || return 1
+        _FC_WEB_DOMAINS=$(web_hostnames_space)
         _FC_WEB_CERT_DIR=$(web_cert_dir 2>/dev/null)
         [ -n "$_FC_WEB_CERT_DIR" ] || _FC_WEB_CERT_DIR="$_FC_CERT_DIR"
         _FC_WEB_CONNECT=$(web_listener_connect_addr)
@@ -448,7 +449,7 @@ _front_caddy_conf() {
 	}
 	layer4 {
 		:${_pub} {
-			@web tls sni ${_FC_WEB_DOMAIN}
+			@web tls sni ${_FC_WEB_DOMAINS:-$_FC_WEB_DOMAIN}
 			route @web {
 				proxy {
 					proxy_protocol v1
@@ -532,7 +533,7 @@ EOF
         # начинается с default-src 'self'. Страница bridge идёт как есть.
         cat << EOF
 
-https://${_FC_WEB_DOMAIN}:${_addr} {
+$(web_exact_hostnames | sed "s|^|https://|;s|$|:${_addr}|" | paste -sd ',' - | sed 's/,/, /g') {
 ${_bind}
 ${_tls}
 	request_body {
@@ -674,7 +675,7 @@ $(_front_haproxy_binds "$_pub")
     timeout client 300s
     tcp-request inspect-delay 5s
     tcp-request content accept if { req.ssl_hello_type 1 }
-    use_backend mtproxyl_web_tls if { req.ssl_sni -i ${_FC_WEB_DOMAIN} }
+    use_backend mtproxyl_web_tls if { req.ssl_sni -i ${_FC_WEB_DOMAINS:-$_FC_WEB_DOMAIN} }
     default_backend mtproxyl_mtproto
 
 backend mtproxyl_web_tls
@@ -732,7 +733,7 @@ frontend mtproxyl_web
 ${_bind}
     # Браузер переиспользует HTTP/2-соединение для другого имени с тем же
     # сертификатом — 421 заставляет открыть своё.
-    http-request return status 421 if !{ ${_host_acl} ${_FC_WEB_DOMAIN} }
+    http-request return status 421 if !{ ${_host_acl} ${_FC_WEB_DOMAINS:-$_FC_WEB_DOMAIN} }
 $(_front_haproxy_panel_rules)
     default_backend mtproxyl_web
 

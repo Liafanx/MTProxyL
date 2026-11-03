@@ -112,8 +112,19 @@ async function mock(page) {
       data = users.map((user) => ({ label: user.username, total_bytes: 7e9, ip_history: [] }));
     }
     else if (url.pathname.endsWith('/mtproxyl/web')) data = {
-      enabled: true, domain: 'web.example.com', secret_mode: 'dd', mtproto_enabled: true,
+      enabled: true, domain: 'web.example.com', hosts: ['web.example.com', 'alt.example.com'],
+      hosts_supported: true, secret_mode: 'dd', mtproto_enabled: true,
+      owner: 'mtproxyl',
+      proxy_mode: 'combined', frontend: 'nginx', layout: 'shared', public_port: 443,
+      listen_port: 15080, tls_port: 15444, mtproxy_port: 15443, problems: '', decoy_mode: 'empty',
     };
+    else if (url.pathname.endsWith('/mtproxyl/web/params')) data = [
+      { key: 'WEB_DOMAIN', validator: 'custom:_validate_web_domain', desc: 'Публичный домен WEB', value: 'web.example.com' },
+      { key: 'WEB_HOSTS', validator: 'custom:_validate_web_hosts', desc: 'Дополнительные WEB-домены через запятую', value: 'alt.example.com' },
+      { key: 'WEB_DECOY_RESOLVE', validator: 'enum:never,startup', desc: 'DNS для HTTP-origin', value: 'never' },
+    ];
+    else if (url.pathname.endsWith('/mtproxyl/mode')) data = { mode: 'manager' };
+    else if (url.pathname.endsWith('/mtproxyl/settings')) data = [];
     else if (url.pathname.endsWith('/availability/status')) data = { supported: false };
     else if (url.pathname.endsWith('/history')) {
       data = { range: '30m', requested_from_epoch_secs: now - 1800, retention_secs: 7200,
@@ -267,6 +278,22 @@ async function checkEnhancements(page, state, width) {
   console.log(`panel enhancements ${width}: ok`);
 }
 
+async function checkWeb(page, state, width) {
+  await page.goto(`${base}/web`);
+  await page.getByText('web.example.com, alt.example.com', { exact: true }).waitFor();
+  const field = page.getByText('WEB_HOSTS', { exact: true }).locator('../..').locator('input');
+  assert.equal(await field.inputValue(), 'alt.example.com');
+  await field.fill('alt.example.com,other.example.com');
+  assert.equal(await field.inputValue(), 'alt.example.com,other.example.com');
+  await page.getByText('DNS для HTTP-origin', { exact: true }).locator('../..').locator('select').selectOption('startup');
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `WEB overflow ${width}`);
+  assert.deepEqual(state.writes, [], 'WEB wrote settings before save');
+  assert.equal(await page.getByText(/TypeError:/).count(), 0);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: path.join(output, `web-${width}.png`), fullPage: true });
+  console.log(`panel WEB ${width}: ok`);
+}
+
 async function checkSettings(page, state, width) {
   let release;
   state.brandingWait = new Promise((resolve) => { release = resolve; });
@@ -410,7 +437,8 @@ async function checkLayout(page, width) {
         const errors = [];
         page.on('pageerror', (error) => errors.push(error.message));
         const state = await mock(page);
-        if (process.argv.includes('--enhancements')) await checkEnhancements(page, state, width);
+        if (process.argv.includes('--web')) await checkWeb(page, state, width);
+        else if (process.argv.includes('--enhancements')) await checkEnhancements(page, state, width);
         else if (process.argv.includes('--navigation')) await checkNavigation(page, state, width);
         else {
           await checkLayout(page, width);

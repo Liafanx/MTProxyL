@@ -240,6 +240,9 @@ export interface WebStatus {
   frontend: string;
   haproxy_ready: boolean;
   haproxy_cert: string;
+  hosts?: string[];
+  hosts_supported?: boolean;
+  decoy_resolve?: 'never' | 'startup';
   /** shared — один публичный порт на двоих, split — у WEB свой. */
   layout: string;
   public_port: number;

@@ -226,12 +226,18 @@ tui_web_menu() {
         echo -e "  ${CYAN}[13]${NC} Отчёты bridge в /web-status  ${DIM}$([ "${WEB_DEBUG_SIDEBAND:-false}" = "true" ] && echo "включены" || echo "выключены")${NC}"
         [ "$_rean" = false ] && echo -e "  ${CYAN}[14]${NC} Проверка A-записи домена  ${DIM}$(web_dns_check_disabled && echo "выключена (CDN/балансировщик)" || echo "включена")${NC}"
         web_is_enabled && web_can_disable && echo -e "  ${CYAN}[15]${NC} Применить заново  ${DIM}пересобрать конфиг движка и держателя без выключения WEB${NC}"
+        echo -e "  ${CYAN}[16]${NC} Дополнительные WEB-домены  ${DIM}${WEB_HOSTS:-нет}${NC}"
         echo ""
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
         local _c; _c=$(read_choice "выбор" "0")
 
         case "$_c" in
+            16)
+                local _hosts
+                read_line _hosts "  ${BOLD}Домены через запятую, пусто — убрать дополнительные:${NC} "
+                web_set_param WEB_HOSTS "$_hosts"
+                press_any_key ;;
             15) web_is_enabled && web_enable; press_any_key ;;
             11) tui_https_headers_menu ;;
             12) _tui_web_base_path_menu; press_any_key ;;

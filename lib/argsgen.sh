@@ -225,6 +225,8 @@ _argsgen_build() {
         [ -n "${WEB_CARRIERS:-}" ] && _a+=(--web-carriers "$WEB_CARRIERS")
         _a+=(--web-secret-mode "${WEB_SECRET_MODE:-dd}")
         [ -n "${WEB_DOMAIN:-}" ] && _a+=(--web-domain "$WEB_DOMAIN")
+        [ -n "${WEB_HOSTS:-}" ] && _a+=(--web-hosts "$WEB_HOSTS")
+        [ "${WEB_DECOY_RESOLVE:-never}" = startup ] && _a+=(--web-decoy-resolve startup)
         [ -n "${WEB_BASE_PATH:-}" ] && _a+=(--web-path "$WEB_BASE_PATH")
         case "${WEB_DECOY_MODE:-empty}" in
             static_directory) _a+=(--web-decoy site) ;;

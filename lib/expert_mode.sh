@@ -18,6 +18,10 @@ _expert_drop_line() {
 
 save_expert_override() {
     local section="$1" key="$2" value="$3"
+    if [ "$section.$key" = access.user_quota_periods ]; then
+        _validate_quota_periods "$value" >/dev/null || return 1
+        value=$(jq -c . <<< "$value") || return 1
+    fi
     mkdir -p "$INSTALL_DIR"
     touch "$EXPERT_OVERRIDES_FILE"; chmod 600 "$EXPERT_OVERRIDES_FILE"
     # Временный файл рядом с целевым, иначе mv через /tmp (tmpfs) — это
@@ -84,6 +88,9 @@ _expert_toml_value() {
             string)
                 fv="\"$value\""
                 ;;
+            quota_periods)
+                fv=$(_expert_quota_periods_toml "$value") || return 1
+                ;;
             "string[]"|"carrier_list")
                 # web.carriers = false выключает автосогласование, и это
                 # не список из одного слова «false», а именно булево.
@@ -143,7 +150,13 @@ _apply_expert_overrides() {
         [[ "$section" =~ ^[[:space:]]*$ ]] && continue
         [ -z "$key" ] && continue
 
-        local fv; fv=$(_expert_toml_value "$section" "$key" "$value")
+        if ! _expert_supported "$section" "$key"; then
+            log_warn "[${section}] ${key} сохранён, но не применяется: нужен telemt $(_expert_min_engine "$section" "$key")+" >&2
+            continue
+        fi
+
+        local fv
+        fv=$(_expert_toml_value "$section" "$key" "$value") || { rm -f "$work_file"; return 1; }
 
         # Ключ с точкой TOML читает как путь до вложенной таблицы: без
         # кавычек «a.b = x» превращается в [a] b = x, а не в ключ «a.b».
