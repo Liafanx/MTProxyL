@@ -24,7 +24,7 @@ release_previous() {
 _release_stage_cleanup() {
     [ -n "$_RELEASE_STAGE" ] && rm -rf "$_RELEASE_STAGE"
     _RELEASE_STAGE=""
-_RELEASE_FROM=""
+    _RELEASE_FROM=""
 }
 
 # Список библиотек — из самого mtproxyl.sh: его цикл загрузки и есть правда.
@@ -41,6 +41,9 @@ _release_check() {
     if [ -n "$_want" ] && [ "$_ver" != "$_want" ]; then
         log_error "В архиве версия ${_ver}, ждали ${_want}"; return 1
     fi
+    [ -f "${_root}/version" ] && [ "$(tr -d '[:space:]' < "${_root}/version")" = "$_ver" ] || {
+        log_error 'Номер в version не совпадает с mtproxyl.sh'; return 1;
+    }
     _libs=$(_release_lib_list "${_root}/mtproxyl.sh")
     [ -n "$_libs" ] || { log_error "В mtproxyl.sh ${_ver} нет списка библиотек"; return 1; }
     for _l in $_libs; do
@@ -74,10 +77,8 @@ _release_unpack() {
     tar -xzf "$_arc" -C "$_RELEASE_STAGE" --no-same-owner --no-same-permissions 2>/dev/null \
         || { log_error "Не удалось распаковать ${_arc}"; _release_stage_cleanup; return 1; }
     local _root="${_RELEASE_STAGE}/mtproxyl-${_ver}"
-    if [ -f "${_root}/SHA256SUMS" ]; then
-        (cd "$_root" && sha256sum -c --quiet --strict SHA256SUMS >/dev/null 2>&1) \
-            || { log_error "Контрольные суммы внутри архива не сходятся"; _release_stage_cleanup; return 1; }
-    fi
+    (cd "$_root" && sha256sum -c --quiet --strict SHA256SUMS >/dev/null 2>&1) \
+        || { log_error "Контрольные суммы внутри архива не сходятся"; _release_stage_cleanup; return 1; }
     _release_check "$_root" "$_ver" >/dev/null || { _release_stage_cleanup; return 1; }
 }
 
@@ -86,8 +87,9 @@ _release_download() {
     local _ver="$1" _url _tmp _sum _got
     _url=$(_release_url "$_ver")
     mkdir -p "$RELEASE_CACHE_DIR"; chmod 700 "$RELEASE_CACHE_DIR"
-    _sum=$(curl -fsSL --retry 3 --retry-delay 2 --max-time 30 "${_url}.sha256" 2>/dev/null | awk 'NR==1{print $1}')
-    [[ "$_sum" =~ ^[0-9a-f]{64}$ ]] || return 1
+    _sum=$(curl -fsSL --retry 3 --retry-delay 2 --max-time 30 "${_url}.sha256" 2>/dev/null) || return 1
+    _sum=$(awk 'NR==1{print $1}' <<< "$_sum")
+    [[ "$_sum" =~ ^[0-9a-f]{64}$ ]] || { log_error 'Некорректная сумма архива'; return 2; }
     _tmp=$(mktemp "${RELEASE_CACHE_DIR}/.dl.XXXXXX") || return 1
     if ! curl -fsSL --retry 3 --retry-delay 2 --max-time 180 "$_url" -o "$_tmp" 2>/dev/null; then
         rm -f "$_tmp"; return 1
@@ -108,25 +110,27 @@ _release_stage_version() {
     if [ "$_prefer" = local ] && [ -f "$(_release_local "$_ver")" ]; then
         log_info "Берём сохранённую копию v${_ver}"
         _RELEASE_FROM="сохранённая копия v${_ver}"
-        _release_unpack "$(_release_local "$_ver")" "$_ver" && return 0
+        _release_unpack "$(_release_local "$_ver")" "$_ver" && { _RELEASE_FROM="сохранённая копия v${_ver}"; return 0; }
     fi
     _RELEASE_FROM="архив v${_ver}"
     _arc=$(_release_cached "$_ver")
     if [ -f "$_arc" ]; then
         log_info "Архив v${_ver} уже скачан"
-        _release_unpack "$_arc" "$_ver" && return 0
+        _release_unpack "$_arc" "$_ver" && { _RELEASE_FROM="архив v${_ver}"; return 0; }
         rm -f "$_arc"
     fi
     log_info "Скачиваем архив v${_ver} с GitHub..."
     _release_download "$_ver"; _rc=$?
+    [ "$_rc" -ne 2 ] || return 2
     if [ "$_rc" -eq 0 ]; then
-        _release_unpack "$_arc" "$_ver" && return 0
+        _release_unpack "$_arc" "$_ver" && { _RELEASE_FROM="архив v${_ver}"; return 0; }
         rm -f "$_arc"
+        return 2
     fi
     if [ "$_prefer" != local ] && [ -f "$(_release_local "$_ver")" ]; then
         log_info "Берём сохранённую копию v${_ver}"
         _RELEASE_FROM="сохранённая копия v${_ver}"
-        _release_unpack "$(_release_local "$_ver")" "$_ver" && return 0
+        _release_unpack "$(_release_local "$_ver")" "$_ver" && { _RELEASE_FROM="сохранённая копия v${_ver}"; return 0; }
     fi
     return 1
 }
@@ -134,10 +138,11 @@ _release_stage_version() {
 # Запасной путь — файлы ветки, закреплённые за одним коммитом: релиз ещё
 # собирается или установка идёт с не релизной ветки.
 _release_stage_branch() {
-    local _ref="$GITHUB_BRANCH" _sha _base _root _f _libs _l _bot
+    local _ref _sha _base _root _f _libs _l _bot
     _sha=$(curl -fsS --max-time 10 -H 'Accept: application/vnd.github.sha' \
-        "https://api.github.com/repos/${GITHUB_REPO}/commits/${GITHUB_BRANCH}" 2>/dev/null)
-    [[ "$_sha" =~ ^[0-9a-f]{40}$ ]] && _ref="$_sha"
+        "https://api.github.com/repos/${GITHUB_REPO}/commits/${GITHUB_BRANCH}" 2>/dev/null) || _sha=''
+    [[ "$_sha" =~ ^[0-9a-f]{40}$ ]] || { log_error 'Не удалось закрепить версию ветки: файлы не изменены, повторите позже'; return 1; }
+    _ref="$_sha"
     _base="https://raw.githubusercontent.com/${GITHUB_REPO}/${_ref}"
     log_info "Скачиваем файлы ветки ${GITHUB_BRANCH}${_sha:+ (коммит ${_sha:0:7})}..."
     _RELEASE_STAGE=$(mktemp -d "${INSTALL_DIR}/.release-stage.XXXXXX") || return 1
@@ -145,7 +150,7 @@ _release_stage_branch() {
     mkdir -p "${_root}/lib" "${_root}/mtproxyl-tgbot/bot"
     _fetch() { curl -fsS --retry 3 --retry-delay 2 --max-time 30 "${_base}/$1" -o "${_root}/$1" 2>/dev/null; }
     _fetch mtproxyl.sh || { log_error "Не удалось скачать mtproxyl.sh"; _release_stage_cleanup; return 1; }
-    _fetch version || true
+    _fetch version || { _release_stage_cleanup; return 1; }
     _libs=$(_release_lib_list "${_root}/mtproxyl.sh")
     for _l in $_libs; do
         _fetch "lib/${_l}.sh" || { log_error "Не удалось скачать lib/${_l}.sh"; _release_stage_cleanup; return 1; }
@@ -153,7 +158,7 @@ _release_stage_branch() {
     # Список файлов бота — из новой tgbot.sh.
     _bot=$(sed -n '/^_TGBOT_FILES=(/,/^)/{s/^ *"\(.*\)"$/\1/p}' "${_root}/lib/tgbot.sh" 2>/dev/null)
     for _f in $_bot; do
-        _fetch "mtproxyl-tgbot/${_f}" || { rm -rf "${_root}/mtproxyl-tgbot"; break; }
+        _fetch "mtproxyl-tgbot/${_f}" || { log_error "Не удалось скачать код бота: ${_f}"; _release_stage_cleanup; return 1; }
     done
     _release_check "$_root" >/dev/null || { _release_stage_cleanup; return 1; }
 }
@@ -174,10 +179,11 @@ _release_snapshot() {
         for _f in "${_TGBOT_FILES[@]}"; do
             [ -f "${TGBOT_DIR}/${_f}" ] || continue
             mkdir -p "${_root}/mtproxyl-tgbot/$(dirname "$_f")"
-            cp "${TGBOT_DIR}/${_f}" "${_root}/mtproxyl-tgbot/${_f}"
+            cp "${TGBOT_DIR}/${_f}" "${_root}/mtproxyl-tgbot/${_f}" || { rm -rf "$_tmp"; return 1; }
         done
     fi
-    (cd "$_root" && find . -type f ! -name SHA256SUMS -printf '%P\n' | LC_ALL=C sort | xargs -d '\n' sha256sum > SHA256SUMS)
+    _release_check "$_root" "$VERSION" >/dev/null || { rm -rf "$_tmp"; return 1; }
+    (cd "$_root" && find . -type f ! -name SHA256SUMS -printf '%P\n' | LC_ALL=C sort | xargs -d '\n' sha256sum > SHA256SUMS) || { rm -rf "$_tmp"; return 1; }
     tar -czf "${_tmp}/a.tar.gz" -C "$_tmp" "mtproxyl-${VERSION}" \
         && mv -f "${_tmp}/a.tar.gz" "$(_release_local "$VERSION")"
     local _rc=$?
@@ -194,7 +200,8 @@ _release_apply() {
         _n=$(basename "$_f")
         install -m 644 "$_f" "${LIB_DIR}/.${_n}.new" && mv -f "${LIB_DIR}/.${_n}.new" "${LIB_DIR}/${_n}" || return 1
     done
-    [ -f "${_root}/version" ] && install -m 644 "${_root}/version" "${INSTALL_DIR}/version"
+    install -m 644 "${_root}/version" "${INSTALL_DIR}/.version.new" \
+        && mv -f "${INSTALL_DIR}/.version.new" "${INSTALL_DIR}/version" || return 1
     install -m 755 "${_root}/mtproxyl.sh" "${INSTALL_DIR}/.mtproxyl.sh.new" \
         && mv -f "${INSTALL_DIR}/.mtproxyl.sh.new" "${INSTALL_DIR}/mtproxyl.sh"
 }
@@ -341,11 +348,15 @@ self_update() {
     log_info "Шаг 1/3: Получение и проверка файлов..."
     if [ "$GITHUB_BRANCH" != main ] && ! $_explicit; then
         _release_stage_branch && _source="ветка ${GITHUB_BRANCH}"
-    elif _release_stage_version "$_want" "$($_rollback && echo local)"; then
-        _source="$_RELEASE_FROM"
-    elif ! $_explicit; then
-        log_warn "Архива v${_want} пока нет — берём файлы ветки"
-        _release_stage_branch && _source="ветка ${GITHUB_BRANCH}"
+    else
+        local _stage_rc=0
+        _release_stage_version "$_want" "$($_rollback && echo local)" || _stage_rc=$?
+        if [ "$_stage_rc" -eq 0 ]; then
+            _source="$_RELEASE_FROM"
+        elif [ "$_stage_rc" -eq 1 ] && ! $_explicit; then
+            log_warn "Архива v${_want} пока нет — берём файлы ветки"
+            _release_stage_branch && _source="ветка ${GITHUB_BRANCH}"
+        fi
     fi
     if [ -z "$_source" ]; then
         _release_stage_cleanup
@@ -362,15 +373,15 @@ self_update() {
     if _release_snapshot; then
         log_success "Копия v${VERSION}: $(_release_local "$VERSION")"
     else
-        log_warn "Копию текущей версии сохранить не удалось"
-        _release_confirm "Продолжить без копии?" || { _release_stage_cleanup; return 1; }
+        log_error "Копию текущей версии сохранить не удалось — обновление отменено"
+        _release_stage_cleanup; return 1
     fi
 
     log_info "Шаг 3/3: Замена файлов..."
     if ! _release_apply "$_root"; then
         log_error "Замена прервалась — возвращаем v${VERSION}"
         if _release_stage_cleanup && _release_unpack "$(_release_local "$VERSION")" "$VERSION"; then
-            _release_apply "$(_release_root)"
+            _release_apply "$(_release_root)" || log_error "Не удалось вернуть файлы: сохранённая копия — $(_release_local "$VERSION")"
         fi
         _release_stage_cleanup
         return 1

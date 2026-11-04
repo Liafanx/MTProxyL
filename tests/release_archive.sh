@@ -53,6 +53,12 @@ rm -f "$(_release_cached "$cur")"
 _release_download "$cur" 2>/dev/null && fail "принят архив с чужой суммой"
 cp "$t/good.tgz" "$t/dist/mtproxyl-$cur.tar.gz"
 
+# Повреждённый кэш загружается заново, источник версии не теряется.
+echo broken > "$(_release_cached "$cur")"
+_release_stage_version "$cur" || fail "повторная загрузка кэша"
+[ "$_RELEASE_FROM" = "архив v${cur}" ] || fail "потерян источник после очистки кэша"
+_release_stage_cleanup
+
 # Файл мимо каталога версии и символьная ссылка — отказ.
 mkdir -p "$t/evil/mtproxyl-$cur" && echo x > "$t/evil/evil.sh"
 ln -s /etc "$t/evil/mtproxyl-$cur/etc"
