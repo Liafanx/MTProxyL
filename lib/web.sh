@@ -328,8 +328,7 @@ web_carrier_survives_zapret2() {
 }
 
 web_zapret2_hurts() {
-    web_is_only_mode && return 1
-    web_layout_is_split && return 1
+    if ! web_is_only_mode && web_layout_is_split; then return 1; fi
     web_carrier_survives_zapret2 && return 1
     zapret2_in_effect 2>/dev/null
 }
@@ -1279,6 +1278,12 @@ _web_suspend_mtproto_fixes() {
 
 _web_resume_mtproto_fixes() {
     load_nft_settings 2>/dev/null || true
+    # Ручной выбор в WEB-only важнее защиты, снятой при переходе в этот режим.
+    if nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null; then
+        WEB_ONLY_PREV_NFT="true"; WEB_ONLY_PREV_ZAPRET2="false"
+    elif zapret2_is_running; then
+        WEB_ONLY_PREV_NFT="false"; WEB_ONLY_PREV_ZAPRET2="true"
+    fi
     if [ "${WEB_ONLY_PREV_NFT:-false}" = "true" ]; then
         apply_nft_rules >/dev/null 2>&1 && install_nft_service >/dev/null 2>&1 || \
             log_warn "SYN-лимитер не удалось вернуть автоматически"
