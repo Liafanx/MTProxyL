@@ -51,6 +51,18 @@ func ValidateExpertParam(section, key, value string) error {
 	if !expertKeyRe.MatchString(key) || len(key) > 64 {
 		return fmt.Errorf("invalid key %q", key)
 	}
+	if section == "access" && key == "user_quota_periods" && value != "" {
+		var periods map[string]string
+		if len(value) > 65536 || json.Unmarshal([]byte(value), &periods) != nil || periods == nil {
+			return fmt.Errorf("quota periods must be a JSON object, at most 64 KiB")
+		}
+		for user, period := range periods {
+			if !regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`).MatchString(user) || (period != "daily" && period != "weekly" && period != "monthly") {
+				return fmt.Errorf("invalid quota user or period")
+			}
+		}
+		return nil
+	}
 	if len(value) > 512 {
 		return fmt.Errorf("value too long")
 	}

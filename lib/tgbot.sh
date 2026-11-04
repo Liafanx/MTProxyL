@@ -167,7 +167,9 @@ _tgbot_fetch_sources() {
             if cmp -s "${MTPROXYL_TGBOT_SRC}/${_file}" "${TGBOT_DIR}/${_file}" 2>/dev/null; then
                 echo -e "    ${DIM}= ${_file} — без изменений${NC}"
             else
-                install -m 644 "${MTPROXYL_TGBOT_SRC}/${_file}" "${TGBOT_DIR}/${_file}"
+                install -m 644 "${MTPROXYL_TGBOT_SRC}/${_file}" "${TGBOT_DIR}/${_file}" || {
+                    log_error "Не удалось записать ${_file}"; _failed=$((_failed + 1)); continue;
+                }
                 echo -e "    ${GREEN}↻${NC} ${_file} — обновлён"
                 [ "$_file" = "requirements.txt" ] && _TGBOT_DEPS_CHANGED="true"
             fi
@@ -553,7 +555,7 @@ tgbot_set_param() {
 
     local _expr=""
     case "$_key" in
-        notify.availability|notify.dc|notify.dc_zero|notify.proxy|notify.limits|notify.backup|notify.egress)
+        notify.availability|notify.dc|notify.dc_zero|notify.proxy|notify.limits|notify.backup|notify.egress|notify.limits_soon|notify.weekly)
             case "$_val" in
                 true|false) ;;
                 *) log_error "Ожидается true или false"; return 1 ;;

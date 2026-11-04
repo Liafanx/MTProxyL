@@ -1448,7 +1448,11 @@ _selfmask_obtain_web_cert() {
     [ -n "$_wd" ] && [ "$_wd" != "$SELFMASK_DOMAIN" ] || return 1
 
     _dir=$(web_own_cert_dir) || return 1
-    if _selfmask_cert_is_valid "$_dir" "$_wd"; then
+    local -a _names=() _domains=()
+    mapfile -t _names < <(web_exact_hostnames)
+    local _name
+    for _name in "${_names[@]}"; do _domains+=(-d "$_name"); done
+    if _selfmask_cert_is_valid "$_dir" "${_names[@]}"; then
         log_success "У WEB уже есть свой сертификат на ${_wd}"
         return 0
     fi
@@ -1459,7 +1463,7 @@ _selfmask_obtain_web_cert() {
 
     local _out
     if _out=$(certbot certonly --webroot -w "$SELFMASK_SITE_DIR" \
-        -d "$_wd" --non-interactive --agree-tos \
+        "${_domains[@]}" --non-interactive --agree-tos \
         "${_mail2[@]}" --cert-name "$_wd" 2>&1); then
         log_success "Сертификат для ${_wd} получен"
         return 0
@@ -1476,9 +1480,11 @@ _selfmask_obtain_cert() {
     local -a _need=("$SELFMASK_DOMAIN")
     # Если WEB уже обзавёлся своим сертификатом, требовать его имя от общего
     # незачем — иначе мы бы выпускали общий заново на каждом применении.
-    if web_is_enabled 2>/dev/null && ! web_has_own_cert 2>/dev/null; then
-        local _wd; _wd=$(web_domain 2>/dev/null)
-        [ -n "$_wd" ] && [ "$_wd" != "$SELFMASK_DOMAIN" ] && _need+=("$_wd")
+    if web_is_enabled 2>/dev/null && { ! web_has_own_cert 2>/dev/null || [ "$(web_domain)" = "$SELFMASK_DOMAIN" ]; }; then
+        local _wd
+        while IFS= read -r _wd; do
+            [ -n "$_wd" ] && [ "$_wd" != "$SELFMASK_DOMAIN" ] && _need+=("$_wd")
+        done < <(web_exact_hostnames)
     fi
     if _selfmask_cert_is_valid "$_cert_dir" "${_need[@]}"; then
         local _until
@@ -1574,8 +1580,10 @@ EOF
     # поэтому пути в конфиге nginx остаются прежними.
     local -a _domain_args=(-d "$SELFMASK_DOMAIN")
     if web_is_enabled 2>/dev/null; then
-        local _wd; _wd=$(web_domain 2>/dev/null)
-        [ -n "$_wd" ] && [ "$_wd" != "$SELFMASK_DOMAIN" ] && _domain_args+=(-d "$_wd")
+        local _cert_host
+        while IFS= read -r _cert_host; do
+            [ -n "$_cert_host" ] && [ "$_cert_host" != "$SELFMASK_DOMAIN" ] && _domain_args+=(-d "$_cert_host")
+        done < <(web_exact_hostnames)
     fi
 
     local _cb_out

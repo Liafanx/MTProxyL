@@ -19,6 +19,8 @@ source "$repo/lib/config.sh"
 source "$repo/lib/detect.sh"
 source "$repo/lib/secrets.sh"
 source "$repo/lib/web.sh"
+source "$repo/lib/expert_catalog.sh"
+source "$repo/lib/expert_mode.sh"
 
 log_info() { :; }
 log_success() { :; }
@@ -44,7 +46,9 @@ printf 'TOTAL|10|20\nUSER|alice|10|20\n' > "$INSTALL_DIR/relay_stats/traffic_db"
 printf 'USER|alice|192.0.2.1|100|200\n' > "$INSTALL_DIR/relay_stats/user_ips_db"
 printf 'alice|10|20\n' > "$INSTALL_DIR/relay_stats/user_session_snapshot"
 
+save_expert_override access user_quota_periods '{"alice":"monthly"}'
 secret_rename alice renamed
+jq -e '.renamed == "monthly" and (has("alice") | not)' <<< "$(get_expert_override_value access user_quota_periods)" >/dev/null
 grep -q '^renamed|' "$SECRETS_FILE" || fail 'manager secrets label not renamed'
 grep -q '^USER|renamed|10|20$' "$INSTALL_DIR/relay_stats/traffic_db" || fail 'manager traffic not moved'
 grep -q '^USER|renamed|192.0.2.1|100|200$' "$INSTALL_DIR/relay_stats/user_ips_db" || fail 'manager IP history not moved'
@@ -56,9 +60,13 @@ DETECTED_CONFIG_PATH="$INSTALL_DIR/target.toml"
 cat > "$DETECTED_CONFIG_PATH" <<'EOF'
 [access.users]
 alice = "0123456789abcdef0123456789abcdef"
+bob = "1123456789abcdef0123456789abcdef"
 
 [access.user_data_quota]
 alice = 4096
+
+[access.user_quota_periods]
+alice = "monthly"
 
 [web]
 enabled = true
@@ -78,9 +86,22 @@ target_user_rename alice renamed
 [[ $(_target_user_state renamed) == on ]] || fail 'target user not renamed'
 [[ -z $(_target_user_state alice) ]] || fail 'old target user remained'
 [[ $(_target_user_limit renamed access.user_data_quota) == 4096 ]] || fail 'target quota not moved'
+[[ $(_target_user_limit renamed access.user_quota_periods) == monthly ]] || fail 'target quota period not moved'
 [[ $(web_target_profiles) == 'renamed|ee' ]] || fail 'WEB profile name or secret mode not preserved'
 grep -q '^USER|renamed|0|0|1234$' "$INSTALL_DIR/relay_stats/target_traffic_db" || fail 'target traffic not moved'
 grep -q '^USER|renamed|198.51.100.2|300|400$' "$INSTALL_DIR/relay_stats/target_user_ips_db" || fail 'target IP history not moved'
 grep -q '^USER|renamed|0|0|1234$' "$INSTALL_DIR/relay_stats/target_session_snapshot" || fail 'target snapshot not moved'
+
+target_user_toggle renamed disable
+python3 - "$DETECTED_CONFIG_PATH" <<'PY'
+import sys,tomllib
+c=tomllib.load(open(sys.argv[1],'rb'))
+assert 'renamed' not in c['access']['users']
+assert 'renamed' not in c['access']['user_quota_periods']
+PY
+target_user_toggle renamed enable
+[[ $(_target_user_limit renamed access.user_quota_periods) == monthly ]] || fail 'target quota period not restored'
+target_user_setlimits renamed 0 0 0
+[[ -z $(_target_user_limit renamed access.user_quota_periods) ]] || fail 'period without positive quota remained'
 
 echo 'user rename tests: OK'

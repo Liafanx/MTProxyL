@@ -7,6 +7,7 @@ import type { HistorySeries } from '@/lib/api';
 interface LoadCardProps {
   connections?: HistorySeries;
   activeUsers?: HistorySeries;
+  uniqueIPs?: HistorySeries;
   telemetryOff: boolean;
   loading: boolean;
   /** Режим Manager: параметр движка можно включить из «Экспертных параметров». */
@@ -14,20 +15,26 @@ interface LoadCardProps {
 }
 
 /** Нагрузка за 30 минут: текущие соединения и активные пользователи. */
-export function LoadCard({ connections, activeUsers, telemetryOff, loading, manager = false }: LoadCardProps) {
+export function LoadCard({ connections, activeUsers, uniqueIPs, telemetryOff, loading, manager = false }: LoadCardProps) {
   const now = lastValue(connections);
   const peak = peakValue(connections);
   const users = lastValue(activeUsers);
+  const lastIP = uniqueIPs?.points[uniqueIPs.points.length - 1];
+  const lastConnection = connections?.points[connections.points.length - 1];
+  const ipsFresh = lastIP && (!lastConnection || lastConnection.ts - lastIP.ts <= 30);
+  const ips = ipsFresh ? lastValue(uniqueIPs) : null;
+  const ipsPeak = peakValue(uniqueIPs);
   return (
     <section className="rounded-xl border border-border bg-surface p-4">
       <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <h3 className="text-[13px] font-semibold text-text">Нагрузка за 30 минут</h3>
-          <p className="mt-0.5 text-micro text-text-muted">Текущие соединения и активные пользователи по данным движка</p>
+          <p className="mt-0.5 text-micro text-text-muted">Соединения, активные профили и уникальные IP одновременно. Один IP считается один раз для всех профилей.</p>
         </div>
-        <div className="flex items-center gap-4 text-micro text-text-muted">
+        <div className="flex flex-wrap items-center gap-4 text-micro text-text-muted">
           <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-accent" />соединения</span>
           <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-ok" />пользователи</span>
+          <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-warn" />уникальные IP</span>
         </div>
       </div>
       {telemetryOff ? (
@@ -53,14 +60,17 @@ export function LoadCard({ connections, activeUsers, telemetryOff, loading, mana
         </div>
       ) : (
         <>
-          <div className="mb-2 grid grid-cols-3 gap-2">
+          <div className="mb-2 grid grid-cols-2 sm:grid-cols-3 gap-2">
             <Stat label="Сейчас" value={now === null ? '—' : formatNumber(now)} />
             <Stat label="Пик за окно" value={peak === null ? '—' : formatNumber(peak)} />
             <Stat label="Пользователей" value={users === null ? '—' : formatNumber(users)} />
+            <Stat label="Уникальных IP" value={ips === null ? '—' : formatNumber(ips)} />
+            <Stat label="Пик IP за окно" value={ipsPeak === null ? '—' : formatNumber(ipsPeak)} />
           </div>
           <LoadChart
             connections={connections?.points ?? []}
             activeUsers={activeUsers?.points ?? []}
+            uniqueIPs={uniqueIPs?.points ?? []}
             label="Нагрузка за 30 минут"
             emptyLabel={loading ? 'Загрузка истории…' : 'История накапливается: первые точки появятся через минуту'}
           />

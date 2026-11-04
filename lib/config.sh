@@ -402,6 +402,15 @@ sni_action_for_engine() {
     echo "$_a"
 }
 
+# Постоянный checkpoint календарных квот, общий для обоих носителей движка.
+_quota_state_toml() {
+    web_engine_at_least 3.5.15 || return 0
+    local _periods; _periods=$(get_expert_override_value access user_quota_periods)
+    [ -d "${INSTALL_DIR}/quota-state" ] || { [ -n "$_periods" ] && [ "$_periods" != '{}' ]; } || return 0
+    install -d -m 700 "${INSTALL_DIR}/quota-state" || return 1
+    printf 'quota_state_path = %s\n' "$(jq -Rn --arg path "${INSTALL_DIR}/quota-state/telemt.limit.json" '$path')"
+}
+
 # ── Генерация config.toml ────────────────────────────────────
 generate_telemt_config() {
     mkdir -p "$CONFIG_DIR"; chmod 700 "$CONFIG_DIR"
@@ -454,6 +463,7 @@ generate_telemt_config() {
         web_listeners=$(web_listeners_toml)
     fi
 
+    local _quota_state; _quota_state=$(_quota_state_toml) || return 1
     local tmp; tmp=$(_mktemp "$CONFIG_DIR") || return 1
 
     cat > "$tmp" << TOML_EOF
@@ -462,6 +472,7 @@ generate_telemt_config() {
 
 [general]
 prefer_ipv6 = false
+${_quota_state}
 tg_connect = ${MTPROXYL_TG_CONNECT}
 fast_mode = true
 use_middle_proxy = true
@@ -633,7 +644,9 @@ TOML_EOF
     done
 
     # WEB Proxy — после [access.*], иначе профили разорвали бы таблицу секретов
-    web_is_enabled && web_sections_toml >> "$tmp"
+    if web_is_enabled && ! web_sections_toml >> "$tmp"; then
+        rm -f "$tmp"; return 1
+    fi
 
     # Engine tunings
     if [ -f "${_TUNE_FILE:-/dev/null}" ] && [ -s "${_TUNE_FILE}" ]; then
@@ -691,7 +704,7 @@ TOML_EOF
     fi
 
     # Expert overrides
-    _apply_expert_overrides "$tmp"
+    _apply_expert_overrides "$tmp" || { rm -f "$tmp"; return 1; }
 
     chmod 644 "$tmp"
     cp "$tmp" "$(engine_config_path)" && rm -f "$tmp"
@@ -730,11 +743,15 @@ _expert_generate_and_apply() {
 # лимит владельца больше общего), откатывается: узнали бы только при старте.
 _expert_web_limits_guard() {
     local _sec="$1" _key="$2" _prev="$3" _lp
-    [ "$_sec" = "web.limits" ] || return 0
-    _lp=$(web_limits_check 2>/dev/null)
+    case "$_sec" in
+        web) [ "$_key" = allow_wildcard_hosts ] || return 0 ;;
+        web.limits|web.limits.wildcard|web.retry_jitter) ;;
+        *) return 0 ;;
+    esac
+    _lp=$(web_new_settings_problems; web_limits_check 2>/dev/null)
     [ -n "$_lp" ] || return 0
     if [ -n "$_prev" ]; then save_expert_override "$_sec" "$_key" "$_prev"; else delete_expert_override "$_sec" "$_key"; fi
-    log_error "Движок не примет такие лимиты WEB — правка не сохранена:"
+    log_error "Движок не примет такие настройки WEB — правка не сохранена:"
     printf '%s\n' "$_lp" | sed 's/^/    • /'
     return 1
 }
@@ -855,6 +872,7 @@ handle_expert_command() {
             save_expert_override "$_sec" "$_key" "$_val" || return 1
             _expert_web_limits_guard "$_sec" "$_key" "$_prev" || return 1
             log_success "Override сохранён: [${_sec}] ${_key} = ${_val}"
+            _expert_supported "$_sec" "$_key" || log_warn "Параметр начнёт применяться после обновления telemt до $(_expert_min_engine "$_sec" "$_key")+"
             [ -z "$_entry" ] && log_warn "Параметра нет в каталоге — значение не проверялось"
             [ "$_apply" = "true" ] || return 0
             _expert_apply_prompt ;;

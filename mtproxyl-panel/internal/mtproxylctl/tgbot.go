@@ -148,6 +148,8 @@ var tgbotSettable = map[string]string{
 	"notify.proxy":           "bool",
 	"notify.limits":          "bool",
 	"notify.backup":          "bool",
+	"notify.limits_soon":     "bool",
+	"notify.weekly":          "bool",
 	"intervals.availability": "minutes",
 	"intervals.dc":           "minutes",
 	"intervals.proxy":        "minutes",

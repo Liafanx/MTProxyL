@@ -3,6 +3,7 @@ package history
 import (
 	"context"
 	"log"
+	"net/netip"
 	"strconv"
 	"sync"
 	"time"
@@ -16,6 +17,7 @@ const (
 	MetricCurrentConnections = "current_connections"
 	MetricActiveUsers        = "active_users"
 	MetricActiveIPs          = "active_ips"
+	MetricUniqueIPs          = "unique_ips"
 	MetricTraffic            = "traffic"
 
 	StatsInterval        = 5 * time.Second
@@ -26,7 +28,7 @@ const (
 var knownMetrics = map[string]bool{
 	MetricConnections: true, MetricRefusals: true, MetricProbes: true, MetricAvailable: true,
 	MetricCurrentConnections: true, MetricActiveUsers: true,
-	MetricActiveIPs: true, MetricTraffic: true,
+	MetricActiveIPs: true, MetricUniqueIPs: true, MetricTraffic: true,
 }
 
 func IsMetric(name string) bool { return knownMetrics[name] }
@@ -290,6 +292,25 @@ func (r *Recorder) PollUsers(ctx context.Context) {
 	}
 	r.ring.Append(MetricActiveIPs, Point{TS: ts, V: float64(ips)})
 	r.ring.Append(MetricTraffic, Point{TS: ts, V: traffic})
+	var rows []struct {
+		ActiveIPs []string `json:"active_ips"`
+	}
+	if err := r.fetch.GetJSON(ctx, "/v1/stats/users/active-ips", &rows); err != nil {
+		r.warn("unique-ips", err)
+		return
+	}
+	if rows == nil {
+		return
+	}
+	unique := make(map[netip.Addr]struct{})
+	for _, row := range rows {
+		for _, raw := range row.ActiveIPs {
+			if ip, err := netip.ParseAddr(raw); err == nil {
+				unique[ip.Unmap()] = struct{}{}
+			}
+		}
+	}
+	r.ring.Append(MetricUniqueIPs, Point{TS: ts, V: float64(len(unique))})
 }
 
 // warn пишет ошибку источника не чаще раза в минуту.

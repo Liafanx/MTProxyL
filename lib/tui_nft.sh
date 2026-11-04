@@ -795,7 +795,7 @@ tui_zapret2_menu() {
             echo -e "    NFQUEUE:     $(zapret2_queue_spec)  (экземпляров nfqws2: $(zapret2_instance_count))"
             echo -e "    fwmark:      ${ZAPRET2_FWMARK}"
             echo -e "    UID:GID:     ${ZAPRET2_UID}:${ZAPRET2_GID}"
-            echo -e "    Порт:        ${PROXY_PORT:-не задан}"
+            echo -e "    Порт:        $(zapret2_main_port)"
             if [ "${ZAPRET2_DEBUG:-false}" = "true" ]; then
                 echo -e "    Debug:       ${YELLOW}включён${NC} → ${ZAPRET2_DEBUG_LOG}"
             else
@@ -830,7 +830,7 @@ tui_zapret2_menu() {
             echo -e "    win SYN+ACK: ${ZAPRET2_WIN_SYNACK}"
             echo -e "    win ACK:     ${ZAPRET2_WIN_ACK}"
             echo -e "    NFQUEUE:     $(zapret2_queue_spec)  (экземпляров nfqws2: $(zapret2_instance_count))"
-            echo -e "    Порт:        ${PROXY_PORT:-не задан}"
+            echo -e "    Порт:        $(zapret2_main_port)"
             echo ""
         fi
 
@@ -1114,7 +1114,7 @@ tui_zapret2_settings() {
                 press_any_key ;;
             10)
                 echo ""
-                echo -e "  ${DIM}Порт прокси (${PROXY_PORT:-443}) добавляется автоматически.${NC}"
+                echo -e "  ${DIM}Основной порт ($(zapret2_main_port)) добавляется автоматически.${NC}"
                 echo -e "  ${DIM}Формат: 8443,9000-9100 — сколько угодно портов и диапазонов.${NC}"
                 echo -e "  ${DIM}Пусто — убрать дополнительные порты.${NC}"
                 local _ep; read_line _ep "  Доп. порты [${ZAPRET2_EXTRA_PORTS:-нет}]: "
@@ -1211,7 +1211,7 @@ tui_zapret2_settings() {
                 press_any_key ;;
             13)
                 echo ""
-                echo -e "  ${DIM}По умолчанию берётся порт прокси из конфига (${PROXY_PORT:-443}).${NC}"
+                echo -e "  ${DIM}По умолчанию берётся публичный порт активного транспорта ($(nft_default_port)).${NC}"
                 echo -e "  ${DIM}Менять стоит, когда клиенты приходят на другой порт:${NC}"
                 echo -e "  ${DIM}проброс, балансировщик, свой DNAT.${NC}"
                 echo -e "  ${DIM}Пусто — вернуться к порту из конфига.${NC}"
@@ -1219,7 +1219,7 @@ tui_zapret2_settings() {
                 if [ -z "$_mp" ]; then
                     if [ -n "${ZAPRET2_PORT:-}" ]; then
                         ZAPRET2_PORT=""; save_nft_settings
-                        log_success "Основной порт снова из конфига: ${PROXY_PORT:-443}"
+                        log_success "Основной порт снова из конфига: $(nft_default_port)"
                         zapret2_update_config
                     fi
                 elif [[ "$_mp" =~ ^[0-9]+$ ]] && [ "$_mp" -ge 1 ] && [ "$_mp" -le 65535 ]; then

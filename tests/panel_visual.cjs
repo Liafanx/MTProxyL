@@ -12,7 +12,7 @@ const output = fs.mkdtempSync(path.join(os.tmpdir(), 'mtproxyl-panel-visual-'));
 const errorText = 'Proxy error: ME init incomplete: no live writers for DC groups [-203, -3, -2, -1, 1, 2, 3, 203, -5, -4, 5]. ' + 'x'.repeat(300);
 const now = 1791982800;
 const points = (metric) => Array.from({ length: 31 }, (_, i) => ({
-  ts: now - 1800 + i * 60, v: metric === 'active_users' ? 1 : (i === 15 ? 20 : 2 + i % 4),
+  ts: now - 1800 + i * 60, v: metric === 'active_users' ? 1 : metric === 'unique_ips' ? (i === 15 ? 7 : 3 + i % 2) : (i === 15 ? 20 : 2 + i % 4),
 }));
 const initialization = {
   status: 'initializing', degraded: false, current_stage: 'background_init', progress_pct: 71,
@@ -46,7 +46,9 @@ const users = ['short', 'long_username_'.repeat(4), 'other'].map((username, inde
 }));
 
 async function mock(page) {
-  const state = { brandingWait: null, statsWait: null, failBranding: false, writes: [], sockets: [], hold: new Set(), upstreamAddress: '203.0.113.17:1080' };
+  const state = { brandingWait: null, statsWait: null, failBranding: false, writes: [], sockets: [], hold: new Set(), upstreamAddress: '203.0.113.17:1080',
+    theme: { theme: 'light', colors: {}, configured: true }, imported: false, panelCheckFails: false,
+    panelUpdate: { current_version: '1.3.14', latest_version: 'mtproxyl-panel-v1.3.15', update_available: true } };
   await page.addInitScript(() => localStorage.setItem('mtproxyl-panel-theme', 'light'));
   await page.addInitScript(() => {
     window.__testSockets = [];
@@ -64,7 +66,28 @@ async function mock(page) {
     if (route.request().method() !== 'GET') state.writes.push(url.pathname);
     let data = {};
     if (url.pathname.endsWith('/auth/me')) data = { username: 'admin' };
-    else if (url.pathname.endsWith('/theme')) data = { theme: 'light', colors: {}, configured: true };
+    else if (url.pathname.endsWith('/theme')) {
+      if (route.request().method() === 'PUT') state.theme = { ...route.request().postDataJSON(), configured: true };
+      data = state.theme;
+    }
+    else if (url.pathname.endsWith('/panel/update/check')) {
+      if (state.panelCheckFails) {
+        await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ok: false, error: { message: 'Version service unavailable' } }) }); return;
+      }
+      data = state.panelUpdate;
+    }
+    else if (url.pathname.endsWith('/panel/update/releases')) data = { current_version: state.panelUpdate.current_version, releases: [] };
+    else if (url.pathname.endsWith('/auto-update/status')) data = null;
+    else if (url.pathname.endsWith('/update/status')) data = { phase: 'idle' };
+    else if (url.pathname.endsWith('/update/releases')) data = { current_version: '3.5.13', releases: [] };
+    else if (url.pathname.endsWith('/panel/settings/appearance')) {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({ contentType: 'application/zip', body: Buffer.from('PK-test-appearance') }); return;
+      }
+      assert(route.request().postDataBuffer().length > 0, 'missing archive upload');
+      state.imported = true; state.theme = { theme: 'matrix', colors: {}, configured: true };
+      data = { theme: state.theme, branding: { ...branding, panel_name: 'Импортированная панель' } };
+    }
     else if (url.pathname.endsWith('/theme/custom')) data = null;
     else if (url.pathname.endsWith('/history/storage')) data = {
       traffic: { enabled: false }, fingerprints: { enabled: false },
@@ -78,7 +101,7 @@ async function mock(page) {
           body: JSON.stringify({ ok: false, error: { message: 'Настройки временно недоступны' } }) });
         return;
       }
-      data = branding;
+      data = state.imported ? { ...branding, panel_name: 'Импортированная панель' } : branding;
     }
     else if (url.pathname.endsWith('/v1/users')) data = users;
     else if (url.pathname.endsWith('/v1/stats/users/quota')) data = {
@@ -89,8 +112,19 @@ async function mock(page) {
       data = users.map((user) => ({ label: user.username, total_bytes: 7e9, ip_history: [] }));
     }
     else if (url.pathname.endsWith('/mtproxyl/web')) data = {
-      enabled: true, domain: 'web.example.com', secret_mode: 'dd', mtproto_enabled: true,
+      enabled: true, domain: 'web.example.com', hosts: ['web.example.com', 'alt.example.com'],
+      hosts_supported: true, secret_mode: 'dd', mtproto_enabled: true,
+      owner: 'mtproxyl',
+      proxy_mode: 'combined', frontend: 'nginx', layout: 'shared', public_port: 443,
+      listen_port: 15080, tls_port: 15444, mtproxy_port: 15443, problems: '', decoy_mode: 'empty',
     };
+    else if (url.pathname.endsWith('/mtproxyl/web/params')) data = [
+      { key: 'WEB_DOMAIN', validator: 'custom:_validate_web_domain', desc: 'Публичный домен WEB', value: 'web.example.com' },
+      { key: 'WEB_HOSTS', validator: 'custom:_validate_web_hosts', desc: 'Дополнительные WEB-домены через запятую', value: 'alt.example.com' },
+      { key: 'WEB_DECOY_RESOLVE', validator: 'enum:never,startup', desc: 'DNS для HTTP-origin', value: 'never' },
+    ];
+    else if (url.pathname.endsWith('/mtproxyl/mode')) data = { mode: 'manager' };
+    else if (url.pathname.endsWith('/mtproxyl/settings')) data = [];
     else if (url.pathname.endsWith('/availability/status')) data = { supported: false };
     else if (url.pathname.endsWith('/history')) {
       data = { range: '30m', requested_from_epoch_secs: now - 1800, retention_secs: 7200,
@@ -207,6 +241,59 @@ async function checkNavigation(page, state, width) {
   console.log(`panel navigation ${width}: ok`);
 }
 
+async function checkEnhancements(page, state, width) {
+  await page.goto(`${base}/`);
+  await page.getByText(/Доступна новая версия панели:/).waitFor();
+  await page.getByText('Пик IP за окно', { exact: true }).waitFor();
+  const chart = page.getByRole('button', { name: /^Нагрузка за 30 минут\./ });
+  await chart.scrollIntoViewIfNeeded();
+  const bounds = await chart.boundingBox();
+  if (width < 600) await page.touchscreen.tap(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  else await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  assert((await chart.getAttribute('aria-label')).includes('уникальные IP'), 'missing IP tooltip');
+  await page.screenshot({ path: path.join(output, `dashboard-enhancements-${width}.png`), fullPage: true });
+  state.panelUpdate.update_available = false;
+  await page.goto(`${base}/update`);
+  await page.getByText('Установлена последняя версия панели', { exact: true }).waitFor();
+  state.panelCheckFails = true;
+  await page.reload();
+  await page.getByText(/Не удалось проверить версию/).waitFor();
+  assert.equal(await page.getByText('Установлена последняя версия панели', { exact: true }).count(), 0);
+  state.panelCheckFails = false;
+  await page.goto(`${base}/panel-settings`);
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Скачать оформление', exact: true }).click();
+  assert.equal((await download).suggestedFilename(), 'mtproxyl-panel-appearance.zip');
+  await page.getByText('Архив оформления сохранён', { exact: true }).waitFor();
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByLabel('Архив оформления ZIP').setInputFiles({ name: 'appearance.zip', mimeType: 'application/zip', buffer: Buffer.from('PK-test-appearance') });
+  await page.getByText('Оформление загружено и сохранено на сервере', { exact: true }).waitFor();
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'matrix');
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.waitForFunction(() => document.documentElement.dataset.theme === 'matrix');
+  assert.equal(await page.getByLabel('Название панели', { exact: true }).inputValue(), 'Импортированная панель');
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `appearance overflow ${width}`);
+  await page.screenshot({ path: path.join(output, `appearance-${width}.png`), fullPage: true });
+  console.log(`panel enhancements ${width}: ok`);
+}
+
+async function checkWeb(page, state, width) {
+  await page.goto(`${base}/web`);
+  await page.getByText('web.example.com, alt.example.com', { exact: true }).waitFor();
+  const field = page.getByText('WEB_HOSTS', { exact: true }).locator('../..').locator('input');
+  assert.equal(await field.inputValue(), 'alt.example.com');
+  await field.fill('alt.example.com,other.example.com');
+  assert.equal(await field.inputValue(), 'alt.example.com,other.example.com');
+  await page.getByText('DNS для HTTP-origin', { exact: true }).locator('../..').locator('select').selectOption('startup');
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `WEB overflow ${width}`);
+  assert.deepEqual(state.writes, [], 'WEB wrote settings before save');
+  assert.equal(await page.getByText(/TypeError:/).count(), 0);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: path.join(output, `web-${width}.png`), fullPage: true });
+  console.log(`panel WEB ${width}: ok`);
+}
+
 async function checkSettings(page, state, width) {
   let release;
   state.brandingWait = new Promise((resolve) => { release = resolve; });
@@ -310,12 +397,12 @@ async function checkLayout(page, width) {
     const rect = element.getBoundingClientRect();
     return { width: rect.width, height: rect.height };
   }));
-  assert.equal(dimensions.length, 4, `selection markers missing at ${width}`);
+  assert.equal(dimensions.length, 6, `selection markers missing at ${width}`);
   for (const marker of dimensions) assert(Math.abs(marker.width - marker.height) < 0.1, `ellipse at ${width}`);
-  assert(dimensions.filter((marker) => marker.width === 10).length === 2, `selection size changed at ${width}`);
+  assert(dimensions.filter((marker) => marker.width === 10).length === 3, `selection size changed at ${width}`);
   await chart.press('ArrowLeft');
   await chart.press('Escape');
-  assert.equal(await markers.count(), 2, `selection did not clear at ${width}`);
+  assert.equal(await markers.count(), 3, `selection did not clear at ${width}`);
   await chart.click({ position: { x: bounds.width / 2, y: bounds.height / 2 } });
   await page.screenshot({ path: path.join(output, `load-${width}.png`), fullPage: true });
   console.log(`panel visual ${width}: ok`);
@@ -350,7 +437,9 @@ async function checkLayout(page, width) {
         const errors = [];
         page.on('pageerror', (error) => errors.push(error.message));
         const state = await mock(page);
-        if (process.argv.includes('--navigation')) await checkNavigation(page, state, width);
+        if (process.argv.includes('--web')) await checkWeb(page, state, width);
+        else if (process.argv.includes('--enhancements')) await checkEnhancements(page, state, width);
+        else if (process.argv.includes('--navigation')) await checkNavigation(page, state, width);
         else {
           await checkLayout(page, width);
           await checkSettings(page, state, width);

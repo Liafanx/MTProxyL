@@ -237,7 +237,7 @@ export function WebPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
-                <Row label="Домен" value={status.domain || 'не задан'} mono />
+                <Row label="Домены" value={status.hosts?.join(', ') || status.domain || 'не задан'} mono />
                 <Row
                   label="Режим"
                   value={proxyMode === 'web' ? 'Только WEB' : proxyMode === 'combined' ? 'MTProto + WEB' : 'Только MTProto'}
@@ -385,6 +385,19 @@ export function WebPage() {
                   <CardTitle>Параметры</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
+                  <p className="text-sm text-text-secondary">
+                    WEB_HOSTS добавляет домены к основному WEB_DOMAIN. У них общие пользователи,
+                    заглушка и путь WEB; для каждого домена нужна DNS-запись и сертификат.
+                    Кнопка «Ссылки» покажет адреса для всех точных доменов.
+                  </p>
+                  {status.hosts_supported === false && (
+                    <p className="text-sm text-warning">Дополнительные домены требуют telemt 3.5.15+. Перед применением обновите движок.</p>
+                  )}
+                  <p className="text-sm text-text-secondary">
+                    Шаблоны *.example.org и * доступны через внешний HAProxy с вашим сертификатом
+                    и экспертным allow_wildcard_hosts. Задержки HTTP-повторов настраиваются
+                    в экспертном разделе web.retry_jitter (telemt 3.5.16+).
+                  </p>
                   {visibleParams.map((p) => (
                     <div key={p.key} className="flex items-start justify-between gap-4">
                       <div className="min-w-0">

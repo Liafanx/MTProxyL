@@ -21,11 +21,14 @@ type WebStatus struct {
 	HAProxyCert    string `json:"haproxy_cert"`
 	// Layout is "shared" (one public port split by SNI) or "split" (WEB gets
 	// its own port and the proxy keeps PROXY_PORT untouched).
-	Layout     string `json:"layout"`
-	PublicPort int    `json:"public_port"`
-	ProxyPort  int    `json:"proxy_port"`
-	Domain     string `json:"domain"`
-	Carrier    string `json:"carrier"`
+	Layout         string   `json:"layout"`
+	PublicPort     int      `json:"public_port"`
+	ProxyPort      int      `json:"proxy_port"`
+	Domain         string   `json:"domain"`
+	Hosts          []string `json:"hosts,omitempty"`
+	HostsSupported bool     `json:"hosts_supported"`
+	DecoyResolve   string   `json:"decoy_resolve,omitempty"`
+	Carrier        string   `json:"carrier"`
 	// Carriers is the negotiation order before Carrier, comma-separated;
 	// empty disables negotiation. It needs telemt 3.5.4+.
 	Carriers          string `json:"carriers"`
@@ -147,6 +150,12 @@ var webValueRe = regexp.MustCompile(`^[A-Za-z0-9_.:/,@%+-]*$`)
 func ValidateWebParam(key, value string) error {
 	if !webKeyRe.MatchString(key) {
 		return fmt.Errorf("invalid parameter name %q", key)
+	}
+	if key == "WEB_HOSTS" {
+		if len(value) > 8192 || !regexp.MustCompile(`^[A-Za-z0-9_.,* -]*$`).MatchString(value) {
+			return fmt.Errorf("invalid WEB hosts list")
+		}
+		return nil
 	}
 	if len(value) > 512 {
 		return fmt.Errorf("value too long")

@@ -6,6 +6,7 @@
 
 WEB_MIN_ENGINE_VERSION="3.5.1"
 WEB_SITE_REDEPLOY_MARKER="${INSTALL_DIR}/.web-site-redeploy"
+source "${BASH_SOURCE[0]%/*}/web_hosts.sh"
 
 # В реаниматоре WEB цели ведёт отдельный флаг: WEB_ENABLED остаётся от
 # менеджера и к цели не относится. Раскладка там выбирается сама: только
@@ -84,10 +85,10 @@ web_haproxy_cert() {
 # В split порты разные, и совпадение безобидно. Поддомен берём по умолчанию в
 # обоих режимах — так переключение раскладки не меняет ссылки.
 web_domain() {
-    if [ -n "${WEB_DOMAIN:-}" ]; then echo "${WEB_DOMAIN}"; return 0; fi
+    if [ -n "${WEB_DOMAIN:-}" ]; then echo "${WEB_DOMAIN,,}"; return 0; fi
     local _base="${SELFMASK_DOMAIN:-}"
     [ -n "$_base" ] || return 1
-    echo "web.${_base}"
+    echo "web.${_base,,}"
 }
 
 web_decoy_dir()  { echo "${WEB_DECOY_DIR:-${SELFMASK_SITE_DIR:-/var/www/mtproxyl-selfmask}}"; }
@@ -327,8 +328,7 @@ web_carrier_survives_zapret2() {
 }
 
 web_zapret2_hurts() {
-    web_is_only_mode && return 1
-    web_layout_is_split && return 1
+    if ! web_is_only_mode && web_layout_is_split; then return 1; fi
     web_carrier_survives_zapret2 && return 1
     zapret2_in_effect 2>/dev/null
 }
@@ -385,6 +385,7 @@ TOML
 _web_decoy_toml() {
     if [ "${WEB_DECOY_MODE:-empty}" = "http_upstream" ]; then
         printf 'mode = "http_upstream"\nupstream = "%s"\n' "${WEB_DECOY_UPSTREAM}"
+        [ "${WEB_DECOY_RESOLVE:-never}" != startup ] || printf 'resolve = "startup"\n'
     else
         printf 'mode = "static_directory"\ndirectory = "%s"\nindex = "index.html"\n' "$(web_effective_decoy_dir)"
     fi
@@ -425,14 +426,22 @@ _web_profiles_toml() {
 # уникальным секретом.
 web_profile_count() {
     local i _n=0 _seen=" "
-    web_is_reanimator && { _web_target_users | grep -c .; return 0; }
+    if web_is_reanimator; then
+        _n=$(_web_target_users | grep -c .) || _n=0
+    else
     for i in "${!SECRETS_LABELS[@]}"; do
         [ "${SECRETS_ENABLED[$i]}" = "true" ] || continue
         case "$_seen" in *" ${SECRETS_KEYS[$i]} "*) continue ;; esac
         _seen+="${SECRETS_KEYS[$i]} "
         _n=$((_n + 1))
     done
-    echo "$_n"
+    fi
+    local _hosts=1
+    if [ -n "${WEB_HOSTS:-}" ]; then
+        _hosts=$(web_exact_hostnames | wc -l)
+        web_has_wildcard_hosts && _hosts=$((_hosts + 1))
+    fi
+    echo $((_n * _hosts))
 }
 
 # Движок отказывается стартовать, если профилей больше max_profiles, а по
@@ -474,6 +483,12 @@ web_duplicate_secret_labels() {
 
 web_sections_toml() {
     local _domain _addr
+    local _problems
+    _problems=$(web_hosts_problems; web_new_settings_problems)
+    [ -z "$_problems" ] || { log_error "$_problems" >&2; return 1; }
+    if [ "${WEB_DECOY_RESOLVE:-never}" = startup ] && ! web_engine_at_least 3.5.14; then
+        log_error 'DNS origin требует telemt 3.5.14+' >&2; return 1
+    fi
     _domain=$(web_domain)
     _addr=$(web_public_addr) || return 1
     [ -n "$_domain" ] || return 1
@@ -482,7 +497,9 @@ web_sections_toml() {
     web_carriers_toml
     printf '\n[web.debug]\nenabled = %s\n' "$([ "${WEB_DEBUG:-false}" = "true" ] && echo true || echo false)"
     web_engine_supports_path && printf 'sideband = %s\n' "$(web_sideband_enabled && echo true || echo false)"
-    printf '\n[[web.vhosts]]\nhost = "%s"\npublic_addr = "%s"\n' "$_domain" "$_addr"
+    printf '\n[[web.vhosts]]\n'
+    web_hosts_toml
+    printf 'public_addr = "%s"\n' "$_addr"
     local _base; _base=$(web_base_path)
     [ -z "$_base" ] || printf 'base_path = "%s"\n' "$_base"
     printf '\n[web.vhosts.decoy]\n'
@@ -525,7 +542,7 @@ web_nginx_stream_block() {
 stream {
     map_hash_bucket_size 128;
     map \$ssl_preread_server_name \$mtproxyl_upstream {
-        ${_domain}  mtproxyl_web;
+$(web_hostnames | sed 's/$/ mtproxyl_web;/')
         default     mtproxyl_faketls;
     }
 
@@ -661,7 +678,7 @@ web_nginx_http_server() {
     server {
         ${_listen}
         http2 on;
-        server_name ${_domain};
+        server_name $(web_hostnames_space);
         server_tokens off;
 
         ${_realip}
@@ -763,7 +780,7 @@ frontend mtproxyl_public
     timeout client 65s
     tcp-request inspect-delay 5s
     tcp-request content accept if { req.ssl_hello_type 1 }
-    acl mtproxyl_web_sni req.ssl_sni -i ${_domain}
+    acl mtproxyl_web_sni $(web_haproxy_host_acl req.ssl_sni)
     use_backend mtproxyl_web_nginx if mtproxyl_web_sni
     default_backend mtproxyl_mtproto
 
@@ -877,7 +894,7 @@ backend mtproxyl_web
     timeout connect 5s
     timeout server 65s
     timeout tunnel 65s
-    http-request set-header Host ${_domain}
+    http-request return status 421 if !{ $(web_haproxy_host_acl 'hdr(host),lower,field(1,:)') }
     http-request del-header X-Forwarded-For
     http-request set-header X-Forwarded-For %[src]
     http-request del-header If-None-Match
@@ -901,7 +918,7 @@ frontend mtproxyl_web_public
     mode http
     no log
     timeout client 65s
-    acl mtproxyl_web_host hdr(host) -i ${_domain} ${_domain}:443
+    acl mtproxyl_web_host $(web_haproxy_host_acl 'hdr(host),lower,field(1,:)')
     use_backend mtproxyl_web if mtproxyl_web_host
 
 backend mtproxyl_web
@@ -911,7 +928,7 @@ backend mtproxyl_web
     timeout connect 5s
     timeout server 65s
     timeout tunnel 65s
-    http-request set-header Host ${_domain}
+    http-request return status 421 if !{ $(web_haproxy_host_acl 'hdr(host),lower,field(1,:)') }
     http-request del-header X-Forwarded-For
     http-request set-header X-Forwarded-For %[src]
     http-request del-header If-None-Match
@@ -1261,6 +1278,12 @@ _web_suspend_mtproto_fixes() {
 
 _web_resume_mtproto_fixes() {
     load_nft_settings 2>/dev/null || true
+    # Ручной выбор в WEB-only важнее защиты, снятой при переходе в этот режим.
+    if nft list table inet "${NFT_TABLE:-mtproxyl_limit}" &>/dev/null; then
+        WEB_ONLY_PREV_NFT="true"; WEB_ONLY_PREV_ZAPRET2="false"
+    elif zapret2_is_running; then
+        WEB_ONLY_PREV_NFT="false"; WEB_ONLY_PREV_ZAPRET2="true"
+    fi
     if [ "${WEB_ONLY_PREV_NFT:-false}" = "true" ]; then
         apply_nft_rules >/dev/null 2>&1 && install_nft_service >/dev/null 2>&1 || \
             log_warn "SYN-лимитер не удалось вернуть автоматически"
@@ -1275,6 +1298,10 @@ _web_resume_mtproto_fixes() {
 
 # Порядок важен: пока движок держит публичный порт, nginx на него не сядет.
 _web_obtain_cert() {
+    if [ -n "${WEB_HOSTS:-}" ] && web_has_own_cert && [ "$(web_domain)" != "${SELFMASK_DOMAIN:-}" ]; then
+        _selfmask_obtain_web_cert
+        return $?
+    fi
     # Переиспользуем выпуск сертификата, но не сохраняем WEB-домен в Selfmask.
     local SELFMASK_DOMAIN="${SELFMASK_DOMAIN:-}"
     if [ "${SELFMASK_ENABLED:-false}" != true ]; then
@@ -1498,9 +1525,10 @@ _web_status_json_target() {
         _host=$(web_target_host 2>/dev/null)
         _mode=$(_web_target_secret_mode 2>/dev/null)
     fi
-    printf '{"enabled":%s,"proxy_mode":"target","mtproto_enabled":true,"frontend":"target","haproxy_ready":false,"haproxy_cert":"","layout":"target","public_port":%s,"proxy_port":%s,"domain":"%s","carrier":"","secret_mode":"%s","public_addr":"","listen_port":0,"tls_port":0,"mtproxy_port":0,"decoy_mode":"","decoy_dir":"","debug":false,"sideband":false,"base_path":"%s","base_path_saved":"","path_supported":false,"problems":"","owner":"target","reanimator":true}\n' \
+    printf '{"enabled":%s,"proxy_mode":"target","mtproto_enabled":true,"frontend":"target","haproxy_ready":false,"haproxy_cert":"","layout":"target","public_port":%s,"proxy_port":%s,"domain":"%s","carrier":"","secret_mode":"%s","public_addr":"","listen_port":0,"tls_port":0,"mtproxy_port":0,"decoy_mode":"","decoy_dir":"","debug":false,"sideband":false,"base_path":"%s","base_path_saved":"","path_supported":false,"problems":"","owner":"target","reanimator":true,"hosts":%s}\n' \
         "$_en" "${DETECTED_PORT:-443}" "${DETECTED_PORT:-443}" "$(json_escape "$_host")" "$(json_escape "$_mode")" \
-        "$(json_escape "$(web_target_base_path 2>/dev/null)")"
+        "$(json_escape "$(web_target_base_path 2>/dev/null)")" \
+        "$(web_target_hosts | jq -Rsc 'split("\n") | map(select(length > 0))')"
 }
 
 # В менеджере профили пересобираются вместе со всем конфигом, у цели правим
@@ -1533,7 +1561,7 @@ web_status_json() {
     _d=$(web_domain 2>/dev/null)
     _addr=$(web_public_addr 2>/dev/null)
     _problems=$( { web_is_reanimator && web_target_problems; web_preflight_problems; } 2>/dev/null | tr '\n' ';')
-    printf '{"enabled":%s,"proxy_mode":"%s","mtproto_enabled":%s,"frontend":"%s","haproxy_ready":%s,"haproxy_cert":"%s","layout":"%s","public_port":%s,"proxy_port":%s,"domain":"%s","carrier":"%s","carriers":"%s","carriers_supported":%s,"secret_mode":"%s","public_addr":"%s","listen_port":%s,"tls_port":%s,"mtproxy_port":%s,"decoy_mode":"%s","decoy_source":"%s","decoy_dir":"%s","debug":%s,"sideband":%s,"base_path":"%s","base_path_saved":"%s","path_supported":%s,"problems":"%s","owner":"mtproxyl","reanimator":%s,"engine_version":"%s","front":"%s","front_title":"%s"}\n' \
+    printf '{"enabled":%s,"proxy_mode":"%s","mtproto_enabled":%s,"frontend":"%s","haproxy_ready":%s,"haproxy_cert":"%s","layout":"%s","public_port":%s,"proxy_port":%s,"domain":"%s","carrier":"%s","carriers":"%s","carriers_supported":%s,"secret_mode":"%s","public_addr":"%s","listen_port":%s,"tls_port":%s,"mtproxy_port":%s,"decoy_mode":"%s","decoy_source":"%s","decoy_dir":"%s","debug":%s,"sideband":%s,"base_path":"%s","base_path_saved":"%s","path_supported":%s,"problems":"%s","owner":"mtproxyl","reanimator":%s,"engine_version":"%s","front":"%s","front_title":"%s","hosts":%s,"hosts_supported":%s,"decoy_resolve":"%s"}\n' \
         "$(web_is_enabled && echo true || echo false)" \
         "$(json_escape "$(if web_is_reanimator; then web_is_enabled && echo combined || echo mtproto; else echo "${PROXY_MODE:-mtproto}"; fi)")" \
         "$(mtproto_is_enabled && echo true || echo false)" \
@@ -1552,7 +1580,9 @@ web_status_json() {
         "$(json_escape "$(web_base_path)")" "$(json_escape "${WEB_BASE_PATH:-}")" \
         "$(web_engine_supports_path && echo true || echo false)" \
         "$(json_escape "$_problems")" "$(web_is_reanimator && echo true || echo false)" \
-        "$(json_escape "$(web_engine_version)")" "$(front_server)" "$(front_title)"
+        "$(json_escape "$(web_engine_version)")" "$(front_server)" "$(front_title)" \
+        "$(web_hostnames | jq -Rsc 'split("\n") | map(select(length > 0))')" \
+        "$(web_engine_at_least 3.5.15 && echo true || echo false)" "${WEB_DECOY_RESOLVE:-never}"
 }
 
 # ── Проверка предусловий ──────────────────────────────────────
@@ -1572,6 +1602,13 @@ web_preflight_problems() {
     local _p="" _d _ft _already="${1:-${WEB_ENABLED:-false}}"
     _d=$(web_domain 2>/dev/null)
     _ft=$(web_faketls_domain 2>/dev/null)
+    local _hosts_problems; _hosts_problems=$(web_hosts_problems)
+    [ -z "$_hosts_problems" ] || _p+="${_hosts_problems}"$'\n'
+    _hosts_problems=$(web_new_settings_problems)
+    [ -z "$_hosts_problems" ] || _p+="${_hosts_problems}"$'\n'
+    if [ "${WEB_DECOY_RESOLVE:-never}" = startup ] && ! web_engine_at_least 3.5.14; then
+        _p+="DNS origin требует telemt 3.5.14+"$'\n'
+    fi
     [ -n "$_d" ] || _p+="не задан домен: нужен свой FQDN с сертификатом"$'\n'
     if web_uses_managed_nginx && [ "${SELFMASK_ENABLED:-false}" = "true" ] \
        && [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "selfsigned" ]; then
@@ -1610,7 +1647,10 @@ web_preflight_problems() {
     fi
     case "${WEB_DECOY_MODE:-empty}" in
         http_upstream)
-            [ -n "${WEB_DECOY_UPSTREAM:-}" ] || _p+="не задан upstream для заглушки"$'\n' ;;
+            [ -n "${WEB_DECOY_UPSTREAM:-}" ] || _p+="не задан upstream для заглушки"$'\n'
+            if [ "${WEB_DECOY_RESOLVE:-never}" != startup ] && [[ "${WEB_DECOY_UPSTREAM:-}" =~ ^http://[a-zA-Z] ]]; then
+                _p+="DNS origin требует WEB_DECOY_RESOLVE=startup; все ответы DNS должны быть частными"$'\n'
+            fi ;;
         static_directory)
             [ -d "$(web_decoy_dir)" ] || _p+="каталог сайта-заглушки не найден: $(web_decoy_dir)"$'\n' ;;
     esac
@@ -1827,7 +1867,7 @@ web_status_print() {
         echo -e "   🎯 Цель             порт $(web_target_public_port), telemt $(web_engine_version)"
     fi
     echo -e "   🚪 Frontend         $(web_frontend_title)"
-    echo -e "   🔗 Домен            $(web_domain 2>/dev/null || echo '—')"
+    echo -e "   🔗 Домены           $(web_hostnames_space 2>/dev/null || echo '—')"
     if mtproto_is_enabled; then
         echo -e "   🎭 Домен маскировки $(web_faketls_domain 2>/dev/null || echo '—')"
     fi
@@ -1910,29 +1950,33 @@ web_status_print() {
 web_links_print() {
     if web_is_reanimator; then
         web_target_enabled || { log_warn "У цели WEB Proxy не включён"; return 1; }
-        local _u _m _l _k=0
+        local _u _m _l _host _k=0
         echo ""
         while IFS='|' read -r _u _m; do
             [ -n "$_u" ] || continue
-            _l=$(web_target_link "$_u") || continue
             echo -e "  ${BOLD}${_u}${NC}"
-            echo -e "  ${CYAN}${_l}${NC}\n"
+            while IFS= read -r _host; do
+                _l=$(web_target_link "$_u" "$_host") || continue
+                echo -e "  ${CYAN}${_l}${NC}\n"
+            done < <(web_target_hosts | awk 'index($0,"*")==0')
             _k=$((_k + 1))
         done <<< "$(web_target_profiles)"
         [ "$_k" -gt 0 ] || { log_warn "Не удалось собрать ни одной ссылки"; return 1; }
         return 0
     fi
     web_is_enabled || { log_warn "WEB Proxy выключен"; return 1; }
-    local i _link _n=0 _seen=" "
+    local i _link _host _n=0 _seen=" "
     echo ""
     for i in "${!SECRETS_LABELS[@]}"; do
         [ "${SECRETS_ENABLED[$i]}" = "true" ] || continue
         # Профиля у дубля секрета нет — ссылка на него не работала бы.
         case "$_seen" in *" ${SECRETS_KEYS[$i]} "*) continue ;; esac
         _seen+="${SECRETS_KEYS[$i]} "
-        _link=$(web_link_for_secret "${SECRETS_KEYS[$i]}") || continue
         echo -e "  ${BOLD}${SECRETS_LABELS[$i]}${NC}"
-        echo -e "  ${CYAN}${_link}${NC}\n"
+        while IFS= read -r _host; do
+            _link=$(web_format_link "$_host" "$(web_base_path)" "${WEB_SECRET_MODE:-dd}" "${SECRETS_KEYS[$i]}") || continue
+            echo -e "  ${CYAN}${_link}${NC}\n"
+        done < <(web_exact_hostnames)
         _n=$((_n + 1))
     done
     [ "$_n" -gt 0 ] || { log_warn "Нет включённых пользователей"; return 1; }
@@ -1977,6 +2021,7 @@ _WEB_SETTABLE=(
     "WEB_LAYOUT|enum:shared,split|shared — один порт с FakeTLS по SNI, split — свой порт"
     "WEB_PUBLIC_PORT|range:1:65535|Порт nginx WEB в раскладке split"
     "WEB_DOMAIN|custom:_validate_web_domain|Публичный домен WEB Proxy"
+    "WEB_HOSTS|custom:_validate_web_hosts|Дополнительные WEB-домены через запятую, telemt 3.5.15+; общие пользователи и заглушка; пусто — только основной домен"
     "WEB_CARRIER|enum:https,https-lanes,websocket,websocket-lanes|Транспорт carrier"
     "WEB_CARRIERS|custom:_validate_web_carriers_setting|Перебор carrier до основного через запятую, по порядку; пусто — без перебора (telemt 3.5.4+)"
     "WEB_SECRET_MODE|enum:plain,dd|Представление секрета в ссылке"
@@ -1990,6 +2035,7 @@ _WEB_SETTABLE=(
     "WEB_DECOY_SOURCE|custom:_validate_web_site_source|Шаблон, URL на index.html или папка с сайтом"
     "WEB_DECOY_DIR|custom:_validate_web_decoy_dir|Каталог сайта-заглушки"
     "WEB_DECOY_UPSTREAM|custom:_validate_web_upstream|HTTP-origin заглушки"
+    "WEB_DECOY_RESOLVE|enum:never,startup|DNS для HTTP-origin: never — только частный IP, startup — разрешить имя при подготовке конфига (telemt 3.5.14+); все ответы должны быть частными"
     "WEB_DEBUG|enum:true,false|Страница диагностики /web-status"
     "WEB_DEBUG_SIDEBAND|enum:true,false|Отчёты bridge-страницы в /web-status (telemt 3.5.8+, вместе с WEB_DEBUG)"
     "WEB_DNS_CHECK|enum:true,false|Сверять A-запись WEB-домена с IP сервера; false — для CDN и балансировщика перед сервером"
@@ -2067,8 +2113,17 @@ _validate_web_site_source() {
 _validate_web_upstream() {
     local _v="$1"
     [ -n "$_v" ] || return 0
+    if [[ "$_v" =~ ^http://([a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?)(:([0-9]+))?$ ]]; then
+        local _host="${BASH_REMATCH[1]}" _port="${BASH_REMATCH[4]:-80}"
+        [ "$_port" -ge 1 ] && [ "$_port" -le 65535 ] || { echo 'Порт origin: 1..65535' >&2; return 1; }
+        if [[ "$_host" == *[!0-9.]* ]]; then
+            [[ "$_host" != *..* ]] || { echo 'Некорректное DNS-имя origin' >&2; return 1; }
+            return 0
+        fi
+        validate_ip_literal "$_host" >/dev/null 2>&1 || { echo 'Некорректный IPv4 origin' >&2; return 1; }
+    fi
     [[ "$_v" =~ ^http://(127\.[0-9.]+|10\.[0-9.]+|172\.(1[6-9]|2[0-9]|3[01])\.[0-9.]+|192\.168\.[0-9.]+|169\.254\.[0-9.]+|\[::1\])(:[0-9]+)?$ ]] || {
-        echo "движок принимает только loopback, link-local или частный IP без пути" >&2; return 1; }
+        echo "Нужен http:// с частным IP либо DNS-именем без пути и учётных данных; DNS требует WEB_DECOY_RESOLVE=startup" >&2; return 1; }
 }
 
 _validate_web_haproxy_cert() {
@@ -2193,6 +2248,9 @@ web_set_param() {
         WEB_CARRIERS="$_val"
         # Экспертный web.carriers перекрыл бы эту настройку — источник один.
         delete_expert_override web carriers 2>/dev/null || true
+    elif [ "$_key" = WEB_HOSTS ]; then
+        _val=$(printf '%s' "${_val,,}" | tr -d '[:space:]')
+        WEB_HOSTS="$_val"
     else
         printf -v "$_key" '%s' "$_val"
     fi
@@ -2235,17 +2293,25 @@ web_target_enabled() {
 }
 
 # Первый vhost: host лежит в [[web.vhosts]], до вложенных таблиц decoy/profiles.
-web_target_host() {
+web_target_hosts() {
     local _f="${DETECTED_CONFIG_PATH:-}"
     [ -f "$_f" ] || return 1
     awk '
-        /^[[:space:]]*\[\[web\.vhosts\]\][[:space:]]*$/ { inv=1; next }
+        /^[[:space:]]*\[\[web\.vhosts\]\][[:space:]]*$/ { if (seen++) exit; inv=1; next }
         /^[[:space:]]*\[/ { if (inv) inv=0 }
-        inv && /^[[:space:]]*host[[:space:]]*=/ {
+        inv && /^[[:space:]]*hosts?[[:space:]]*=/ { reading=1 }
+        inv && reading {
             line=$0; sub(/^[^=]*=[[:space:]]*/, "", line)
-            gsub(/^"|"[[:space:]]*$/, "", line); print line; exit
+            sub(/[[:space:]]*#.*/, "", line)
+            while (match(line, /["\047][A-Za-z0-9.*_-]+["\047]/)) {
+                print tolower(substr(line, RSTART+1, RLENGTH-2))
+                line=substr(line,RSTART+RLENGTH)
+            }
+            if (line ~ /\]/ || $0 ~ /^[[:space:]]*host[[:space:]]*=/) exit
         }' "$_f"
 }
+
+web_target_host() { web_target_hosts | awk 'index($0,"*")==0 {print; exit}'; }
 
 # Пары «пользователь|secret_mode» из [[web.vhosts.profiles]].
 web_target_profiles() {
@@ -2444,7 +2510,7 @@ web_target_sync_profiles() {
 web_target_link() {
     local _label="$1" _host _u _m _raw
     web_target_enabled || return 1
-    _host=$(web_target_host) || return 1
+    _host="${2:-$(web_target_host)}"
     [ -n "$_host" ] || return 1
     while IFS='|' read -r _u _m; do
         [ "$_u" = "$_label" ] || continue
@@ -2525,7 +2591,7 @@ _web_target_has_section() {
 # ── Лимиты и таймауты WEB у цели ──────────────────────────────
 # Свои оверрайды цели — отдельно от expert.conf своего движка: при смене
 # режима они не должны попасть в чужой конфиг.
-WEB_TARGET_TUNING_SECTIONS="web.limits web.timeouts"
+WEB_TARGET_TUNING_SECTIONS="web.limits web.timeouts web.retry_jitter web.limits.wildcard"
 
 # Файлы, подключённые к конфигу цели через include = "…" (путь от его каталога).
 _web_target_includes() {
@@ -2573,6 +2639,7 @@ _web_target_tuning_toml() {
         _hdr=""
         while IFS='|' read -r _src _k _v; do
             [ -n "$_k" ] || continue
+            _expert_supported "$_s" "$_k" || continue
             [ -n "$_hdr" ] || { _hdr=1; printf '\n[%s]\n' "$_s"; }
             printf '%s = %s\n' "$_k" "$(_expert_toml_value "$_s" "$_k" "$_v")"
         done < <(_web_target_tuning_lines "$_s")
@@ -2587,6 +2654,7 @@ _web_target_merge_tuning() {
         _f=$(_web_target_table_file "$_s") || continue
         while IFS='|' read -r _src _k _v; do
             [ -n "$_k" ] || continue
+            _expert_supported "$_s" "$_k" || continue
             if [ "$_src" = "auto" ]; then
                 _cur=$(_toml_get_string_in_section "$_s" "$_k" "$_f" 2>/dev/null)
                 [[ "$_cur" =~ ^[0-9]+$ ]] && [ "$_cur" -ge "$_v" ] && continue
@@ -2610,7 +2678,8 @@ max_header_bytes=16384 max_http_overload_connections=64 memory_envelope_bytes=13
 max_body_readers=32 max_body_bytes=2097152 pending_bytes_per_session=33554432 \
 pending_bytes_per_lane=8388608 max_sessions_per_ip=16 max_streams_global=4096 \
 max_stream_handshakes=256 max_bootstraps_per_ip=64 max_bootstraps_global=512 \
-max_http_handlers=512 max_static_file_bytes=8388608"
+max_http_handlers=512 max_static_file_bytes=8388608 wildcard_enabled=0 \
+wildcard_max_rules=32 wildcard_max_profiles_per_request=256 wildcard_cache_bytes=8388608"
 
 # Вход — строки «ключ=значение» (позднее перекрывает раннее), выход — проблемы.
 web_limits_problems() {
@@ -2626,6 +2695,11 @@ web_limits_problems() {
                 + ring + 2 * 8388608 + v["debug_bytes_global"] + 2 * ring + 2 * 4194304 \
                 + v["max_carrier_learning_entries"] * 512 + v["max_profiles"] * 64 + lane \
                 + v["max_http_connections"] * v["max_header_bytes"] + v["max_http_overload_connections"] * 4096
+            if (v["wildcard_enabled"])
+                res += v["wildcard_max_profiles_per_request"] * 32 * v["max_http_handlers"] \
+                    + 1024 * v["max_http_handlers"] + v["wildcard_cache_bytes"] \
+                    + v["wildcard_max_rules"] * 1024 + v["max_profiles"] * 1024 \
+                    + (v["max_bootstraps_global"] + v["max_sessions_global"]) * 1024
             if (res > v["memory_envelope_bytes"])
                 printf "резервы WEB %d МиБ не помещаются в memory_envelope_bytes %d МиБ (состояние потоков %d МиБ = (max_streams_per_session + max_tombstones_per_session + 1) × max_sessions_global × 1 КиБ) — поднимите memory_envelope_bytes до %d или уменьшите лимиты\n", \
                     m(res), m(v["memory_envelope_bytes"]), m(lane), m(res) * 1048576
@@ -2667,6 +2741,10 @@ _web_limits_effective() {
         _f=$(_web_target_table_file web.limits 2>/dev/null) && _toml_section_numbers web.limits "$_f"
     fi
     awk -F'|' '$1 == "web.limits" && $2 != "" { print $2 "=" $3 }' "$EXPERT_OVERRIDES_FILE" 2>/dev/null
+    if [ "$(get_expert_override_value web allow_wildcard_hosts)" = true ]; then
+        echo 'wildcard_enabled=1'
+        awk -F'|' '$1 == "web.limits.wildcard" && ($2 == "max_rules" || $2 == "max_profiles_per_request" || $2 == "cache_bytes") {print "wildcard_" $2 "=" $3}' "$EXPERT_OVERRIDES_FILE" 2>/dev/null
+    fi
 }
 
 # Проблемы лимитов WEB, если кто-то их задавал и движок считает по этой формуле.

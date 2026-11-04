@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
-import { themeApi } from '@/lib/api'
+import { themeApi, type PanelThemeSettings } from '@/lib/api'
 import {
   CUSTOM_THEME_COLOR_KEYS,
   CUSTOM_THEME_STORAGE_KEY,
@@ -53,6 +53,8 @@ interface ThemeContextValue {
   syncStatus: ThemeSyncStatus
   syncError: string
   retrySave: () => void
+  flush: () => Promise<void>
+  acceptSettings: (settings: PanelThemeSettings) => void
   setTheme: (next: Theme) => void
   setCustomColor: (key: ThemeColorKey, value: string) => void
   copyThemeColors: (source: Exclude<Theme, 'custom'>) => void
@@ -66,6 +68,8 @@ export const ThemeContext = createContext<ThemeContextValue>({
   syncStatus: 'loading',
   syncError: '',
   retrySave: () => {},
+  flush: async () => {},
+  acceptSettings: () => {},
   setTheme: () => {},
   setCustomColor: () => {},
   copyThemeColors: () => {},
@@ -123,6 +127,7 @@ export function useThemeProvider(authenticated: boolean): ThemeContextValue {
   const [customColors, setCustomColors] = useState<CustomThemeColors>(readCustomThemeColors)
   const [scheme, setScheme] = useState<ColorScheme>(() => resolveScheme(theme, customColors))
   const [serverLoaded, setServerLoaded] = useState(false)
+  const [loadRevision, setLoadRevision] = useState(0)
   const [dirtyRevision, setDirtyRevision] = useState(0)
   const [syncStatus, setSyncStatus] = useState<ThemeSyncStatus>('loading')
   const [syncError, setSyncError] = useState('')
@@ -159,10 +164,10 @@ export function useThemeProvider(authenticated: boolean): ThemeContextValue {
       if (cancelled) return
       setSyncError(error instanceof Error ? error.message : 'Не удалось загрузить тему панели')
       setSyncStatus('error')
-      setServerLoaded(true)
+      setServerLoaded(false)
     })
     return () => { cancelled = true }
-  }, [])
+  }, [loadRevision])
 
   useEffect(() => {
     if (theme === 'custom' && Object.keys(customColors).length === 0) {
@@ -235,8 +240,34 @@ export function useThemeProvider(authenticated: boolean): ThemeContextValue {
   }
   const toggle = () => setTheme(resolveScheme(theme, customColors) === 'dark' ? 'light' : 'dark')
 
+  const acceptSettings = (settings: PanelThemeSettings) => {
+    revisionRef.current += 1
+    setDirtyRevision(0)
+    setThemeState(isTheme(settings.theme) ? settings.theme : 'dark')
+    setCustomColors(sanitizeCustomThemeColors(settings.colors))
+    setServerLoaded(true)
+    setSyncError('')
+    setSyncStatus('saved')
+  }
+
+  const flush = async () => {
+    if (!serverLoaded || !authenticated) throw new Error('Сначала загрузите настройки темы и войдите в панель')
+    revisionRef.current += 1
+    setDirtyRevision(0)
+    setSyncStatus('saving')
+    await saveQueueRef.current.catch(() => {})
+    try {
+      acceptSettings(await themeApi.update(theme, customColors))
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : 'Не удалось сохранить тему')
+      setSyncStatus('error')
+      throw err
+    }
+  }
+
   return { theme, scheme, customColors, syncStatus, syncError,
-    retrySave: markChanged, setTheme, setCustomColor, copyThemeColors, toggle }
+    retrySave: () => { if (serverLoaded) markChanged(); else { setSyncStatus('loading'); setLoadRevision((v) => v + 1) } },
+    flush, acceptSettings, setTheme, setCustomColor, copyThemeColors, toggle }
 }
 
 export function useTheme() {

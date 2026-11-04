@@ -22,6 +22,7 @@ _IA_SECRETS=()
 _IA_SELFMASK_DOMAIN=""; _IA_SELFMASK_CERT=""; _IA_SELFMASK_EMAIL=""
 _IA_SELFMASK_TEMPLATE=""; _IA_SELFMASK_BACKEND_PORT=""; _IA_FRONT=""
 _IA_WEB=""; _IA_WEB_DOMAIN=""; _IA_WEB_CARRIER=""; _IA_WEB_CARRIERS=""; _IA_WEB_LAYOUT=""; _IA_WEB_FRONTEND=""
+_IA_WEB_HOSTS=""; _IA_WEB_DECOY_RESOLVE=""
 _IA_WEB_HAPROXY_CERT=""
 _IA_WEB_PORT=""; _IA_WEB_SECRET_MODE=""; _IA_WEB_PATH=""
 _IA_WEB_DECOY=""; _IA_WEB_DECOY_UPSTREAM=""
@@ -118,6 +119,8 @@ install_args_help() {
                                HAProxy перед встроенным nginx
     --web-haproxy-cert ПУТЬ    PEM сертификат + ключ для фрагмента HAProxy
     --web-domain <домен>       по умолчанию web.<домен selfmask>
+    --web-hosts <домены>       дополнительные домены через запятую (telemt 3.5.15+)
+    --web-decoy-resolve <режим> never или startup для DNS origin (telemt 3.5.14+)
     --web-carrier https|https-lanes|websocket|websocket-lanes
     --web-carriers <список>    перебор carrier через запятую (telemt 3.5.4+)
     --web-port N               публичный порт WEB для WEB-only и split
@@ -253,6 +256,8 @@ _install_args_parse() {
                     *) log_error "--web: yes или no"; return 1 ;;
                 esac ;;
             --web-domain)      _IA_WEB_DOMAIN="${_v,,}" ;;
+            --web-hosts)       _IA_WEB_HOSTS="${_v,,}" ;;
+            --web-decoy-resolve) _IA_WEB_DECOY_RESOLVE="$_v" ;;
             --web-carrier)     _IA_WEB_CARRIER="$_v" ;;
             --web-carriers)    _IA_WEB_CARRIERS="${_v,,}" ;;
             --web-layout)      _IA_WEB_LAYOUT="$_v" ;;
@@ -513,6 +518,9 @@ _install_args_validate() {
         fi
         _key="${_s##*:}"; _label="${_s%:*}"
         [ "$_label" = "$_s" ] && _label="default"
+        if _owner=$(_secret_key_owner "$_key"); then
+            log_warn "${_label}: ключ уже у '${_owner}' — пропущен"; continue
+        fi
         if ! [[ "$_key" =~ ^[0-9a-fA-F]{32}$ ]]; then
             log_error "--secret '${_s}': ключ — 32 hex-символа, формат «метка:ключ» или просто ключ"; _ok=false
         fi
@@ -615,7 +623,7 @@ _install_args_validate() {
     fi
     if [ -n "$_IA_WEB_DECOY_UPSTREAM" ] \
        && ! _validate_web_upstream "$_IA_WEB_DECOY_UPSTREAM" >/dev/null 2>&1; then
-        log_error "--web-decoy-upstream: нужен приватный URL http://IP[:порт]"; _ok=false
+        log_error "--web-decoy-upstream: http://частный-IP[:порт] либо DNS-имя с --web-decoy-resolve startup"; _ok=false
     fi
     if [ -n "$_IA_WEB_DECOY_UPSTREAM" ] && [ "$_IA_WEB_DECOY" != "upstream" ]; then
         log_error "--web-decoy-upstream применяется только с --web-decoy upstream"; _ok=false
@@ -632,7 +640,12 @@ _install_args_validate() {
     if [ "$_IA_WEB" = "yes" ] && [ -z "$_IA_WEB_DOMAIN" ] && [ -z "$_IA_SELFMASK_DOMAIN" ]; then
         log_error "--web yes требует --web-domain <домен> либо --selfmask <домен>"; _ok=false
     fi
-    if [ "$_IA_WEB" != "yes" ] && { [ -n "$_IA_WEB_DOMAIN" ] || [ -n "$_IA_WEB_CARRIER" ] || [ -n "$_IA_WEB_CARRIERS" ] || \
+    if [ -n "$_IA_WEB_HOSTS" ]; then
+        local WEB_DOMAIN="${_IA_WEB_DOMAIN:-web.${_IA_SELFMASK_DOMAIN}}"
+        _validate_web_hosts "$_IA_WEB_HOSTS" || { log_error '--web-hosts: некорректный список'; _ok=false; }
+    fi
+    case "$_IA_WEB_DECOY_RESOLVE" in ''|never|startup) ;; *) log_error '--web-decoy-resolve: never или startup'; _ok=false ;; esac
+    if [ "$_IA_WEB" != "yes" ] && { [ -n "$_IA_WEB_DOMAIN" ] || [ -n "$_IA_WEB_HOSTS" ] || [ -n "$_IA_WEB_DECOY_RESOLVE" ] || [ -n "$_IA_WEB_CARRIER" ] || [ -n "$_IA_WEB_CARRIERS" ] || \
        [ -n "$_IA_WEB_LAYOUT" ] || [ -n "$_IA_WEB_PORT" ] || [ -n "$_IA_WEB_SECRET_MODE" ] || [ -n "$_IA_WEB_DNS_CHECK" ] || \
        [ -n "$_IA_WEB_FRONTEND" ] || [ -n "$_IA_WEB_HAPROXY_CERT" ] || \
        [ -n "$_IA_WEB_DECOY" ] || [ -n "$_IA_WEB_DECOY_UPSTREAM" ] || [ -n "$_IA_WEB_PATH" ]; }; then
@@ -978,7 +991,7 @@ _install_args_secrets() {
     SECRETS_MAX_CONNS=(); SECRETS_MAX_IPS=(); SECRETS_QUOTA=(); SECRETS_EXPIRES=(); SECRETS_NOTES=()
     SECRETS_ADTAG=(); SECRETS_RATE=()
 
-    local _s _label _key _now; _now=$(date +%s)
+    local _s _label _key _owner _now; _now=$(date +%s)
     local _IMP_L _IMP_K _IMP_CR _IMP_EN _IMP_MC _IMP_MI _IMP_Q _IMP_EX _IMP_N _IMP_AT _IMP_RT
     if [ ${#_IA_SECRETS[@]} -eq 0 ]; then
         _IA_SECRETS=("default:$(generate_secret)")
@@ -986,6 +999,9 @@ _install_args_secrets() {
     fi
     for _s in "${_IA_SECRETS[@]}"; do
         if [[ "$_s" == *"|"* ]] && _secret_parse_line "$_s"; then
+            if _owner=$(_secret_key_owner "$_IMP_K"); then
+                log_warn "${_IMP_L}: ключ уже у '${_owner}' — пропущен"; continue
+            fi
             SECRETS_LABELS+=("$_IMP_L"); SECRETS_KEYS+=("${_IMP_K,,}")
             SECRETS_CREATED+=("$_IMP_CR"); SECRETS_ENABLED+=("$_IMP_EN")
             SECRETS_MAX_CONNS+=("$_IMP_MC"); SECRETS_MAX_IPS+=("$_IMP_MI")
@@ -995,6 +1011,9 @@ _install_args_secrets() {
         fi
         _key="${_s##*:}"; _label="${_s%:*}"
         [ "$_label" = "$_s" ] && _label="default"
+        if _owner=$(_secret_key_owner "$_key"); then
+            log_warn "${_label}: ключ уже у '${_owner}' — пропущен"; continue
+        fi
         SECRETS_LABELS+=("$_label"); SECRETS_KEYS+=("${_key,,}")
         SECRETS_CREATED+=("$_now"); SECRETS_ENABLED+=("true")
         SECRETS_MAX_CONNS+=("0"); SECRETS_MAX_IPS+=("0")
@@ -1058,6 +1077,8 @@ _install_args_web() {
     esac
     WEB_DECOY_UPSTREAM="${_IA_WEB_DECOY_UPSTREAM:-}"
     [ -n "$_IA_WEB_DOMAIN" ]      && WEB_DOMAIN="$_IA_WEB_DOMAIN"
+    [ -n "$_IA_WEB_HOSTS" ]       && WEB_HOSTS="$_IA_WEB_HOSTS"
+    [ -n "$_IA_WEB_DECOY_RESOLVE" ] && WEB_DECOY_RESOLVE="$_IA_WEB_DECOY_RESOLVE"
     [ -n "$_IA_WEB_CARRIER" ]     && WEB_CARRIER="$_IA_WEB_CARRIER"
     [ -n "$_IA_WEB_CARRIERS" ]    && WEB_CARRIERS="$_IA_WEB_CARRIERS"
     [ -n "$_IA_WEB_SECRET_MODE" ] && WEB_SECRET_MODE="$_IA_WEB_SECRET_MODE"

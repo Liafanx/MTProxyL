@@ -7,6 +7,7 @@ import { ProxyControls } from '@/components/ProxyControls';
 import { ConnectionErrors, type ClassCount } from '@/components/ConnectionErrors';
 import { AvailabilityCard } from '@/components/AvailabilityCard';
 import { MtproxylUpdateBanner } from '@/components/MtproxylUpdateCard';
+import { PanelUpdateBanner } from '@/components/PanelUpdateBanner';
 import { HealthBanner, type HealthFact } from '@/components/HealthBanner';
 import { ProblemsCard, type ProblemItem } from '@/components/ProblemsCard';
 import { Card, CardContent } from '@/components/ui/card';
@@ -114,7 +115,7 @@ export function DashboardPage() {
   }, [usersData]);
 
   const history = useHistorySeries(
-    ['connections', 'refusals', 'probes', 'active_ips', 'traffic', 'current_connections', 'active_users'],
+    ['connections', 'refusals', 'probes', 'active_ips', 'unique_ips', 'traffic', 'current_connections', 'active_users'],
     '30m',
     10_000,
   );
@@ -229,6 +230,7 @@ export function DashboardPage() {
         {firstError && <ErrorAlert message={firstError} onRetry={refresh} />}
 
         <MtproxylUpdateBanner />
+        <PanelUpdateBanner />
 
         <HealthBanner
           state={hero.state}
@@ -299,6 +301,7 @@ export function DashboardPage() {
           <LoadCard
             connections={history.series.current_connections}
             activeUsers={history.series.active_users}
+            uniqueIPs={history.series.unique_ips}
             telemetryOff={telemetryOff}
             loading={history.loading}
             manager={mtproxylEnabled && mtproxylMode === 'manager'}

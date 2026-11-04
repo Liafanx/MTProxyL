@@ -122,6 +122,7 @@ tui_secrets_menu() {
         echo -e "  ${DIM}[11]${NC} Экспорт секретов"
         echo -e "  ${DIM}[12]${NC} Импорт секретов"
         echo -e "  ${DIM}[13]${NC} Рекламная метка пользователя"
+        echo -e "  ${DIM}[14]${NC} Заметка к пользователю"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
@@ -193,8 +194,12 @@ tui_secrets_menu() {
                     if [ $idx -ge 0 ]; then
                         echo -e "  ${DIM}Текущий: ${SECRETS_KEYS[$idx]}${NC}"
                         echo -en "  ${BOLD}Новый ключ (32 hex):${NC} "; local nk; read_line nk
-                        if [[ "$nk" =~ ^[0-9a-fA-F]{32}$ ]]; then
-                            SECRETS_KEYS[$idx]="$nk"
+                        local _own=""
+                        [[ "$nk" =~ ^[0-9a-fA-F]{32}$ ]] && _own=$(_secret_key_owner "$nk" "$idx")
+                        if [ -n "$_own" ]; then
+                            log_error "Этот ключ уже у пользователя '${_own}'"
+                        elif [[ "$nk" =~ ^[0-9a-fA-F]{32}$ ]]; then
+                            SECRETS_KEYS[$idx]="${nk,,}"
                             save_secrets; reload_proxy_config 2>/dev/null || true
                             log_success "Ключ для '${l}' изменён"
                         elif [ -n "$nk" ]; then log_error "Ключ должен быть ровно 32 hex-символа"; fi
@@ -218,6 +223,17 @@ tui_secrets_menu() {
                     echo -e "  ${DIM}32 hex-символа от @MTProxybot, 'remove' — снять${NC}"
                     echo -en "  ${BOLD}Рекламная метка:${NC} "; local at; read_line at
                     [ -n "$at" ] && { secret_set_adtag "$l" "$at" || true; }
+                fi
+                press_any_key ;;
+            14)
+                echo -en "  ${BOLD}Метка или #:${NC} "; local l; read_line l
+                if [[ "$l" =~ ^[0-9]+$ ]] && [ "$l" -ge 1 ] && [ "$l" -le "${#SECRETS_LABELS[@]}" ]; then
+                    l="${SECRETS_LABELS[$((l - 1))]}"; fi
+                if [ -n "$l" ]; then
+                    echo -e "  ${DIM}Сейчас: $(secret_set_note "$l" 2>/dev/null | grep . || echo 'нет')${NC}"
+                    echo -e "  ${DIM}До 200 символов, '-' — стереть, Enter — оставить${NC}"
+                    echo -en "  ${BOLD}Заметка:${NC} "; local nt; read_line nt
+                    [ -n "$nt" ] && { secret_set_note "$l" "$nt" || true; }
                 fi
                 press_any_key ;;
             0|"") return ;;

@@ -17,6 +17,7 @@
 #   custom:FUNCNAME           — вызвать функцию FUNCNAME "$value"
 
 declare -a _EXPERT_CATALOG=()
+source "${BASH_SOURCE[0]%/*}/web_hosts.sh"
 
 _catalog() {
     _EXPERT_CATALOG+=("$1|$2|$3|$4|$5|$6|$7|$8")
@@ -212,6 +213,24 @@ _catalog "web" "carrier_negotiation_aggressiveness" "enum" "conservative" "✔" 
 _catalog "web" "carriers"                     "carrier_list" "false" "✔" "custom:_validate_web_carriers" "false или список через запятую" "Порядок перебора carrier при автосогласовании"
 _catalog "web" "carrier_method"               "enum"  "post"     "✔" "enum:post,put"                     "post/put"          "HTTP-метод carrier в bridge-странице; put — переиспользование соединений в WebKitGTK (telemt 3.5.12+)"
 _catalog "web" "conveyor"                     "bool"  "true"     "✔" "bool"                              "true/false"        "Конвейер HTTP-запросов uplink для новых WEB-сессий (telemt 3.5.13+)"
+_catalog "web" "allow_wildcard_hosts"         "bool"  "false"    "✘" "bool"                              "true/false; нужен перезапуск" "Разрешить *.example.org и * в WEB_HOSTS (telemt 3.5.15+); TLS и frontend должны принимать эти имена"
+_catalog "web.timeouts" "decoy_resolve_secs"   "u64"   "5"        "✔" "range:1:3600"                      "1..3600 секунд"    "DNS-таймаут одной пары имя/порт origin при resolve=startup (telemt 3.5.14+)"
+
+# telemt 3.5.15: лимиты wildcard принадлежат процессу.
+_catalog "web.limits.wildcard" "max_rules"                "usize" "32"      "✘" "range:1:65536"      "положительное число" "Максимум суффиксных селекторов и catch-all"
+_catalog "web.limits.wildcard" "max_profiles_per_request" "usize" "256"     "✘" "range:1:65536"      "не больше cold_hmac_burst" "Максимум профилей для холодного запроса wildcard"
+_catalog "web.limits.wildcard" "cache_hosts"              "usize" "256"     "✘" "range:0:1048576"    "0 — без хранения"  "Размер положительного кэша доменов wildcard"
+_catalog "web.limits.wildcard" "cache_bytes"              "usize" "8388608" "✘" "range:1:4294967296" "байты"             "Бюджет памяти кэша wildcard, включая вытесненные записи в работе"
+_catalog "web.limits.wildcard" "cold_hmac_per_minute"     "u32"   "1000000" "✘" "range:1:4294967295" "вычисления в минуту" "Устойчивый бюджет холодных HMAC для wildcard"
+_catalog "web.limits.wildcard" "cold_hmac_burst"          "u32"   "65536"   "✘" "range:1:4294967295" "не меньше max_profiles_per_request" "Допустимый всплеск холодных HMAC"
+
+# telemt 3.5.16: политика фиксируется при выдаче новой bridge-страницы.
+_catalog "web.retry_jitter" "enabled"      "bool" "false"   "✔" "bool"                    "true/false"       "Добавочная случайная задержка HTTP-повторов WEB; успешный трафик не задерживается"
+_catalog "web.retry_jitter" "min_ms"       "u32"  "0"       "✔" "range:0:30000"           "не больше max_ms" "Минимальная добавка к паузе HTTP-повтора, мс"
+_catalog "web.retry_jitter" "max_ms"       "u32"  "250"     "✔" "range:0:30000"           "не меньше min_ms" "Максимальная добавка к паузе HTTP-повтора, мс"
+_catalog "web.retry_jitter" "distribution" "enum" "uniform" "✔" "enum:uniform,triangular" "uniform/triangular" "Равномерное или треугольное распределение задержки"
+_catalog "web.retry_jitter" "peak_ms"      "u32"  ""        "✔" "range:0:30000"           "только triangular; по умолчанию середина" "Пик треугольного распределения внутри min_ms..max_ms"
+_catalog "access" "user_quota_periods" "quota_periods" "{}" "✘" "custom:_validate_quota_periods" '{"alice":"monthly"}' "Периодические квоты telemt 3.5.15+: daily, weekly, monthly; границы UTC, нужна положительная квота; checkpoint хранится на сервере, применение через перезапуск"
 
 # ── web.debug ─────────────────────────────────────────────────
 _catalog "web.debug" "capture_lifecycle"      "bool"  "true"     "✔" "bool"                              "true/false"        "Записывать события bridge, сессий и потоков"
@@ -361,7 +380,9 @@ _EXPERT_SECTIONS=(
     "logging"
     "web"
     "web.limits"
+    "web.limits.wildcard"
     "web.timeouts"
+    "web.retry_jitter"
     "web.debug"
 )
 

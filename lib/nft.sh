@@ -338,6 +338,11 @@ prompt_apply_nft_rules() {
     fi
 }
 
+# В WEB-only защищаем публичный frontend, а не резервный порт MTProto.
+nft_default_port() {
+    if web_is_only_mode 2>/dev/null; then web_public_port; else echo "${PROXY_PORT:-443}"; fi
+}
+
 # ── Генерация NFT скрипта ─────────────────────────────────────
 generate_nft_script() {
     local _ip=""
@@ -347,7 +352,7 @@ generate_nft_script() {
         _ip=""
         log_warn "NFT: список адресов SERVER_IPS пуст — правило для всех IP сервера"
     fi
-    local _port="${PROXY_PORT:-443}"
+    local _port; _port=$(nft_default_port)
     local _timeout="${NFT_METER_TIMEOUT:-60s}"
     local _table="${NFT_TABLE:-mtproxyl_limit}"
     local _ios2_table="${IOS2_NFT_TABLE}"
@@ -534,10 +539,6 @@ ensure_nftables_installed() {
 }
 
 apply_nft_rules() {
-    if web_is_only_mode 2>/dev/null; then
-        log_error "SYN-лимитер предназначен для обычного MTProto и отключён в режиме «Только WEB»"
-        return 1
-    fi
     if zapret2_in_effect 2>/dev/null; then
         log_error "Zapret2 активен — вместе с ним SYN-лимитер не работает"
         log_info "Сначала уберите zapret2: меню NFT → Zapret2 → удалить"
@@ -1619,14 +1620,13 @@ zapret2_download_bundle() {
     return 0
 }
 
-# Основной порт zapret2. По умолчанию это порт прокси из конфига; заданный
-# вручную ZAPRET2_PORT его перекрывает.
+# Основной порт активного транспорта; явный ZAPRET2_PORT его перекрывает.
 zapret2_main_port() {
     if [[ "${ZAPRET2_PORT:-}" =~ ^[0-9]+$ ]] && [ "$ZAPRET2_PORT" -ge 1 ] && [ "$ZAPRET2_PORT" -le 65535 ]; then
         echo "$ZAPRET2_PORT"
         return 0
     fi
-    echo "${PROXY_PORT:-443}"
+    nft_default_port
 }
 
 # Совпадение по адресу сервера для правила nft: "ip saddr X " / "ip daddr X "
@@ -2363,10 +2363,6 @@ zapret2_remove_nft() {
 }
 
 zapret2_start() {
-    if web_is_only_mode 2>/dev/null; then
-        log_error "Zapret2 предназначен для обычного MTProto и отключён в режиме «Только WEB»"
-        return 1
-    fi
     if [ ! -x "$ZAPRET2_BIN" ]; then
         log_error "Бинарник nfqws2 не найден: ${ZAPRET2_BIN}"
         return 1
@@ -2422,10 +2418,6 @@ zapret2_cleanup_failed_install() {
 }
 
 zapret2_start_existing() {
-    if web_is_only_mode 2>/dev/null; then
-        log_error "Zapret2 недоступен в режиме «Только WEB»"
-        return 1
-    fi
     if [ "${ZAPRET2_APPLIED:-false}" != "true" ] || [ ! -x "$ZAPRET2_BIN" ]; then
         log_error "Zapret2 не установлен — используйте [1] Установить"
         return 1
@@ -2443,13 +2435,17 @@ zapret2_start_existing() {
         nft_limiter_yield
     fi
 
+    zapret2_write_conf || {
+        _zapret2_restore_limiter "$_restore_limiter" "$_restore_limiter_service"
+        return 1
+    }
     zapret2_apply_nft || {
         _zapret2_restore_limiter "$_restore_limiter" "$_restore_limiter_service"
         return 1
     }
     systemctl daemon-reload
     systemctl enable "$ZAPRET2_SERVICE" >/dev/null 2>&1 || true
-    systemctl start "$ZAPRET2_SERVICE" 2>/dev/null || true
+    systemctl restart "$ZAPRET2_SERVICE" 2>/dev/null || true
     sleep 1
     if systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null; then
         ZAPRET2_SERVICE_ENABLED="true"

@@ -73,6 +73,20 @@ export const themeApi = {
     }),
 };
 
+export const appearanceApi = {
+  export: async () => {
+    const res = await fetch(`${PANEL_BASE}/panel/settings/appearance`, { credentials: 'same-origin' });
+    if (!res.ok) {
+      const body = await res.json();
+      throw new Error(body.error?.message || 'Не удалось выгрузить оформление');
+    }
+    return res.blob();
+  },
+  import: (file: File) => request<{ branding: PanelBranding; theme: PanelThemeSettings }>(PANEL_BASE, '/panel/settings/appearance', {
+    method: 'POST', body: file, headers: { 'Content-Type': 'application/zip' },
+  }),
+};
+
 export interface PanelBranding {
   has_icon?: boolean;
   icon_revision?: string;
@@ -226,6 +240,9 @@ export interface WebStatus {
   frontend: string;
   haproxy_ready: boolean;
   haproxy_cert: string;
+  hosts?: string[];
+  hosts_supported?: boolean;
+  decoy_resolve?: 'never' | 'startup';
   /** shared — один публичный порт на двоих, split — у WEB свой. */
   layout: string;
   public_port: number;
@@ -701,6 +718,11 @@ export const mtproxylUsersApi = {
     request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/adtag`, {
       method: 'POST',
       body: JSON.stringify({ ad_tag: adTag }),
+    }),
+  setNote: (label: string, note: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/note`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
     }),
   setRate: (label: string, upBps: number, downBps: number) =>
     request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/rate`, {
@@ -1621,6 +1643,7 @@ export type HistoryMetric =
   | 'current_connections'
   | 'active_users'
   | 'active_ips'
+  | 'unique_ips'
   | 'traffic';
 
 export interface HistoryPoint {

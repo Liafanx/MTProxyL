@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
@@ -46,6 +46,12 @@ def _mark(state: dict, key: str) -> None:
     state.setdefault("last_run", {})[key] = time.time()
 
 
+def _count(state: dict, key: str) -> None:
+    """Событие для отчёта за неделю."""
+    events = state.setdefault("weekly_events", {})
+    events[key] = int(events.get(key) or 0) + 1
+
+
 # ── Дата-центры Telegram ─────────────────────────────────────────────────────
 
 async def check_dc(bot: Bot, state: dict) -> None:
@@ -65,6 +71,7 @@ async def check_dc(bot: Bot, state: dict) -> None:
         state["dc_restart_at"] = last
     elif last > int(state.get("dc_restart_at") or 0):
         state["dc_restart_at"] = last
+        _count(state, "dc_restart")
         if cfg.notify_on("dc"):
             await broadcast(
                 bot,
@@ -167,6 +174,8 @@ async def check_availability(bot: Bot, state: dict) -> None:
     elif was_bad == bad:
         return
     state["availability_bad"] = bad
+    if bad:
+        _count(state, "availability_drop")
 
     icon = LEVEL_ICON.get(result.get("level", "red"), "🔴")
     target = (report.get("target") or {}).get("host") or "?"
@@ -206,6 +215,8 @@ async def check_proxy(bot: Bot, state: dict) -> None:
     elif was == running:
         return
     state["proxy_running"] = running
+    if not running:
+        _count(state, "proxy_down")
 
     if running:
         text = (
@@ -252,6 +263,7 @@ async def check_egress(bot: Bot, state: dict) -> None:
         state["egress_switch_at"] = at
     elif at > int(state.get("egress_switch_at") or 0):
         state["egress_switch_at"] = at
+        _count(state, "egress_switch")
         text = (f"🔀 <b>Выход к Telegram переключён</b>\n\n"
                 f"«{esc(switch.get('from') or '?')}» → «{esc(switch.get('to') or '?')}»\n"
                 f"Причина: {esc(switch.get('reason') or '—')}")
@@ -323,11 +335,165 @@ async def check_limits(bot: Bot, state: dict) -> None:
     state["limits_seeded"] = True
     if not seeded or not fresh:
         return
+    for _ in fresh:
+        _count(state, "limit_hit")
 
     lines = ["🎚 <b>Лимиты пользователей</b>", ""]
     lines += [f"• <b>{esc(label)}</b> — {esc(reason)}" for label, reason in fresh]
     lines += ["", "Изменить: /users"]
     await broadcast(bot, "\n".join(lines))
+
+
+# ── Скоро лимит ──────────────────────────────────────────────────────────────
+
+SOON_QUOTA_PCT = 80
+SOON_DAYS = 3
+
+
+def _expiry_date(user: dict) -> date | None:
+    raw = str(user.get("expires") or "")
+    if not raw or raw == "0":
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def _soon_reasons(user: dict, today: date) -> dict[str, str]:
+    """Что подходит к концу, но ещё не кончилось: кончившееся — дело check_limits."""
+    out: dict[str, str] = {}
+    quota = int(user.get("quota_bytes") or 0)
+    used = int(user.get("total_bytes") or 0)
+    if quota and quota * SOON_QUOTA_PCT // 100 <= used < quota:
+        out["quota"] = f"израсходовано {used * 100 // quota}% квоты {human_bytes(quota)}"
+    exp = _expiry_date(user)
+    if exp and today <= exp <= today + timedelta(days=SOON_DAYS):
+        left = (exp - today).days
+        out["expiry"] = "срок истекает сегодня" if left == 0 else f"срок истекает через {left} дн. ({exp.isoformat()})"
+    return out
+
+
+async def check_limits_soon(bot: Bot, state: dict) -> None:
+    try:
+        users = await cli.secrets()
+    except CliError as exc:
+        log.debug("список пользователей недоступен: %s", exc)
+        return
+    today = date.today()
+    warned: dict = state.get("soon_warned") or {}
+    current: dict[str, list[str]] = {}
+    fresh: list[tuple[str, str]] = []
+    for user in users:
+        label = user.get("label") or ""
+        if not label or user.get("enabled") is False:
+            continue
+        reasons = _soon_reasons(user, today)
+        if not reasons:
+            continue
+        current[label] = sorted(reasons)
+        for kind, text in reasons.items():
+            if kind not in (warned.get(label) or []):
+                fresh.append((label, text))
+    # Квоту сбросили или срок продлили — следующее приближение снова новость.
+    state["soon_warned"] = current
+    seeded = state.get("soon_seeded") is True
+    state["soon_seeded"] = True
+    if not seeded or not fresh:
+        return
+    lines = ["⏳ <b>Скоро кончится</b>", ""]
+    lines += [f"• <b>{esc(label)}</b> — {esc(text)}" for label, text in fresh]
+    lines += ["", "Продлить или поднять квоту: /users"]
+    await broadcast(bot, "\n".join(lines))
+
+
+# ── Отчёт за неделю ──────────────────────────────────────────────────────────
+
+WEEKLY_WEEKDAY = 0      # понедельник
+WEEKLY_TIME = (10, 0)
+
+_EVENT_TITLES = (
+    ("proxy_down", "прокси не отвечал"),
+    ("availability_drop", "доступность падала ниже порога"),
+    ("dc_restart", "движок перезапускался из-за DC"),
+    ("egress_switch", "выход к Telegram переключался"),
+    ("limit_hit", "пользователи упирались в лимит"),
+)
+
+
+def weekly_report_text(users: list[dict], base: dict, events: dict, since: float,
+                       availability: dict | None = None) -> str:
+    before = base or {}
+    rows = []
+    total = 0
+    for user in users:
+        label = user.get("label") or ""
+        now_bytes = int(user.get("total_bytes") or 0)
+        prev = int(before.get(label, 0) or 0)
+        # Счётчик меньше прежнего — квоту сбросили: считаем с нуля.
+        delta = now_bytes - prev if now_bytes >= prev else now_bytes
+        total += delta
+        if delta > 0:
+            rows.append((delta, label))
+    rows.sort(reverse=True)
+    active = sum(1 for u in users if u.get("enabled") is not False)
+    since_s = datetime.fromtimestamp(since).strftime("%d.%m") if since else "?"
+    lines = [
+        "📊 <b>Отчёт за неделю</b>",
+        f"<i>с {since_s} по {datetime.now().strftime('%d.%m')}</i>",
+        "",
+        f"Трафик: <b>{human_bytes(total)}</b>",
+        f"Пользователи: {len(users)}, включено {active}, с трафиком {len(rows)}",
+    ]
+    if rows:
+        lines += ["", "<b>Больше всех:</b>"]
+        lines += [f"{i}. {esc(label)} — {human_bytes(delta)}" for i, (delta, label) in enumerate(rows[:5], 1)]
+    today = date.today()
+    soon = [u.get("label") for u in users
+            if (exp := _expiry_date(u)) and today <= exp <= today + timedelta(days=7)]
+    if soon:
+        lines += ["", f"Срок истекает в ближайшие 7 дней: {esc(', '.join(sorted(soon)))}"]
+    result = (availability or {}).get("result") or {}
+    if result and not result.get("error"):
+        lines += ["", f"Доступность из России сейчас: {float(result.get('percentage') or 0):.0f}%"]
+    happened = [(title, int(events.get(key) or 0)) for key, title in _EVENT_TITLES if events.get(key)]
+    lines += [""]
+    if happened:
+        lines += ["<b>События:</b>"] + [f"• {title} — {n} раз" for title, n in happened]
+    else:
+        lines += ["Сбоев за неделю не было."]
+    return "\n".join(lines)
+
+
+async def check_weekly(bot: Bot, state: dict) -> None:
+    now = datetime.now()
+    today = now.date().isoformat()
+    weekly = state.get("weekly") or {}
+    first = not weekly.get("base_at")
+    due = (now.weekday() == WEEKLY_WEEKDAY and (now.hour, now.minute) >= WEEKLY_TIME
+           and weekly.get("sent") != today)
+    if not first and not due:
+        return
+    try:
+        users = await cli.secrets()
+    except CliError as exc:
+        log.debug("список пользователей недоступен: %s", exc)
+        return
+    snapshot = {u.get("label"): int(u.get("total_bytes") or 0) for u in users if u.get("label")}
+    # Первый запуск: точка отсчёта трафика, отчёт — в ближайший понедельник.
+    if first:
+        state["weekly"] = {"base_at": now.timestamp(), "base": snapshot, "sent": today if due else ""}
+        state["weekly_events"] = {}
+        return
+    try:
+        availability = await cli.availability_status()
+    except CliError:
+        availability = None
+    text = weekly_report_text(users, weekly.get("base") or {}, state.get("weekly_events") or {},
+                              float(weekly.get("base_at") or 0), availability)
+    state["weekly"] = {"base_at": now.timestamp(), "base": snapshot, "sent": today}
+    state["weekly_events"] = {}
+    await broadcast(bot, text)
 
 
 # ── Автобэкап ────────────────────────────────────────────────────────────────
@@ -418,6 +584,11 @@ async def run(bot: Bot) -> None:
             if cfg.notify_on("limits") and _due(state, "limits", cfg.interval("limits")):
                 _mark(state, "limits")
                 await check_limits(bot, state)
+            if cfg.notify_on("limits_soon") and _due(state, "limits_soon", cfg.interval("limits")):
+                _mark(state, "limits_soon")
+                await check_limits_soon(bot, state)
+            if cfg.notify_on("weekly"):
+                await check_weekly(bot, state)
             await check_autobackup(bot, state)
 
             if state != before:

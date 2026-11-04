@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // Secret is one entry of `mtproxyl secret list --json`. MTProxyL calls these
@@ -258,6 +260,29 @@ func (c *Client) SetSecretAdTag(ctx context.Context, label, tag string) (string,
 		arg = tag
 	}
 	out, err := c.run(ctx, "secret", "adtag", label, arg)
+	return stripANSI(out), err
+}
+
+// SetSecretNote stores a free-text note for the user (who it was issued to,
+// payment). Empty clears it. MTProxyL strips separators itself; here we cap
+// the length and drop control characters so the argv stays one line.
+func (c *Client) SetSecretNote(ctx context.Context, label, note string) (string, error) {
+	if err := ValidateSecretLabel(label); err != nil {
+		return "", err
+	}
+	note = strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == '|' {
+			return ' '
+		}
+		return r
+	}, note))
+	if utf8.RuneCountInString(note) > 200 {
+		return "", fmt.Errorf("заметка: не длиннее 200 символов")
+	}
+	if note == "" {
+		note = "-"
+	}
+	out, err := c.run(ctx, "secret", "note", label, note)
 	return stripANSI(out), err
 }
 

@@ -584,6 +584,7 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script secret disable [A-Za-z0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script secret rename [A-Za-z0-9]* [A-Za-z0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script secret setlimits [A-Za-z0-9]* * * * *
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script secret adtag [A-Za-z0-9]* *
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script secret note [A-Za-z0-9]* *
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script secret setrate [A-Za-z0-9]* [0-9]* [0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script secret reset-quota [A-Za-z0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script secret export -

@@ -101,6 +101,13 @@ has shared.cfg "accept-proxy ssl crt \"@mtproxyl/site\""
 has shared.cfg "server mtproto 127.0.0.1:15443 send-proxy"
 has shared.cfg "set-var(txn.mtproxyl_decoy)"
 
+WEB_HOSTS=alt.site.test
+check multi-hosts
+has multi-hosts.Caddyfile "@web tls sni web.site.test alt.site.test"
+has multi-hosts.Caddyfile "https://web.site.test:15444, https://alt.site.test:15444 {"
+has multi-hosts.cfg "req.ssl_sni -i web.site.test alt.site.test"
+WEB_HOSTS=''
+
 # split: WEB сам на публичном порту, прокси остаётся на своём.
 WEB_LAYOUT=split PROXY_PORT=8443 WEB_PUBLIC_PORT=443
 check split

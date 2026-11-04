@@ -188,6 +188,7 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 		return fmt.Errorf("panel theme: %w", err)
 	}
 	s.registerThemeRoutes(mux, jwtSecret, theme)
+	s.registerAppearanceRoutes(mux, jwtSecret, branding, theme)
 
 	// Auth endpoints
 	mux.HandleFunc("POST /api/auth/login", func(w http.ResponseWriter, r *http.Request) {
@@ -368,14 +369,7 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 		panel_updater.SetMtproxylScript(s.cfg.Mtproxyl.ScriptPath)
 	}
 
-	mux.Handle("GET /api/panel/update/check", auth.RequireAuth(jwtSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		result, err := panelUpd.Check()
-		if err != nil {
-			writeError(w, http.StatusBadGateway, "update_check_failed", err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: result})
-	})))
+	mux.Handle("GET /api/panel/update/check", auth.RequireAuth(jwtSecret, panelVersionCheck(panelUpd.Check)))
 
 	mux.Handle("GET /api/panel/update/releases", auth.RequireAuth(jwtSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		result, err := panelUpd.Releases()

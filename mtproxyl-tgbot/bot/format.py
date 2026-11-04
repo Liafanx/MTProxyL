@@ -353,6 +353,8 @@ def settings_text(cfg, manager: bool) -> str:
         f"Лимиты пользователей: <b>{flag('limits')}</b>"
         f" · проверка каждые {cfg.interval('limits')} мин",
         f"Выход к Telegram — смена и сбой: <b>{flag('egress')}</b>",
+        f"Скоро кончится квота или срок: <b>{flag('limits_soon')}</b>",
+        f"Отчёт за неделю (пн, 10:00): <b>{flag('weekly')}</b>",
     ]
     if manager:
         auto = cfg.autobackup

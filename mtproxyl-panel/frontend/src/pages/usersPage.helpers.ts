@@ -6,6 +6,8 @@ export interface UserStats {
   ip_history: MtproxylUserIP[];
   /** false — выключен в MTProxyL (`secret disable`); без записи считаем включённым. */
   enabled: boolean;
+  /** Заметка из MTProxyL: кому выдан, оплата. */
+  notes?: string;
 }
 
 /**
@@ -23,7 +25,7 @@ export function mergeUserStats<T extends { username: string }>(
   const byLabel = new Map((mtproxylUsers ?? []).map((u) => [u.label, u]));
   return liveUsers.map((u) => {
     const m = byLabel.get(u.username);
-    return { ...u, total_bytes: m?.total_bytes, ip_history: m?.ip_history ?? [], enabled: m?.enabled !== false };
+    return { ...u, total_bytes: m?.total_bytes, ip_history: m?.ip_history ?? [], enabled: m?.enabled !== false, notes: m?.notes || undefined };
   });
 }
 

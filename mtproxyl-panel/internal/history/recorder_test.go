@@ -22,6 +22,7 @@ type fakeTelemt struct {
 	current   atomic.Uint64
 	octets    atomic.Uint64
 	activeIPs atomic.Int64
+	ipFail    atomic.Bool
 }
 
 func newFakeTelemt(t *testing.T) *fakeTelemt {
@@ -51,6 +52,15 @@ func newFakeTelemt(t *testing.T) *fakeTelemt {
 				data = map[string]any{"enabled": true, "data": map[string]any{"totals": map[string]any{
 					"current_connections": f.current.Load(), "active_users": 2,
 				}}}
+			}
+		case "/v1/stats/users/active-ips":
+			if f.ipFail.Load() {
+				w.WriteHeader(502)
+				return
+			}
+			data = []map[string]any{
+				{"active_ips": []string{"192.0.2.1", "198.51.100.1", "2001:db8::1"}},
+				{"active_ips": []string{"192.0.2.1", "::ffff:198.51.100.1", "invalid"}},
 			}
 		case "/v1/users":
 			data = []map[string]any{
@@ -197,8 +207,18 @@ func TestRecorderUsers(t *testing.T) {
 	if len(ips) != 2 || ips[0].V != 4 || ips[1].V != 6 {
 		t.Fatalf("active_ips = %+v", ips)
 	}
+	unique := rec.Ring().Range(MetricUniqueIPs, 0)
+	if len(unique) != 2 || unique[0].V != 3 || unique[1].V != 3 {
+		t.Fatalf("unique_ips = %+v", unique)
+	}
+	f.ipFail.Store(true)
+	*clock = start.Add(20 * time.Second)
+	rec.PollUsers(ctx)
+	if got := rec.Ring().Range(MetricUniqueIPs, 0); len(got) != 2 {
+		t.Fatalf("failed source wrote a false sample: %+v", got)
+	}
 	tr := rec.Ring().Range(MetricTraffic, 0)
-	if len(tr) != 2 || tr[0].V != 0 || tr[1].V != 500 {
+	if len(tr) != 3 || tr[0].V != 0 || tr[1].V != 500 {
 		t.Fatalf("traffic = %+v", tr)
 	}
 }

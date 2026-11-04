@@ -136,6 +136,7 @@ WEB_FRONTEND="nginx"       # nginx|haproxy, кто держит публичны
 WEB_LAYOUT="shared"
 WEB_PUBLIC_PORT="443"       # публичный порт встроенного nginx
 WEB_DOMAIN=""
+WEB_HOSTS=""               # дополнительные WEB-домены через запятую, telemt 3.5.15+
 WEB_CARRIER="websocket"        # https|https-lanes|websocket|websocket-lanes
 WEB_TARGET_ENABLED="false"  # реаниматор: WEB у цели поднят MTProxyL
 WEB_TARGET_PORT=""          # публичный порт цели на время WEB
@@ -153,6 +154,7 @@ WEB_HAPROXY_CERT=""          # PEM с сертификатом и ключом �
 WEB_DECOY_MODE="empty"              # empty|static_directory|http_upstream
 WEB_DECOY_DIR=""
 WEB_DECOY_UPSTREAM=""
+WEB_DECOY_RESOLVE="never"  # never|startup: DNS origin только при подготовке конфига
 WEB_DEBUG="false"           # [web.debug].enabled, страница /web-status
 WEB_DEBUG_SIDEBAND="false"  # [web.debug].sideband: отчёты bridge-страницы (telemt 3.5.8+)
 WEB_DNS_CHECK="true"        # false — не сверять A-запись WEB-домена (CDN, балансировщик)
@@ -296,6 +298,7 @@ WEB_FRONTEND='${WEB_FRONTEND}'
 WEB_LAYOUT='${WEB_LAYOUT}'
 WEB_PUBLIC_PORT='${WEB_PUBLIC_PORT}'
 WEB_DOMAIN='${WEB_DOMAIN}'
+WEB_HOSTS='${WEB_HOSTS}'
 WEB_CARRIER='${WEB_CARRIER}'
 WEB_CARRIERS='${WEB_CARRIERS}'
 WEB_TARGET_ENABLED='${WEB_TARGET_ENABLED}'
@@ -313,6 +316,7 @@ WEB_HAPROXY_CERT='${WEB_HAPROXY_CERT}'
 WEB_DECOY_MODE='${WEB_DECOY_MODE}'
 WEB_DECOY_DIR='${WEB_DECOY_DIR}'
 WEB_DECOY_UPSTREAM='${WEB_DECOY_UPSTREAM}'
+WEB_DECOY_RESOLVE='${WEB_DECOY_RESOLVE}'
 WEB_DEBUG='${WEB_DEBUG}'
 WEB_DEBUG_SIDEBAND='${WEB_DEBUG_SIDEBAND}'
 WEB_DNS_CHECK='${WEB_DNS_CHECK}'
@@ -568,7 +572,7 @@ load_settings() {
                 SELFMASK_AUTO_RENEW|SELFMASK_TLS_PROTOCOLS|SELFMASK_CERT_MODE|\
                 PANEL_SELFMASK_ENABLED|PANEL_SELFMASK_PATH|PANEL_SELFMASK_PREV_LISTEN|\
                 PANEL_SELFMASK_PREV_BASE_PATH|\
-                WEB_ENABLED|WEB_FRONTEND|WEB_LAYOUT|WEB_PUBLIC_PORT|WEB_DOMAIN|WEB_CARRIER|WEB_CARRIERS|WEB_TARGET_ENABLED|WEB_TARGET_PORT|WEB_TARGET_PREV_SAVED|WEB_TARGET_PREV_PUBLIC_PORT|WEB_TARGET_PREV_PP_CIDRS|WEB_SECRET_MODE|\
+                WEB_ENABLED|WEB_FRONTEND|WEB_LAYOUT|WEB_PUBLIC_PORT|WEB_DOMAIN|WEB_HOSTS|WEB_DECOY_RESOLVE|WEB_CARRIER|WEB_CARRIERS|WEB_TARGET_ENABLED|WEB_TARGET_PORT|WEB_TARGET_PREV_SAVED|WEB_TARGET_PREV_PUBLIC_PORT|WEB_TARGET_PREV_PP_CIDRS|WEB_SECRET_MODE|\
                 WEB_LISTEN_ADDR|WEB_LISTEN_PORT|WEB_TRUSTED_PROXY_CIDRS|\
                 WEB_TLS_PORT|WEB_MTPROXY_PORT|\
                 WEB_HAPROXY_CERT|\
