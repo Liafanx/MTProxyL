@@ -402,6 +402,15 @@ sni_action_for_engine() {
     echo "$_a"
 }
 
+# Постоянный checkpoint календарных квот, общий для обоих носителей движка.
+_quota_state_toml() {
+    web_engine_at_least 3.5.15 || return 0
+    local _periods; _periods=$(get_expert_override_value access user_quota_periods)
+    [ -d "${INSTALL_DIR}/quota-state" ] || { [ -n "$_periods" ] && [ "$_periods" != '{}' ]; } || return 0
+    install -d -m 700 "${INSTALL_DIR}/quota-state" || return 1
+    printf 'quota_state_path = %s\n' "$(jq -Rn --arg path "${INSTALL_DIR}/quota-state/telemt.limit.json" '$path')"
+}
+
 # ── Генерация config.toml ────────────────────────────────────
 generate_telemt_config() {
     mkdir -p "$CONFIG_DIR"; chmod 700 "$CONFIG_DIR"
@@ -454,6 +463,7 @@ generate_telemt_config() {
         web_listeners=$(web_listeners_toml)
     fi
 
+    local _quota_state; _quota_state=$(_quota_state_toml) || return 1
     local tmp; tmp=$(_mktemp "$CONFIG_DIR") || return 1
 
     cat > "$tmp" << TOML_EOF
@@ -462,6 +472,7 @@ generate_telemt_config() {
 
 [general]
 prefer_ipv6 = false
+${_quota_state}
 tg_connect = ${MTPROXYL_TG_CONNECT}
 fast_mode = true
 use_middle_proxy = true

@@ -62,6 +62,11 @@ save_expert_override web.retry_jitter peak_ms 301
 grep -q 'peak_ms' <<< "$(web_new_settings_problems)"
 save_expert_override web.retry_jitter peak_ms 125
 save_expert_override access user_quota_periods '{"alice":"monthly","removed":"weekly"}'
+[ "$(_quota_state_toml)" = "quota_state_path = \"$INSTALL_DIR/quota-state/telemt.limit.json\"" ]
+[ "$(stat -c %a "$INSTALL_DIR/quota-state")" = 700 ]
+ENGINE=3.5.14
+[ -z "$(_quota_state_toml)" ]
+ENGINE=3.5.16
 _expert_quota_period_move alice renamed
 jq -e '.renamed == "monthly" and (has("alice") | not)' <<< "$(get_expert_override_value access user_quota_periods)" >/dev/null
 _expert_quota_period_move renamed alice
@@ -69,6 +74,11 @@ fails _validate_quota_periods '{"alice":"yearly"}'
 fails _validate_quota_periods '{"alice":"monthly\n[server]"}'
 fails _validate_quota_periods 'null'
 _apply_expert_overrides "$test_dir/web.toml" 2>"$test_dir/warnings"
+printf '{"checkpoint":"retained"}\n' > "$INSTALL_DIR/quota-state/telemt.limit.json"
+delete_expert_override access user_quota_periods
+[ -n "$(_quota_state_toml)" ]
+jq -e '.checkpoint == "retained"' "$INSTALL_DIR/quota-state/telemt.limit.json" >/dev/null
+save_expert_override access user_quota_periods '{"alice":"monthly","removed":"weekly"}'
 grep -q 'removed' "$test_dir/warnings"
 python3 - "$test_dir/web.toml" <<'PY'
 import sys,tomllib

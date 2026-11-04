@@ -41,3 +41,8 @@ allowed=$(_backup_allowed_members "$test_dir/evil.tar.gz" 2>/dev/null | sort | t
 [ "$allowed" = "availability/last.json relay_stats/a settings.conf " ] || fail "белый список: $allowed"
 
 echo "backup restore: ok"
+
+mkdir -p "$test_dir/src/quota-state"
+printf '{"checkpoint":"retained"}\n' > "$test_dir/src/quota-state/telemt.limit.json"
+tar czf "$test_dir/quota.tar.gz" -C "$test_dir/src" settings.conf quota-state/telemt.limit.json
+_backup_allowed_members "$test_dir/quota.tar.gz" | grep -qx quota-state/telemt.limit.json || fail 'checkpoint квоты пропущен'

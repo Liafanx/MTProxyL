@@ -600,6 +600,9 @@ run_proxy_container() {
         [ -n "${PROXY_CPUS}" ] && _args+=(--cpus "${PROXY_CPUS}")
         [ -n "${PROXY_MEMORY}" ] && _args+=(--memory "${PROXY_MEMORY}" --memory-swap "${PROXY_MEMORY}")
 
+        # Движок заменяет checkpoint через rename, поэтому нужен весь каталог.
+        [ ! -d "${INSTALL_DIR}/quota-state" ] || _args+=(-v "${INSTALL_DIR}/quota-state:${INSTALL_DIR}/quota-state")
+
         # Сайт-заглушку WEB движок читает с диска, а у контейнера своя ФС —
         # без проброса он не стартует вовсе.
         if web_is_enabled 2>/dev/null && [ "${WEB_DECOY_MODE:-empty}" != "http_upstream" ]; then

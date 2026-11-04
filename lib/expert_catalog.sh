@@ -230,7 +230,7 @@ _catalog "web.retry_jitter" "min_ms"       "u32"  "0"       "✔" "range:0:30000
 _catalog "web.retry_jitter" "max_ms"       "u32"  "250"     "✔" "range:0:30000"           "не меньше min_ms" "Максимальная добавка к паузе HTTP-повтора, мс"
 _catalog "web.retry_jitter" "distribution" "enum" "uniform" "✔" "enum:uniform,triangular" "uniform/triangular" "Равномерное или треугольное распределение задержки"
 _catalog "web.retry_jitter" "peak_ms"      "u32"  ""        "✔" "range:0:30000"           "только triangular; по умолчанию середина" "Пик треугольного распределения внутри min_ms..max_ms"
-_catalog "access" "user_quota_periods" "quota_periods" "{}" "✔" "custom:_validate_quota_periods" '{"alice":"monthly"}' "Периодические квоты telemt 3.5.15+: daily, weekly, monthly; границы UTC, нужна положительная квота и доступный для записи quota_state_path"
+_catalog "access" "user_quota_periods" "quota_periods" "{}" "✘" "custom:_validate_quota_periods" '{"alice":"monthly"}' "Периодические квоты telemt 3.5.15+: daily, weekly, monthly; границы UTC, нужна положительная квота; checkpoint хранится на сервере, применение через перезапуск"
 
 # ── web.debug ─────────────────────────────────────────────────
 _catalog "web.debug" "capture_lifecycle"      "bool"  "true"     "✔" "bool"                              "true/false"        "Записывать события bridge, сессий и потоков"

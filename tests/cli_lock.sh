@@ -18,8 +18,9 @@ K=none; kind availability check --json
 
 [ "$(id -u)" -eq 0 ] || { echo "SKIP (не root)"; exit 0; }
 unset MTPROXYL_LOCK_HELD
-cli_lock 1 "secret add a" || fail "свободный замок"
+cli_lock 1 "secret add a private-test-value" || fail "свободный замок"
 [ "$(cat "$t/lock/pid")" = "$$" ] || fail "pid хозяина"
+[ "$(cat "$t/lock/cmd")" = secret ] || fail "аргументы попали в сообщение очереди"
 # Второй процесс ждёт и сдаётся.
 ( unset MTPROXYL_LOCK_HELD; cli_lock 1 x 2>/dev/null ) && fail "занятый замок взят"
 # Вложенный вызов из-под замка не ждёт.

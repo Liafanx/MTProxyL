@@ -890,6 +890,8 @@ cli_lock() {
         sleep 0.5; _n=$((_n + 1))
     done
     echo "$$" > "${MTPROXYL_LOCK_DIR}/pid"
+    # Аргументы могут содержать ключ пользователя или токен бота.
+    _what=${_what%% *}
     printf '%s\n' "${_what:0:120}" > "${MTPROXYL_LOCK_DIR}/cmd"
     _MTPROXYL_LOCK_OWNED=1
     # Вложенные вызовы mtproxyl.sh из этой операции замок не ждут.
