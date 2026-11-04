@@ -92,7 +92,18 @@ jobs:
           done
           cat checksums.txt
 
-      # Описание релиза берётся из подготовленного файла без автодополнений.
+      - name: Extract release notes
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          awk -v ver="$VERSION" '
+            $0 == "# MTProxyL-Panel " ver { found = 1 }
+            found && /^# MTProxyL-Panel / && $0 != "# MTProxyL-Panel " ver { exit }
+            found { print }
+          ' RELEASE_NOTES.md > release-notes-current.md
+          test -s release-notes-current.md
+
+      # В релиз попадает только описание текущей версии.
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
@@ -102,4 +113,4 @@ jobs:
             mtproxyl-panel/release/mtproxyl-api-linux-arm64
             mtproxyl-panel/release/*.sha256
             mtproxyl-panel/release/checksums.txt
-          body_path: mtproxyl-panel/RELEASE_NOTES.md
+          body_path: mtproxyl-panel/release-notes-current.md

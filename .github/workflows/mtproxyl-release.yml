@@ -92,6 +92,24 @@ jobs:
           tools/.github/scripts/mtproxyl-archive.sh build src "${{ steps.version.outputs.value }}" dist
           cat dist/*.sha256
 
+      - name: Ensure previous release archive
+        if: steps.version.outputs.backfill != 'true'
+        run: |
+          ver="${{ steps.version.outputs.value }}"
+          prev=$( { cat published.txt; echo "$ver"; } | sort -V | grep -B1 -xF "$ver" | head -1)
+          [ -n "$prev" ] && [ "$prev" != "$ver" ] || exit 0
+          asset="mtproxyl-$prev.tar.gz"
+          gh release view "v$prev" -R "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' > previous-assets.txt
+          if grep -qxF "$asset" previous-assets.txt; then
+            grep -qxF "$asset.sha256" previous-assets.txt || { echo "У v$prev нет контрольной суммы" >&2; exit 1; }
+            exit 0
+          fi
+          git -C src fetch --depth=1 origin "refs/tags/v$prev"
+          git -C src worktree add --detach ../previous FETCH_HEAD
+          [ "$(tr -d '[:space:]' < previous/version)" = "$prev" ] || { echo "Номер прошлой версии не совпадает с тегом" >&2; exit 1; }
+          tools/.github/scripts/mtproxyl-archive.sh build previous "$prev" previous-dist
+          gh release upload "v$prev" -R "$GITHUB_REPOSITORY" previous-dist/*
+
       # Тот же код под новым номером — не релиз: откат на «предыдущую»
       # версию ничего бы не менял.
       - name: Refuse unchanged code
