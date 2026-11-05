@@ -14,6 +14,7 @@ INSTALL_DIR="/opt/mtproxyl"
 BRANCH="${MTPROXYL_BRANCH:-main}"
 # Версия релиза: пусто — последняя. Ставится из архива релиза целиком.
 WANT_VERSION="${MTPROXYL_VERSION:-}"
+FORCE_REPAIR=false
 # Аргументы после «--» уходят установщику: переезд на новый сервер одной строкой.
 INSTALL_ARGS=()
 
@@ -27,9 +28,11 @@ while [ $# -gt 0 ]; do
             [ -n "${2:-}" ] || { echo "ОШИБКА: --version требует номер, например 1.7.17" >&2; exit 1; }
             WANT_VERSION="${2#v}"; shift 2 ;;
         --version=*) WANT_VERSION="${1#*=}"; WANT_VERSION="${WANT_VERSION#v}"; shift ;;
+        --force|--forced) FORCE_REPAIR=true; shift ;;
         -h|--help)
-            echo "Использование: install.sh [--version X.Y.Z | --branch <ветка>] [-- <аргументы установки>]"
+            echo "Использование: install.sh [--version X.Y.Z | --branch <ветка>] [--force] [-- <аргументы установки>]"
             echo "  --version  поставить конкретную версию из архива релиза"
+            echo "  --force    восстановить повреждённый код, сохранив его отдельной копией"
             echo "  Всё после -- уходит в 'mtproxyl install' — установка без вопросов."
             echo "  Список аргументов: mtproxyl install --help"
             exit 0 ;;
@@ -271,16 +274,42 @@ done
 for _file in "${INSTALL_DIR}"/lib/*.sh; do
     [ ! -f "$_file" ] || cp -p "$_file" "${_old}/lib/"
 done
+_install_save_recovery() {
+    local recovery bot_dir=/opt/mtproxyl-tgbot
+    mkdir -p "${INSTALL_DIR}/releases" && chmod 700 "${INSTALL_DIR}/releases" || return 1
+    recovery=$(mktemp -d "${INSTALL_DIR}/releases/recovery-$(date -u +%Y%m%d-%H%M%S).XXXXXX") || return 1
+    mv "$_old" "${recovery}/code" || return 1
+    _old="${recovery}/code"
+    if [ -d "${bot_dir}/bot" ]; then
+        mkdir -p "${recovery}/mtproxyl-tgbot" && cp -a "${bot_dir}/bot" "${recovery}/mtproxyl-tgbot/" || return 1
+        if [ -f "${bot_dir}/requirements.txt" ]; then
+            cp -p "${bot_dir}/requirements.txt" "${recovery}/mtproxyl-tgbot/" || return 1
+        fi
+    fi
+    echo "  Повреждённый код сохранён: ${recovery}"
+    echo '  Эта копия не предлагается как рабочая версия для --rollback'
+    echo '  Восстанавливаем код из проверенного комплекта; настройки и пользователи сохраняются'
+}
+
 _old_ver=''
-if [ -f "${_old}/mtproxyl.sh" ] && [ -f "${_INSTALL_ROOT}/lib/release.sh" ]; then
+if [ "$FORCE_REPAIR" = true ]; then
+    _install_save_recovery || { echo '  ОШИБКА: не удалось сохранить копию, установка отменена' >&2; exit 1; }
+elif [ -f "${_old}/mtproxyl.sh" ] && [ -f "${_INSTALL_ROOT}/lib/release.sh" ]; then
     source "${_INSTALL_ROOT}/lib/release.sh"
     VERSION=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "${_old}/mtproxyl.sh" | head -1)
     LIB_DIR="${INSTALL_DIR}/lib" TGBOT_DIR=/opt/mtproxyl-tgbot
     _TGBOT_FILES=()
-    while IFS= read -r _file; do _TGBOT_FILES+=("$_file"); done < <(
-        sed -n '/^_TGBOT_FILES=(/,/^)/{s/^ *"\(.*\)"$/\1/p}' "${LIB_DIR}/tgbot.sh")
-    _release_snapshot || { echo '  ОШИБКА: не удалось сохранить копию, установка отменена' >&2; exit 1; }
-    _old_ver="$VERSION"
+    if [ -f "${LIB_DIR}/tgbot.sh" ]; then
+        while IFS= read -r _file; do _TGBOT_FILES+=("$_file"); done < <(
+            sed -n '/^_TGBOT_FILES=(/,/^)/{s/^ *"\(.*\)"$/\1/p}' "${LIB_DIR}/tgbot.sh")
+    fi
+    if _release_snapshot; then
+        _old_ver="$VERSION"
+    else
+        echo '  ОШИБКА: не удалось сохранить рабочую копию, установка отменена' >&2
+        echo '  Если прежнее обновление прервалось и код повреждён, повторите install.sh с --force' >&2
+        exit 1
+    fi
 fi
 
 _install_apply_files() {
@@ -301,6 +330,9 @@ _install_apply_files() {
 }
 if ! _install_apply_files "$_INSTALL_ROOT"; then
     echo '  ОШИБКА: замена прервалась, восстанавливаем прежний код' >&2
+    for _file in "${_INSTALL_ROOT}"/lib/*.sh; do
+        [ -f "${_old}/lib/$(basename "$_file")" ] || rm -f "${INSTALL_DIR}/lib/$(basename "$_file")"
+    done
     if ! _install_apply_files "$_old"; then
         echo "  ОШИБКА: восстановление не удалось, копия: ${_old}" >&2
         _INSTALL_STAGE=''
