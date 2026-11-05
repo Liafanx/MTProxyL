@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -20,6 +21,8 @@ type WarpExit struct {
 
 // WarpStatus is `mtproxyl warp status --json`.
 type WarpStatus struct {
+	MTU             *int       `json:"mtu,omitempty"`
+	ActiveMTU       *int       `json:"active_mtu,omitempty"`
 	WatchdogEnabled bool       `json:"watchdog_enabled"`
 	ActiveEndpoint  string     `json:"active_endpoint"`
 	ActiveProto     string     `json:"active_proto"`
@@ -271,7 +274,7 @@ func (c *Client) WarpSetEndpoint(ctx context.Context, ep string) (string, error)
 // Cloudflare node codes to exclude, comma-separated; empty means none.
 var warpExcludeRe = regexp.MustCompile(`^[A-Z]{3}(,[A-Z]{3})*$`)
 
-func (c *Client) WarpSetSettings(ctx context.Context, proto, location, endpoint, exclude *string) (string, error) {
+func (c *Client) WarpSetSettings(ctx context.Context, proto, location, endpoint, exclude *string, mtu *int) (string, error) {
 	p, l, e := "keep", "keep", "keep"
 	if proto != nil {
 		p = *proto
@@ -306,6 +309,15 @@ func (c *Client) WarpSetSettings(ctx context.Context, proto, location, endpoint,
 			return "", fmt.Errorf("исключения: коды узлов через запятую (DME,LED)")
 		}
 		args = append(args, x)
+	}
+	if mtu != nil {
+		if *mtu < 1000 || *mtu > 1500 {
+			return "", fmt.Errorf("MTU: целое число от 1000 до 1500")
+		}
+		if exclude == nil {
+			args = append(args, "keep")
+		}
+		args = append(args, strconv.Itoa(*mtu))
 	}
 	out, err := c.run(ctx, args...)
 	return stripANSI(out), err

@@ -48,6 +48,9 @@ const users = ['short', 'long_username_'.repeat(4), 'other'].map((username, inde
 async function mock(page) {
   const state = { brandingWait: null, statsWait: null, failBranding: false, writes: [], sockets: [], hold: new Set(), upstreamAddress: '203.0.113.17:1080',
     theme: { theme: 'light', colors: {}, configured: true }, imported: false, panelCheckFails: false,
+    warpPatches: [], warp: { enabled: false, mode: 'upstream', proto: 'awg', endpoint: '', location: '', exclude: 'DME',
+      mtu: 1280, installed: true, version: '0.16.1-mtproxyl.1', socks_active: false, redirect_active: false, iface_active: false, nft_applied: false,
+      cidr_count: 0, socks_port: 2536, redirect_port: 12345, matched_packets: 0, exit: { ip: '', loc: '', colo: '', confirmed: false } },
     panelUpdate: { current_version: '1.3.14', latest_version: 'mtproxyl-panel-v1.3.15', update_available: true } };
   await page.addInitScript(() => localStorage.setItem('mtproxyl-panel-theme', 'light'));
   await page.addInitScript(() => {
@@ -93,6 +96,15 @@ async function mock(page) {
       traffic: { enabled: false }, fingerprints: { enabled: false },
       limits: { traffic_max_users: 0, fingerprints_max_records: 2000, fingerprints_retention_days: 30 },
     };
+    else if (url.pathname.endsWith('/warp/status')) data = { supported: true, status: state.warp };
+    else if (url.pathname.endsWith('/warp/scan')) data = { supported: true, scan: null };
+    else if (url.pathname.endsWith('/warp/settings')) {
+      const patch = route.request().postDataJSON();
+      state.warpPatches.push(patch);
+      state.warp = { ...state.warp, ...patch };
+      data = { supported: true, status: state.warp };
+    }
+    else if (url.pathname.endsWith('/egress')) data = { supported: false };
     else if (url.pathname.endsWith('/mtproxyl/status')) data = { enabled: false };
     else if (url.pathname.endsWith('/branding')) {
       if (state.brandingWait) await state.brandingWait;
@@ -278,6 +290,55 @@ async function checkEnhancements(page, state, width) {
   console.log(`panel enhancements ${width}: ok`);
 }
 
+async function checkWarpMTU(page, state, width) {
+  state.panelUpdate.update_available = false;
+  for (const theme of ['light', 'dark', 'parchment']) {
+    state.theme.theme = theme;
+    await page.goto(`${base}/update`);
+    const badge = page.getByText('Установлена последняя версия панели', { exact: true });
+    await badge.waitFor();
+    const geometry = await badge.evaluate((el) => ({
+      boxes: el.getClientRects().length,
+      display: getComputedStyle(el).display,
+      fits: el.scrollWidth <= el.clientWidth + 1,
+    }));
+    assert.equal(geometry.boxes, 1, 'badge split into overlapping inline backgrounds');
+    assert.equal(geometry.display, 'inline-flex');
+    assert(geometry.fits, 'badge text overflow');
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `update overflow ${width}`);
+    await badge.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(output, `panel-version-${theme}-${width}.png`), fullPage: true });
+  }
+  await page.goto(`${base}/warp`);
+  const mtu = page.getByLabel('MTU туннеля', { exact: true });
+  await mtu.waitFor();
+  assert.equal(await mtu.inputValue(), '1280');
+  for (const value of ['', '0', '999', '1501', '1280.5']) {
+    await mtu.fill(value);
+    await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
+    await page.getByText(/MTU: введите целое число/).waitFor();
+    assert.equal(state.warpPatches.length, 0, `invalid MTU saved: ${value}`);
+  }
+  await mtu.fill('1400');
+  const saved = page.waitForResponse(r => r.url().endsWith('/warp/settings') && r.request().method() === 'PUT');
+  await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
+  await saved;
+  await page.waitForFunction(() => document.querySelector('input[type="number"]')?.value === '1400');
+  assert.equal(state.warpPatches.at(-1).mtu, 1400);
+  assert(!state.writes.some(p => /\/warp\/(apply|enable)$/.test(p)), 'save restarted tunnel');
+  const overflow = await page.evaluate(() => ({ width: innerWidth, scroll: document.documentElement.scrollWidth,
+    elements: [...document.querySelectorAll('main *')].filter(el => el.getBoundingClientRect().right > innerWidth + 1).slice(0, 12).map(el => `${el.tagName}.${el.className}`) }));
+  await page.screenshot({ path: path.join(output, `warp-mtu-${width}.png`), fullPage: true });
+  assert(overflow.scroll <= overflow.width + 1, `WARP overflow ${width}: ${JSON.stringify(overflow)}`);
+  await mtu.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(output, `warp-mtu-${width}.png`), fullPage: true });
+  delete state.warp.mtu;
+  await page.reload();
+  await page.getByText('Где выходить и через что', { exact: true }).waitFor();
+  assert.equal(await page.getByLabel('MTU туннеля', { exact: true }).count(), 0, 'MTU shown for old CLI');
+  console.log(`WARP MTU and panel badge ${width}: ok`);
+}
+
 async function checkWeb(page, state, width) {
   await page.goto(`${base}/web`);
   await page.getByText('web.example.com, alt.example.com', { exact: true }).waitFor();
@@ -437,7 +498,8 @@ async function checkLayout(page, width) {
         const errors = [];
         page.on('pageerror', (error) => errors.push(error.message));
         const state = await mock(page);
-        if (process.argv.includes('--web')) await checkWeb(page, state, width);
+        if (process.argv.includes('--warp-mtu')) await checkWarpMTU(page, state, width);
+        else if (process.argv.includes('--web')) await checkWeb(page, state, width);
         else if (process.argv.includes('--enhancements')) await checkEnhancements(page, state, width);
         else if (process.argv.includes('--navigation')) await checkNavigation(page, state, width);
         else {

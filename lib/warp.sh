@@ -2,7 +2,8 @@
 # MTProxyL — маршрут до Telegram через Cloudflare WARP (warpscout).
 # Вариант A — SOCKS5 + redsocks, вариант B — интерфейс WireGuard.
 
-WARPSCOUT_VERSION="0.16.0"
+WARPSCOUT_VERSION="0.16.1"
+WARPSCOUT_BUILD="${WARPSCOUT_VERSION}-mtproxyl.1"
 WARPSCOUT_UPSTREAM_REPO="vernette/warpscout"
 
 WARP_IFACE="mtpwarp"
@@ -64,8 +65,8 @@ _warp_write_state() {
     local _tmp; _tmp=$(mktemp "$(_warp_dir)/state.XXXXXX") || return 1
     jq -nc --arg endpoint "$1" --arg proto "$(_warp_proto)" --arg mode "$(_warp_mode)" \
         --arg location "${WARP_LOCATION:-}" --arg pin "${WARP_ENDPOINT:-}" \
-        --arg node "$_node" --arg country "$_country" \
-        --argjson ts "$(date +%s)" '{endpoint:$endpoint,proto:$proto,mode:$mode,location:$location,pin:$pin,node:$node,country:$country,picked_at:$ts}' > "$_tmp" \
+        --arg node "$_node" --arg country "$_country" --argjson mtu "$(_warp_mtu)" \
+        --argjson ts "$(date +%s)" '{endpoint:$endpoint,proto:$proto,mode:$mode,location:$location,pin:$pin,node:$node,country:$country,mtu:$mtu,picked_at:$ts}' > "$_tmp" \
         && chmod 600 "$_tmp" && mv "$_tmp" "$(_warp_state)"
 }
 
@@ -141,8 +142,23 @@ _warp_socks_reachable_host() {
 
 _warp_mtu() {
     local _v="${WARP_MTU:-1280}"
-    [[ "$_v" =~ ^[0-9]+$ ]] && [ "$_v" -ge 1000 ] && [ "$_v" -le 1500 ] || _v="1280"
+    _warp_valid_mtu "$_v" || _v="1280"
     echo "$_v"
+}
+
+_warp_valid_mtu() {
+    [[ "$1" =~ ^[0-9]{4}$ ]] && [ "$1" -ge 1000 ] && [ "$1" -le 1500 ]
+}
+
+_warp_active_mtu() {
+    local _v
+    _v=$(jq -er '.mtu // 1280' "$(_warp_state)" 2>/dev/null) && _warp_valid_mtu "$_v" && { echo "$_v"; return 0; }
+    echo null
+}
+
+_warp_bin_supports_mtu() {
+    local _help; _help=$("${1:-$(_warp_bin)}" socks -h 2>&1)
+    grep -q -- '-tunnel-mtu' <<< "$_help"
 }
 
 # ── Бинарник ────────────────────────────────────────────────────────────────
@@ -170,6 +186,9 @@ _warp_bin_usable() {
     for _flag in best conf endpoint country node plain tun-ping port table-off no-dns; do
         grep -q -- "-${_flag}\b" <<< "$_help" || return 1
     done
+    if [ "$(_warp_mode)" != iface ] && [ "$(_warp_mtu)" != 1280 ]; then
+        _warp_bin_supports_mtu "$_b" || return 1
+    fi
     return 0
 }
 
@@ -178,19 +197,19 @@ warp_install_binary() {
     mkdir -p "$_dir"
     chmod 700 "$_dir"
 
-    if [ -x "$(_warp_bin)" ] && [ "$(_warp_bin_version)" = "$WARPSCOUT_VERSION" ] && _warp_bin_usable; then
+    if [ -x "$(_warp_bin)" ] && [[ "$(_warp_bin_version)" == "$WARPSCOUT_VERSION" || "$(_warp_bin_version)" == "$WARPSCOUT_BUILD" ]] && _warp_bin_usable; then
         log_success "warpscout ${WARPSCOUT_VERSION} уже установлен"
         return 0
     fi
 
     local _arch; _arch=$(_warp_arch) || { log_error "Архитектура $(uname -m) не поддерживается"; return 1; }
 
-    # Сначала релиз оригинального проекта, запасной — наша сборка из форка.
+    # Сборка MTProxyL добавляет MTU действующего SOCKS-туннеля.
     local _sources=(
+        "https://github.com/${GITHUB_REPO}/releases/download/warpscout-${WARPSCOUT_BUILD}/mtproxyl-warpscout-${WARPSCOUT_BUILD}-linux-${_arch}.tar.gz"
         "https://github.com/${WARPSCOUT_UPSTREAM_REPO}/releases/download/v${WARPSCOUT_VERSION}/warpscout_${WARPSCOUT_VERSION}_linux_${_arch}.tar.gz"
-        "https://github.com/${GITHUB_REPO}/releases/download/warpscout-${WARPSCOUT_VERSION}/mtproxyl-warpscout-${WARPSCOUT_VERSION}-linux-${_arch}.tar.gz"
     )
-    local _names=("оригинального проекта" "сборки MTProxyL")
+    local _names=("сборки MTProxyL с настройкой MTU" "оригинального проекта (MTU SOCKS-туннеля только 1280)")
 
     local _tmp _i _extract _ok="false"
     _tmp=$(mktemp -d /tmp/warpscout.XXXXXX) || { log_error "Не удалось создать временный каталог"; return 1; }
@@ -209,7 +228,8 @@ warp_install_binary() {
         local _found; _found=$(find "$_extract" -type f -name warpscout | head -1)
         [ -n "$_found" ] || { log_warn "В архиве нет warpscout"; continue; }
         chmod 700 "$_found"
-        if ! _warp_bin_usable "$_found" || [ "$("$_found" version 2>/dev/null | head -1)" != "$WARPSCOUT_VERSION" ]; then
+        local _version; _version=$("$_found" version 2>/dev/null | head -1)
+        if ! _warp_bin_usable "$_found" || [[ "$_version" != "$WARPSCOUT_VERSION" && "$_version" != "$WARPSCOUT_BUILD" ]]; then
             log_warn "Скачанный warpscout не понимает нужные ключи — пробуем следующий источник"
             continue
         fi
@@ -220,7 +240,7 @@ warp_install_binary() {
     done
     rm -rf "$_tmp"
 
-    [ "$_ok" = "true" ] || { log_error "Не удалось поставить warpscout"; return 1; }
+    [ "$_ok" = "true" ] || { log_error "Не удалось поставить совместимый warpscout; для MTU SOCKS-туннеля, отличного от 1280, нужна сборка MTProxyL"; return 1; }
     log_success "warpscout $(_warp_bin_version) установлен: $(_warp_bin)"
 }
 
@@ -674,15 +694,26 @@ _warp_nft_remove() {
 
 _warp_write_socks_runner() {
     local _runner; _runner=$(_warp_runner)
+    local _mtu_flag=false
+    if _warp_bin_supports_mtu; then
+        _mtu_flag=true
+    elif [ "$(_warp_active_mtu)" != 1280 ]; then
+        log_error "Установленный warpscout не поддерживает MTU туннеля: mtproxyl warp install"
+        return 1
+    fi
     {
         echo '#!/bin/bash'
-        printf 'BIN=%q\nACCOUNT=%q\nSTATE=%q\nPORT=%q\nLISTEN=%q\n' \
-            "$(_warp_bin)" "$(_warp_account)" "$(_warp_state)" "$(_warp_socks_port)" "$(_warp_socks_listen)"
+        printf 'BIN=%q\nACCOUNT=%q\nSTATE=%q\nPORT=%q\nLISTEN=%q\nMTU_FLAG=%q\n' \
+            "$(_warp_bin)" "$(_warp_account)" "$(_warp_state)" "$(_warp_socks_port)" "$(_warp_socks_listen)" "$_mtu_flag"
         cat <<'RUNNER'
 set -eu
 EP=$(jq -er '.endpoint' "$STATE")
 PROTO=$(jq -er '.proto' "$STATE")
-exec "$BIN" socks -a "$ACCOUNT" -e "$EP" -p "$PROTO" -l "$LISTEN" -port "$PORT"
+MTU=$(jq -er '.mtu // 1280' "$STATE")
+[[ "$MTU" =~ ^[0-9]{4}$ ]] && [ "$MTU" -ge 1000 ] && [ "$MTU" -le 1500 ] || exit 1
+args=()
+if [ "$MTU_FLAG" = true ]; then args=(-tunnel-mtu "$MTU"); fi
+exec "$BIN" socks -a "$ACCOUNT" -e "$EP" -p "$PROTO" -l "$LISTEN" -port "$PORT" "${args[@]}"
 RUNNER
     } > "$_runner"
     chmod 700 "$_runner"
@@ -1565,6 +1596,7 @@ warp_status() {
     [ "$_mode" = "upstream" ] && _title="вариант C — socks5-upstream движка"
     echo -e "  ${BOLD}Режим:${NC}        ${_title}"
     echo -e "  ${BOLD}Протокол:${NC}     $(_warp_proto)"
+    echo -e "  ${BOLD}MTU:${NC}          $(_warp_mtu) (активный: $(_warp_active_mtu))"
     echo -e "  ${BOLD}Эндпоинт:${NC}     ${WARP_ENDPOINT:-${DIM}выбирается разведкой${NC}}"
     echo -e "  ${BOLD}Рабочий адрес:${NC} $(_warp_active_endpoint)"
     echo -e "  ${BOLD}Автовосстановление:${NC} ${WARP_WATCHDOG_ENABLED:-true}"
@@ -1626,7 +1658,8 @@ warp_status_json() {
     _warp_unit_active "$WARP_REDSOCKS_UNIT" && _redir="true"
     ip link show "$WARP_IFACE" >/dev/null 2>&1 && _iface="true"
 
-    printf '{"watchdog_enabled":%s,"active_endpoint":"%s","active_proto":"%s","health":%s,' \
+    printf '{"mtu":%s,"active_mtu":%s,' "$(_warp_mtu)" "$(_warp_active_mtu)"
+    printf '"watchdog_enabled":%s,"active_endpoint":"%s","active_proto":"%s","health":%s,' \
         "$([ "${WARP_WATCHDOG_ENABLED:-true}" = true ] && echo true || echo false)" \
         "$(json_escape "$_active")" "$(json_escape "$_active_proto")" "$_health"
     printf '"enabled":%s,"mode":"%s","proto":"%s","endpoint":"%s","location":"%s","exclude":"%s",' \
@@ -1769,11 +1802,13 @@ warp_set_exclude() {
 }
 
 warp_set_settings() {
-    local _proto="${1:-keep}" _location="${2:-keep}" _ep="${3:-keep}" _exclude="${4:-keep}"
+    local _proto="${1:-keep}" _location="${2:-keep}" _ep="${3:-keep}" _exclude="${4:-keep}" _mtu="${5:-keep}"
     case "$_proto" in keep|awg|wg|masque|masque-h2) ;; *) log_error "Неверный протокол WARP"; return 1 ;; esac
     if [ "$_exclude" != keep ]; then
         _exclude=$(_warp_parse_exclude "$_exclude") || { log_error "Неверный список исключённых узлов"; return 1; }
-        WARP_EXCLUDE="$_exclude"
+    fi
+    if [ "$_mtu" != keep ]; then
+        _warp_valid_mtu "$_mtu" || { log_error "MTU: целое число от 1000 до 1500 (по умолчанию 1280)"; return 1; }
     fi
     if [ "$_location" != keep ] && [ "$_location" != clear ]; then
         [[ "$_location" =~ ^[A-Za-z]{2,3}(,[A-Za-z]{2,3})*$ ]] || { log_error "Неверная локация WARP"; return 1; }
@@ -1781,6 +1816,8 @@ warp_set_settings() {
     if [ "$_ep" != keep ] && [ "$_ep" != clear ]; then
         _warp_valid_endpoint "$_ep" || { log_error "Неверный endpoint WARP"; return 1; }
     fi
+    [ "$_exclude" = keep ] || WARP_EXCLUDE="$_exclude"
+    [ "$_mtu" = keep ] || WARP_MTU="$_mtu"
     [ "$_proto" = keep ] || WARP_PROTO="$_proto"
     [ "$_location" = keep ] || WARP_LOCATION="${_location^^}"
     [ "$_location" != clear ] || WARP_LOCATION=""
@@ -1931,6 +1968,9 @@ _warp_activate_endpoint() {
 
 warp_apply() {
     [ "${WARP_ENABLED:-false}" = true ] || { log_error "Сначала включите WARP"; return 1; }
+    if [ "$(_warp_mode)" != iface ] && [ "$(_warp_mtu)" != 1280 ] && ! _warp_bin_supports_mtu; then
+        warp_install_binary || return 1
+    fi
     local _ep
     _ep=$(warp_resolve_endpoint) || return 1
     _warp_activate_endpoint "$_ep" || return 1
@@ -1950,7 +1990,9 @@ warp_recover() {
         log_error "Не удалось прочитать активные настройки WARP; автоматическая смена локации отменена"
         return 1
     fi
-    local WARP_MODE WARP_PROTO WARP_LOCATION WARP_ENDPOINT
+    local WARP_MODE WARP_PROTO WARP_LOCATION WARP_ENDPOINT WARP_MTU
+    WARP_MTU=$(jq -r '.mtu // 1280' <<< "$_state")
+    _warp_valid_mtu "$WARP_MTU" || { log_error "Некорректный MTU активного туннеля WARP"; return 1; }
     WARP_MODE=$(jq -r '.mode' <<< "$_state")
     WARP_PROTO=$(jq -r '.proto' <<< "$_state")
     WARP_LOCATION=$(jq -r '.location' <<< "$_state")
@@ -2078,7 +2120,13 @@ _warp_dispatch() {
         recover)     warp_recover ;;
         watch)       warp_watch ;;
         watchdog)    warp_set_watchdog "${2:-}" ;;
-        settings)    warp_set_settings "${2:-keep}" "${3:-keep}" "${4:-keep}" "${5:-keep}" ;;
+        settings)    warp_set_settings "${2:-keep}" "${3:-keep}" "${4:-keep}" "${5:-keep}" "${6:-keep}" ;;
+        mtu)
+            if [ "$#" -eq 1 ]; then _warp_mtu
+            else
+                _warp_valid_mtu "$2" || { log_error "MTU: целое число от 1000 до 1500"; return 1; }
+                warp_set_settings keep keep keep keep "$2"
+            fi ;;
         exclude)     warp_set_exclude "${2:-}" ;;
         preflight)
             [ "${3:-}" = "--json" ] || { log_error "warp preflight <вариант> --json"; return 1; }
@@ -2114,6 +2162,7 @@ _warp_dispatch() {
             echo -e "    ${GREEN}warp location${NC} <A>     Страны (DE,NL) или узлы (FRA,AMS), clear — авто"
             echo -e "    ${GREEN}warp exclude${NC} <N>      Исключить узлы (DME,LED); none — без исключений, default — DME"
             echo -e "    ${GREEN}warp endpoint${NC} <A>     Закрепить адрес, clear — выбирать разведкой"
+            echo -e "    ${GREEN}warp mtu${NC} <1000–1500> MTU туннеля; по умолчанию 1280, затем warp apply"
             echo -e "    ${GREEN}warp proto${NC} <P>        awg (по умолчанию), wg, masque"
             echo -e "    ${GREEN}warp hint${NC}             Что дописать в конфиг чужой цели для варианта C"
             echo -e "    ${GREEN}warp reapply${NC}          Переприменить правила и список подсетей"

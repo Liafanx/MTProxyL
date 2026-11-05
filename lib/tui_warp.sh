@@ -128,6 +128,7 @@ tui_warp_menu() {
         echo -e "  ${DIM}[16]${NC} Автовосстановление: ${WARP_WATCHDOG_ENABLED:-true}"
         echo -e "  ${DIM}[17]${NC} Обновить warpscout"
         echo -e "  ${DIM}[18]${NC} Исключённые узлы: $(_warp_excluded | sed 's/^$/нет/')"
+        echo -e "  ${DIM}[19]${NC} MTU туннеля: $(_warp_mtu) (по умолчанию 1280)"
         echo -e "  ${DIM}[0]${NC} Назад"
         echo ""
 
@@ -161,6 +162,11 @@ tui_warp_menu() {
                 press_any_key ;;
             17) handle_warp_command install; press_any_key ;;
             18) _tui_warp_exclude ;;
+            19)
+                local _mtu
+                read_line _mtu "  MTU туннеля, 1000–1500 [$(_warp_mtu)]: "
+                handle_warp_command mtu "${_mtu:-$(_warp_mtu)}"
+                press_any_key ;;
             0|"") return ;;
         esac
     done

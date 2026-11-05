@@ -1214,7 +1214,7 @@ show_cli_help() {
     echo -e "  ${BOLD}Для issue:${NC}      report [файл|--stdout] — сводка без IP и ключей"
     echo -e "  ${BOLD}История IP:${NC}     ip-history status|flush|on|off"
     echo -e "  ${BOLD}Доступность:${NC}    availability status|check|details|target|on|off|interval|token"
-    echo -e "  ${BOLD}Telegram/WARP:${NC}  warp status|on socks|on iface|off|scan|location|endpoint|proto"
+    echo -e "  ${BOLD}Telegram/WARP:${NC}  warp status|on socks|on iface|off|scan|location|endpoint|proto|mtu"
     echo -e "  ${BOLD}Донор (AWG):${NC}    donor status|setup <IP|домен>|manual <IP|домен>|host <IP|домен>|finish <ключ>|check|on|off|remove"
     echo -e "  ${BOLD}Свой AWG:${NC}       awg status|scan|import <файл>|list|on <имя|файл> [--replace]|order|timers|off|check|remove <имя>"
     echo -e "  ${BOLD}Выход:${NC}          egress [--json] — через что идёт трафик к Telegram"

@@ -1283,6 +1283,8 @@ export interface WarpExit {
 }
 
 export interface WarpStatus {
+  mtu?: number;
+  active_mtu?: number;
   watchdog_enabled?: boolean;
   active_endpoint?: string;
   active_proto?: string;
@@ -1355,6 +1357,7 @@ export interface WarpScanResponse {
 }
 
 export interface WarpSettingsPatch {
+  mtu?: number;
   location?: string;
   endpoint?: string;
   proto?: string;

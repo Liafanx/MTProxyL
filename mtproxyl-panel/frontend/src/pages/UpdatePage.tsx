@@ -640,16 +640,16 @@ export function UpdatePage() {
           {panelError && <ErrorAlert message={panelError} />}
 
           <div className="space-y-3 lg:space-y-4">
-            <div className="grid grid-cols-2 gap-2 lg:gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 lg:gap-3">
               <MetricCard label="Текущая версия" value={panelCurrentVersion || '—'} />
-              <div className="self-center text-xs" role="status">
+              <div className="min-w-0 self-center text-xs leading-relaxed" role="status">
                 {panelUpdate.loading ? <span className="text-text-muted">Проверка версии…</span>
                   : panelUpdate.error ? <span className="text-warn">Не удалось проверить версию <button className="underline" onClick={() => { void panelUpdate.load(); }}>Повторить</button></span>
-                  : panelUpdate.info?.update_available ? <span className="rounded bg-accent/15 px-2 py-1 text-accent">Доступна {panelVersionLabel(panelUpdate.info.latest_version)}</span>
-                  : panelUpdate.info && /^v?\d+\.\d+\.\d+$/.test(panelUpdate.info.current_version) ? <span className="rounded bg-ok/15 px-2 py-1 text-ok">Установлена последняя версия панели</span>
+                  : panelUpdate.info?.update_available ? <span className="inline-flex max-w-full rounded bg-accent/15 px-2 py-1 text-accent">Доступна {panelVersionLabel(panelUpdate.info.latest_version)}</span>
+                  : panelUpdate.info && /^v?\d+\.\d+\.\d+$/.test(panelUpdate.info.current_version) ? <span className="inline-flex max-w-full rounded bg-ok/15 px-2 py-1 text-ok">Установлена последняя версия панели</span>
                   : <span className="text-text-muted">Сборка из исходников</span>}
               </div>
-              <div className="flex items-center">
+              <div className="min-w-0 flex items-center sm:col-span-2">
                 <VersionSelect
                   releases={panelReleases}
                   selected={panelSelectedRelease}

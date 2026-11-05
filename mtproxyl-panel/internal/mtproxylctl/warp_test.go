@@ -2,6 +2,7 @@ package mtproxylctl
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,7 +32,7 @@ func TestWarpSettingsOneInvocation(t *testing.T) {
 	}
 	c := New(config.MtproxylConfig{Enabled: true, ScriptPath: script})
 	proto, loc, ep := "masque-h2", "de,ams", "[2606:4700::1]:443"
-	out, err := c.WarpSetSettings(context.Background(), &proto, &loc, &ep, nil)
+	out, err := c.WarpSetSettings(context.Background(), &proto, &loc, &ep, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,26 +40,52 @@ func TestWarpSettingsOneInvocation(t *testing.T) {
 		t.Fatalf("args: %q", out)
 	}
 	loc = "DE;id"
-	if _, err := c.WarpSetSettings(context.Background(), &proto, &loc, &ep, nil); err == nil {
+	if _, err := c.WarpSetSettings(context.Background(), &proto, &loc, &ep, nil, nil); err == nil {
 		t.Fatal("invalid settings accepted")
 	}
-	out, err = c.WarpSetSettings(context.Background(), nil, nil, nil, nil)
+	out, err = c.WarpSetSettings(context.Background(), nil, nil, nil, nil, nil)
 	if err != nil || !strings.Contains(out, "settings\nkeep\nkeep\nkeep\n") {
 		t.Fatalf("partial patch: %q %v", out, err)
 	}
 	ex := "dme, led"
-	out, err = c.WarpSetSettings(context.Background(), nil, nil, nil, &ex)
+	out, err = c.WarpSetSettings(context.Background(), nil, nil, nil, &ex, nil)
 	if err != nil || !strings.HasSuffix(out, "keep\nkeep\nkeep\nDME,LED\n") {
 		t.Fatalf("exclude: %q %v", out, err)
 	}
 	ex = ""
-	out, err = c.WarpSetSettings(context.Background(), nil, nil, nil, &ex)
+	out, err = c.WarpSetSettings(context.Background(), nil, nil, nil, &ex, nil)
 	if err != nil || !strings.HasSuffix(out, "keep\nnone\n") {
 		t.Fatalf("exclude none: %q %v", out, err)
 	}
 	ex = "DME;id"
-	if _, err := c.WarpSetSettings(context.Background(), nil, nil, nil, &ex); err == nil {
+	if _, err := c.WarpSetSettings(context.Background(), nil, nil, nil, &ex, nil); err == nil {
 		t.Fatal("invalid exclude accepted")
+	}
+}
+
+func TestWarpMTUSettings(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "cli")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	c := New(config.MtproxylConfig{Enabled: true, ScriptPath: script})
+	for _, mtu := range []int{1000, 1280, 1400, 1500} {
+		out, err := c.WarpSetSettings(context.Background(), nil, nil, nil, nil, &mtu)
+		if err != nil || out != fmt.Sprintf("warp\nsettings\nkeep\nkeep\nkeep\nkeep\n%d\n", mtu) {
+			t.Fatalf("MTU args: %q %v", out, err)
+		}
+	}
+	ex := "dme"
+	mtu := 1400
+	out, err := c.WarpSetSettings(context.Background(), nil, nil, nil, &ex, &mtu)
+	if err != nil || !strings.HasSuffix(out, "DME\n1400\n") {
+		t.Fatalf("MTU + exclusion: %q %v", out, err)
+	}
+	for _, mtu := range []int{0, 999, 1501, -1} {
+		if _, err := c.WarpSetSettings(context.Background(), nil, nil, nil, nil, &mtu); err == nil {
+			t.Fatalf("accepted %d", mtu)
+		}
 	}
 }
 

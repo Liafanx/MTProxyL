@@ -1,28 +1,16 @@
-name: Сборка warpscout (запасной бинарник для маршрута через WARP)
-
-# MTProxyL сначала берёт релиз оригинального проекта, а этот ассет — запас:
-# на случай, когда оригинальный релиз недоступен или уехал от того, что зовёт
-# lib/warp.sh. Исходный тег фиксирован, артефакты хранятся в релизах MTProxyL.
+name: Сборка warpscout с настройкой MTU
 
 on:
+  push:
+    tags: ['warpscout-*-mtproxyl.*']
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Версия warpscout без v'
-        required: true
-        default: '0.16.0'
-      fork_ref:
-        description: 'Тег исходников warpscout: v<версия>'
-        required: true
-        default: 'v0.16.0'
-      push_release:
-        description: 'Опубликовать как Release?'
-        required: true
-        default: 'true'
-        type: choice
-        options:
-          - 'true'
-          - 'false'
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_REF: v0.16.1
+  BUILD_VERSION: 0.16.1-mtproxyl.1
 
 jobs:
   build:
@@ -32,108 +20,77 @@ jobs:
       fail-fast: false
       matrix:
         arch: [amd64, arm64]
-
     steps:
-      - name: Проверить соответствие версии и тега
-        env:
-          SOURCE_REF: ${{ github.event.inputs.fork_ref }}
-          SOURCE_VERSION: ${{ github.event.inputs.version }}
-        run: test "$SOURCE_REF" = "v$SOURCE_VERSION"
-
+      - uses: actions/checkout@v4
+      - name: Проверить тег сборки
+        if: github.event_name == 'push'
+        run: test "$GITHUB_REF_NAME" = "warpscout-$BUILD_VERSION"
       - name: Забрать исходники warpscout
         uses: actions/checkout@v4
         with:
           repository: vernette/warpscout
-          ref: ${{ github.event.inputs.fork_ref }}
-
-      - name: Go
-        uses: actions/setup-go@v5
+          ref: ${{ env.SOURCE_REF }}
+          path: upstream
+      - name: Добавить MTU действующего туннеля
+        working-directory: upstream
+        run: git apply --check ../.github/patches/warpscout-tunnel-mtu.patch && git apply ../.github/patches/warpscout-tunnel-mtu.patch
+      - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version-file: upstream/go.mod
           cache: false
-
-      - name: Сборка статического бинарника
+      - name: Проверить MTU сетевого стека
+        working-directory: upstream
+        run: go test ./...
+      - name: Собрать бинарник
+        working-directory: upstream
         env:
           GOOS: linux
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: '0'
-        run: |
-          set -eu
-          VER="${{ github.event.inputs.version }}"
-          go build -trimpath -ldflags "-s -w -X main.version=${VER}" -o warpscout .
-          file warpscout
-
-      - name: Проверка ключей, на которые рассчитывает MTProxyL
+        run: go build -trimpath -ldflags "-s -w -X main.version=$BUILD_VERSION" -o warpscout .
+      - name: Проверить совместимость с MTProxyL
         if: matrix.arch == 'amd64'
+        working-directory: upstream
         run: |
           set -eu
-          # Форк может уехать от оригинала. Пусть это ломает сборку здесь, а не
-          # разведку эндпоинтов на сервере пользователя.
           HELP="$(./warpscout scan -h 2>&1 || true)$(./warpscout socks -h 2>&1 || true)"
-          for flag in best conf endpoint country node table-off no-dns plain tun-ping port; do
-            echo "$HELP" | grep -q -- "-${flag}" || { echo "нет ключа -${flag}"; exit 1; }
+          for flag in best conf endpoint country node table-off no-dns plain tun-ping port tunnel-mtu; do
+            echo "$HELP" | grep -q -- "-${flag}" || { echo "Нет ключа -${flag}"; exit 1; }
           done
-          ./warpscout version
-
-      - name: Упаковка
+          test "$(./warpscout version)" = "$BUILD_VERSION"
+      - name: Упаковать
+        working-directory: upstream
         run: |
-          set -eu
-          ARCHIVE="mtproxyl-warpscout-${{ github.event.inputs.version }}-linux-${{ matrix.arch }}.tar.gz"
-          tar czf "${ARCHIVE}" warpscout
-          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
-
-      - name: Загрузка артефакта
-        uses: actions/upload-artifact@v4
+          cp LICENSE LICENSE.warpscout
+          tar czf "../mtproxyl-warpscout-$BUILD_VERSION-linux-${{ matrix.arch }}.tar.gz" warpscout LICENSE.warpscout
+      - uses: actions/upload-artifact@v4
         with:
           name: warpscout-${{ matrix.arch }}
-          path: ${{ env.ARCHIVE }}
+          path: mtproxyl-warpscout-*.tar.gz
           retention-days: 7
-
   release:
-    name: Публикация Release
+    name: Публикация сборки warpscout
     needs: build
-    if: github.event.inputs.push_release == 'true'
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
-      - name: Скачать артефакты
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
-
-      - name: Показать файлы
-        run: find artifacts -type f -maxdepth 3
-
-      - name: Создать Release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
-          tag_name: warpscout-${{ github.event.inputs.version }}
-          name: "warpscout ${{ github.event.inputs.version }} (сборка MTProxyL)"
+          tag_name: warpscout-${{ env.BUILD_VERSION }}
+          name: warpscout ${{ env.BUILD_VERSION }} (MTU туннеля)
           body: |
-            ## warpscout ${{ github.event.inputs.version }}
+            Сборка [vernette/warpscout](https://github.com/vernette/warpscout),
+            исходный тег `${{ env.SOURCE_REF }}`. Добавлен параметр SOCKS `-tunnel-mtu`
+            (1000–1500, по умолчанию 1280), применяемый сетевым стеком WG/AWG и MASQUE.
+            Параметр `scan -mtu` по-прежнему управляет только экспортом конфигурации.
 
-            Запасной бинарник для маршрута до Telegram через WARP. Собран из
-            [исходников warpscout](https://github.com/vernette/warpscout),
-            тег `${{ github.event.inputs.fork_ref }}`.
-
-            MTProxyL берёт его, только если релиз оригинального проекта
-            [vernette/warpscout](https://github.com/vernette/warpscout)
-            недоступен или не понимает нужные ключи.
-
-            - `linux/amd64`
-            - `linux/arm64`
-
-            ### Ручная проверка
-            ```bash
-            tar xzf mtproxyl-warpscout-*.tar.gz
-            ./warpscout version
-            ./warpscout register -a /tmp/warp-account.json
-            ./warpscout scan -a /tmp/warp-account.json -p awg -best -plain
-            ```
-          files: |
-            artifacts/warpscout-amd64/*.tar.gz
-            artifacts/warpscout-arm64/*.tar.gz
-          draft: false
-          prerelease: false
+            Патч и тест сетевого стека: `.github/patches/warpscout-tunnel-mtu.patch`.
+            Зависимость MTProxyL для linux/amd64 и linux/arm64.
+          files: artifacts/warpscout-*/*.tar.gz
+          prerelease: true
+          make_latest: false

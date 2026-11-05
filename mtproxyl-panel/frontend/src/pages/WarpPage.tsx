@@ -175,7 +175,7 @@ export function WarpPage() {
                 MTProxyL выполнит быструю проверку: до 2 адресов на подсеть.
                 Расширенная разведка ниже проверяет больше адресов и портов.
               </p>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 [&>button]:max-w-full [&>button]:whitespace-normal [&>button]:py-1.5">
                 <Button
                   onClick={() => void prepareEnable('socks')}
                   disabled={busy || running}
@@ -632,6 +632,7 @@ function StateCard({ status }: { status: WarpStatus }) {
         <Cell label="Рабочий эндпоинт" value={status.enabled ? status.active_endpoint || '—' : '—'} />
         <Cell label="Закреплённый адрес" value={status.endpoint || 'автовыбор'} />
         <Cell label="Протокол туннеля" value={status.active_proto || status.proto} />
+        {status.mtu !== undefined && <Cell label="MTU туннеля" value={status.enabled && status.active_mtu != null ? String(status.active_mtu) : '—'} />}
         <Cell label="Последняя проверка" value={status.health?.checked_at ? new Date(status.health.checked_at * 1000).toLocaleString('ru-RU') : '—'} />
         <Cell label="Восстановление" value={status.health?.last_recovery_at ? new Date(status.health.last_recovery_at * 1000).toLocaleString('ru-RU') : 'не требовалось'} />
         {status.health?.error && <Cell label="Причина сбоя" value={status.health.error} />}
@@ -734,6 +735,7 @@ function SettingsForm({ status, onSaved, disabled }: { status: WarpStatus; onSav
   const [endpoint, setEndpoint] = useState(status.endpoint);
   const [proto, setProto] = useState(status.proto);
   const [exclude, setExclude] = useState(status.exclude ?? '');
+  const [mtu, setMtu] = useState(String(status.mtu ?? 1280));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -743,9 +745,15 @@ function SettingsForm({ status, onSaved, disabled }: { status: WarpStatus; onSav
     setEndpoint(status.endpoint);
     setProto(status.proto);
     setExclude(status.exclude ?? '');
-  }, [status.location, status.endpoint, status.proto, status.exclude]);
+    setMtu(String(status.mtu ?? 1280));
+  }, [status.location, status.endpoint, status.proto, status.exclude, status.mtu]);
 
   const save = async () => {
+    if (status.mtu !== undefined && (!/^\d{4}$/.test(mtu) || Number(mtu) < 1000 || Number(mtu) > 1500)) {
+      setError('MTU: введите целое число от 1000 до 1500. По умолчанию — 1280.');
+      setSaved(false);
+      return;
+    }
     setSaving(true);
     setError(null);
     setSaved(false);
@@ -756,6 +764,7 @@ function SettingsForm({ status, onSaved, disabled }: { status: WarpStatus; onSav
         proto,
         // Старый MTProxyL не знает исключений — поле не отправляем.
         ...(status.exclude !== undefined ? { exclude: exclude.trim() } : {}),
+        ...(status.mtu !== undefined ? { mtu: Number(mtu) } : {}),
       });
       setSaved(true);
       onSaved();
@@ -817,6 +826,20 @@ function SettingsForm({ status, onSaved, disabled }: { status: WarpStatus; onSav
             userspace-туннель warpscout.
           </span>
         </label>
+        {status.mtu !== undefined && (
+          <label className="flex flex-col gap-1">
+            <span className="text-xs text-text-secondary">MTU туннеля</span>
+            <Input
+              type="number" aria-label="MTU туннеля" min={1000} max={1500} step={1} required
+              value={mtu} onChange={(e) => setMtu(e.target.value)} placeholder="1280"
+            />
+            <span className="text-[11px] text-text-secondary/80">
+              Для всех вариантов WARP. По умолчанию 1280; допустимо 1000–1500.
+              Изменение вступит в силу после применения сохранённого выбора.
+              {status.active_mtu != null && ` Сейчас в туннеле: ${status.active_mtu}.`}
+            </span>
+          </label>
+        )}
         {status.exclude !== undefined && (
           <label className="flex flex-col gap-1">
             <span className="text-xs text-text-secondary">Исключённые узлы</span>
