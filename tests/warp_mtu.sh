@@ -73,6 +73,13 @@ if _warp_activate_endpoint '188.114.98.59:2408' >/dev/null 2>&1; then exit 1; fi
 grep -qx 'MTU = 1380' "$(_warp_conf)"
 diff "$test_dir/starts" <(printf '1400\n1380\n')
 _warp_wait_route() { return 0; }
+# Before MTU entered state.json, B already allowed it through settings.conf.
+jq 'del(.mtu)' "$(_warp_state)" > "$test_dir/legacy"
+mv "$test_dir/legacy" "$(_warp_state)"
+[[ "$(_warp_active_mtu)" == 1380 ]]
+mv "$(_warp_conf)" "$test_dir/old.conf"
+[[ "$(_warp_active_mtu)" == 1280 ]]
+mv "$test_dir/old.conf" "$(_warp_conf)"
 _warp_start_services() { [[ "$WARP_MTU" == 1380 ]]; }
 warp_recover >/dev/null
 [[ "$WARP_MTU" == 1400 ]]

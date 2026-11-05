@@ -152,7 +152,16 @@ _warp_valid_mtu() {
 
 _warp_active_mtu() {
     local _v
-    _v=$(jq -er '.mtu // 1280' "$(_warp_state)" 2>/dev/null) && _warp_valid_mtu "$_v" && { echo "$_v"; return 0; }
+    _v=$(jq -r '.mtu // empty' "$(_warp_state)" 2>/dev/null) || { echo null; return 0; }
+    if [ -z "$_v" ]; then
+        _v=1280
+        if jq -e '.mode == "iface"' "$(_warp_state)" >/dev/null 2>&1; then
+            local _conf_mtu
+            _conf_mtu=$(awk -F= '/^[[:space:]]*MTU[[:space:]]*=/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$(_warp_conf)" 2>/dev/null) || _conf_mtu=""
+            if _warp_valid_mtu "$_conf_mtu"; then _v="$_conf_mtu"; fi
+        fi
+    fi
+    _warp_valid_mtu "$_v" && { echo "$_v"; return 0; }
     echo null
 }
 
@@ -1991,7 +2000,7 @@ warp_recover() {
         return 1
     fi
     local WARP_MODE WARP_PROTO WARP_LOCATION WARP_ENDPOINT WARP_MTU
-    WARP_MTU=$(jq -r '.mtu // 1280' <<< "$_state")
+    WARP_MTU=$(_warp_active_mtu)
     _warp_valid_mtu "$WARP_MTU" || { log_error "Некорректный MTU активного туннеля WARP"; return 1; }
     WARP_MODE=$(jq -r '.mode' <<< "$_state")
     WARP_PROTO=$(jq -r '.proto' <<< "$_state")
