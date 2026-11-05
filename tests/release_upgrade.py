@@ -11,7 +11,7 @@ import tarfile
 import tempfile
 
 if '--inside' not in sys.argv:
-    os.execvp('unshare', ['unshare', '-m', '-n', '--fork', sys.executable, __file__, '--inside'])
+    os.execvp('unshare', ['unshare', '-m', '-n', '--fork', sys.executable, __file__, '--inside', *sys.argv[1:]])
 
 repo = Path(__file__).resolve().parent.parent
 base = Path(tempfile.mkdtemp(prefix='mtproxyl-upgrade-'))
@@ -36,6 +36,11 @@ archive = subprocess.check_output(['git', '-C', str(repo), 'archive', 'v1.7.17']
 (base / 'old.tar').write_bytes(archive)
 with tarfile.open(base / 'old.tar') as f:
     f.extractall(old, filter='data')
+published = base / 'published'
+published.mkdir()
+(base / 'published.tar').write_bytes(subprocess.check_output(['git', '-C', str(repo), 'archive', 'v1.7.18']))
+with tarfile.open(base / 'published.tar') as f:
+    f.extractall(published, filter='data')
 new = base / 'new'
 new.mkdir()
 for file in subprocess.check_output(['git', '-C', str(repo), 'ls-files'], text=True).splitlines():
@@ -53,7 +58,8 @@ p.write_text(p.read_text().replace(f'VERSION="{version}"', 'VERSION="9.0.1"'))
 (future / 'lib/utils.sh').write_text((future / 'lib/utils.sh').read_text() + '\n# future fixture\n')
 dist = base / 'dist'
 dist.mkdir()
-for tree, number in [(old, '1.7.17'), (new, version), (future, '9.0.1')]:
+fixtures = {version: new, '1.7.17': old, '1.7.18': published, '9.0.1': future}
+for number, tree in fixtures.items():
     root = base / ('archive-' + number) / ('mtproxyl-' + number)
     root.mkdir(parents=True)
     for name in ['mtproxyl.sh', 'version', 'lib', 'mtproxyl-tgbot']:
@@ -108,6 +114,10 @@ exec /usr/bin/install "$@"
 if [ -n "${FAIL_SNAPSHOT:-}" ] && [[ "$*" == *"/.snap."* ]]; then exit 1; fi
 exec /usr/bin/cp "$@"
 ''')
+(bin_dir / 'mv').write_text('''#!/bin/bash
+if [ -n "${FAIL_RECOVERY:-}" ] && [[ "$*" == *"/recovery-"* ]]; then exit 1; fi
+exec /usr/bin/mv "$@"
+''')
 for name in ['systemctl', 'nft', 'docker', 'sysctl', 'sleep', 'apt-get', 'journalctl', 'pgrep']:
     (bin_dir / name).write_text('#!/bin/sh\n' + ('exit 0\n' if name == 'sleep' else 'exit 1\n'))
 for f in bin_dir.iterdir():
@@ -126,6 +136,7 @@ def run(args, success=True, **flags):
         result = subprocess.run(args, env=dict(env, **flags), stdin=subprocess.DEVNULL,
                                 stdout=f, stderr=f, timeout=90)
     assert (result.returncode == 0) == success, (args, result.returncode, str(log), log.read_text()[-1200:])
+    return log
 
 def reset(tree=new):
     for item in inst.iterdir():
@@ -157,6 +168,63 @@ def check(number, tree, legacy=False):
     assert (inst / '.telemt_version').read_text() == '3.5.13-d3de986\n'
     assert "PROXY_PORT='9443'" in (inst / 'settings.conf').read_text()
     run(['/opt/mtproxyl/mtproxyl.sh', 'version'])
+
+def installed_code():
+    files = [inst / 'mtproxyl.sh', inst / 'version', *sorted((inst / 'lib').glob('*.sh'))]
+    return {str(p.relative_to(inst)): p.read_bytes() for p in files if p.is_file()}
+
+
+def repair_cases():
+    installer = ['bash', str(new / 'install.sh'), '--version', '1.7.18']
+    for damage in ['missing', 'syntax', 'script', 'mixed', 'deleted-script']:
+        reset(published)
+        if damage == 'missing':
+            (inst / 'lib/web_hosts.sh').unlink()
+        elif damage == 'syntax':
+            (inst / 'lib/utils.sh').write_text('if\n')
+        elif damage == 'script':
+            (inst / 'mtproxyl.sh').write_text('#!/bin/bash\nif\n')
+        elif damage == 'mixed':
+            with (inst / 'lib/utils.sh').open('a') as f:
+                f.write('\n# partial update fixture\n')
+        else:
+            (inst / 'mtproxyl.sh').unlink()
+        original = installed_code()
+        if damage not in ['mixed', 'deleted-script']:
+            log = run([*installer, '--', '--help'], success=False)
+            assert '--force' in log.read_text()
+            assert installed_code() == original
+        cache = inst / 'releases'
+        cache.mkdir(exist_ok=True)
+        good_snapshot = cache / 'mtproxyl-1.7.18-local.tar.gz'
+        good_snapshot.write_bytes((dist / 'mtproxyl-1.7.18.tar.gz').read_bytes())
+        (cache / 'previous').write_text('1.7.17\n')
+        flag = '--forced' if damage == 'script' else '--force'
+        run([*installer, flag, '--', '--help'])
+        check('1.7.18', published)
+        backups = list(cache.glob('recovery-*'))
+        assert len(backups) == 1
+        assert backups[0].stat().st_mode & 0o077 == 0
+        saved = backups[0] / 'code'
+        restored = {str(p.relative_to(saved)): p.read_bytes() for p in saved.rglob('*') if p.is_file()}
+        assert restored == original
+        assert good_snapshot.read_bytes() == (dist / 'mtproxyl-1.7.18.tar.gz').read_bytes()
+        assert (cache / 'previous').read_text() == '1.7.17\n'
+        print('PASS installer repair of ' + damage + ': original saved, stable 1.7.18 installed', flush=True)
+    for flags in [dict(CORRUPT_ARCHIVE='1'), dict(FAIL_RECOVERY='1'), dict(FAIL_INSTALL='1')]:
+        reset(published)
+        (inst / 'lib/web_hosts.sh').unlink()
+        original = installed_code()
+        run([*installer, '--force', '--', '--help'], success=False, **flags)
+        assert installed_code() == original
+        if 'FAIL_INSTALL' in flags:
+            assert len(list((inst / 'releases').glob('recovery-*'))) == 1
+        print('PASS forced repair failure leaves original files: ' + next(iter(flags)), flush=True)
+
+
+if '--repair-only' in sys.argv:
+    repair_cases()
+    sys.exit(0)
 
 cli = '/opt/mtproxyl/mtproxyl.sh'
 reset(old)
@@ -225,3 +293,5 @@ for tag in ['v1.6.22', 'v1.7.0']:
     run([cli, 'update', '--no-restart'])
     check(version, new, legacy=True)
     print('PASS actual legacy CLI ' + tag + ' -> new version', flush=True)
+
+repair_cases()
