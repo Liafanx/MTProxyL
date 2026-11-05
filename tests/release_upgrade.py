@@ -58,7 +58,8 @@ p.write_text(p.read_text().replace(f'VERSION="{version}"', 'VERSION="9.0.1"'))
 (future / 'lib/utils.sh').write_text((future / 'lib/utils.sh').read_text() + '\n# future fixture\n')
 dist = base / 'dist'
 dist.mkdir()
-for tree, number in [(old, '1.7.17'), (published, '1.7.18'), (new, version), (future, '9.0.1')]:
+fixtures = {version: new, '1.7.17': old, '1.7.18': published, '9.0.1': future}
+for number, tree in fixtures.items():
     root = base / ('archive-' + number) / ('mtproxyl-' + number)
     root.mkdir(parents=True)
     for name in ['mtproxyl.sh', 'version', 'lib', 'mtproxyl-tgbot']:
