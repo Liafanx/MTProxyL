@@ -646,7 +646,10 @@ export function UpdatePage() {
                 {panelUpdate.loading ? <span className="text-text-muted">Проверка версии…</span>
                   : panelUpdate.error ? <span className="text-warn">Не удалось проверить версию <button className="underline" onClick={() => { void panelUpdate.load(); }}>Повторить</button></span>
                   : panelUpdate.info?.update_available ? <span className="inline-flex max-w-full rounded bg-accent/15 px-2 py-1 text-accent">Доступна {panelVersionLabel(panelUpdate.info.latest_version)}</span>
-                  : panelUpdate.info && /^v?\d+\.\d+\.\d+$/.test(panelUpdate.info.current_version) ? <span className="inline-flex max-w-full rounded bg-ok/15 px-2 py-1 text-ok">Установлена последняя версия панели</span>
+                  : panelUpdate.info && /^v?\d+\.\d+\.\d+$/.test(panelUpdate.info.current_version) ? <div className="flex items-center gap-2 text-xs lg:text-sm text-success">
+                    <CheckCircle2 size={14} className="shrink-0 lg:w-4 lg:h-4" />
+                    Установлена последняя версия панели
+                  </div>
                   : <span className="text-text-muted">Сборка из исходников</span>}
               </div>
               <div className="min-w-0 flex items-center sm:col-span-2">

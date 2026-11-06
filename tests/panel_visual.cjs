@@ -299,11 +299,11 @@ async function checkWarpMTU(page, state, width) {
     await badge.waitFor();
     const geometry = await badge.evaluate((el) => ({
       boxes: el.getClientRects().length,
-      display: getComputedStyle(el).display,
+      background: getComputedStyle(el).backgroundColor,
       fits: el.scrollWidth <= el.clientWidth + 1,
     }));
     assert.equal(geometry.boxes, 1, 'badge split into overlapping inline backgrounds');
-    assert.equal(geometry.display, 'inline-flex');
+    assert.equal(geometry.background, 'rgba(0, 0, 0, 0)', 'latest-version status has a background');
     assert(geometry.fits, 'badge text overflow');
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `update overflow ${width}`);
     await badge.scrollIntoViewIfNeeded();
