@@ -1515,6 +1515,7 @@ const AWG_BASE = `${BASE}/api/awg`;
 export interface AwgConfigInfo {
   name: string;
   endpoint: string;
+  endpoint_family?: 'ipv4' | 'ipv6' | 'hostname';
   address: string;
   obfuscation: boolean;
   /** «AWG 3.x», «AWG 2.0», «AWG 1.0», «WireGuard» или пусто. */
@@ -1565,6 +1566,7 @@ export interface AwgScanFile {
   name: string;
   valid: boolean;
   endpoint: string;
+  endpoint_family?: 'ipv4' | 'ipv6' | 'hostname';
   address: string;
   obfuscation: boolean;
   ipv6: boolean;

@@ -176,6 +176,8 @@ function StateCard({ status, locked, onCheck, onDisable }: {
   onDisable: () => void;
 }) {
   const active = status.configs.find((c) => c.name === status.active);
+  const endpointFamily = active?.endpoint_family ?? (active?.endpoint.startsWith('[')
+    ? 'ipv6' : /^[\d.]+:/.test(active?.endpoint ?? '') ? 'ipv4' : 'hostname');
   const handshakeOk = status.tunnel_up && status.handshake_age !== null && status.handshake_age < 300;
   const working = handshakeOk && status.rules && status.check.result !== 'fail';
   const me = status.me_mode === 'natip'
@@ -212,6 +214,8 @@ function StateCard({ status, locked, onCheck, onDisable }: {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
         <Cell label="Сервер" value={active ? `${active.endpoint}${active.awg_version ? ` · ${active.awg_version}` : ''}` : '—'} />
+        <Cell label="Подключение к серверу" value={!active ? '—' : endpointFamily === 'ipv6'
+          ? 'IPv6 (UDP)' : endpointFamily === 'ipv4' ? 'IPv4 (UDP)' : 'По DNS: IPv4 или IPv6'} />
         <Cell label="Адрес в туннеле" value={active?.address || '—'} />
         <Cell label="Туннель" value={status.tunnel_up ? `${status.iface} поднят${status.mtu ? ` · MTU ${status.mtu}` : ''}` : 'не поднят'} />
         <Cell label="Рукопожатие" value={status.handshake_age !== null ? `${status.handshake_age} с назад` : 'нет'} />
@@ -219,7 +223,7 @@ function StateCard({ status, locked, onCheck, onDisable }: {
         <Cell label="Middle proxy" value={me} />
         <Cell label="Движок" value={engine} />
         <Cell label="Трафик туннеля" value={`↓ ${formatBytes(status.rx_bytes)} · ↑ ${formatBytes(status.tx_bytes)}`} />
-        <Cell label="IPv6 до Telegram" value={status.ipv6 ? 'через туннель' : 'выключен, идёт IPv4'} />
+        <Cell label="IPv6 внутри туннеля" value={status.ipv6 ? 'через туннель до Telegram' : 'нет, до Telegram идёт IPv4'} />
         <Cell label="Последняя проверка" value={`${checkedAt}${status.check.result ? ` · ${status.check.result}` : ''}`} />
         {(status.order?.length ?? 0) > 1 && <Cell label="Порядок выходов" value={(status.order ?? []).join(' → ')} />}
         {status.last_switch?.at ? (
@@ -496,6 +500,11 @@ function ImportCard({ locked, onImportBody, onImportPath, onError }: {
   return (
     <Card className="p-4 space-y-4">
       <h3 className="text-sm font-medium text-text-primary">Добавить конфиг</h3>
+      <p className="text-xs text-text-secondary break-words">
+        Endpoint сервера может быть IPv4, доменом или IPv6: <code>[2001:db8::1]:51820</code>.
+        IPv6 без скобок с портом нормализуется при импорте. На этой машине нужен маршрут IPv6 до сервера AWG.
+        IPv4 в Address — адрес внутри туннеля, он нужен и при подключении к серверу по IPv6.
+      </p>
 
       <div className="flex flex-wrap gap-2">
         <input ref={fileRef} type="file" accept=".conf,text/plain" className="hidden"
@@ -559,7 +568,7 @@ function Cell({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
       <div className="text-xs text-text-secondary">{label}</div>
-      <div className="text-text-primary truncate" title={value}>
+      <div className="text-text-primary break-words [overflow-wrap:anywhere]" title={value}>
         {value}
       </div>
     </div>

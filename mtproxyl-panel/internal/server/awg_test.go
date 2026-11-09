@@ -28,7 +28,7 @@ func newAwgMux(t *testing.T, script string) (*http.ServeMux, *mtproxylctl.Runner
 func TestAwgImportBodyOnStdin(t *testing.T) {
 	script, argsFile, stdinFile := recordingScript(t)
 	mux, _ := newAwgMux(t, script)
-	conf := "[Interface]\nPrivateKey = SH3OIYp3CI4y87GeQiH6RpoZno//jwFfCy4dZAm3qnQ=\n"
+	conf := "[Interface]\nPrivateKey = SH3OIYp3CI4y87GeQiH6RpoZno//jwFfCy4dZAm3qnQ=\nAddress = 10.8.0.2/32\n[Peer]\nPublicKey = 9dtJF55DbiNNS3NavGV4eBmzq+EPqYlZT0QDfBbZWFA=\nEndpoint = [2001:db8::1]:51820\nAllowedIPs = 0.0.0.0/0\n"
 	body, _ := json.Marshal(map[string]string{"name": "home-1", "body": conf})
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, authedRequest(t, http.MethodPost, "/api/awg/import", string(body)))
@@ -42,6 +42,28 @@ func TestAwgImportBodyOnStdin(t *testing.T) {
 	stdin, _ := os.ReadFile(stdinFile)
 	if string(stdin) != conf {
 		t.Fatalf("stdin: %q", stdin)
+	}
+}
+
+func TestAwgIPv6EndpointMetadata(t *testing.T) {
+	const conf = `{"name":"ipv6","endpoint":"[2001:db8::1]:51820","endpoint_family":"ipv6","address":"10.8.0.2/32","obfuscation":true,"awg_version":"AWG 2.0"}`
+	for _, tc := range []struct{ path, output string }{
+		{"/api/awg/status", `{"enabled":true,"ipv6":false,"configs":[` + conf + `]}`},
+		{"/api/awg/scan", `{"files":[` + conf + `]}`},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			script := filepath.Join(t.TempDir(), "cli")
+			if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' '"+tc.output+"'\n"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			mux, _ := newAwgMux(t, script)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, authedRequest(t, http.MethodGet, tc.path, ""))
+			if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"endpoint_family":"ipv6"`) ||
+				!strings.Contains(rec.Body.String(), `"endpoint":"[2001:db8::1]:51820"`) {
+				t.Fatalf("IPv6 metadata: %d %s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 

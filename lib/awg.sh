@@ -92,6 +92,52 @@ _awg_normalize() {
         function trim(s) { sub(/^[ \t\r]+/, "", s); sub(/[ \t\r]+$/, "", s); return s }
         function iskey(v) { return length(v) == 44 && v ~ /^[A-Za-z0-9+\/]+=$/ }
         function fail(m) { if (err == "") err = m }
+        function isipv4(v,   a,i) {
+            if (split(v, a, ".") != 4) return 0
+            for (i = 1; i <= 4; i++) if (a[i] !~ /^[0-9]+$/ || length(a[i]) > 3 || a[i] + 0 > 255) return 0
+            return 1
+        }
+        function isipv6(v,   a,n,i,c,z,tail) {
+            z = index(v, "%")
+            if (z) {
+                if (substr(v, z + 1) !~ /^[A-Za-z0-9_.-]+$/) return 0
+                v = substr(v, 1, z - 1)
+            }
+            if (index(v, ".")) {
+                tail = v; sub(/^.*:/, "", tail)
+                if (!isipv4(tail)) return 0
+                v = substr(v, 1, length(v) - length(tail)) "0:0"
+            }
+            if (v !~ /^[0-9a-fA-F:]+$/ || !index(v, ":")) return 0
+            c = index(v, "::")
+            if (c) {
+                if (index(substr(v, c + 2), "::")) return 0
+                v = substr(v, 1, c - 1) ":" substr(v, c + 2)
+                sub(/^:/, "", v); sub(/:$/, "", v)
+            }
+            if (v == "") return c > 0
+            n = split(v, a, ":")
+            for (i = 1; i <= n; i++) if (a[i] !~ /^[0-9a-fA-F]+$/ || length(a[i]) > 4) return 0
+            return c ? n < 8 : n == 8
+        }
+        function endpoint(v,   h,p) {
+            p = v; sub(/^.*:/, "", p)
+            if (p !~ /^[0-9]+$/ || p + 0 < 1 || p + 0 > 65535) {
+                fail("Endpoint: нужен порт от 1 до 65535 (IPv6: [2001:db8::1]:51820)"); return v
+            }
+            h = substr(v, 1, length(v) - length(p) - 1)
+            if (substr(h, 1, 1) == "[") {
+                if (substr(h, length(h)) != "]") { fail("Endpoint: IPv6 задаётся как [2001:db8::1]:51820"); return v }
+                h = substr(h, 2, length(h) - 2)
+                if (!index(h, ":")) fail("Endpoint: в квадратных скобках должен быть IPv6")
+            }
+            if (index(h, ":")) {
+                if (!isipv6(h)) fail("Endpoint: неверный IPv6; пример [2001:db8::1]:51820")
+                return "[" h "]:" (p + 0)
+            }
+            if (h !~ /^[A-Za-z0-9][A-Za-z0-9.-]*$/ || (h ~ /^[0-9.]+$/ && !isipv4(h))) fail("Endpoint: нужен IPv4, домен или [IPv6]:порт")
+            return h ":" (p + 0)
+        }
         # Диапазон AWG 3.x: «N» или «N-M», u16, N <= M.
         function isrange(v,   r) {
             if (v !~ /^[0-9]+(-[0-9]+)?$/) return 0
@@ -154,7 +200,7 @@ _awg_normalize() {
                 if (ck == "PublicKey") { if (!iskey(v)) fail("PublicKey не похож на ключ"); ppub[np] = 1 }
                 else if (ck == "PresharedKey") { if (!iskey(v)) fail("PresharedKey не похож на ключ") }
                 else if (ck == "Endpoint") {
-                    if (v !~ /^[A-Za-z0-9.-]+:[0-9]+$/ && v !~ /^\[[0-9a-fA-F:]+\]:[0-9]+$/) fail("Endpoint: " v)
+                    v = endpoint(v)
                     pep[np] = 1; if (ep == "") ep = v
                 }
                 else if (ck == "AllowedIPs") { if (v !~ /^[0-9a-fA-F:.,\/ ]+$/) fail("AllowedIPs: " v) }
@@ -174,7 +220,7 @@ _awg_normalize() {
             if (ni != 1) fail(ni == 0 ? "нет секции [Interface]" : "несколько секций [Interface]")
             if (np < 1) fail("нет секции [Peer]")
             if (!hk) fail("нет PrivateKey")
-            if (!has4) fail("нет IPv4 в Address")
+            if (!has4) fail("нет IPv4 в Address: это адрес внутри туннеля, он нужен и при IPv6 в Endpoint")
             # Модуль AWG 3.x с защитой заголовков требует S1–S4 не меньше 12.
             if (hpk) for (j = 1; j <= 4; j++) if (sv["S" j] + 0 < 12) { fail("с HeaderProtectionKey S1–S4 должны быть не меньше 12"); break }
             for (j = 1; j <= np; j++) {
@@ -193,6 +239,39 @@ _awg_normalize() {
 # Пятое поле — уровень AWG (wg, 1, 2, 3); у конфигов до 1.7.15 его нет.
 _awg_conf_info() {
     sed -n '1s/^# MTProxyL: endpoint=\([^ ]*\) address=\(.*\) obfuscation=\([a-z]*\) ipv6=\([a-z]*\)\( awg=\([a-z0-9]*\)\)\{0,1\}$/\1|\2|\3|\4|\6/p' "$1" 2>/dev/null
+}
+
+_awg_endpoint_family() {
+    case "$1" in
+        \[*) echo ipv6 ;;
+        *[!0-9.:]*) echo hostname ;;
+        *) echo ipv4 ;;
+    esac
+}
+
+# Проверяем транспорт до сервера, а не семейство трафика внутри туннеля.
+_awg_check_endpoint_routes() {
+    local _ep _host _zone _out _mapped
+    while IFS= read -r _ep; do
+        [[ "$_ep" == \[* ]] || continue
+        _host="${_ep#\[}"; _host="${_host%\]:*}"
+        # IPv4-mapped Endpoint ядро отправляет по IPv4.
+        _mapped=$(getent ahostsv4 "$_host" 2>/dev/null | awk 'NR == 1 {print $1}') || _mapped=""
+        [ -z "$_mapped" ] || continue
+        local -a _args=(-6 route get)
+        _zone=""; [[ "$_host" == *%* ]] && { _zone="${_host#*%}"; _host="${_host%%%*}"; }
+        if [[ "$_zone" =~ ^[0-9]+$ ]]; then
+            _out="$_zone"
+            _zone=$(ip -o link show | awk -F ': ' -v idx="$_zone" '$1 == idx {sub(/@.*/, "", $2); print $2; exit}') || _zone=""
+            [ -n "$_zone" ] || { log_error "Endpoint ${_ep}: сетевой интерфейс с индексом ${_out} не найден"; return 1; }
+        fi
+        _args+=("$_host"); [ -z "$_zone" ] || _args+=(oif "$_zone")
+        if ! _out=$(ip "${_args[@]}" 2>&1); then
+            log_error "Нет IPv6-маршрута к серверу AWG ${_ep}"
+            printf '  Проверьте IPv6-адрес и маршрут на этой машине: %s\n' "$_out"
+            return 1
+        fi
+    done < <(sed -n 's/^Endpoint = //p' "$1")
 }
 
 # Подпись уровня для людей: «AWG 3.x», «AWG 2.0», «AWG 1.0», «WireGuard».
@@ -254,8 +333,9 @@ awg_scan() {
             [ "$_first" = true ] || printf ','; _first=false
             if _info=$(_awg_check_file "$_f"); then
                 IFS='|' read -r _ep _addr _obf _v6 _lvl <<< "$_info"
-                printf '{"path":"%s","name":"%s","valid":true,"endpoint":"%s","address":"%s","obfuscation":%s,"ipv6":%s,"awg_version":"%s","error":""}' \
+                printf '{"path":"%s","name":"%s","valid":true,"endpoint":"%s","endpoint_family":"%s","address":"%s","obfuscation":%s,"ipv6":%s,"awg_version":"%s","error":""}' \
                     "$(json_escape "$_f")" "$(json_escape "$(_awg_name_from_path "$_f")")" "$(json_escape "$_ep")" \
+                    "$(_awg_endpoint_family "$_ep")" \
                     "$(json_escape "$_addr")" "$([ "$_obf" = yes ] && echo true || echo false)" \
                     "$([ "$_v6" = yes ] && echo true || echo false)" "$(_awg_level_label "$_lvl")"
             else
@@ -335,8 +415,8 @@ awg_import() {
     local _ep _addr _obf _v6 _lvl
     IFS='|' read -r _ep _addr _obf _v6 _lvl < <(_awg_conf_info "$_dst")
     if [ "$_json" = true ]; then
-        printf '{"name":"%s","endpoint":"%s","address":"%s","obfuscation":%s,"replaced":%s,"dropped":"%s"}\n' \
-            "$(json_escape "$_name")" "$(json_escape "$_ep")" "$(json_escape "$_addr")" \
+        printf '{"name":"%s","endpoint":"%s","endpoint_family":"%s","address":"%s","obfuscation":%s,"replaced":%s,"dropped":"%s"}\n' \
+            "$(json_escape "$_name")" "$(json_escape "$_ep")" "$(_awg_endpoint_family "$_ep")" "$(json_escape "$_addr")" \
             "$([ "$_obf" = yes ] && echo true || echo false)" "$_existed" "$(json_escape "$(_awg_conf_dropped "$_dst")")"
         return 0
     fi
@@ -840,6 +920,7 @@ _awg_test_config() {
     local _name="$1" _src _tmp _ok=1 _a _i _ts
     _src="$(_awg_store)/${_name}.conf"
     [ -f "$_src" ] || return 1
+    _awg_check_endpoint_routes "$_src" || return 1
     if [ "$(_awg_conf_level "$_name")" = 3 ] && ! _awg_supports_v3; then return 1; fi
     ip link delete "$AWG_TEST_IFACE" 2>/dev/null
     _tmp=$(mktemp) || return 1
@@ -864,6 +945,7 @@ _awg_test_config() {
 
 # Поднять конфиг на основном интерфейсе и убедиться, что Telegram отвечает.
 _awg_bring_up() {
+    _awg_check_endpoint_routes "$(_awg_store)/$1.conf" || return 1
     AWG_ACTIVE="$1"; awg_save
     _awg_write_sys_conf || return 1
     _awg_tunnel_up || return 1
@@ -949,6 +1031,15 @@ awg_enable() (
     [ ${#_AWG_NAMES[@]} -le 8 ] || { log_error "Не больше 8 выходов"; return 1; }
 
     _awg_ensure_installed || return 1
+    local _name _ready=false _route_errors="" _route_error
+    for _name in "${_AWG_NAMES[@]}"; do
+        if _route_error=$(_awg_check_endpoint_routes "$(_awg_store)/${_name}.conf"); then
+            _ready=true
+        else
+            _route_errors+="${_route_error}"$'\n'
+        fi
+    done
+    [ "$_ready" = true ] || { printf '%s' "$_route_errors"; return 1; }
     # Другой выход выключаем; если AWG не поднимется — возвращаем.
     egress_take_over awg "$_replace" || return 1
     local _done=false
@@ -963,7 +1054,7 @@ awg_enable() (
     case "$_mtu" in auto) AWG_MTU="" ;; "") ;; *) AWG_MTU="$_mtu" ;; esac
     awg_save
 
-    local _name _up=""
+    local _up=""
     for _name in "${_AWG_NAMES[@]}"; do
         _awg_need_v3 "$_name" || continue
         log_info "Поднимаем туннель ${AWG_IFACE} по конфигу «${_name}»..."
@@ -1227,8 +1318,8 @@ awg_status_json() {
         [ -n "$_name" ] || continue
         IFS='|' read -r _ep _addr _obf _v6 _lvl < <(_awg_conf_info "$(_awg_store)/${_name}.conf")
         [ "$_first" = true ] || _configs+=","; _first=false
-        _configs+=$(printf '{"name":"%s","endpoint":"%s","address":"%s","obfuscation":%s,"awg_version":"%s"}' \
-            "$(json_escape "$_name")" "$(json_escape "$_ep")" "$(json_escape "$_addr")" \
+        _configs+=$(printf '{"name":"%s","endpoint":"%s","endpoint_family":"%s","address":"%s","obfuscation":%s,"awg_version":"%s"}' \
+            "$(json_escape "$_name")" "$(json_escape "$_ep")" "$(_awg_endpoint_family "$_ep")" "$(json_escape "$_addr")" \
             "$([ "$_obf" = yes ] && echo true || echo false)" "$(_awg_level_label "$_lvl")")
     done < <(_awg_list_names)
     printf '{"enabled":%s,"active":"%s","mtu":%s,"iface":"%s","awg_installed":%s,"tunnel_up":%s,"rules":%s,' \
@@ -1264,6 +1355,11 @@ awg_status() {
     local _ep _addr _obf _v6 _lvl _age
     IFS='|' read -r _ep _addr _obf _v6 _lvl < <(_awg_conf_info "$(_awg_store)/${AWG_ACTIVE}.conf")
     echo -e "  ${BOLD}Активный:${NC}     ${AWG_ACTIVE} — ${_ep}, ${_addr}$(_awg_kind "$_obf" "$_lvl")${AWG_MTU:+, MTU ${AWG_MTU}}"
+    case "$(_awg_endpoint_family "$_ep")" in
+        ipv6) echo -e "  ${BOLD}До сервера:${NC}   IPv6 (UDP); адрес внутри туннеля указан отдельно" ;;
+        ipv4) echo -e "  ${BOLD}До сервера:${NC}   IPv4 (UDP)" ;;
+        *) echo -e "  ${BOLD}До сервера:${NC}   адрес из DNS (IPv4 или IPv6)" ;;
+    esac
     local _ord; _ord=$(_awg_order_list | paste -sd, -)
     if [[ "$_ord" == *,* ]]; then
         echo -e "  ${BOLD}Порядок:${NC}      ${_ord//,/ → } ${DIM}(запасной — через $(_awg_human_sec "$(_awg_failover_after)") сбоя, основной проверяется раз в $(_awg_human_sec "$(_awg_failback_every)"))${NC}"

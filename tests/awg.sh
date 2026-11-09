@@ -68,6 +68,27 @@ plain="$test_dir/wg0.conf"
 printf '[Interface]\nPrivateKey = %s\nAddress = 10.0.0.2/32, fd00::2/128\n\n[Peer]\nPublicKey = %s\nEndpoint = [2001:db8::1]:51820\nAllowedIPs = 0.0.0.0/0\n' "$K1" "$K2" > "$plain"
 [ "$(_awg_check_file "$plain")" = "[2001:db8::1]:51820|10.0.0.2/32, fd00::2/128|no|yes|wg" ]
 
+# IPv6 Endpoint не требует IPv6 внутри туннеля; скобки и порт нормализуются.
+epconf="$test_dir/endpoint.conf"
+for ep in '[2001:db8::1]:51820' '2001:db8::1:51820' \
+    '[2001:0DB8:0:0:0:0:0:1]:65535' '[::1]:1' '[::ffff:203.0.113.7]:443' \
+    '[fe80::1%eth0]:51820' '[fe80::1%2]:51820'; do
+    sed -e "s/^Endpoint = .*/Endpoint = $ep/" -e 's/^Address = .*/Address = 10.0.0.2\/32/' "$plain" > "$epconf"
+    info=$(_awg_check_file "$epconf")
+    [[ "$info" == *'|10.0.0.2/32|no|no|wg' ]]
+    [ "$(_awg_endpoint_family "${info%%|*}")" = ipv6 ]
+done
+for ep in '[2001:db8::1]:0' '[2001:db8::1]:65536' '[2001:db8::1]:abc' \
+    '[2001:db8::1]' '[2001:db8:::1]:51820' '[2001:db8::xyz]:51820' \
+    '[1:2:3:4:5:6:7:8:9]:443' '[1:2:3:4:5:6:7]:443' '[1::2::3]:443' \
+    '[::ffff:999.0.0.1]:443' '[fe80::1%eth0;id]:443' '[203.0.113.7]:443' \
+    '203.0.113.7:0' '256.1.2.3:443' 'vpn.example.org:65536'; do
+    sed "s/^Endpoint = .*/Endpoint = $ep/" "$plain" > "$epconf"
+    fails _awg_check_file "$epconf"
+done
+[ "$(_awg_endpoint_family '203.0.113.7:443')" = ipv4 ]
+[ "$(_awg_endpoint_family 'vpn.example.org:443')" = hostname ]
+
 # AWG 3.1: новые ключи и диапазоны; J1 и Itime из 1.5 выкидываются.
 v3="$test_dir/v3.conf"
 cat > "$v3" <<CONF
@@ -145,6 +166,35 @@ awg_import - --name piped < "$plain" >/dev/null
 fails awg_import - --name 'bad name' < "$plain"
 json=$(awg_import "$plain" --name wg --json)
 jq -e '.name == "wg" and .obfuscation == false' <<< "$json" >/dev/null
+
+sed -e 's/^Endpoint = .*/Endpoint = 2001:db8::1:051820/' -e 's/^Address = .*/Address = 10.0.0.2\/32/' "$plain" > "$epconf"
+json=$(awg_import "$epconf" --name ipv6 --json)
+jq -e '.endpoint == "[2001:db8::1]:51820" and .endpoint_family == "ipv6"' <<< "$json" >/dev/null
+AWG_ACTIVE=ipv6 AWG_MTU=1280 DONOR_AWG_DIR="$test_dir/etc"
+_awg_write_sys_conf
+grep -q '^Endpoint = \[2001:db8::1\]:51820$' "$test_dir/etc/mtpawg.conf"
+
+# Нет маршрута IPv6: отказываем до записи состояния и выключения другого выхода.
+(
+    ip() { printf '%s\n' "$*" >> "$test_dir/ip-args"; echo 'Network is unreachable' >&2; return 2; }
+    _awg_ensure_installed() { :; }
+    egress_take_over() { echo 'Нельзя выключать прежний выход' >&2; exit 99; }
+    awg_load; AWG_ACTIVE=My_Server; awg_save
+    before=$(sha256sum "$(_awg_state_file)")
+    out=$(awg_enable ipv6 --yes 2>&1) && exit 1
+    grep -q 'Нет IPv6-маршрута' <<< "$out"
+    [ "$before" = "$(sha256sum "$(_awg_state_file)")" ]
+    fails _awg_bring_up ipv6
+    [ "$AWG_ACTIVE" = My_Server ]
+    fails _awg_test_config ipv6
+    grep -q '^-6 route get 2001:db8::1$' "$test_dir/ip-args"
+    fails grep -q 'link' "$test_dir/ip-args"
+    ip() { printf '%s\n' "$*" > "$test_dir/ip-args"; }
+    _awg_check_endpoint_routes "$(_awg_store)/ipv6.conf"
+    sed 's/^Endpoint = .*/Endpoint = [fe80::1%eth0]:443/' "$plain" > "$epconf"
+    _awg_check_endpoint_routes "$epconf"
+    [ "$(cat "$test_dir/ip-args")" = '-6 route get fe80::1 oif eth0' ]
+)
 
 # Системный конфиг: Table = off, MTU по запросу, без служебных строк.
 DONOR_AWG_DIR="$test_dir/etc"

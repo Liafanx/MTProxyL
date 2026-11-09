@@ -19,10 +19,11 @@ type AwgCheck struct {
 
 // AwgConfig is an imported client config; keys never leave the server.
 type AwgConfig struct {
-	Name        string `json:"name"`
-	Endpoint    string `json:"endpoint"`
-	Address     string `json:"address"`
-	Obfuscation bool   `json:"obfuscation"`
+	Name           string `json:"name"`
+	Endpoint       string `json:"endpoint"`
+	EndpointFamily string `json:"endpoint_family,omitempty"`
+	Address        string `json:"address"`
+	Obfuscation    bool   `json:"obfuscation"`
 	// AwgVersion: «AWG 3.x», «AWG 2.0», «AWG 1.0», «WireGuard» или пусто.
 	AwgVersion string `json:"awg_version"`
 }
@@ -78,15 +79,16 @@ type AwgPrimaryCheck struct {
 
 // AwgScanFile is a candidate config found on the server.
 type AwgScanFile struct {
-	Path        string `json:"path"`
-	Name        string `json:"name"`
-	Valid       bool   `json:"valid"`
-	Endpoint    string `json:"endpoint"`
-	Address     string `json:"address"`
-	Obfuscation bool   `json:"obfuscation"`
-	IPv6        bool   `json:"ipv6"`
-	AwgVersion  string `json:"awg_version"`
-	Error       string `json:"error"`
+	Path           string `json:"path"`
+	Name           string `json:"name"`
+	Valid          bool   `json:"valid"`
+	Endpoint       string `json:"endpoint"`
+	EndpointFamily string `json:"endpoint_family,omitempty"`
+	Address        string `json:"address"`
+	Obfuscation    bool   `json:"obfuscation"`
+	IPv6           bool   `json:"ipv6"`
+	AwgVersion     string `json:"awg_version"`
+	Error          string `json:"error"`
 }
 
 // AwgEnableRequest — какие выходы включить (по порядку) и что разрешено.

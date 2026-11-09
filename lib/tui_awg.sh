@@ -66,6 +66,7 @@ _tui_awg_pick_many() {
 }
 
 _tui_awg_enable() {
+    echo -e "  ${DIM}Endpoint: IPv4:порт, домен:порт или [IPv6]:порт; IPv4 в Address — внутри туннеля.${NC}"
     _tui_awg_pick || return 0
     local -a _all=("$_TUI_AWG_PICK")
     local _primary="$_TUI_AWG_PICK"

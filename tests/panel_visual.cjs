@@ -105,6 +105,18 @@ async function mock(page) {
       data = { supported: true, status: state.warp };
     }
     else if (url.pathname.endsWith('/egress')) data = { supported: false };
+    else if (url.pathname.endsWith('/awg/status')) data = { supported: true, status: {
+      enabled: true, active: 'ipv6', mtu: 1280, iface: 'mtpawg', tunnel_up: true, awg_installed: true,
+      rules: true, handshake_age: 2, rx_bytes: 1000, tx_bytes: 500, egress_ip: '203.0.113.7',
+      ipv6: false, me_mode: 'natip', me_disabled: false, engine_mode: 'manager', engine_routed: 'manager',
+      order: ['ipv6'], check: { at: now, result: 'ok', error: '' },
+      configs: [{ name: 'ipv6', endpoint: '[2001:db8:1234:5678:9abc:def0:1234:5678]:51820',
+        endpoint_family: 'ipv6', address: '10.8.0.2/32', obfuscation: true, awg_version: 'AWG 2.0' }],
+    } };
+    else if (url.pathname.endsWith('/awg/import')) {
+      state.awgImport = route.request().postDataJSON();
+      data = { output: 'Конфиг сохранён' };
+    }
     else if (url.pathname.endsWith('/mtproxyl/status')) data = { enabled: false };
     else if (url.pathname.endsWith('/branding')) {
       if (state.brandingWait) await state.brandingWait;
@@ -288,6 +300,23 @@ async function checkEnhancements(page, state, width) {
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `appearance overflow ${width}`);
   await page.screenshot({ path: path.join(output, `appearance-${width}.png`), fullPage: true });
   console.log(`panel enhancements ${width}: ok`);
+}
+
+async function checkAwgIPv6(page, state, width) {
+  await page.goto(`${base}/awg`);
+  await page.getByText('IPv6 (UDP)', { exact: true }).waitFor();
+  await page.getByText('нет, до Telegram идёт IPv4', { exact: true }).waitFor();
+  const endpoint = page.getByText('[2001:db8:1234:5678:9abc:def0:1234:5678]:51820 · AWG 2.0', { exact: true });
+  await endpoint.waitFor();
+  assert(await endpoint.evaluate(el => el.scrollWidth <= el.clientWidth + 1), `IPv6 address clipped at ${width}`);
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `AWG overflow ${width}`);
+  const body = '[Interface]\nAddress = 10.8.0.2/32\n[Peer]\nEndpoint = [2001:db8::1]:51820\n';
+  await page.locator('input[type="file"]').setInputFiles({ name: 'ipv6-upload.conf', mimeType: 'text/plain', buffer: Buffer.from(body) });
+  await page.getByText('Конфиг сохранён', { exact: true }).waitFor();
+  assert.deepEqual(state.awgImport, { name: 'ipv6-upload', body });
+  assert(!state.writes.some(p => /\/awg\/(enable|disable|order)$/.test(p)), 'import changed the tunnel');
+  await page.screenshot({ path: path.join(output, `awg-ipv6-${width}.png`), fullPage: true });
+  console.log(`AWG IPv6 ${width}: ok`);
 }
 
 async function checkWarpMTU(page, state, width) {
@@ -498,7 +527,8 @@ async function checkLayout(page, width) {
         const errors = [];
         page.on('pageerror', (error) => errors.push(error.message));
         const state = await mock(page);
-        if (process.argv.includes('--warp-mtu')) await checkWarpMTU(page, state, width);
+        if (process.argv.includes('--awg-ipv6')) await checkAwgIPv6(page, state, width);
+        else if (process.argv.includes('--warp-mtu')) await checkWarpMTU(page, state, width);
         else if (process.argv.includes('--web')) await checkWeb(page, state, width);
         else if (process.argv.includes('--enhancements')) await checkEnhancements(page, state, width);
         else if (process.argv.includes('--navigation')) await checkNavigation(page, state, width);
