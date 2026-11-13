@@ -28,7 +28,10 @@ _stats_ips_db() {
 _stats_known_labels() {
     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
         [ -f "${DETECTED_CONFIG_PATH:-}" ] || return 0
-        _target_section_pairs "access.users" | cut -d'|' -f2
+        # У mtdd список берётся из API: сбой — это ошибка, а не «пользователей нет».
+        local _pairs; _pairs=$(_target_section_pairs "access.users") || return 1
+        [ -n "$_pairs" ] && cut -d'|' -f2 <<< "$_pairs"
+        return 0
     else
         local _i
         for _i in "${!SECRETS_LABELS[@]}"; do
@@ -41,14 +44,18 @@ _stats_known_labels() {
 # запись — 300 пользователей и 1400 IP давали десятки секунд.
 declare -gA _STATS_KNOWN=()
 _STATS_KNOWN_READY=0
+_stats_known_load() {
+    [ "$_STATS_KNOWN_READY" = 1 ] && return 0
+    local _k _list
+    _list=$(_stats_known_labels) || return 1
+    while IFS= read -r _k; do
+        [ -n "$_k" ] && _STATS_KNOWN["$_k"]=1
+    done <<< "$_list"
+    _STATS_KNOWN_READY=1
+}
+
 _stats_label_known() {
-    if [ "$_STATS_KNOWN_READY" != 1 ]; then
-        local _k
-        while IFS= read -r _k; do
-            [ -n "$_k" ] && _STATS_KNOWN["$_k"]=1
-        done < <(_stats_known_labels)
-        _STATS_KNOWN_READY=1
-    fi
+    _stats_known_load || return 0   # список не прочитан — никого не считаем удалённым
     [ -n "${_STATS_KNOWN[$1]+x}" ]
 }
 
@@ -237,6 +244,10 @@ handle_stats_command() {
                     log_success "История IP очищена: ${_i} записей" ;;
                 orphans|deleted)
                     local _t _i
+                    _stats_known_load || {
+                        log_error "Список пользователей цели не прочитан — удалённых не отличить, ничего не убрано"
+                        return 1
+                    }
                     _t=$(stats_reset_traffic orphans)
                     _i=$(stats_reset_ips orphans)
                     log_success "Данные удалённых пользователей убраны: трафик ${_t}, история IP ${_i}" ;;

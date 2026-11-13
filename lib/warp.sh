@@ -2084,6 +2084,13 @@ warp_preflight() {
 }
 
 handle_warp_command() (
+    # Цель mtdd: этой функции у него нет, показываем только состояние.
+    if engine_is_mtdd; then
+        case "${1:-status}" in
+            status|list|--json|json) ;;
+            *) mtdd_unsupported "Telegram через WARP настраивает upstream telemt"; return 1 ;;
+        esac
+    fi
     case "${1:-}" in
         off|disable|remove|uninstall)
             check_root

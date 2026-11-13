@@ -530,6 +530,8 @@ build_faketls_secret() {
 # умолчание telemt (classic и secure выключены, tls включён).
 engine_link_modes() {
     local _cfg="${1:-}"
+    # У mtdd только FakeTLS: dd и classic он не принимает.
+    declare -F engine_is_mtdd >/dev/null && engine_is_mtdd && { echo "tls"; return 0; }
     if [ -z "$_cfg" ] \
         && [ "${MTPROXYL_MODE:-manager}" = "manager" ] \
         && ! _superexpert_active 2>/dev/null; then
@@ -858,7 +860,7 @@ cli_lock_kind() {
     case "$_c $_s" in
         "awg watch"|"dc watch"|"warp watch"|"donor reresolve"|"availability check"|"block hits-sample"|"ip-history flush")
             echo tick; return ;;
-        "update --list"|"update list"|"update --check"|"traffic "|"secret "|"port "|"ip "|"ips "|"domain "|"secret api-view"*|"secret limits"*)
+        "update --list"|"update list"|"update --check"|"traffic "|"secret "|"port "|"ip "|"ips "|"domain "|"secret api-view"*|"secret limits"*|"target-api snapshot")
             echo none; return ;;
     esac
     case "$_s" in
@@ -1161,6 +1163,7 @@ handle_sni_policy() {
         echo -e "  ${BOLD}SNI-политика:${NC} ${UNKNOWN_SNI_ACTION}"
         return 0
     fi
+    mtdd_mgr_active && { mtdd_unsupported "SNI-политика: чужой SNI mtdd отдаёт маскировке"; return 1; }
     check_root
     case "$new_policy" in
         mask|drop|accept|reject_handshake)
@@ -1197,7 +1200,7 @@ show_cli_help() {
     echo -e "  ${BOLD}Прокси:${NC}         start | stop | restart | status [--json]"
     echo -e "  ${BOLD}Секреты:${NC}        secret add|remove|list|rotate|enable|disable|limits|setlimits|setrate|adtag|note|link|qr|clone|rename|export|import"
     echo -e "  ${BOLD}Настройки:${NC}      port | ip | ips | domain | mask-backend | config | settings list|set"
-    echo -e "  ${BOLD}Движок:${NC}         engine status|list|update|rollback|rebuild|backend | tune list|set|clear"
+    echo -e "  ${BOLD}Движок:${NC}         engine status|list|update|rollback|rebuild|backend|kind | tune list|set|clear"
     echo -e "  ${BOLD}Скорость:${NC}       shaping status|set|off|exempt"
     echo -e "  ${BOLD}Эксперт:${NC}        expert list|set|clear|edit"
     echo -e "  ${BOLD}Супер эксперт:${NC}  superexpert status|on|off|edit|show|write"
@@ -1222,7 +1225,7 @@ show_cli_help() {
     echo -e "  ${BOLD}API управления:${NC} api status|on|off|key|set"
     echo -e "  ${BOLD}Переезд:${NC}        migrate <[user@]хост[:порт]> [--dry-run] ${DIM}(только менеджер)${NC}"
     echo -e "  ${BOLD}Подкачка:${NC}       swap status|on [МБ]|off"
-    echo -e "  ${BOLD}Reanimator:${NC}     mode [manager|reanimator] | detect | edit-config | target-config show|write\n                  install-telemt | uninstall-telemt"
+    echo -e "  ${BOLD}Reanimator:${NC}     mode [manager|reanimator] | detect | edit-config | target-config show|write\n                  install-telemt | uninstall-telemt\n                  install-mtdd [--channel main|dev] | uninstall-mtdd | media status|set|off"
     echo -e "  ${BOLD}Система:${NC}        install [аргументы] | menu | update-check | uninstall | version | help"
     echo -e "  ${BOLD}Обновление:${NC}     update [--version X.Y.Z | --rollback] [--yes] [--no-restart] | update --list"
     echo -e "  ${DIM}Установка без вопросов: mtproxyl install --help${NC}"

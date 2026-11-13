@@ -15,8 +15,16 @@ tui_security_menu() {
         esac
         echo -e "  ${DIM}[1]${NC} Гео-блокировка"
         # Работает в любом режиме: правила в ядре, а не в конфиге движка.
-        echo -e "  ${DIM}[2]${NC} Telegram через WARP: $(_tui_warp_state_label)"
-        if [ "${MTPROXYL_MODE:-manager}" = "manager" ] && ! _superexpert_active; then
+        local _mtdd=false; engine_is_mtdd && _mtdd=true
+        if [ "$_mtdd" = true ]; then
+            echo -e "  ${DIM}[2]${NC} Telegram через WARP: ${DIM}недоступно у mtdd${NC}"
+        else
+            echo -e "  ${DIM}[2]${NC} Telegram через WARP: $(_tui_warp_state_label)"
+        fi
+        if [ "$_mtdd" = true ] && [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
+            echo -e "  ${DIM}[3]${NC} Upstream-маршруты: ${DIM}недоступно у mtdd${NC}"
+            echo -e "  ${DIM}[4]${NC} SNI-политика: ${DIM}у mtdd чужой SNI уходит на маскировку${NC}"
+        elif [ "${MTPROXYL_MODE:-manager}" = "manager" ] && ! _superexpert_active; then
             echo -e "  ${DIM}[3]${NC} Upstream-маршруты"
             echo -e "  ${DIM}[4]${NC} SNI-политика: ${sni_label}"
         elif _superexpert_active; then
@@ -35,8 +43,14 @@ tui_security_menu() {
         echo -e "  ${DIM}[5]${NC} Блокировка IP адресов: $(_tui_ipblock_state_label)"
         echo -e "  ${DIM}[6]${NC} Ограничение скорости клиентов"
         # Туннель — в любом режиме; конфиг цели правится с копией.
-        echo -e "  ${DIM}[7]${NC} Туннель AWG до сервера-донора: $(_tui_donor_state_label)"
-        echo -e "  ${DIM}[8]${NC} Telegram через свой AWG (конфиг): $(_tui_awg_state_label)"
+        if [ "$_mtdd" = true ]; then
+            echo -e "  ${DIM}[7]${NC} Туннель AWG до сервера-донора: ${DIM}недоступно у mtdd${NC}"
+            echo -e "  ${DIM}[8]${NC} Telegram через свой AWG (конфиг): ${DIM}недоступно у mtdd${NC}"
+            echo -e "  ${DIM}[9]${NC} Медиа-лимиты mtdd ${DIM}(встроенный лимит загрузок)${NC}"
+        else
+            echo -e "  ${DIM}[7]${NC} Туннель AWG до сервера-донора: $(_tui_donor_state_label)"
+            echo -e "  ${DIM}[8]${NC} Telegram через свой AWG (конфиг): $(_tui_awg_state_label)"
+        fi
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
@@ -45,15 +59,20 @@ tui_security_menu() {
             6)
                 shaping_menu
                 press_any_key ;;
-            2) tui_warp_menu ;;
-            7) tui_donor_menu ;;
-            8) tui_awg_menu ;;
+            2|7|8)
+                if [ "$_mtdd" = true ]; then
+                    mtdd_unsupported "upstream-маршруты (WARP, AWG, донор)"; press_any_key; continue
+                fi
+                case "$choice" in 2) tui_warp_menu ;; 7) tui_donor_menu ;; 8) tui_awg_menu ;; esac ;;
+            9) [ "$_mtdd" = true ] && tui_mtdd_media_menu ;;
             3)
                 _require_manager_mode || { press_any_key; continue; }
+                [ "$_mtdd" = true ] && { mtdd_unsupported "upstream-маршруты"; press_any_key; continue; }
                 _require_no_superexpert || { press_any_key; continue; }
                 tui_upstream_menu ;;
             4)
                 _require_manager_mode || { press_any_key; continue; }
+                [ "$_mtdd" = true ] && { mtdd_unsupported "SNI-политика: чужой SNI mtdd отдаёт маскировке"; press_any_key; continue; }
                 _require_no_superexpert || { press_any_key; continue; }
                 echo ""
                 echo -e "  ${BOLD}Что делать с чужим SNI${NC}"

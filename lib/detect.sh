@@ -4,13 +4,40 @@
 DETECT_CONF="${INSTALL_DIR}/detect.conf"
 
 # ── Значения по умолчанию ─────────────────────────────────────
-DETECTED_MODE="unknown"          # mtproxymax|docker|local|config_only|manual|unknown
+DETECTED_MODE="unknown"          # mtproxymax|docker|local|config_only|manual|mtdd|unknown
 DETECTED_CONTAINER=""
 DETECTED_CONFIG_PATH=""
 DETECTED_IP=""
 DETECTED_PORT=""
 DETECTED_NETWORK_MODE=""         # host|bridge
 DETECT_BRIDGE_STRATEGY="simple"  # simple|precise
+
+# Цель реаниматора — mtdd (lib/mtdd.sh). Предикаты здесь, а не в mtdd.sh:
+# detect.sh подключают все, кто трогает конфиг цели, в том числе тесты.
+_target_is_mtdd() {
+    [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && [ "${DETECTED_MODE:-}" = "mtdd" ]
+}
+
+# Менеджер сам держит mtdd вместо telemt (ENGINE_KIND=mtdd, lib/mtdd_mgr.sh).
+mtdd_mgr_active() {
+    [ "${MTPROXYL_MODE:-manager}" = "manager" ] && [ "${ENGINE_KIND:-telemt}" = "mtdd" ]
+}
+
+# Движок, с которым работает MTProxyL, — mtdd: в Manager или целью Reanimator.
+# Этим проверяются функции, которых у mtdd нет в любом режиме (WEB, upstream,
+# WARP, ad-tag на пользователя…). Пользователи и конфиг цели реаниматора
+# остаются за _target_is_mtdd: в Manager источник истины — secrets.conf.
+engine_is_mtdd() {
+    mtdd_mgr_active || _target_is_mtdd
+}
+
+# Писатели TOML зовут это первым: у mtdd конфиг JSON, и неизвестный ключ
+# для него ошибка запуска — дописанный TOML положил бы прокси.
+_target_toml_guard() {
+    engine_is_mtdd || return 0
+    log_error "Цель — mtdd: у него конфиг JSON, правка в формате telemt не применяется"
+    return 1
+}
 
 save_detect_settings() {
     mkdir -p "$INSTALL_DIR"
@@ -51,6 +78,9 @@ load_detect_settings() {
         *) DETECT_BRIDGE_STRATEGY="simple" ;;
     esac
     _ensure_target_config_owner
+    # Manager с mtdd: пути адаптера — свои, а не цели реаниматора из файла.
+    declare -F mtdd_mgr_ctx >/dev/null && mtdd_mgr_ctx
+    return 0
 }
 
 # Официальный установщик кладёт конфиг как root:telemt, а движок с 3.5.8 при
@@ -92,6 +122,7 @@ _toml_get_value() {
 _toml_safe_set() {
     local _key="$1" _value="$2" _section="$3" _file="$4"
     [ -f "$_file" ] || return 1
+    _target_toml_guard || return 1
 
     local _tmp; _tmp=$(_mktemp) || return 1
     local _rc=0
@@ -166,8 +197,15 @@ _toml_get_string_in_section() {
 }
 
 # ── API управления цели (telemt [server.api]) ──────────────────
+# Конфиг — это конфиг цели mtdd (а не свой конфиг менеджера или чужой TOML).
+_is_mtdd_cfg() {
+    engine_is_mtdd || return 1
+    [ -z "${1:-}" ] || [ "$1" = "${DETECTED_CONFIG_PATH:-}" ]
+}
+
 _get_telemt_api_port() {
     local _cfg="${1:-$DETECTED_CONFIG_PATH}"
+    _is_mtdd_cfg "$_cfg" && { mtdd_api_port; return; }
     local _listen="" _port=""
     if [ -n "$_cfg" ] && [ -f "$_cfg" ]; then
         _listen=$(_toml_get_string_in_section "server.api" "listen" "$_cfg")
@@ -179,6 +217,7 @@ _get_telemt_api_port() {
 
 _get_telemt_metrics_port() {
     local _cfg="${1:-$DETECTED_CONFIG_PATH}"
+    _is_mtdd_cfg "$_cfg" && { mtdd_metrics_port; return; }
     local _listen="" _port=""
     if [ -n "$_cfg" ] && [ -f "$_cfg" ]; then
         # metrics_listen имеет приоритет над metrics_port (так же, как в telemt)
@@ -195,6 +234,8 @@ _get_telemt_metrics_port() {
 _telemt_api_enabled() {
     local _cfg="${1:-$DETECTED_CONFIG_PATH}"
     [ -n "$_cfg" ] && [ -f "$_cfg" ] || return 1
+    # У mtdd API нельзя выключить: без него нет управления.
+    _is_mtdd_cfg "$_cfg" && return 0
     local _en; _en=$(_toml_get_string_in_section "server.api" "enabled" "$_cfg")
     [ "$_en" != "false" ]
 }
@@ -204,6 +245,8 @@ _telemt_api_enabled() {
 _get_telemt_auth_header() {
     local _cfg="${1:-$DETECTED_CONFIG_PATH}"
     [ -n "$_cfg" ] && [ -f "$_cfg" ] || return 0
+    # Токен mtdd в аргументы curl не отдаём: к его API ходит _mtdd_py.
+    _is_mtdd_cfg "$_cfg" && return 0
     _toml_get_string_in_section "server.api" "auth_header" "$_cfg"
 }
 
@@ -261,6 +304,17 @@ _telemt_api_probe_code() {
 # 4 — отвечает, но отклонил авторизацию ([server.api] auth_header).
 _get_telemt_users_json() {
     local _cfg="${1:-$DETECTED_CONFIG_PATH}"
+    if _is_mtdd_cfg "$_cfg"; then
+        # Тот же документ, что у telemt: его разбирают ссылки и статистика.
+        local _mj _mrc
+        _mj=$(_mtdd_py users-telemt 2>/dev/null); _mrc=$?
+        case "$_mrc" in
+            0) echo "$_mj"; return 0 ;;
+            2) return 2 ;;
+            4) return 4 ;;
+            *) return 3 ;;
+        esac
+    fi
     _telemt_api_enabled "$_cfg" || return 2
     local _port; _port=$(_get_telemt_api_port "$_cfg")
     local _host; _host=$(_telemt_api_host "$_cfg")
@@ -289,6 +343,7 @@ _get_telemt_users_json() {
 # вместо тихих нулей/«н/д» без объяснения.
 _telemt_api_unavailable_reason() {
     local _cfg="${1:-$DETECTED_CONFIG_PATH}"
+    _is_mtdd_cfg "$_cfg" && { mtdd_api_unavailable_reason; return; }
     if [ -z "$_cfg" ] || [ ! -f "$_cfg" ]; then
         echo "конфиг цели не найден"
         return
@@ -385,15 +440,21 @@ show_target_links_ipv4() {
     _json=$(_get_telemt_users_json 2>/dev/null); _rc=$?
     if [ $_rc -ne 0 ]; then
         log_warn "Ссылки недоступны: $(_telemt_api_unavailable_reason)"
-        [ $_rc -eq 2 ] && log_info "Включите [server.api] enabled = true в ${DETECTED_CONFIG_PATH:-конфиге цели} и перезапустите цель"
-        _telemt_api_bridge_hint
+        if ! _target_is_mtdd; then
+            [ $_rc -eq 2 ] && log_info "Включите [server.api] enabled = true в ${DETECTED_CONFIG_PATH:-конфиге цели} и перезапустите цель"
+            _telemt_api_bridge_hint
+        fi
         return 1
     fi
 
     local _pairs; _pairs=$(_target_links_ipv4 "$_json")
     if [ -z "$_pairs" ]; then
         log_warn "IPv4-ссылки не найдены в ответе API цели"
-        log_info "Если цель отдаёт только IPv6 — задайте [general.links] public_host в конфиге цели"
+        if _target_is_mtdd; then
+            log_info "Ссылки mtdd строит по public_host из ${DETECTED_CONFIG_PATH:-/etc/mtdd/config.json}"
+        else
+            log_info "Если цель отдаёт только IPv6 — задайте [general.links] public_host в конфиге цели"
+        fi
         return 1
     fi
 
@@ -544,10 +605,17 @@ _engine_unique_ips() {
 # умолчанию выключены (metrics_listen/metrics_port закомментированы),
 # поэтому это отдельная от API проверка.
 _target_metrics_available() {
+    # Метрики mtdd закрыты своим токеном; трафик и соединения берутся из API.
+    _target_is_mtdd && return 1
     curl -s --max-time 2 "http://127.0.0.1:$(_get_telemt_metrics_port)/metrics" &>/dev/null
 }
 
 _target_metrics_hint() {
+    if _target_is_mtdd; then
+        echo ""
+        log_info "У mtdd трафик, соединения и уникальные IP берутся из его API — метрики не нужны"
+        return 0
+    fi
     echo ""
     log_warn "Метрики движка у цели не включены"
     echo -e "  ${DIM}Нужно добавить в конфиг цели (${DETECTED_CONFIG_PATH:-путь не определён})${NC}"
@@ -567,7 +635,7 @@ offer_enable_target_metrics() {
     if [ -z "${DETECTED_CONFIG_PATH:-}" ] || [ ! -f "${DETECTED_CONFIG_PATH}" ]; then
         return 0
     fi
-    if [ "${DETECTED_MODE:-}" = "mtproxymax" ]; then
+    if [ "${DETECTED_MODE:-}" = "mtproxymax" ] || [ "${DETECTED_MODE:-}" = "mtdd" ]; then
         return 0
     fi
 
@@ -681,6 +749,7 @@ _wait_target_api() {
 _target_tls_domain() {
     local _cfg="${1:-$DETECTED_CONFIG_PATH}"
     [ -n "$_cfg" ] && [ -f "$_cfg" ] || return 1
+    _is_mtdd_cfg "$_cfg" && { mtdd_cfg_get tls_domain; return; }
     _toml_get_string_in_section "censorship" "tls_domain" "$_cfg"
 }
 
@@ -928,7 +997,12 @@ detect_telemt() {
         return 0
     fi
 
-    # 4. Только конфиг (процесс не найден)
+    # 4. mtdd: служба mtdd.service или бинарник с конфигом на штатном месте.
+    # После живого telemt: на сервере с обоими целью остаётся telemt, как и
+    # до появления mtdd; перед «только конфигом» telemt — живой mtdd важнее.
+    detect_mtdd && return 0
+
+    # 5. Только конфиг (процесс не найден)
     local _cf
     for _cf in /etc/telemt/telemt.toml /etc/telemt/config.toml /etc/telemt.toml \
                /opt/telemt/config.toml /opt/telemt/telemt.toml \
@@ -983,7 +1057,7 @@ prompt_bridge_mode() {
 }
 
 run_target_detection() {
-    log_info "Поиск установленного telemt на хосте..."
+    log_info "Поиск установленного telemt или mtdd на хосте..."
     if detect_telemt; then
         echo ""
         echo -e "  ${BOLD}Найдено:${NC} ${DETECTED_MODE}"
@@ -993,7 +1067,7 @@ run_target_detection() {
         [ -n "$DETECTED_NETWORK_MODE" ] && echo -e "  ${BOLD}Сеть Docker:${NC}    ${DETECTED_NETWORK_MODE}"
         return 0
     else
-        log_warn "Автоматически найти telemt не удалось"
+        log_warn "Автоматически найти telemt или mtdd не удалось"
         return 1
     fi
 }
@@ -1001,6 +1075,16 @@ run_target_detection() {
 # ── Безопасный точечный тюнинг чужого конфига (reanimator) ────
 apply_target_tuning() {
     local param="$1" value="$2" section="$3" _batch="${4:-false}"
+
+    # У mtdd конфиг JSON без секций: ключ верхнего уровня, своя проверка.
+    if _target_is_mtdd; then
+        if [ "$_batch" = "true" ]; then
+            mtdd_config_set "${param}=${value}"
+        else
+            mtdd_tune_set "$param" "$value"
+        fi
+        return
+    fi
 
     if [ "$DETECTED_MODE" = "mtproxymax" ]; then
         command -v mtproxymax &>/dev/null || { log_error "mtproxymax не найден в PATH"; return 1; }
@@ -1056,6 +1140,11 @@ apply_target_tuning() {
 # ── Тюнинг таймаутов цели (визард при установке) ───────────────
 # Только набор _REANIMATOR_TUNE_SET, одним подтверждением и рестартом.
 run_reanimator_tuning_wizard() {
+    if _target_is_mtdd; then
+        log_info "Тюнинг таймаутов telemt к mtdd не относится: у него свои значения по умолчанию"
+        log_info "Свои параметры mtdd: mtproxyl tune list"
+        return 0
+    fi
     if [ -z "${DETECTED_CONFIG_PATH:-}" ] || [ ! -f "$DETECTED_CONFIG_PATH" ]; then
         log_warn "Конфиг цели не найден — тюнинг таймаутов пропущен"
         return 1
@@ -1154,6 +1243,11 @@ edit_target_config() {
         return 1
     fi
 
+    if _target_is_mtdd; then
+        mtdd_edit_config "$_editor"
+        return
+    fi
+
     backup_target_config "pre-edit" || true
     local _bak="$TARGET_CONFIG_BACKUP"
 
@@ -1221,6 +1315,19 @@ write_target_config() {
     if [ -z "${_new//[[:space:]]/}" ]; then
         log_error "Пустой конфиг — запись отменена"
         return 1
+    fi
+
+    if _target_is_mtdd; then
+        local _mtmp; _mtmp=$(_mktemp) || return 1
+        printf '%s' "$_new" > "$_mtmp"
+        mtdd_config_write_file "$_mtmp" || { rm -f "$_mtmp"; return 1; }
+        rm -f "$_mtmp"
+        log_success "Конфиг mtdd записан: ${DETECTED_CONFIG_PATH}"
+        if [ "$_restart" = "true" ]; then
+            mtdd_restart || return 1
+            mtdd_wait_api 15 || { log_error "mtdd не поднялся после перезапуска — смотрите journalctl -u ${MTDD_UNIT}"; return 1; }
+        fi
+        return 0
     fi
 
     local _tmp; _tmp=$(_mktemp "$(dirname "$DETECTED_CONFIG_PATH")") || {
@@ -1423,6 +1530,17 @@ switch_to_manager_mode() {
 # Аргументом, а не вопросом: панель спрашивает пользователя сама.
 _dispose_own_container() {
     local _choice="$1"
+    if mtdd_mgr_active; then
+        case "$_choice" in
+            remove) mtdd_mgr_remove_service ;;
+            stop)   mtdd_mgr_stop ;;
+            keep)
+                log_info "Движок mtdd оставлен как есть"
+                log_warn "Он продолжит занимать порт ${PROXY_PORT:-443} — цель реаниматора может не запуститься" ;;
+            *) log_error "Неизвестное решение по движку: ${_choice}"; return 1 ;;
+        esac
+        return
+    fi
     if engine_is_binary; then
         case "$_choice" in
             remove) binengine_remove_service ;;
@@ -1523,6 +1641,8 @@ _no_telemt_target() {
     # Проверяем реальность, а не запомненный результат детекта: цель могли
     # снести уже после него.
     case "${DETECTED_MODE:-unknown}" in
+        mtdd)
+            { mtdd_unit_exists || [ -x "$(mtdd_bin)" ]; } && return 1 ;;
         docker|mtproxymax)
             [ -n "${DETECTED_CONTAINER:-}" ] \
                 && docker inspect "$DETECTED_CONTAINER" &>/dev/null && return 1 ;;
@@ -1920,21 +2040,30 @@ uninstall_original_telemt() {
 }
 
 # Предложить установку, если чинить нечего. Возвращает 0, если telemt
-# в итоге установлен.
+# в итоге установлен. Аргумент — как у install_original_telemt: true, если
+# тюнинг после установки telemt предложить здесь (главное меню); мастер
+# реаниматора предлагает его сам и зовёт без аргумента.
 offer_install_original_telemt() {
+    local _offer_tuning="${1:-false}"
     _no_telemt_target || return 0
     echo ""
-    log_warn "Установленный telemt на сервере не найден — реаниматору нечем управлять"
-    echo -e "  ${DIM}Можно поставить оригинальный telemt официальным установщиком проекта${NC}"
-    local _yn; read_line _yn "  ${BOLD}Установить telemt сейчас? [Y/n]:${NC} "
-    [[ "$_yn" =~ ^[nN] ]] && { log_info "Позже: меню «Цель / режим» → «Установить telemt»"; return 1; }
-    # Тюнинг предложит сам мастер установки реаниматора — здесь не дублируем
-    install_original_telemt "false"
+    log_warn "Прокси (telemt или mtdd) на сервере не найден — реаниматору нечем управлять"
+    echo -e "  ${DIM}Можно поставить один из них официальным установщиком проекта:${NC}"
+    echo ""
+    echo -e "  ${DIM}[1]${NC} telemt ${DIM}(Rust; WEB Proxy, upstream'ы, WARP/AWG/донор)${NC}"
+    echo -e "  ${DIM}[2]${NC} mtdd   ${DIM}(C++; без WEB и upstream, ad-tag обязателен, только x86-64)${NC}"
+    echo -e "  ${DIM}[0]${NC} Пропустить"
+    local _c; _c=$(read_choice "выбор" "1")
+    case "$_c" in
+        1) install_original_telemt "$_offer_tuning" ;;
+        2) install_original_mtdd ;;
+        *) log_info "Позже: меню «Цель / режим» → «Установить telemt / mtdd»"; return 1 ;;
+    esac
 }
 
 # ── Установочный визард для режима Reanimator ──────────────────
 run_reanimator_installer() {
-    draw_header "REANIMATOR — ПОИСК СУЩЕСТВУЮЩЕЙ УСТАНОВКИ TELEMT"
+    draw_header "REANIMATOR — ПОИСК УСТАНОВЛЕННОГО TELEMT ИЛИ MTDD"
     echo ""
 
     check_root

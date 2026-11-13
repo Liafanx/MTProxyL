@@ -42,6 +42,11 @@ func TestAPIEndpointMismatch(t *testing.T) {
 			st:   &mtproxylctl.ModeStatus{Mode: "manager", APIPort: 9091, APIEnabled: true},
 		},
 		{
+			name: "цель mtdd — url панели к ней не относится",
+			url:  "http://127.0.0.1:9091",
+			st:   &mtproxylctl.ModeStatus{Mode: "reanimator", EngineKind: "mtdd", APIPort: 9090, APIEnabled: true, EngineConfig: "/etc/mtdd/config.json"},
+		},
+		{
 			name: "статус не прочитался",
 			url:  "http://127.0.0.1:9091",
 			st:   nil,

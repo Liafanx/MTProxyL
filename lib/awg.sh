@@ -1411,6 +1411,13 @@ awg_help() {
 }
 
 handle_awg_command() (
+    # Цель mtdd: этой функции у него нет, показываем только состояние.
+    if engine_is_mtdd; then
+        case "${1:-status}" in
+            status|list|--json|json) ;;
+            *) mtdd_unsupported "маршрут через свой AWG настраивает upstream и middle proxy telemt"; return 1 ;;
+        esac
+    fi
     local _ro=false
     case "${1:-status}" in
         status|scan|list|help|-h|--help) _ro=true ;;

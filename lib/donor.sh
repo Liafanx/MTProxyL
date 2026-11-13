@@ -1809,6 +1809,13 @@ donor_help() {
 }
 
 handle_donor_command() {
+    # Цель mtdd: этой функции у него нет, показываем только состояние.
+    if engine_is_mtdd; then
+        case "${1:-status}" in
+            status|list|--json|json) ;;
+            *) mtdd_unsupported "туннель до донора пишет upstream в конфиг telemt"; return 1 ;;
+        esac
+    fi
     local _sub="${1:-status}"; shift 2>/dev/null || true
     case "$_sub" in
         status)

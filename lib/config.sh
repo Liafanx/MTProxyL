@@ -69,6 +69,11 @@ _tune_lookup() {
 
 handle_tune_command() {
     local sub="${1:-list}"; shift 2>/dev/null || true
+    # У mtdd свой набор ключей и JSON-конфиг; tunings.conf telemt не трогаем.
+    if engine_is_mtdd; then
+        mtdd_handle_tune "$sub" "$@"
+        return
+    fi
     case "$sub" in
         list)
             echo ""; draw_header "ПАРАМЕТРЫ ТЮНИНГА ДВИЖКА"; echo ""
@@ -364,6 +369,9 @@ superexpert_recreate() {
 
 handle_superexpert_command() {
     local _sub="${1:-status}"
+    if mtdd_mgr_active; then
+        case "$_sub" in status|"") ;; *) mtdd_unsupported "супер эксперт — это свой config.toml telemt; у mtdd есть mtproxyl tune"; return 1 ;; esac
+    fi
     case "$_sub" in
         on|enable)   superexpert_enable ;;
         off|disable) superexpert_disable ;;
@@ -413,6 +421,10 @@ _quota_state_toml() {
 
 # ── Генерация config.toml ────────────────────────────────────
 generate_telemt_config() {
+    # Движок Manager — mtdd: его конфиг JSON, TOML telemt туда писать нельзя.
+    if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
+        generate_mtdd_config; return
+    fi
     mkdir -p "$CONFIG_DIR"; chmod 700 "$CONFIG_DIR"
 
     # Маршруты собираются из массивов в памяти. Команда, которая не звала
@@ -806,6 +818,13 @@ _expert_apply_prompt() {
 }
 
 handle_expert_command() {
+    # Цель mtdd: этой функции у него нет, показываем только состояние.
+    if engine_is_mtdd; then
+        case "${1:-status}" in
+            status|list|--json|json) ;;
+            *) mtdd_unsupported "режим эксперта — каталог ключей telemt; для mtdd есть mtproxyl tune list"; return 1 ;;
+        esac
+    fi
     local subcmd="${1:-list}"; shift 2>/dev/null || true
     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
         # Конфигом цели владеет её хозяин: из оверрайдов ей достаются только

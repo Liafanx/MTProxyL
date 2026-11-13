@@ -236,7 +236,7 @@ DOCKERFILE_EOF
 # запоминаем его фактический управляемый образ, чтобы обычный restart из
 # Selfmask/WEB/настроек не превратился в неявное обновление движка.
 remember_proxy_container_version() {
-    engine_is_binary && return 0
+    { engine_is_binary || mtdd_mgr_active; } && return 0
     [ -s "${INSTALL_DIR}/.telemt_version" ] && return 0
     local _image _version
     _image=$(docker inspect -f '{{.Config.Image}}' "$CONTAINER_NAME" 2>/dev/null) || return 0
@@ -253,6 +253,7 @@ remember_proxy_container_version() {
 }
 
 get_telemt_version() {
+    mtdd_mgr_active && { mtdd_mgr_version; return; }
     engine_is_binary && { binengine_version; return; }
     local ver
     ver=$(cat "${INSTALL_DIR}/.telemt_version" 2>/dev/null)
@@ -301,10 +302,12 @@ _is_proxy_running_raw() {
                     return
                 fi
                 _telemt_host_pids >/dev/null ;;
+            mtdd) mtdd_running ;;
             *) return 1 ;;
         esac
         return
     fi
+    mtdd_mgr_active && { mtdd_mgr_running; return; }
     engine_is_binary && { binengine_running; return; }
     # docker ps показывает и контейнер в состоянии Restarting, поэтому
     # падающий в цикле контейнер выглядел как «РАБОТАЕТ». Смотрим состояние.
@@ -315,6 +318,7 @@ _is_proxy_running_raw() {
 
 # Состояние собственного контейнера: running|restarting|exited|created|absent
 own_container_state() {
+    mtdd_mgr_active && { mtdd_mgr_state; return; }
     engine_is_binary && { binengine_state; return; }
     command -v docker &>/dev/null || { echo "absent"; return; }
     local _running _restarting _status
@@ -329,6 +333,7 @@ own_container_state() {
 # действительно проблема. Чистая остановка (exited с кодом 0) — обычное
 # состояние после «Остановить», её не показываем и логами не пугаем.
 own_container_problem() {
+    mtdd_mgr_active && { mtdd_mgr_problem; return; }
     engine_is_binary && { binengine_problem; return; }
     local _st; _st=$(own_container_state)
     case "$_st" in
@@ -377,10 +382,12 @@ get_proxy_uptime() {
                 _pid=$(_telemt_host_pids | head -1)
                 [ -n "$_pid" ] && _et=$(ps -o etimes= -p "$_pid" 2>/dev/null | tr -cd '0-9')
                 echo "${_et:-0}" ;;
+            mtdd) mtdd_uptime_seconds ;;
             *) echo "0" ;;
         esac
         return
     fi
+    mtdd_mgr_active && { mtdd_mgr_uptime; return; }
     engine_is_binary && { binengine_uptime; return; }
     local started_at
     started_at=$(docker inspect --format '{{.State.StartedAt}}' "$CONTAINER_NAME" 2>/dev/null)
@@ -422,6 +429,7 @@ restart_target() {
                 else
                     log_warn "telemt не запущен и systemd-юнит не найден — запустите цель вручную"
                 fi ;;
+            mtdd) mtdd_restart ;;
             *) log_warn "Нет способа перезапустить обнаруженную цель (${DETECTED_MODE:-unknown})" ;;
         esac
         return
@@ -456,6 +464,7 @@ start_target() {
                 else
                     log_warn "systemd-юнит telemt.service не найден — запустите цель вручную"
                 fi ;;
+            mtdd) mtdd_start ;;
             *) log_warn "Нет способа запустить обнаруженную цель (${DETECTED_MODE:-unknown})" ;;
         esac
         return
@@ -488,6 +497,7 @@ stop_target() {
                 else
                     log_warn "Процесс telemt на хосте не найден"
                 fi ;;
+            mtdd) mtdd_stop ;;
             *) log_warn "Нет способа остановить обнаруженную цель (${DETECTED_MODE:-unknown})" ;;
         esac
         return
@@ -519,10 +529,12 @@ _show_target_logs_stream() {
                 else
                     log_warn "Логи недоступны: процесс telemt не привязан к systemd-юниту"
                 fi ;;
+            mtdd) mtdd_logs "$_tail" ;;
             *) log_warn "Логи недоступны для обнаруженной цели (${DETECTED_MODE:-unknown})" ;;
         esac
         return
     fi
+    mtdd_mgr_active && { journalctl -u "$MTDD_MGR_SERVICE" -f -n "$_tail"; return; }
     engine_is_binary && { journalctl -u "$ENGINE_SERVICE" -f -n "$_tail"; return; }
     docker logs -f --tail "$_tail" "$CONTAINER_NAME" 2>&1
 }
@@ -540,6 +552,8 @@ reload_target_config() {
                 else
                     restart_target
                 fi ;;
+            # SIGHUP mtdd перечитывает только me_* и media_*: всё остальное — рестарт.
+            mtdd)       mtdd_restart ;;
             *)          restart_target ;;
         esac
         return
@@ -548,7 +562,9 @@ reload_target_config() {
 }
 
 run_proxy_container() {
-    if engine_is_binary; then
+    if mtdd_mgr_active; then
+        mtdd_mgr_ensure_installed || { log_error "Не удалось поставить mtdd"; return 1; }
+    elif engine_is_binary; then
         binengine_ensure_installed || { log_error "Не удалось поставить бинарник движка"; return 1; }
     else
         local _selected_image; _selected_image=$(get_docker_image)
@@ -585,7 +601,9 @@ run_proxy_container() {
     # Generate config (один вызов с обработкой ошибки)
     generate_telemt_config || { log_error "Ошибка генерации конфига"; return 1; }
 
-    if engine_is_binary; then
+    if mtdd_mgr_active; then
+        mtdd_mgr_launch || return 1
+    elif engine_is_binary; then
         binengine_launch || return 1
     else
         docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
@@ -658,6 +676,10 @@ run_proxy_container() {
             echo ""
         }
         return 0
+    elif mtdd_mgr_active; then
+        log_error "mtdd не запустился — проверьте логи: journalctl -u ${MTDD_MGR_SERVICE} -n 50"
+        journalctl -u "$MTDD_MGR_SERVICE" -n 10 --no-pager 2>/dev/null | sed 's/^/    /'
+        return 1
     elif engine_is_binary; then
         log_error "Движок не запустился — проверьте логи: journalctl -u ${ENGINE_SERVICE} -n 50"
         journalctl -u "$ENGINE_SERVICE" -n 10 --no-pager 2>/dev/null | sed 's/^/    /'
@@ -673,6 +695,7 @@ run_proxy_container() {
 # Нужно при переходе в reanimator и когда контейнер менеджера больше
 # не используется, но продолжает держать порт.
 remove_own_container() {
+    mtdd_mgr_active && { mtdd_mgr_remove_service; return; }
     engine_is_binary && { binengine_remove_service; return; }
     _docker_remove_own_container
 }
@@ -698,6 +721,7 @@ _docker_remove_own_container() {
 }
 
 stop_proxy_container() {
+    mtdd_mgr_active && { mtdd_mgr_stop; return; }
     engine_is_binary && { binengine_stop; return; }
     if is_proxy_running; then
         flush_traffic_to_disk 2>/dev/null || true
@@ -709,6 +733,12 @@ stop_proxy_container() {
 }
 
 start_proxy_container() {
+    if mtdd_mgr_active; then
+        mtdd_mgr_running && { log_info "Прокси уже запущен"; return 0; }
+        run_proxy_container || return 1
+        shaping_restore 2>/dev/null || log_warn 'Не удалось восстановить ограничение скорости'
+        return 0
+    fi
     if engine_is_binary; then
         binengine_start || return 1
         shaping_restore 2>/dev/null || log_warn 'Не удалось восстановить ограничение скорости'
@@ -726,6 +756,12 @@ start_proxy_container() {
 }
 
 restart_proxy_container() {
+    if mtdd_mgr_active; then
+        mtdd_mgr_stop 2>/dev/null || true
+        run_proxy_container || return 1
+        shaping_restore 2>/dev/null || log_warn 'Не удалось восстановить ограничение скорости'
+        return 0
+    fi
     if engine_is_binary; then
         binengine_restart || return 1
         shaping_restore 2>/dev/null || log_warn 'Не удалось восстановить ограничение скорости'
@@ -739,6 +775,8 @@ restart_proxy_container() {
 }
 
 reload_proxy_config() {
+    # mtdd: свой конфиг и синхронизация пользователей (lib/mtdd_mgr.sh).
+    mtdd_mgr_active && { mtdd_mgr_reload_config; return; }
     # [web.limits] принадлежит процессу: SIGHUP её не применит, и движок
     # отвергнет конфиг, где профилей больше старого лимита.
     local _web_limits_before=""

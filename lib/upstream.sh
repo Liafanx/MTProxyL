@@ -385,6 +385,10 @@ upstream_test() {
 handle_upstream_command() {
     local subcmd="${1:-list}"; shift 2>/dev/null || true
     _require_manager_mode || return 1
+    # Список читать можно (панель), менять — нет: у mtdd upstream нет.
+    if mtdd_mgr_active && [ "$subcmd" != list ]; then
+        mtdd_unsupported "upstream-маршруты"; return 1
+    fi
     case "$subcmd" in
         list)
             if [ "${1:-}" = "--json" ]; then

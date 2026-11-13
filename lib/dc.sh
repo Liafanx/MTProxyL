@@ -30,6 +30,22 @@ _dc_mark_threshold() {
 # ([server.api] auth_header).
 _engine_api_get() {
     local _path="$1" _cfg; _cfg=$(_engine_config_path 2>/dev/null)
+    # У mtdd своя разбивка по DC (/v1/stats/me): приводим её к форме
+    # /v1/stats/dcs telemt, остальные маршруты отдаём как есть.
+    if _is_mtdd_cfg "$_cfg"; then
+        local _mj _mrc
+        if [ "$_path" = "/v1/stats/dcs" ]; then
+            _mj=$(_mtdd_py dcs-telemt 2>/dev/null); _mrc=$?
+        else
+            _mj=$(_mtdd_py get "$_path" 2>/dev/null); _mrc=$?
+            [ $_mrc -eq 0 ] && _mj="{\"ok\":true,\"data\":${_mj}}"
+        fi
+        case "$_mrc" in
+            0) printf '%s' "$_mj"; return 0 ;;
+            4) return 4 ;;
+            *) return 3 ;;
+        esac
+    fi
     _telemt_api_enabled "$_cfg" || return 2
     local _port _host _auth _resp _code _json
     _port=$(_get_telemt_api_port "$_cfg")
@@ -322,6 +338,10 @@ _dc_restart_pause() {
 }
 
 dc_restart_json() {
+    # Автоперезапуск по покрытию DC сделан и проверен под telemt. mtdd сам
+    # переподключает свой пул ME, а перезапуск его службы по этому сигналу не
+    # проверялся — поэтому для mtdd его нет: null, и бот, и панель прячут переключатель.
+    if engine_is_mtdd; then printf 'null'; return 0; fi
     _dc_watch_load
     printf '{"enabled":%s,"threshold":%d,"cooldown_min":%d,"pause_min":%d,"restarts":%d,"last_restart_at":%d,"last_restart_coverage":%s,"checked_at":%d,"result":"%s"}' \
         "$([ "${DC_RESTART_ENABLED:-false}" = "true" ] && echo true || echo false)" \
@@ -386,6 +406,7 @@ _ensure_dc_watch_timer() {
 dc_watch() {
     [ "${DC_RESTART_ENABLED:-false}" = "true" ] || return 0
     [ "${TOOLS_ONLY:-false}" = "true" ] && return 0
+    engine_is_mtdd && return 0
     exec 9>"${DC_WATCH_STATE}.lock"
     if command -v flock &>/dev/null; then flock -n 9 || return 0; fi
     _dc_watch_load
@@ -454,6 +475,10 @@ dc_restart_set() {
         ""|status) dc_restart_show; return 0 ;;
         on|off)
             check_root
+            if [ "$_what" = on ] && engine_is_mtdd; then
+                mtdd_unsupported "перезапуск при падении DC: он сделан под telemt, mtdd сам переподключает пул ME"
+                return 1
+            fi
             DC_RESTART_ENABLED=false; [ "$_what" = on ] && DC_RESTART_ENABLED=true
             save_settings || return 1
             dc_install_watch || { log_error "Не удалось поставить таймер ${DC_WATCH_UNIT}"; return 1; }

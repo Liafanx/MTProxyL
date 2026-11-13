@@ -555,7 +555,8 @@ shaping_apply() (
     old_tc=''; [ -f "$SHAPING_TC_FILE" ] && old_tc=$(cat "$SHAPING_TC_FILE")
     old_map='[]'; [ -n "$old_tc" ] && old_map=$(printf '%s\n' "$old_tc" | jq -c '[.ips[]? | {ip,exempt}]')
     config_path=''
-    if [ "${MTPROXYL_MODE:-manager}" = reanimator ] || shaping_superexpert_mode; then
+    # Конфиг mtdd ограничением не затрагивается: его собирает generate_mtdd_config.
+    if [ "${MTPROXYL_MODE:-manager}" = reanimator ] || shaping_superexpert_mode || engine_is_mtdd; then
         manage_config=false
     else
         config_path=$(engine_config_path)
@@ -634,6 +635,23 @@ shaping_apply() (
 
 shaping_fetch_active_map() {
     local cfg="$1" auth response port="${PROXY_API_PORT:-9091}" host=127.0.0.1 exempt config_path
+    if engine_is_mtdd; then
+        # mtdd не отдаёт список IP одним маршрутом: адреса подключённых
+        # устройств собираются из /v1/users/{name}/devices. Предпроверке тика
+        # повторить такой обход нечем — без адреса она запускает полный тик.
+        response=$(_mtdd_py active-ips 2>/dev/null) || return 1
+        rm -f "$SHAPING_TICK_ENDPOINT" 2>/dev/null
+        exempt=$(printf '%s\n' "$cfg" | jq -c '.profile_exempt') || return 1
+        printf '%s\n' "$response" | jq -ce --argjson exempt "$exempt" '
+            [.data[] | select(.username | type == "string") | .username as $user | .active_ips[]? |
+                select(type == "string") |
+                select(test("^((0|[1-9][0-9]{0,2})\\.){3}(0|[1-9][0-9]{0,2})$") and
+                    (split(".") | all(.[]; tonumber <= 255))) |
+                {ip:., exempt: ($exempt | index($user) != null)}] |
+            group_by(.ip) | map({ip:.[0].ip, exempt:all(.[]; .exempt)})
+        ' 2>/dev/null
+        return
+    fi
     if [ "${MTPROXYL_MODE:-manager}" = reanimator ]; then
         config_path="${DETECTED_CONFIG_PATH:-}"
         _telemt_api_enabled "$config_path" || return 1

@@ -31,6 +31,59 @@ _AG_ITEMS=(
     "force|Ставить поверх существующей|no"
 )
 
+# Цель mtdd в реаниматоре: команда ставит тот же mtdd с теми же
+# пользователями, а не менеджер с telemt.
+_argsgen_is_mtdd() { [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && _target_is_mtdd; }
+# Пользователи mtdd строками secrets.conf; заполняется в _argsgen_defaults.
+_AG_MTDD_USERS=()
+
+_argsgen_defaults_mtdd() {
+    local _ch _guess="" _host _mask _name _en _sec _mc _mi _q _ex _note _ru _rd _rest _now
+    _ch=$(cat "$MTDD_CHANNEL_FILE" 2>/dev/null)
+    # Канал неизвестен (mtdd ставили без MTProxyL). Перенос на сборку без
+    # полного API потерял бы лимиты, сроки и выключенных — поэтому, если у
+    # стоящей сборки полный API, берём dev.
+    case "$_ch" in
+        main|dev) ;;
+        *) if _mtdd_py full 2>/dev/null; then _ch="dev"; _guess=" (канал неизвестен; у стоящей сборки полный API — взяли dev)"
+           else _ch="main"; _guess=" (канал неизвестен, взяли main)"; fi ;;
+    esac
+    _AG_ON[engine]="yes"; _AG_VAL[engine]="mtdd:${_ch}"; _AG_VAL[engine_note]="$_guess"
+    _AG_ON[proxy_mode]="no"; _AG_VAL[proxy_mode]="у mtdd только MTProto"
+    _AG_ON[port]="yes";     _AG_VAL[port]="$(mtdd_cfg_get proxy_port 2>/dev/null || echo "${PROXY_PORT:-443}")"
+    _AG_ON[ports]="no";     _AG_VAL[ports]="у mtdd свои, не переносятся"
+    _AG_ON[sni]="yes";      _AG_VAL[sni]="$(mtdd_cfg_get tls_domain 2>/dev/null)"
+    _host=$(mtdd_cfg_get public_host 2>/dev/null)
+    if [ -n "$_host" ] && ! validate_ip_literal "$_host"; then
+        _AG_ON[host]="yes"; _AG_VAL[host]="$_host"
+    else
+        _AG_ON[host]="no";  _AG_VAL[host]=""
+    fi
+    _AG_MTDD_USERS=(); _now=$(date +%s)
+    local _rows _err
+    # Без пользователей команда переноса бесполезна, а с частью — опасна:
+    # недостающие клиенты потеряют ссылки. Поэтому сбой — громко.
+    if ! _rows=$(_mtdd_py users-tsv 2>&1); then
+        _err="$_rows"; _rows=""
+        log_error "Пользователи mtdd не прочитаны: ${_err}"
+    fi
+    while IFS='|' read -r _name _en _sec _mc _mi _q _ex _note _ru _rd _rest; do
+        [ -n "$_name" ] && [ -n "$_sec" ] || continue
+        local _rt=""
+        { [ "${_ru:-0}" != 0 ] || [ "${_rd:-0}" != 0 ]; } && _rt="${_ru:-0}:${_rd:-0}"
+        _AG_MTDD_USERS+=("${_name}|${_sec}|${_now}|${_en}|${_mc:-0}|${_mi:-0}|${_q:-0}|${_ex:-0}|${_note}||${_rt}")
+    done <<< "$_rows"
+    _AG_ON[secrets]="yes"; _AG_VAL[secrets]="${#_AG_MTDD_USERS[@]}"
+    [ -n "${_err:-}" ] && _AG_VAL[secrets]="ОШИБКА чтения — команда неполная"
+    local _tag; _tag=$(mtdd_cfg_get ad_tag 2>/dev/null)
+    # Без тега mtdd не встанет, поэтому этот пункт не выключается.
+    _AG_ON[adtag]="yes"; _AG_VAL[adtag]="${_tag:-нет}"
+    _mask=$(mtdd_cfg_get masking 2>/dev/null)
+    _AG_ON[mask]="yes"; _AG_VAL[mask]="$([ "$_mask" = "false" ] && echo "выкл" || echo "вкл")"
+    _AG_ON[web]="no"; _AG_VAL[web]="у mtdd нет"
+    _AG_ON[dcrestart]="no"; _AG_VAL[dcrestart]="у mtdd нет"
+}
+
 _argsgen_defaults() {
     load_nft_settings 2>/dev/null || true
     load_selfmask_settings 2>/dev/null || true
@@ -38,7 +91,14 @@ _argsgen_defaults() {
     _AG_ON=(); _AG_VAL=()
 
     _AG_ON[engine]="yes"
-    if [ "$(engine_backend)" = "binary" ] && binengine_is_custom; then
+    if _argsgen_is_mtdd; then
+        :
+    elif mtdd_mgr_active; then
+        # Движок Manager — mtdd: на новом сервере тот же канал сборки.
+        local _mch; _mch=$(cat "$MTDD_CHANNEL_FILE" 2>/dev/null)
+        case "$_mch" in main|dev) ;; *) _mch=main ;; esac
+        _AG_VAL[engine]="mtdd:${_mch}"
+    elif [ "$(engine_backend)" = "binary" ] && binengine_is_custom; then
         _AG_VAL[engine]="custom"
     elif [ "$(engine_backend)" = "binary" ]; then
         local _ev; _ev=$(binengine_version)
@@ -122,6 +182,9 @@ _argsgen_defaults() {
     fi
 
     _AG_ON[force]="no"; _AG_VAL[force]="--force"
+    # Поверх общего: то, что у mtdd иначе или чего у него нет.
+    _argsgen_is_mtdd && _argsgen_defaults_mtdd
+    return 0
 }
 
 # Аргументы одной строкой на stdout.
@@ -136,9 +199,20 @@ _ag_user_plain() {
 
 _argsgen_build() {
     local -a _a=(--mode manager)
+    local _mtdd=false _mgrmtdd=false
+    mtdd_mgr_active && _mgrmtdd=true
+    if _argsgen_is_mtdd; then
+        _mtdd=true
+        _a=(--mode reanimator --target mtdd --mtdd-channel "${_AG_VAL[engine]#mtdd:}")
+    fi
     [ "${_AG_ON[force]}" = "yes" ] && _a+=(--force)
-    if [ "${_AG_ON[engine]}" = "yes" ]; then
+    if [ "$_mtdd" = true ]; then
+        :
+    elif [ "${_AG_ON[engine]}" = "yes" ]; then
         case "${_AG_VAL[engine]}" in
+            mtdd:*)
+                _a+=(--engine mtdd --mtdd-channel "${_AG_VAL[engine]#mtdd:}")
+                _a+=(--service-name "$([ -n "${MTDD_SERVICE_NAME:-}" ] && echo random || echo standard)") ;;
             custom)
                 _a+=(--engine binary --engine-url "$(binengine_source)")
                 [ -n "${ENGINE_CUSTOM_SHA256:-}" ] && _a+=(--engine-sha256 "$ENGINE_CUSTOM_SHA256") ;;
@@ -146,18 +220,21 @@ _argsgen_build() {
             binary)   _a+=(--engine binary) ;;
             *)        _a+=(--engine docker) ;;
         esac
-        [ "${_AG_VAL[engine]}" != "docker" ] && [ -n "${ENGINE_SERVICE_NAMING:-}" ] \
+        [ "$_mgrmtdd" = false ] && [ "${_AG_VAL[engine]}" != "docker" ] && [ -n "${ENGINE_SERVICE_NAMING:-}" ] \
             && _a+=(--service-name "$ENGINE_SERVICE_NAMING")
     fi
-    [ "${_AG_ON[proxy_mode]}" = "yes" ] && _a+=(--proxy-mode "${_AG_VAL[proxy_mode]}")
+    [ "$_mtdd" = false ] && [ "${_AG_ON[proxy_mode]}" = "yes" ] && _a+=(--proxy-mode "${_AG_VAL[proxy_mode]}")
     [ "${_AG_ON[port]}" = "yes" ] && _a+=(--port "${_AG_VAL[port]}")
-    if [ "${_AG_ON[ports]}" = "yes" ]; then
+    if [ "$_mtdd" = false ] && [ "${_AG_ON[ports]}" = "yes" ]; then
         _a+=(--metrics-port "${PROXY_METRICS_PORT:-9090}" --api-port "${PROXY_API_PORT:-9091}")
     fi
     [ "${_AG_ON[host]}" = "yes" ] && [ -n "${_AG_VAL[host]}" ] && _a+=(--host "${_AG_VAL[host]}")
     [ "${_AG_ON[sni]}" = "yes" ] && _a+=(--sni "${_AG_VAL[sni]}")
 
-    if [ "${_AG_ON[secrets]}" = "yes" ]; then
+    if [ "$_mtdd" = true ] && [ "${_AG_ON[secrets]}" = "yes" ]; then
+        local _u
+        for _u in "${_AG_MTDD_USERS[@]}"; do _a+=(--user "$_u"); done
+    elif [ "${_AG_ON[secrets]}" = "yes" ]; then
         local _i
         for _i in "${!SECRETS_LABELS[@]}"; do
             if _ag_user_plain "$_i"; then
@@ -169,11 +246,18 @@ _argsgen_build() {
             fi
         done
     fi
-    [ "${_AG_ON[adtag]}" = "yes" ] && [ -n "${AD_TAG:-}" ] && _a+=(--ad-tag "$AD_TAG")
+    if [ "$_mtdd" = true ] || [ "$_mgrmtdd" = true ]; then
+        # mtdd без тега не запускается — переносим всегда.
+        [[ "${_AG_VAL[adtag]}" =~ ^[0-9a-fA-F]{32}$ ]] && _a+=(--ad-tag "${_AG_VAL[adtag]}")
+    else
+        [ "${_AG_ON[adtag]}" = "yes" ] && [ -n "${AD_TAG:-}" ] && _a+=(--ad-tag "$AD_TAG")
+    fi
 
-    if [ "${_AG_ON[mask]}" = "yes" ]; then
+    if [ "$_mtdd" = true ]; then
+        [ "${_AG_ON[mask]}" = "yes" ] && { [ "${_AG_VAL[mask]}" = "выкл" ] && _a+=(--mask off) || _a+=(--mask on); }
+    elif [ "${_AG_ON[mask]}" = "yes" ]; then
         [ "${MASKING_ENABLED:-true}" = "false" ] && _a+=(--mask off) || _a+=(--mask on)
-        _a+=(--sni-policy "${UNKNOWN_SNI_ACTION:-reject_handshake}")
+        [ "$_mgrmtdd" = true ] || _a+=(--sni-policy "${UNKNOWN_SNI_ACTION:-reject_handshake}")
     fi
 
     if [ "${_AG_ON[fixes]}" = "yes" ]; then
@@ -214,7 +298,7 @@ _argsgen_build() {
         [ "${FRONT_SERVER:-nginx}" != "nginx" ] && _a+=(--front "$FRONT_SERVER")
     fi
 
-    if [ "${_AG_ON[web]}" = "yes" ]; then
+    if [ "$_mtdd" = false ] && [ "$_mgrmtdd" = false ] && [ "${_AG_ON[web]}" = "yes" ]; then
         _a+=(--web yes --web-layout "${WEB_LAYOUT:-shared}")
         _a+=(--web-frontend "${WEB_FRONTEND:-nginx}")
         [ "${WEB_DNS_CHECK:-true}" = "false" ] && _a+=(--web-dns-check no)
@@ -281,7 +365,7 @@ _argsgen_build() {
         fi
     fi
 
-    if [ "${_AG_ON[dcrestart]:-no}" = "yes" ]; then
+    if [ "$_mtdd" = false ] && [ "$_mgrmtdd" = false ] && [ "${_AG_ON[dcrestart]:-no}" = "yes" ]; then
         _a+=(--dc-restart "${DC_RESTART_THRESHOLD:-50}")
         [ "${DC_RESTART_COOLDOWN:-5}" = "5" ] || _a+=(--dc-restart-cooldown "$DC_RESTART_COOLDOWN")
     fi
@@ -293,6 +377,7 @@ _argsgen_build() {
 # В значениях храним то, что уйдёт в аргументы; человеку показываем словами.
 _ag_engine_label() {
     case "$1" in
+        mtdd:*)   echo "mtdd, канал ${1#mtdd:}${_AG_VAL[engine_note]:-}" ;;
         custom)   echo "свой бинарник по той же ссылке" ;;
         binary:*) echo "бинарник ${1#binary:}" ;;
         binary)   echo "бинарник, последняя версия" ;;
@@ -326,6 +411,24 @@ _argsgen_print_command() {
 
 _argsgen_edit() {
     local _key="$1" _v=""
+    if _argsgen_is_mtdd || mtdd_mgr_active; then
+        case "$_key" in
+            engine)
+                echo -e "  ${DIM}Какую сборку mtdd поставить на новом сервере.${NC}"
+                echo -e "  ${DIM}[1]${NC} main ${DIM}(основной канал)${NC}"
+                echo -e "  ${DIM}[2]${NC} dev  ${DIM}(свежее, полный API)${NC}"
+                case "$(read_choice "выбор" "1")" in
+                    2) _AG_VAL[engine]="mtdd:dev" ;;
+                    *) _AG_VAL[engine]="mtdd:main" ;;
+                esac
+                _AG_VAL[engine_note]=""
+                return 0 ;;
+            ports)
+                _argsgen_is_mtdd && { log_info "У mtdd этот пункт не переносится или обязателен"; return 0; } ;;
+            proxy_mode|web|dcrestart|adtag)
+                log_info "У mtdd этот пункт не переносится или обязателен"; return 0 ;;
+        esac
+    fi
     case "$_key" in
         engine)
             echo -e "  ${DIM}Чем новый сервер будет держать движок.${NC}"
@@ -376,7 +479,7 @@ _argsgen_edit() {
 
 # Меню: сверху готовая команда, ниже — что в неё входит.
 tui_args_export_menu() {
-    _require_manager_mode || { press_any_key; return 0; }
+    _argsgen_is_mtdd || _require_manager_mode || { press_any_key; return 0; }
     _argsgen_defaults
 
     while true; do

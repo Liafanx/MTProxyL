@@ -593,6 +593,10 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script panel api-auth --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script panel api-auth set -
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script panel api-auth clear
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script dc status --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script target-api snapshot
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script media status --json
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script media set [0-9]* [0-9]*
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script media off
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup list --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup cat mtproxyl-[0-9]*.tar.gz
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script restore ${_install_dir}/backups/mtproxyl-[0-9]*.tar.gz
@@ -888,6 +892,7 @@ detect_from_mtproxyl() {
   API_ENABLED_DETECTED=""
   LOG_KIND_DETECTED=""
   LOG_TARGET_DETECTED=""
+  ENGINE_KIND_DETECTED=""
 
   mtproxyl_present || return 1
 
@@ -902,6 +907,8 @@ detect_from_mtproxyl() {
   ENGINE_CONFIG_DETECTED=$(printf '%s' "$_json" | sed -n 's/.*"engine_config"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
   LOG_KIND_DETECTED=$(printf '%s' "$_json" | sed -n 's/.*"log_kind"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
   LOG_TARGET_DETECTED=$(printf '%s' "$_json" | sed -n 's/.*"log_target"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  # telemt или mtdd: у mtdd другой API, панель говорит с ним через MTProxyL.
+  ENGINE_KIND_DETECTED=$(printf '%s' "$_json" | sed -n 's/.*"engine_kind"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
   # Имя службы движка-бинарника: у новых установок оно случайное.
   ENGINE_SERVICE_DETECTED=$(printf '%s' "$_json" | sed -n 's/.*"engine_service"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 
@@ -1088,6 +1095,15 @@ do_install() {
         printf '            включите API и перезапустите движок, иначе панель будет пустой\n'
       fi
     fi
+    if [ "${ENGINE_KIND_DETECTED:-}" = "mtdd" ]; then
+      # Адрес и заголовок API telemt здесь не нужны: запросы к «telemt» панель
+      # обслуживает сама из снимка MTProxyL (mtproxyl target-api snapshot), а
+      # токен mtdd читает только root. Адрес оставляем API цели — по нему
+      # панель сверяет, не сменился ли режим.
+      say "Цель — mtdd: панель работает с ним через MTProxyL, API telemt не спрашиваем"
+      TELEMT_URL="$API_URL_DEFAULT"
+      TELEMT_AUTH=""
+    else
     TELEMT_URL=$(prompt "Адрес API telemt" "$API_URL_DEFAULT")
 
     if [ -n "$API_AUTH_DETECTED" ]; then
@@ -1134,6 +1150,7 @@ do_install() {
     else
       say "API движка отвечает"
     fi
+    fi
 
     echo ""
     say "Учётная запись администратора панели"
@@ -1149,6 +1166,12 @@ do_install() {
       printf '  Обновление движка: mtproxyl engine\n'
       TELEMT_PATH=""
       TELEMT_SERVICE=""
+    elif [ "${ENGINE_KIND_DETECTED:-}" = "mtdd" ]; then
+      # Бинарник mtdd обновляет MTProxyL (mtproxyl engine update), встроенное
+      # обновление telemt к нему не относится. Служба — для кнопки перезапуска.
+      printf '  Цель mtdd: сборку меняет mtproxyl engine update, служба mtdd\n'
+      TELEMT_PATH=""
+      TELEMT_SERVICE="mtdd"
     else
       TELEMT_DETECTED=$(detect_telemt)
       if [ -x "$TELEMT_DETECTED" ]; then

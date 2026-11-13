@@ -33,12 +33,17 @@ _IA_BLOCK_FILE=""
 _IA_BLOCK_LIST=""
 _IA_BLOCK_ACTION=""
 _IA_ENGINE=""; _IA_ENGINE_VERSION=""; _IA_ENGINE_URL=""; _IA_ENGINE_SHA256=""; _IA_SERVICE_NAME=""
+# Вид движка Manager: telemt (носитель — _IA_ENGINE) или mtdd.
+_IA_ENGINE_KIND=""
 _IA_TGBOT_TOKEN=""; _IA_TGBOT_ADMIN=""
 _IA_DC_RESTART=""; _IA_DC_RESTART_COOLDOWN=""
 _IA_SHAPING_MODE=""; _IA_SHAPING_CHANNEL=""; _IA_SHAPING_RESERVE=""
 _IA_SHAPING_USERS=""; _IA_SHAPING_TOTAL=""; _IA_SHAPING_IP=""
 _IA_SHAPING_PROFILES=(); _IA_SHAPING_IPS=()
 _IA_FORCE="false"
+# Реаниматор аргументами: пока только mtdd, который ставим сами.
+_IA_MODE="manager"; _IA_TARGET=""; _IA_MTDD_CHANNEL=""
+_IA_SEEN=()
 
 install_args_help() {
     cat <<'EOF'
@@ -57,6 +62,12 @@ install_args_help() {
     --service-name random|standard
                                имя службы и бинарника движка: случайное
                                (по умолчанию) или mtproxyl-telemt
+    --engine mtdd              движок mtdd вместо telemt: бинарник из релизов
+                               ugDeDe/mtdd под systemd, нужен --ad-tag
+    --mtdd-channel main|dev    сборка mtdd (по умолчанию main)
+                               У mtdd нет: --engine-version/url/sha256, WEB,
+                               --sni-policy, --dc-restart*; скорость --user
+                               от 8192 бит/с; тег у пользователя не действует
 
   Прокси
     --proxy-mode mtproto|web|combined
@@ -150,6 +161,17 @@ install_args_help() {
   Прочее
     --force                    ставить поверх существующей установки
 
+  Реаниматор с mtdd (ставится официальным установщиком mtdd)
+    mtproxyl install --mode reanimator --target mtdd --ad-tag <32 hex> [параметры]
+    --mtdd-channel main|dev    сборка mtdd (по умолчанию main)
+    Подходят: --port, --sni, --host, --ad-tag (обязателен), --secret, --user,
+    --mask, --cpus, --memory, --server-ips, --selfmask*, --front, фиксы
+    (--zapret2, --syn-limiter, --limiter-action, --meko), шейпинг, --geoip,
+    --api*, --block*, --tgbot-*.
+    У mtdd нет: --engine*, --service-name, --web*, --proxy-mode web|combined,
+    --sni-policy, --dc-restart*, --api-port, --metrics-port.
+    Если mtdd уже стоит, его не переставляем: заводим пользователей и фиксы.
+
   Пример переезда на новый сервер:
     mtproxyl install --mode manager --port 443 --host proxy.example.com \
       --sni m.beboo.ru --secret vpn:0123...ef --ad-tag 89ab...01 \
@@ -187,18 +209,33 @@ _install_args_parse() {
                 _i=$((_i + 1)) ;;
         esac
 
+        _IA_SEEN+=("$_k")
         case "$_k" in
             --mode)
-                if [ "$_v" != "manager" ]; then
-                    log_error "Аргументами ставится только менеджер: --mode manager"
-                    log_info "Реаниматор чинит чужую цель — её параметры берутся с сервера, а не из ключей"
-                    return 1
-                fi ;;
+                case "$_v" in
+                    manager|reanimator) _IA_MODE="$_v" ;;
+                    *) log_error "--mode: manager или reanimator"; return 1 ;;
+                esac ;;
+            --target)
+                case "${_v,,}" in
+                    mtdd) _IA_TARGET="mtdd" ;;
+                    telemt)
+                        log_error "Реаниматор telemt аргументами не ставится: он чинит уже стоящий telemt"
+                        log_info "Аргументами реаниматор ставит mtdd: --mode reanimator --target mtdd"
+                        return 1 ;;
+                    *) log_error "--target: mtdd"; return 1 ;;
+                esac ;;
+            --mtdd-channel)
+                case "${_v,,}" in
+                    main|dev) _IA_MTDD_CHANNEL="${_v,,}" ;;
+                    *) log_error "--mtdd-channel: main или dev"; return 1 ;;
+                esac ;;
             --engine)
                 case "${_v,,}" in
                     docker|контейнер) _IA_ENGINE="docker" ;;
                     binary|bin|бинарник) _IA_ENGINE="binary" ;;
-                    *) log_error "--engine: docker или binary"; return 1 ;;
+                    mtdd) _IA_ENGINE_KIND="mtdd" ;;
+                    *) log_error "--engine: docker, binary или mtdd"; return 1 ;;
                 esac ;;
             --engine-version) _IA_ENGINE_VERSION="$_v" ;;
             --engine-url)    _IA_ENGINE_URL="$_v" ;;
@@ -524,7 +561,9 @@ _install_args_validate() {
         if ! [[ "$_key" =~ ^[0-9a-fA-F]{32}$ ]]; then
             log_error "--secret '${_s}': ключ — 32 hex-символа, формат «метка:ключ» или просто ключ"; _ok=false
         fi
-        if ! [[ "$_label" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        if [ "${_IA_TARGET:-}" = mtdd ]; then
+            :   # своё правило меток у mtdd проверяет _install_args_validate_mtdd
+        elif ! [[ "$_label" =~ ^[a-zA-Z0-9_-]+$ ]]; then
             log_error "--secret '${_s}': в метке только буквы, цифры, дефис и подчёркивание"; _ok=false
         fi
     done
@@ -651,6 +690,7 @@ _install_args_validate() {
        [ -n "$_IA_WEB_DECOY" ] || [ -n "$_IA_WEB_DECOY_UPSTREAM" ] || [ -n "$_IA_WEB_PATH" ]; }; then
         log_error "Параметры WEB заданы без --web yes"; _ok=false
     fi
+    _install_args_validate_mgr_mtdd || _ok=false
 
     if [ -n "$_IA_SELFMASK_CERT" ] || [ -n "$_IA_SELFMASK_EMAIL" ] || \
        [ -n "$_IA_SELFMASK_TEMPLATE" ] || [ -n "$_IA_SELFMASK_BACKEND_PORT" ]; then
@@ -683,6 +723,13 @@ run_installer_args() {
         2) return 0 ;;
         *) echo ""; log_info "Справка: mtproxyl install --help"; return 1 ;;
     esac
+    if [ "$_IA_MODE" = "reanimator" ]; then
+        run_installer_args_mtdd
+        return
+    fi
+    # Без --engine установка поверх mtdd остаётся на mtdd — с его проверками.
+    [ -z "$_IA_ENGINE_KIND" ] && [ -z "$_IA_ENGINE" ] && [ -f "$SETTINGS_FILE" ] \
+        && [ "${ENGINE_KIND:-telemt}" = "mtdd" ] && _IA_ENGINE_KIND="mtdd"
     _install_args_validate || { echo ""; log_info "Справка: mtproxyl install --help"; return 1; }
 
     if [ -f "${INSTALL_DIR}/mtproxyl.sh" ] && [ -f "$SETTINGS_FILE" ] && [ "$_IA_FORCE" != "true" ]; then
@@ -708,6 +755,10 @@ run_installer_args() {
     # упираются в OOM, и установка выглядит зависшей.
     offer_swap_if_low_ram
 
+    if [ "$_IA_ENGINE_KIND" = "mtdd" ]; then
+        _install_args_engine_mtdd || return 1
+    else
+    ENGINE_KIND="telemt"; mtdd_mgr_ctx
     # Без --engine на существующей установке остаёмся на том же движке:
     # молча вернуть контейнер тому, кто ушёл на бинарник, — не то, о чём просили.
     if [ -n "$_IA_ENGINE" ]; then
@@ -745,6 +796,7 @@ run_installer_args() {
         [ -n "$_IA_ENGINE_VERSION" ] && log_warn "--engine-version не применяется к Docker-движку"
         install_docker || return 1
         wait_for_docker || return 1
+    fi
     fi
 
     PROXY_PORT="${_IA_PORT:-${PROXY_PORT:-443}}"
@@ -825,7 +877,9 @@ run_installer_args() {
     if [ "$_IA_WEB" != "yes" ]; then
     run_proxy_container || {
         log_error "Не удалось запустить прокси"
-        if engine_is_binary; then
+        if mtdd_mgr_active; then
+            echo -e "  ${DIM}Проверьте: journalctl -u ${MTDD_MGR_SERVICE} -n 50${NC}"
+        elif engine_is_binary; then
             echo -e "  ${DIM}Проверьте: journalctl -u ${ENGINE_SERVICE} -n 50${NC}"
         else
             echo -e "  ${DIM}Проверьте: docker logs mtproxyl${NC}"
@@ -1098,4 +1152,283 @@ _install_args_web() {
     fi
     save_settings
     web_enable
+}
+
+# ── Реаниматор с mtdd аргументами ──────────────────────────────
+# У mtdd нет WEB, upstream'ов, SNI-политики и своих портов API/метрик в
+# MTProxyL — такие ключи отклоняем явно, а не пропускаем молча.
+# Manager на mtdd: то, чего у mtdd нет, — ошибка, а не тихо пропущенный флаг.
+_IA_MGR_MTDD_DENY_RE='^--(engine-version|engine-url|engine-sha256|web-.*|sni-policy|dc-restart|dc-restart-cooldown)$'
+
+_install_args_validate_mgr_mtdd() {
+    if [ "$_IA_ENGINE_KIND" != "mtdd" ]; then
+        # Реаниматор ставит mtdd с каналом без --engine — это его ключ.
+        [ "$_IA_MODE" = reanimator ] || [ -z "$_IA_MTDD_CHANNEL" ] || { log_error "--mtdd-channel без --engine mtdd"; return 1; }
+        return 0
+    fi
+    local _ok=true _k _s _r _a _b _why
+    [ -z "$_IA_ENGINE" ] || { log_error "--engine задан дважды: ${_IA_ENGINE} и mtdd"; _ok=false; }
+    for _k in "${_IA_SEEN[@]}"; do
+        [[ "$_k" =~ $_IA_MGR_MTDD_DENY_RE ]] && { log_error "${_k}: у mtdd этого нет"; _ok=false; }
+    done
+    [ "$_IA_WEB" = "yes" ] && { log_error "--web: у mtdd нет WEB Proxy"; _ok=false; }
+    local _tag="${_IA_AD_TAG:-${AD_TAG:-}}"
+    [[ "$_tag" =~ ^[0-9a-fA-F]{32}$ ]] && [ "$_tag" != "00000000000000000000000000000000" ] \
+        || { log_error "--ad-tag: mtdd без рекламного тега не запускается (32 hex от @MTProxybot, не из нулей)"; _ok=false; }
+    _why=$(mtdd_mgr_unsupported_reason)
+    [ -z "$_why" ] || { log_error "--engine mtdd: ${_why}"; _ok=false; }
+    for _s in "${_IA_SECRETS[@]}"; do
+        [[ "$_s" == *"|"* ]] || continue
+        _r=$(cut -d'|' -f11 <<< "$_s")
+        [ -n "$_r" ] || continue
+        IFS=: read -r _a _b <<< "$_r"
+        if { [[ "${_a:-0}" =~ ^[0-9]+$ ]] && [ "${_a:-0}" -gt 0 ] && [ "$_a" -lt 8192 ]; } \
+            || { [[ "${_b:-0}" =~ ^[0-9]+$ ]] && [ "${_b:-0}" -gt 0 ] && [ "$_b" -lt 8192 ]; }; then
+            log_error "--user $(cut -d'|' -f1 <<< "$_s"): mtdd принимает скорость от 8192 бит/с"; _ok=false
+        fi
+    done
+    [ "$_ok" = true ]
+}
+
+# Бинарник mtdd из релизов ugDeDe/mtdd и имя его службы.
+_install_args_engine_mtdd() {
+    local _ch="${_IA_MTDD_CHANNEL:-}"
+    [ -n "$_ch" ] || _ch=$(cat "$MTDD_CHANNEL_FILE" 2>/dev/null)
+    case "$_ch" in main|dev) ;; *) _ch=main ;; esac
+    ENGINE_KIND="mtdd"
+    # Docker не ставится: носитель telemt на случай возврата — бинарник.
+    ENGINE_BACKEND="binary"
+    mtdd_mgr_names; local _old_svc="$MTDD_MGR_SERVICE"
+    # Имя службы: как у telemt — случайное у новой установки, прежнее у старой.
+    case "$_IA_SERVICE_NAME" in
+        random)   [ -n "${MTDD_SERVICE_NAME:-}" ] || MTDD_SERVICE_NAME=$(binengine_random_name) ;;
+        standard) MTDD_SERVICE_NAME="" ;;
+        "")       [ -f "$SETTINGS_FILE" ] || MTDD_SERVICE_NAME=$(binengine_random_name) ;;
+    esac
+    mtdd_mgr_ctx
+    # Поверх установки: то, чего у mtdd нет, осталось бы включённым молча.
+    local _b; _b=$(PROXY_MODE=mtproto WEB_ENABLED=false AD_TAG="${_IA_AD_TAG:-${AD_TAG:-}}" mtdd_mgr_switch_blockers)
+    if [ -n "$_b" ]; then
+        log_error "Поставить mtdd поверх этой установки нельзя:"
+        sed 's/^/    • /' <<< "$_b"
+        return 1
+    fi
+    mtdd_mgr_drop_old_service "$_old_svc"
+    log_info "Движок: mtdd (${_ch}) из релизов ${MTDD_REPO}, служба ${MTDD_MGR_SERVICE}"
+    mtdd_mgr_fetch "$_ch"
+}
+
+_IA_MTDD_DENY_RE='^--(engine|engine-version|engine-url|engine-sha256|service-name|web-.*|sni-policy|dc-restart|dc-restart-cooldown|api-port|metrics-port)$'
+
+_install_args_validate_mtdd() {
+    local _ok=true _k _s _l
+    [ "$_IA_TARGET" = "mtdd" ] || { log_error "Реаниматор аргументами ставит только mtdd: добавьте --target mtdd"; return 1; }
+    for _k in "${_IA_SEEN[@]}"; do
+        [[ "$_k" =~ $_IA_MTDD_DENY_RE ]] && { log_error "${_k}: у mtdd этого нет"; _ok=false; }
+    done
+    [ "$_IA_WEB" = "yes" ] && { log_error "--web: у mtdd нет WEB Proxy"; _ok=false; }
+    case "${_IA_PROXY_MODE:-mtproto}" in
+        mtproto) ;;
+        *) log_error "--proxy-mode ${_IA_PROXY_MODE}: у mtdd только MTProto"; _ok=false ;;
+    esac
+    if [ -z "$_IA_AD_TAG" ] && ! mtdd_unit_exists; then
+        log_error "--ad-tag: mtdd без рекламного тега не запускается (32 hex от @MTProxybot)"; _ok=false
+    fi
+    [ "$_IA_AD_TAG" = "00000000000000000000000000000000" ] && { log_error "--ad-tag: тег из одних нулей mtdd не примет"; _ok=false; }
+    for _s in "${_IA_SECRETS[@]}"; do
+        _l=$(_ia_secret_label "$_s")
+        _mtdd_valid_label "$_l" || { log_error "Метка '${_l}': у mtdd только латиница, цифры, _ . -, до 64 символов"; _ok=false; }
+        # Этим именем свежая установка заводит служебного пользователя и потом его удаляет.
+        if [ "$_l" = "mtproxyl-init" ] && ! mtdd_unit_exists; then
+            log_error "Метка 'mtproxyl-init' занята установкой — выберите другую"; _ok=false
+        fi
+    done
+    if ! mtdd_unit_exists; then
+        [ "$(uname -m)" = "x86_64" ] || { log_error "Сборки mtdd есть только для Linux x86_64, здесь $(uname -m)"; _ok=false; }
+        command -v systemctl &>/dev/null || { log_error "mtdd ставится службой systemd, а systemd здесь нет"; _ok=false; }
+    fi
+    _install_args_validate || _ok=false
+    [ "$_ok" = true ]
+}
+
+# Ключи из аргументов — во временный файл формата secrets.conf, его съест
+# mtdd_users_import. Первый пропускается по требованию (_skip_first=true).
+_ia_mtdd_users_file() {
+    local _skip_first="$1" _f _i _note
+    _f=$(mktemp "${TMPDIR:-/tmp}/mtproxyl-ia-users.XXXXXX") || return 1
+    chmod 600 "$_f"
+    for _i in "${!SECRETS_LABELS[@]}"; do
+        [ "$_skip_first" = true ] && [ "$_i" -eq 0 ] && continue
+        _note="${SECRETS_NOTES[$_i]:-}"; _note="${_note//|/ }"
+        echo "${SECRETS_LABELS[$_i]}|${SECRETS_KEYS[$_i]}|${SECRETS_CREATED[$_i]}|${SECRETS_ENABLED[$_i]}|${SECRETS_MAX_CONNS[$_i]:-0}|${SECRETS_MAX_IPS[$_i]:-0}|${SECRETS_QUOTA[$_i]:-0}|${SECRETS_EXPIRES[$_i]:-0}|${_note}|${SECRETS_ADTAG[$_i]:-}|${SECRETS_RATE[$_i]:-}" >> "$_f"
+    done
+    echo "$_f"
+}
+
+run_installer_args_mtdd() {
+    _install_args_validate_mtdd || { echo ""; log_info "Справка: mtproxyl install --help"; return 1; }
+    if [ -f "${INSTALL_DIR}/mtproxyl.sh" ] && [ -f "$SETTINGS_FILE" ] && [ "$_IA_FORCE" != "true" ]; then
+        log_error "MTProxyL уже установлен — переустановка поверх только с --force"
+        return 1
+    fi
+    # Менеджер держит свой telemt на том же порту: ставить mtdd рядом —
+    # получить два прокси, один из которых не поднимется.
+    if [ -f "$SETTINGS_FILE" ] && [ "${MTPROXYL_MODE:-manager}" = "manager" ] && _own_install_exists 2>/dev/null; then
+        log_error "Здесь стоит MTProxyL в режиме менеджера со своим telemt — mtdd поверх него не ставится"
+        log_info "Сначала удалите менеджер (mtproxyl uninstall), потом повторите команду"
+        return 1
+    fi
+    if ! mtdd_unit_exists && ! is_port_available "${_IA_PORT:-443}" 2>/dev/null; then
+        log_error "Порт ${_IA_PORT:-443} уже занят — mtdd на нём не поднимется"
+        show_port_listener "${_IA_PORT:-443}" 2>/dev/null || true
+        return 1
+    fi
+
+    MTPROXYL_NONINTERACTIVE="true"
+    MTPROXYL_MODE="reanimator"
+    TOOLS_ONLY="false"
+    PROXY_MODE="mtproto"
+    WEB_ENABLED="false"
+
+    show_banner
+    draw_header "УСТАНОВКА АРГУМЕНТАМИ"
+    echo ""
+    log_info "Режим: reanimator, цель mtdd, вопросов не будет"
+    echo ""
+
+    _install_args_deps || return 1
+    if ! command -v python3 &>/dev/null || ! command -v sha256sum &>/dev/null; then
+        log_info "Установка: python3"
+        case "$(detect_os)" in
+            debian) _wait_apt; apt-get install -y -qq python3 coreutils ;;
+            rhel)   yum install -y -q python3 coreutils ;;
+            alpine) apk add --no-cache python3 coreutils ;;
+        esac
+        command -v python3 &>/dev/null || { log_error "Без python3 MTProxyL с mtdd не работает"; return 1; }
+    fi
+
+    mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" "$STATS_DIR" "$BACKUP_DIR"
+    chmod 700 "$CONFIG_DIR" "$STATS_DIR" "$BACKUP_DIR"
+    chmod "${_INSTALL_DIR_MODE:-711}" "$INSTALL_DIR"
+
+    # Ключи заданы явно — переносим их; не заданы — остаётся пользователь,
+    # которого заведёт установщик mtdd со своим случайным ключом.
+    local _have_keys=false
+    [ ${#_IA_SECRETS[@]} -gt 0 ] && _have_keys=true
+    if [ "$_have_keys" = true ]; then _install_args_secrets; fi
+    # Пользователь установщика получает случайный ключ. Когда ключи заданы,
+    # он служебный: заводим всех с их ключами и только потом его удаляем.
+    local _first="admin" _placeholder=""
+    if [ "$_have_keys" = true ]; then
+        _placeholder="mtproxyl-init"
+        _first="$_placeholder"
+    fi
+
+    local _fresh=false
+    if mtdd_unit_exists; then
+        log_info "mtdd уже установлен — не переставляем: заводим пользователей и фиксы"
+        local _k
+        for _k in "${_IA_SEEN[@]}"; do
+            case "$_k" in --port|--sni|--domain|--host|--ip|--ad-tag|--tag|--mtdd-channel)
+                log_warn "${_k}: у стоящего mtdd не меняется (mtproxyl tune / engine update)" ;; esac
+        done
+        run_target_detection >/dev/null 2>&1 || true
+        _target_is_mtdd || { log_error "Служба ${MTDD_UNIT} есть, но цель не определилась"; return 1; }
+        save_detect_settings
+    else
+        _fresh=true
+        local -a _inst=(--domain "${_IA_SNI:-autoscout24.ru}" --ad-tag "${_IA_AD_TAG,,}"
+                        --port "${_IA_PORT:-443}" --user "$_first" --yes)
+        [ -n "$_IA_HOST" ] && _inst+=(--public-host "$_IA_HOST")
+        install_original_mtdd --yes --channel "${_IA_MTDD_CHANNEL:-main}" -- "${_inst[@]}" || return 1
+    fi
+    # Порт фиксов — тот, что слушает найденный mtdd, а не значение по умолчанию.
+    PROXY_PORT="${DETECTED_PORT:-${_IA_PORT:-${PROXY_PORT:-443}}}"
+    CUSTOM_IP="${_IA_HOST:-${DETECTED_IP:-}}"
+    PROXY_DOMAIN="$(mtdd_cfg_get tls_domain 2>/dev/null)"
+    PROXY_DOMAIN="${PROXY_DOMAIN:-${_IA_SNI:-autoscout24.ru}}"
+    SERVER_IPS="$_IA_SERVER_IPS"
+    PROXY_CPUS="$_IA_CPUS"; PROXY_MEMORY="$_IA_MEMORY"
+    save_settings
+    save_detect_settings
+    backup_target_config "install" "true" || true
+
+    mtdd_wait_api 20 >/dev/null 2>&1 || log_warn "API mtdd пока не отвечает — $(mtdd_api_unavailable_reason)"
+    if [ "$_have_keys" = true ]; then
+        local _f _missing="" _l _have
+        _f=$(_ia_mtdd_users_file false) && { mtdd_users_import "$_f" || true; rm -f "$_f"; }
+        _have=$(_mtdd_py users-tsv --no-links 2>/dev/null | cut -d'|' -f1)
+        for _l in "${SECRETS_LABELS[@]}"; do
+            grep -qxF "$_l" <<< "$_have" || _missing+=" ${_l}"
+        done
+        if [ -n "$_missing" ]; then
+            log_warn "Не заведены:${_missing} — повторите: mtproxyl secret import <файл>"
+        fi
+        if [ "$_fresh" = true ] && [ -n "$_placeholder" ]; then
+            if [ -z "$_missing" ] && grep -qxF "$_placeholder" <<< "$_have"; then
+                mtdd_user_remove "$_placeholder" >/dev/null 2>&1 \
+                    || log_warn "Служебный пользователь ${_placeholder} не удалён: mtproxyl secret remove ${_placeholder}"
+            elif [ -n "$_missing" ]; then
+                log_warn "Служебный пользователь ${_placeholder} оставлен, пока заведены не все"
+            fi
+        fi
+    fi
+    if [ -n "$_IA_MASK" ]; then
+        case "${_IA_MASK,,}" in
+            off|no|false) mtdd_config_set masking=false && mtdd_restart >/dev/null 2>&1 || true ;;
+            *) mtdd_config_set masking=true && mtdd_restart >/dev/null 2>&1 || true ;;
+        esac
+    fi
+    { [ -n "$_IA_CPUS" ] || [ -n "$_IA_MEMORY" ]; } && mtdd_apply_limits
+
+    ln -sf "${INSTALL_DIR}/mtproxyl.sh" /usr/local/bin/mtproxyl
+    run_fix_arsenal_wizard
+    command -v systemctl &>/dev/null && install_ip_history_timer
+    install_availability_timer
+
+    if [ -n "$_IA_SELFMASK_DOMAIN" ]; then
+        _install_args_selfmask || log_warn "Selfmask не настроен — остальное установлено"
+    fi
+    if [ "$_IA_GEOIP" = "yes" ]; then
+        echo ""
+        geoip_install || log_warn "База GeoIP не установлена — поставьте позже: меню «Дополнения»"
+    fi
+    if [ "$_IA_API" = "yes" ]; then
+        echo ""
+        draw_header "API УПРАВЛЕНИЯ"
+        [ -n "$_IA_API_LISTEN" ] && API_LISTEN="$_IA_API_LISTEN"
+        [ -n "$_IA_API_ALLOW" ] && API_ALLOW="${_IA_API_ALLOW// /}"
+        [ -n "$_IA_API_TLS" ] && API_TLS="$_IA_API_TLS"
+        api_enable || log_warn "API не включён — включите позже: mtproxyl api on"
+    fi
+    [ -n "${_IA_BLOCK_ACTION}" ] && IPBLOCK_ACTION="${_IA_BLOCK_ACTION}"
+    if [ -n "${_IA_BLOCK_FILE}" ] || [ -n "${_IA_BLOCK_LIST}" ]; then
+        local _bl_tmp; _bl_tmp=$(_mktemp "${INSTALL_DIR}" 2>/dev/null || mktemp)
+        [ -n "${_IA_BLOCK_FILE}" ] && { cat "${_IA_BLOCK_FILE}" >> "$_bl_tmp" 2>/dev/null || log_warn "Файл со списком блокировок не читается: ${_IA_BLOCK_FILE}"; }
+        [ -n "${_IA_BLOCK_LIST}" ] && printf '%s\n' "${_IA_BLOCK_LIST//,/$'\n'}" >> "$_bl_tmp"
+        IPBLOCK_ENABLED="true"
+        if ipblock_import "$_bl_tmp" replace; then ipblock_install_unit; else IPBLOCK_ENABLED="false"; fi
+        save_settings
+        rm -f "$_bl_tmp"
+    fi
+    local _shaping_failed=false
+    if ! _install_args_shaping; then
+        log_warn 'Шейпинг не применён; проверьте mtproxyl shaping status --json'
+        _shaping_failed=true
+    fi
+    if [ -n "$_IA_TGBOT_TOKEN" ]; then
+        echo ""
+        draw_header "TELEGRAM-БОТ"
+        tgbot_install --token "$_IA_TGBOT_TOKEN" --admin "$_IA_TGBOT_ADMIN" \
+            || log_warn "Telegram-бот не установлен — повторите: mtproxyl tgbot install"
+    fi
+
+    echo ""
+    echo -e "  ${BRIGHT_GREEN}${BOLD}УСТАНОВКА ЗАВЕРШЕНА${NC}"
+    echo ""
+    echo -e "  ${BOLD}Режим:${NC}  Reanimator, цель mtdd ($(mtdd_build_label 2>/dev/null || echo mtdd))"
+    echo -e "  ${BOLD}Порт:${NC}   ${PROXY_PORT}, SNI ${PROXY_DOMAIN}"
+    echo ""
+    mtdd_users_list 2>/dev/null || true
+    [ "$_shaping_failed" = false ]
 }

@@ -18,7 +18,7 @@ interface SidebarProps {
 export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
   const { logout, username } = useAuth();
   const { theme, setTheme } = useTheme();
-  const { enabled: mtproxylEnabled, mode: mtproxylMode } = useMtproxyl();
+  const { enabled: mtproxylEnabled, mode: mtproxylMode, engineKind } = useMtproxyl();
   const { branding } = useBranding();
 
   return (
@@ -58,7 +58,7 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
           className="flex-1 min-h-0 overflow-y-auto p-3 pr-4 space-y-1"
           style={{ scrollbarGutter: 'stable' }}
         >
-          {navItems.map(({ to, icon: Icon, label }) => (
+          {navItems.filter((i) => !i.telemtOnly || engineKind !== 'mtdd').map(({ to, icon: Icon, label }) => (
             <NavLink
               key={to}
               to={to}
@@ -84,7 +84,7 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
                 MTProxyL
               </div>
               {mtproxylNavItems
-                .filter((i) => !i.managerOnly || mtproxylMode === 'manager')
+                .filter((i) => (!i.managerOnly || mtproxylMode === 'manager') && (!i.telemtOnly || engineKind !== 'mtdd'))
                 .map(({ to, icon: Icon, label }) => (
                 <NavLink
                   key={to}
@@ -151,12 +151,14 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
 
 // Mobile bottom navigation
 export function BottomNav() {
-  const navItems = [
+  const { engineKind } = useMtproxyl();
+  const allItems = [
     { to: '/', icon: LayoutDashboard, label: 'Дашборд' },
     { to: '/users', icon: Users, label: 'Пользователи' },
-    { to: '/runtime', icon: Activity, label: 'Телеметрия' },
-    { to: '/upstreams', icon: Network, label: 'Ещё' },
+    { to: '/runtime', icon: Activity, label: 'Телеметрия', telemtOnly: true },
+    { to: '/upstreams', icon: Network, label: 'Ещё', telemtOnly: true },
   ];
+  const navItems = allItems.filter((i) => !i.telemtOnly || engineKind !== 'mtdd');
 
   return (
     <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-surface border-t border-border z-30 pb-safe" aria-label="Основные разделы">

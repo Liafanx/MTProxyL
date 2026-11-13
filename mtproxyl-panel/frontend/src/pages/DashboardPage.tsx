@@ -89,7 +89,8 @@ export function DashboardPage() {
   const system = useEndpoint<SystemInfoData>(wsData, '/v1/system/info');
   const gates = useEndpoint<GatesData>(wsData, '/v1/runtime/gates');
   const dcs = useEndpoint<DcsData>(wsData, '/v1/stats/dcs');
-  const { enabled: mtproxylEnabled, mode: mtproxylMode } = useMtproxyl();
+  const { enabled: mtproxylEnabled, mode: mtproxylMode, engineKind } = useMtproxyl();
+  const engineName = engineKind === 'mtdd' ? 'mtdd' : 'Telemt';
 
   const { data: usersData } = usePolling<UserTrafficData[]>(
     () => telemt.get('/v1/users'),
@@ -152,7 +153,7 @@ export function DashboardPage() {
   // Неудавшаяся проверка (квота, сеть) — не вердикт: зонды ничего не измерили.
   const availStatus = availability?.status;
   const availVerdict = availStatus && !availStatus.error && availStatus.total_probes > 0 ? availStatus : null;
-  const hero = describeHealth({ health, connected, hasData: Boolean(summary), starting, dcOk: dcSummary?.ok ?? true, availability: availVerdict?.level });
+  const hero = describeHealth({ health, connected, hasData: Boolean(summary), starting, dcOk: dcSummary?.ok ?? true, availability: availVerdict?.level, engineName });
 
   const facts: HealthFact[] = [];
   if (typeof system?.version === 'string') facts.push({ key: 'version', label: 'Версия', value: system.version });
@@ -170,10 +171,10 @@ export function DashboardPage() {
     problems.push({ key: 'ws', severity: 'warn', label: 'Нет живого соединения с панелью', detail: 'Данные обновятся после переподключения WebSocket.' });
   }
   if (connected && health && !isHealthy) {
-    problems.push({ key: 'health', severity: 'error', label: 'Telemt не отвечает', detail: `Состояние: ${health.status}`, to: '/logs' });
+    problems.push({ key: 'health', severity: 'error', label: `${engineName} не отвечает`, detail: `Состояние: ${health.status}`, to: '/logs' });
   }
   if (health?.read_only) {
-    problems.push({ key: 'ro', severity: 'warn', label: 'API движка в режиме «только чтение»', detail: 'Изменения конфигурации и пользователей сейчас недоступны.', to: '/config' });
+    problems.push({ key: 'ro', severity: 'warn', label: 'API движка в режиме «только чтение»', detail: 'Изменения конфигурации и пользователей сейчас недоступны.', to: engineKind === 'mtdd' ? undefined : '/config' });
   }
   if (starting) {
     problems.push({ key: 'startup', severity: 'warn', label: 'Движок ещё запускается', detail: gates?.startup_stage ? `Этап: ${gates.startup_stage}` : undefined });
@@ -198,7 +199,7 @@ export function DashboardPage() {
       detail: dcSummary.zero.length > 0
         ? `Без писателей: ${dcSummary.zero.map((d) => `DC ${d}`).join(', ')}`
         : `Ниже порога ${dcThreshold.value}%`,
-      to: '/upstreams',
+      to: engineKind === 'mtdd' ? undefined : '/upstreams',
     });
   }
   if (badRecent > 0) {
@@ -410,12 +411,13 @@ function describeHealth(input: {
   starting: boolean;
   dcOk: boolean;
   availability?: 'green' | 'yellow' | 'red';
+  engineName: string;
 }): { state: PillState; title: string; detail?: string } {
   if (!input.hasData && !input.health) {
-    return { state: 'muted', title: 'Ждём данные движка', detail: 'Панель подключается к API Telemt.' };
+    return { state: 'muted', title: 'Ждём данные движка', detail: `Панель подключается к API ${input.engineName}.` };
   }
   if (input.health && input.health.status !== 'ok') {
-    return { state: 'error', title: 'Telemt недоступен', detail: `API ответил состоянием «${input.health.status}».` };
+    return { state: 'error', title: `${input.engineName} недоступен`, detail: `API ответил состоянием «${input.health.status}».` };
   }
   if (input.starting) {
     return { state: 'warn', title: 'Движок запускается', detail: 'Клиенты подключатся, когда запуск завершится.' };
@@ -426,7 +428,7 @@ function describeHealth(input: {
   if (!input.dcOk || input.availability === 'yellow' || !input.connected) {
     return { state: 'warn', title: 'Работает с замечаниями', detail: 'Подробности в списке проблем ниже.' };
   }
-  return { state: 'ok', title: 'Telemt работает', detail: 'Клиенты принимаются, связь с Telegram в норме.' };
+  return { state: 'ok', title: `${input.engineName} работает`, detail: 'Клиенты принимаются, связь с Telegram в норме.' };
 }
 
 interface DcSummary {

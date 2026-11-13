@@ -216,12 +216,19 @@ panel_install() {
     fi
 
     echo ""
-    log_info "Установщик панели спросит адрес API telemt, логин и пароль администратора"
-    log_info "Интеграция с MTProxyL будет предложена автоматически"
+    if engine_is_mtdd; then
+        log_info "Цель — mtdd: его API другой, поэтому панель работает с ним через MTProxyL"
+        log_info "Адрес API telemt установщик не спросит; разделов, которых у mtdd нет"
+        log_info "(Телеметрия, Безопасность, Апстримы, Конфигурация), панель не покажет"
+        log_info "Установщик спросит логин и пароль администратора"
+    else
+        log_info "Установщик панели спросит адрес API telemt, логин и пароль администратора"
+        log_info "Интеграция с MTProxyL будет предложена автоматически"
+    fi
 
     # В режиме реаниматора цель чужая, и её API может слушать не на порту по
     # умолчанию — подсказываем найденный, чтобы не подбирать вручную.
-    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && ! _target_is_mtdd; then
         local _api_port; _api_port=$(_get_telemt_api_port 2>/dev/null)
         if [ -n "$_api_port" ]; then
             # У цели в bridge-сети адрес не 127.0.0.1: панели нужен тот же
@@ -464,27 +471,29 @@ panel_grant_engine_journal() {
     command -v systemctl &>/dev/null || return 0
     local _user; _user=$(_panel_system_user)
     [ -n "$_user" ] || return 0
-    local _sc _jc
+    local _sc _jc _svc="$ENGINE_SERVICE"
+    # Движок Manager — mtdd: журнал и перезапуск его службы.
+    mtdd_mgr_active 2>/dev/null && _svc="$MTDD_MGR_SERVICE"
     _sc=$(command -v systemctl); _jc=$(command -v journalctl)
     [ -n "$_sc" ] && [ -n "$_jc" ] || return 0
 
     local _f="/etc/sudoers.d/${PANEL_SERVICE}-engine"
     local _tmp; _tmp=$(_mktemp) || return 1
     cat > "$_tmp" <<SUDO_EOF
-# MTProxyL: журнал движка ${ENGINE_SERVICE}.service для веб-панели
-${_user} ALL=(root) NOPASSWD: ${_sc} restart ${ENGINE_SERVICE}
-${_user} ALL=(root) NOPASSWD: ${_sc} start ${ENGINE_SERVICE}
-${_user} ALL=(root) NOPASSWD: ${_jc} -u ${ENGINE_SERVICE} -n * --no-pager -o short-iso
-${_user} ALL=(root) NOPASSWD: ${_jc} -u ${ENGINE_SERVICE} -n * --since * --no-pager -o short-iso
-${_user} ALL=(root) NOPASSWD: ${_jc} -u ${ENGINE_SERVICE} -f --no-pager -o short-iso
-${_user} ALL=(root) NOPASSWD: ${_jc} -u ${ENGINE_SERVICE} -f --since * --no-pager -o short-iso
+# MTProxyL: журнал движка ${_svc}.service для веб-панели
+${_user} ALL=(root) NOPASSWD: ${_sc} restart ${_svc}
+${_user} ALL=(root) NOPASSWD: ${_sc} start ${_svc}
+${_user} ALL=(root) NOPASSWD: ${_jc} -u ${_svc} -n * --no-pager -o short-iso
+${_user} ALL=(root) NOPASSWD: ${_jc} -u ${_svc} -n * --since * --no-pager -o short-iso
+${_user} ALL=(root) NOPASSWD: ${_jc} -u ${_svc} -f --no-pager -o short-iso
+${_user} ALL=(root) NOPASSWD: ${_jc} -u ${_svc} -f --since * --no-pager -o short-iso
 SUDO_EOF
     if command -v visudo &>/dev/null && ! visudo -cf "$_tmp" >/dev/null 2>&1; then
         log_warn "Правило sudo для журнала движка отклонено visudo — пропускаем"
         rm -f "$_tmp"; return 1
     fi
     install -m 0440 "$_tmp" "$_f" && rm -f "$_tmp" \
-        && log_success "Панель получила доступ к журналу ${ENGINE_SERVICE}"
+        && log_success "Панель получила доступ к журналу ${_svc}"
 }
 
 # Панель ходит к движку по [telemt] url из своего конфига и читает его при

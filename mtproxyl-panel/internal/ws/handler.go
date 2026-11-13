@@ -51,6 +51,12 @@ func NewHandler(telemtURL, authHeader string) *Handler {
 	}
 }
 
+// WrapTransport puts wrap around the polling client's transport; the mtdd
+// shim answers subscriptions itself through it. Call before serving.
+func (h *Handler) WrapTransport(wrap func(http.RoundTripper) http.RoundTripper) {
+	h.client.Transport = wrap(h.client.Transport)
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {

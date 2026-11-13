@@ -63,6 +63,16 @@ type ModeStatus struct {
 	// The panel is configured with one container at install time.
 	LogKind   string `json:"log_kind"`
 	LogTarget string `json:"log_target"`
+	// EngineKind is the proxy implementation behind the current mode:
+	// "telemt" or "mtdd" — a reanimator target or the Manager's own engine.
+	// mtdd has its own REST API, so the panel cannot talk to it as it talks
+	// to telemt.
+	EngineKind string `json:"engine_kind"`
+}
+
+// IsMtdd reports whether the current mode's engine is mtdd rather than telemt.
+func (st *ModeStatus) IsMtdd() bool {
+	return st != nil && st.EngineKind == "mtdd"
 }
 
 // ContainerDisposition says what to do with MTProxyL's own container when

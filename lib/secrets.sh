@@ -50,6 +50,18 @@ _parse_rate_bps() {
     echo "$_n"
 }
 
+# Донести изменение пользователей до движка. У telemt это перегенерация
+# конфига и SIGHUP, сбои там редки и шумны. У mtdd — синхронизация через API:
+# её отказ (API молчит, сборка без полного API) пользователь должен увидеть.
+_secret_apply() {
+    # У mtdd отказ доставки — ошибка команды: панель и бот должны его увидеть.
+    if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
+        reload_proxy_config
+    else
+        reload_proxy_config 2>/dev/null || true
+    fi
+}
+
 save_secrets() {
     mkdir -p "$INSTALL_DIR"
     local tmp
@@ -169,7 +181,10 @@ _secret_parse_line() {
     local -a _f=()
     IFS='|' read -ra _f <<< "$1"
     _IMP_L="${_f[0]:-}"; _IMP_K="${_f[1]:-}"
-    [[ "$_IMP_L" =~ ^[a-zA-Z0-9_-]+$ ]] && [ ${#_IMP_L} -le 32 ] || return 1
+    # Цель mtdd допускает и точку, и до 64 символов (её собственное правило).
+    { [[ "$_IMP_L" =~ ^[a-zA-Z0-9_-]+$ ]] && [ ${#_IMP_L} -le 32 ]; } \
+        || { declare -F _target_is_mtdd >/dev/null && _target_is_mtdd && _mtdd_label_ok "$_IMP_L"; } \
+        || return 1
     [[ "$_IMP_K" =~ ^[0-9a-fA-F]{32}$ ]] || return 1
     if [[ "${_f[2]:-}" =~ ^[0-9]{9,}$ ]]; then
         _IMP_CR="${_f[2]}";     _IMP_EN="${_f[3]:-true}"; _IMP_MC="${_f[4]:-0}"; _IMP_MI="${_f[5]:-0}"
@@ -239,7 +254,7 @@ secret_import_file() {
 
     if [ "$_added" -gt 0 ]; then
         save_secrets
-        reload_proxy_config 2>/dev/null || true
+        _secret_apply
     fi
     log_success "Импортировано: ${_added}, пропущено дубликатов: ${_dup}, строк с ошибкой: ${_bad}"
     return 0
@@ -323,7 +338,7 @@ secret_add() {
     SECRETS_RATE+=("")
 
     save_secrets
-    [ "$no_restart" != "true" ] && reload_proxy_config 2>/dev/null || true
+    [ "$no_restart" != "true" ] && _secret_apply
 
     local server_ip server_port
     server_ip=$(proxy_link_host)
@@ -396,7 +411,7 @@ secret_remove() {
     SECRETS_RATE=("${nrt[@]}")
 
     save_secrets
-    [ "$no_restart" != "true" ] && reload_proxy_config 2>/dev/null || true
+    [ "$no_restart" != "true" ] && _secret_apply
     log_success "Секрет '${label}' удалён"
 }
 
@@ -422,7 +437,7 @@ secret_rotate() {
     SECRETS_CREATED[$idx]="$(date +%s)"
 
     save_secrets
-    reload_proxy_config 2>/dev/null || true
+    _secret_apply
 
     local server_ip server_port
     server_ip=$(proxy_link_host)
@@ -467,7 +482,7 @@ secret_toggle() {
     fi
 
     save_secrets
-    reload_proxy_config 2>/dev/null || true
+    _secret_apply
     log_success "Секрет '${label}': ${SECRETS_ENABLED[$idx]}"
 }
 
@@ -524,7 +539,7 @@ secret_set_limits() {
     fi
 
     save_secrets
-    reload_proxy_config 2>/dev/null || true
+    _secret_apply
     log_success "Лимиты обновлены для '${label}'"
 }
 
@@ -551,13 +566,23 @@ secret_set_note() {
     if [ "${#text}" -gt 200 ]; then
         log_error "Заметка: не длиннее 200 символов"; return 1
     fi
+    # mtdd считает заметку в байтах: не больше 256, кириллица — по 2 байта.
+    if mtdd_mgr_active && [ "$(printf '%s' "$text" | wc -c)" -gt 256 ]; then
+        log_error "Заметка: у mtdd не длиннее 256 байт (около 128 кириллических символов)"; return 1
+    fi
     SECRETS_NOTES[$idx]="$text"
     save_secrets || return 1
     if [ -n "$text" ]; then log_success "Заметка для '${label}' сохранена"; else log_success "Заметка '${label}' стёрта"; fi
+    mtdd_mgr_active && { _secret_apply || return 1; }
+    return 0
 }
 
 secret_set_adtag() {
     local label="$1" tag="${2:-}"
+    if mtdd_mgr_active && [ -n "$tag" ] && ! [[ "$tag" =~ ^(remove|none|-|0)$ ]]; then
+        mtdd_unsupported "свой рекламный тег на пользователя — у mtdd тег один на сервер (mtproxyl settings set AD_TAG <hex>)"
+        return 1
+    fi
     local idx=-1 i
     for i in "${!SECRETS_LABELS[@]}"; do
         [ "${SECRETS_LABELS[$i]}" = "$label" ] && { idx=$i; break; }
@@ -568,7 +593,7 @@ secret_set_adtag() {
         remove|none|"-"|"0")
             SECRETS_ADTAG[$idx]=""
             save_secrets
-            reload_proxy_config 2>/dev/null || true
+            _secret_apply
             log_success "Метка снята с '${label}'"
             return 0 ;;
     esac
@@ -582,7 +607,7 @@ secret_set_adtag() {
     fi
     SECRETS_ADTAG[$idx]="$tag"
     save_secrets
-    reload_proxy_config 2>/dev/null || true
+    _secret_apply
     log_success "Метка задана для '${label}'"
 }
 
@@ -613,9 +638,13 @@ secret_set_rate() {
     done
     [ $idx -eq -1 ] && { log_error "Секрет '${label}' не найден"; return 1; }
     _rt=$(_secret_rate_value "${2:-0}" "${3:-0}") || return 1
+    # mtdd считает в байтах и меньше 1024 байт/с не принимает.
+    if mtdd_mgr_active && [ -n "$_rt" ]; then
+        _mtdd_rate_bytes "$(_rate_up "$_rt")" >/dev/null && _mtdd_rate_bytes "$(_rate_down "$_rt")" >/dev/null || return 1
+    fi
     SECRETS_RATE[$idx]="$_rt"
     save_secrets
-    reload_proxy_config 2>/dev/null || true
+    _secret_apply
     if [ -n "$_rt" ]; then
         log_success "Скорость '${label}': вверх $(_rate_human "$(_rate_up "$_rt")"), вниз $(_rate_human "$(_rate_down "$_rt")")"
     else
@@ -645,6 +674,7 @@ _rate_human_v() {
 secret_reset_quota() {
     local _label="$1" _cfg _port _host _auth _resp _code
     [[ "$_label" =~ ^[a-zA-Z0-9_-]+$ ]] || { log_error "Требуется метка"; return 1; }
+    engine_is_mtdd && { mtdd_user_reset_quota "$_label"; return; }
     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
         _target_users_ready || return 1
         [ -n "$(_target_user_state "$_label")" ] || { log_error "Пользователь '${_label}' не найден у цели"; return 1; }
@@ -927,7 +957,7 @@ secret_clone() {
     SECRETS_RATE+=("${SECRETS_RATE[$idx]:-}")
 
     save_secrets
-    reload_proxy_config 2>/dev/null || true
+    _secret_apply
 
     local server_ip server_port
     server_ip=$(proxy_link_host)
@@ -974,7 +1004,7 @@ secret_rename() {
         "${INSTALL_DIR}/relay_stats/user_ips_db" \
         "${INSTALL_DIR}/relay_stats/user_session_snapshot" \
         || log_warn "Имя изменено, но накопленную статистику перенести не удалось"
-    reload_proxy_config 2>/dev/null || true
+    _secret_apply
     log_success "Переименован: '${old}' → '${new}'"
 }
 
@@ -1038,6 +1068,16 @@ _target_users_ready() {
 # помечены own-префиксом, поэтому возвращаются наравне с активными.
 _target_section_pairs() {
     local _sect="$1" _file="${2:-$DETECTED_CONFIG_PATH}"
+    # У mtdd пользователи живут в его хранилище, а не в секциях конфига:
+    # состав «вкл|метка|секрет» берётся из API, прочих секций у него нет.
+    if _is_mtdd_cfg "$_file"; then
+        [ "$_sect" = "access.users" ] || return 0
+        # API не ответил — ошибка, а не пустой список: иначе вызывающие
+        # (stats reset orphans) приняли бы всех пользователей за удалённых.
+        local _rows; _rows=$(_mtdd_py users-tsv 2>/dev/null) || return 1
+        awk -F'|' '$1 != "" { print ($2 == "true" ? "on" : "off") "|" $1 "|" $3 }' <<< "$_rows"
+        return 0
+    fi
     awk -v sect="[${_sect}]" -v mark="$_TARGET_USER_MARK" '
         BEGIN { insect = 0 }
         {
@@ -1070,6 +1110,7 @@ _target_section_pairs() {
 _toml_safe_unset() {
     local _key="$1" _section="$2" _file="$3"
     [ -f "$_file" ] || return 1
+    _target_toml_guard || return 1
     local _tmp; _tmp=$(_mktemp) || return 1
     awk -v sect="[${_section}]" -v k="$_key" -v mark="$_TARGET_USER_MARK" '
         BEGIN { insect = 0 }
@@ -1095,6 +1136,7 @@ _toml_safe_unset() {
 _toml_toggle_key() {
     local _key="$1" _section="$2" _file="$3" _want="$4"
     [ -f "$_file" ] || return 1
+    _target_toml_guard || return 1
     local _tmp; _tmp=$(_mktemp) || return 1
     awk -v sect="[${_section}]" -v k="$_key" -v mark="$_TARGET_USER_MARK" -v want="$_want" '
         BEGIN { insect = 0; hit = 0 }
@@ -1127,6 +1169,7 @@ _toml_toggle_key() {
 # те, что перечислены в _TARGET_LIMIT_SECTIONS, чужие не трогаем.
 _target_drop_empty_limit_section() {
     local _sect="$1"
+    _target_toml_guard || return 1
     [ -n "$(_target_section_pairs "$_sect")" ] && return 0
     local _tmp; _tmp=$(_mktemp) || return 1
     awk -v sect="[${_sect}]" '
@@ -1154,6 +1197,7 @@ _target_drop_empty_limit_section() {
 # Записать ключ в секцию цели, создав саму секцию, если её ещё нет.
 _target_set_in_section() {
     local _key="$1" _value="$2" _section="$3"
+    _target_toml_guard || return 1
     _toml_safe_set "$_key" "$_value" "$_section" "$DETECTED_CONFIG_PATH" && return 0
     printf '\n[%s]\n%s = %s\n' "$_section" "$_key" "$_value" >> "$DETECTED_CONFIG_PATH"
 }
@@ -1202,6 +1246,7 @@ _target_web_link() {
 }
 
 target_user_link() {
+    _target_is_mtdd && { mtdd_user_link "$@"; return; }
     local _label="$1" _raw _domain _mask _full _ip _port
 
     # Если API цели отвечает — ссылки уже собраны самим движком, включая dd и
@@ -1364,6 +1409,7 @@ _target_users_apply() {
 }
 
 target_user_add() {
+    _target_is_mtdd && { mtdd_user_add "$@"; return; }
     local _label="$1" _custom="${2:-}"
     _target_users_ready || return 1
 
@@ -1401,6 +1447,7 @@ target_user_add() {
 }
 
 target_user_remove() {
+    _target_is_mtdd && { mtdd_user_remove "$@"; return; }
     local _label="$1"
     _target_users_ready || return 1
     [ -n "$(_target_user_state "$_label")" ] || { log_error "Пользователь '${_label}' не найден у цели"; return 1; }
@@ -1429,6 +1476,7 @@ target_user_remove() {
 }
 
 target_user_rotate() {
+    _target_is_mtdd && { mtdd_user_rotate "$@"; return; }
     local _label="$1" _want="${2:-}"
     if [ -n "$_want" ] && ! [[ "$_want" =~ ^[0-9a-fA-F]{32}$ ]]; then
         log_error "Секрет: ровно 32 шестнадцатеричных символа"
@@ -1460,6 +1508,7 @@ target_user_rotate() {
 }
 
 target_user_toggle() {
+    _target_is_mtdd && { mtdd_user_toggle "$@"; return; }
     local _label="$1" _action="$2"
     _target_users_ready || return 1
     local _state; _state=$(_target_user_state "$_label")
@@ -1492,6 +1541,7 @@ target_user_toggle() {
 }
 
 target_user_rename() {
+    _target_is_mtdd && { mtdd_user_rename "$@"; return; }
     local _from="$1" _to="$2"
     _target_users_ready || return 1
     [ -n "$(_target_user_state "$_from")" ] || { log_error "Пользователь '${_from}' не найден у цели"; return 1; }
@@ -1531,6 +1581,7 @@ target_user_rename() {
 }
 
 target_user_setlimits() {
+    _target_is_mtdd && { mtdd_user_setlimits "$@"; return; }
     local _label="$1" _conns="${2:-0}" _ips="${3:-0}" _quota="${4:-0}" _expires="${5:-}"
     _target_users_ready || return 1
     [ -n "$(_target_user_state "$_label")" ] || { log_error "Пользователь '${_label}' не найден у цели"; return 1; }
@@ -1568,6 +1619,7 @@ _target_users_set_limit() {
 }
 
 target_user_setrate() {
+    _target_is_mtdd && { mtdd_user_setrate "$@"; return; }
     local _label="$1" _rt _t
     _target_users_ready || return 1
     [ -n "$(_target_user_state "$_label")" ] || { log_error "Пользователь '${_label}' не найден у цели"; return 1; }
@@ -1585,6 +1637,7 @@ target_user_setrate() {
 
 # Рекламная метка пользователя цели — та же секция, что и у менеджера.
 target_user_adtag() {
+    _target_is_mtdd && { mtdd_unsupported "свой ad-tag у пользователя (у mtdd только общий ad_tag в конфиге)"; return; }
     local _label="$1" _tag="${2:-}"
     _target_users_ready || return 1
     [ -n "$(_target_user_state "$_label")" ] || {
@@ -1611,6 +1664,7 @@ target_user_adtag() {
 }
 
 target_users_list_json() {
+    _target_is_mtdd && { mtdd_users_list_json "$@"; return; }
     _target_users_ready || { printf '[]\n'; return 1; }
     # Ответ API цели можно передать готовым (api-view его уже получил).
     local _json="${1:-}"
@@ -1695,6 +1749,7 @@ target_users_list_json() {
 }
 
 target_users_list() {
+    _target_is_mtdd && { mtdd_users_list "$@"; return; }
     _target_users_ready || return 1
     local _rows; _rows=$(_target_section_pairs "access.users")
     if [ -z "$_rows" ]; then
@@ -1732,6 +1787,7 @@ target_users_list() {
 # Экспорт пользователей цели в формате менеджера: файл переносится в режим
 # менеджера (или на другую цель) обычным импортом.
 target_users_export() {
+    _target_is_mtdd && { mtdd_users_export "$@"; return; }
     _target_users_ready || return 1
     local _rows="" _n=0 _st _lb _key _c _i _q _e _a _r
     while IFS='|' read -r _st _lb _key; do
@@ -1751,6 +1807,7 @@ target_users_export() {
 # Импорт в конфиг цели: тот же формат, существующие метки пропускаются.
 # Заметок у цели нет — они теряются.
 target_users_import() {
+    _target_is_mtdd && { mtdd_users_import "$@"; return; }
     _target_users_ready || return 1
     local _file; _file=$(_secret_import_source "${1:-}") || return 1
     local _added=0 _dup=0 _bad=0 _line _ex _backed=""
@@ -1858,6 +1915,7 @@ handle_target_user_command() {
 }
 
 target_user_show_limits() {
+    _target_is_mtdd && { mtdd_user_show_limits "$@"; return; }
     _target_users_ready || return 1
     local _label="$1"
     if [ -z "$_label" ]; then
@@ -2036,6 +2094,11 @@ handle_secret_command() {
     # В реаниматоре у пользователей своё хранилище — конфиг цели, и общий гвард
     # на режим менеджера к ним не относится.
     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+        # Цель mtdd: пользователи меняются его API, а не правкой конфига.
+        if _target_is_mtdd; then
+            handle_mtdd_user_command "$subcmd" "$@"
+            return $?
+        fi
         handle_target_user_command "$subcmd" "$@"
         return $?
     fi

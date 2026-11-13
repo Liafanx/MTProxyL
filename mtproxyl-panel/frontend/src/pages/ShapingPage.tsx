@@ -4,7 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ErrorAlert } from '@/components/ErrorAlert';
-import { mtproxylNetApi, mtproxylUsersApi, type ShapingConfig, type ShapingStatus } from '@/lib/api';
+import { mtproxylApi, mtproxylNetApi, mtproxylUsersApi, type MtddMediaLimits, type ShapingConfig, type ShapingStatus } from '@/lib/api';
+import { useMtproxyl } from '@/hooks/useMtproxyl';
 
 const EMPTY: ShapingConfig = {
   enabled: false, mode: 'manual', channel_mbps: 1000, reserve_percent: 10,
@@ -22,7 +23,68 @@ const numberDrafts = (config: ShapingConfig): Record<NumericKey, string> => ({
   manual_ip_mbps: String(config.manual_ip_mbps),
 });
 
+const kbpsToMbps = (kbps: number) => String(Math.round((kbps / 1000) * 100) / 100);
+const limitText = (kbps: number) => (kbps > 0 ? `${kbpsToMbps(kbps)} Мбит/с` : 'без лимита');
+
+/** Встроенный лимит скачивания медиа у mtdd: не зависит от tc-шейпинга ниже. */
+function MtddMediaCard() {
+  const [media, setMedia] = useState<MtddMediaLimits | null>(null);
+  const [userMbps, setUserMbps] = useState('0');
+  const [totalMbps, setTotalMbps] = useState('0');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      const next = await mtproxylApi.getMedia();
+      setMedia(next);
+      setUserMbps(kbpsToMbps(next.user_kbps));
+      setTotalMbps(kbpsToMbps(next.total_kbps));
+      setError('');
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const valid = (v: string) => v.trim() !== '' && Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= 100000;
+  const validation = valid(userMbps) && valid(totalMbps) ? '' : 'Лимиты: число от 0 до 100000 Мбит/с (0 — без лимита)';
+
+  const save = async (user: number, total: number, done: string) => {
+    setBusy(true); setError(''); setNotice('');
+    try {
+      await mtproxylApi.setMedia(user, total);
+      await load();
+      setNotice(done);
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Card>
+      <CardHeader><CardTitle>Медиа-лимиты mtdd</CardTitle></CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-sm text-text-secondary">Встроенный лимит mtdd на скачивание медиа. Он не зависит от ограничения скорости через tc ниже и от лимитов скорости отдельных пользователей.</p>
+        {error && <ErrorAlert message={error} onRetry={() => { void load(); }} />}
+        {notice && <div className="bg-accent/10 border border-accent/30 rounded-lg p-3 text-sm">{notice}</div>}
+        {media && !media.available && <p className="text-sm text-text-secondary">Эта сборка mtdd не поддерживает медиа-лимиты.</p>}
+        {media && <p className="text-sm">Сейчас: на пользователя — {limitText(media.user_kbps)} · на весь сервер — {limitText(media.total_kbps)}</p>}
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-1"><Label htmlFor="media-user">На пользователя, Мбит/с</Label><Input id="media-user" type="number" min="0" step="0.1" value={userMbps} onChange={(e) => setUserMbps(e.target.value)} /></div>
+          <div className="space-y-1"><Label htmlFor="media-total">На весь сервер, Мбит/с</Label><Input id="media-total" type="number" min="0" step="0.1" value={totalMbps} onChange={(e) => setTotalMbps(e.target.value)} /></div>
+        </div>
+        <p className="text-xs text-text-secondary">0 — без лимита.</p>
+        {validation && <p className="text-sm text-danger">{validation}</p>}
+        <div className="flex flex-wrap gap-2">
+          <Button disabled={busy || !!validation || media?.available === false} onClick={() => { void save(Number(userMbps), Number(totalMbps), 'Медиа-лимиты сохранены'); }}>Сохранить</Button>
+          <Button variant="outline" disabled={busy || media?.available === false} onClick={() => { void save(0, 0, 'Медиа-лимиты сняты'); }}>Снять лимиты</Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function ShapingPage() {
+  const { engineKind } = useMtproxyl();
   const [status, setStatus] = useState<ShapingStatus | null>(null);
   const [form, setForm] = useState<ShapingConfig>(EMPTY);
   const [drafts, setDrafts] = useState(() => numberDrafts(EMPTY));
@@ -119,6 +181,7 @@ export function ShapingPage() {
         <h1 className="text-xl font-semibold text-text-primary">Ограничение скорости</h1>
         <p className="text-sm text-text-secondary mt-1">Ограничивается отдача клиентам по IPv4. Несколько соединений с одного IP считаются одним пользователем.</p>
       </div>
+      {engineKind === 'mtdd' && <MtddMediaCard />}
       {error && <ErrorAlert message={error} onRetry={() => { void load(); }} />}
       {notice && <div className="bg-accent/10 border border-accent/30 rounded-lg p-3 text-sm">{notice}</div>}
       {status && <Card>
