@@ -6,6 +6,15 @@
 
 ---
 
+## Не выпущено — цель mtdd в Reanimator
+
+- Reanimator работает с движком [mtdd](https://github.com/ugDeDe/mtdd): детект службы `mtdd.service`, управление через локальный API mtdd (токен из `/etc/mtdd/credentials.env`, в аргументы процессов не попадает). Пользователи, ссылки, лимиты, экспорт/импорт, статистика, активные IP, DC, шейпинг, Selfmask, бот и прочие host-level фиксы работают так же, как с telemt.
+- Установка mtdd: выбор telemt/mtdd в мастере, `mtproxyl install-mtdd [--channel main|dev]`, `mtproxyl uninstall-mtdd`; аргументами — `install --mode reanimator --target mtdd --mtdd-channel …`. Пользователи переносятся со своими ключами. «Перенос аргументами» собирает команду для цели mtdd.
+- Версия mtdd: `engine update [main|dev]` — бинарник канала со сверкой sha256 и проверкой конфига до замены, автоматический откат при неудачном старте; `engine rollback` — предыдущая сборка.
+- Медиа-лимиты mtdd: `mtproxyl media status|set|off`, пункт меню и карточка в панели.
+- Для цели mtdd скрыты и отклоняются: WEB Proxy, Donor/AWG/WARP, режим эксперта, ad_tag на пользователя, TLS-отпечатки, upstream-маршруты, SNI-политика, автоперезапуск DC.
+- Панель: с целью mtdd данные берутся через `mtproxyl target-api snapshot`; разделы, которых у mtdd нет, скрыты. После обновления — `mtproxyl panel grant`.
+
 ## v1.7.20 — 10.11.2026
 
 - Свой AWG: импорт IPv6 Endpoint без скобок с приведением к `[IPv6]:порт`, IPv4-mapped адресов и зон интерфейса. Проверяются корректность адреса и порт 1–65535; сообщение об отсутствии IPv4 в Address поясняет отличие адреса внутри туннеля от IPv6 сервера.
