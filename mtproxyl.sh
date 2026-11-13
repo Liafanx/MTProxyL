@@ -71,7 +71,7 @@ fi
 
 # Загрузка библиотек
 LIB_DIR="${INSTALL_DIR}/lib"
-for _lib in colors utils settings detect secrets config docker binengine engine traffic stats availability dc warp donor awg egress geoblock geoip upstream backup release report nft ipblock shaping selfmask front api web web_hosts panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_donor tui_awg tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
+for _lib in colors utils settings detect mtdd secrets config docker binengine engine traffic stats availability dc warp donor awg egress geoblock geoip upstream backup release report nft ipblock shaping selfmask front api web web_hosts panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_donor tui_awg tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
     if [ -f "${LIB_DIR}/${_lib}.sh" ]; then
         # shellcheck source=/dev/null
         source "${LIB_DIR}/${_lib}.sh"
@@ -294,6 +294,8 @@ cli_main() {
                                 _log_kind="docker"; _log_target="${DETECTED_CONTAINER:-}" ;;
                             local|config_only|manual)
                                 _log_kind="service"; _log_target="telemt" ;;
+                            mtdd)
+                                _log_kind="service"; _log_target="${MTDD_UNIT%.service}" ;;
                             *)
                                 _log_kind=""; _log_target="" ;;
                         esac
@@ -304,10 +306,15 @@ cli_main() {
                     # конфига цели, а не наш PROXY_DOMAIN.
                     _mode_sni=$(_current_sni_domain 2>/dev/null || echo "")
 
-                    printf '{"mode":"%s","proxy_mode":"%s","engine":"%s","tools_only":%s,"detected_mode":"%s","detected_config":"%s","port":%d,"sni":"%s","engine_config":"%s","api_port":%d,"api_enabled":%s,"own_container":"%s","running":%s,"log_kind":"%s","log_target":"%s","engine_service":"%s"}\n' \
+                    # Какой движок у цели: панели и боту это нужно, чтобы не
+                    # опрашивать маршруты API telemt у mtdd.
+                    _engine_kind="telemt"
+                    _target_is_mtdd && _engine_kind="mtdd"
+                    printf '{"mode":"%s","proxy_mode":"%s","engine":"%s","engine_kind":"%s","tools_only":%s,"detected_mode":"%s","detected_config":"%s","port":%d,"sni":"%s","engine_config":"%s","api_port":%d,"api_enabled":%s,"own_container":"%s","running":%s,"log_kind":"%s","log_target":"%s","engine_service":"%s"}\n' \
                         "$(json_escape "${MTPROXYL_MODE:-manager}")" \
                         "$(json_escape "${PROXY_MODE:-mtproto}")" \
                         "$(json_escape "$(engine_backend)")" \
+                        "$_engine_kind" \
                         "$([ "${TOOLS_ONLY:-false}" = "true" ] && echo true || echo false)" \
                         "$(json_escape "${DETECTED_MODE:-unknown}")" \
                         "$(json_escape "${DETECTED_CONFIG_PATH:-}")" \
@@ -342,6 +349,31 @@ cli_main() {
         uninstall-telemt)
             check_root; load_settings; load_detect_settings
             uninstall_original_telemt
+            ;;
+        install-mtdd)
+            check_root; load_settings; load_detect_settings
+            install_original_mtdd "$@"
+            ;;
+        uninstall-mtdd)
+            check_root; load_settings; load_detect_settings
+            uninstall_original_mtdd "$@"
+            ;;
+        media)
+            load_settings; load_detect_settings
+            handle_media_command "$@"
+            ;;
+
+        target-api)
+            # Снимок цели mtdd в форме ответов telemt — для панели: её
+            # страницы и история читают API telemt, а у mtdd он другой.
+            load_settings; load_detect_settings
+            if [ "${1:-}" != "snapshot" ]; then
+                log_error "Использование: mtproxyl target-api snapshot"; exit 1
+            fi
+            if [ "${MTPROXYL_MODE:-manager}" != "reanimator" ] || ! _target_is_mtdd; then
+                printf '{"ok":false,"error":{"code":"not_mtdd","message":"цель не mtdd"}}\n'; exit 1
+            fi
+            _mtdd_py snapshot || exit $?
             ;;
 
         edit-config)

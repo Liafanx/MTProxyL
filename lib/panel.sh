@@ -216,12 +216,19 @@ panel_install() {
     fi
 
     echo ""
-    log_info "Установщик панели спросит адрес API telemt, логин и пароль администратора"
-    log_info "Интеграция с MTProxyL будет предложена автоматически"
+    if _target_is_mtdd; then
+        log_info "Цель — mtdd: его API другой, поэтому панель работает с ним через MTProxyL"
+        log_info "Адрес API telemt установщик не спросит; разделов, которых у mtdd нет"
+        log_info "(Телеметрия, Безопасность, Апстримы, Конфигурация), панель не покажет"
+        log_info "Установщик спросит логин и пароль администратора"
+    else
+        log_info "Установщик панели спросит адрес API telemt, логин и пароль администратора"
+        log_info "Интеграция с MTProxyL будет предложена автоматически"
+    fi
 
     # В режиме реаниматора цель чужая, и её API может слушать не на порту по
     # умолчанию — подсказываем найденный, чтобы не подбирать вручную.
-    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
+    if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && ! _target_is_mtdd; then
         local _api_port; _api_port=$(_get_telemt_api_port 2>/dev/null)
         if [ -n "$_api_port" ]; then
             # У цели в bridge-сети адрес не 127.0.0.1: панели нужен тот же

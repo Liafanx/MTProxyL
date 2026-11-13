@@ -479,11 +479,12 @@ _selfmask_scheme_line() {
     # WEB, поднятый хозяином цели, нам не принадлежит: раскладки его портов
     # мы не знаем. Свой WEB у цели описывается так же, как в менеджере.
     if web_is_reanimator 2>/dev/null && ! web_is_enabled 2>/dev/null; then
-        local _p="${DETECTED_PORT:-${PROXY_PORT:-443}}"
+        local _p="${DETECTED_PORT:-${PROXY_PORT:-443}}" _eng="telemt"
+        _target_is_mtdd && _eng="mtdd"
         if web_target_enabled 2>/dev/null; then
-            echo "telemt :${_p} → mask → $(front_title) ${_back}; WEB у цели: $(web_target_host 2>/dev/null || echo '—')"
+            echo "${_eng} :${_p} → mask → $(front_title) ${_back}; WEB у цели: $(web_target_host 2>/dev/null || echo '—')"
         else
-            echo "telemt :${_p} → mask → $(front_title) ${_back}"
+            echo "${_eng} :${_p} → mask → $(front_title) ${_back}"
         fi
         return 0
     fi
@@ -1956,6 +1957,7 @@ _selfmask_snapshot_target_settings() {
     [ "${SELFMASK_PREV_SAVED:-false}" = "true" ] && return 0
     local _cfg="${DETECTED_CONFIG_PATH:-}"
     [ -f "$_cfg" ] || return 1
+    _target_is_mtdd && { mtdd_selfmask_snapshot; return; }
     SELFMASK_PREV_DOMAIN=$(_toml_get_string_in_section "censorship" "tls_domain" "$_cfg" 2>/dev/null)
     SELFMASK_PREV_MASK_HOST=$(_toml_get_string_in_section "censorship" "mask_host" "$_cfg" 2>/dev/null)
     SELFMASK_PREV_MASK_PORT=$(_toml_get_string_in_section "censorship" "mask_port" "$_cfg" 2>/dev/null)
@@ -1973,6 +1975,7 @@ _selfmask_restore_target_settings() {
         log_warn "Конфиг цели не найден — вернуть прежние параметры автоматически не получится"
         return 1
     fi
+    _target_is_mtdd && { mtdd_selfmask_restore; return; }
 
     local _ok=true _touched=false _skipped=""
     _selfmask_restore_target_key() {
@@ -2057,6 +2060,8 @@ _selfmask_apply_mtproxyl_settings() {
 _selfmask_apply_target_settings() {
     SELFMASK_ENABLED="true"
     save_settings
+
+    _target_is_mtdd && { mtdd_selfmask_apply; return; }
 
     local _old_domain; _old_domain=$(_target_tls_domain 2>/dev/null)
     local _sni; _sni=$(sni_action_for_engine reject_handshake "$(target_engine_version 2>/dev/null)")
@@ -2417,8 +2422,13 @@ selfmask_verify() {
         # Сверяем конфиг ЦЕЛИ, а не собственные настройки менеджера —
         # в этом режиме mask/SNI живут в чужом toml.
         local _t_host _t_port _t_dom
+        if _target_is_mtdd; then
+            _t_host=$(mtdd_cfg_get fallback_host)
+            _t_port=$(mtdd_cfg_get fallback_port)
+        else
         _t_host=$(_toml_get_string_in_section "censorship" "mask_host" "${DETECTED_CONFIG_PATH:-}" 2>/dev/null)
         _t_port=$(_toml_get_string_in_section "censorship" "mask_port" "${DETECTED_CONFIG_PATH:-}" 2>/dev/null)
+        fi
         _t_dom=$(_target_tls_domain 2>/dev/null)
         if [ "$_t_host" = "127.0.0.1" ] && \
            [ "$_t_port" = "${SELFMASK_NGINX_BACKEND_PORT}" ] && \

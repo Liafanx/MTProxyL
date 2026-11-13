@@ -301,6 +301,7 @@ _is_proxy_running_raw() {
                     return
                 fi
                 _telemt_host_pids >/dev/null ;;
+            mtdd) mtdd_running ;;
             *) return 1 ;;
         esac
         return
@@ -377,6 +378,7 @@ get_proxy_uptime() {
                 _pid=$(_telemt_host_pids | head -1)
                 [ -n "$_pid" ] && _et=$(ps -o etimes= -p "$_pid" 2>/dev/null | tr -cd '0-9')
                 echo "${_et:-0}" ;;
+            mtdd) mtdd_uptime_seconds ;;
             *) echo "0" ;;
         esac
         return
@@ -422,6 +424,7 @@ restart_target() {
                 else
                     log_warn "telemt не запущен и systemd-юнит не найден — запустите цель вручную"
                 fi ;;
+            mtdd) mtdd_restart ;;
             *) log_warn "Нет способа перезапустить обнаруженную цель (${DETECTED_MODE:-unknown})" ;;
         esac
         return
@@ -456,6 +459,7 @@ start_target() {
                 else
                     log_warn "systemd-юнит telemt.service не найден — запустите цель вручную"
                 fi ;;
+            mtdd) mtdd_start ;;
             *) log_warn "Нет способа запустить обнаруженную цель (${DETECTED_MODE:-unknown})" ;;
         esac
         return
@@ -488,6 +492,7 @@ stop_target() {
                 else
                     log_warn "Процесс telemt на хосте не найден"
                 fi ;;
+            mtdd) mtdd_stop ;;
             *) log_warn "Нет способа остановить обнаруженную цель (${DETECTED_MODE:-unknown})" ;;
         esac
         return
@@ -519,6 +524,7 @@ _show_target_logs_stream() {
                 else
                     log_warn "Логи недоступны: процесс telemt не привязан к systemd-юниту"
                 fi ;;
+            mtdd) mtdd_logs "$_tail" ;;
             *) log_warn "Логи недоступны для обнаруженной цели (${DETECTED_MODE:-unknown})" ;;
         esac
         return
@@ -540,6 +546,8 @@ reload_target_config() {
                 else
                     restart_target
                 fi ;;
+            # SIGHUP mtdd перечитывает только me_* и media_*: всё остальное — рестарт.
+            mtdd)       mtdd_restart ;;
             *)          restart_target ;;
         esac
         return

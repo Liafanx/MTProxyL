@@ -216,6 +216,10 @@ settings_set_param() {
         _require_manager_mode || return 1
         _require_no_superexpert || return 1
     fi
+    if [ "$_key" = "DC_RESTART_ENABLED" ] && [ "$_val" = "true" ] && _target_is_mtdd; then
+        mtdd_unsupported "перезапуск при падении DC (покрытие ME у mtdd на простое бывает нулевым)"
+        return 1
+    fi
 
     printf -v "$_key" '%s' "$_val"
     save_settings
@@ -395,6 +399,7 @@ api_port_current() {
 
 api_port_set() {
     local _port="$1" _cur
+    _target_is_mtdd && { mtdd_unsupported "смена порта API из MTProxyL: у mtdd он 127.0.0.1:9090, его задаёт установщик"; return; }
     [[ "$_port" =~ ^[0-9]+$ ]] && [ "$_port" -ge 1 ] && [ "$_port" -le 65535 ] \
         || { log_error "Порт: число от 1 до 65535"; return 1; }
     _cur=$(api_port_current)
@@ -463,6 +468,7 @@ api_auth_current() {
 
 api_auth_set() {
     local _v="$1" _cfg
+    _target_is_mtdd && { mtdd_unsupported "заголовок авторизации API: токен mtdd лежит в $(mtdd_env_file), MTProxyL читает его сам"; return; }
     if [ ${#_v} -gt 512 ] || ! [[ "$_v" =~ ^[[:print:]]*$ ]] || [[ "$_v" == *[\"\'\\\|]* ]]; then
         log_error "Заголовок: до 512 печатных символов, без кавычек, \\ и |"
         return 1

@@ -2289,6 +2289,7 @@ web_status_line() {
 web_target_enabled() {
     local _f="${DETECTED_CONFIG_PATH:-}"
     [ -f "$_f" ] || return 1
+    _target_is_mtdd && return 1
     [ "$(_toml_get_string_in_section "web" "enabled" "$_f" 2>/dev/null)" = "true" ]
 }
 
@@ -2530,7 +2531,7 @@ web_target_link() {
 WEB_TARGET_BEGIN="# >>> mtproxyl-web: блок ведёт MTProxyL, ручные правки в нём пропадут"
 WEB_TARGET_END="# <<< mtproxyl-web"
 
-web_target_managed() { web_is_reanimator && [ "${WEB_TARGET_ENABLED:-false}" = "true" ]; }
+web_target_managed() { web_is_reanimator && ! _target_is_mtdd && [ "${WEB_TARGET_ENABLED:-false}" = "true" ]; }
 
 # Публичный порт цели. На время WEB он сохранён: в shared сама цель уходит
 # на приватный порт.
@@ -2942,7 +2943,7 @@ _web_target_in_copy() {
 }
 
 # Пишет блок заново. Секции, которых у цели нет, уходят внутрь блока.
-_web_target_write() { _web_target_in_copy _web_target_write_now; }
+_web_target_write() { _target_toml_guard || return 1; _web_target_in_copy _web_target_write_now; }
 
 _web_target_unwrite_now() { _web_target_strip && _web_target_restore_keys; }
 
@@ -3002,6 +3003,7 @@ _web_target_rollback() {
 # Порядок как в менеджере: сертификат, цель уходит с :443 на приватные порты,
 # затем nginx занимает публичный. Любой сбой возвращает цель как было.
 web_target_enable() {
+    _target_is_mtdd && { mtdd_unsupported "WEB Proxy — это транспорт telemt"; return 1; }
     if web_target_foreign_web && ! _web_target_has_block; then
         log_error "WEB в конфиге цели уже настроил её хозяин — MTProxyL его только показывает"
         log_info "Ссылки: mtproxyl web links"

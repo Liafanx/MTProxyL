@@ -347,12 +347,14 @@ _target_elf_version() {
 }
 
 target_engine_version() {
+    _target_is_mtdd && { "$(mtdd_bin)" --version 2>/dev/null | awk '{print $NF; exit}'; return; }
     local _b; _b=$(target_engine_bin) || return 1
     _target_elf_version "$_b"
 }
 
 # Пусто — версию цели менять можно; иначе причина, почему нельзя.
 target_engine_unsupported_reason() {
+    _target_is_mtdd && { mtdd_engine_unsupported_reason; return; }
     case "${DETECTED_MODE:-unknown}" in
         docker|mtproxymax)
             echo "Цель работает в Docker — её версией управляет образ контейнера"; return ;;
@@ -378,6 +380,7 @@ target_engine_local_versions() {
 }
 
 target_engine_versions_json() {
+    _target_is_mtdd && { mtdd_engine_versions_json; return; }
     local _reason _bin="" _cur=""
     _reason=$(target_engine_unsupported_reason)
     if [ -z "$_reason" ]; then
@@ -483,6 +486,7 @@ _target_engine_switch() {
 }
 
 target_engine_update() {
+    _target_is_mtdd && { mtdd_engine_update "$@"; return; }
     local _want="${1:-}" _reason
     _reason=$(target_engine_unsupported_reason)
     [ -z "$_reason" ] || { log_error "$_reason"; return 1; }
@@ -517,6 +521,7 @@ target_engine_update() {
 
 # Откат на бинарник с диска. Тег, которого на диске нет, ставится из релизов.
 target_engine_rollback() {
+    _target_is_mtdd && { mtdd_engine_rollback "$@"; return; }
     local _want="${1:-}" _reason
     _reason=$(target_engine_unsupported_reason)
     [ -z "$_reason" ] || { log_error "$_reason"; return 1; }
@@ -548,6 +553,7 @@ target_engine_rollback() {
 }
 
 target_engine_status() {
+    _target_is_mtdd && { mtdd_engine_status; return; }
     local _reason; _reason=$(target_engine_unsupported_reason)
     echo -e "  ${BOLD}Движок цели Reanimator${NC}"
     if [ -n "$_reason" ]; then
@@ -565,6 +571,11 @@ target_engine_status() {
 handle_engine_command() {
     local subcmd="${1:-status}"
     shift 2>/dev/null || true
+    # Цель mtdd: каналы сборок вместо номеров версий.
+    if _target_is_mtdd; then
+        mtdd_handle_engine "$subcmd" "$@"
+        return
+    fi
     # У реаниматора — только версия бинарника цели.
     if _is_reanimator; then
         case "$subcmd" in

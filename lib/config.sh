@@ -69,6 +69,11 @@ _tune_lookup() {
 
 handle_tune_command() {
     local sub="${1:-list}"; shift 2>/dev/null || true
+    # У mtdd свой набор ключей и JSON-конфиг; tunings.conf telemt не трогаем.
+    if _target_is_mtdd; then
+        mtdd_handle_tune "$sub" "$@"
+        return
+    fi
     case "$sub" in
         list)
             echo ""; draw_header "ПАРАМЕТРЫ ТЮНИНГА ДВИЖКА"; echo ""
@@ -806,6 +811,13 @@ _expert_apply_prompt() {
 }
 
 handle_expert_command() {
+    # Цель mtdd: этой функции у него нет, показываем только состояние.
+    if _target_is_mtdd; then
+        case "${1:-status}" in
+            status|list|--json|json) ;;
+            *) mtdd_unsupported "режим эксперта — каталог ключей telemt; для mtdd есть mtproxyl tune list"; return 1 ;;
+        esac
+    fi
     local subcmd="${1:-list}"; shift 2>/dev/null || true
     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
         # Конфигом цели владеет её хозяин: из оверрайдов ей достаются только

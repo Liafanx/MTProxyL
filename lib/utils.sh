@@ -858,7 +858,7 @@ cli_lock_kind() {
     case "$_c $_s" in
         "awg watch"|"dc watch"|"warp watch"|"donor reresolve"|"availability check"|"block hits-sample"|"ip-history flush")
             echo tick; return ;;
-        "update --list"|"update list"|"update --check"|"traffic "|"secret "|"port "|"ip "|"ips "|"domain "|"secret api-view"*|"secret limits"*)
+        "update --list"|"update list"|"update --check"|"traffic "|"secret "|"port "|"ip "|"ips "|"domain "|"secret api-view"*|"secret limits"*|"target-api snapshot")
             echo none; return ;;
     esac
     case "$_s" in
@@ -1222,7 +1222,7 @@ show_cli_help() {
     echo -e "  ${BOLD}API управления:${NC} api status|on|off|key|set"
     echo -e "  ${BOLD}Переезд:${NC}        migrate <[user@]хост[:порт]> [--dry-run] ${DIM}(только менеджер)${NC}"
     echo -e "  ${BOLD}Подкачка:${NC}       swap status|on [МБ]|off"
-    echo -e "  ${BOLD}Reanimator:${NC}     mode [manager|reanimator] | detect | edit-config | target-config show|write\n                  install-telemt | uninstall-telemt"
+    echo -e "  ${BOLD}Reanimator:${NC}     mode [manager|reanimator] | detect | edit-config | target-config show|write\n                  install-telemt | uninstall-telemt\n                  install-mtdd [--channel main|dev] | uninstall-mtdd | media status|set|off"
     echo -e "  ${BOLD}Система:${NC}        install [аргументы] | menu | update-check | uninstall | version | help"
     echo -e "  ${BOLD}Обновление:${NC}     update [--version X.Y.Z | --rollback] [--yes] [--no-restart] | update --list"
     echo -e "  ${DIM}Установка без вопросов: mtproxyl install --help${NC}"

@@ -24,6 +24,9 @@ _fetch_metrics() {
     if [ -n "$_METRICS_CACHE" ] && [ $((now - _METRICS_CACHE_AGE)) -lt 2 ]; then
         echo "$_METRICS_CACHE"; return 0
     fi
+    # Метрики mtdd названы по-своему (mtdd_*) и закрыты токеном; всё нужное
+    # отдаёт его API — ниже это та же ветка, что «метрики недоступны».
+    _target_is_mtdd && return 1
     local _mport="${PROXY_METRICS_PORT:-9090}"
     [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && _mport=$(_get_telemt_metrics_port)
     _METRICS_CACHE=$(curl -s --max-time 2 "http://127.0.0.1:${_mport}/metrics" 2>/dev/null | _normalize_metrics)
@@ -34,6 +37,12 @@ _fetch_metrics() {
 
 get_proxy_stats() {
     is_proxy_running || { echo "0 0 0"; return; }
+    if _target_is_mtdd; then
+        local _mj
+        _mj=$(_get_telemt_users_json 2>/dev/null) || { echo "0 0 0"; return; }
+        echo "$(_json_sum_field "$_mj" octets_from_client) $(_json_sum_field "$_mj" octets_to_client) $(_json_sum_field "$_mj" current_connections)"
+        return
+    fi
     local m
     if m=$(_fetch_metrics); then
         local bi bo conns
@@ -1284,6 +1293,20 @@ _health_check_reanimator() {
             else
                 echo -e "  ${GREEN}${SYM_CHECK}${NC} Управление: процесс telemt (без systemd-юнита)"
             fi ;;
+        mtdd)
+            if mtdd_unit_exists; then
+                echo -e "  ${GREEN}${SYM_CHECK}${NC} Управление: systemd (${MTDD_UNIT})"
+            else
+                echo -e "  ${YELLOW}!${NC} Служба ${MTDD_UNIT} не найдена — mtdd запущен вручную?"
+            fi
+            local _probe _ver _full
+            _probe=$(_mtdd_py probe 2>/dev/null)
+            _ver=$(sed -n 's/^version=//p' <<< "$_probe")
+            _full=$(sed -n 's/^full=//p' <<< "$_probe")
+            [ -n "$_ver" ] && echo -e "  ${GREEN}${SYM_CHECK}${NC} mtdd ${_ver}"
+            if [ "$_full" = "0" ] && [ "$(sed -n 's/^api=//p' <<< "$_probe")" = "ok" ]; then
+                echo -e "  ${YELLOW}!${NC} Старая сборка mtdd: API без управления пользователями — обновите: ${BOLD}mtproxyl engine update${NC}"
+            fi ;;
         *)
             echo -e "  ${YELLOW}!${NC} Тип цели не определён — выполните ${BOLD}mtproxyl detect${NC}" ;;
     esac
@@ -1323,9 +1346,13 @@ _health_check_reanimator() {
     fi
 
     # Метрики цели (Prometheus)
+    if _target_is_mtdd; then
+        echo -e "  ${DIM}—${NC} Метрики mtdd не нужны: трафик и соединения берутся из его API"
+    else
     curl -s --max-time 2 "http://127.0.0.1:$(_get_telemt_metrics_port)/metrics" &>/dev/null \
         && echo -e "  ${GREEN}${SYM_CHECK}${NC} Метрики цели доступны (127.0.0.1:$(_get_telemt_metrics_port))" \
         || echo -e "  ${DIM}—${NC} Метрики цели недоступны ${DIM}(metrics_listen в конфиге цели)${NC}"
+    fi
 
     # Наши фиксы
     echo ""
