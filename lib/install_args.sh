@@ -33,6 +33,8 @@ _IA_BLOCK_FILE=""
 _IA_BLOCK_LIST=""
 _IA_BLOCK_ACTION=""
 _IA_ENGINE=""; _IA_ENGINE_VERSION=""; _IA_ENGINE_URL=""; _IA_ENGINE_SHA256=""; _IA_SERVICE_NAME=""
+# Вид движка Manager: telemt (носитель — _IA_ENGINE) или mtdd.
+_IA_ENGINE_KIND=""
 _IA_TGBOT_TOKEN=""; _IA_TGBOT_ADMIN=""
 _IA_DC_RESTART=""; _IA_DC_RESTART_COOLDOWN=""
 _IA_SHAPING_MODE=""; _IA_SHAPING_CHANNEL=""; _IA_SHAPING_RESERVE=""
@@ -60,6 +62,12 @@ install_args_help() {
     --service-name random|standard
                                имя службы и бинарника движка: случайное
                                (по умолчанию) или mtproxyl-telemt
+    --engine mtdd              движок mtdd вместо telemt: бинарник из релизов
+                               ugDeDe/mtdd под systemd, нужен --ad-tag
+    --mtdd-channel main|dev    сборка mtdd (по умолчанию main)
+                               У mtdd нет: --engine-version/url/sha256, WEB,
+                               --sni-policy, --dc-restart*; скорость --user
+                               от 8192 бит/с; тег у пользователя не действует
 
   Прокси
     --proxy-mode mtproto|web|combined
@@ -226,7 +234,8 @@ _install_args_parse() {
                 case "${_v,,}" in
                     docker|контейнер) _IA_ENGINE="docker" ;;
                     binary|bin|бинарник) _IA_ENGINE="binary" ;;
-                    *) log_error "--engine: docker или binary"; return 1 ;;
+                    mtdd) _IA_ENGINE_KIND="mtdd" ;;
+                    *) log_error "--engine: docker, binary или mtdd"; return 1 ;;
                 esac ;;
             --engine-version) _IA_ENGINE_VERSION="$_v" ;;
             --engine-url)    _IA_ENGINE_URL="$_v" ;;
@@ -681,6 +690,7 @@ _install_args_validate() {
        [ -n "$_IA_WEB_DECOY" ] || [ -n "$_IA_WEB_DECOY_UPSTREAM" ] || [ -n "$_IA_WEB_PATH" ]; }; then
         log_error "Параметры WEB заданы без --web yes"; _ok=false
     fi
+    _install_args_validate_mgr_mtdd || _ok=false
 
     if [ -n "$_IA_SELFMASK_CERT" ] || [ -n "$_IA_SELFMASK_EMAIL" ] || \
        [ -n "$_IA_SELFMASK_TEMPLATE" ] || [ -n "$_IA_SELFMASK_BACKEND_PORT" ]; then
@@ -717,6 +727,9 @@ run_installer_args() {
         run_installer_args_mtdd
         return
     fi
+    # Без --engine установка поверх mtdd остаётся на mtdd — с его проверками.
+    [ -z "$_IA_ENGINE_KIND" ] && [ -z "$_IA_ENGINE" ] && [ -f "$SETTINGS_FILE" ] \
+        && [ "${ENGINE_KIND:-telemt}" = "mtdd" ] && _IA_ENGINE_KIND="mtdd"
     _install_args_validate || { echo ""; log_info "Справка: mtproxyl install --help"; return 1; }
 
     if [ -f "${INSTALL_DIR}/mtproxyl.sh" ] && [ -f "$SETTINGS_FILE" ] && [ "$_IA_FORCE" != "true" ]; then
@@ -742,6 +755,10 @@ run_installer_args() {
     # упираются в OOM, и установка выглядит зависшей.
     offer_swap_if_low_ram
 
+    if [ "$_IA_ENGINE_KIND" = "mtdd" ]; then
+        _install_args_engine_mtdd || return 1
+    else
+    ENGINE_KIND="telemt"; mtdd_mgr_ctx
     # Без --engine на существующей установке остаёмся на том же движке:
     # молча вернуть контейнер тому, кто ушёл на бинарник, — не то, о чём просили.
     if [ -n "$_IA_ENGINE" ]; then
@@ -779,6 +796,7 @@ run_installer_args() {
         [ -n "$_IA_ENGINE_VERSION" ] && log_warn "--engine-version не применяется к Docker-движку"
         install_docker || return 1
         wait_for_docker || return 1
+    fi
     fi
 
     PROXY_PORT="${_IA_PORT:-${PROXY_PORT:-443}}"
@@ -859,7 +877,9 @@ run_installer_args() {
     if [ "$_IA_WEB" != "yes" ]; then
     run_proxy_container || {
         log_error "Не удалось запустить прокси"
-        if engine_is_binary; then
+        if mtdd_mgr_active; then
+            echo -e "  ${DIM}Проверьте: journalctl -u ${MTDD_MGR_SERVICE} -n 50${NC}"
+        elif engine_is_binary; then
             echo -e "  ${DIM}Проверьте: journalctl -u ${ENGINE_SERVICE} -n 50${NC}"
         else
             echo -e "  ${DIM}Проверьте: docker logs mtproxyl${NC}"
@@ -1137,6 +1157,67 @@ _install_args_web() {
 # ── Реаниматор с mtdd аргументами ──────────────────────────────
 # У mtdd нет WEB, upstream'ов, SNI-политики и своих портов API/метрик в
 # MTProxyL — такие ключи отклоняем явно, а не пропускаем молча.
+# Manager на mtdd: то, чего у mtdd нет, — ошибка, а не тихо пропущенный флаг.
+_IA_MGR_MTDD_DENY_RE='^--(engine-version|engine-url|engine-sha256|web-.*|sni-policy|dc-restart|dc-restart-cooldown)$'
+
+_install_args_validate_mgr_mtdd() {
+    if [ "$_IA_ENGINE_KIND" != "mtdd" ]; then
+        # Реаниматор ставит mtdd с каналом без --engine — это его ключ.
+        [ "$_IA_MODE" = reanimator ] || [ -z "$_IA_MTDD_CHANNEL" ] || { log_error "--mtdd-channel без --engine mtdd"; return 1; }
+        return 0
+    fi
+    local _ok=true _k _s _r _a _b _why
+    [ -z "$_IA_ENGINE" ] || { log_error "--engine задан дважды: ${_IA_ENGINE} и mtdd"; _ok=false; }
+    for _k in "${_IA_SEEN[@]}"; do
+        [[ "$_k" =~ $_IA_MGR_MTDD_DENY_RE ]] && { log_error "${_k}: у mtdd этого нет"; _ok=false; }
+    done
+    [ "$_IA_WEB" = "yes" ] && { log_error "--web: у mtdd нет WEB Proxy"; _ok=false; }
+    local _tag="${_IA_AD_TAG:-${AD_TAG:-}}"
+    [[ "$_tag" =~ ^[0-9a-fA-F]{32}$ ]] && [ "$_tag" != "00000000000000000000000000000000" ] \
+        || { log_error "--ad-tag: mtdd без рекламного тега не запускается (32 hex от @MTProxybot, не из нулей)"; _ok=false; }
+    _why=$(mtdd_mgr_unsupported_reason)
+    [ -z "$_why" ] || { log_error "--engine mtdd: ${_why}"; _ok=false; }
+    for _s in "${_IA_SECRETS[@]}"; do
+        [[ "$_s" == *"|"* ]] || continue
+        _r=$(cut -d'|' -f11 <<< "$_s")
+        [ -n "$_r" ] || continue
+        IFS=: read -r _a _b <<< "$_r"
+        if { [[ "${_a:-0}" =~ ^[0-9]+$ ]] && [ "${_a:-0}" -gt 0 ] && [ "$_a" -lt 8192 ]; } \
+            || { [[ "${_b:-0}" =~ ^[0-9]+$ ]] && [ "${_b:-0}" -gt 0 ] && [ "$_b" -lt 8192 ]; }; then
+            log_error "--user $(cut -d'|' -f1 <<< "$_s"): mtdd принимает скорость от 8192 бит/с"; _ok=false
+        fi
+    done
+    [ "$_ok" = true ]
+}
+
+# Бинарник mtdd из релизов ugDeDe/mtdd и имя его службы.
+_install_args_engine_mtdd() {
+    local _ch="${_IA_MTDD_CHANNEL:-}"
+    [ -n "$_ch" ] || _ch=$(cat "$MTDD_CHANNEL_FILE" 2>/dev/null)
+    case "$_ch" in main|dev) ;; *) _ch=main ;; esac
+    ENGINE_KIND="mtdd"
+    # Docker не ставится: носитель telemt на случай возврата — бинарник.
+    ENGINE_BACKEND="binary"
+    mtdd_mgr_names; local _old_svc="$MTDD_MGR_SERVICE"
+    # Имя службы: как у telemt — случайное у новой установки, прежнее у старой.
+    case "$_IA_SERVICE_NAME" in
+        random)   [ -n "${MTDD_SERVICE_NAME:-}" ] || MTDD_SERVICE_NAME=$(binengine_random_name) ;;
+        standard) MTDD_SERVICE_NAME="" ;;
+        "")       [ -f "$SETTINGS_FILE" ] || MTDD_SERVICE_NAME=$(binengine_random_name) ;;
+    esac
+    mtdd_mgr_ctx
+    # Поверх установки: то, чего у mtdd нет, осталось бы включённым молча.
+    local _b; _b=$(PROXY_MODE=mtproto WEB_ENABLED=false AD_TAG="${_IA_AD_TAG:-${AD_TAG:-}}" mtdd_mgr_switch_blockers)
+    if [ -n "$_b" ]; then
+        log_error "Поставить mtdd поверх этой установки нельзя:"
+        sed 's/^/    • /' <<< "$_b"
+        return 1
+    fi
+    mtdd_mgr_drop_old_service "$_old_svc"
+    log_info "Движок: mtdd (${_ch}) из релизов ${MTDD_REPO}, служба ${MTDD_MGR_SERVICE}"
+    mtdd_mgr_fetch "$_ch"
+}
+
 _IA_MTDD_DENY_RE='^--(engine|engine-version|engine-url|engine-sha256|service-name|web-.*|sni-policy|dc-restart|dc-restart-cooldown|api-port|metrics-port)$'
 
 _install_args_validate_mtdd() {

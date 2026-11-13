@@ -3,7 +3,7 @@
 
 # Что входит в бэкап. Восстанавливается только это: архив распаковывается от
 # root прямо в каталог установки и иначе мог бы подменить сам скрипт.
-_BACKUP_FILES="settings.conf secrets.conf upstreams.conf nft-rules.conf shaping.json expert.conf expert-target.conf tunings.conf superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf backup_meta.txt availability/last.json availability/history.jsonl warp/account.json quota-state/telemt.limit.json"
+_BACKUP_FILES="settings.conf secrets.conf upstreams.conf nft-rules.conf shaping.json expert.conf expert-target.conf tunings.conf superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf backup_meta.txt availability/last.json availability/history.jsonl warp/account.json quota-state/telemt.limit.json mtdd/tune.json"
 _BACKUP_DIRS="relay_stats geoblock"
 
 # Имена из архива, которые можно распаковать. Остальные — в stderr.

@@ -29,7 +29,7 @@ run_installer() {
 
     draw_header "РЕЖИМ РАБОТЫ"
     echo ""
-    echo -e "  ${BOLD}[1]${NC} Manager    ${DIM}— MTProxyL устанавливает и владеет своим telemt${NC}"
+    echo -e "  ${BOLD}[1]${NC} Manager    ${DIM}— MTProxyL устанавливает и владеет своим telemt или mtdd${NC}"
     echo -e "  ${BOLD}[2]${NC} Reanimator ${DIM}— применить фиксы к уже установленному telemt или mtdd${NC}"
     echo ""
     local _mode_choice; _mode_choice=$(read_choice "выбор" "1")
@@ -70,7 +70,10 @@ run_installer() {
     # Подкачка до движка: без неё установка на маленькой машине упирается в OOM.
     offer_swap_if_low_ram
 
-    if [ "${ENGINE_BACKEND:-docker}" = "binary" ] && [ -n "${ENGINE_CUSTOM_URL:-}" ]; then
+    if [ "${ENGINE_KIND:-telemt}" = "mtdd" ]; then
+        mtdd_mgr_ctx
+        mtdd_mgr_fetch "${_INSTALLER_MTDD_CHANNEL:-main}" || exit 1
+    elif [ "${ENGINE_BACKEND:-docker}" = "binary" ] && [ -n "${ENGINE_CUSTOM_URL:-}" ]; then
         binengine_install_custom "$ENGINE_CUSTOM_URL" "${ENGINE_CUSTOM_SHA256:-}" || exit 1
     elif [ "${ENGINE_BACKEND:-docker}" = "binary" ]; then
         binengine_fetch "${ENGINE_VERSION:-latest}" || exit 1
@@ -417,6 +420,13 @@ run_installer() {
 }
 
 installer_pick_proxy_transport() {
+    WEB_ENABLED="false"
+    WEB_PUBLIC_PORT="443"
+    if [ "${ENGINE_KIND:-telemt}" = "mtdd" ]; then
+        PROXY_MODE="mtproto"
+        log_info "Транспорт: MTProto (у mtdd WEB Proxy нет)"
+        return 0
+    fi
     echo -e "  ${BOLD}Транспорт прокси${NC}"
     echo -e "  ${BOLD}[1]${NC} Только MTProto  ${DIM}— обычный прокси без WEB${NC}"
     echo -e "  ${BOLD}[2]${NC} Только WEB      ${DIM}— сайт и WEB Proxy на 443${NC}"
@@ -488,8 +498,52 @@ installer_pick_service_name() {
 
 # Чем менеджер будет держать движок. По умолчанию бинарник: он экономит время
 # установки и память, сам Docker тогда не ставится вовсе. Docker — вторым.
+# mtdd движком Manager: канал сборки, обязательный рекламный тег, имя службы.
+installer_pick_mtdd() {
+    ENGINE_KIND="mtdd"
+    ENGINE_BACKEND="binary"
+    mtdd_mgr_names; local _old_svc="$MTDD_MGR_SERVICE"
+    _INSTALLER_MTDD_CHANNEL=$(mtdd_pick_channel)
+    log_success "Движок: mtdd (${_INSTALLER_MTDD_CHANNEL}) из релизов ${MTDD_REPO}"
+    echo ""
+    echo -e "  ${BOLD}Рекламный тег${NC}"
+    echo -e "  ${DIM}mtdd без тега не запускается: 32 hex от @MTProxybot (/newproxy).${NC}"
+    local _t
+    while true; do
+        read_line _t "  ${BOLD}Тег${AD_TAG:+ [${AD_TAG}]}:${NC} "
+        _t="${_t:-${AD_TAG:-}}"
+        [[ "$_t" =~ ^[0-9a-fA-F]{32}$ ]] && [ "$_t" != "00000000000000000000000000000000" ] && break
+        log_error "Нужны 32 шестнадцатеричных символа, не из одних нулей"
+    done
+    AD_TAG="${_t,,}"
+    local _def=1
+    [ -f "$SETTINGS_FILE" ] && [ -z "${MTDD_SERVICE_NAME:-}" ] && _def=2
+    echo ""
+    echo -e "  ${BOLD}Имя службы mtdd${NC}"
+    echo -e "  ${BOLD}[1]${NC} Случайное ${DIM}— по списку служб и процессов не видно прокси$([ "$_def" = 1 ] && echo " (по умолчанию)")${NC}"
+    echo -e "  ${BOLD}[2]${NC} Стандартное ${DIM}— ${MTDD_MGR_STANDARD}$([ "$_def" = 2 ] && echo " (сейчас)")${NC}"
+    if [ "$(read_choice "выбор" "$_def")" = "2" ]; then
+        MTDD_SERVICE_NAME=""
+    else
+        [ -n "${MTDD_SERVICE_NAME:-}" ] || MTDD_SERVICE_NAME=$(binengine_random_name)
+    fi
+    mtdd_mgr_ctx
+    local _b; _b=$(PROXY_MODE=mtproto WEB_ENABLED=false mtdd_mgr_switch_blockers)
+    if [ -n "$_b" ]; then
+        log_error "Поставить mtdd поверх этой установки нельзя:"
+        sed 's/^/    • /' <<< "$_b"
+        exit 1
+    fi
+    mtdd_mgr_drop_old_service "$_old_svc"
+    log_success "Служба mtdd: ${MTDD_MGR_SERVICE}"
+}
+
 installer_pick_engine_backend() {
     ENGINE_VERSION=""; ENGINE_CUSTOM_URL=""; ENGINE_CUSTOM_SHA256=""
+    local _prev_kind="${ENGINE_KIND:-telemt}"
+    ENGINE_KIND="telemt"
+    local _mtdd_ok=false
+    [ -z "$(mtdd_mgr_unsupported_reason)" ] && _mtdd_ok=true
     # Бинарник живёт службой systemd. Без него (Alpine с OpenRC) выбирать не из
     # чего — молча предложить и упасть на запуске было бы хуже.
     if ! command -v systemctl &>/dev/null; then
@@ -503,8 +557,10 @@ installer_pick_engine_backend() {
         return 0
     fi
     # Переустановка не меняет движок молча: по Enter остаётся прежний.
-    local _def=1 _mark1=" (по умолчанию)" _mark2=""
-    if [ -f "$SETTINGS_FILE" ] && [ "${ENGINE_BACKEND:-docker}" = "docker" ]; then
+    local _def=1 _mark1=" (по умолчанию)" _mark2="" _mark4=""
+    if [ -f "$SETTINGS_FILE" ] && [ "$_prev_kind" = "mtdd" ] && [ "$_mtdd_ok" = true ]; then
+        _def=4; _mark1=""; _mark4=" (сейчас)"
+    elif [ -f "$SETTINGS_FILE" ] && [ "${ENGINE_BACKEND:-docker}" = "docker" ]; then
         _def=2; _mark1=""; _mark2=" (сейчас)"
     fi
     echo ""
@@ -513,6 +569,8 @@ installer_pick_engine_backend() {
     echo -e "  ${BOLD}[1]${NC} Бинарник MTProxyL-Telemt ${DIM}— служба systemd, без Docker${_mark1}${NC}"
     echo -e "  ${BOLD}[2]${NC} Docker-образ ${DIM}— контейнер mtproxyl${_mark2}${NC}"
     echo -e "  ${BOLD}[3]${NC} Свой бинарник telemt по ссылке ${DIM}— тоже служба systemd${NC}"
+    [ "$_mtdd_ok" = true ] && \
+        echo -e "  ${BOLD}[4]${NC} mtdd ${DIM}— другой движок (ugDeDe/mtdd), служба systemd; без WEB, WARP, upstream${_mark4}${NC}"
     echo ""
     echo -e "  ${DIM}Бинарник ставится за секунды и не тянет за собой Docker: на${NC}"
     echo -e "  ${DIM}свежей машине это минус несколько минут и сотни мегабайт.${NC}"
@@ -521,7 +579,10 @@ installer_pick_engine_backend() {
     echo -e "  ${DIM}главное меню → Движок.${NC}"
     echo ""
     local _ec; _ec=$(_fix_read_choice "выбор" "$_def" "${_FIX_ANS_ENGINE-}")
-    if [ "$_ec" = "3" ]; then
+    if [ "$_ec" = "4" ] && [ "$_mtdd_ok" = true ]; then
+        installer_pick_mtdd
+        return 0
+    elif [ "$_ec" = "3" ]; then
         ENGINE_BACKEND="binary"
         echo ""
         echo -e "  ${DIM}Ссылка https на бинарник telemt или архив .tar.gz с ним, например:${NC}"
@@ -567,15 +628,22 @@ installer_pick_engine_backend() {
 install_autostart_unit() {
     command -v systemctl &>/dev/null || return 0
 
-    if [ "${ENGINE_BACKEND:-docker}" = "binary" ]; then
+    if [ "${ENGINE_BACKEND:-docker}" = "binary" ] || mtdd_mgr_active; then
         if [ -f /etc/systemd/system/mtproxyl.service ]; then
             systemctl disable --now mtproxyl.service &>/dev/null || true
             rm -f /etc/systemd/system/mtproxyl.service
         fi
         systemctl daemon-reload 2>/dev/null || true
-        binengine_resolve_naming
-        systemctl enable "$ENGINE_SERVICE" &>/dev/null || true
-        log_success "Автозапуск: ${ENGINE_SERVICE}.service"
+        if mtdd_mgr_active; then
+            # Юнита ещё может не быть: его пишет и включает первый запуск.
+            mtdd_mgr_names
+            systemctl enable "$MTDD_MGR_SERVICE" &>/dev/null || true
+            log_success "Автозапуск: ${MTDD_MGR_SERVICE}.service"
+        else
+            binengine_resolve_naming
+            systemctl enable "$ENGINE_SERVICE" &>/dev/null || true
+            log_success "Автозапуск: ${ENGINE_SERVICE}.service"
+        fi
         # Панель читает журнал движка по имени юнита, и права ей выписаны под
         # прежний носитель — иначе логи в ней просто молчат.
         panel_grant_engine_journal 2>/dev/null || true
@@ -953,6 +1021,9 @@ uninstall() {
     geoblock_remove_service >/dev/null 2>&1 || true
     geoblock_remove_all >/dev/null 2>&1 || true
 
+    # mtdd движка Manager — и когда он сейчас стоит, и когда остался после
+    # возврата на telemt.
+    [ "${MTPROXYL_MODE:-manager}" = "manager" ] && mtdd_mgr_purge
     if [ "${MTPROXYL_MODE:-manager}" = "manager" ] && engine_is_binary; then
         log_info "Удаление движка MTProxyL-Telemt..."
         binengine_purge

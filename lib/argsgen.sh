@@ -93,6 +93,11 @@ _argsgen_defaults() {
     _AG_ON[engine]="yes"
     if _argsgen_is_mtdd; then
         :
+    elif mtdd_mgr_active; then
+        # Движок Manager — mtdd: на новом сервере тот же канал сборки.
+        local _mch; _mch=$(cat "$MTDD_CHANNEL_FILE" 2>/dev/null)
+        case "$_mch" in main|dev) ;; *) _mch=main ;; esac
+        _AG_VAL[engine]="mtdd:${_mch}"
     elif [ "$(engine_backend)" = "binary" ] && binengine_is_custom; then
         _AG_VAL[engine]="custom"
     elif [ "$(engine_backend)" = "binary" ]; then
@@ -194,7 +199,8 @@ _ag_user_plain() {
 
 _argsgen_build() {
     local -a _a=(--mode manager)
-    local _mtdd=false
+    local _mtdd=false _mgrmtdd=false
+    mtdd_mgr_active && _mgrmtdd=true
     if _argsgen_is_mtdd; then
         _mtdd=true
         _a=(--mode reanimator --target mtdd --mtdd-channel "${_AG_VAL[engine]#mtdd:}")
@@ -204,6 +210,9 @@ _argsgen_build() {
         :
     elif [ "${_AG_ON[engine]}" = "yes" ]; then
         case "${_AG_VAL[engine]}" in
+            mtdd:*)
+                _a+=(--engine mtdd --mtdd-channel "${_AG_VAL[engine]#mtdd:}")
+                _a+=(--service-name "$([ -n "${MTDD_SERVICE_NAME:-}" ] && echo random || echo standard)") ;;
             custom)
                 _a+=(--engine binary --engine-url "$(binengine_source)")
                 [ -n "${ENGINE_CUSTOM_SHA256:-}" ] && _a+=(--engine-sha256 "$ENGINE_CUSTOM_SHA256") ;;
@@ -211,7 +220,7 @@ _argsgen_build() {
             binary)   _a+=(--engine binary) ;;
             *)        _a+=(--engine docker) ;;
         esac
-        [ "${_AG_VAL[engine]}" != "docker" ] && [ -n "${ENGINE_SERVICE_NAMING:-}" ] \
+        [ "$_mgrmtdd" = false ] && [ "${_AG_VAL[engine]}" != "docker" ] && [ -n "${ENGINE_SERVICE_NAMING:-}" ] \
             && _a+=(--service-name "$ENGINE_SERVICE_NAMING")
     fi
     [ "$_mtdd" = false ] && [ "${_AG_ON[proxy_mode]}" = "yes" ] && _a+=(--proxy-mode "${_AG_VAL[proxy_mode]}")
@@ -237,7 +246,8 @@ _argsgen_build() {
             fi
         done
     fi
-    if [ "$_mtdd" = true ]; then
+    if [ "$_mtdd" = true ] || [ "$_mgrmtdd" = true ]; then
+        # mtdd без тега не запускается — переносим всегда.
         [[ "${_AG_VAL[adtag]}" =~ ^[0-9a-fA-F]{32}$ ]] && _a+=(--ad-tag "${_AG_VAL[adtag]}")
     else
         [ "${_AG_ON[adtag]}" = "yes" ] && [ -n "${AD_TAG:-}" ] && _a+=(--ad-tag "$AD_TAG")
@@ -247,7 +257,7 @@ _argsgen_build() {
         [ "${_AG_ON[mask]}" = "yes" ] && { [ "${_AG_VAL[mask]}" = "выкл" ] && _a+=(--mask off) || _a+=(--mask on); }
     elif [ "${_AG_ON[mask]}" = "yes" ]; then
         [ "${MASKING_ENABLED:-true}" = "false" ] && _a+=(--mask off) || _a+=(--mask on)
-        _a+=(--sni-policy "${UNKNOWN_SNI_ACTION:-reject_handshake}")
+        [ "$_mgrmtdd" = true ] || _a+=(--sni-policy "${UNKNOWN_SNI_ACTION:-reject_handshake}")
     fi
 
     if [ "${_AG_ON[fixes]}" = "yes" ]; then
@@ -288,7 +298,7 @@ _argsgen_build() {
         [ "${FRONT_SERVER:-nginx}" != "nginx" ] && _a+=(--front "$FRONT_SERVER")
     fi
 
-    if [ "$_mtdd" = false ] && [ "${_AG_ON[web]}" = "yes" ]; then
+    if [ "$_mtdd" = false ] && [ "$_mgrmtdd" = false ] && [ "${_AG_ON[web]}" = "yes" ]; then
         _a+=(--web yes --web-layout "${WEB_LAYOUT:-shared}")
         _a+=(--web-frontend "${WEB_FRONTEND:-nginx}")
         [ "${WEB_DNS_CHECK:-true}" = "false" ] && _a+=(--web-dns-check no)
@@ -355,7 +365,7 @@ _argsgen_build() {
         fi
     fi
 
-    if [ "$_mtdd" = false ] && [ "${_AG_ON[dcrestart]:-no}" = "yes" ]; then
+    if [ "$_mtdd" = false ] && [ "$_mgrmtdd" = false ] && [ "${_AG_ON[dcrestart]:-no}" = "yes" ]; then
         _a+=(--dc-restart "${DC_RESTART_THRESHOLD:-50}")
         [ "${DC_RESTART_COOLDOWN:-5}" = "5" ] || _a+=(--dc-restart-cooldown "$DC_RESTART_COOLDOWN")
     fi
@@ -401,7 +411,7 @@ _argsgen_print_command() {
 
 _argsgen_edit() {
     local _key="$1" _v=""
-    if _argsgen_is_mtdd; then
+    if _argsgen_is_mtdd || mtdd_mgr_active; then
         case "$_key" in
             engine)
                 echo -e "  ${DIM}Какую сборку mtdd поставить на новом сервере.${NC}"
@@ -413,7 +423,9 @@ _argsgen_edit() {
                 esac
                 _AG_VAL[engine_note]=""
                 return 0 ;;
-            proxy_mode|ports|web|dcrestart|adtag)
+            ports)
+                _argsgen_is_mtdd && { log_info "У mtdd этот пункт не переносится или обязателен"; return 0; } ;;
+            proxy_mode|web|dcrestart|adtag)
                 log_info "У mtdd этот пункт не переносится или обязателен"; return 0 ;;
         esac
     fi

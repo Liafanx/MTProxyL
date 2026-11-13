@@ -197,7 +197,15 @@ _mig_check_remote() {
         log_warn "Там уже стоит MTProxyL — установка пойдёт поверх"
     fi
     # Бинарник движка собирают не под всё: под чужую архитектуру ехать незачем.
-    if engine_is_binary; then
+    if mtdd_mgr_active; then
+        case "$_arch" in
+            x86_64|amd64) ;;
+            *)
+                log_error "Сборки mtdd есть только для x86_64, а там ${_arch}"
+                log_info "Переезжайте на telemt: сначала здесь mtproxyl engine kind telemt"
+                return 1 ;;
+        esac
+    elif engine_is_binary; then
         case "$_arch" in
             x86_64|amd64|aarch64|arm64) ;;
             *)
@@ -321,7 +329,14 @@ _mig_build_args() {
     _a+=(--proxy-mode "${PROXY_MODE:-mtproto}")
     # Движок переезжает тем же носителем: у кого бинарник — тому и версию,
     # чтобы на новой машине встало ровно то же, что работало на старой.
-    if [ "$(engine_backend)" = "binary" ] && binengine_is_custom; then
+    local _mtdd=false
+    if mtdd_mgr_active; then
+        _mtdd=true
+        local _ch; _ch=$(cat "$MTDD_CHANNEL_FILE" 2>/dev/null)
+        case "$_ch" in main|dev) ;; *) _ch=main ;; esac
+        _a+=(--engine mtdd --mtdd-channel "$_ch")
+        _a+=(--service-name "$([ -n "${MTDD_SERVICE_NAME:-}" ] && echo random || echo standard)")
+    elif [ "$(engine_backend)" = "binary" ] && binengine_is_custom; then
         _a+=(--engine binary --engine-url "$(binengine_source)")
         [ -n "${ENGINE_CUSTOM_SHA256:-}" ] && _a+=(--engine-sha256 "$ENGINE_CUSTOM_SHA256")
     elif [ "$(engine_backend)" = "binary" ]; then
@@ -335,10 +350,10 @@ _mig_build_args() {
     _a+=(--metrics-port "${PROXY_METRICS_PORT:-9090}")
     _a+=(--api-port "${PROXY_API_PORT:-9091}")
     _a+=(--sni "${PROXY_DOMAIN:-autoscout24.ru}")
-    _a+=(--sni-policy "${UNKNOWN_SNI_ACTION:-reject_handshake}")
+    [ "$_mtdd" = true ] || _a+=(--sni-policy "${UNKNOWN_SNI_ACTION:-reject_handshake}")
     [ "${MASKING_ENABLED:-true}" = "false" ] && _a+=(--mask off) || _a+=(--mask on)
     [ -n "${AD_TAG:-}" ] && _a+=(--ad-tag "$AD_TAG")
-    if [ "${DC_RESTART_ENABLED:-false}" = "true" ]; then
+    if [ "$_mtdd" = false ] && [ "${DC_RESTART_ENABLED:-false}" = "true" ]; then
         _a+=(--dc-restart "${DC_RESTART_THRESHOLD:-50}" --dc-restart-cooldown "${DC_RESTART_COOLDOWN:-5}")
     fi
     # Лимиты CPU и памяти не переносим: их подбирали под старую машину, а docker
