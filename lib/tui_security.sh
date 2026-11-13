@@ -15,13 +15,16 @@ tui_security_menu() {
         esac
         echo -e "  ${DIM}[1]${NC} Гео-блокировка"
         # Работает в любом режиме: правила в ядре, а не в конфиге движка.
-        local _mtdd=false; _target_is_mtdd && _mtdd=true
+        local _mtdd=false; engine_is_mtdd && _mtdd=true
         if [ "$_mtdd" = true ]; then
             echo -e "  ${DIM}[2]${NC} Telegram через WARP: ${DIM}недоступно у mtdd${NC}"
         else
             echo -e "  ${DIM}[2]${NC} Telegram через WARP: $(_tui_warp_state_label)"
         fi
-        if [ "${MTPROXYL_MODE:-manager}" = "manager" ] && ! _superexpert_active; then
+        if [ "$_mtdd" = true ] && [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
+            echo -e "  ${DIM}[3]${NC} Upstream-маршруты: ${DIM}недоступно у mtdd${NC}"
+            echo -e "  ${DIM}[4]${NC} SNI-политика: ${DIM}у mtdd чужой SNI уходит на маскировку${NC}"
+        elif [ "${MTPROXYL_MODE:-manager}" = "manager" ] && ! _superexpert_active; then
             echo -e "  ${DIM}[3]${NC} Upstream-маршруты"
             echo -e "  ${DIM}[4]${NC} SNI-политика: ${sni_label}"
         elif _superexpert_active; then
@@ -64,10 +67,12 @@ tui_security_menu() {
             9) [ "$_mtdd" = true ] && tui_mtdd_media_menu ;;
             3)
                 _require_manager_mode || { press_any_key; continue; }
+                [ "$_mtdd" = true ] && { mtdd_unsupported "upstream-маршруты"; press_any_key; continue; }
                 _require_no_superexpert || { press_any_key; continue; }
                 tui_upstream_menu ;;
             4)
                 _require_manager_mode || { press_any_key; continue; }
+                [ "$_mtdd" = true ] && { mtdd_unsupported "SNI-политика: чужой SNI mtdd отдаёт маскировке"; press_any_key; continue; }
                 _require_no_superexpert || { press_any_key; continue; }
                 echo ""
                 echo -e "  ${BOLD}Что делать с чужим SNI${NC}"

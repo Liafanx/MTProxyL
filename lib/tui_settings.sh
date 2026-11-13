@@ -38,7 +38,11 @@ tui_settings_menu() {
         echo -e "  ${BOLD}SNI-полит.:${NC}        ${UNKNOWN_SNI_ACTION}"
         echo -e "  ${BOLD}PROXY proto:${NC}       ${PROXY_PROTOCOL}"
         echo -e "  ${BOLD}Selfmask:${NC}          $(selfmask_status_line 2>/dev/null || echo "${DIM}выключен${NC}")"
-        echo -e "  ${BOLD}Движок:${NC}            telemt v$(get_telemt_version)"
+        if mtdd_mgr_active; then
+            echo -e "  ${BOLD}Движок:${NC}            mtdd $(mtdd_mgr_version)"
+        else
+            echo -e "  ${BOLD}Движок:${NC}            telemt v$(get_telemt_version)"
+        fi
         echo ""
         echo -e "  ${DIM}[1]${NC} Изменить порт"
         echo -e "  ${DIM}[2]${NC} Изменить IP/домен сервера"
@@ -52,13 +56,20 @@ tui_settings_menu() {
         echo -e "  ${DIM}[10]${NC} Управление движком"
         echo -e "  ${DIM}[11]${NC} Изменить порт метрик"        
         echo -e "  ${DIM}[12]${NC} Просмотр текущего конфига"
-        echo -e "  ${DIM}[13]${NC} Тюнинг движка (tune) Telemt"
+        echo -e "  ${DIM}[13]${NC} Тюнинг движка (tune) $(mtdd_mgr_active && echo mtdd || echo Telemt)"
         echo -e "  ${DIM}[14]${NC} Пользовательские URL Telegram"
         echo -e "  ${DIM}[15]${NC} Selfmask (заглушка + сертификат)"
         echo -e "  ${DIM}[16]${NC} Изменить порт API движка [$(api_port_current 2>/dev/null)]"
         echo -e "  ${DIM}[17]${NC} Уровень логирования [$(proxy_log_level)]"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
+        # У mtdd нет SNI-политики, PROXY protocol, своих URL Telegram и уровня логов.
+        if mtdd_mgr_active; then
+            case "$choice" in
+                8|9|14|17) mtdd_unsupported "этот пункт есть только у telemt"; press_any_key; continue ;;
+                13) tui_mtdd_tune_menu; continue ;;
+            esac
+        fi
         case "$choice" in
             16)
                 echo ""
@@ -203,6 +214,10 @@ tui_settings_menu() {
                 press_any_key ;;
             7)
                 echo -en "  ${BOLD}Рекл. метка (32 hex, 'remove'):${NC} "; local at; read_line at
+                if mtdd_mgr_active && { [ "$at" = "remove" ] || [ -n "$at" ]; } \
+                    && ! _err=$(_validate_settings_adtag "$([ "$at" = remove ] || echo "$at")"); then
+                    log_error "$_err"; press_any_key; continue
+                fi
                 if [ "$at" = "remove" ]; then AD_TAG=""; log_success "Метка удалена"
                 elif [[ "$at" =~ ^[0-9a-fA-F]{32}$ ]]; then AD_TAG="$at"; log_success "Метка установлена"
                 elif [ -n "$at" ]; then log_error "Нужно 32 hex-символа"; fi

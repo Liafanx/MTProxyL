@@ -30,7 +30,58 @@ _tui_engine_service_name() {
     esac
 }
 
+# Тюнинг mtdd: ключи из белого списка, порт/домен/тег — в настройках MTProxyL.
+tui_mtdd_tune_menu() {
+    while true; do
+        clear_screen
+        mtdd_handle_tune list
+        echo -e "  ${DIM}[1]${NC} Задать параметр"
+        echo -e "  ${DIM}[2]${NC} Сбросить параметр (значение mtdd по умолчанию)"
+        echo -e "  ${DIM}[0]${NC} Назад"
+        local _c _k _v; _c=$(read_choice "выбор" "0")
+        case "$_c" in
+            1) read_line _k "  ${BOLD}Параметр:${NC} "; [ -n "$_k" ] || continue
+               read_line _v "  ${BOLD}Значение:${NC} "; [ -n "$_v" ] || continue
+               mtdd_handle_tune set "$_k" "$_v"; press_any_key ;;
+            2) read_line _k "  ${BOLD}Параметр:${NC} "; [ -n "$_k" ] || continue
+               mtdd_handle_tune clear "$_k"; press_any_key ;;
+            *) return ;;
+        esac
+    done
+}
+
+# Движок Manager — mtdd: каналы сборок вместо версий, смена на telemt.
+tui_mtdd_mgr_engine_menu() {
+    while mtdd_mgr_active; do
+        clear_screen
+        draw_header "ДВИЖОК MTDD"
+        echo ""
+        echo -e "  ${BOLD}Версия:${NC}    $(mtdd_mgr_version)"
+        echo -e "  ${BOLD}Бинарник:${NC}  ${MTDD_MGR_BIN} ${DIM}(из релизов ${MTDD_REPO})${NC}"
+        echo -e "  ${BOLD}Служба:${NC}    ${MTDD_MGR_SERVICE}.service"
+        echo ""
+        echo -e "  ${DIM}[1]${NC} Сборки main и dev"
+        echo -e "  ${DIM}[2]${NC} Обновить / сменить канал"
+        echo -e "  ${DIM}[3]${NC} Откатить на предыдущую сборку"
+        echo -e "  ${DIM}[4]${NC} Тюнинг mtdd (свои ключи конфига)"
+        echo -e "  ${DIM}[5]${NC} Медиа-лимиты mtdd"
+        echo -e "  ${DIM}[6]${NC} Сменить движок на telemt ${DIM}(ключи и ссылки сохранятся)${NC}"
+        echo -e "  ${DIM}[0]${NC} Назад"
+        local choice; choice=$(read_choice "выбор" "0")
+        case "$choice" in
+            1) handle_engine_command list; press_any_key ;;
+            2) handle_engine_command update; press_any_key ;;
+            3) handle_engine_command rollback; press_any_key ;;
+            4) tui_mtdd_tune_menu ;;
+            5) tui_mtdd_media_menu ;;
+            6) engine_switch_kind telemt; load_settings; press_any_key ;;
+            0|"") return ;;
+        esac
+    done
+}
+
 tui_engine_menu() {
+    mtdd_mgr_active && { tui_mtdd_mgr_engine_menu; return; }
     while true; do
         clear_screen
         draw_header "ДВИЖОК TELEMT"
@@ -58,6 +109,8 @@ tui_engine_menu() {
         command -v docker >/dev/null && echo -e "  ${DIM}[6]${NC} Очистить неиспользуемые Docker-образы"
         command -v systemctl >/dev/null && echo -e "  ${DIM}[7]${NC} Свой бинарник telemt по ссылке"
         command -v systemctl >/dev/null && echo -e "  ${DIM}[8]${NC} Имя службы движка"
+        [ -z "$(mtdd_mgr_unsupported_reason)" ] && \
+            echo -e "  ${DIM}[9]${NC} Сменить движок на mtdd ${DIM}(ключи и ссылки сохранятся)${NC}"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
@@ -68,6 +121,7 @@ tui_engine_menu() {
             6) handle_engine_command cleanup; press_any_key ;;
             7) _tui_engine_custom; load_settings; press_any_key ;;
             8) _tui_engine_service_name; load_settings; press_any_key ;;
+            9) engine_switch_kind mtdd; load_settings; mtdd_mgr_active && return; press_any_key ;;
             5) if engine_is_binary; then
                    engine_switch_backend docker
                else
