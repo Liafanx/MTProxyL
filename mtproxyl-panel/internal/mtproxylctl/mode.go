@@ -64,14 +64,15 @@ type ModeStatus struct {
 	LogKind   string `json:"log_kind"`
 	LogTarget string `json:"log_target"`
 	// EngineKind is the proxy implementation behind the current mode:
-	// "telemt" or, for a reanimator target, "mtdd". mtdd has its own REST API,
-	// so the panel cannot talk to it as it talks to telemt.
+	// "telemt" or "mtdd" — a reanimator target or the Manager's own engine.
+	// mtdd has its own REST API, so the panel cannot talk to it as it talks
+	// to telemt.
 	EngineKind string `json:"engine_kind"`
 }
 
-// IsMtdd reports whether the current target is mtdd rather than telemt.
+// IsMtdd reports whether the current mode's engine is mtdd rather than telemt.
 func (st *ModeStatus) IsMtdd() bool {
-	return st != nil && st.Mode == ModeReanimator && st.EngineKind == "mtdd"
+	return st != nil && st.EngineKind == "mtdd"
 }
 
 // ContainerDisposition says what to do with MTProxyL's own container when

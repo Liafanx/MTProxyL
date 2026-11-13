@@ -7,9 +7,9 @@ import { mtproxylApi, type MtproxylEngineVersions, type MtproxylEngineCleanup } 
 import { useMtproxyl, useMtproxylOperation } from '@/hooks/useMtproxyl';
 import { cn } from '@/lib/utils';
 
-/** Версии движка telemt: что стоит, что лежит на диске, что опубликовано. */
+/** Версии движка (telemt или mtdd): что стоит, что лежит на диске, что опубликовано. */
 export function MtproxylEngineCard() {
-  const { enabled, mode } = useMtproxyl();
+  const { enabled, mode, engineKind } = useMtproxyl();
   const [info, setInfo] = useState<MtproxylEngineVersions | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -42,7 +42,9 @@ export function MtproxylEngineCard() {
   // В реаниматоре меняется только бинарник цели под telemt.service; цель в
   // Docker обновляет её образ, и здесь ей предложить нечего.
   const isTarget = mode === 'reanimator';
-  if (isTarget && info && info.supported === false) {
+  // У mtdd вместо версий — каналы сборок main и dev.
+  const isMtdd = engineKind === 'mtdd';
+  if ((isTarget || isMtdd) && info && info.supported === false) {
     return (
       <div className="bg-surface rounded-lg p-4 lg:p-5 border border-border">
         <h2 className="text-xs lg:text-sm font-semibold text-text-primary mb-2">Версия движка</h2>
@@ -54,7 +56,10 @@ export function MtproxylEngineCard() {
   }
 
   const update = async (t: string) => {
-    if (isTarget && !window.confirm(
+    if (isMtdd && !window.confirm(
+      `Поставить сборку mtdd ${t}? Движок перезапустится, конфиг и пользователи не изменятся.`,
+    )) return;
+    if (!isMtdd && isTarget && !window.confirm(
       `Поставить telemt ${t} на цель? Движок перезапустится, конфиг цели не изменится.`,
     )) return;
     try {
@@ -66,7 +71,7 @@ export function MtproxylEngineCard() {
   };
 
   const rollback = async (t = '') => {
-    if (isTarget && !window.confirm('Вернуть предыдущую версию движка? Он перезапустится.')) return;
+    if ((isTarget || isMtdd) && !window.confirm('Вернуть предыдущую версию движка? Он перезапустится.')) return;
     try {
       setActionError(null);
       start(await mtproxylApi.engineRollback(t));
@@ -140,6 +145,8 @@ export function MtproxylEngineCard() {
           <MetricCard label="Установлена" value={current || '—'} />
           {isTarget ? (
             <MetricCard label="Бинарник цели" value={info?.bin_path || '—'} />
+          ) : isMtdd ? (
+            <MetricCard label="Служба mtdd" value={info?.service || '—'} />
           ) : (
             <MetricCard
               label="Носитель"
@@ -203,6 +210,7 @@ export function MtproxylEngineCard() {
           </div>
         )}
 
+        {!isMtdd && (
         <div className="flex flex-col sm:flex-row gap-2">
           <input
             value={tag}
@@ -223,11 +231,14 @@ export function MtproxylEngineCard() {
             Поставить
           </button>
         </div>
+        )}
 
         <div className="rounded-md border border-border p-3">
           <p className="text-xs lg:text-sm font-medium text-text-primary mb-1">Откат</p>
           <p className="text-xs text-text-secondary mb-2">
-            {isTarget
+            {isMtdd && !isTarget
+              ? 'Предыдущая сборка mtdd лежит рядом с текущей — откат идёт без сети. На другой канал — кнопкой «Поставить» в списке.'
+              : isTarget
               ? 'Предыдущий бинарник цели MTProxyL хранит у себя — откат идёт без сети. На любую другую версию — кнопкой «Поставить» в списке.'
               : info?.binary
                 ? 'Предыдущий бинарник лежит рядом с текущим — откат идёт без сети.'
@@ -269,7 +280,7 @@ export function MtproxylEngineCard() {
           )}
         </div>
 
-        {!isTarget && info?.binary && info.service && (
+        {!isTarget && !isMtdd && info?.binary && info.service && (
           <div className="rounded-md border border-border p-3 space-y-2">
             <p className="text-xs lg:text-sm font-medium text-text-primary">Имя службы</p>
             <p className="text-xs text-text-secondary">

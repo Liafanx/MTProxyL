@@ -26,4 +26,8 @@ assert "Режим: <code>Только WEB</code>" in rendered("web")
 assert "Режим: <code>MTProto + WEB</code>" in rendered("combined")
 assert "Режим: <code>MTProto</code>" in rendered(None, enabled=False)
 
+st = {"version": "test", "status": "running", "port": 443, "domain": "p.example.com", "web": None}
+assert "Движок: <code>mtdd</code>" in status_text(st, {"mode": "manager", "engine_kind": "mtdd"})
+assert "Движок" not in status_text(st, {"mode": "manager", "engine_kind": "telemt"})
+
 print("bot status mode: OK")
