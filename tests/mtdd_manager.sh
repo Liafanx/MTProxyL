@@ -238,9 +238,11 @@ grep -q "тег один на сервер" "$t/out" || fail "нет преду�
 [ "$(tr '\n' ' ' < "$t/switch.log")" = "fetch:mtdd remove:telemt autostart:mtdd run:mtdd:mgr " ] || fail "порядок перехода: $(cat "$t/switch.log")"
 [ "$ENGINE_KIND" = mtdd ] && mtdd_mgr_active && [ "$(tail -1 "$t/saved")" = ENGINE_KIND=mtdd ] || fail "вид движка после перехода"
 : > "$t/switch.log"; _run_fail=telemt
+# Без Docker в PATH telemt ставится бинарником, с Docker — остаётся в нём.
+_no_docker=""; command -v docker >/dev/null 2>&1 || _no_docker="fetch-telemt:binary "
 engine_switch_kind telemt --yes >/dev/null 2>&1 && fail "провал telemt не замечен"
-[ "$(tr '\n' ' ' < "$t/switch.log")" = "fetch-telemt:binary remove:mtdd autostart:telemt run:telemt:tm remove:telemt autostart:mtdd run:mtdd:mgr " ] || fail "откат: $(cat "$t/switch.log")"
-[ "$ENGINE_BACKEND" = binary ] || fail "без Docker telemt не ушёл на бинарник: $ENGINE_BACKEND"
+[ "$(tr '\n' ' ' < "$t/switch.log")" = "${_no_docker}remove:mtdd autostart:telemt run:telemt:tm remove:telemt autostart:mtdd run:mtdd:mgr " ] || fail "откат: $(cat "$t/switch.log")"
+[ -z "$_no_docker" ] || [ "$ENGINE_BACKEND" = binary ] || fail "без Docker telemt не ушёл на бинарник: $ENGINE_BACKEND"
 [ "$ENGINE_KIND" = mtdd ] && [ "$(tail -1 "$t/saved")" = ENGINE_KIND=mtdd ] || fail "после отката вид не mtdd"
 : > "$t/switch.log"; _run_fail=""
 engine_switch_kind telemt --yes >/dev/null 2>&1 || fail "обратно на telemt"
