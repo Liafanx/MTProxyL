@@ -4,7 +4,7 @@
 # Версия telemt цели: меняется только бинарник, конфиг цели остаётся.
 _tui_target_engine() {
     clear_screen
-    draw_header "ВЕРСИЯ TELEMT ЦЕЛИ"
+    if _target_is_mtdd; then draw_header "СБОРКА MTDD ЦЕЛИ"; else draw_header "ВЕРСИЯ TELEMT ЦЕЛИ"; fi
     echo ""
     target_engine_status
     echo ""
@@ -15,7 +15,11 @@ _tui_target_engine() {
     echo -e "  ${DIM}Меняется только бинарник, конфиг цели не трогается. Если новая версия${NC}"
     echo -e "  ${DIM}не поднимется с этим конфигом, прежняя вернётся сама.${NC}"
     echo ""
-    echo -e "  ${DIM}[1]${NC} Поставить версию из списка"
+    if _target_is_mtdd; then
+        echo -e "  ${DIM}[1]${NC} Поставить свежую сборку канала ${DIM}(main / dev, с датами)${NC}"
+    else
+        echo -e "  ${DIM}[1]${NC} Поставить версию из списка"
+    fi
     echo -e "  ${DIM}[2]${NC} Откатить на предыдущую"
     echo -e "  ${DIM}[0]${NC} Назад"
     local _c; _c=$(read_choice "выбор" "0")
@@ -48,15 +52,25 @@ tui_target_menu() {
         else
             echo -e "  ${DIM}[2]${NC} Переключиться в Manager"
         fi
+        local _eng_name="telemt"
+        _target_is_mtdd && _eng_name="mtdd"
         if [ "$_telemt_item" = "true" ]; then
-            echo -e "  ${DIM}[3]${NC} Установить / обновить telemt (официальный установщик)"
-            echo -e "  ${DIM}[4]${NC} Удалить telemt (официальный установщик)"
+            if [ "$_eng_name" = "mtdd" ]; then
+                echo -e "  ${DIM}[3]${NC} Обновить mtdd ${DIM}(свежая сборка канала main / dev)${NC}"
+                echo -e "  ${DIM}[4]${NC} Удалить mtdd (штатная команда mtdd)"
+            else
+                echo -e "  ${DIM}[3]${NC} Установить / обновить telemt (официальный установщик)"
+                echo -e "  ${DIM}[4]${NC} Удалить telemt (официальный установщик)"
+            fi
             if [ "${TOOLS_ONLY:-false}" = "true" ]; then
                 echo -e "  ${DIM}[5]${NC} Только оптимизация: ${GREEN}включена${NC} — вернуть работу с движком"
             else
                 echo -e "  ${DIM}[5]${NC} Только оптимизация ${DIM}(без движка: фиксы, лимитер, оптимизация)${NC}"
             fi
-            echo -e "  ${DIM}[6]${NC} Версия telemt: обновить или откатить ${DIM}(только бинарник)${NC}"
+            echo -e "  ${DIM}[6]${NC} Версия ${_eng_name}: обновить или откатить ${DIM}(только бинарник)${NC}"
+            if [ "$_eng_name" = "telemt" ] && ! mtdd_unit_exists; then
+                echo -e "  ${DIM}[7]${NC} Установить mtdd вместо telemt ${DIM}(официальный установщик; без WEB и upstream)${NC}"
+            fi
         fi
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
@@ -89,11 +103,28 @@ tui_target_menu() {
                 press_any_key ;;
             3)
                 [ "$_telemt_item" = "true" ] || continue
-                install_original_telemt || true
+                if [ "$_eng_name" = "mtdd" ]; then
+                    handle_engine_command update || true
+                else
+                    install_original_telemt || true
+                fi
                 press_any_key ;;
             4)
                 [ "$_telemt_item" = "true" ] || continue
-                uninstall_original_telemt || true
+                if [ "$_eng_name" = "mtdd" ]; then
+                    uninstall_original_mtdd || true
+                else
+                    uninstall_original_telemt || true
+                fi
+                press_any_key ;;
+            7)
+                [ "$_telemt_item" = "true" ] && [ "$_eng_name" = "telemt" ] || continue
+                if ! _no_telemt_target; then
+                    log_warn "На сервере уже есть telemt (${DETECTED_MODE}). Два прокси на одном порту не уживутся:"
+                    echo -e "  ${DIM}сначала удалите telemt пунктом [4], потом ставьте mtdd.${NC}"
+                else
+                    install_original_mtdd || true
+                fi
                 press_any_key ;;
             6)
                 [ "$_telemt_item" = "true" ] || continue

@@ -74,13 +74,13 @@ show_main_menu() {
                 # во втором случае строка выше показывает путь к конфигу, и
                 # сообщение «не найден» без уточнения выглядит противоречиво.
                 if [ -n "${DETECTED_CONFIG_PATH:-}" ] && [ -f "${DETECTED_CONFIG_PATH}" ]; then
-                    echo -e "  ${YELLOW}⚠ Конфиг остался, но самого telemt нет${NC}"
+                    echo -e "  ${YELLOW}⚠ Конфиг остался, но самого прокси нет${NC}"
                     echo -e "  ${DIM}  Ни службы, ни контейнера, ни бинарника — чинить нечего${NC}"
-                    echo -e "  ${DIM}  Поставить telemt заново: пункт «Установить telemt» ниже${NC}"
+                    echo -e "  ${DIM}  Поставить заново: пункт «Установить telemt или mtdd» ниже${NC}"
                     echo -e "  ${DIM}  Настройки из конфига установщик подхватит${NC}"
                 else
-                    echo -e "  ${YELLOW}⚠ telemt на сервере не найден — чинить нечего${NC}"
-                    echo -e "  ${DIM}  Поставить оригинальный telemt: пункт «Установить telemt» ниже${NC}"
+                    echo -e "  ${YELLOW}⚠ Ни telemt, ни mtdd на сервере не найдены — чинить нечего${NC}"
+                    echo -e "  ${DIM}  Поставить прокси: пункт «Установить telemt или mtdd» ниже${NC}"
                     echo -e "  ${DIM}  Нужны только фиксы и оптимизация? Цель/режим → «Только оптимизация»${NC}"
                 fi
             fi
@@ -164,7 +164,13 @@ show_main_menu() {
 
         echo -e "  ${BOLD}MEKO оптим.:${NC} $(meko_opt_status 2>/dev/null || echo "${DIM}—${NC}")"
         echo -e "  ${BOLD}Selfmask:${NC}    $(selfmask_status_line 2>/dev/null || echo "${DIM}—${NC}")"
-        echo -e "  ${BOLD}WEB Proxy:${NC}   $(web_status_line 2>/dev/null || echo "${DIM}—${NC}")"
+        if _target_is_mtdd; then
+            local _mu _mt
+            _mu=$(mtdd_cfg_get media_user_rate_kbps 2>/dev/null); _mt=$(mtdd_cfg_get media_total_rate_kbps 2>/dev/null)
+            echo -e "  ${BOLD}Медиа mtdd:${NC}  на польз. $(_mtdd_kbps_human "$_mu"), на сервер $(_mtdd_kbps_human "$_mt")"
+        else
+            echo -e "  ${BOLD}WEB Proxy:${NC}   $(web_status_line 2>/dev/null || echo "${DIM}—${NC}")"
+        fi
         # Только когда включён: на обычной установке строка была бы шумом.
         warp_menu_line 2>/dev/null || true
         donor_menu_line 2>/dev/null || true
@@ -237,10 +243,14 @@ show_main_menu() {
             echo -e "  ${BRIGHT_CYAN}[10]${NC}  Цель / режим (Manager ⇄ Reanimator)"
             echo -e "  ${BRIGHT_CYAN}[11]${NC}  Редактировать конфиг цели"
             echo -e "  ${BRIGHT_CYAN}[12]${NC}  Информация"
-            echo -e "  ${BRIGHT_CYAN}[13]${NC}  WEB Proxy  ${DIM}$(web_status_line)${NC}"
+            if _target_is_mtdd; then
+                echo -e "  ${BRIGHT_CYAN}[13]${NC}  Медиа-лимиты mtdd ${DIM}(скорость загрузки файлов)${NC}"
+            else
+                echo -e "  ${BRIGHT_CYAN}[13]${NC}  WEB Proxy  ${DIM}$(web_status_line)${NC}"
+            fi
             echo ""
             [ "$_n_telemt" != "__none__" ] && \
-                echo -e "  ${GREEN}[${_n_telemt}]${NC}  Установить telemt (официальный установщик)"
+                echo -e "  ${GREEN}[${_n_telemt}]${NC}  Установить telemt или mtdd (официальный установщик)"
             echo -e "  ${BRIGHT_CYAN}[${_n_setup}]${NC}  Установка / переустановка"
             echo -e "  ${RED}[${_n_uninstall}]${NC}  Удаление"
             echo -e "  ${BRIGHT_CYAN}[0]${NC}   Выход"
@@ -259,8 +269,8 @@ show_main_menu() {
                 10) tui_target_menu ;;
                 11) edit_target_config || true; press_any_key ;;
                 12) show_server_info; press_any_key ;;
-                13) tui_web_menu ;;
-                "$_n_telemt")    install_original_telemt || true; press_any_key ;;
+                13) if _target_is_mtdd; then tui_mtdd_media_menu; else tui_web_menu; fi ;;
+                "$_n_telemt")    offer_install_original_telemt true || true; press_any_key ;;
                 "$_n_setup")     run_installer ;;
                 "$_n_uninstall") uninstall; exit 0 ;;
                 0)  exit 0 ;;

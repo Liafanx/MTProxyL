@@ -32,6 +32,8 @@ tui_backup_menu() {
         else
             echo -e "  ${DIM}Бэкапы и миграция работают с собственным конфигом${NC}"
             echo -e "  ${DIM}и секретами менеджера — в режиме reanimator недоступны.${NC}"
+            _target_is_mtdd && \
+                echo -e "  ${DIM}[11]${NC} Перенос аргументами ${DIM}(команда, которая поставит такой же mtdd)${NC}"
         fi
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
