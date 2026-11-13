@@ -18,6 +18,7 @@ import (
 
 type TelemtProxy struct {
 	handler    http.Handler
+	rp         *httputil.ReverseProxy
 	targetURL  string
 	authHeader string
 	client     *http.Client
@@ -116,7 +117,16 @@ func newTelemtProxy(targetURL string, authHeader string, responseTimeout time.Du
 	}
 
 	tp.handler = proxy
+	tp.rp = proxy
 	return tp, nil
+}
+
+// WrapTransport puts wrap around the transport of both the reverse proxy and
+// the JSON client. The mtdd shim uses it to answer telemt requests itself.
+// Call before serving.
+func (p *TelemtProxy) WrapTransport(wrap func(http.RoundTripper) http.RoundTripper) {
+	p.client.Transport = wrap(p.client.Transport)
+	p.rp.Transport = wrap(p.rp.Transport)
 }
 
 // touchConfig fetches the config path from Telemt and touches the file
@@ -125,6 +135,10 @@ func (p *TelemtProxy) touchConfig() {
 	info, err := p.GetSystemInfo()
 	if err != nil {
 		log.Printf("[proxy] touch config: failed to get system info: %v", err)
+		return
+	}
+	// mtdd (через shim) не называет файла: его пользователи живут в API.
+	if info.ConfigPath == "" {
 		return
 	}
 	now := time.Now()

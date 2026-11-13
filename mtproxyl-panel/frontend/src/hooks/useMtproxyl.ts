@@ -11,6 +11,7 @@ export function useMtproxylAvailability() {
   const [enabled, setEnabled] = useState(false);
   const [mode, setMode] = useState<MtproxylMode | ''>('');
   const [apiMismatch, setApiMismatch] = useState<string>('');
+  const [engineKind, setEngineKind] = useState<EngineKind>('telemt');
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
@@ -19,10 +20,12 @@ export function useMtproxylAvailability() {
       setEnabled(s.enabled);
       setMode(s.mode);
       setApiMismatch(s.api_mismatch ?? '');
+      setEngineKind(s.engine_kind === 'mtdd' ? 'mtdd' : 'telemt');
     } catch {
       setEnabled(false);
       setMode('');
       setApiMismatch('');
+      setEngineKind('telemt');
     } finally {
       setLoading(false);
     }
@@ -32,14 +35,18 @@ export function useMtproxylAvailability() {
     void refresh();
   }, [refresh]);
 
-  return { enabled, mode, apiMismatch, loading, refresh };
+  return { enabled, mode, apiMismatch, engineKind, loading, refresh };
 }
+
+/** Движок прокси. Пустое или неизвестное значение с бэкенда — telemt. */
+export type EngineKind = 'telemt' | 'mtdd';
 
 interface MtproxylState {
   enabled: boolean;
   mode: MtproxylMode | '';
   /** Сообщение о том, что панель смотрит на движок другого режима. */
   apiMismatch?: string;
+  engineKind?: EngineKind;
   loading: boolean;
   refresh?: () => Promise<void>;
 }
@@ -51,7 +58,10 @@ export const MtproxylContext = createContext<MtproxylState>({
   loading: true,
 });
 
-export const useMtproxyl = () => useContext(MtproxylContext);
+export const useMtproxyl = () => {
+  const ctx = useContext(MtproxylContext);
+  return { ...ctx, engineKind: ctx.engineKind ?? ('telemt' as EngineKind) };
+};
 
 /**
  * Часть возможностей MTProxyL существует только в режиме manager: бэкапы и

@@ -8,19 +8,20 @@ import { useMtproxyl } from '@/hooks/useMtproxyl';
 import { useBranding } from '@/hooks/useBranding';
 import { useKeyboardInset } from '@/hooks/useKeyboardInset';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
-import { PANEL_NAV_ITEMS, isNavItemActive, mtproxylItems, primaryItems, type NavItem } from './nav';
+import { panelItems, isNavItemActive, mtproxylItems, primaryItems, type NavItem } from './nav';
 
 /** Одна навигация в трёх геометриях: табы до 600px, рельса до 1180px, полное меню шире. */
 export function Shell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
-  const { enabled, mode } = useMtproxyl();
+  const { enabled, mode, engineKind } = useMtproxyl();
   const keyboardInset = useKeyboardInset();
   const [moreOpen, setMoreOpen] = useState(false);
   const [railMoreOpen, setRailMoreOpen] = useState(false);
-  const primary = primaryItems(enabled, mode);
+  const primary = primaryItems(enabled, mode, engineKind);
+  const visiblePanel = panelItems(engineKind);
   const primaryPaths = new Set(primary.map((i) => i.to));
-  const secondaryPanel = PANEL_NAV_ITEMS.filter((i) => !primaryPaths.has(i.to));
-  const secondaryMtproxyl = mtproxylItems(enabled, mode).filter((i) => !primaryPaths.has(i.to));
+  const secondaryPanel = visiblePanel.filter((i) => !primaryPaths.has(i.to));
+  const secondaryMtproxyl = mtproxylItems(enabled, mode, engineKind).filter((i) => !primaryPaths.has(i.to));
   const secondaryActive = [...secondaryPanel, ...secondaryMtproxyl].some((i) => isNavItemActive(i.to, pathname));
 
   useEffect(() => {
@@ -39,7 +40,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-dvh min-[600px]:flex-row">
-      <FullSidebar pathname={pathname} panelItems={PANEL_NAV_ITEMS} mtproxylItems={mtproxylItems(enabled, mode)} />
+      <FullSidebar pathname={pathname} panelItems={visiblePanel} mtproxylItems={mtproxylItems(enabled, mode, engineKind)} />
 
       <aside className="sticky top-0 z-30 hidden h-dvh w-16 shrink-0 flex-col items-center border-r border-border bg-surface py-3 min-[600px]:flex min-[1180px]:hidden">
         <BrandMark compact />

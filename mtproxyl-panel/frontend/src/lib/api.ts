@@ -331,6 +331,8 @@ export interface MtproxylAvailability {
    * режим. Готовое сообщение на русском — его и показываем.
    */
   api_mismatch?: string;
+  /** Движок: telemt или mtdd; пусто, если режим не прочитан (считаем telemt). */
+  engine_kind?: string;
   api_expected_port?: number;
   api_enabled?: boolean;
   operation: MtproxylOperation;
@@ -432,8 +434,23 @@ export interface MtproxylStats {
 
 export type MtproxylStatsScope = 'all' | 'traffic' | 'ips' | 'orphans' | 'user';
 
+/** Медиа-лимиты mtdd: скорость в кбит/с, 0 — без лимита. */
+export interface MtddMediaLimits {
+  available: boolean;
+  user_kbps: number;
+  total_kbps: number;
+}
+
 export const mtproxylApi = {
   status: () => request<MtproxylAvailability>(MTPROXYL_BASE, '/status'),
+
+  getMedia: () => request<MtddMediaLimits>(MTPROXYL_BASE, '/media'),
+  /** Мбит/с; оба нуля снимают лимиты. */
+  setMedia: (userMbps: number, totalMbps: number) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/media', {
+      method: 'POST',
+      body: JSON.stringify({ user_mbps: userMbps, total_mbps: totalMbps }),
+    }),
 
   // Проверка ходит на github и запускает скрипт под sudo, поэтому ответ
   // кэшируется на сервере; refresh — это кнопка «Проверить».

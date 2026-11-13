@@ -49,7 +49,7 @@ interface UserInfo {
  * пустой аргумент как «не менять». Разница в том, что пустое поле в форме
  * означает «без ограничения», то есть 0 — иначе снять лимит было бы нечем.
  */
-async function applyMtproxylLimits(label: string, data: Record<string, unknown>) {
+async function applyMtproxylLimits(label: string, data: Record<string, unknown>, adTagSupported = true) {
   const num = (v: unknown) => (v === undefined || v === '' ? 0 : Number(v));
   const expiration = data.expiration_rfc3339 ? String(data.expiration_rfc3339) : '';
   await mtproxylUsersApi.setLimits(label, {
@@ -62,7 +62,7 @@ async function applyMtproxylLimits(label: string, data: Record<string, unknown>)
   // Метка живёт в отдельной секции конфига, и у MTProxyL для неё отдельная
   // команда: в лимиты её не сложить. Форма отдаёт пустую строку, когда поле
   // очистили, — это снятие метки.
-  if ('user_ad_tag' in data) {
+  if (adTagSupported && 'user_ad_tag' in data) {
     await mtproxylUsersApi.setAdTag(label, data.user_ad_tag ? String(data.user_ad_tag) : '');
   }
   if ('notes' in data) {
@@ -206,8 +206,12 @@ export function UsersPage() {
   // чтения — telemt отвечает на запись «Device or resource busy». Владелец
   // пользователей там MTProxyL, и правим мы их через его CLI. Чтение
   // статистики остаётся у API движка: трафик и соединения знает только он.
-  const { enabled: mtproxylEnabled, mode: mtproxylMode } = useMtproxyl();
-  const usersOwnedByMtproxyl = mtproxylEnabled && mtproxylMode === 'manager';
+  // У mtdd пользователей тоже ведёт MTProxyL: мост отвечает на чтение
+  // telemt-эндпоинтов, а запись через них отклоняет.
+  const { enabled: mtproxylEnabled, mode: mtproxylMode, engineKind } = useMtproxyl();
+  const usersOwnedByMtproxyl = mtproxylEnabled && (mtproxylMode === 'manager' || engineKind === 'mtdd');
+  // Метку на пользователя mtdd не поддерживает.
+  const adTagSupported = engineKind !== 'mtdd';
 
   const [editUser, setEditUser] = useState<UserInfo | null>(null);
   // Один объект на открытие формы: иначе её useEffect сбрасывал бы ввод.
@@ -253,13 +257,13 @@ export function UsersPage() {
   const handleCreate = useCallback(async (data: Record<string, unknown>) => {
     if (usersOwnedByMtproxyl) {
       await mtproxylUsersApi.create(String(data.username), data.secret ? String(data.secret) : undefined);
-      await applyMtproxylLimits(String(data.username), data);
+      await applyMtproxylLimits(String(data.username), data, adTagSupported);
     } else {
       await telemt.post('/v1/users', data);
       await syncWebProfiles();
     }
     refresh();
-  }, [refresh, usersOwnedByMtproxyl, syncWebProfiles]);
+  }, [refresh, usersOwnedByMtproxyl, syncWebProfiles, adTagSupported]);
 
   const handleEdit = useCallback(async (data: Record<string, unknown>) => {
     if (!editUser) return;
@@ -273,7 +277,7 @@ export function UsersPage() {
       if (changes.secret) {
         await mtproxylUsersApi.rotate(editUser.username);
       }
-      await applyMtproxylLimits(editUser.username, changes);
+      await applyMtproxylLimits(editUser.username, changes, adTagSupported);
     } else if (Object.keys(changes).length > 0) {
       await telemt.patch(`/v1/users/${editUser.username}`, changes);
     }
@@ -287,7 +291,7 @@ export function UsersPage() {
       await mtproxylUsersApi.rename(editUser.username, nextUsername);
     }
     refresh();
-  }, [editUser, refresh, usersOwnedByMtproxyl, mtproxylEnabled]);
+  }, [editUser, refresh, usersOwnedByMtproxyl, mtproxylEnabled, adTagSupported]);
 
   const handleDelete = useCallback(async () => {
     if (!deleteUser) return;
@@ -693,6 +697,7 @@ export function UsersPage() {
         initialData={userDefaults}
         mode="create"
         notesEditable={usersOwnedByMtproxyl}
+        adTagEditable={adTagSupported}
       />
 
       <UserFormDialog
@@ -706,6 +711,7 @@ export function UsersPage() {
         usernameEditable={mtproxylEnabled}
         initialRate={editRate}
         notesEditable={usersOwnedByMtproxyl}
+        adTagEditable={adTagSupported}
       />
 
       <ConfirmDialog

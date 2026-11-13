@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Outlet, Navigate } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 import { Sidebar, BottomNav } from './Sidebar';
 import { Shell } from './Shell';
+import { EngineGuardedOutlet } from './EngineGuardedOutlet';
 import { useNavLayout } from '@/hooks/useNavLayout';
 import { useAuth } from '@/hooks/useAuth';
 import { useMtproxyl } from '@/hooks/useMtproxyl';
@@ -50,7 +51,7 @@ export function AppLayout() {
       <div className={`min-h-dvh ${backgroundClass}`} style={backgroundStyle}>
         <Shell>
           {mismatch}
-          <Outlet />
+          <EngineGuardedOutlet />
         </Shell>
       </div>
     );
@@ -76,7 +77,7 @@ export function AppLayout() {
 
         {mismatch}
 
-        <Outlet />
+        <EngineGuardedOutlet />
       </main>
 
       <BottomNav />

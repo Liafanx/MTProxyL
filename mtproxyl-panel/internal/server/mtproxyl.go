@@ -63,12 +63,18 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 			"enabled":   client.Enabled(),
 			"operation": runner.Status(),
 			"mode":      "",
+			// telemt или mtdd: страницы, которых у mtdd нет, панель скрывает.
+			"engine_kind": "",
 		}
 		if client.Enabled() {
 			// A failure here must not break the probe: the UI still needs to
 			// know the bridge is on, even if the mode could not be read.
 			if st, err := cachedMode(r.Context(), client); err == nil {
 				resp["mode"] = string(st.Mode)
+				resp["engine_kind"] = st.EngineKind
+				if resp["engine_kind"] == "" {
+					resp["engine_kind"] = "telemt"
+				}
 				// The panel talks to one fixed telemt URL chosen at install time;
 				// a mode switch does not change it, so the dashboard can show the
 				// other engine's data as its own.
@@ -706,6 +712,40 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 			return
 		}
 		invalidateUsersCache()
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	// ── Медиа-лимиты mtdd ───────────────────────────────────────────────────
+	// Встроенный лимит загрузок mtdd, отдельно от шейпинга MTProxyL. У telemt
+	// его нет: CLI отвечает ошибкой, и страница раздел не показывает.
+	mux.Handle("GET /api/mtproxyl/media", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		m, err := client.GetMediaLimits(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: m})
+	}))
+	mux.Handle("POST /api/mtproxyl/media", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			UserMbps  float64 `json:"user_mbps"`
+			TotalMbps float64 `json:"total_mbps"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		out, err := client.SetMediaLimits(r.Context(), req.UserMbps, req.TotalMbps)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 

@@ -22,6 +22,7 @@ import (
 	"github.com/Liafanx/mtproxyl-panel/internal/config"
 	"github.com/Liafanx/mtproxyl-panel/internal/history"
 	"github.com/Liafanx/mtproxyl-panel/internal/logs"
+	"github.com/Liafanx/mtproxyl-panel/internal/mtddshim"
 	"github.com/Liafanx/mtproxyl-panel/internal/mtproxylctl"
 	"github.com/Liafanx/mtproxyl-panel/internal/panel_updater"
 	"github.com/Liafanx/mtproxyl-panel/internal/proxy"
@@ -175,6 +176,12 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 	if err != nil {
 		return err
 	}
+	// Цель mtdd говорит не на API telemt: страницы, WS и история получают
+	// ответы telemt из снимка MTProxyL. Без моста к MTProxyL цели mtdd нет.
+	if mc := mtproxylctl.New(s.cfg.Mtproxyl); mc.Enabled() {
+		mtddShim = mtddshim.New(mc)
+		telemtProxy.WrapTransport(mtddShim.Wrap)
+	}
 
 	limiter := newLoginRateLimiter()
 	mux := http.NewServeMux()
@@ -273,6 +280,9 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 
 	// WebSocket endpoint (auth checked via cookie on upgrade)
 	wsHandler := ws.NewHandler(s.cfg.Telemt.URL, s.cfg.Telemt.AuthHeader)
+	if mtddShim != nil {
+		wsHandler.WrapTransport(mtddShim.Wrap)
+	}
 	mux.Handle("/api/ws", auth.RequireAuth(jwtSecret, wsHandler))
 
 	// История метрик в памяти: спарклайны и график нагрузки на дашборде
@@ -752,6 +762,13 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 
 	// Telemt connectivity check (diagnostic endpoint)
 	mux.Handle("GET /api/telemt/connectivity", auth.RequireAuth(jwtSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if mtddShim != nil && mtddShim.Active(r.Context()) {
+			// К mtdd панель ходит не по URL telemt, а через MTProxyL.
+			writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]any{
+				"status": "ok", "engine_kind": "mtdd", "telemt_url": "mtdd через MTProxyL (target-api snapshot)",
+			}})
+			return
+		}
 		result := telemtProxy.ConnectivityCheck()
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: result})
 	})))

@@ -14,6 +14,7 @@ import (
 
 	"github.com/Liafanx/mtproxyl-panel/internal/config"
 	"github.com/Liafanx/mtproxyl-panel/internal/geoip"
+	"github.com/Liafanx/mtproxyl-panel/internal/mtddshim"
 	"github.com/Liafanx/mtproxyl-panel/internal/mtproxylctl"
 )
 
@@ -22,6 +23,11 @@ import (
 // fixed at install time and a mode switch does not rewrite it.
 func apiEndpointMismatch(telemtURL string, st *mtproxylctl.ModeStatus) string {
 	if st == nil || st.APIPort <= 0 {
+		return ""
+	}
+	// К цели mtdd панель по url не ходит: её ответы собирает mtddshim
+	// из снимка MTProxyL, так что порт в config.toml тут ни при чём.
+	if st.IsMtdd() {
 		return ""
 	}
 	if !st.APIEnabled {
@@ -115,7 +121,12 @@ func invalidateModeCache() {
 	modeCache.at = time.Time{}
 	modeCache.val, modeCache.err = nil, nil
 	modeCache.mu.Unlock()
+	mtddShim.Invalidate()
 }
+
+// mtddShim answers telemt API requests for an mtdd target (see package
+// mtddshim). nil while the MTProxyL bridge is off.
+var mtddShim *mtddshim.Shim
 
 // usersCache — список пользователей из кэша: `secret list --json` запускает
 // bash под sudo (на сотнях пользователей около секунды), а вкладки опрашивают
@@ -155,6 +166,7 @@ func invalidateUsersCache() {
 	if snap != nil {
 		snap.Invalidate()
 	}
+	mtddShim.InvalidateSnapshot()
 }
 
 // updateCache holds the last MTProxyL version check. The dashboard shows the

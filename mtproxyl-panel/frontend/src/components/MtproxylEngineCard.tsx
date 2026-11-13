@@ -66,7 +66,7 @@ export function MtproxylEngineCard() {
   };
 
   const rollback = async (t = '') => {
-    if (isTarget && !window.confirm('Вернуть предыдущую версию telemt? Движок перезапустится.')) return;
+    if (isTarget && !window.confirm('Вернуть предыдущую версию движка? Он перезапустится.')) return;
     try {
       setActionError(null);
       start(await mtproxylApi.engineRollback(t));

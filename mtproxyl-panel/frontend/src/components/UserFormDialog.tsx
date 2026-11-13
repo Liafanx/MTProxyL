@@ -47,6 +47,8 @@ interface UserFormDialogProps {
   initialRate?: { up: number; down: number };
   /** Заметки хранит MTProxyL в режиме Manager; у движка такого поля нет. */
   notesEditable?: boolean;
+  /** false — движок не поддерживает метку на пользователя (mtdd): поле скрыто. */
+  adTagEditable?: boolean;
 }
 
 /** Байты трудно читать глазами — показываем, сколько это на самом деле. */
@@ -95,6 +97,7 @@ export function UserFormDialog({
   usernameEditable = true,
   initialRate,
   notesEditable,
+  adTagEditable = true,
 }: UserFormDialogProps) {
   const [form, setForm] = useState<UserFormData>(emptyForm);
   const [loading, setLoading] = useState(false);
@@ -134,7 +137,9 @@ export function UserFormDialog({
       // снимает метку только null. Ключ шлём, лишь когда он реально изменился:
       // отсутствие ключа означает «оставить как есть».
       const adTag = String(form.user_ad_tag ?? '').trim();
-      if (adTag) payload.user_ad_tag = adTag;
+      if (!adTagEditable) {
+        // поле скрыто — метку не трогаем
+      } else if (adTag) payload.user_ad_tag = adTag;
       else if (initialData?.user_ad_tag) payload.user_ad_tag = null;
       if (form.max_tcp_conns !== '' && form.max_tcp_conns !== undefined && Number(form.max_tcp_conns) > 0) {
         payload.max_tcp_conns = Number(form.max_tcp_conns);
@@ -255,7 +260,7 @@ export function UserFormDialog({
             )}
           </div>
 
-          <div className="space-y-1.5">
+          {adTagEditable && <div className="space-y-1.5">
             <Label htmlFor="ad_tag">Рекламная метка</Label>
             <Input
               id="ad_tag"
@@ -267,7 +272,7 @@ export function UserFormDialog({
             <p className="text-xs text-text-secondary">
               32 шестнадцатеричных символа от @MTProxybot — только для этого пользователя.
             </p>
-          </div>
+          </div>}
 
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
