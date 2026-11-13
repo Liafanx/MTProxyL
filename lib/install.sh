@@ -30,7 +30,7 @@ run_installer() {
     draw_header "РЕЖИМ РАБОТЫ"
     echo ""
     echo -e "  ${BOLD}[1]${NC} Manager    ${DIM}— MTProxyL устанавливает и владеет своим telemt${NC}"
-    echo -e "  ${BOLD}[2]${NC} Reanimator ${DIM}— применить фиксы к уже установленному telemt${NC}"
+    echo -e "  ${BOLD}[2]${NC} Reanimator ${DIM}— применить фиксы к уже установленному telemt или mtdd${NC}"
     echo ""
     local _mode_choice; _mode_choice=$(read_choice "выбор" "1")
     if [ "$_mode_choice" = "2" ]; then
