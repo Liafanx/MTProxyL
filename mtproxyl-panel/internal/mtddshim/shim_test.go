@@ -212,7 +212,10 @@ func TestModeIsCachedAndErrorKeepsLastAnswer(t *testing.T) {
 	now := time.Unix(1000, 0)
 	shim.now = func() time.Time { return now }
 	ctx := context.Background()
-	if !shim.Active(ctx) || !shim.Active(ctx) || src.modeCalls != 1 {
+	// Два запроса подряд — один вызов CLI: второй ответ из кэша.
+	first := shim.Active(ctx)
+	second := shim.Active(ctx)
+	if !first || !second || src.modeCalls != 1 {
 		t.Fatalf("mode must be cached: calls=%d", src.modeCalls)
 	}
 	set := func(kind string, err error) {
