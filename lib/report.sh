@@ -85,11 +85,13 @@ report_create() {
         _report_run "Проверка" health
         echo ""
         echo "== Предупреждения и ошибки движка (последние) =="
-        if [ "${MTPROXYL_MODE:-manager}" = manager ] && declare -F engine_is_binary >/dev/null && engine_is_binary; then
+        if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
+            journalctl -u "${MTDD_UNIT:-mtproxyl-mtdd.service}" -n 2000 --no-pager -o short-iso 2>/dev/null
+        elif [ "${MTPROXYL_MODE:-manager}" = manager ] && declare -F engine_is_binary >/dev/null && engine_is_binary; then
             journalctl -u "$ENGINE_SERVICE" -n 2000 --no-pager -o short-iso 2>/dev/null
         elif [ "${MTPROXYL_MODE:-manager}" = manager ]; then
             docker logs --tail 2000 "$CONTAINER_NAME" 2>&1
-        elif declare -F _target_is_mtdd >/dev/null && _target_is_mtdd; then
+        elif declare -F engine_is_mtdd >/dev/null && engine_is_mtdd; then
             journalctl -u "${MTDD_UNIT:-mtdd.service}" -n 2000 --no-pager -o short-iso 2>/dev/null
         elif _telemt_unit_exists 2>/dev/null; then
             journalctl -u telemt.service -n 2000 --no-pager -o short-iso 2>/dev/null

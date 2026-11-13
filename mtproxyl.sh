@@ -71,7 +71,7 @@ fi
 
 # Загрузка библиотек
 LIB_DIR="${INSTALL_DIR}/lib"
-for _lib in colors utils settings detect mtdd secrets config docker binengine engine traffic stats availability dc warp donor awg egress geoblock geoip upstream backup release report nft ipblock shaping selfmask front api web web_hosts panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_donor tui_awg tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
+for _lib in colors utils settings detect mtdd mtdd_mgr secrets config docker binengine engine traffic stats availability dc warp donor awg egress geoblock geoip upstream backup release report nft ipblock shaping selfmask front api web web_hosts panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_donor tui_awg tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
     if [ -f "${LIB_DIR}/${_lib}.sh" ]; then
         # shellcheck source=/dev/null
         source "${LIB_DIR}/${_lib}.sh"
@@ -288,6 +288,7 @@ cli_main() {
                     else
                         _log_kind="docker"; _log_target="$CONTAINER_NAME"
                     fi
+                    mtdd_mgr_active && { _log_kind="service"; _log_target="$MTDD_MGR_SERVICE"; }
                     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
                         case "${DETECTED_MODE:-unknown}" in
                             docker|mtproxymax)
@@ -309,7 +310,7 @@ cli_main() {
                     # Какой движок у цели: панели и боту это нужно, чтобы не
                     # опрашивать маршруты API telemt у mtdd.
                     _engine_kind="telemt"
-                    _target_is_mtdd && _engine_kind="mtdd"
+                    engine_is_mtdd && _engine_kind="mtdd"
                     printf '{"mode":"%s","proxy_mode":"%s","engine":"%s","engine_kind":"%s","tools_only":%s,"detected_mode":"%s","detected_config":"%s","port":%d,"sni":"%s","engine_config":"%s","api_port":%d,"api_enabled":%s,"own_container":"%s","running":%s,"log_kind":"%s","log_target":"%s","engine_service":"%s"}\n' \
                         "$(json_escape "${MTPROXYL_MODE:-manager}")" \
                         "$(json_escape "${PROXY_MODE:-mtproto}")" \
@@ -327,7 +328,7 @@ cli_main() {
                         "$(is_proxy_running 2>/dev/null && echo true || echo false)" \
                         "$(json_escape "${_log_kind}")" \
                         "$(json_escape "${_log_target}")" \
-                        "$(json_escape "${ENGINE_SERVICE:-mtproxyl-telemt}")"
+                        "$(json_escape "$(mtdd_mgr_active && echo "$MTDD_MGR_SERVICE" || echo "${ENGINE_SERVICE:-mtproxyl-telemt}")")"
                     ;;
                 "")         echo -e "  ${BOLD}Текущий режим:${NC} ${MTPROXYL_MODE:-manager}" ;;
                 *)          log_error "Использование: mtproxyl mode [manager|reanimator|--json]" ;;
@@ -370,7 +371,7 @@ cli_main() {
             if [ "${1:-}" != "snapshot" ]; then
                 log_error "Использование: mtproxyl target-api snapshot"; exit 1
             fi
-            if [ "${MTPROXYL_MODE:-manager}" != "reanimator" ] || ! _target_is_mtdd; then
+            if ! engine_is_mtdd; then
                 printf '{"ok":false,"error":{"code":"not_mtdd","message":"цель не mtdd"}}\n'; exit 1
             fi
             _mtdd_py snapshot || exit $?

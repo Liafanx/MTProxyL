@@ -142,7 +142,9 @@ engine_is_binary() {
 }
 
 engine_backend_title() {
-    if [ "$(engine_backend)" = "binary" ]; then
+    if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
+        echo "mtdd (служба ${MTDD_MGR_SERVICE})"
+    elif [ "$(engine_backend)" = "binary" ]; then
         echo "бинарник (MTProxyL-Telemt)"
     else
         echo "Docker-образ"
@@ -152,7 +154,9 @@ engine_backend_title() {
 # Конфиг собственного движка. У бинарника он telemt.toml — так его называет
 # сам telemt, и так его ждёт панель.
 engine_config_path() {
-    if engine_is_binary; then
+    if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
+        echo "$MTDD_MGR_CONFIG"
+    elif engine_is_binary; then
         echo "${CONFIG_DIR}/telemt.toml"
     else
         echo "${CONFIG_DIR}/config.toml"
@@ -682,6 +686,17 @@ binengine_purge() {
 # Установка поверх могла сменить носитель: прежний остался бы держать порт,
 # и новый движок просто не поднялся бы.
 engine_clear_other_carrier() {
+    # Движок Manager — mtdd: telemt не должен держать порт ни в каком носителе.
+    if mtdd_mgr_active; then
+        _docker_remove_own_container 2>/dev/null || true
+        binengine_unit_exists && binengine_remove_service
+        return 0
+    fi
+    # И наоборот: служба mtdd от прежней установки осталась бы держать порт.
+    if declare -F mtdd_mgr_names >/dev/null; then
+        mtdd_mgr_names
+        [ -f "$MTDD_MGR_UNIT_FILE" ] && mtdd_mgr_remove_service
+    fi
     if engine_is_binary; then
         _docker_remove_own_container 2>/dev/null || true
     elif binengine_unit_exists; then

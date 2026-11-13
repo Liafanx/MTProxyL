@@ -530,6 +530,8 @@ build_faketls_secret() {
 # умолчание telemt (classic и secure выключены, tls включён).
 engine_link_modes() {
     local _cfg="${1:-}"
+    # У mtdd только FakeTLS: dd и classic он не принимает.
+    declare -F engine_is_mtdd >/dev/null && engine_is_mtdd && { echo "tls"; return 0; }
     if [ -z "$_cfg" ] \
         && [ "${MTPROXYL_MODE:-manager}" = "manager" ] \
         && ! _superexpert_active 2>/dev/null; then
@@ -1161,6 +1163,7 @@ handle_sni_policy() {
         echo -e "  ${BOLD}SNI-политика:${NC} ${UNKNOWN_SNI_ACTION}"
         return 0
     fi
+    mtdd_mgr_active && { mtdd_unsupported "SNI-политика: чужой SNI mtdd отдаёт маскировке"; return 1; }
     check_root
     case "$new_policy" in
         mask|drop|accept|reject_handshake)
@@ -1197,7 +1200,7 @@ show_cli_help() {
     echo -e "  ${BOLD}Прокси:${NC}         start | stop | restart | status [--json]"
     echo -e "  ${BOLD}Секреты:${NC}        secret add|remove|list|rotate|enable|disable|limits|setlimits|setrate|adtag|note|link|qr|clone|rename|export|import"
     echo -e "  ${BOLD}Настройки:${NC}      port | ip | ips | domain | mask-backend | config | settings list|set"
-    echo -e "  ${BOLD}Движок:${NC}         engine status|list|update|rollback|rebuild|backend | tune list|set|clear"
+    echo -e "  ${BOLD}Движок:${NC}         engine status|list|update|rollback|rebuild|backend|kind | tune list|set|clear"
     echo -e "  ${BOLD}Скорость:${NC}       shaping status|set|off|exempt"
     echo -e "  ${BOLD}Эксперт:${NC}        expert list|set|clear|edit"
     echo -e "  ${BOLD}Супер эксперт:${NC}  superexpert status|on|off|edit|show|write"

@@ -229,6 +229,158 @@ def devices_ips(cfg, name):
 def num(v):
     return v if isinstance(v, int) and not isinstance(v, bool) else None
 
+def store_secrets(cfg, revision):
+    # Секреты прямо из users.json (под root), если ревизия та же, что у API.
+    path = cfg.get("users_path") or ""
+    if not path or revision is None:
+        return None
+    if not os.path.isabs(path):
+        path = os.path.join(os.path.dirname(os.path.abspath(CFG)), path)
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(doc, dict) or doc.get("revision") != revision:
+        return None
+    return {u["name"]: str(u.get("secret") or "").lower()
+            for u in doc.get("users") or [] if isinstance(u, dict) and isinstance(u.get("name"), str)}
+
+def utf8_cut(s, n):
+    b = s.encode("utf-8")[:n]
+    return b.decode("utf-8", "ignore")
+
+def utc_rfc3339(v):
+    # Срок из secrets.conf (RFC3339 с любым смещением или 0) → «…Z» для mtdd.
+    if not v or v == "0":
+        return None
+    import datetime
+    t = v.replace("Z", "+00:00")
+    if "." in t:
+        head, tail = t.split(".", 1)
+        tz = tail[next((i for i, ch in enumerate(tail) if ch in "+-"), len(tail)):]
+        t = head + tz
+    import re
+    t = re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", t)   # +0300 → +03:00 (Python < 3.11)
+    try:
+        d = datetime.datetime.fromisoformat(t)
+    except ValueError:
+        sys.stderr.write("срок %r не разобран — пользователь без срока\n" % v)
+        return None
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=datetime.timezone.utc)
+    return d.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def desired_users(text):
+    # Строки secrets.conf: LABEL|SECRET|CREATED|ENABLED|MAX_CONNS|MAX_IPS|QUOTA|EXPIRES|NOTES|AD_TAG|RATE
+    out = []
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        f = (line.split("|") + [""] * 11)[:11]
+        name, secret = f[0], f[1].lower()
+        if not name or len(secret) != 32:
+            continue
+        def pos(x):
+            try:
+                x = int(x)
+                return x if x > 0 else None
+            except ValueError:
+                return None
+        up = down = None
+        if ":" in f[10]:
+            a, b = f[10].split(":", 1)
+            up = pos(a) // 8 if pos(a) else None
+            down = pos(b) // 8 if pos(b) else None
+        out.append({"name": name, "secret": secret, "enabled": f[3] != "false",
+                    "max_connections": pos(f[4]), "max_unique_ips": pos(f[5]),
+                    "data_quota_bytes": pos(f[6]), "expires_at": utc_rfc3339(f[7]),
+                    "note": utf8_cut(f[8], 256),   # mtdd: строка до 256 байт, null не принимает
+                    "rate_limit_up_bytes_per_sec": up, "rate_limit_down_bytes_per_sec": down})
+    return out
+
+POLICY = ("max_connections", "max_unique_ips", "data_quota_bytes", "expires_at", "note",
+          "rate_limit_up_bytes_per_sec", "rate_limit_down_bytes_per_sec")
+
+def cmd_sync(cfg, text):
+    # secrets.conf → mtdd: завести недостающих с их ключами, убрать лишних,
+    # поправить ключ, политики и включённость. Без полного API (бинарник main
+    # до пересборки) mtdd хранит только имя, ключ и лимит соединений: выключенный
+    # не заводится вовсе — иначе он получил бы доступ.
+    want = desired_users(text)
+    full = full_api(cfg)
+    cur, rev = users_doc(cfg)
+    if not want and cur:
+        die(6, "в secrets.conf нет пользователей — убирать всех из mtdd не будем")
+    have = {u.get("name"): u for u in cur}
+    sec = store_secrets(cfg, rev)
+    def secret_now(name):
+        if sec is not None and name in sec:
+            return sec[name]
+        return secret_of(links(cfg, name).get("native") or "")
+    norm = lambda v: None if v in (None, "", 0) else v
+    st = {"created": 0, "updated": 0, "deleted": 0, "skipped": [], "errors": []}
+    def body_of(w):
+        b = {"name": w["name"], "secret": w["secret"]}
+        if full:
+            b["enabled"] = w["enabled"]
+            for k in POLICY:
+                if w[k] not in (None, ""):
+                    b[k] = w[k]
+        elif w["max_connections"]:
+            b["max_connections"] = w["max_connections"]
+        return b
+    def attempt(name, fn):
+        try:
+            fn()
+            return True
+        except ApiError as e:
+            st["errors"].append("%s: %s" % (name, e))
+            return False
+    names = {w["name"] for w in want}
+    for name in [n for n in have if n not in names]:
+        if attempt(name, lambda n=name: call(cfg, "DELETE", "/v1/users/%s" % n)):
+            st["deleted"] += 1
+    for w in want:
+        n = w["name"]
+        if not full and not w["enabled"]:
+            st["skipped"].append(n)
+            if n in have and attempt(n, lambda: call(cfg, "DELETE", "/v1/users/%s" % n)):
+                st["deleted"] += 1
+            continue
+        u = have.get(n)
+        if u is None:
+            if attempt(n, lambda: call(cfg, "POST", "/v1/users", body_of(w))):
+                st["created"] += 1
+            continue
+        changed = False
+        if full:
+            if secret_now(n) != w["secret"]:
+                if not attempt(n, lambda: call(cfg, "POST", "/v1/users/%s/rotate-secret" % n, {"secret": w["secret"]})):
+                    continue
+                changed = True
+            patch = {k: w[k] for k in POLICY if norm(u.get(k)) != norm(w[k])}
+            if patch:
+                if not attempt(n, lambda: call(cfg, "PATCH", "/v1/users/%s" % n, patch)):
+                    continue
+                changed = True
+            if bool(u.get("enabled", True)) != w["enabled"]:
+                act = "enable" if w["enabled"] else "disable"
+                if not attempt(n, lambda: call(cfg, "POST", "/v1/users/%s/%s" % (n, act), {})):
+                    continue
+                changed = True
+        elif secret_now(n) != w["secret"] or norm(u.get("max_connections")) != norm(w["max_connections"]):
+            # Без PATCH и rotate — пересоздать: такая сборка всё равно хранит только это.
+            if attempt(n, lambda: call(cfg, "DELETE", "/v1/users/%s" % n)) \
+                    and attempt(n, lambda: call(cfg, "POST", "/v1/users", body_of(w))):
+                changed = True
+        if changed:
+            st["updated"] += 1
+    st["full_api"] = full
+    print(json.dumps(st, ensure_ascii=False))
+    if st["errors"]:
+        sys.exit(6)
+
 def cmd_patch_noop(cfg, name, body):
     # Сборка без PATCH: правка, совпадающая с тем, что уже стоит, — не ошибка.
     # Панель после создания пользователя шлёт нулевые лимиты и пустую заметку.
@@ -508,6 +660,8 @@ def main():
             print(json.dumps(call(cfg, a[1], a[2], body), ensure_ascii=False))
         elif c == "full":
             die(0 if full_api(cfg) else 5)
+        elif c == "sync":
+            cmd_sync(cfg, sys.stdin.read())
         elif c == "patch-noop":
             cmd_patch_noop(cfg, a[1], a[2])
         elif c == "users-telemt":
@@ -696,8 +850,19 @@ mtdd_restart() {
 }
 
 # SIGHUP перечитывает только me_* и media_*; остальное требует рестарта.
+# Движок Manager остановлен владельцем — правка ждёт запуска, а не будит его.
+_mtdd_mgr_stopped() {
+    mtdd_mgr_active && ! mtdd_running || return 1
+    log_info "mtdd не запущен — изменения применятся при запуске"
+}
+
 mtdd_reload() {
+    MTDD_RELOAD_HOT=false
+    _mtdd_mgr_stopped && return 0
     mtdd_running || { mtdd_restart; return; }
+    # SIGHUP ловит только сборка с полным API; старый main от него падает.
+    _mtdd_py full 2>/dev/null || { mtdd_restart; return; }
+    MTDD_RELOAD_HOT=true
     systemctl reload "$MTDD_UNIT" &>/dev/null || mtdd_restart
 }
 
@@ -721,6 +886,10 @@ mtdd_wait_api() {
 # @unset. Кандидат проверяется бинарником (--check-config), затем бэкап и
 # замена с прежними правами. Перезапуск — забота вызывающего.
 mtdd_config_set() {
+    # Manager: конфиг собирает MTProxyL, свои ключи живут в tune.json.
+    if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
+        mtdd_mgr_tune_pairs "$@"; return
+    fi
     [ -n "${DETECTED_CONFIG_PATH:-}" ] && [ -f "$DETECTED_CONFIG_PATH" ] || { log_error "Конфиг mtdd не найден"; return 1; }
     local _out _rc
     _out=$(_mtdd_py cfg-set "$BACKUP_DIR" "$@" 2>&1); _rc=$?
@@ -771,9 +940,11 @@ mtdd_tune_set() {
     mtdd_config_set "${_key}=${_json}" || return 1
     log_success "${_key} = ${_value}"
     if _mtdd_hot_key "$_key"; then
-        mtdd_reload && log_info "Применено без обрыва клиентов (reload)"
+        mtdd_reload || return 1
+        [ "${MTDD_RELOAD_HOT:-false}" = true ] && log_info "Применено без обрыва клиентов (reload)"
+        return 0
     else
-        mtdd_restart
+        _mtdd_mgr_stopped || mtdd_restart
     fi
 }
 
@@ -781,7 +952,7 @@ mtdd_tune_clear() {
     local _key="$1"
     mtdd_config_set "${_key}=@unset" || return 1
     log_success "${_key} снят (значение mtdd по умолчанию)"
-    if _mtdd_hot_key "$_key"; then mtdd_reload; else mtdd_restart; fi
+    if _mtdd_hot_key "$_key"; then mtdd_reload; else _mtdd_mgr_stopped || mtdd_restart; fi
 }
 
 # ── Медиа-лимиты (media_user_rate_kbps / media_total_rate_kbps) ─
@@ -829,7 +1000,7 @@ mtdd_media_set() {
 }
 
 handle_media_command() {
-    _target_is_mtdd || { log_error "Медиа-лимиты есть только у цели mtdd (режим Reanimator)"; return 1; }
+    engine_is_mtdd || { log_error "Медиа-лимиты есть только у движка mtdd"; return 1; }
     case "${1:-status}" in
         status) if [ "${2:-}" = "--json" ]; then mtdd_media_status_json; else mtdd_media_status; fi ;;
         set)    check_root; mtdd_media_set "${2:-}" "${3:-}" ;;
@@ -1698,6 +1869,13 @@ _mtdd_healthy() {
     [ "$_stable" -ge 5 ] && mtdd_wait_api 20
 }
 
+# Manager: вернуть конфиг, собранный под прежнюю сборку.
+_mtdd_mgr_config_back() {
+    mtdd_mgr_active || return 0
+    [ -f "${MTDD_ENGINE_DIR}/config.cur" ] && mv -f "${MTDD_ENGINE_DIR}/config.cur" "$MTDD_MGR_CONFIG"
+    return 0
+}
+
 _mtdd_place() {
     local _src="$1" _bin="$2"
     install -m 0755 "$_src" "${_bin}.mtproxyl-new" || return 1
@@ -1714,20 +1892,35 @@ _mtdd_switch() {
     _cur_label=$(mtdd_build_label "$_bin")
     # Проверка до замены: свежий бинарник должен принять текущий конфиг
     # (у разных сборок разный набор ключей, неизвестный ключ — ошибка).
-    local _chk
-    if ! _chk=$(MTDD_BIN="$_src" MTDD_CONFIG="$DETECTED_CONFIG_PATH" python3 -I -c "$(_mtdd_py_src)" cfg-check "$DETECTED_CONFIG_PATH" 2>&1); then
+    local _chk _mgr=false
+    mtdd_mgr_active && _mgr=true
+    mkdir -p "$MTDD_ENGINE_DIR" && chmod 700 "$MTDD_ENGINE_DIR"
+    if [ "$_mgr" = true ]; then
+        # Manager сам собирает конфиг — под набор ключей новой сборки (у main
+        # нет метрик и квот). Прежний конфиг вернётся вместе с бинарником.
+        cp -p "$MTDD_MGR_CONFIG" "${MTDD_ENGINE_DIR}/config.cur" 2>/dev/null || true
+        if ! MTDD_MGR_CHECK_BIN="$_src" generate_mtdd_config; then
+            rm -f "${MTDD_ENGINE_DIR}/config.cur"
+            log_error "Сборка ${_label} не принимает конфиг mtdd"
+            log_info "Неизвестный ей ключ задан через tune или media: mtproxyl tune clear <ключ> / mtproxyl media off"
+            log_info "Рабочий бинарник не тронут"
+            return 1
+        fi
+    elif ! _chk=$(MTDD_BIN="$_src" MTDD_CONFIG="$DETECTED_CONFIG_PATH" python3 -I -c "$(_mtdd_py_src)" cfg-check "$DETECTED_CONFIG_PATH" 2>&1); then
         log_error "Сборка ${_label} не принимает текущий конфиг mtdd: ${_chk}"
         log_info "Рабочий бинарник не тронут"
         return 1
     fi
-    mkdir -p "$MTDD_ENGINE_DIR" && chmod 700 "$MTDD_ENGINE_DIR"
-    cp -f "$_bin" "${MTDD_ENGINE_DIR}/mtdd.cur" || { log_error "Не удалось сохранить текущий бинарник"; return 1; }
-    _mtdd_place "$_src" "$_bin" || { rm -f "${MTDD_ENGINE_DIR}/mtdd.cur" "${_bin}.mtproxyl-new"; log_error "Не удалось заменить ${_bin}"; return 1; }
+    cp -f "$_bin" "${MTDD_ENGINE_DIR}/mtdd.cur" || { _mtdd_mgr_config_back; log_error "Не удалось сохранить текущий бинарник"; return 1; }
+    _mtdd_place "$_src" "$_bin" || { rm -f "${MTDD_ENGINE_DIR}/mtdd.cur" "${_bin}.mtproxyl-new"; _mtdd_mgr_config_back; log_error "Не удалось заменить ${_bin}"; return 1; }
     log_info "Перезапуск ${MTDD_UNIT}..."
     systemctl restart "$MTDD_UNIT" >/dev/null 2>&1 || true
     if _mtdd_healthy; then
         mv -f "${MTDD_ENGINE_DIR}/mtdd.cur" "$MTDD_PREV_BIN"
         printf '%s\n' "$_cur_label" > "$MTDD_PREV_LABEL"
+        rm -f "${MTDD_ENGINE_DIR}/config.cur"
+        # Набор возможностей сборки мог смениться (выключенные, лимиты).
+        [ "$_mgr" = true ] && { mtdd_mgr_sync_users || log_warn "Пользователи доставлены в mtdd не полностью"; }
         log_success "mtdd ${_label} работает: ${_bin}. Конфиг и пользователи не менялись"
         return 0
     fi
@@ -1735,6 +1928,7 @@ _mtdd_switch() {
     journalctl -u "$MTDD_UNIT" -n 5 --no-pager -o cat 2>/dev/null | sed 's/^/    /'
     _mtdd_place "${MTDD_ENGINE_DIR}/mtdd.cur" "$_bin" || true
     rm -f "${MTDD_ENGINE_DIR}/mtdd.cur"
+    _mtdd_mgr_config_back
     systemctl restart "$MTDD_UNIT" >/dev/null 2>&1 || true
     if _mtdd_healthy; then log_info "Прежняя сборка снова работает"; else log_warn "Прежняя сборка тоже не поднялась — journalctl -u ${MTDD_UNIT} -n 50"; fi
     return 1
@@ -1769,7 +1963,9 @@ mtdd_engine_update() {
         *) log_error "У mtdd каналы main и dev, а не номера версий"; return 1 ;;
     esac
     local _tmpd _date _rc=0
-    _tmpd=$(mktemp -d "${TMPDIR:-/tmp}/mtproxyl-mtdd.XXXXXX") || return 1
+    # Не в /tmp: там бывает noexec, а новую сборку запускают для проверки.
+    mkdir -p "$MTDD_ENGINE_DIR" && chmod 700 "$MTDD_ENGINE_DIR" || return 1
+    _tmpd=$(mktemp -d "${MTDD_ENGINE_DIR}/.dl.XXXXXX") || return 1
     MTDD_FETCH_DATE=""
     _mtdd_fetch_channel "$_ch" "$_tmpd" || { rm -rf "$_tmpd"; return 1; }
     _date="$MTDD_FETCH_DATE"
@@ -1799,8 +1995,9 @@ mtdd_engine_rollback() {
         [[ "$_yn" =~ ^[yY] ]] || { log_info "Отменено"; return 0; }
     fi
     local _tmp _rc=0
-    _tmp=$(mktemp "${TMPDIR:-/tmp}/mtproxyl-mtdd-prev.XXXXXX") || return 1
-    cp -f "$MTDD_PREV_BIN" "$_tmp" || { rm -f "$_tmp"; return 1; }
+    _tmp=$(mktemp "${MTDD_ENGINE_DIR}/.prev.XXXXXX") || return 1
+    # mktemp создаёт 0600, cp права не меняет — проверка не смогла бы запустить копию.
+    cp -f "$MTDD_PREV_BIN" "$_tmp" && chmod 755 "$_tmp" || { rm -f "$_tmp"; return 1; }
     _mtdd_switch "$_tmp" "${_prev:-предыдущая}" || _rc=$?
     rm -f "$_tmp"
     return $_rc
@@ -1808,7 +2005,12 @@ mtdd_engine_rollback() {
 
 mtdd_engine_status() {
     local _reason; _reason=$(mtdd_engine_unsupported_reason)
-    echo -e "  ${BOLD}Движок цели Reanimator: mtdd${NC}"
+    if mtdd_mgr_active; then
+        echo -e "  ${BOLD}Движок mtdd${NC} ${DIM}(сменить на telemt: mtproxyl engine kind telemt)${NC}"
+        echo -e "  ${DIM}Служба:${NC}      ${MTDD_UNIT}"
+    else
+        echo -e "  ${BOLD}Движок цели Reanimator: mtdd${NC}"
+    fi
     [ -z "$_reason" ] || { echo -e "  ${DIM}${_reason}${NC}"; return 0; }
     echo -e "  ${DIM}Сборка:${NC}      $(mtdd_build_label)"
     echo -e "  ${DIM}Бинарник:${NC}    $(mtdd_bin)"
@@ -1824,7 +2026,11 @@ mtdd_engine_versions_json() {
     local _reason _bin="" _cur="" _rows
     _reason=$(mtdd_engine_unsupported_reason)
     if [ -z "$_reason" ]; then _bin=$(mtdd_bin); _cur=$(mtdd_build_label "$_bin"); fi
-    printf '{"backend":"target","engine_kind":"mtdd","target":true,"supported":%s,"reason":"%s","bin_path":"%s","config_path":"%s","current":"%s","binary":true,"docker_available":false,"custom":false,"custom_url":"",' \
+    # Manager: свой движок, не цель — панель показывает службу и смену движка.
+    local _backend=target _target=true
+    mtdd_mgr_active && { _backend=mtdd; _target=false; }
+    printf '{"backend":"%s","engine_kind":"mtdd","target":%s,"service":"%s","supported":%s,"reason":"%s","bin_path":"%s","config_path":"%s","current":"%s","binary":true,"docker_available":false,"custom":false,"custom_url":"",' \
+        "$_backend" "$_target" "$(json_escape "${MTDD_UNIT%.service}")" \
         "$([ -z "$_reason" ] && echo true || echo false)" "$(json_escape "$_reason")" \
         "$(json_escape "$_bin")" "$(json_escape "${DETECTED_CONFIG_PATH:-}")" "$(json_escape "$_cur")"
     printf '"local":['
@@ -1862,7 +2068,7 @@ mtdd_handle_engine() {
         update)
             if [ -n "${1:-}" ]; then mtdd_engine_update "$1"; else mtdd_engine_update "$(mtdd_pick_channel)"; fi ;;
         rollback) mtdd_engine_rollback "${1:-}" ;;
-        *) log_error "Для mtdd: mtproxyl engine status|list|update [main|dev]|rollback"; return 1 ;;
+        *) log_error "Для mtdd: mtproxyl engine status|list|update [main|dev]|rollback$(mtdd_mgr_active && echo '|kind telemt')"; return 1 ;;
     esac
 }
 

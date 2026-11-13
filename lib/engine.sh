@@ -56,6 +56,7 @@ engine_local_versions() {
 # что лежит на диске и что есть в релизах.
 engine_versions_json() {
     _is_reanimator && { target_engine_versions_json; return; }
+    mtdd_mgr_active && { mtdd_engine_versions_json; return; }
     local _cur; _cur=$(engine_current_version)
     local _src=""
     engine_is_binary && _src=$(binengine_source 2>/dev/null)
@@ -95,6 +96,7 @@ engine_update_to() {
     local target_tag="$1"
     [ -z "$target_tag" ] && { log_error "Укажите версию"; return 1; }
     _is_reanimator && { target_engine_update "$target_tag"; return; }
+    mtdd_mgr_active && { mtdd_engine_update "$target_tag"; return; }
     engine_is_binary && { binengine_update_to "$target_tag"; return; }
 
     log_info "Получение информации о версии ${target_tag}..."
@@ -174,6 +176,7 @@ except: print('?')
 engine_rollback() {
     local _want="${1:-}"
     _is_reanimator && { target_engine_rollback "$_want"; return; }
+    mtdd_mgr_active && { mtdd_engine_rollback "$_want"; return; }
     engine_is_binary && { binengine_rollback "$_want"; return; }
     local images
     images=$(docker images --format '{{.Tag}}' "${DOCKER_IMAGE_BASE}" 2>/dev/null | grep -E '^[0-9]+\.' | sort -rV)
@@ -571,8 +574,13 @@ target_engine_status() {
 handle_engine_command() {
     local subcmd="${1:-status}"
     shift 2>/dev/null || true
-    # Цель mtdd: каналы сборок вместо номеров версий.
-    if _target_is_mtdd; then
+    # Вид движка Manager: telemt или mtdd.
+    if [ "$subcmd" = kind ]; then
+        engine_switch_kind "$@"
+        return
+    fi
+    # mtdd (цель Reanimator или движок Manager): каналы сборок вместо номеров версий.
+    if engine_is_mtdd; then
         mtdd_handle_engine "$subcmd" "$@"
         return
     fi
@@ -593,7 +601,7 @@ handle_engine_command() {
                 return 0
             fi
             _is_reanimator && { target_engine_status; return 0; }
-            echo -e "  ${BOLD}Движок Telemt${NC}"
+            echo -e "  ${BOLD}Движок Telemt${NC} ${DIM}(сменить на mtdd: mtproxyl engine kind mtdd)${NC}"
             echo -e "  ${DIM}Носитель:${NC}   $(engine_backend_title)"
             echo -e "  ${DIM}Установлен:${NC}  v$(engine_current_version)"
             if engine_is_binary; then

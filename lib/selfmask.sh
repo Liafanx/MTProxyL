@@ -480,7 +480,7 @@ _selfmask_scheme_line() {
     # мы не знаем. Свой WEB у цели описывается так же, как в менеджере.
     if web_is_reanimator 2>/dev/null && ! web_is_enabled 2>/dev/null; then
         local _p="${DETECTED_PORT:-${PROXY_PORT:-443}}" _eng="telemt"
-        _target_is_mtdd && _eng="mtdd"
+        engine_is_mtdd && _eng="mtdd"
         if web_target_enabled 2>/dev/null; then
             echo "${_eng} :${_p} → mask → $(front_title) ${_back}; WEB у цели: $(web_target_host 2>/dev/null || echo '—')"
         else

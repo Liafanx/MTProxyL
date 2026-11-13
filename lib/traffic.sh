@@ -24,9 +24,22 @@ _fetch_metrics() {
     if [ -n "$_METRICS_CACHE" ] && [ $((now - _METRICS_CACHE_AGE)) -lt 2 ]; then
         echo "$_METRICS_CACHE"; return 0
     fi
-    # Метрики mtdd названы по-своему (mtdd_*) и закрыты токеном; всё нужное
-    # отдаёт его API — ниже это та же ветка, что «метрики недоступны».
-    _target_is_mtdd && return 1
+    # Метрики mtdd названы по-своему (mtdd_*). В Manager счётчики пользователей
+    # берём из его API и отдаём строками telemt: база трафика, снимки сессий и
+    # статистика по пользователям работают как с telemt. Реаниматор считает
+    # трафик цели по API сам — для него это «метрики недоступны».
+    if engine_is_mtdd; then
+        mtdd_mgr_active || return 1
+        _METRICS_CACHE=$(_mtdd_py users-telemt --no-links --no-ips 2>/dev/null | jq -r '
+            .data[]? | (.username | gsub("[\\\"]"; "")) as $u
+            | "telemt_user_octets_from_client{user=\"\($u)\"} \(.octets_from_client // 0)",
+              "telemt_user_octets_to_client{user=\"\($u)\"} \(.octets_to_client // 0)",
+              "telemt_user_connections_current{user=\"\($u)\"} \(.current_connections // 0)"
+        ' 2>/dev/null | _normalize_metrics)
+        _METRICS_CACHE_AGE=$now
+        [ -n "$_METRICS_CACHE" ] && echo "$_METRICS_CACHE" && return 0
+        return 1
+    fi
     local _mport="${PROXY_METRICS_PORT:-9090}"
     [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && _mport=$(_get_telemt_metrics_port)
     _METRICS_CACHE=$(curl -s --max-time 2 "http://127.0.0.1:${_mport}/metrics" 2>/dev/null | _normalize_metrics)
@@ -37,7 +50,7 @@ _fetch_metrics() {
 
 get_proxy_stats() {
     is_proxy_running || { echo "0 0 0"; return; }
-    if _target_is_mtdd; then
+    if engine_is_mtdd; then
         local _mj
         _mj=$(_get_telemt_users_json 2>/dev/null) || { echo "0 0 0"; return; }
         echo "$(_json_sum_field "$_mj" octets_from_client) $(_json_sum_field "$_mj" octets_to_client) $(_json_sum_field "$_mj" current_connections)"
@@ -1346,7 +1359,7 @@ _health_check_reanimator() {
     fi
 
     # Метрики цели (Prometheus)
-    if _target_is_mtdd; then
+    if engine_is_mtdd; then
         echo -e "  ${DIM}—${NC} Метрики mtdd не нужны: трафик и соединения берутся из его API"
     else
     curl -s --max-time 2 "http://127.0.0.1:$(_get_telemt_metrics_port)/metrics" &>/dev/null \

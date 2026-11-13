@@ -56,6 +56,11 @@ _validate_settings_ip() {
 }
 
 _validate_settings_adtag() {
+    # mtdd без тега не запускается и тег из нулей не примет.
+    if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
+        [[ "$1" =~ ^[0-9a-fA-F]{32}$ ]] && [ "$1" != "00000000000000000000000000000000" ] && return 0
+        echo "у mtdd тег обязателен: 32 шестнадцатеричных символа от @MTProxybot, не из одних нулей"; return 1
+    fi
     [ -z "$1" ] && return 0
     [[ "$1" =~ ^[0-9a-fA-F]{32}$ ]] && return 0
     echo "32 шестнадцатеричных символа либо пусто"; return 1
@@ -216,9 +221,20 @@ settings_set_param() {
         _require_manager_mode || return 1
         _require_no_superexpert || return 1
     fi
-    if [ "$_key" = "DC_RESTART_ENABLED" ] && [ "$_val" = "true" ] && _target_is_mtdd; then
+    if [ "$_key" = "DC_RESTART_ENABLED" ] && [ "$_val" = "true" ] && engine_is_mtdd; then
         mtdd_unsupported "перезапуск при падении DC (покрытие ME у mtdd на простое бывает нулевым)"
         return 1
+    fi
+    # Ключи конфига telemt, которых у mtdd нет: молча не действовать хуже отказа.
+    if mtdd_mgr_active; then
+        case "$_key" in
+            UNKNOWN_SNI_ACTION|PROXY_SECRET_URL|PROXY_CONFIG_V4_URL|PROXY_CONFIG_V6_URL|PROXY_LOG_LEVEL)
+                mtdd_unsupported "${_key} — настройка telemt"; return 1 ;;
+            PROXY_PROTOCOL|PROXY_PROTOCOL_TRUSTED_CIDRS)
+                [ "$_key" = PROXY_PROTOCOL ] && [ "$_val" != true ] || { mtdd_unsupported "PROXY protocol"; return 1; } ;;
+            PROXY_MODE)
+                [ "$_val" = mtproto ] || { mtdd_unsupported "WEB Proxy"; return 1; } ;;
+        esac
     fi
 
     printf -v "$_key" '%s' "$_val"
@@ -468,7 +484,7 @@ api_auth_current() {
 
 api_auth_set() {
     local _v="$1" _cfg
-    _target_is_mtdd && { mtdd_unsupported "заголовок авторизации API: токен mtdd лежит в $(mtdd_env_file), MTProxyL читает его сам"; return; }
+    engine_is_mtdd && { mtdd_unsupported "заголовок авторизации API: токен mtdd лежит в $(mtdd_env_file), MTProxyL читает его сам"; return; }
     if [ ${#_v} -gt 512 ] || ! [[ "$_v" =~ ^[[:print:]]*$ ]] || [[ "$_v" == *[\"\'\\\|]* ]]; then
         log_error "Заголовок: до 512 печатных символов, без кавычек, \\ и |"
         return 1

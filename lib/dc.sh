@@ -341,7 +341,7 @@ dc_restart_json() {
     # Автоперезапуск по покрытию DC сделан и проверен под telemt. mtdd сам
     # переподключает свой пул ME, а перезапуск его службы по этому сигналу не
     # проверялся — поэтому для mtdd его нет: null, и бот, и панель прячут переключатель.
-    if _target_is_mtdd; then printf 'null'; return 0; fi
+    if engine_is_mtdd; then printf 'null'; return 0; fi
     _dc_watch_load
     printf '{"enabled":%s,"threshold":%d,"cooldown_min":%d,"pause_min":%d,"restarts":%d,"last_restart_at":%d,"last_restart_coverage":%s,"checked_at":%d,"result":"%s"}' \
         "$([ "${DC_RESTART_ENABLED:-false}" = "true" ] && echo true || echo false)" \
@@ -406,7 +406,7 @@ _ensure_dc_watch_timer() {
 dc_watch() {
     [ "${DC_RESTART_ENABLED:-false}" = "true" ] || return 0
     [ "${TOOLS_ONLY:-false}" = "true" ] && return 0
-    _target_is_mtdd && return 0
+    engine_is_mtdd && return 0
     exec 9>"${DC_WATCH_STATE}.lock"
     if command -v flock &>/dev/null; then flock -n 9 || return 0; fi
     _dc_watch_load
@@ -475,7 +475,7 @@ dc_restart_set() {
         ""|status) dc_restart_show; return 0 ;;
         on|off)
             check_root
-            if [ "$_what" = on ] && _target_is_mtdd; then
+            if [ "$_what" = on ] && engine_is_mtdd; then
                 mtdd_unsupported "перезапуск при падении DC: он сделан под telemt, mtdd сам переподключает пул ME"
                 return 1
             fi

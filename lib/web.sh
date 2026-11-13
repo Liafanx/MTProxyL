@@ -1313,6 +1313,7 @@ _web_obtain_cert() {
 # Поэтому сначала уводим движок на loopback и только потом поднимаем nginx.
 web_enable() {
     web_is_reanimator && { web_target_enable; return; }
+    mtdd_mgr_active && { mtdd_unsupported "WEB Proxy — это транспорт telemt"; return 1; }
     if _superexpert_active; then
         log_error "В режиме супер эксперта transport задаётся в пользовательском конфиге"
         return 1
@@ -1476,6 +1477,7 @@ web_disable() {
 }
 
 web_set_proxy_mode() {
+    mtdd_mgr_active && [ "${1:-}" != mtproto ] && { mtdd_unsupported "WEB Proxy — это транспорт telemt"; return 1; }
     web_is_reanimator && { log_error "У цели обычный MTProto остаётся всегда: режим «Только WEB» — в менеджере"; return 1; }
     _superexpert_active && {
         log_error "В режиме супер эксперта transport задаётся в пользовательском конфиге"
@@ -3003,7 +3005,7 @@ _web_target_rollback() {
 # Порядок как в менеджере: сертификат, цель уходит с :443 на приватные порты,
 # затем nginx занимает публичный. Любой сбой возвращает цель как было.
 web_target_enable() {
-    _target_is_mtdd && { mtdd_unsupported "WEB Proxy — это транспорт telemt"; return 1; }
+    engine_is_mtdd && { mtdd_unsupported "WEB Proxy — это транспорт telemt"; return 1; }
     if web_target_foreign_web && ! _web_target_has_block; then
         log_error "WEB в конфиге цели уже настроил её хозяин — MTProxyL его только показывает"
         log_info "Ссылки: mtproxyl web links"

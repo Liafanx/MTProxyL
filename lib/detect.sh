@@ -18,10 +18,23 @@ _target_is_mtdd() {
     [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && [ "${DETECTED_MODE:-}" = "mtdd" ]
 }
 
+# Менеджер сам держит mtdd вместо telemt (ENGINE_KIND=mtdd, lib/mtdd_mgr.sh).
+mtdd_mgr_active() {
+    [ "${MTPROXYL_MODE:-manager}" = "manager" ] && [ "${ENGINE_KIND:-telemt}" = "mtdd" ]
+}
+
+# Движок, с которым работает MTProxyL, — mtdd: в Manager или целью Reanimator.
+# Этим проверяются функции, которых у mtdd нет в любом режиме (WEB, upstream,
+# WARP, ad-tag на пользователя…). Пользователи и конфиг цели реаниматора
+# остаются за _target_is_mtdd: в Manager источник истины — secrets.conf.
+engine_is_mtdd() {
+    mtdd_mgr_active || _target_is_mtdd
+}
+
 # Писатели TOML зовут это первым: у mtdd конфиг JSON, и неизвестный ключ
 # для него ошибка запуска — дописанный TOML положил бы прокси.
 _target_toml_guard() {
-    _target_is_mtdd || return 0
+    engine_is_mtdd || return 0
     log_error "Цель — mtdd: у него конфиг JSON, правка в формате telemt не применяется"
     return 1
 }
@@ -65,6 +78,9 @@ load_detect_settings() {
         *) DETECT_BRIDGE_STRATEGY="simple" ;;
     esac
     _ensure_target_config_owner
+    # Manager с mtdd: пути адаптера — свои, а не цели реаниматора из файла.
+    declare -F mtdd_mgr_ctx >/dev/null && mtdd_mgr_ctx
+    return 0
 }
 
 # Официальный установщик кладёт конфиг как root:telemt, а движок с 3.5.8 при
@@ -183,7 +199,7 @@ _toml_get_string_in_section() {
 # ── API управления цели (telemt [server.api]) ──────────────────
 # Конфиг — это конфиг цели mtdd (а не свой конфиг менеджера или чужой TOML).
 _is_mtdd_cfg() {
-    _target_is_mtdd || return 1
+    engine_is_mtdd || return 1
     [ -z "${1:-}" ] || [ "$1" = "${DETECTED_CONFIG_PATH:-}" ]
 }
 
@@ -1514,6 +1530,17 @@ switch_to_manager_mode() {
 # Аргументом, а не вопросом: панель спрашивает пользователя сама.
 _dispose_own_container() {
     local _choice="$1"
+    if mtdd_mgr_active; then
+        case "$_choice" in
+            remove) mtdd_mgr_remove_service ;;
+            stop)   mtdd_mgr_stop ;;
+            keep)
+                log_info "Движок mtdd оставлен как есть"
+                log_warn "Он продолжит занимать порт ${PROXY_PORT:-443} — цель реаниматора может не запуститься" ;;
+            *) log_error "Неизвестное решение по движку: ${_choice}"; return 1 ;;
+        esac
+        return
+    fi
     if engine_is_binary; then
         case "$_choice" in
             remove) binengine_remove_service ;;

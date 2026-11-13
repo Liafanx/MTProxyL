@@ -50,6 +50,18 @@ _parse_rate_bps() {
     echo "$_n"
 }
 
+# Донести изменение пользователей до движка. У telemt это перегенерация
+# конфига и SIGHUP, сбои там редки и шумны. У mtdd — синхронизация через API:
+# её отказ (API молчит, сборка без полного API) пользователь должен увидеть.
+_secret_apply() {
+    # У mtdd отказ доставки — ошибка команды: панель и бот должны его увидеть.
+    if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
+        reload_proxy_config
+    else
+        reload_proxy_config 2>/dev/null || true
+    fi
+}
+
 save_secrets() {
     mkdir -p "$INSTALL_DIR"
     local tmp
@@ -242,7 +254,7 @@ secret_import_file() {
 
     if [ "$_added" -gt 0 ]; then
         save_secrets
-        reload_proxy_config 2>/dev/null || true
+        _secret_apply
     fi
     log_success "Импортировано: ${_added}, пропущено дубликатов: ${_dup}, строк с ошибкой: ${_bad}"
     return 0
@@ -326,7 +338,7 @@ secret_add() {
     SECRETS_RATE+=("")
 
     save_secrets
-    [ "$no_restart" != "true" ] && reload_proxy_config 2>/dev/null || true
+    [ "$no_restart" != "true" ] && _secret_apply
 
     local server_ip server_port
     server_ip=$(proxy_link_host)
@@ -399,7 +411,7 @@ secret_remove() {
     SECRETS_RATE=("${nrt[@]}")
 
     save_secrets
-    [ "$no_restart" != "true" ] && reload_proxy_config 2>/dev/null || true
+    [ "$no_restart" != "true" ] && _secret_apply
     log_success "Секрет '${label}' удалён"
 }
 
@@ -425,7 +437,7 @@ secret_rotate() {
     SECRETS_CREATED[$idx]="$(date +%s)"
 
     save_secrets
-    reload_proxy_config 2>/dev/null || true
+    _secret_apply
 
     local server_ip server_port
     server_ip=$(proxy_link_host)
@@ -470,7 +482,7 @@ secret_toggle() {
     fi
 
     save_secrets
-    reload_proxy_config 2>/dev/null || true
+    _secret_apply
     log_success "Секрет '${label}': ${SECRETS_ENABLED[$idx]}"
 }
 
@@ -527,7 +539,7 @@ secret_set_limits() {
     fi
 
     save_secrets
-    reload_proxy_config 2>/dev/null || true
+    _secret_apply
     log_success "Лимиты обновлены для '${label}'"
 }
 
@@ -554,13 +566,23 @@ secret_set_note() {
     if [ "${#text}" -gt 200 ]; then
         log_error "Заметка: не длиннее 200 символов"; return 1
     fi
+    # mtdd считает заметку в байтах: не больше 256, кириллица — по 2 байта.
+    if mtdd_mgr_active && [ "$(printf '%s' "$text" | wc -c)" -gt 256 ]; then
+        log_error "Заметка: у mtdd не длиннее 256 байт (около 128 кириллических символов)"; return 1
+    fi
     SECRETS_NOTES[$idx]="$text"
     save_secrets || return 1
     if [ -n "$text" ]; then log_success "Заметка для '${label}' сохранена"; else log_success "Заметка '${label}' стёрта"; fi
+    mtdd_mgr_active && { _secret_apply || return 1; }
+    return 0
 }
 
 secret_set_adtag() {
     local label="$1" tag="${2:-}"
+    if mtdd_mgr_active && [ -n "$tag" ] && ! [[ "$tag" =~ ^(remove|none|-|0)$ ]]; then
+        mtdd_unsupported "свой рекламный тег на пользователя — у mtdd тег один на сервер (mtproxyl settings set AD_TAG <hex>)"
+        return 1
+    fi
     local idx=-1 i
     for i in "${!SECRETS_LABELS[@]}"; do
         [ "${SECRETS_LABELS[$i]}" = "$label" ] && { idx=$i; break; }
@@ -571,7 +593,7 @@ secret_set_adtag() {
         remove|none|"-"|"0")
             SECRETS_ADTAG[$idx]=""
             save_secrets
-            reload_proxy_config 2>/dev/null || true
+            _secret_apply
             log_success "Метка снята с '${label}'"
             return 0 ;;
     esac
@@ -585,7 +607,7 @@ secret_set_adtag() {
     fi
     SECRETS_ADTAG[$idx]="$tag"
     save_secrets
-    reload_proxy_config 2>/dev/null || true
+    _secret_apply
     log_success "Метка задана для '${label}'"
 }
 
@@ -616,9 +638,13 @@ secret_set_rate() {
     done
     [ $idx -eq -1 ] && { log_error "Секрет '${label}' не найден"; return 1; }
     _rt=$(_secret_rate_value "${2:-0}" "${3:-0}") || return 1
+    # mtdd считает в байтах и меньше 1024 байт/с не принимает.
+    if mtdd_mgr_active && [ -n "$_rt" ]; then
+        _mtdd_rate_bytes "$(_rate_up "$_rt")" >/dev/null && _mtdd_rate_bytes "$(_rate_down "$_rt")" >/dev/null || return 1
+    fi
     SECRETS_RATE[$idx]="$_rt"
     save_secrets
-    reload_proxy_config 2>/dev/null || true
+    _secret_apply
     if [ -n "$_rt" ]; then
         log_success "Скорость '${label}': вверх $(_rate_human "$(_rate_up "$_rt")"), вниз $(_rate_human "$(_rate_down "$_rt")")"
     else
@@ -648,7 +674,7 @@ _rate_human_v() {
 secret_reset_quota() {
     local _label="$1" _cfg _port _host _auth _resp _code
     [[ "$_label" =~ ^[a-zA-Z0-9_-]+$ ]] || { log_error "Требуется метка"; return 1; }
-    _target_is_mtdd && { mtdd_user_reset_quota "$_label"; return; }
+    engine_is_mtdd && { mtdd_user_reset_quota "$_label"; return; }
     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then
         _target_users_ready || return 1
         [ -n "$(_target_user_state "$_label")" ] || { log_error "Пользователь '${_label}' не найден у цели"; return 1; }
@@ -931,7 +957,7 @@ secret_clone() {
     SECRETS_RATE+=("${SECRETS_RATE[$idx]:-}")
 
     save_secrets
-    reload_proxy_config 2>/dev/null || true
+    _secret_apply
 
     local server_ip server_port
     server_ip=$(proxy_link_host)
@@ -978,7 +1004,7 @@ secret_rename() {
         "${INSTALL_DIR}/relay_stats/user_ips_db" \
         "${INSTALL_DIR}/relay_stats/user_session_snapshot" \
         || log_warn "Имя изменено, но накопленную статистику перенести не удалось"
-    reload_proxy_config 2>/dev/null || true
+    _secret_apply
     log_success "Переименован: '${old}' → '${new}'"
 }
 
