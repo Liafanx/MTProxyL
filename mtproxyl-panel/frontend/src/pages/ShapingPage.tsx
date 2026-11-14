@@ -63,7 +63,7 @@ function MtddMediaCard() {
     <Card>
       <CardHeader><CardTitle>Медиа-лимиты mtdd</CardTitle></CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-sm text-text-secondary">Встроенный лимит mtdd на скачивание медиа. Он не зависит от ограничения скорости через tc ниже и от лимитов скорости отдельных пользователей.</p>
+        <p className="text-sm text-text-secondary">Встроенный лимит mtdd на скачивание медиа клиентом. «На пользователя» — на секрет целиком: все его IP и устройства вместе, а не на IP. «На сервер» — на всех вместе. Внутри лимита скорость делится поровну между активными медиа-соединениями; отправку файлов не ограничивает. Не зависит от ограничения скорости через tc ниже и от лимитов скорости отдельных пользователей.</p>
         {error && <ErrorAlert message={error} onRetry={() => { void load(); }} />}
         {notice && <div className="bg-accent/10 border border-accent/30 rounded-lg p-3 text-sm">{notice}</div>}
         {media && !media.available && <p className="text-sm text-text-secondary">Эта сборка mtdd не поддерживает медиа-лимиты.</p>}

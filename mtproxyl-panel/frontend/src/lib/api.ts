@@ -441,8 +441,25 @@ export interface MtddMediaLimits {
   total_kbps: number;
 }
 
+/** Уникальные IP mtdd: seen — прошли рукопожатие, active — передали ≥ min_bytes. */
+export interface MtddIpPeriod { seen: number; active: number; started_at: number | null }
+export interface MtddIpStats {
+  available: boolean;
+  online: { seen: number; active: number };
+  hour: MtddIpPeriod;
+  day: MtddIpPeriod;
+  week: MtddIpPeriod;
+  min_bytes: number | null;
+  collection_started_at: number | null;
+  relative_error: number | null;
+  persistent: boolean;
+  timezone: string;
+}
+
 export const mtproxylApi = {
   status: () => request<MtproxylAvailability>(MTPROXYL_BASE, '/status'),
+
+  getMtddIps: () => request<MtddIpStats>(MTPROXYL_BASE, '/mtdd/ips'),
 
   getMedia: () => request<MtddMediaLimits>(MTPROXYL_BASE, '/media'),
   /** Мбит/с; оба нуля снимают лимиты. */

@@ -30,6 +30,20 @@ type MediaLimits struct {
 	TotalKbps int64 `json:"total_kbps"`
 }
 
+// GetMtddIPStats returns `mtproxyl metrics ips --json`: mtdd unique IPs, online
+// and HyperLogLog history (seen and active). The document is passed through as is.
+func (c *Client) GetMtddIPStats(ctx context.Context) (json.RawMessage, error) {
+	out, err := c.run(ctx, "metrics", "ips", "--json")
+	if err != nil {
+		return nil, err
+	}
+	line := firstJSONLine(out)
+	if !json.Valid([]byte(line)) {
+		return nil, fmt.Errorf("metrics ips: invalid JSON")
+	}
+	return json.RawMessage(line), nil
+}
+
 // GetMediaLimits returns `mtproxyl media status --json`.
 func (c *Client) GetMediaLimits(ctx context.Context) (*MediaLimits, error) {
 	out, err := c.run(ctx, "media", "status", "--json")

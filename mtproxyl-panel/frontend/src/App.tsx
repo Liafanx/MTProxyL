@@ -27,6 +27,7 @@ import { IpBlockPage } from '@/pages/IpBlockPage';
 import { RoutesPage } from '@/pages/RoutesPage';
 import { TrafficPage } from '@/pages/TrafficPage';
 import { ShapingPage } from '@/pages/ShapingPage';
+import { MtddIpsPage } from '@/pages/MtddIpsPage';
 import { ExpertPage } from '@/pages/ExpertPage';
 import { SuperExpertPage } from '@/pages/SuperExpertPage';
 import { AddonsPage } from '@/pages/AddonsPage';
@@ -84,6 +85,7 @@ function AuthenticatedApp() {
           <Route path="/routes" element={<RoutesPage />} />
           <Route path="/traffic" element={<TrafficPage />} />
           <Route path="/shaping" element={<ShapingPage />} />
+          <Route path="/mtdd-ips" element={<MtddIpsPage />} />
           <Route path="/expert" element={<ExpertPage />} />
           <Route path="/superexpert" element={<SuperExpertPage />} />
           <Route path="/addons" element={<AddonsPage />} />
