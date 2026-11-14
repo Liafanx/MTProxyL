@@ -40,13 +40,11 @@ _AG_MTDD_USERS=()
 _argsgen_defaults_mtdd() {
     local _ch _guess="" _host _mask _name _en _sec _mc _mi _q _ex _note _ru _rd _rest _now
     _ch=$(cat "$MTDD_CHANNEL_FILE" 2>/dev/null)
-    # Канал неизвестен (mtdd ставили без MTProxyL). Перенос на сборку без
-    # полного API потерял бы лимиты, сроки и выключенных — поэтому, если у
-    # стоящей сборки полный API, берём dev.
+    # Канал неизвестен (mtdd ставили без MTProxyL) — main: с 1.0.0 это
+    # нумерованный релиз с полным API (лимиты, сроки, выключенные переносятся).
     case "$_ch" in
         main|dev) ;;
-        *) if _mtdd_py full 2>/dev/null; then _ch="dev"; _guess=" (канал неизвестен; у стоящей сборки полный API — взяли dev)"
-           else _ch="main"; _guess=" (канал неизвестен, взяли main)"; fi ;;
+        *) _ch="main"; _guess=" (канал неизвестен, взяли main)" ;;
     esac
     _AG_ON[engine]="yes"; _AG_VAL[engine]="mtdd:${_ch}"; _AG_VAL[engine_note]="$_guess"
     _AG_ON[proxy_mode]="no"; _AG_VAL[proxy_mode]="у mtdd только MTProto"
@@ -69,14 +67,17 @@ _argsgen_defaults_mtdd() {
     fi
     while IFS='|' read -r _name _en _sec _mc _mi _q _ex _note _ru _rd _rest; do
         [ -n "$_name" ] && [ -n "$_sec" ] || continue
-        local _rt=""
+        local _rt="" _uat=""
         { [ "${_ru:-0}" != 0 ] || [ "${_rd:-0}" != 0 ]; } && _rt="${_ru:-0}:${_rd:-0}"
-        _AG_MTDD_USERS+=("${_name}|${_sec}|${_now}|${_en}|${_mc:-0}|${_mi:-0}|${_q:-0}|${_ex:-0}|${_note}||${_rt}")
+        # Поле 19 users-tsv — свой рекламный тег пользователя (mtdd 1.0.0+).
+        _uat=$(cut -d'|' -f9 <<< "$_rest")
+        [[ "$_uat" =~ ^[0-9a-fA-F]{32}$ ]] || _uat=""
+        _AG_MTDD_USERS+=("${_name}|${_sec}|${_now}|${_en}|${_mc:-0}|${_mi:-0}|${_q:-0}|${_ex:-0}|${_note}|${_uat}|${_rt}")
     done <<< "$_rows"
     _AG_ON[secrets]="yes"; _AG_VAL[secrets]="${#_AG_MTDD_USERS[@]}"
     [ -n "${_err:-}" ] && _AG_VAL[secrets]="ОШИБКА чтения — команда неполная"
     local _tag; _tag=$(mtdd_cfg_get ad_tag 2>/dev/null)
-    # Без тега mtdd не встанет, поэтому этот пункт не выключается.
+    # Тег сервера переносится как есть: задан — тот же, нет — без тега.
     _AG_ON[adtag]="yes"; _AG_VAL[adtag]="${_tag:-нет}"
     _mask=$(mtdd_cfg_get masking 2>/dev/null)
     _AG_ON[mask]="yes"; _AG_VAL[mask]="$([ "$_mask" = "false" ] && echo "выкл" || echo "вкл")"
@@ -247,7 +248,7 @@ _argsgen_build() {
         done
     fi
     if [ "$_mtdd" = true ] || [ "$_mgrmtdd" = true ]; then
-        # mtdd без тега не запускается — переносим всегда.
+        # Тег сервера mtdd — как на этом сервере (задан или нет).
         [[ "${_AG_VAL[adtag]}" =~ ^[0-9a-fA-F]{32}$ ]] && _a+=(--ad-tag "${_AG_VAL[adtag]}")
     else
         [ "${_AG_ON[adtag]}" = "yes" ] && [ -n "${AD_TAG:-}" ] && _a+=(--ad-tag "$AD_TAG")

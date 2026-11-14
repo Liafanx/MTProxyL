@@ -940,6 +940,9 @@ _warp_dc_hint() {
 # ME с WARP несовместим: ключи рукопожатия зависят от адреса и порта, а выход
 # Cloudflare меняет и то, и другое. Замеры — в README и CHANGELOG.
 _warp_me_enabled() {
+    # mtdd: ME выключать нечем и незачем — при WARP MTProxyL сам переводит
+    # все DC на маршрут Direct. Согласие спрашиваем всё равно: тег перестанет действовать.
+    if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then return 0; fi
     local _cfg; _cfg=$(_engine_config_path 2>/dev/null)
     [ -n "$_cfg" ] && [ -r "$_cfg" ] || return 1
     grep -qE '^[[:space:]]*use_middle_proxy[[:space:]]*=[[:space:]]*false' "$_cfg" && return 1
@@ -979,6 +982,11 @@ _warp_me_gate() {
         [[ "$_yn" =~ ^[yY] ]] || { log_info "Ничего не меняем — WARP не включён"; return 1; }
     fi
 
+    if mtdd_mgr_active; then
+        _WARP_CONFIG_DIRTY="true"
+        log_success "mtdd пойдёт к дата-центрам маршрутом Direct, пока включён WARP"
+        return 0
+    fi
     handle_expert_command set general use_middle_proxy false --no-apply >/dev/null || {
         log_error "Не удалось выключить middle proxy"
         return 1
@@ -1104,7 +1112,7 @@ _warp_apply_upstream() {
     upstream_remove "$WARP_UPSTREAM_LOCAL" >/dev/null 2>&1 || true
     if [ $_rc -eq 0 ] && _warp_local_mask_backend; then
         upstream_add "$WARP_UPSTREAM_LOCAL" direct "" "" "" 1 "" "local" >/dev/null || true
-        handle_expert_command set censorship tls_fetch_scope local --no-apply >/dev/null 2>&1 \
+        mtdd_mgr_active || handle_expert_command set censorship tls_fetch_scope local --no-apply >/dev/null 2>&1 \
             || log_warn "Не удалось задать censorship.tls_fetch_scope — маскировка может не подтянуть сертификат"
     fi
 
@@ -1122,7 +1130,7 @@ _warp_drop_upstream() {
     UPSTREAM_DEFER_RESTART="true"
     upstream_remove "$WARP_UPSTREAM_NAME" >/dev/null 2>&1 || true
     upstream_remove "$WARP_UPSTREAM_LOCAL" >/dev/null 2>&1 || true
-    handle_expert_command clear censorship tls_fetch_scope --no-apply >/dev/null 2>&1 || true
+    mtdd_mgr_active || handle_expert_command clear censorship tls_fetch_scope --no-apply >/dev/null 2>&1 || true
 
     local _name
     local _old="$IFS"; IFS=','
@@ -2084,11 +2092,12 @@ warp_preflight() {
 }
 
 handle_warp_command() (
-    # Цель mtdd: этой функции у него нет, показываем только состояние.
-    if engine_is_mtdd; then
+    # Цель mtdd в реаниматоре: её конфиг правит её хозяин, показываем только
+    # состояние. В Manager маршруты mtdd собирает generate_mtdd_config.
+    if engine_is_mtdd && ! mtdd_mgr_active; then
         case "${1:-status}" in
             status|list|--json|json) ;;
-            *) mtdd_unsupported "Telegram через WARP настраивает upstream telemt"; return 1 ;;
+            *) mtdd_unsupported "Telegram через WARP настраивает upstream; для mtdd маршруты есть в режиме Manager"; return 1 ;;
         esac
     fi
     case "${1:-}" in

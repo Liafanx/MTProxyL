@@ -161,6 +161,9 @@ upstream_add() {
         direct|socks5|socks4|shadowsocks) ;;
         *) log_error "Тип: direct, socks5, socks4, shadowsocks"; return 1 ;;
     esac
+    if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
+        case "$type" in socks4|shadowsocks) mtdd_unsupported "upstream ${type} (у mtdd только direct и socks5)"; return 1 ;; esac
+    fi
 
     [ "$type" != "direct" ] && [ -z "$addr" ] && { log_error "Адрес обязателен для ${type}"; return 1; }
 
@@ -385,10 +388,8 @@ upstream_test() {
 handle_upstream_command() {
     local subcmd="${1:-list}"; shift 2>/dev/null || true
     _require_manager_mode || return 1
-    # Список читать можно (панель), менять — нет: у mtdd upstream нет.
-    if mtdd_mgr_active && [ "$subcmd" != list ]; then
-        mtdd_unsupported "upstream-маршруты"; return 1
-    fi
+    # mtdd (1.0.0+) знает upstream direct и socks5 — их MTProxyL переносит
+    # в его config.json; socks4 и shadowsocks отклоняет upstream_add.
     case "$subcmd" in
         list)
             if [ "${1:-}" = "--json" ]; then

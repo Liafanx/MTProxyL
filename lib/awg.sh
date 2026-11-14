@@ -700,6 +700,9 @@ _awg_me_fallback() {
     if [ "$AWG_ENGINE_ROUTED" = target ]; then
         _toml_safe_set use_middle_proxy false general "$DETECTED_CONFIG_PATH" || { log_error "Не удалось выключить ME в конфиге цели"; return 1; }
         AWG_ME_DISABLED="target"
+    elif mtdd_mgr_active; then
+        # mtdd: ME не выключается, а все DC переводятся на маршрут Direct (generate_mtdd_config).
+        AWG_ME_DISABLED="manager"
     else
         handle_expert_command set general use_middle_proxy false --no-apply >/dev/null || { log_error "Не удалось выключить middle proxy"; return 1; }
         AWG_ME_DISABLED="manager"
@@ -754,7 +757,9 @@ _awg_unroute_engine() {
     case "$AWG_ENGINE_ROUTED" in
         manager)
             AWG_ME_MODE=""
-            if [ "$AWG_ME_DISABLED" = manager ]; then
+            if [ "$AWG_ME_DISABLED" = manager ] && mtdd_mgr_active; then
+                log_info "mtdd вернётся на middle proxy"
+            elif [ "$AWG_ME_DISABLED" = manager ]; then
                 MTPROXYL_MODE=manager handle_expert_command clear general use_middle_proxy --no-apply >/dev/null 2>&1 \
                     && log_info "Middle proxy включён обратно"
             fi
@@ -1411,11 +1416,12 @@ awg_help() {
 }
 
 handle_awg_command() (
-    # Цель mtdd: этой функции у него нет, показываем только состояние.
-    if engine_is_mtdd; then
+    # Цель mtdd в реаниматоре: её конфиг правит её хозяин, показываем только
+    # состояние. В Manager маршруты mtdd собирает generate_mtdd_config.
+    if engine_is_mtdd && ! mtdd_mgr_active; then
         case "${1:-status}" in
             status|list|--json|json) ;;
-            *) mtdd_unsupported "маршрут через свой AWG настраивает upstream и middle proxy telemt"; return 1 ;;
+            *) mtdd_unsupported "маршрут через свой AWG настраивает upstream и middle proxy; для mtdd маршруты есть в режиме Manager"; return 1 ;;
         esac
     fi
     local _ro=false

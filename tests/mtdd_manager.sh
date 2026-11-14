@@ -60,6 +60,7 @@ case "\$*" in
     [ -f "$t/no_usage" ] && grep -q usage_state_path "\$cfg" && { echo "mtdd: unknown configuration option: usage_state_path" >&2; exit 1; }
     [ -f "$t/no_usage" ] && grep -q metrics_host "\$cfg" && { echo "mtdd: unknown configuration option: metrics_host" >&2; exit 1; }
     [ -f "$t/no_usage" ] && grep -q metrics_port "\$cfg" && { echo "mtdd: unknown configuration option: metrics_port" >&2; exit 1; }
+    # Как настоящая 0.1.0: unique_ip_stats_path она знает (свой формат файла).
     grep -q '"bogus_key"' "\$cfg" && { echo "mtdd: unknown configuration option: bogus_key" >&2; exit 1; }
     exit 0 ;;
   *--version*) echo "mtdd 0.1.0" ;;
@@ -99,8 +100,8 @@ generate_mtdd_config && [ "$MTDD_MGR_CONFIG_CHANGE" = restart ] || fail "сме�
 [ "$(cfg .fallback_host):$(cfg .fallback_port)" = 127.0.0.1:8444 ] || fail "fallback Selfmask"
 MASKING_HOST=""; MASKING_PORT=443; generate_mtdd_config
 touch "$t/no_usage"; generate_mtdd_config || fail "сборка без квот"
-[ "$(cfg '.usage_state_path // "нет"')|$(cfg '.metrics_port // "нет"')|$(cfg '.metrics_host // "нет"')" = "нет|нет|нет" ] \
-    || fail "ключи, которых не знает старая сборка, остались"
+[ "$(cfg '.usage_state_path // "нет"')|$(cfg '.metrics_port // "нет"')|$(cfg '.metrics_host // "нет"')|$(cfg '.unique_ip_stats_path // "нет"')" = "нет|нет|нет|нет" ] \
+    || fail "ключи, которых не знает старая сборка, остались (или файл истории IP, который 0.1.0 не прочтёт после 1.0.0)"
 mtdd_config_set 'bogus_key=1' >/dev/null 2>&1 && fail "неизвестный ключ из tune.json принят"
 jq -e 'has("bogus_key") | not' "$MTDD_MGR_TUNE" >/dev/null 2>&1 || [ ! -f "$MTDD_MGR_TUNE" ] || fail "tune.json не откатился после bogus_key"
 rm -f "$t/no_usage"; generate_mtdd_config
@@ -108,11 +109,51 @@ touch "$t/check_fail"; cp "$MTDD_MGR_CONFIG" "$t/cfg.before"; PROXY_PORT=8443
 generate_mtdd_config 2>/dev/null && fail "непринятый конфиг записан"
 cmp -s "$MTDD_MGR_CONFIG" "$t/cfg.before" || fail "конфиг изменён, хотя бинарник его отверг"
 rm -f "$t/check_fail"; PROXY_PORT=443
-AD_TAG=""; generate_mtdd_config 2>/dev/null && fail "конфиг без ad-tag"; AD_TAG=0123456789abcdef0123456789abcdef
+# Тег необязателен (mtdd 1.0.0+): без него ключа ad_tag в конфиге нет.
+AD_TAG=""; generate_mtdd_config 2>/dev/null || fail "конфиг без ad-tag не собран"
+jq -e 'has("ad_tag") | not' "$MTDD_MGR_CONFIG" >/dev/null || fail "пустой ad_tag попал в конфиг"
+AD_TAG=0123456789abcdef0123456789abcdef; generate_mtdd_config || fail "конфиг с тегом не собран"
+[ "$(cfg .unique_ip_stats_path)" = "$t/unique_ips.json" ] || fail "история уникальных IP не сохраняется"
+
+# ── Маршруты, PROXY protocol (mtdd 1.0.0+) ────────────────────
+jq -e 'has("upstreams") or has("masking_scope") or has("me_nat_ip") or has("proxy_protocol") | not' "$MTDD_MGR_CONFIG" >/dev/null \
+    || fail "лишние ключи маршрутов в простом конфиге: $(cat "$MTDD_MGR_CONFIG")"
+UPSTREAM_NAMES=(direct donor donorlocal); UPSTREAM_TYPES=(direct socks5 direct); UPSTREAM_ADDRS=("" "10.200.0.1:1080" "")
+UPSTREAM_USERS=("" u ""); UPSTREAM_PASSES=("" p ""); UPSTREAM_WEIGHTS=(10 10 1); UPSTREAM_IFACES=("" "" "")
+UPSTREAM_ENABLED=(false true true); UPSTREAM_SCOPES=("" "" local)
+generate_mtdd_config || fail "конфиг с донором"
+jq -e '.upstreams == [{"name":"donor","type":"socks5","weight":10,"address":"10.200.0.1:1080","username":"u","password":"p"},
+                      {"name":"donorlocal","type":"direct","weight":1,"scopes":["local"]}] and .masking_scope == "local"' \
+    "$MTDD_MGR_CONFIG" >/dev/null || fail "upstreams донора: $(jq -c '{upstreams,masking_scope}' "$MTDD_MGR_CONFIG")"
+UPSTREAM_TYPES=(direct socks4 direct)
+generate_mtdd_config 2>/dev/null && fail "socks4 принят для mtdd"
+UPSTREAM_NAMES=(direct); UPSTREAM_TYPES=(direct); UPSTREAM_ADDRS=(""); UPSTREAM_USERS=(""); UPSTREAM_PASSES=("")
+UPSTREAM_WEIGHTS=(10); UPSTREAM_IFACES=(""); UPSTREAM_ENABLED=(true); UPSTREAM_SCOPES=("")
+# direct_fallback из tune — за пользователем, пока нет WARP/AWG без ME.
+cp "$MTDD_MGR_TUNE" "$t/tune.bak" 2>/dev/null || echo '{}' > "$t/tune.bak"
+jq '. + {"direct_fallback_enabled": true, "direct_fallback_dcs": [2]}' "$t/tune.bak" > "$MTDD_MGR_TUNE"
+generate_mtdd_config && jq -e '.direct_fallback_dcs == [2]' "$MTDD_MGR_CONFIG" >/dev/null \
+    || fail "direct_fallback из tune потерян без WARP: $(jq -c .direct_fallback_dcs "$MTDD_MGR_CONFIG")"
+_cfgget_orig=$(declare -f mtdd_cfg_get)
+mtdd_cfg_get() { jq -r --arg k "$1" '.[$k] // empty | tostring' "$MTDD_MGR_CONFIG"; }
+mtdd_handle_tune list | grep -E '^ +direct_fallback_dcs ' | grep -q "задаёт MTProxyL" && fail "direct_fallback помечен без WARP"
+WARP_ENABLED=true; generate_mtdd_config || fail "конфиг с WARP"
+jq -e '.direct_fallback_enabled == true and (.direct_fallback_dcs | length) == 10' "$MTDD_MGR_CONFIG" >/dev/null || fail "WARP: не все DC на Direct"
+mtdd_handle_tune list | grep -E '^ +direct_fallback_dcs ' | grep -q "задаёт MTProxyL" || fail "direct_fallback при WARP не помечен"
+eval "$_cfgget_orig"
+WARP_ENABLED=false; cp "$t/tune.bak" "$MTDD_MGR_TUNE"
+_route_orig=$(declare -f _mtdd_mgr_route_state)
+_mtdd_mgr_route_state() { echo "0|198.51.100.20"; }
+generate_mtdd_config && [ "$(cfg .me_nat_ip)" = 198.51.100.20 ] || fail "AWG: me_nat_ip"
+eval "$_route_orig"
+PROXY_PROTOCOL=true; PROXY_PROTOCOL_TRUSTED_CIDRS="10.0.0.5/32, 127.0.0.1/32"
+generate_mtdd_config && jq -e '.proxy_protocol == true and .proxy_protocol_allow == ["10.0.0.5/32","127.0.0.1/32"]' "$MTDD_MGR_CONFIG" >/dev/null \
+    || fail "PROXY protocol: $(jq -c '{proxy_protocol,proxy_protocol_allow}' "$MTDD_MGR_CONFIG")"
+PROXY_PROTOCOL=false; PROXY_PROTOCOL_TRUSTED_CIDRS=""; generate_mtdd_config
 declare -F _validate_settings_adtag >/dev/null || fail "нет _validate_settings_adtag"
 generate_telemt_config || fail "generate_telemt_config при mtdd"
 jq -e '.tls_domain == "example.org"' "$MTDD_MGR_CONFIG" >/dev/null 2>&1 || fail "generate_telemt_config записал не JSON mtdd: $(head -3 "$MTDD_MGR_CONFIG")"
-_validate_settings_adtag "" >/dev/null && fail "пустой ad-tag для mtdd принят"
+_validate_settings_adtag "" >/dev/null || fail "пустой ad-tag для mtdd отвергнут"
 _validate_settings_adtag "$AD_TAG" >/dev/null || fail "верный ad-tag для mtdd отвергнут"
 _validate_settings_adtag 00000000000000000000000000000000 >/dev/null && fail "нулевой ad-tag для mtdd принят"
 
@@ -184,8 +225,22 @@ grep -q '^telemt_connections_current ' <<< "$m" || fail "нет суммы со�
 
 # ── Гарды функций, которых у mtdd нет ────────────────────────
 load_secrets
-secret_set_adtag bob "$ALICE" >/dev/null 2>&1 && fail "ad-tag на пользователя для mtdd принят"
+# Свой тег пользователя (mtdd 1.0.0+) доходит до mtdd через sync.
+secret_set_adtag bob "$ALICE" >/dev/null 2>&1 || fail "ad-tag на пользователя для mtdd отвергнут"
+[ "$(_mtdd_py users-tsv --no-links | awk -F'|' '$1=="bob"{print $19}')" = "$ALICE" ] || fail "свой тег не дошёл до mtdd"
 secret_set_adtag bob remove >/dev/null 2>&1 || fail "снять тег у пользователя mtdd нельзя"
+[ -z "$(_mtdd_py users-tsv --no-links | awk -F'|' '$1=="bob"{print $19}')" ] || fail "свой тег не снят в mtdd"
+# Лимит устройств: devices.conf → max_devices; переименование и удаление его переносят.
+secret_set_devices bob 3 >/dev/null 2>&1 || fail "лимит устройств не задан"
+[ "$(_mtdd_py users-tsv --no-links | awk -F'|' '$1=="bob"{print $17}')" = 3 ] || fail "max_devices не дошёл до mtdd"
+grep -qx 'bob|3' "$INSTALL_DIR/devices.conf" || fail "devices.conf: $(cat "$INSTALL_DIR/devices.conf")"
+secret_set_devices bob 2000000 >/dev/null 2>&1 && fail "лимит устройств вне 1..1000000 принят"
+mtdd_devices_rename bob bob2 && grep -qx 'bob2|3' "$INSTALL_DIR/devices.conf" && ! grep -q '^bob|' "$INSTALL_DIR/devices.conf" \
+    || fail "переименование не перенесло лимит устройств"
+mtdd_devices_rename bob2 bob
+secret_set_devices bob 0 >/dev/null 2>&1 || fail "лимит устройств не снят"
+[ "$(_mtdd_py users-tsv --no-links | awk -F'|' '$1=="bob"{print $17}')" = 0 ] || fail "max_devices не снят в mtdd"
+out=$(secret_show_devices bob 2>&1) && grep -q "198.51.100.7" <<< "$out" || fail "устройства: $out"
 long=$(printf 'я%.0s' $(seq 150))
 secret_set_note bob "$long" >/dev/null 2>&1 && fail "заметка 300 байт принята для mtdd"
 secret_set_note bob "коротко" >/dev/null 2>&1 || fail "заметка"
@@ -225,16 +280,14 @@ bob|${BOB}|1700000000|true|0|0|0|0||${ALICE}|4000:0
 EOF2
 ENGINE_KIND=telemt; mtdd_mgr_ctx
 WEB_ENABLED=true; PROXY_PROTOCOL=true
-out=$(engine_switch_kind mtdd --yes 2>&1) && fail "переход при WEB/PROXY protocol: $out"
-grep -q "WEB" <<< "$out" && grep -q "PROXY protocol" <<< "$out" && grep -q "8192 бит/с у: bob" <<< "$out" \
-    || fail "причины отказа: $out"
+out=$(engine_switch_kind mtdd --yes 2>&1) && fail "переход при WEB: $out"
+grep -q "WEB" <<< "$out" && grep -q "8192 бит/с у: bob" <<< "$out" || fail "причины отказа: $out"
+grep -q "PROXY protocol" <<< "$out" && fail "PROXY protocol всё ещё мешает переходу: $out"
 [ "$ENGINE_KIND" = telemt ] && [ ! -s "$t/switch.log" ] || fail "отказ всё же что-то сделал"
 WEB_ENABLED=false; PROXY_PROTOCOL=false
 sed -i 's/4000:0/16384:0/' "$SECRETS_FILE"
-out=$(AD_TAG="" engine_switch_kind mtdd --yes 2>&1) && fail "переход без ad-tag"
-grep -q "рекламный тег" <<< "$out" || fail "нет причины про ad-tag: $out"
+grep -q "рекламный тег" <<< "$(AD_TAG="" mtdd_mgr_switch_blockers)" && fail "переход без ad-tag отклоняется"
 engine_switch_kind mtdd --yes > "$t/out" 2>&1 || fail "переход на mtdd: $(cat "$t/out")"
-grep -q "тег один на сервер" "$t/out" || fail "нет предупреждения о своих тегах: $(cat "$t/out")"
 [ "$(tr '\n' ' ' < "$t/switch.log")" = "fetch:mtdd remove:telemt autostart:mtdd run:mtdd:mgr " ] || fail "порядок перехода: $(cat "$t/switch.log")"
 [ "$ENGINE_KIND" = mtdd ] && mtdd_mgr_active && [ "$(tail -1 "$t/saved")" = ENGINE_KIND=mtdd ] || fail "вид движка после перехода"
 : > "$t/switch.log"; _run_fail=telemt

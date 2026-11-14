@@ -1181,7 +1181,7 @@ show_status() {
         [ "${SECRETS_ENABLED[$i]}" = "true" ] && active=$((active+1)) || disabled=$((disabled+1))
     done
 
-    echo -e "  ${BOLD}Движок:${NC}      telemt v$(get_telemt_version)  ${BOLD}Статус:${NC} ${status_str}"
+    echo -e "  ${BOLD}Движок:${NC}      $(engine_title)  ${BOLD}Статус:${NC} ${status_str}"
     echo -e "  ${BOLD}Порт:${NC}        ${PROXY_PORT}            ${BOLD}Время работы:${NC} ${uptime_str}"
     echo -e "  ${BOLD}Домен:${NC}       ${PROXY_DOMAIN}"
     echo -e "  ${BOLD}Трафик:${NC}      ${SYM_DOWN} $(format_bytes "$traffic_in")  ${SYM_UP} $(format_bytes "$traffic_out")"
@@ -1248,6 +1248,16 @@ show_config() {
 
 handle_metrics_command() {
     local subcmd="${1:-}"
+    # metrics ips [--json] — уникальные IP mtdd: онлайн и история HyperLogLog.
+    if [ "$subcmd" = "ips" ]; then
+        mtdd_ip_stats "${2:-}"
+        return
+    fi
+    # metrics engine [live] — метрики движка; у mtdd — его дашборд.
+    if [ "$subcmd" = "engine" ]; then
+        if [ "${2:-}" = "live" ]; then tui_metrics_live; else show_metrics; fi
+        return
+    fi
     if [ "$subcmd" = "live" ]; then
         local interval="${2:-5}"
         [[ "$interval" =~ ^[0-9]+$ ]] && [ "$interval" -ge 1 ] || interval=5
@@ -1273,7 +1283,21 @@ health_check() {
         return
     fi
 
-    if engine_is_binary; then
+    if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
+        # mtdd: свой бинарник и служба, без Docker.
+        [ -x "$MTDD_MGR_BIN" ] && echo -e "  ${GREEN}${SYM_CHECK}${NC} Бинарник mtdd на месте ($(mtdd_mgr_version))" || echo -e "  ${RED}${SYM_CROSS}${NC} Бинарник mtdd не найден"
+        mtdd_running && echo -e "  ${GREEN}${SYM_CHECK}${NC} Служба ${MTDD_UNIT} запущена" || echo -e "  ${RED}${SYM_CROSS}${NC} Служба ${MTDD_UNIT} не запущена"
+        if _mtdd_py full 2>/dev/null; then
+            echo -e "  ${GREEN}${SYM_CHECK}${NC} API mtdd отвечает"
+        else
+            local _why; _why=$(mtdd_api_unavailable_reason)
+            if [ "$_why" = "API mtdd отвечает" ]; then
+                echo -e "  ${YELLOW}!${NC} Старая сборка mtdd: API без управления пользователями — обновите: ${BOLD}mtproxyl engine update main${NC}"
+            else
+                echo -e "  ${RED}${SYM_CROSS}${NC} ${_why}"
+            fi
+        fi
+    elif engine_is_binary; then
         binengine_installed && echo -e "  ${GREEN}${SYM_CHECK}${NC} Бинарник движка на месте (v$(binengine_version))" || echo -e "  ${RED}${SYM_CROSS}${NC} Бинарник движка не найден"
         binengine_running && echo -e "  ${GREEN}${SYM_CHECK}${NC} Служба ${ENGINE_SERVICE} запущена" || echo -e "  ${RED}${SYM_CROSS}${NC} Служба ${ENGINE_SERVICE} не запущена"
     else
@@ -1409,7 +1433,7 @@ show_server_info() {
 
     echo -e "  ${BOLD}Прокси${NC}"
     echo -e "    Скрипт:       v${VERSION}"
-    echo -e "    Движок:       telemt v$(get_telemt_version)"
+    echo -e "    Движок:       $(engine_title)"
     echo -e "    Домен:        ${PROXY_DOMAIN}"
     echo -e "    Порт:         ${PROXY_PORT}"
     echo -e "    Маскировка:   ${MASKING_ENABLED}"
@@ -1417,6 +1441,8 @@ show_server_info() {
 }
 
 show_metrics() {
+    # У mtdd свой набор метрик — показываем дашборд как у `mtdd-ctl metrics`.
+    if engine_is_mtdd; then mtdd_metrics_dashboard; return; fi
     local m
     m=$(_fetch_metrics 2>/dev/null) || { log_error "Эндпоинт метрик недоступен"; return 1; }
 

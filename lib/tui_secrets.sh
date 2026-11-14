@@ -19,6 +19,10 @@ tui_target_users_menu() {
         echo -e "  ${DIM}[9]${NC} Рекламная метка"
         echo -e "  ${DIM}[10]${NC} Экспорт пользователей с лимитами"
         echo -e "  ${DIM}[11]${NC} Импорт пользователей"
+        if _target_is_mtdd; then
+            echo -e "  ${DIM}[12]${NC} Лимит устройств"
+            echo -e "  ${DIM}[13]${NC} Устройства пользователя"
+        fi
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         local l
@@ -87,6 +91,17 @@ tui_target_users_menu() {
                 echo -en "  ${BOLD}Файл для импорта:${NC} "; local f; read_line f
                 [ -n "$f" ] && { target_users_import "$f" || true; }
                 press_any_key ;;
+            12|13)
+                _target_is_mtdd || continue
+                echo -en "  ${BOLD}Метка:${NC} "; read_line l
+                if [ -n "$l" ] && [ "$choice" = 12 ]; then
+                    echo -e "  ${DIM}Устройство — ключ авторизации Telegram на DC. 0 — без лимита${NC}"
+                    local _dv; read_line _dv "  ${BOLD}Устройств:${NC} "
+                    [ -n "$_dv" ] && { mtdd_user_setdevices "$l" "$_dv" || true; }
+                elif [ -n "$l" ]; then
+                    mtdd_user_devices "$l" || true
+                fi
+                press_any_key ;;
             0)  return ;;
         esac
     done
@@ -123,6 +138,10 @@ tui_secrets_menu() {
         echo -e "  ${DIM}[12]${NC} Импорт секретов"
         echo -e "  ${DIM}[13]${NC} Рекламная метка пользователя"
         echo -e "  ${DIM}[14]${NC} Заметка к пользователю"
+        if mtdd_mgr_active; then
+            echo -e "  ${DIM}[15]${NC} Лимит устройств ${DIM}(mtdd)${NC}"
+            echo -e "  ${DIM}[16]${NC} Устройства пользователя ${DIM}(mtdd)${NC}"
+        fi
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
@@ -234,6 +253,19 @@ tui_secrets_menu() {
                     echo -e "  ${DIM}До 200 символов, '-' — стереть, Enter — оставить${NC}"
                     echo -en "  ${BOLD}Заметка:${NC} "; local nt; read_line nt
                     [ -n "$nt" ] && { secret_set_note "$l" "$nt" || true; }
+                fi
+                press_any_key ;;
+            15|16)
+                mtdd_mgr_active || continue
+                echo -en "  ${BOLD}Метка или #:${NC} "; local l; read_line l
+                if [[ "$l" =~ ^[0-9]+$ ]] && [ "$l" -ge 1 ] && [ "$l" -le "${#SECRETS_LABELS[@]}" ]; then
+                    l="${SECRETS_LABELS[$((l - 1))]}"; fi
+                if [ -n "$l" ] && [ "$choice" = 15 ]; then
+                    echo -e "  ${DIM}Устройство — ключ авторизации Telegram на DC. Сейчас: $(mtdd_devices_get "$l" | grep . || echo 'без лимита'). 0 — снять${NC}"
+                    local _dv; read_line _dv "  ${BOLD}Устройств:${NC} "
+                    [ -n "$_dv" ] && { secret_set_devices "$l" "$_dv" || true; }
+                elif [ -n "$l" ]; then
+                    secret_show_devices "$l" || true
                 fi
                 press_any_key ;;
             0|"") return ;;

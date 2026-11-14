@@ -71,7 +71,7 @@ fi
 
 # Загрузка библиотек
 LIB_DIR="${INSTALL_DIR}/lib"
-for _lib in colors utils settings detect mtdd mtdd_mgr secrets config docker binengine engine traffic stats availability dc warp donor awg egress geoblock geoip upstream backup release report nft ipblock shaping selfmask front api web web_hosts panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_donor tui_awg tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
+for _lib in colors utils settings detect mtdd mtdd_mgr mtdd_dash secrets config docker binengine engine traffic stats availability dc warp donor awg egress geoblock geoip upstream backup release report nft ipblock shaping selfmask front api web web_hosts panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_donor tui_awg tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
     if [ -f "${LIB_DIR}/${_lib}.sh" ]; then
         # shellcheck source=/dev/null
         source "${LIB_DIR}/${_lib}.sh"
@@ -167,7 +167,7 @@ cli_main() {
             ;;
 
         secret)
-            case "${1:-}" in list|api-view|link|qr|limits) _SETTINGS_READ_ONLY=1; _RUNNING_CACHE_OK=1 ;; esac
+            case "${1:-}" in list|api-view|link|qr|limits|devices) _SETTINGS_READ_ONLY=1; _RUNNING_CACHE_OK=1 ;; esac
             load_settings; load_secrets
             # В реаниматоре пользователи живут в конфиге цели, а путь к нему
             # знает только обнаружение.
@@ -362,6 +362,11 @@ cli_main() {
         media)
             load_settings; load_detect_settings
             handle_media_command "$@"
+            ;;
+
+        suspects)
+            load_settings; load_detect_settings
+            handle_suspects_command "$@"
             ;;
 
         target-api)
@@ -589,6 +594,8 @@ cli_main() {
             check_root; load_settings; load_detect_settings
             case "${1:-status}" in
                 flush|snapshot)
+                    # Заодно точка для графиков «Динамика» дашборда mtdd.
+                    engine_is_mtdd && mtdd_metrics_record
                     ip_history_snapshot || { log_warn "Движок не ответил — снимок пропущен"; exit 1; }
                     ;;
                 on|enable)
@@ -700,7 +707,7 @@ cli_main() {
                 load_detect_settings
                 echo -e "  ${DIM}Режим: reanimator, цель: ${DETECTED_MODE:-unknown}${NC}"
             else
-                echo -e "  ${DIM}Движок: telemt v$(get_telemt_version) (Rust)${NC}"
+                echo -e "  ${DIM}Движок: $(engine_title)${NC}"
             fi
             # Если стоим не на релизной ветке — это важно видеть сразу
             [ "$GITHUB_BRANCH" != "main" ] && echo -e "  ${YELLOW}Ветка обновлений: ${GITHUB_BRANCH}${NC}"

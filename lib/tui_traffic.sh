@@ -200,7 +200,8 @@ tui_traffic_menu() {
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
             1) echo -e "  ${DIM}Ctrl+C для остановки...${NC}"; show_target_logs 30; ;;
-            2) show_metrics 2>/dev/null || log_error "Метрики недоступны"; press_any_key ;;
+            2) if engine_is_mtdd; then show_metrics || true; else show_metrics 2>/dev/null || log_error "Метрики недоступны"; fi
+               press_any_key ;;
             3) tui_metrics_live ;;
             4) show_connections; press_any_key ;;
             5) tui_ip_history_menu ;;
@@ -274,14 +275,16 @@ _tui_traffic_menu_reanimator() {
             2) ;;
             6) tui_stats_reset_menu ;;
             3)
-                if _target_metrics_available; then
+                if _target_is_mtdd; then
+                    show_metrics || true
+                elif _target_metrics_available; then
                     show_metrics 2>/dev/null || log_error "Не удалось разобрать метрики"
                 else
                     _target_metrics_hint
                 fi
                 press_any_key ;;
             4)
-                if _target_metrics_available; then
+                if _target_is_mtdd || _target_metrics_available; then
                     tui_metrics_live
                 else
                     _target_metrics_hint
@@ -294,6 +297,7 @@ _tui_traffic_menu_reanimator() {
 }
 
 tui_metrics_live() {
+    if engine_is_mtdd; then mtdd_metrics_dashboard live; return; fi
     local interval=5
     trap 'return 0' INT
     while true; do

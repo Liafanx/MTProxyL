@@ -63,7 +63,7 @@ install_args_help() {
                                имя службы и бинарника движка: случайное
                                (по умолчанию) или mtproxyl-telemt
     --engine mtdd              движок mtdd вместо telemt: бинарник из релизов
-                               ugDeDe/mtdd под systemd, нужен --ad-tag
+                               ugDeDe/mtdd под systemd; --ad-tag по желанию
     --mtdd-channel main|dev    сборка mtdd (по умолчанию main)
                                У mtdd нет: --engine-version/url/sha256, WEB,
                                --sni-policy, --dc-restart*; скорость --user
@@ -162,9 +162,9 @@ install_args_help() {
     --force                    ставить поверх существующей установки
 
   Реаниматор с mtdd (ставится официальным установщиком mtdd)
-    mtproxyl install --mode reanimator --target mtdd --ad-tag <32 hex> [параметры]
+    mtproxyl install --mode reanimator --target mtdd [--ad-tag <32 hex>] [параметры]
     --mtdd-channel main|dev    сборка mtdd (по умолчанию main)
-    Подходят: --port, --sni, --host, --ad-tag (обязателен), --secret, --user,
+    Подходят: --port, --sni, --host, --ad-tag, --secret, --user,
     --mask, --cpus, --memory, --server-ips, --selfmask*, --front, фиксы
     (--zapret2, --syn-limiter, --limiter-action, --meko), шейпинг, --geoip,
     --api*, --block*, --tgbot-*.
@@ -1172,9 +1172,11 @@ _install_args_validate_mgr_mtdd() {
         [[ "$_k" =~ $_IA_MGR_MTDD_DENY_RE ]] && { log_error "${_k}: у mtdd этого нет"; _ok=false; }
     done
     [ "$_IA_WEB" = "yes" ] && { log_error "--web: у mtdd нет WEB Proxy"; _ok=false; }
+    # Тег необязателен: без него mtdd работает без спонсорского канала.
     local _tag="${_IA_AD_TAG:-${AD_TAG:-}}"
-    [[ "$_tag" =~ ^[0-9a-fA-F]{32}$ ]] && [ "$_tag" != "00000000000000000000000000000000" ] \
-        || { log_error "--ad-tag: mtdd без рекламного тега не запускается (32 hex от @MTProxybot, не из нулей)"; _ok=false; }
+    if [ -n "$_tag" ] && { ! [[ "$_tag" =~ ^[0-9a-fA-F]{32}$ ]] || [ "$_tag" = "00000000000000000000000000000000" ]; }; then
+        log_error "--ad-tag: 32 hex от @MTProxybot, не из одних нулей"; _ok=false
+    fi
     _why=$(mtdd_mgr_unsupported_reason)
     [ -z "$_why" ] || { log_error "--engine mtdd: ${_why}"; _ok=false; }
     for _s in "${_IA_SECRETS[@]}"; do
@@ -1231,9 +1233,6 @@ _install_args_validate_mtdd() {
         mtproto) ;;
         *) log_error "--proxy-mode ${_IA_PROXY_MODE}: у mtdd только MTProto"; _ok=false ;;
     esac
-    if [ -z "$_IA_AD_TAG" ] && ! mtdd_unit_exists; then
-        log_error "--ad-tag: mtdd без рекламного тега не запускается (32 hex от @MTProxybot)"; _ok=false
-    fi
     [ "$_IA_AD_TAG" = "00000000000000000000000000000000" ] && { log_error "--ad-tag: тег из одних нулей mtdd не примет"; _ok=false; }
     for _s in "${_IA_SECRETS[@]}"; do
         _l=$(_ia_secret_label "$_s")
@@ -1337,8 +1336,9 @@ run_installer_args_mtdd() {
         save_detect_settings
     else
         _fresh=true
-        local -a _inst=(--domain "${_IA_SNI:-autoscout24.ru}" --ad-tag "${_IA_AD_TAG,,}"
+        local -a _inst=(--domain "${_IA_SNI:-autoscout24.ru}"
                         --port "${_IA_PORT:-443}" --user "$_first" --yes)
+        [ -n "$_IA_AD_TAG" ] && _inst+=(--ad-tag "${_IA_AD_TAG,,}")
         [ -n "$_IA_HOST" ] && _inst+=(--public-host "$_IA_HOST")
         install_original_mtdd --yes --channel "${_IA_MTDD_CHANNEL:-main}" -- "${_inst[@]}" || return 1
     fi

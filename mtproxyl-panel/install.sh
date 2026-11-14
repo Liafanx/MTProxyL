@@ -597,6 +597,7 @@ $SYSTEM_USER ALL=(root) NOPASSWD: $_script target-api snapshot
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script media status --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script media set [0-9]* [0-9]*
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script media off
+$SYSTEM_USER ALL=(root) NOPASSWD: $_script metrics ips --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup list --json
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script backup cat mtproxyl-[0-9]*.tar.gz
 $SYSTEM_USER ALL=(root) NOPASSWD: $_script restore ${_install_dir}/backups/mtproxyl-[0-9]*.tar.gz

@@ -20,7 +20,7 @@ lock = threading.Lock()
 users = {"admin": {"name": "admin", "secret": "00112233445566778899aabbccddeeff", "enabled": True}}
 FULL_FIELDS = {"name", "secret", "enabled", "max_connections", "max_unique_ips", "max_devices",
                "data_quota_bytes", "expires_at", "note", "rate_limit_up_bytes_per_sec",
-               "rate_limit_down_bytes_per_sec", "tls_domain"}
+               "rate_limit_down_bytes_per_sec", "tls_domain", "ad_tag"}
 OLD_FIELDS = {"name", "secret", "max_connections"}
 rid = [0]
 rev = [1]
@@ -65,7 +65,7 @@ def view(u):
                      "unique_ips_active": 1}}
     if full:
         for k in ("max_unique_ips", "data_quota_bytes", "expires_at", "rate_limit_up_bytes_per_sec",
-                  "rate_limit_down_bytes_per_sec", "tls_domain", "max_devices"):
+                  "rate_limit_down_bytes_per_sec", "tls_domain", "max_devices", "ad_tag"):
             out[k] = u.get(k)
         out["note"] = u.get("note", "")
         out["stats"].update({"quota_used_bytes": u.get("used", 0), "unique_ips_seen": 2,
@@ -126,6 +126,16 @@ class H(BaseHTTPRequestHandler):
                                        "me": {"connected_dcs": 1, "dcs": [
                                            {"dc": "2", "connected": True, "ping_rtt_us": 41000, "pool_target": 2, "ready_connections": 2},
                                            {"dc": "-2", "connected": True, "ping_rtt_us": 0, "pool_target": 1, "ready_connections": 1}]}})
+            if method == "GET" and path == "/v1/suspects" and "format=ips" in self.path:
+                if not full:
+                    return nf()
+                text = "1.2.3.4\n1.2.3.4\n::ffff:5.6.7.8\n::ffff:0102:0305\n2001:db8::1/128\n999.1.1.1\n10.0.0.0/33\n:\n2001:db8::/32\n"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Content-Length", str(len(text)))
+                self.end_headers()
+                self.wfile.write(text.encode())
+                return
             if method == "GET" and path == "/v1/users":
                 lst = [view(u) for u in users.values()]
                 return self.send(200, {"users": lst, "total": len(lst), "limit": None, "offset": 0, "revision": rev[0]})

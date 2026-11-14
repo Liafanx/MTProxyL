@@ -38,11 +38,7 @@ tui_settings_menu() {
         echo -e "  ${BOLD}SNI-полит.:${NC}        ${UNKNOWN_SNI_ACTION}"
         echo -e "  ${BOLD}PROXY proto:${NC}       ${PROXY_PROTOCOL}"
         echo -e "  ${BOLD}Selfmask:${NC}          $(selfmask_status_line 2>/dev/null || echo "${DIM}выключен${NC}")"
-        if mtdd_mgr_active; then
-            echo -e "  ${BOLD}Движок:${NC}            mtdd $(mtdd_mgr_version)"
-        else
-            echo -e "  ${BOLD}Движок:${NC}            telemt v$(get_telemt_version)"
-        fi
+        echo -e "  ${BOLD}Движок:${NC}            $(engine_title)"
         echo ""
         echo -e "  ${DIM}[1]${NC} Изменить порт"
         echo -e "  ${DIM}[2]${NC} Изменить IP/домен сервера"
@@ -63,10 +59,10 @@ tui_settings_menu() {
         echo -e "  ${DIM}[17]${NC} Уровень логирования [$(proxy_log_level)]"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
-        # У mtdd нет SNI-политики, PROXY protocol, своих URL Telegram и уровня логов.
+        # У mtdd нет SNI-политики, своих URL Telegram и уровня логов.
         if mtdd_mgr_active; then
             case "$choice" in
-                8|9|14|17) mtdd_unsupported "этот пункт есть только у telemt"; press_any_key; continue ;;
+                8|14|17) mtdd_unsupported "этот пункт есть только у telemt"; press_any_key; continue ;;
                 13) tui_mtdd_tune_menu; continue ;;
             esac
         fi

@@ -404,7 +404,12 @@ run_installer() {
     fi
 
     install_availability_timer
-    log_success "Проверка доступности из РФ: каждые $(availability_interval_minutes) мин"
+    # Таймер ставится только при AVAILABILITY_ENABLED=true (по умолчанию выключено).
+    if availability_enabled && [ "$(availability_interval_minutes)" -gt 0 ]; then
+        log_success "Проверка доступности из РФ: каждые $(availability_interval_minutes) мин"
+    else
+        log_info "Проверка доступности из РФ по расписанию выключена (включить: mtproxyl availability on)"
+    fi
 
     offer_tgbot_install
 
@@ -498,7 +503,7 @@ installer_pick_service_name() {
 
 # Чем менеджер будет держать движок. По умолчанию бинарник: он экономит время
 # установки и память, сам Docker тогда не ставится вовсе. Docker — вторым.
-# mtdd движком Manager: канал сборки, обязательный рекламный тег, имя службы.
+# mtdd движком Manager: канал сборки, рекламный тег (по желанию), имя службы.
 installer_pick_mtdd() {
     ENGINE_KIND="mtdd"
     ENGINE_BACKEND="binary"
@@ -507,13 +512,14 @@ installer_pick_mtdd() {
     log_success "Движок: mtdd (${_INSTALLER_MTDD_CHANNEL}) из релизов ${MTDD_REPO}"
     echo ""
     echo -e "  ${BOLD}Рекламный тег${NC}"
-    echo -e "  ${DIM}mtdd без тега не запускается: 32 hex от @MTProxybot (/newproxy).${NC}"
+    echo -e "  ${DIM}32 hex от @MTProxybot (/newproxy). Enter — без тега: прокси работает без спонсорского канала.${NC}"
     local _t
     while true; do
         read_line _t "  ${BOLD}Тег${AD_TAG:+ [${AD_TAG}]}:${NC} "
         _t="${_t:-${AD_TAG:-}}"
+        [ -z "$_t" ] && break
         [[ "$_t" =~ ^[0-9a-fA-F]{32}$ ]] && [ "$_t" != "00000000000000000000000000000000" ] && break
-        log_error "Нужны 32 шестнадцатеричных символа, не из одних нулей"
+        log_error "Нужны 32 шестнадцатеричных символа, не из одних нулей (или Enter — без тега)"
     done
     AD_TAG="${_t,,}"
     local _def=1
@@ -845,7 +851,11 @@ show_install_summary() {
         echo -e "  ${BOLD}MTProto:${NC} ${PROXY_PORT}, SNI ${PROXY_DOMAIN}"
     fi
     web_is_enabled && echo -e "  ${BOLD}WEB:${NC}    https://$(web_domain 2>/dev/null)"
-    echo -e "  ${BOLD}Движок:${NC} telemt (Rust), $(engine_backend_title)"
+    if mtdd_mgr_active; then
+        echo -e "  ${BOLD}Движок:${NC} $(engine_title), служба ${MTDD_MGR_SERVICE}"
+    else
+        echo -e "  ${BOLD}Движок:${NC} telemt (Rust), $(engine_backend_title)"
+    fi
     echo ""
 
     if [ -n "$server_ip" ]; then

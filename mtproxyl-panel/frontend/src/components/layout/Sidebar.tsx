@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { LayoutDashboard, Users, Activity, Network, LogOut, X, Palette } from 'lucide-react';
-import { PANEL_NAV_ITEMS, MTPROXYL_NAV_ITEMS } from './nav';
+import { PANEL_NAV_ITEMS, MTPROXYL_NAV_ITEMS, engineHasItem } from './nav';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme, THEMES, THEME_LABELS, isTheme } from '@/hooks/useTheme';
@@ -58,7 +58,7 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
           className="flex-1 min-h-0 overflow-y-auto p-3 pr-4 space-y-1"
           style={{ scrollbarGutter: 'stable' }}
         >
-          {navItems.filter((i) => !i.telemtOnly || engineKind !== 'mtdd').map(({ to, icon: Icon, label }) => (
+          {navItems.filter((i) => engineHasItem(i, engineKind, mtproxylMode)).map(({ to, icon: Icon, label }) => (
             <NavLink
               key={to}
               to={to}
@@ -84,7 +84,7 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
                 MTProxyL
               </div>
               {mtproxylNavItems
-                .filter((i) => (!i.managerOnly || mtproxylMode === 'manager') && (!i.telemtOnly || engineKind !== 'mtdd'))
+                .filter((i) => (!i.managerOnly || mtproxylMode === 'manager') && engineHasItem(i, engineKind, mtproxylMode))
                 .map(({ to, icon: Icon, label }) => (
                 <NavLink
                   key={to}

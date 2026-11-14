@@ -715,6 +715,19 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 
+	// ── Уникальные IP mtdd (seen/active, HyperLogLog) ───────────────────────
+	mux.Handle("GET /api/mtproxyl/mtdd/ips", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		doc, err := client.GetMtddIPStats(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: doc})
+	}))
+
 	// ── Медиа-лимиты mtdd ───────────────────────────────────────────────────
 	// Встроенный лимит загрузок mtdd, отдельно от шейпинга MTProxyL. У telemt
 	// его нет: CLI отвечает ошибкой, и страница раздел не показывает.

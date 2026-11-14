@@ -3,7 +3,7 @@
 
 # Что входит в бэкап. Восстанавливается только это: архив распаковывается от
 # root прямо в каталог установки и иначе мог бы подменить сам скрипт.
-_BACKUP_FILES="settings.conf secrets.conf upstreams.conf nft-rules.conf shaping.json expert.conf expert-target.conf tunings.conf superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf backup_meta.txt availability/last.json availability/history.jsonl warp/account.json quota-state/telemt.limit.json mtdd/tune.json"
+_BACKUP_FILES="settings.conf secrets.conf devices.conf upstreams.conf nft-rules.conf shaping.json expert.conf expert-target.conf tunings.conf superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf backup_meta.txt availability/last.json availability/history.jsonl warp/account.json quota-state/telemt.limit.json mtdd/tune.json"
 _BACKUP_DIRS="relay_stats geoblock"
 
 # Имена из архива, которые можно распаковать. Остальные — в stderr.
@@ -311,7 +311,7 @@ migrate_export() {
     local out="${1:-/tmp/mtproxyl-migrate-$(date +%Y%m%d-%H%M%S).tar.gz}"
     local tmp; tmp=$(mktemp -d) || { log_error "Не удалось создать временную директорию"; return 1; }
     local count=0
-    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf shaping.json expert.conf expert-target.conf tunings.conf \
+    for f in settings.conf secrets.conf devices.conf upstreams.conf nft-rules.conf shaping.json expert.conf expert-target.conf tunings.conf \
              superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf; do
         [ -f "${INSTALL_DIR}/$f" ] && { cp "${INSTALL_DIR}/$f" "$tmp/" && count=$((count + 1)); }
     done
@@ -348,7 +348,7 @@ migrate_import() {
     fi
 
     local restored=0 base
-    for f in settings.conf secrets.conf upstreams.conf nft-rules.conf shaping.json expert.conf expert-target.conf tunings.conf \
+    for f in settings.conf secrets.conf devices.conf upstreams.conf nft-rules.conf shaping.json expert.conf expert-target.conf tunings.conf \
              superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf; do
         [ -f "${tmp}/${f}" ] && { cp "${tmp}/${f}" "${INSTALL_DIR}/$f" && chmod 600 "${INSTALL_DIR}/$f" && restored=$((restored + 1)); }
     done

@@ -947,7 +947,7 @@ _donor_apply_manager() {
     # Локальную заглушку донор не видит: TLS-метаданные берём напрямую.
     if [ $_rc -eq 0 ] && _donor_local_mask_backend; then
         upstream_add "$DONOR_UPSTREAM_LOCAL" direct "" "" "" 1 "" "local" >/dev/null || true
-        handle_expert_command set censorship tls_fetch_scope local --no-apply >/dev/null 2>&1 \
+        mtdd_mgr_active || handle_expert_command set censorship tls_fetch_scope local --no-apply >/dev/null 2>&1 \
             || log_warn "Не удалось задать censorship.tls_fetch_scope — маскировка может не подтянуть сертификат"
     fi
     UPSTREAM_DEFER_RESTART="false"
@@ -967,7 +967,7 @@ _donor_drop_manager() {
     upstream_remove "$DONOR_UPSTREAM_NAME" >/dev/null 2>&1 || true
     upstream_remove "$DONOR_UPSTREAM_LOCAL" >/dev/null 2>&1 || true
     # В реаниматоре expert отказывает, а чистить нужно настройки менеджера.
-    MTPROXYL_MODE=manager handle_expert_command clear censorship tls_fetch_scope --no-apply >/dev/null 2>&1 || true
+    mtdd_mgr_active || MTPROXYL_MODE=manager handle_expert_command clear censorship tls_fetch_scope --no-apply >/dev/null 2>&1 || true
     local _name
     local -a _list=()
     IFS=',' read -ra _list <<< "${DONOR_DISABLED_UPSTREAMS:-}"
@@ -1809,11 +1809,12 @@ donor_help() {
 }
 
 handle_donor_command() {
-    # Цель mtdd: этой функции у него нет, показываем только состояние.
-    if engine_is_mtdd; then
+    # Цель mtdd в реаниматоре: её конфиг правит её хозяин, показываем только
+    # состояние. В Manager маршруты mtdd собирает generate_mtdd_config.
+    if engine_is_mtdd && ! mtdd_mgr_active; then
         case "${1:-status}" in
             status|list|--json|json) ;;
-            *) mtdd_unsupported "туннель до донора пишет upstream в конфиг telemt"; return 1 ;;
+            *) mtdd_unsupported "туннель до донора пишет upstream; для mtdd маршруты есть в режиме Manager"; return 1 ;;
         esac
     fi
     local _sub="${1:-status}"; shift 2>/dev/null || true

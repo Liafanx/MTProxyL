@@ -102,14 +102,44 @@ _mtdd_mgr_prepare_dirs() {
 # ── Конфиг ─────────────────────────────────────────────────────
 # Ключи, которые собирает менеджер из своих настроек. В tune.json их не
 # пускаем: иначе «Тюнинг mtdd» спорил бы с портом, доменом, маскировкой.
-MTDD_MGR_MANAGED_KEYS="proxy_host proxy_port public_host public_port control_host control_port allow_remote_control api_token_env api_read_token_env metrics_host metrics_port metrics_token_env tls_domain ad_tag users_path usage_state_path unique_ip_stats_path masking fallback_host fallback_port me_config_path me_secret_path"
+MTDD_MGR_MANAGED_KEYS="proxy_host proxy_port public_host public_port control_host control_port allow_remote_control api_token_env api_read_token_env metrics_host metrics_port metrics_token_env tls_domain ad_tag users_path usage_state_path unique_ip_stats_path masking fallback_host fallback_port me_config_path me_secret_path proxy_protocol proxy_protocol_allow upstreams masking_scope me_nat_ip"
 
 # Ключи, без которых сборка всё равно работает: старый main их не знает.
-MTDD_MGR_OPTIONAL_KEYS="usage_state_path metrics_host metrics_port"
+MTDD_MGR_OPTIONAL_KEYS="usage_state_path metrics_host metrics_port unique_ip_stats_path"
 
 _mtdd_mgr_is_managed_key() {
     case " ${MTDD_MGR_MANAGED_KEYS} " in *" $1 "*) return 0 ;; esac
     return 1
+}
+
+# Маршруты из upstreams.conf строками «имя|тип|адрес|логин|пароль|вес|интерфейс|вкл|области».
+# Донор, WARP (вариант C) и upstream-меню пишут туда же, что и для telemt.
+_mtdd_mgr_upstream_rows() {
+    if declare -F load_upstreams >/dev/null && [ "${#UPSTREAM_NAMES[@]}" -eq 0 ]; then
+        load_upstreams 2>/dev/null || true
+    fi
+    local _i
+    for _i in "${!UPSTREAM_NAMES[@]}"; do
+        printf '%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "${UPSTREAM_NAMES[$_i]}" "${UPSTREAM_TYPES[$_i]}" \
+            "${UPSTREAM_ADDRS[$_i]:-}" "${UPSTREAM_USERS[$_i]:-}" "${UPSTREAM_PASSES[$_i]:-}" \
+            "${UPSTREAM_WEIGHTS[$_i]:-10}" "${UPSTREAM_IFACES[$_i]:-}" "${UPSTREAM_ENABLED[$_i]:-true}" \
+            "${UPSTREAM_SCOPES[$_i]:-}"
+    done
+}
+
+# «direct|nat_ip»: direct=1 — ME невозможен (WARP или AWG с выключенным ME),
+# все DC идут маршрутом Direct; nat_ip — внешний адрес выхода AWG для ME.
+_mtdd_mgr_route_state() {
+    local _direct=0 _awg=""
+    [ "${WARP_ENABLED:-false}" = true ] && _direct=1
+    if declare -F awg_load >/dev/null && [ -f "$(_awg_state_file 2>/dev/null)" ]; then
+        _awg=$(awg_load 2>/dev/null; echo "${AWG_ENABLED}|${AWG_ME_MODE}|${AWG_EGRESS_IP}|${AWG_ME_DISABLED}")
+    fi
+    local _en _mode _ip _dis
+    IFS='|' read -r _en _mode _ip _dis <<< "$_awg"
+    [ "$_en" = true ] && [ "$_dis" = manager ] && _direct=1
+    [ "$_en" = true ] && [ "$_mode" = natip ] || _ip=""
+    echo "${_direct}|${_ip}"
 }
 
 # Кандидат конфига → файл $1. Второй аргумент 0 — без usage_state_path:
@@ -136,7 +166,9 @@ _mtdd_mgr_render() {
     MG_API_PORT="${PROXY_API_PORT:-9091}" MG_METRICS_PORT="${PROXY_METRICS_PORT:-9090}" \
     MG_DOMAIN="$_dom" MG_TAG="${AD_TAG:-}" MG_MASK="${MASKING_ENABLED:-true}" \
     MG_FB_HOST="$_fb_host" MG_FB_PORT="$_fb_port" MG_STATE="$MTDD_MGR_STATE" MG_USAGE="$_usage" \
+    MG_UPSTREAMS="$(_mtdd_mgr_upstream_rows)" MG_ROUTE="$(_mtdd_mgr_route_state)" \
     MG_MANAGED="$MTDD_MGR_MANAGED_KEYS" \
+    MG_PP="${PROXY_PROTOCOL:-false}" MG_PP_ALLOW="${PROXY_PROTOCOL_TRUSTED_CIDRS:-}" \
         python3 -I - "$_out" "$MTDD_MGR_TUNE" <<'PY'
 import json, os, sys
 e = os.environ
@@ -146,10 +178,13 @@ c = {
     "control_host": "127.0.0.1", "control_port": int(e["MG_API_PORT"]),
     "api_token_env": "MTDD_API_TOKEN",
     "metrics_host": "127.0.0.1", "metrics_port": int(e["MG_METRICS_PORT"]),
-    "tls_domain": e["MG_DOMAIN"], "ad_tag": e["MG_TAG"],
+    "tls_domain": e["MG_DOMAIN"],
     "users_path": e["MG_STATE"] + "/users.json",
     "masking": e["MG_MASK"] == "true",
 }
+# Тег необязателен с mtdd 1.0.0: без него прокси работает без спонсорского канала.
+if e["MG_TAG"]:
+    c["ad_tag"] = e["MG_TAG"]
 if e["MG_PUB"]:
     c["public_host"] = e["MG_PUB"]
 lp = e["MG_LINK_PORT"]
@@ -158,8 +193,17 @@ if lp.isdigit() and int(lp) != port:
 if e["MG_FB_HOST"]:
     c["fallback_host"] = e["MG_FB_HOST"]
     c["fallback_port"] = int(e["MG_FB_PORT"])
+# PROXY protocol (mtdd 1.0.0+): доверенные адреса фронта — из настроек,
+# пусто — по умолчанию mtdd (127.0.0.0/8, ::1), как 127.0.0.1/32 у telemt.
+if e["MG_PP"] == "true":
+    c["proxy_protocol"] = True
+    allow = [x for x in e["MG_PP_ALLOW"].replace(",", " ").split() if x]
+    if allow:
+        c["proxy_protocol_allow"] = allow
 if e["MG_USAGE"] == "1":
     c["usage_state_path"] = e["MG_STATE"] + "/usage.json"
+    # История уникальных IP (HyperLogLog, без самих адресов) переживает перезапуск.
+    c["unique_ip_stats_path"] = e["MG_STATE"] + "/unique_ips.json"
 # Ёмкость — как у установщика mtdd: бюджет буферов от памяти.
 try:
     ram = next(int(l.split()[1]) * 1024 for l in open("/proc/meminfo") if l.startswith("MemTotal:"))
@@ -179,6 +223,43 @@ except (OSError, ValueError) as ex:
 for k, v in (tune.items() if isinstance(tune, dict) else []):
     if k not in managed:
         c[k] = v
+# Маршруты (mtdd 1.0.0+). Формат повторяет [[upstreams]] telemt; socks4 и
+# shadowsocks у mtdd нет. Один простой direct — то же, что без ключа.
+ups, local_scope = [], False
+for line in e["MG_UPSTREAMS"].splitlines():
+    n, t, a, u, pw, w, ifc, en, sc = (line.split("|") + [""] * 9)[:9]
+    if not n or en != "true":
+        continue
+    if t not in ("direct", "socks5"):
+        sys.stderr.write("upstream %s: тип %s у mtdd нет (только direct и socks5)\n" % (n, t)); sys.exit(1)
+    item = {"name": n, "type": t}
+    if w.isdigit() and 1 <= int(w) <= 65535:
+        item["weight"] = int(w)
+    if ifc:
+        item["interface"] = ifc
+    scopes = [x.strip() for x in sc.split(",") if x.strip()]
+    if scopes:
+        item["scopes"] = scopes
+        local_scope = local_scope or "local" in scopes
+    if t == "socks5":
+        item["address"] = a
+        if u:
+            item["username"], item["password"] = u, pw
+    ups.append(item)
+if any(x["type"] != "direct" or "interface" in x or "scopes" in x for x in ups) or len(ups) > 1:
+    c["upstreams"] = ups
+    # Локальная заглушка маскировки через туннель недостижима — как
+    # tls_fetch_scope = "local" у telemt.
+    if local_scope:
+        c["masking_scope"] = "local"
+direct, nat_ip = (e["MG_ROUTE"].split("|") + ["", ""])[:2]
+if nat_ip:
+    c["me_nat_ip"] = nat_ip
+if direct == "1":
+    # ME через WARP невозможен (симметричный NAT): все DC — маршрутом Direct.
+    # Рекламный тег на нём не передаётся.
+    c["direct_fallback_enabled"] = True
+    c["direct_fallback_dcs"] = [1, 2, 3, 4, 5, -1, -2, -3, -4, -5]
 with open(sys.argv[1], "w") as f:
     f.write(json.dumps(c, indent=2, ensure_ascii=False) + "\n")
 PY
@@ -205,7 +286,6 @@ PY
 generate_mtdd_config() {
     MTDD_MGR_CONFIG_CHANGE="same"
     mtdd_mgr_names
-    [ -n "${AD_TAG:-}" ] || { log_error "mtdd без рекламного тега не запускается: mtproxyl settings set AD_TAG <32 hex от @MTProxybot>"; return 1; }
     [ -x "${MTDD_MGR_CHECK_BIN:-$MTDD_MGR_BIN}" ] || { log_error "mtdd не установлен: нет ${MTDD_MGR_BIN}"; return 1; }
     _mtdd_mgr_prepare_dirs || return 1
     local _cand _why _key _try _ok=false
@@ -214,7 +294,7 @@ generate_mtdd_config() {
     # Сборки отличаются набором ключей: у main нет метрик Prometheus и квот.
     # Необязательный ключ, которого сборка не знает, снимаем и проверяем снова;
     # любой другой отказ — ошибка (в том числе неизвестный ключ из tune.json).
-    for _try in 1 2 3 4; do
+    for _try in 1 2 3 4 5 6; do
         _why=$(MTDD_BIN="${MTDD_MGR_CHECK_BIN:-$MTDD_MGR_BIN}" MTDD_CONFIG="$_cand" MTDD_ENV_FILE="$MTDD_MGR_ENV" \
             python3 -I -c "$(_mtdd_py_src)" cfg-check "$_cand" 2>&1) && { _ok=true; break; }
         _why="${_why:-проверка не прошла}"
@@ -223,10 +303,21 @@ generate_mtdd_config() {
             *" ${_key:-—} "*)
                 jq --arg k "$_key" 'del(.[$k])' "$_cand" > "${_cand}.n" && mv -f "${_cand}.n" "$_cand" \
                     || { rm -f "$_cand" "${_cand}.n"; log_error "Не удалось собрать конфиг mtdd"; return 1; } ;;
-            *)  rm -f "$_cand"; log_error "mtdd не принял конфиг: ${_why}"; return 1 ;;
+            *)  rm -f "$_cand"; log_error "mtdd не принял конфиг: ${_why}"
+                if [ -z "${AD_TAG:-}" ] && grep -qi 'ad_tag' <<< "$_why"; then
+                    log_info "Эта сборка mtdd требует рекламный тег. Обновите сборку (mtproxyl engine update main) или задайте тег: mtproxyl settings set AD_TAG <32 hex>"
+                fi
+                return 1 ;;
         esac
     done
     [ "$_ok" = true ] || { rm -f "$_cand"; log_error "mtdd не принял конфиг: ${_why}"; return 1; }
+    # Сборка до квот (0.1.0) знает unique_ip_stats_path, но читает только свой
+    # формат: файл, дописанный 1.0.0, она отвергает и не стартует (откат с dev).
+    # Историю на диске ведёт только сборка с квотами, как и раньше у старой.
+    if ! jq -e 'has("usage_state_path")' "$_cand" >/dev/null 2>&1; then
+        jq 'del(.unique_ip_stats_path)' "$_cand" > "${_cand}.n" && mv -f "${_cand}.n" "$_cand" \
+            || { rm -f "$_cand" "${_cand}.n"; log_error "Не удалось собрать конфиг mtdd"; return 1; }
+    fi
     MTDD_MGR_CONFIG_CHANGE=$(_mtdd_mgr_diff_kind "$MTDD_MGR_CONFIG" "$_cand")
     if [ "$MTDD_MGR_CONFIG_CHANGE" = "same" ]; then
         rm -f "$_cand"; return 0
@@ -376,11 +467,63 @@ mtdd_mgr_reload_config() {
 }
 
 # secrets.conf → mtdd. Без полного API выключенные не заводятся (и снимаются).
+# ── Лимит устройств (Manager) ──────────────────────────────────
+# devices.conf рядом с secrets.conf, строки «метка|N». Отдельный файл, а не
+# 12-е поле secrets.conf: у telemt такого лимита нет, а старая версия MTProxyL
+# (откат) на 12 полях потеряла бы скорость пользователей.
+mtdd_devices_file() { echo "${INSTALL_DIR}/devices.conf"; }
+
+mtdd_devices_get() {
+    awk -F'|' -v u="$1" '$1 == u { print $2; exit }' "$(mtdd_devices_file)" 2>/dev/null
+}
+
+# mtdd_devices_put МЕТКА N — 0 снимает строку.
+mtdd_devices_put() {
+    local _f _tmp; _f=$(mtdd_devices_file)
+    _tmp=$(_mktemp "$INSTALL_DIR") || return 1
+    { [ -f "$_f" ] && awk -F'|' -v u="$1" '$1 != u' "$_f"
+      [ "${2:-0}" != 0 ] && echo "${1}|${2}"; } > "$_tmp"
+    chmod 600 "$_tmp" && mv -f "$_tmp" "$_f"
+}
+
+mtdd_devices_rename() {
+    local _f; _f=$(mtdd_devices_file); [ -f "$_f" ] || return 0
+    local _n; _n=$(mtdd_devices_get "$1"); [ -n "$_n" ] || return 0
+    mtdd_devices_put "$1" 0 && mtdd_devices_put "$2" "$_n"
+}
+
+mtdd_devices_drop() {
+    [ -f "$(mtdd_devices_file)" ] && [ -n "$(mtdd_devices_get "$1")" ] || return 0
+    mtdd_devices_put "$1" 0
+}
+
+secret_set_devices() {
+    local _label="$1" _n _i _found=false
+    mtdd_mgr_active || { log_error "Лимит устройств есть только у движка mtdd"; return 1; }
+    for _i in "${!SECRETS_LABELS[@]}"; do [ "${SECRETS_LABELS[$_i]}" = "$_label" ] && _found=true; done
+    [ "$_found" = true ] || { log_error "Секрет '${_label}' не найден"; return 1; }
+    _n=$(_mtdd_devices_value "${2:-}") || return 1
+    local _old; _old=$(mtdd_devices_get "$_label")
+    mtdd_devices_put "$_label" "$_n" || { log_error "Не удалось сохранить $(mtdd_devices_file)"; return 1; }
+    if ! mtdd_mgr_sync_users; then
+        mtdd_devices_put "$_label" "${_old:-0}"
+        return 1
+    fi
+    if [ "$_n" -eq 0 ]; then log_success "Лимит устройств снят с '${_label}'"
+    else log_success "Лимит устройств '${_label}': ${_n}"; fi
+}
+
+secret_show_devices() {
+    mtdd_mgr_active || { log_error "Устройства показывает только движок mtdd"; return 1; }
+    mtdd_mgr_ctx
+    mtdd_user_devices "${1:-}"
+}
+
 mtdd_mgr_sync_users() {
     mtdd_mgr_ctx
     [ -f "$SECRETS_FILE" ] || { log_warn "Нет ${SECRETS_FILE} — пользователей не к чему приводить"; return 0; }
     local _out _rc
-    _out=$(_mtdd_py sync < "$SECRETS_FILE" 2>&1); _rc=$?
+    _out=$(MTDD_DEVICES_FILE="$(mtdd_devices_file)" _mtdd_py sync < "$SECRETS_FILE" 2>&1); _rc=$?
     if [ $_rc -ne 0 ] && ! jq -e . >/dev/null 2>&1 <<< "$_out"; then
         log_error "Пользователи не доставлены в mtdd: ${_out}"
         return 1
@@ -390,7 +533,7 @@ mtdd_mgr_sync_users() {
     _errors=$(jq -r '.errors[]' <<< "$_out" 2>/dev/null)
     if [ -n "$_skipped" ]; then
         log_warn "Выключены, а эта сборка mtdd выключать не умеет — в mtdd не заведены: ${_skipped}"
-        log_info "Полная сборка: mtproxyl engine update dev"
+        log_info "Полная сборка: mtproxyl engine update main (v1.0.0 и новее) или dev"
     fi
     if [ -n "$_errors" ]; then
         log_error "Не все изменения дошли до mtdd:"
@@ -402,9 +545,9 @@ mtdd_mgr_sync_users() {
     if [ "$(jq -r '.full_api' <<< "$_out" 2>/dev/null)" = false ]; then
         local _lost
         _lost=$(awk -F'|' '!/^[[:space:]]*#/ && NF >= 2 && \
-            (($6 != "" && $6 != "0") || ($7 != "" && $7 != "0") || ($8 != "" && $8 != "0") || $9 != "" || $11 != "") \
+            (($6 != "" && $6 != "0") || ($7 != "" && $7 != "0") || ($8 != "" && $8 != "0") || $9 != "" || $10 != "" || $11 != "") \
             { printf "%s%s", (n++ ? ", " : ""), $1 }' "$SECRETS_FILE")
-        [ -n "$_lost" ] && log_warn "Эта сборка mtdd знает только лимит соединений — лимит IP, квота, срок, заметка и скорость не действуют у: ${_lost} (полная сборка: mtproxyl engine update dev)"
+        [ -n "$_lost" ] && log_warn "Эта сборка mtdd знает только лимит соединений — лимит IP, квота, срок, заметка, скорость и свой рекл. тег не действуют у: ${_lost} (обновите сборку: mtproxyl engine update main)"
     fi
     return 0
 }
@@ -460,26 +603,20 @@ PY
 mtdd_mgr_switch_blockers() {
     local _why; _why=$(mtdd_mgr_unsupported_reason)
     [ -n "$_why" ] && echo "$_why"
-    [[ "${AD_TAG:-}" =~ ^[0-9a-fA-F]{32}$ ]] && [ "$AD_TAG" != "00000000000000000000000000000000" ] \
-        || echo "нужен рекламный тег: mtdd без него не запускается (mtproxyl settings set AD_TAG <32 hex от @MTProxybot>)"
     { [ "${WEB_ENABLED:-false}" = true ] || [ "${PROXY_MODE:-mtproto}" != mtproto ]; } \
         && echo "включён WEB-режим — у mtdd его нет"
     [ "${SUPEREXPERT_ENABLED:-false}" = true ] && echo "включён Супер эксперт — это конфиг telemt"
-    [ "${PROXY_PROTOCOL:-false}" = true ] && echo "включён PROXY protocol — mtdd его не принимает"
     [ -n "${MASKING_HOST:-}" ] && [ "$MASKING_HOST" != "${PROXY_DOMAIN:-}" ] && [ "${MASKING_PORT:-443}" = "${PROXY_PORT:-443}" ] \
         && echo "mask backend ${MASKING_HOST}:${MASKING_PORT:-443} на порту прокси — у mtdd порт маскировки должен отличаться от порта прокси"
-    [ "${WARP_ENABLED:-false}" = true ] && echo "включён WARP — для mtdd пока не поддержан"
-    if declare -F donor_load >/dev/null; then
-        donor_load 2>/dev/null; [ "${DONOR_ENABLED:-false}" = true ] && echo "включён донор — для mtdd пока не поддержан"
-    fi
-    declare -F awg_is_enabled >/dev/null && awg_is_enabled && echo "включён AmneziaWG — для mtdd пока не поддержан"
     if declare -F load_upstreams >/dev/null; then
         load_upstreams 2>/dev/null
         local _i _up=""
         for _i in "${!UPSTREAM_NAMES[@]}"; do
-            [ "${UPSTREAM_TYPES[$_i]}" != direct ] && [ "${UPSTREAM_ENABLED[$_i]:-true}" = true ] && _up+="${UPSTREAM_NAMES[$_i]} "
+            case "${UPSTREAM_TYPES[$_i]}" in socks4|shadowsocks)
+                [ "${UPSTREAM_ENABLED[$_i]:-true}" = true ] && _up+="${UPSTREAM_NAMES[$_i]} " ;;
+            esac
         done
-        [ -n "$_up" ] && echo "включены upstream-маршруты (${_up% }) — у mtdd их нет"
+        [ -n "$_up" ] && echo "включены upstream socks4/shadowsocks (${_up% }) — у mtdd только direct и socks5"
     fi
     # Скорость mtdd считает в байтах/с и не ниже 1024.
     local _n _r _a _b _slow=""
@@ -518,11 +655,6 @@ engine_switch_kind() {
             sed 's/^/    • /' <<< "$_b"
             return 1
         fi
-        local _i _tags=""
-        for _i in "${!SECRETS_LABELS[@]}"; do
-            [ -n "${SECRETS_ADTAG[$_i]:-}" ] && _tags+="${SECRETS_LABELS[$_i]} "
-        done
-        [ -n "$_tags" ] && log_warn "Свой рекламный тег у: ${_tags% } — у mtdd тег один на сервер, эти теги не действуют"
     fi
     local _from="${ENGINE_KIND:-telemt}"
     if [ "$_yes" != "--yes" ]; then

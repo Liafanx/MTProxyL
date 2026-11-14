@@ -15,14 +15,18 @@ tui_security_menu() {
         esac
         echo -e "  ${DIM}[1]${NC} Гео-блокировка"
         # Работает в любом режиме: правила в ядре, а не в конфиге движка.
-        local _mtdd=false; engine_is_mtdd && _mtdd=true
-        if [ "$_mtdd" = true ]; then
-            echo -e "  ${DIM}[2]${NC} Telegram через WARP: ${DIM}недоступно у mtdd${NC}"
+        # _mtdd — любой mtdd (нет SNI-политики); _mtdd_noroute — цель mtdd в
+        # реаниматоре: маршруты mtdd MTProxyL пишет только в свой конфиг (Manager).
+        local _mtdd=false _mtdd_noroute=false
+        engine_is_mtdd && _mtdd=true
+        [ "$_mtdd" = true ] && ! mtdd_mgr_active && _mtdd_noroute=true
+        if [ "$_mtdd_noroute" = true ]; then
+            echo -e "  ${DIM}[2]${NC} Telegram через WARP: ${DIM}у цели mtdd — нет (есть в Manager)${NC}"
         else
             echo -e "  ${DIM}[2]${NC} Telegram через WARP: $(_tui_warp_state_label)"
         fi
         if [ "$_mtdd" = true ] && [ "${MTPROXYL_MODE:-manager}" = "manager" ]; then
-            echo -e "  ${DIM}[3]${NC} Upstream-маршруты: ${DIM}недоступно у mtdd${NC}"
+            echo -e "  ${DIM}[3]${NC} Upstream-маршруты ${DIM}(у mtdd: direct и socks5)${NC}"
             echo -e "  ${DIM}[4]${NC} SNI-политика: ${DIM}у mtdd чужой SNI уходит на маскировку${NC}"
         elif [ "${MTPROXYL_MODE:-manager}" = "manager" ] && ! _superexpert_active; then
             echo -e "  ${DIM}[3]${NC} Upstream-маршруты"
@@ -43,13 +47,16 @@ tui_security_menu() {
         echo -e "  ${DIM}[5]${NC} Блокировка IP адресов: $(_tui_ipblock_state_label)"
         echo -e "  ${DIM}[6]${NC} Ограничение скорости клиентов"
         # Туннель — в любом режиме; конфиг цели правится с копией.
-        if [ "$_mtdd" = true ]; then
-            echo -e "  ${DIM}[7]${NC} Туннель AWG до сервера-донора: ${DIM}недоступно у mtdd${NC}"
-            echo -e "  ${DIM}[8]${NC} Telegram через свой AWG (конфиг): ${DIM}недоступно у mtdd${NC}"
-            echo -e "  ${DIM}[9]${NC} Медиа-лимиты mtdd ${DIM}(встроенный лимит загрузок)${NC}"
+        if [ "$_mtdd_noroute" = true ]; then
+            echo -e "  ${DIM}[7]${NC} Туннель AWG до сервера-донора: ${DIM}у цели mtdd — нет (есть в Manager)${NC}"
+            echo -e "  ${DIM}[8]${NC} Telegram через свой AWG (конфиг): ${DIM}у цели mtdd — нет (есть в Manager)${NC}"
         else
             echo -e "  ${DIM}[7]${NC} Туннель AWG до сервера-донора: $(_tui_donor_state_label)"
             echo -e "  ${DIM}[8]${NC} Telegram через свой AWG (конфиг): $(_tui_awg_state_label)"
+        fi
+        if [ "$_mtdd" = true ]; then
+            echo -e "  ${DIM}[9]${NC} Медиа-лимиты mtdd ${DIM}(скачивание файлов)${NC}"
+            echo -e "  ${DIM}[10]${NC} Подозрительные адреса ${DIM}(детектор mtdd: $([ "$(mtdd_cfg_get suspects 2>/dev/null)" = true ] && echo вкл || echo выкл))${NC}"
         fi
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
@@ -60,14 +67,14 @@ tui_security_menu() {
                 shaping_menu
                 press_any_key ;;
             2|7|8)
-                if [ "$_mtdd" = true ]; then
-                    mtdd_unsupported "upstream-маршруты (WARP, AWG, донор)"; press_any_key; continue
+                if [ "$_mtdd_noroute" = true ]; then
+                    mtdd_unsupported "маршруты (WARP, AWG, донор) для цели mtdd; в режиме Manager они есть"; press_any_key; continue
                 fi
                 case "$choice" in 2) tui_warp_menu ;; 7) tui_donor_menu ;; 8) tui_awg_menu ;; esac ;;
             9) [ "$_mtdd" = true ] && tui_mtdd_media_menu ;;
+            10) [ "$_mtdd" = true ] && tui_mtdd_suspects_menu ;;
             3)
                 _require_manager_mode || { press_any_key; continue; }
-                [ "$_mtdd" = true ] && { mtdd_unsupported "upstream-маршруты"; press_any_key; continue; }
                 _require_no_superexpert || { press_any_key; continue; }
                 tui_upstream_menu ;;
             4)

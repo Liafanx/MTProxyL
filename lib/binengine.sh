@@ -141,6 +141,18 @@ engine_is_binary() {
     [ "${MTPROXYL_MODE:-manager}" = "manager" ] && [ "$(engine_backend)" = "binary" ]
 }
 
+# Подпись движка для экранов: «mtdd 1.0.0 (main)» или «telemt v3.5.13».
+# --carrier добавляет носитель telemt («(бинарник)»); у mtdd он один.
+engine_title() {
+    if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
+        echo "mtdd $(mtdd_mgr_version)"
+        return
+    fi
+    local _t; _t="telemt v$(get_telemt_version)"
+    [ "${1:-}" = "--carrier" ] && engine_is_binary && _t+=" ${DIM}(бинарник)${NC}"
+    echo -e "$_t"
+}
+
 engine_backend_title() {
     if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
         echo "mtdd (служба ${MTDD_MGR_SERVICE})"
