@@ -411,6 +411,7 @@ secret_remove() {
     SECRETS_RATE=("${nrt[@]}")
 
     save_secrets
+    declare -F mtdd_devices_drop >/dev/null && mtdd_devices_drop "$label"
     [ "$no_restart" != "true" ] && _secret_apply
     log_success "Секрет '${label}' удалён"
 }
@@ -579,10 +580,6 @@ secret_set_note() {
 
 secret_set_adtag() {
     local label="$1" tag="${2:-}"
-    if mtdd_mgr_active && [ -n "$tag" ] && ! [[ "$tag" =~ ^(remove|none|-|0)$ ]]; then
-        mtdd_unsupported "свой рекламный тег на пользователя — у mtdd тег один на сервер (mtproxyl settings set AD_TAG <hex>)"
-        return 1
-    fi
     local idx=-1 i
     for i in "${!SECRETS_LABELS[@]}"; do
         [ "${SECRETS_LABELS[$i]}" = "$label" ] && { idx=$i; break; }
@@ -999,6 +996,7 @@ secret_rename() {
         _expert_quota_period_move "$old" "$new" || log_warn 'Имя изменено, но период квоты перенести не удалось: проверьте access.user_quota_periods'
     fi
     shaping_rename_profile "$old" "$new" 2>/dev/null || true
+    declare -F mtdd_devices_rename >/dev/null && { mtdd_devices_rename "$old" "$new" || log_warn "Лимит устройств перенести не удалось"; }
     _rename_user_stats_files "$old" "$new" \
         "${INSTALL_DIR}/relay_stats/traffic_db" \
         "${INSTALL_DIR}/relay_stats/user_ips_db" \
@@ -1637,7 +1635,7 @@ target_user_setrate() {
 
 # Рекламная метка пользователя цели — та же секция, что и у менеджера.
 target_user_adtag() {
-    _target_is_mtdd && { mtdd_unsupported "свой ad-tag у пользователя (у mtdd только общий ad_tag в конфиге)"; return; }
+    _target_is_mtdd && { mtdd_user_adtag "$@"; return; }
     local _label="$1" _tag="${2:-}"
     _target_users_ready || return 1
     [ -n "$(_target_user_state "$_label")" ] || {
@@ -2107,7 +2105,7 @@ handle_secret_command() {
     # 'secret list --json' (запрос панели) попадал в ветку пишущих команд и в
     # режиме супер эксперта отказывал, хотя ничего не пишет.
     case "$subcmd" in
-        list|link|qr|export|api-view|note|"") ;;
+        list|link|qr|export|api-view|note|devices|"") ;;
         *) _require_no_superexpert || return 1 ;;
     esac
     case "$subcmd" in
@@ -2126,6 +2124,8 @@ handle_secret_command() {
         adtag)    check_root; secret_set_adtag "$1" "${2:-}" ;;
         note)     check_root; secret_set_note "$@" ;;
         setrate)  check_root; secret_set_rate "$1" "${2:-0}" "${3:-0}" ;;
+        setdevices) check_root; secret_set_devices "${1:-}" "${2:-}" ;;
+        devices)  secret_show_devices "${1:-}" ;;
         reset-quota) check_root; secret_reset_quota "${1:-}" ;;
         setlimits)
             check_root
@@ -2154,6 +2154,8 @@ handle_secret_command() {
             echo -e "    ${GREEN}secret setlimits${NC} <метка> <соед> <ip> <квота> [срок]"
             echo -e "    ${GREEN}secret setrate${NC} <метка> <вверх> <вниз>  Скорость, бит/с (10M, 512k, 0 — без)"
             echo -e "    ${GREEN}secret adtag${NC} <метка> <32hex|remove>  Рекламная метка"
+            echo -e "    ${GREEN}secret setdevices${NC} <метка> <N|0>  Лимит устройств (mtdd)"
+            echo -e "    ${GREEN}secret devices${NC} <метка>    Устройства пользователя (mtdd)"
             echo -e "    ${GREEN}secret reset-quota${NC} <метка>  Обнулить израсходованную квоту"
             echo -e "    ${GREEN}secret link${NC} [метка]       Ссылка"
             echo -e "    ${GREEN}secret qr${NC} [метка]         Ссылки (устар., = link)"

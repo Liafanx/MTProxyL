@@ -130,6 +130,43 @@ def call(cfg, method, path, body=None, tok=None):
         raise ApiError(5, status, etype, "эта сборка mtdd не знает маршрут %s" % path)
     raise ApiError(6, status, etype, msg)
 
+def raw_get(url, tok=""):
+    headers = {"Authorization": "Bearer " + tok} if tok else {}
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=5) as r:
+        return r.read().decode("utf-8", "replace")
+
+def prom_text(cfg):
+    # Как у лаунчера mtdd: сначала свой listener метрик, потом устаревший
+    # GET /metrics на порту API с админским токеном.
+    port = cfg.get("metrics_port", 9091)
+    if isinstance(port, int) and port > 0:
+        host = cfg.get("metrics_host") or "127.0.0.1"
+        if host in ("0.0.0.0", ""):
+            host = "127.0.0.1"
+        elif host == "::":
+            host = "::1"
+        if ":" in host:
+            host = "[" + host + "]"
+        tok = env_value(cfg["metrics_token_env"]) if cfg.get("metrics_token_env") else ""
+        try:
+            return raw_get("http://%s:%d/metrics" % (host, port), tok)
+        except (urllib.error.URLError, OSError):
+            pass
+    try:
+        return raw_get(base_url(cfg) + "/metrics", token(cfg))
+    except (urllib.error.URLError, OSError):
+        return ""
+
+def cmd_dash_input(cfg, out_dir):
+    # Вход дашборда метрик (lib/mtdd_dash.sh): ответ /v1/status в конверте
+    # {"data": ...}, как его отдаёт API, и текст Prometheus.
+    st = call(cfg, "GET", "/v1/status")
+    with open(os.path.join(out_dir, "status.json"), "w", encoding="utf-8") as f:
+        json.dump({"ok": True, "data": st}, f, ensure_ascii=False)
+    with open(os.path.join(out_dir, "metrics.txt"), "w", encoding="utf-8") as f:
+        f.write(prom_text(cfg))
+
 def full_api(cfg):
     try:
         call(cfg, "GET", "/v1/system/info")
@@ -229,6 +266,13 @@ def devices_ips(cfg, name):
 def num(v):
     return v if isinstance(v, int) and not isinstance(v, bool) else None
 
+
+def seen_ips(stats):
+    # Онлайн-IP: unique_ips_seen (1.0.0+); сборка без него — unique_ips_active.
+    stats = stats or {}
+    v = num(stats.get("unique_ips_seen"))
+    return v if v is not None else (num(stats.get("unique_ips_active")) or 0)
+
 def store_secrets(cfg, revision):
     # Секреты прямо из users.json (под root), если ревизия та же, что у API.
     path = cfg.get("users_path") or ""
@@ -271,9 +315,25 @@ def utc_rfc3339(v):
         d = d.replace(tzinfo=datetime.timezone.utc)
     return d.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+def devices_limits():
+    # devices.conf рядом с secrets.conf: «метка|N» — лимит устройств mtdd.
+    # Отдельный файл: у telemt такого лимита нет, формат secrets.conf общий.
+    path = os.environ.get("MTDD_DEVICES_FILE") or ""
+    out = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                name, _, n = line.strip().partition("|")
+                if name and not name.startswith("#") and n.isdigit() and 0 < int(n) <= 1000000:
+                    out[name] = int(n)
+    except OSError:
+        pass
+    return out
+
 def desired_users(text):
     # Строки secrets.conf: LABEL|SECRET|CREATED|ENABLED|MAX_CONNS|MAX_IPS|QUOTA|EXPIRES|NOTES|AD_TAG|RATE
     out = []
+    devs = devices_limits()
     for line in text.splitlines():
         if not line.strip() or line.lstrip().startswith("#"):
             continue
@@ -296,11 +356,16 @@ def desired_users(text):
                     "max_connections": pos(f[4]), "max_unique_ips": pos(f[5]),
                     "data_quota_bytes": pos(f[6]), "expires_at": utc_rfc3339(f[7]),
                     "note": utf8_cut(f[8], 256),   # mtdd: строка до 256 байт, null не принимает
-                    "rate_limit_up_bytes_per_sec": up, "rate_limit_down_bytes_per_sec": down})
+                    "rate_limit_up_bytes_per_sec": up, "rate_limit_down_bytes_per_sec": down,
+                    "max_devices": devs.get(name),
+                    "ad_tag": f[9].lower() if len(f[9]) == 32 else None})
     return out
 
 POLICY = ("max_connections", "max_unique_ips", "data_quota_bytes", "expires_at", "note",
           "rate_limit_up_bytes_per_sec", "rate_limit_down_bytes_per_sec")
+# Поля mtdd 1.0.0+: отправляем, только когда заданы или уже есть у пользователя,
+# чтобы сборка постарше не получала незнакомых ключей.
+POLICY_NEW = ("max_devices", "ad_tag")
 
 def cmd_sync(cfg, text):
     # secrets.conf → mtdd: завести недостающих с их ключами, убрать лишних,
@@ -324,7 +389,7 @@ def cmd_sync(cfg, text):
         b = {"name": w["name"], "secret": w["secret"]}
         if full:
             b["enabled"] = w["enabled"]
-            for k in POLICY:
+            for k in POLICY + POLICY_NEW:
                 if w[k] not in (None, ""):
                     b[k] = w[k]
         elif w["max_connections"]:
@@ -360,6 +425,8 @@ def cmd_sync(cfg, text):
                     continue
                 changed = True
             patch = {k: w[k] for k in POLICY if norm(u.get(k)) != norm(w[k])}
+            patch.update({k: w[k] for k in POLICY_NEW
+                          if (k in u or w[k] is not None) and norm(u.get(k)) != norm(w[k])})
             if patch:
                 if not attempt(n, lambda: call(cfg, "PATCH", "/v1/users/%s" % n, patch)):
                     continue
@@ -434,8 +501,12 @@ def users_telemt_rows(cfg, want_links=True, want_ips=True, full=None):
             "username": name,
             "enabled": bool(u.get("enabled", True)),
             "current_connections": num(s.get("active_connections")) or 0,
-            "active_unique_ips": num(s.get("unique_ips_active")) or 0,
-            "recent_unique_ips": num(s.get("unique_ips_seen")) or 0,
+            # telemt active_unique_ips — IP с открытыми соединениями. У mtdd это
+            # unique_ips_seen; его unique_ips_active строже (IP, передавшие
+            # ≥ unique_ip_min_bytes, по умолчанию 1 MiB) и кратно меньше.
+            "active_unique_ips": seen_ips(s),
+            "recent_unique_ips": seen_ips(s),
+            "qualified_unique_ips": num(s.get("unique_ips_active")) or 0,
             "total_octets": c2s + s2c,
             "octets_from_client": c2s,
             "octets_to_client": s2c,
@@ -449,6 +520,9 @@ def users_telemt_rows(cfg, want_links=True, want_ips=True, full=None):
         down = num(u.get("rate_limit_down_bytes_per_sec"))
         row["rate_limit_up_bps"] = up * 8 if up else None
         row["rate_limit_down_bps"] = down * 8 if down else None
+        # Свой рекламный тег пользователя (mtdd 1.0.0+), как user_ad_tag у telemt.
+        if u.get("ad_tag"):
+            row["user_ad_tag"] = u["ad_tag"]
         if want_links:
             native = fast.get(name) or (links(cfg, name).get("native") or "")
             row["links"] = {"tls": [native] if native else [], "classic": [], "secure": []}
@@ -488,9 +562,11 @@ def cmd_users_tsv(cfg, with_links=True):
              num(u.get("max_connections")) or 0, num(u.get("max_unique_ips")) or 0,
              num(u.get("data_quota_bytes")) or 0, u.get("expires_at") or "", note,
              up * 8, down * 8,
-             num(s.get("active_connections")) or 0, num(s.get("unique_ips_active")) or 0,
+             num(s.get("active_connections")) or 0, seen_ips(s),
              num(s.get("payload_bytes_c2s")) or 0, num(s.get("payload_bytes_s2c")) or 0,
-             num(s.get("quota_used_bytes")) or 0, u.get("tls_domain") or ""]
+             num(s.get("quota_used_bytes")) or 0, u.get("tls_domain") or "",
+             num(u.get("max_devices")) or 0, num(s.get("devices_connected")) or 0,
+             u.get("ad_tag") or ""]
         print("|".join(str(x) for x in f))
 
 def cmd_active_ips(cfg):
@@ -499,7 +575,9 @@ def cmd_active_ips(cfg):
         die(5, "эта сборка mtdd не отдаёт устройства (/devices)")
     data = []
     for u in users(cfg):
-        if not u.get("enabled", True) or not num((u.get("stats") or {}).get("unique_ips_active")):
+        # seen, а не active: шейпингу нужен каждый подключённый IP, а не только
+        # прокачавший 1 MiB.
+        if not u.get("enabled", True) or not seen_ips(u.get("stats")):
             continue
         ips = devices_ips(cfg, u.get("name") or "")
         if ips:
@@ -674,6 +752,35 @@ def main():
             cmd_dcs_telemt(cfg)
         elif c == "snapshot":
             cmd_snapshot(cfg)
+        elif c == "dash-input":
+            cmd_dash_input(cfg, a[1])
+        elif c == "suspects-ips":
+            # format=ips — текст, адрес на строку (не JSON-конверт).
+            try:
+                text = raw_get(base_url(cfg) + "/v1/suspects?format=ips&limit=100000&min_score=%d"
+                               % int(a[1]), token(cfg))
+            except urllib.error.HTTPError as e:
+                if e.code in (401, 403):
+                    die(4, "API mtdd отклонил токен (%d)" % e.code)
+                die(5, "эта сборка mtdd не отдаёт /v1/suspects (обновите: mtproxyl engine update main)"
+                    if e.code == 404 else "HTTP %d от /v1/suspects" % e.code)
+            except (urllib.error.URLError, OSError) as e:
+                die(3, "API mtdd не отвечает: %s" % getattr(e, "reason", e))
+            # Для nftables: только корректные адреса и подсети, IPv4 в виде
+            # v4-mapped — как IPv4, без повторов (по ним и считается итог).
+            import ipaddress
+            seen = []
+            for line in text.splitlines():
+                try:
+                    net = ipaddress.ip_network(line.strip(), strict=False)
+                except ValueError:
+                    continue
+                if net.version == 6 and net.network_address.ipv4_mapped and net.prefixlen >= 96:
+                    net = ipaddress.ip_network("%s/%d" % (net.network_address.ipv4_mapped, net.prefixlen - 96), strict=False)
+                txt = str(net.network_address) if net.num_addresses == 1 else str(net)
+                if txt not in seen:
+                    seen.append(txt)
+            sys.stdout.write("".join(x + "\n" for x in seen))
         elif c == "cfg-get":
             cmd_cfg_get(cfg, a[1])
         elif c == "cfg-set":
@@ -982,10 +1089,11 @@ mtdd_media_status() {
     local _u _t
     _u=$(mtdd_cfg_get media_user_rate_kbps); _t=$(mtdd_cfg_get media_total_rate_kbps)
     echo ""
-    echo -e "  ${BOLD}Медиа-лимиты mtdd${NC} ${DIM}(загрузки файлов, медиа-DC)${NC}"
-    echo -e "    На пользователя: $(_mtdd_kbps_human "$_u")"
-    echo -e "    На весь сервер:  $(_mtdd_kbps_human "$_t")"
-    echo -e "  ${DIM}Лимит делится между активными медиа-соединениями.${NC}"
+    echo -e "  ${BOLD}Медиа-лимиты mtdd${NC} ${DIM}(скачивание файлов и медиа клиентом, медиа-DC)${NC}"
+    echo -e "    На пользователя: $(_mtdd_kbps_human "$_u") ${DIM}— на секрет целиком: все его IP и устройства вместе${NC}"
+    echo -e "    На весь сервер:  $(_mtdd_kbps_human "$_t") ${DIM}— на всех пользователей вместе${NC}"
+    echo -e "  ${DIM}Не на IP. Лимит делится поровну между активными медиа-соединениями;${NC}"
+    echo -e "  ${DIM}отправку файлов клиентом (upload) не ограничивает.${NC}"
     echo ""
 }
 
@@ -997,6 +1105,157 @@ mtdd_media_set() {
     mtdd_config_set "media_user_rate_kbps=${_u}" "media_total_rate_kbps=${_t}" || return 1
     mtdd_reload
     log_success "Медиа-лимиты: на пользователя $(_mtdd_kbps_human "$_u"), на сервер $(_mtdd_kbps_human "$_t")"
+}
+
+# ── Подозрительные адреса (mtdd 1.0.0+) ────────────────────────
+# Детектор mtdd копит адреса с признаками сканера/зонда (/v1/suspects).
+# Таблица — как у `mtdd-ctl suspects`; жёсткая блокировка — набор nftables
+# (до перезагрузки), мягкая — теневой бан самого mtdd (suspect_ban_score).
+MTDD_SUSPECTS_NFT_TABLE="mtproxyl_suspects"
+
+mtdd_suspects_list() {
+    local _min="${1:-0}" _json
+    [[ "$_min" =~ ^[0-9]$ ]] || { log_error "Мин. совпадений: 0–9"; return 1; }
+    _json=$(_mtdd_call GET "/v1/suspects?limit=200&min_matches=${_min}") || {
+        case "$MTDD_LAST_ERROR" in *"не знает маршрут"*) mtdd_require_full_api "показывать подозрительные адреса" ;;
+            *) _mtdd_fail "Список не получен" ;; esac
+        return 1; }
+    echo ""
+    draw_header "ПОДОЗРИТЕЛЬНЫЕ АДРЕСА"
+    MTDD_SUSP_JSON="$_json" MTDD_SUSP_ON="$(mtdd_cfg_get suspects 2>/dev/null)" python3 -I - <<'PY'
+import datetime, json, os, sys
+data = json.loads(os.environ.get("MTDD_SUSP_JSON") or "{}")
+rows = data.get("suspects") or []
+codes = {"probe_session": "A", "secret_text": "B", "raw_obfuscated2": "C", "multi_mode": "D",
+         "wrong_secret": "E", "port_check": "F", "repeat_visits": "G", "junk": "H", "canary": "K"}
+by = data.get("by_matches") or {}
+print()
+print("  Всего: {} · по числу совпадений: {} · под наблюдением: {} · теневой бан: {}".format(
+    data.get("total", 0),
+    ", ".join("{}×{}".format(k, by[k]) for k in sorted(by, key=int, reverse=True)) or "—",
+    data.get("watched", 0), data.get("shadow_banned", 0)))
+if not rows:
+    if os.environ.get("MTDD_SUSP_ON") != "true":
+        print("  Учёт выключен: mtproxyl suspects on (отпечаток SYN/TLS — mtproxyl tune set fingerprint true)")
+    else:
+        print("  Подозрительных адресов нет")
+    sys.exit(0)
+
+def ago(text):
+    try:
+        then = datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except Exception:
+        return text
+    sec = int((datetime.datetime.now(datetime.timezone.utc) - then).total_seconds())
+    for div, unit in ((86400, "д"), (3600, "ч"), (60, "мин")):
+        if sec >= div:
+            return "{} {}".format(sec // div, unit)
+    return "{} с".format(sec)
+
+syn_os = {"linux": "Linux", "windows": "Windows", "apple": "Apple"}
+print()
+print("  {:>3} {:>5}  {:<39} {:<16} {:>5} {:>7}  {:<9} {:<8} {}".format(
+    "Сов", "Score", "IP", "Признаки", "Хиты", "Был", "Платф.", "ОС(SYN)", "Пользователь"))
+for row in rows:
+    sig = row.get("signals") or {}
+    marks = "".join(codes.get(n, "?") + ("" if c == 1 else str(min(c, 99)))
+                    for n, c in sorted(sig.items(), key=lambda kv: codes.get(kv[0], "Z")))
+    flags = ((" !бан" if row.get("shadow_banned") else "") + (" ·лог" if row.get("watched") else "")
+             + (" ·клиент" if row.get("real_client") else ""))
+    syn = row.get("syn") or {}
+    print("  {:>3} {:>5}  {:<39} {:<16} {:>5} {:>7}  {:<9} {:<8} {}{}".format(
+        row.get("matches", 0), round(row.get("score", 0)), str(row.get("ip", "?"))[:39], marks[:16],
+        row.get("hits", 0), ago(row.get("last_seen", "")), row.get("platform", ""),
+        syn_os.get(syn.get("layout", ""), "—"), row.get("user") or "—", flags))
+print()
+print("  A сессия-зонд · B секрет текстом · C obfuscated2 без FakeTLS · D FakeTLS+obfuscated2")
+print("  E наш домен, неверный секрет · F connect без данных · G повторные короткие визиты")
+print("  H мусор/чужой SNI/replay · K ловушка (canary) · цифра — число повторов")
+print("  ·клиент — с адреса были и настоящие сессии · !бан — теневой бан mtdd")
+PY
+    echo ""
+}
+
+# Правила nftables для блока подозрительных адресов (stdout). Только порт
+# прокси: блок не должен закрывать SSH администратору, который сам набрал
+# признаки, проверяя прокси. auto-merge склеивает пересекающиеся подсети.
+_mtdd_suspects_nft_rules() {
+    local _port="$1" _ips="$2" _v4="" _v6="" _ip
+    MTDD_SUSPECTS_COUNT=0
+    while IFS= read -r _ip; do
+        [ -n "$_ip" ] || continue
+        # Адреса уже проверены и приведены помощником (suspects-ips);
+        # здесь — только раскладка по семействам и защита от мусора в nft.
+        if [[ "$_ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$ ]]; then _v4+="${_v4:+, }${_ip}"
+        elif [[ "$_ip" =~ ^[0-9a-fA-F:]*:[0-9a-fA-F:]*(/[0-9]{1,3})?$ ]]; then _v6+="${_v6:+, }${_ip}"
+        else continue; fi
+        MTDD_SUSPECTS_COUNT=$((MTDD_SUSPECTS_COUNT + 1))
+    done <<< "$_ips"
+    local _e4="" _e6=""
+    [ -n "$_v4" ] && _e4=" elements = { ${_v4} };"
+    [ -n "$_v6" ] && _e6=" elements = { ${_v6} };"
+    echo "table inet ${MTDD_SUSPECTS_NFT_TABLE}"
+    echo "delete table inet ${MTDD_SUSPECTS_NFT_TABLE}"
+    echo "table inet ${MTDD_SUSPECTS_NFT_TABLE} {"
+    echo "  set v4 { type ipv4_addr; flags interval; auto-merge;${_e4} }"
+    echo "  set v6 { type ipv6_addr; flags interval; auto-merge;${_e6} }"
+    echo "  chain input { type filter hook input priority -5; policy accept;"
+    echo "    tcp dport ${_port} ip saddr @v4 drop"
+    echo "    tcp dport ${_port} ip6 saddr @v6 drop"
+    echo "  }"
+    echo "}"
+}
+
+mtdd_suspects_block() {
+    local _score="${1:-60}" _ips _port _rules
+    [[ "$_score" =~ ^[0-9]+$ ]] && [ "$((10#$_score))" -ge 1 ] && [ "$((10#$_score))" -le 100 ] \
+        || { log_error "Мин. score: 1–100"; return 1; }
+    command -v nft >/dev/null 2>&1 || { log_error "Нужен nftables (nft)"; return 1; }
+    _port=$(mtdd_cfg_get proxy_port)
+    [[ "${_port:-}" =~ ^[0-9]+$ ]] || _port="${PROXY_PORT:-}"
+    [[ "${_port:-}" =~ ^[0-9]+$ ]] || { log_error "Не удалось узнать порт прокси mtdd"; return 1; }
+    _ips=$(_mtdd_py suspects-ips "$((10#$_score))" 2>&1) || { log_error "Адреса не получены: ${_ips}"; return 1; }
+    _rules=$(_mtdd_suspects_nft_rules "$_port" "$_ips")
+    nft -f - <<< "$_rules" || { log_error "nft не применил правила"; return 1; }
+    _mtdd_suspects_nft_rules "$_port" "$_ips" >/dev/null   # счётчик в этой оболочке
+    log_success "В блоке адресов и подсетей: ${MTDD_SUSPECTS_COUNT} на порту ${_port} (score ≥ $((10#$_score))). Снять: mtproxyl suspects unblock"
+    # За фронтом с PROXY protocol на порт прокси приходит адрес фронта, а не
+    # клиента — такой блок клиентов не поймает.
+    [ "$(mtdd_cfg_get proxy_protocol)" = true ] \
+        && log_warn "Включён PROXY protocol: клиенты приходят через фронт, этот блок их не остановит — блокируйте адреса на фронте"
+    log_info "Блокировка до перезагрузки. Мгновенный отказ сам по себе заметен — мягче теневой бан: mtproxyl suspects ban <score>"
+}
+
+mtdd_suspects_unblock() {
+    command -v nft >/dev/null 2>&1 || { log_error "Нужен nftables (nft)"; return 1; }
+    if nft delete table inet "$MTDD_SUSPECTS_NFT_TABLE" 2>/dev/null; then log_success "Блокировка снята"
+    else log_info "Блокировки не было"; fi
+}
+
+handle_suspects_command() {
+    engine_is_mtdd || { log_error "Подозрительные адреса считает только движок mtdd"; return 1; }
+    local _sub="${1:-list}"
+    case "$_sub" in
+        ''|list|[0-9]) [[ "$_sub" =~ ^[0-9]$ ]] && set -- list "$_sub"
+                  mtdd_suspects_list "${2:-0}" ;;
+        json)     _mtdd_call GET "/v1/suspects?limit=100000" || _mtdd_fail "Список не получен" ;;
+        block)    check_root; mtdd_suspects_block "${2:-60}" ;;
+        unblock)  check_root; mtdd_suspects_unblock ;;
+        on)       check_root; mtdd_tune_set suspects true ;;
+        off)      check_root; mtdd_tune_set suspects false ;;
+        ban)      check_root
+                  [[ "${2:-}" =~ ^[0-9]+$ ]] && [ "$((10#$2))" -le 100 ] \
+                      || { log_error "Использование: suspects ban <score 1–100 | 0 — выкл>"; return 1; }
+                  mtdd_tune_set suspect_ban_score "$((10#$2))" ;;
+        *)
+            echo -e "  ${BOLD}Подозрительные адреса (mtdd):${NC}"
+            echo -e "    ${GREEN}suspects${NC} [мин. совпадений 0–9]  Таблица"
+            echo -e "    ${GREEN}suspects json${NC}                 Как есть, JSON"
+            echo -e "    ${GREEN}suspects on|off${NC}               Учёт (ключ suspects)"
+            echo -e "    ${GREEN}suspects ban${NC} <score|0>         Теневой бан mtdd: такие уходят на маскировку"
+            echo -e "    ${GREEN}suspects block${NC} [score]         nftables-блок на порт прокси, score ≥ (по умолч. 60)"
+            echo -e "    ${GREEN}suspects unblock${NC}              Снять nftables-блок" ;;
+    esac
 }
 
 handle_media_command() {
@@ -1028,7 +1287,7 @@ tui_mtdd_media_menu() {
         case "$_c" in
             1)
                 local _u _t
-                read_line _u "  ${BOLD}На пользователя, Мбит/с (0 — без лимита):${NC} "
+                read_line _u "  ${BOLD}На пользователя (все его IP вместе), Мбит/с (0 — без лимита):${NC} "
                 read_line _t "  ${BOLD}На весь сервер, Мбит/с (0 — без лимита):${NC} "
                 handle_media_command set "${_u:-0}" "${_t:-0}" || true
                 press_any_key ;;
@@ -1175,6 +1434,8 @@ if len(row) > 7 and row[7]: b["note"] = row[7]
 for k, i in (("rate_limit_up_bytes_per_sec", 8), ("rate_limit_down_bytes_per_sec", 9)):
     if n(i): b[k] = n(i) // 8
 if len(row) > 15 and row[15]: b["tls_domain"] = row[15]
+if n(16): b["max_devices"] = n(16)
+if len(row) > 18 and len(row[18]) == 32: b["ad_tag"] = row[18]
 print(json.dumps(b, ensure_ascii=False))
 PY
 }
@@ -1228,6 +1489,84 @@ _mtdd_patch() {
     fi
     _mtdd_call PATCH "/v1/users/${_label}" "$_body" >/dev/null \
         || _mtdd_fail "Не удалось изменить '${_label}'" || return 1
+}
+
+# Свой рекламный тег пользователя (mtdd 1.0.0+): идёт в его запросах к ME
+# вместо общего; на маршруте Direct тега нет вовсе.
+mtdd_user_adtag() {
+    local _label="$1" _tag="${2:-}"
+    _mtdd_valid_label "$_label" || return 1
+    if [ -z "$_tag" ]; then
+        local _at; _at=$(_mtdd_user_row "$_label" | cut -d'|' -f19)
+        echo -e "  ${BOLD}${_label}:${NC} ${_at:-общий тег сервера}"
+        return 0
+    fi
+    case "$_tag" in
+        remove|none|-|0) _mtdd_patch "$_label" '{"ad_tag":null}' "менять тег пользователя" || return 1
+                         log_success "Свой тег снят с '${_label}'"; return 0 ;;
+    esac
+    [[ "$_tag" =~ ^[0-9a-fA-F]{32}$ ]] && [ "$_tag" != "00000000000000000000000000000000" ] \
+        || { log_error "Тег: 32 шестнадцатеричных символа, не из одних нулей"; return 1; }
+    _mtdd_patch "$_label" "{\"ad_tag\":\"${_tag,,}\"}" "менять тег пользователя" || return 1
+    log_success "Свой тег '${_label}': ${_tag,,}"
+}
+
+# Лимит устройств (mtdd 1.0.0+): устройство — ключ auth_key_id на DC.
+# Новый ключ сверх лимита вытесняет самый давний простаивающий.
+_mtdd_devices_value() {
+    local _v="${1:-}"
+    [[ "$_v" =~ ^[0-9]+$ ]] && [ "${#_v}" -le 7 ] && [ "$((10#$_v))" -le 1000000 ] \
+        || { log_error "Устройств: целое 1..1000000, 0 — без лимита"; return 1; }
+    echo "$((10#$_v))"
+}
+
+mtdd_user_setdevices() {
+    local _label="$1" _n
+    _n=$(_mtdd_devices_value "${2:-}") || return 1
+    if [ "$_n" -eq 0 ]; then
+        _mtdd_patch "$_label" '{"max_devices":null}' "менять лимит устройств" || return 1
+        log_success "Лимит устройств снят с '${_label}'"
+    else
+        _mtdd_patch "$_label" "{\"max_devices\":${_n}}" "менять лимит устройств" || return 1
+        log_success "Лимит устройств '${_label}': ${_n}"
+    fi
+}
+
+# Устройства пользователя: ключи auth_key_id по DC, IP, платформа.
+mtdd_user_devices() {
+    local _label="$1" _json
+    _mtdd_valid_label "$_label" || return 1
+    _json=$(_mtdd_call GET "/v1/users/${_label}/devices") || {
+        case "$MTDD_LAST_ERROR" in *"не знает маршрут"*) mtdd_require_full_api "показывать устройства" ;;
+            *) _mtdd_fail "Устройства '${_label}' не получены" ;; esac
+        return 1; }
+    local _lim; _lim=$(_mtdd_user_row "$_label" | cut -d'|' -f17)
+    echo ""
+    draw_header "УСТРОЙСТВА: ${_label}"
+    MTDD_DEV_JSON="$_json" python3 -I - "${_lim:-0}" <<'PY'
+import json, os, sys
+d = json.loads(os.environ.get("MTDD_DEV_JSON") or "{}")
+lim = int(sys.argv[1] or 0)
+print()
+print("  Подключено сейчас: %s · за окно учёта: %s · лимит: %s" % (
+    d.get("devices_connected", 0), d.get("devices", 0), lim if lim else "нет"))
+keys = d.get("keys") or []
+if not keys:
+    print("  Устройств нет")
+    sys.exit(0)
+print()
+print("  %-10s %4s %5s  %-9s %8s  %-39s %s" % ("Ключ", "DC", "Соед", "Статус", "Простой", "IP", "Платформа"))
+for k in keys:
+    idle = int(k.get("idle_seconds") or 0)
+    idle_s = "—" if k.get("connected") else ("%d с" % idle if idle < 60 else "%d мин" % (idle // 60))
+    print("  %-10s %4s %5s  %-9s %8s  %-39s %s" % (
+        str(k.get("id", ""))[:10], k.get("dc", ""), k.get("connections", 0),
+        "в сети" if k.get("connected") else "ушёл", idle_s, str(k.get("ip") or "—")[:39], k.get("platform") or "—"))
+print()
+print("  Устройство — ключ авторизации Telegram (auth_key_id) на DC. Сверх лимита новый")
+print("  ключ вытесняет самый давний без соединений, иначе соединение закрывается.")
+PY
+    echo ""
 }
 
 # Числовой лимит: пусто — не трогать, 0 — снять, иначе значение.
@@ -1306,12 +1645,13 @@ mtdd_users_list() {
     echo ""
     echo -e "  ${BOLD}$(_pad 'МЕТКА' 20) $(_pad 'СТАТУС' 10) $(_pad 'СОЕД.' 6) ЛИМИТЫ${NC}"
     echo -e "  ${DIM}$(_repeat '─' 66)${NC}"
-    local _n _en _sec _mc _mi _q _ex _note _ru _rd _c _rest _lim
-    while IFS='|' read -r _n _en _sec _mc _mi _q _ex _note _ru _rd _c _rest; do
+    local _n _en _sec _mc _mi _q _ex _note _ru _rd _c _ips _c2s _s2c _qu _dom _md _dc _at _rest _lim
+    while IFS='|' read -r _n _en _sec _mc _mi _q _ex _note _ru _rd _c _ips _c2s _s2c _qu _dom _md _dc _at _rest; do
         [ -n "$_n" ] || continue
         _lim=""
         [ "${_mc:-0}" != 0 ] && _lim="соед: ${_mc}"
         [ "${_mi:-0}" != 0 ] && _lim="${_lim}${_lim:+, }IP: ${_mi}"
+        [ "${_md:-0}" != 0 ] && _lim="${_lim}${_lim:+, }устр.: ${_md}"
         [ "${_q:-0}" != 0 ] && _lim="${_lim}${_lim:+, }квота: $(format_bytes "$_q" 2>/dev/null || echo "$_q")"
         [ -n "$_ex" ] && _lim="${_lim}${_lim:+, }до ${_ex%%T*}"
         [ "${_ru:-0}" != 0 ] || [ "${_rd:-0}" != 0 ] && _lim="${_lim}${_lim:+, }↑$(_rate_human "$_ru") ↓$(_rate_human "$_rd")"
@@ -1350,9 +1690,9 @@ mtdd_users_list_json() {
         done < "$_TARGET_USER_IPS_DB"
     fi
 
-    local _first=1 _n _en _sec _mc _mi _q _ex _note _ru _rd _rest _ln _sn _nn _xn
+    local _first=1 _n _en _sec _mc _mi _q _ex _note _ru _rd _c _ips _c2s _s2c _qu _dom _md _dc _at _rest _ln _sn _nn _xn
     printf '['
-    while IFS='|' read -r _n _en _sec _mc _mi _q _ex _note _ru _rd _rest; do
+    while IFS='|' read -r _n _en _sec _mc _mi _q _ex _note _ru _rd _c _ips _c2s _s2c _qu _dom _md _dc _at _rest; do
         [ -n "$_n" ] || continue
         [ $_first -eq 1 ] || printf ','
         _first=0
@@ -1360,8 +1700,8 @@ mtdd_users_list_json() {
         json_escape_fast "$_sec";  _sn="$_JSON_ESCAPE_OUT"
         json_escape_fast "$_note"; _nn="$_JSON_ESCAPE_OUT"
         json_escape_fast "$_ex";   _xn="$_JSON_ESCAPE_OUT"
-        printf '{"label":"%s","secret":"%s","created":0,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"%s","ad_tag":"","rate_limit_up_bps":%s,"rate_limit_down_bps":%s,"total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":[%s]}' \
-            "$_ln" "$_sn" "$_en" "${_mc:-0}" "${_mi:-0}" "${_q:-0}" "$_xn" "$_nn" "${_ru:-0}" "${_rd:-0}" \
+        printf '{"label":"%s","secret":"%s","created":0,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"%s","ad_tag":"%s","max_devices":%s,"rate_limit_up_bps":%s,"rate_limit_down_bps":%s,"total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":[%s]}' \
+            "$_ln" "$_sn" "$_en" "${_mc:-0}" "${_mi:-0}" "${_q:-0}" "$_xn" "$_nn" "${_at//[^0-9a-f]/}" "${_md:-0}" "${_ru:-0}" "${_rd:-0}" \
             "${_TDB_IN[$_n]:-0}" "${_TDB_OUT[$_n]:-0}" "${_TDB_TOTAL[$_n]:-0}" "${_IP_HIST[$_n]:-}"
     done <<< "$_rows"
     printf ']\n'
@@ -1372,8 +1712,8 @@ mtdd_user_show_limits() {
     [ -n "$_label" ] || { mtdd_users_list; return; }
     local _row; _row=$(_mtdd_user_row "$_label")
     [ -n "$_row" ] || { log_error "Пользователь '${_label}' не найден у mtdd"; return 1; }
-    local _n _en _sec _mc _mi _q _ex _note _ru _rd _c _ips _c2s _s2c _qu _dom
-    IFS='|' read -r _n _en _sec _mc _mi _q _ex _note _ru _rd _c _ips _c2s _s2c _qu _dom <<< "$_row"
+    local _n _en _sec _mc _mi _q _ex _note _ru _rd _c _ips _c2s _s2c _qu _dom _md _dc _at _rest
+    IFS='|' read -r _n _en _sec _mc _mi _q _ex _note _ru _rd _c _ips _c2s _s2c _qu _dom _md _dc _at _rest <<< "$_row"
     echo ""
     echo -e "  ${BOLD}Лимиты '${_label}':${NC}"
     echo -e "    Соединений   : $([ "${_mc:-0}" != 0 ] && echo "$_mc" || echo '—')"
@@ -1381,19 +1721,21 @@ mtdd_user_show_limits() {
     echo -e "    Квота, байт  : $([ "${_q:-0}" != 0 ] && echo "$_q (израсходовано ${_qu:-0})" || echo '—')"
     echo -e "    Истекает     : ${_ex:-—}"
     echo -e "    Скорость     : $([ "${_ru:-0}" != 0 ] || [ "${_rd:-0}" != 0 ] && echo "↑$(_rate_human "$_ru") ↓$(_rate_human "$_rd")" || echo '—')"
+    echo -e "    Устройств    : $([ "${_md:-0}" != 0 ] && echo "${_md} (подключено ${_dc:-0})" || echo "— (подключено ${_dc:-0})")"
     [ -n "$_note" ] && echo -e "    Заметка      : ${_note}"
+    [ -n "$_at" ] && echo -e "    Рекл. тег    : ${_at}"
     [ -n "$_dom" ] && echo -e "    Свой SNI     : ${_dom}"
     echo ""
 }
 
 mtdd_users_export() {
-    local _rows _n=0 _out="" _name _en _sec _mc _mi _q _ex _note _ru _rd _rest
+    local _rows _n=0 _out="" _name _en _sec _mc _mi _q _ex _note _ru _rd _c _ips _c2s _s2c _qu _dom _md _dc _at _rest
     _rows=$(_mtdd_py users-tsv 2>/dev/null) || { log_error "$(mtdd_api_unavailable_reason)"; return 1; }
-    while IFS='|' read -r _name _en _sec _mc _mi _q _ex _note _ru _rd _rest; do
+    while IFS='|' read -r _name _en _sec _mc _mi _q _ex _note _ru _rd _c _ips _c2s _s2c _qu _dom _md _dc _at _rest; do
         [ -n "$_name" ] || continue
         local _rt=""
         { [ "${_ru:-0}" != 0 ] || [ "${_rd:-0}" != 0 ]; } && _rt="${_ru:-0}:${_rd:-0}"
-        _out+="${_name}|${_sec}|${_en}|${_mc:-0}|${_mi:-0}|${_q:-0}|${_ex:-0}|${_note}||${_rt}"$'\n'
+        _out+="${_name}|${_sec}|${_en}|${_mc:-0}|${_mi:-0}|${_q:-0}|${_ex:-0}|${_note}|${_at}|${_rt}"$'\n'
         _n=$((_n + 1))
     done <<< "$_rows"
     _secret_export_write "${1:-}" "$_out" "$_n"
@@ -1413,8 +1755,7 @@ mtdd_users_import() {
         _secret_parse_line "$_line" || { _bad=$((_bad + 1)); continue; }
         grep -qxF "$_IMP_L" <<< "$_existing" && { _dup=$((_dup + 1)); continue; }
         _ex=$(_normalize_expiry "$_IMP_EX" 2>/dev/null) || _ex="0"
-        [ -n "$_IMP_AT" ] && log_warn "${_IMP_L}: свой ad-tag mtdd не поддерживает — пропущен"
-        _body=$(mtdd_user_body "$_IMP_L" "$_IMP_K" "$_IMP_EN" "$_IMP_MC" "$_IMP_MI" "$_IMP_Q" "$_ex" "$_IMP_N" "$_IMP_RT") \
+        _body=$(mtdd_user_body "$_IMP_L" "$_IMP_K" "$_IMP_EN" "$_IMP_MC" "$_IMP_MI" "$_IMP_Q" "$_ex" "$_IMP_N" "$_IMP_RT" "$_IMP_AT") \
             || { _bad=$((_bad + 1)); continue; }
         if _mtdd_call POST /v1/users "$_body" >/dev/null; then
             _added=$((_added + 1)); _existing+=$'\n'"$_IMP_L"
@@ -1441,7 +1782,7 @@ mtdd_user_body() {
     MTDD_KEY="$_key" python3 -I - "$_full" "$_lab" "" "$@" <<'PY'
 import json, os, sys
 full = sys.argv[1] == "1"
-lab, key, en, mc, mi, q, ex, note, rt = (sys.argv[2:] + [""] * 9)[:9]
+lab, key, en, mc, mi, q, ex, note, rt, at = (sys.argv[2:] + [""] * 10)[:10]
 key = os.environ.get("MTDD_KEY", "")
 def pos(v):
     try:
@@ -1457,6 +1798,7 @@ if full:
     if pos(q): b["data_quota_bytes"] = pos(q)
     if ex and ex != "0": b["expires_at"] = ex
     if note: b["note"] = note[:200]
+    if len(at) == 32: b["ad_tag"] = at.lower()
     if ":" in rt:
         up, down = rt.split(":", 1)
         for k, v in (("rate_limit_up_bytes_per_sec", up), ("rate_limit_down_bytes_per_sec", down)):
@@ -1469,12 +1811,12 @@ else:
     # Выключенный пользователь на такой сборке стал бы включённым — то есть
     # получил бы доступ. Его не заводим, а говорим почему.
     if en == "false":
-        sys.stderr.write("%s: выключен, а эта сборка mtdd не умеет выключать — не заведён (mtproxyl engine update dev)\n" % lab)
+        sys.stderr.write("%s: выключен, а эта сборка mtdd не умеет выключать — не заведён (обновите сборку: mtproxyl engine update main)\n" % lab)
         sys.exit(1)
     lost = [n for n, v in (("IP", pos(mi)), ("квота", pos(q)), ("срок", ex not in ("", "0")),
-                            ("заметка", note), ("скорость", ":" in rt)) if v]
+                            ("заметка", note), ("скорость", ":" in rt), ("рекл. тег", len(at) == 32)) if v]
     if lost:
-        sys.stderr.write("%s: старая сборка mtdd не хранит — %s (mtproxyl engine update dev)\n" % (lab, ", ".join(lost)))
+        sys.stderr.write("%s: старая сборка mtdd не хранит — %s (обновите сборку: mtproxyl engine update main)\n" % (lab, ", ".join(lost)))
 print(json.dumps(b, ensure_ascii=False))
 PY
 }
@@ -1493,7 +1835,9 @@ handle_mtdd_user_command() {
         setlimits) check_root; local _l="${1:-}"; shift 2>/dev/null || true
                    mtdd_user_setlimits "$_l" "${1:-}" "${2:-}" "${3:-}" "${4:-}" ;;
         limits)    mtdd_user_show_limits "${1:-}" ;;
-        adtag)     mtdd_unsupported "свой ad-tag у пользователя (есть только общий ad_tag в конфиге)" ;;
+        adtag)     check_root; mtdd_user_adtag "${1:-}" "${2:-}" ;;
+        devices)   mtdd_user_devices "${1:-}" ;;
+        setdevices) check_root; mtdd_user_setdevices "${1:-}" "${2:-}" ;;
         note)      check_root; mtdd_user_note "$@" ;;
         setrate)   check_root; mtdd_user_setrate "${1:-}" "${2:-0}" "${3:-0}" ;;
         reset-quota) check_root; mtdd_user_reset_quota "${1:-}" ;;
@@ -1518,6 +1862,9 @@ handle_mtdd_user_command() {
             echo -e "    ${GREEN}secret limits${NC} [метка]      Лимиты"
             echo -e "    ${GREEN}secret setlimits${NC} <метка> <соед> <ip> <квота> [срок]"
             echo -e "    ${GREEN}secret setrate${NC} <метка> <вверх> <вниз>  бит/с (10M, 512k, 0 — без)"
+            echo -e "    ${GREEN}secret setdevices${NC} <метка> <N|0>  Лимит устройств"
+            echo -e "    ${GREEN}secret devices${NC} <метка>     Устройства пользователя"
+            echo -e "    ${GREEN}secret adtag${NC} <метка> <32hex|remove>  Свой рекламный тег"
             echo -e "    ${GREEN}secret note${NC} <метка> [текст|-]"
             echo -e "    ${GREEN}secret reset-quota${NC} <метка>"
             echo -e "    ${GREEN}secret link${NC} <метка>"
@@ -1571,10 +1918,26 @@ mtdd_handle_tune() {
     case "$_sub" in
         list)
             echo ""; draw_header "ПАРАМЕТРЫ ТЮНИНГА MTDD"; echo ""
-            local _e _k _v
+            local _e _k _v _mgr=false _managed="${MTDD_MGR_MANAGED_KEYS:-}"
+            if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
+                _mgr=true
+                # При WARP или AWG без ME Direct для всех DC задаёт MTProxyL
+                # (поверх tune); без них ключи остаются за пользователем.
+                declare -F _mtdd_mgr_route_state >/dev/null \
+                    && [ "$(_mtdd_mgr_route_state | cut -d'|' -f1)" = 1 ] \
+                    && _managed+=" direct_fallback_enabled direct_fallback_dcs"
+            fi
             for _e in "${_MTDD_TUNE_WHITELIST[@]}"; do
                 _k="${_e%%:*}"; _v=$(mtdd_cfg_get "$_k")
-                printf "  %-30s %s\n" "$_k" "${_v:-${DIM}по умолчанию${NC}}"
+                # Значение — %s (как есть), пометка — %b: цвета заданы строками
+                # с \033, их раскрывает printf.
+                if [ "$_mgr" = true ] && [[ " ${_managed} " == *" ${_k} "* ]]; then
+                    printf "  %-30s %s %b\n" "$_k" "${_v:-—}" "${DIM}(задаёт MTProxyL)${NC}"
+                elif [ -n "$_v" ]; then
+                    printf "  %-30s %s\n" "$_k" "$_v"
+                else
+                    printf "  %-30s %b\n" "$_k" "${DIM}по умолчанию${NC}"
+                fi
             done
             echo ""
             echo -e "  ${DIM}Без обрыва клиентов (reload): me_*, media_*. Остальное — с перезапуском.${NC}"
@@ -1723,20 +2086,22 @@ mtdd_selfmask_apply() {
 }
 
 # ── Версия mtdd: каналы main/dev ───────────────────────────────
-# Нумерованных релизов у mtdd нет: CI перезаливает бинарник в релизы
-# channel-main и channel-dev. Дата релиза при этом не меняется, поэтому
-# показываем дату самого файла (updated_at ассета). «Версия» в --version
-# одинакова у разных сборок — сборку узнаём по sha256.
+# main — нумерованные релизы vX.Y.Z, свежий всегда releases/latest
+# (channel-main больше не обновляется). dev — один пререлиз channel-dev,
+# CI перезаливает в него бинарник; дата релиза при этом не меняется, поэтому
+# показываем дату самого файла (updated_at ассета). Сборку на диске узнаём
+# по sha256: у старых сборок --version одинаков.
 MTDD_ASSET="mtdd-linux-x86_64"
 MTDD_PREV_BIN="${MTDD_ENGINE_DIR}/mtdd.prev"
 MTDD_PREV_LABEL="${MTDD_ENGINE_DIR}/mtdd.prev.label"
 
-# Строки «канал|дата ISO|размер|url бинарника|url SHA256SUMS» для main и dev.
+# Строки «канал|дата ISO|размер|url бинарника|url SHA256SUMS|версия» для
+# main и dev. Версия: «1.0.0» из тега main, «dev-<sha>» из описания channel-dev.
 # Ответ GitHub кэшируется на 10 минут: карточка движка в панели открывает
 # его дважды, а без токена у API GitHub 60 запросов в час на адрес.
 # Обновление движка берёт свежий (MTDD_CHANNELS_FRESH=1).
 mtdd_channels() {
-    local _cache="${INSTALL_DIR:-/opt/mtproxyl}/cache/mtdd_channels" _rows
+    local _cache="${INSTALL_DIR:-/opt/mtproxyl}/cache/mtdd_channels.v2" _rows
     if [ "${MTDD_CHANNELS_FRESH:-0}" != 1 ] && [ -s "$_cache" ] \
         && [ $(( $(date +%s) - $(stat -c %Y "$_cache" 2>/dev/null || echo 0) )) -lt 600 ]; then
         cat "$_cache"; return 0
@@ -1750,10 +2115,10 @@ mtdd_channels() {
 
 _mtdd_channels_fetch() {
     python3 -I - "$MTDD_REPO" "$MTDD_ASSET" <<'PY'
-import json, sys, urllib.request
+import json, re, sys, urllib.request
 repo, asset = sys.argv[1], sys.argv[2]
-for ch in ("main", "dev"):
-    url = "https://api.github.com/repos/%s/releases/tags/channel-%s" % (repo, ch)
+api = "https://api.github.com/repos/%s/releases/" % repo
+for ch, url in (("main", api + "latest"), ("dev", api + "tags/channel-dev")):
     try:
         req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "mtproxyl"})
         with urllib.request.urlopen(req, timeout=10) as r:
@@ -1764,8 +2129,15 @@ for ch in ("main", "dev"):
     b, s = bins.get(asset), bins.get("SHA256SUMS")
     if not b or not s:
         continue
-    print("%s|%s|%s|%s|%s" % (ch, b.get("updated_at") or "", b.get("size") or 0,
-                              b.get("browser_download_url") or "", s.get("browser_download_url") or ""))
+    if ch == "main":
+        ver = re.sub(r"^v", "", rel.get("tag_name") or "")
+    else:
+        m = re.search(r"build:\s*([^\s(]+)", rel.get("body") or "")
+        ver = m.group(1).rstrip(".") if m else ""
+    if not re.fullmatch(r"[0-9A-Za-z._-]{1,40}", ver):
+        ver = ""
+    print("%s|%s|%s|%s|%s|%s" % (ch, b.get("updated_at") or "", b.get("size") or 0,
+                                 b.get("browser_download_url") or "", s.get("browser_download_url") or "", ver))
 PY
 }
 
@@ -1785,10 +2157,10 @@ _mtdd_days_between() {
 
 # Список каналов для человека, с пометками. Номер строки = номер выбора.
 mtdd_print_channels() {
-    local _rows="$1" _main_date _dev_date _n=0 _ch _date _size _u _s _note
+    local _rows="$1" _main_date _dev_date _n=0 _ch _date _size _u _s _ver _note
     _main_date=$(awk -F'|' '$1 == "main" { print $2 }' <<< "$_rows")
     _dev_date=$(awk -F'|' '$1 == "dev" { print $2 }' <<< "$_rows")
-    while IFS='|' read -r _ch _date _size _u _s; do
+    while IFS='|' read -r _ch _date _size _u _s _ver; do
         [ -n "$_ch" ] || continue
         _n=$((_n + 1))
         _note=""
@@ -1801,8 +2173,8 @@ mtdd_print_channels() {
                 [ -n "$_dd" ] && [ "$_dd" -gt 0 ] && _note+=", свежее main на ${_dd} дн."
             fi
         fi
-        printf "  ${DIM}[%d]${NC} ${BOLD}%-5s${NC} бинарник от %s  %s МБ  ${DIM}(%s)${NC}\n" \
-            "$_n" "$_ch" "$(_mtdd_date_ru "$_date")" "$(awk -v b="$_size" 'BEGIN{printf "%.1f", b/1048576}')" "$_note"
+        printf "  ${DIM}[%d]${NC} ${BOLD}%-5s${NC} %-14s бинарник от %s  %s МБ  ${DIM}(%s)${NC}\n" \
+            "$_n" "$_ch" "${_ver:-}" "$(_mtdd_date_ru "$_date")" "$(awk -v b="$_size" 'BEGIN{printf "%.1f", b/1048576}')" "$_note"
     done <<< "$_rows"
 }
 
@@ -1829,15 +2201,15 @@ _mtdd_sha() { sha256sum "$1" 2>/dev/null | awk '{print $1}'; }
 
 # Какая сборка стоит: «main от 29.10.2026», если sha совпал с каналом.
 mtdd_build_label() {
-    local _bin="${1:-$(mtdd_bin)}" _sha _rows _ch _date _size _u _s _sums
+    local _bin="${1:-$(mtdd_bin)}" _sha _rows _ch _date _size _u _s _ver _sums
     [ -x "$_bin" ] || { echo "не установлен"; return; }
     _sha=$(_mtdd_sha "$_bin")
     _rows=$(mtdd_channels 2>/dev/null)
-    while IFS='|' read -r _ch _date _size _u _s; do
+    while IFS='|' read -r _ch _date _size _u _s _ver; do
         [ -n "$_s" ] || continue
         _sums=$(curl -fsSL --max-time 10 "$_s" 2>/dev/null) || continue
         if grep -q "^${_sha}[[:space:]]" <<< "$_sums"; then
-            echo "${_ch} от $(_mtdd_date_ru "$_date")"
+            echo "${_ch}${_ver:+ ${_ver}} от $(_mtdd_date_ru "$_date")"
             return
         fi
     done <<< "$_rows"
@@ -1940,7 +2312,7 @@ _mtdd_fetch_channel() {
     _rows=$(MTDD_CHANNELS_FRESH=1 mtdd_channels) || true
     _row=$(awk -F'|' -v c="$_ch" '$1 == c' <<< "$_rows")
     [ -n "$_row" ] || { log_error "Канал ${_ch}: сборка не найдена в релизах ${MTDD_REPO}"; return 1; }
-    IFS='|' read -r _ _ _ _url _sums <<< "$_row"
+    IFS='|' read -r _ _ _ _url _sums _ <<< "$_row"
     log_info "Скачивание mtdd (${_ch})..."
     curl -fsSL --max-time 120 -o "${_dir}/${MTDD_ASSET}" "$_url" || { log_error "Не удалось скачать бинарник"; return 1; }
     curl -fsSL --max-time 30 -o "${_dir}/SHA256SUMS" "$_sums" || { log_error "Не удалось скачать SHA256SUMS"; return 1; }
@@ -2039,15 +2411,15 @@ mtdd_engine_versions_json() {
         [ -x "$MTDD_PREV_BIN" ] && printf ',"%s"' "$(json_escape "$(cat "$MTDD_PREV_LABEL" 2>/dev/null || echo previous)")"
     fi
     printf '],"releases":['
-    local _f=1 _ch _date _size _u _s
+    local _f=1 _ch _date _size _u _s _ver
     if [ -z "$_reason" ]; then
         _rows=$(mtdd_channels 2>/dev/null)
-        while IFS='|' read -r _ch _date _size _u _s; do
+        while IFS='|' read -r _ch _date _size _u _s _ver; do
             [ -n "$_ch" ] || continue
             [ $_f -eq 1 ] || printf ','
             _f=0
             printf '{"tag":"%s","name":"%s","date":"%s"}' "$_ch" \
-                "$([ "$_ch" = main ] && echo "main — основной канал" || echo "dev — тестовый канал")" "${_date%%T*}"
+                "$([ "$_ch" = main ] && echo "main${_ver:+ ${_ver}} — основной канал" || echo "dev${_ver:+ ${_ver}} — тестовый канал")" "${_date%%T*}"
         done <<< "$_rows"
     fi
     printf ']}\n'
@@ -2136,7 +2508,7 @@ install_original_mtdd() {
         draw_header "УСТАНОВКА MTDD"
         echo ""
         echo -e "  Будет запущен официальный установщик проекта mtdd (${MTDD_REPO})."
-        echo -e "  ${DIM}Он спросит домен FakeTLS, рекламный тег (32 hex, обязателен),${NC}"
+        echo -e "  ${DIM}Он спросит домен FakeTLS, рекламный тег (32 hex, по желанию),${NC}"
         echo -e "  ${DIM}порт, имя первого пользователя и публичный адрес; поставит${NC}"
         echo -e "  ${DIM}/usr/local/bin/mtdd, /etc/mtdd/config.json и службу ${MTDD_UNIT}${NC}"
         echo -e "  ${DIM}с API на 127.0.0.1:9090. MTProxyL ничего в нём не подменяет.${NC}"

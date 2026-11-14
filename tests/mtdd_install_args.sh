@@ -87,14 +87,14 @@ start_mock full
 wipe_admin   # пустой «сервер»
 run_ia --mode reanimator --target telemt --ad-tag "$ALICE" && fail "target telemt принят"
 run_ia --mode reanimator --ad-tag "$ALICE" && fail "без --target принято"
-run_ia --mode reanimator --target mtdd && fail "без --ad-tag принято"
-grep -q "ad-tag" "$t/out" || fail "нет причины про ad-tag: $(cat "$t/out")"
 run_ia --mode reanimator --target mtdd --ad-tag "$ALICE" --web-domain w.example.org && fail "--web-domain принят"
 grep -q -- "--web-domain: у mtdd этого нет" "$t/out" || fail "нет причины про web: $(cat "$t/out")"
 run_ia --mode reanimator --target mtdd --ad-tag "$ALICE" --engine binary && fail "--engine принят"
 run_ia --mode reanimator --target mtdd --ad-tag 00000000000000000000000000000000 && fail "нулевой тег принят"
 run_ia --mode reanimator --target mtdd --ad-tag "$ALICE" --mtdd-channel beta && fail "канал beta принят"
 [ -f "$t/installer_args" ] && fail "установщик запускался при отказе"
+reset_state; _IA_MODE=reanimator; _IA_TARGET=mtdd
+_install_args_validate_mtdd > "$t/out" 2>&1 || fail "без --ad-tag отвергнуто: $(cat "$t/out")"
 
 # ── Свежая установка с ключами (полная сборка) ───────────────
 run_ia --mode reanimator --target mtdd --mtdd-channel dev --ad-tag "$ALICE" --sni example.org --port 8443 \

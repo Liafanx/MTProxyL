@@ -74,6 +74,13 @@ mtdd_user_remove ivan.p >/dev/null 2>&1 || fail "remove ivan.p"
 row=$(_mtdd_py users-tsv | awk -F'|' '$1=="bob"')
 [ "$(cut -d'|' -f3 <<< "$row")" = "$BOB" ] || fail "users-tsv: секрет ($row)"
 
+# Онлайн-IP — unique_ips_seen (у mock 2), а не строгий unique_ips_active (1).
+[ "$(cut -d'|' -f12 <<< "$row")" = 2 ] || fail "users-tsv: онлайн-IP не из unique_ips_seen: $row"
+
+# suspects-ips: для nftables только верные адреса, v4-mapped → IPv4, без повторов.
+[ "$(_mtdd_py suspects-ips 60 | tr '\n' ' ')" = "1.2.3.4 5.6.7.8 1.2.3.5 2001:db8::1 2001:db8::/32 " ] \
+    || fail "suspects-ips: $(_mtdd_py suspects-ips 60 2>&1 | tr '\n' ' ')"
+
 # --no-links: один запрос списка вместо запроса на каждого.
 echo 0 > "$t/mock_count"
 _mtdd_py users-tsv --no-links >/dev/null || fail "users-tsv --no-links"
@@ -150,12 +157,15 @@ echo 0 > "$t/mock_count"; _mtdd_py users-tsv >/dev/null
 [ "$(cat "$t/mock_count")" = $((n_users + 1)) ] || fail "устаревший users.json использован"
 
 # ── Снимок для панели ────────────────────────────────────────
+mtdd_user_adtag robert fedcba9876543210fedcba9876543210 >/dev/null 2>&1 || fail "adtag robert"
 snap=$(_mtdd_py snapshot) || fail "snapshot"
 python3 -I - "$snap" <<'PY' || fail "форма снимка"
 import json, sys
 s = json.loads(sys.argv[1])
 assert s["engine"] == "mtdd" and s["full_api"] is True
 names = {u["username"] for u in s["users"]}
+tags = {u["username"]: u.get("user_ad_tag") for u in s["users"]}
+assert tags["robert"] == "fedcba9876543210fedcba9876543210", tags
 assert "robert" in names and "admin" in names, names
 sm = s["summary"]
 assert sm["connections_total"] == 10 and sm["connections_bad_total"] == 3, sm
@@ -218,6 +228,9 @@ echo old > "$t/mock_mode"
 probe=$(_mtdd_py probe) || fail "probe old"
 grep -qx 'full=0' <<< "$probe" || fail "старая сборка не распознана: $probe"
 _mtdd_py users-tsv >/dev/null || fail "чтение на старой сборке"
+# Без unique_ips_seen онлайн-IP — из unique_ips_active (у mock 1), а не 0.
+[ "$(_mtdd_py users-tsv --no-links | awk -F'|' 'NR==1 {print $12}')" = 1 ] || fail "старая сборка: онлайн-IP 0 вместо unique_ips_active"
+_mtdd_py suspects-ips 60 >/dev/null 2>&1; [ $? -eq 5 ] || fail "suspects-ips на старой сборке: ожидался код 5"
 out=$(mtdd_user_setrate robert 8M 0 2>&1) && fail "PATCH на старой сборке прошёл"
 grep -q "engine update" <<< "$out" || fail "нет подсказки про обновление: $out"
 body=$(mtdd_user_body carol 0123456789abcdef0123456789abcdef true 3 2 100 0 "note" "8000:8000")
@@ -237,6 +250,7 @@ mtdd_user_remove carol >/dev/null 2>&1 || fail "DELETE на старой сбо�
 echo full > "$t/mock_mode"
 echo "MTDD_API_TOKEN=wrong" > "$t/credentials.env"
 _mtdd_py users-tsv >/dev/null 2>&1; [ $? -eq 4 ] || fail "чужой токен: ожидался код 4"
+_mtdd_py suspects-ips 60 >/dev/null 2>&1; [ $? -eq 4 ] || fail "suspects-ips с чужим токеном: ожидался код 4"
 _target_section_pairs access.users >/dev/null 2>&1 && fail "сбой API выдан за пустой список пользователей"
 grep -q "отклонил токен" <<< "$(mtdd_api_unavailable_reason)" || fail "причина про токен"
 

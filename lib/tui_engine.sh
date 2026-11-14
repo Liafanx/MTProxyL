@@ -80,6 +80,35 @@ tui_mtdd_mgr_engine_menu() {
     done
 }
 
+# Подозрительные адреса mtdd: таблица, учёт, теневой бан, nftables-блок.
+tui_mtdd_suspects_menu() {
+    while true; do
+        clear_screen
+        mtdd_suspects_list 0 || true
+        local _on _ban; _on=$(mtdd_cfg_get suspects 2>/dev/null); _ban=$(mtdd_cfg_get suspect_ban_score 2>/dev/null)
+        echo -e "  ${DIM}Учёт: $([ "$_on" = true ] && echo включён || echo выключен) · теневой бан: $([ "${_ban:-0}" -gt 0 ] 2>/dev/null && echo "score ≥ ${_ban}" || echo выкл)${NC}"
+        echo ""
+        echo -e "  ${DIM}[1]${NC} $([ "$_on" = true ] && echo Выключить || echo Включить) учёт"
+        echo -e "  ${DIM}[2]${NC} Теневой бан по score ${DIM}(такие соединения уходят на маскировку)${NC}"
+        echo -e "  ${DIM}[3]${NC} Заблокировать в nftables по score ${DIM}(порт прокси, до перезагрузки)${NC}"
+        echo -e "  ${DIM}[4]${NC} Снять nftables-блок"
+        echo -e "  ${DIM}[0]${NC} Назад"
+        local _c; _c=$(read_choice "выбор" "0")
+        case "$_c" in
+            1) if [ "$_on" = true ]; then handle_suspects_command off || true; else handle_suspects_command on || true; fi
+               press_any_key ;;
+            2) local _s; read_line _s "  ${BOLD}Score 1–100 (0 — выключить):${NC} "
+               [ -n "$_s" ] && { handle_suspects_command ban "$_s" || true; }
+               press_any_key ;;
+            3) local _s; read_line _s "  ${BOLD}Мин. score [60]:${NC} "
+               handle_suspects_command block "${_s:-60}" || true
+               press_any_key ;;
+            4) handle_suspects_command unblock || true; press_any_key ;;
+            0|"") return ;;
+        esac
+    done
+}
+
 tui_engine_menu() {
     mtdd_mgr_active && { tui_mtdd_mgr_engine_menu; return; }
     while true; do

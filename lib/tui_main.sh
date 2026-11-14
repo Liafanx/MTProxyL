@@ -86,7 +86,7 @@ show_main_menu() {
             fi
             fi
         else
-            echo -e "  ${BOLD}Движок:${NC}      telemt v$(get_telemt_version)$(engine_is_binary && echo " ${DIM}(бинарник)${NC}")  ${BOLD}Статус:${NC} ${status_str}"
+            echo -e "  ${BOLD}Движок:${NC}      $(engine_title --carrier)  ${BOLD}Статус:${NC} ${status_str}"
             echo -e "  ${BOLD}Транспорт:${NC}   $(proxy_transport_mode_title)"
             # Показываем только когда режим включён — выключенный не упоминаем
             if _superexpert_active; then
@@ -244,7 +244,7 @@ show_main_menu() {
             echo -e "  ${BRIGHT_CYAN}[11]${NC}  Редактировать конфиг цели"
             echo -e "  ${BRIGHT_CYAN}[12]${NC}  Информация"
             if _target_is_mtdd; then
-                echo -e "  ${BRIGHT_CYAN}[13]${NC}  Медиа-лимиты mtdd ${DIM}(скорость загрузки файлов)${NC}"
+                echo -e "  ${BRIGHT_CYAN}[13]${NC}  Медиа-лимиты mtdd ${DIM}(скорость скачивания файлов)${NC}"
             else
                 echo -e "  ${BRIGHT_CYAN}[13]${NC}  WEB Proxy  ${DIM}$(web_status_line)${NC}"
             fi
@@ -284,7 +284,7 @@ show_main_menu() {
             # те же номера ведут к его медиа-лимитам, тюнингу и смене движка.
             local _mm=false; mtdd_mgr_active && _mm=true
             if [ "$_mm" = true ]; then
-                echo -e "  ${BRIGHT_CYAN}[5]${NC}   Медиа-лимиты mtdd ${DIM}(скорость загрузки файлов)${NC}"
+                echo -e "  ${BRIGHT_CYAN}[5]${NC}   Медиа-лимиты mtdd ${DIM}(скорость скачивания файлов)${NC}"
             else
                 echo -e "  ${BRIGHT_CYAN}[5]${NC}   WEB Proxy  ${DIM}$(web_status_line)${NC}"
             fi

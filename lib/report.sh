@@ -4,7 +4,7 @@
 # перед отправкой.
 
 # Что из settings.conf можно показать: ни адресов, ни доменов, ни меток.
-_REPORT_SETTINGS="MTPROXYL_MODE ENGINE_BACKEND ENGINE_VERSION ENGINE_SERVICE_NAMING PROXY_MODE PROXY_PORT PROXY_CONCURRENCY PROXY_CPUS PROXY_MEMORY FAKE_CERT_LEN PROXY_PROTOCOL GEOBLOCK_MODE MASKING_ENABLED UNKNOWN_SNI_ACTION TOOLS_ONLY DC_THRESHOLD DC_RESTART_ENABLED DC_RESTART_THRESHOLD DC_RESTART_COOLDOWN AVAILABILITY_ENABLED AVAILABILITY_INTERVAL WARP_ENABLED WARP_MODE WARP_PROTO API_ENABLED"
+_REPORT_SETTINGS="MTPROXYL_MODE ENGINE_KIND ENGINE_BACKEND ENGINE_VERSION ENGINE_SERVICE_NAMING PROXY_MODE PROXY_PORT PROXY_CONCURRENCY PROXY_CPUS PROXY_MEMORY FAKE_CERT_LEN PROXY_PROTOCOL GEOBLOCK_MODE MASKING_ENABLED UNKNOWN_SNI_ACTION TOOLS_ONLY DC_THRESHOLD DC_RESTART_ENABLED DC_RESTART_THRESHOLD DC_RESTART_COOLDOWN AVAILABILITY_ENABLED AVAILABILITY_INTERVAL WARP_ENABLED WARP_MODE WARP_PROTO API_ENABLED"
 
 # Значения, по которым узнаётся сервер, — их вырезаем дословно.
 _report_private_words() {
@@ -57,7 +57,12 @@ report_create() {
         echo "== Версии =="
         echo "MTProxyL: ${VERSION} (ветка ${GITHUB_BRANCH})"
         echo "Режим: ${MTPROXYL_MODE:-manager}"
-        echo "Движок: ${ENGINE_BACKEND:-?} ${ENGINE_VERSION:-}"
+        if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
+            # У mtdd свой бинарник и служба: ENGINE_BACKEND и ENGINE_VERSION — от telemt.
+            echo "Движок: $(engine_title), служба ${MTDD_UNIT:-?}"
+        else
+            echo "Движок: ${ENGINE_KIND:-telemt}, ${ENGINE_BACKEND:-?} ${ENGINE_VERSION:-}"
+        fi
         panel_installed 2>/dev/null && echo "Панель: установлена"
         tgbot_installed 2>/dev/null && echo "Бот: установлен"
         echo ""

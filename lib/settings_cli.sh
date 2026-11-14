@@ -56,10 +56,11 @@ _validate_settings_ip() {
 }
 
 _validate_settings_adtag() {
-    # mtdd без тега не запускается и тег из нулей не примет.
+    # mtdd 1.0.0+ работает и без тега (без спонсорского канала), а тег из нулей не примет.
     if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
+        [ -z "$1" ] && return 0
         [[ "$1" =~ ^[0-9a-fA-F]{32}$ ]] && [ "$1" != "00000000000000000000000000000000" ] && return 0
-        echo "у mtdd тег обязателен: 32 шестнадцатеричных символа от @MTProxybot, не из одних нулей"; return 1
+        echo "у mtdd: 32 шестнадцатеричных символа от @MTProxybot, не из одних нулей, либо пусто"; return 1
     fi
     [ -z "$1" ] && return 0
     [[ "$1" =~ ^[0-9a-fA-F]{32}$ ]] && return 0
@@ -230,8 +231,6 @@ settings_set_param() {
         case "$_key" in
             UNKNOWN_SNI_ACTION|PROXY_SECRET_URL|PROXY_CONFIG_V4_URL|PROXY_CONFIG_V6_URL|PROXY_LOG_LEVEL)
                 mtdd_unsupported "${_key} — настройка telemt"; return 1 ;;
-            PROXY_PROTOCOL|PROXY_PROTOCOL_TRUSTED_CIDRS)
-                [ "$_key" = PROXY_PROTOCOL ] && [ "$_val" != true ] || { mtdd_unsupported "PROXY protocol"; return 1; } ;;
             PROXY_MODE)
                 [ "$_val" = mtproto ] || { mtdd_unsupported "WEB Proxy"; return 1; } ;;
         esac

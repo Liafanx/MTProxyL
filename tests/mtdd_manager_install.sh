@@ -26,8 +26,7 @@ ia() {
 out=$(ia --mode manager --engine mtdd --ad-tag "$TAG") || fail "годный --engine mtdd отвергнут: $out"
 source lib/install_args.sh >/dev/null 2>&1; _install_args_parse --engine mtdd --ad-tag "$TAG" >/dev/null 2>&1
 [ "$_IA_ENGINE_KIND" = mtdd ] && [ -z "$_IA_ENGINE" ] || fail "--engine mtdd разобран как носитель"
-out=$(ia --mode manager --engine mtdd) && fail "без --ad-tag принято"
-[[ "$out" == *"--ad-tag"* ]] || fail "нет причины про тег: $out"
+out=$(ia --mode manager --engine mtdd) || fail "без --ad-tag отвергнуто: $out"
 out=$(ia --mode manager --engine mtdd --ad-tag 00000000000000000000000000000000) && fail "нулевой тег принят"
 for bad in "--engine-version 3.5.5" "--sni-policy drop" "--dc-restart 50" "--engine-url https://example.org/t"; do
     # shellcheck disable=SC2086
