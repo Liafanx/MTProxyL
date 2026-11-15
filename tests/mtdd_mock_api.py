@@ -113,11 +113,11 @@ class H(BaseHTTPRequestHandler):
         nf = lambda: self.send(404, etype="not_found", msg="route not found")
         with lock:
             if method == "GET" and path == "/v1/system/info":
-                return self.send(200, {"version": "0.1.0"}) if full else nf()
+                return self.send(200, {"version": "1.0.0"}) if full else nf()
             if method == "GET" and path == "/v1/health":
                 return self.send(200, {"status": "ok"})
             if method == "GET" and path == "/v1/status":
-                return self.send(200, {"ready": True, "uptime_seconds": 42, "build": {"version": "0.1.0"},
+                return self.send(200, {"ready": True, "uptime_seconds": 42, "build": {"version": "1.0.0"},
                                        "connections_accepted_total": 10, "connections_active": 2,
                                        "connections_rejected_total": 3,
                                        "connections_rejected_by_reason": {"auth_failed": 3} if full else None,

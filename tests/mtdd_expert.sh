@@ -105,7 +105,7 @@ handle_expert_command set media media_total_rate_kbps 9000 --no-apply >/dev/null
 handle_expert_command apply >/dev/null 2>&1
 grep -q "systemctl reload" "$t/systemctl.log" && ! grep -q restart "$t/systemctl.log" || fail "только горячее → reload: $(cat "$t/systemctl.log")"
 
-# Сборка без SIGHUP (0.1.0): горячий ключ применяется перезапуском — это успех.
+# Сборка без SIGHUP: горячий ключ применяется перезапуском — это успех.
 _mtdd_py() { return 1; }
 : > "$t/systemctl.log"
 handle_expert_command set middle_proxy me_clients_per_writer 300 >/dev/null 2>&1 || fail "горячий set без SIGHUP вернул ошибку"

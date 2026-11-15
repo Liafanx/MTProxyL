@@ -17,14 +17,14 @@ import (
 
 // Снимок в той форме, что печатает `mtproxyl target-api snapshot`
 // (lib/mtdd.sh, cmd_snapshot; тот же набор проверяет tests/mtdd_adapter.sh).
-const snapJSON = `{"engine":"mtdd","version":"0.1.0","full_api":true,"taken_at":1,
+const snapJSON = `{"engine":"mtdd","version":"1.0.0","full_api":true,"taken_at":1,
 "users":[{"username":"alice","enabled":true,"current_connections":2,"active_unique_ips":1,"total_octets":300,
   "links":{"tls":["tg://proxy?server=203.0.113.10&port=443&secret=ee00112233445566778899aabbccddeeff6578616d706c652e6f7267"],"classic":[],"secure":[]},
   "data_quota_bytes":1000,"quota_used_bytes":10,"active_unique_ips_list":["198.51.100.7"]},
  {"username":"bob","enabled":false,"current_connections":0,"active_unique_ips":0,"total_octets":0}],
 "summary":{"uptime_seconds":42,"connections_total":10,"connections_bad_total":3,"connections_bad_by_class":[],
   "handshake_timeouts_total":2,"handshake_failures_by_class":[],"configured_users":2},
-"system_info":{"version":"0.1.0","config_path":"","config_hash":""},
+"system_info":{"version":"1.0.0","config_path":"","config_hash":""},
 "health":{"status":"ok","read_only":false},
 "dcs":{"middle_proxy_enabled":true,"dcs":[{"dc":2,"rtt_ms":41,"alive_writers":2,"required_writers":2,"available_pct":100,"coverage_pct":100}]},
 "active_ips":[{"username":"alice","active_ips":["198.51.100.7"]}],

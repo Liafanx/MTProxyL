@@ -258,8 +258,8 @@ settings_set_param() {
     local _prev="${!_key:-}"
     printf -v "$_key" '%s' "$_val"
     save_settings
-    # mtdd: конфиг проверяет сама сборка (старая 0.1.0 не знает, например,
-    # proxy_protocol). Об успехе — после пересборки, а не принятое — откатываем.
+    # mtdd: конфиг проверяет сама сборка (ключ, которого она не знает,
+    # например proxy_protocol). Об успехе — после пересборки; не принятое — откатываем.
     local _mtdd_cfg=false
     mtdd_mgr_active && [ "$_own_setting" != "true" ] && [ "$_key" != PROXY_METRICS_PORT ] && _mtdd_cfg=true
     [ "$_mtdd_cfg" = true ] || log_success "${_key} = ${_val:-<пусто>}"

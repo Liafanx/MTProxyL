@@ -236,8 +236,8 @@ _mtdd_expert_apply_one() {
     fi
     if [ "$_hot" = "✔" ]; then
         mtdd_reload || return 1
-        # Сборка без SIGHUP (0.1.0) или остановленная служба — reload ушёл в
-        # перезапуск или ждёт запуска: это не ошибка.
+        # Сборка без SIGHUP или остановленная служба — reload ушёл в перезапуск
+        # или ждёт запуска: это не ошибка.
         [ "${MTDD_RELOAD_HOT:-false}" = true ] && log_info "Применено без обрыва клиентов (reload)"
         return 0
     fi

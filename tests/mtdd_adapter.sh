@@ -23,7 +23,7 @@ cat > "$t/mtdd" <<EOF
 #!/bin/sh
 case "\$*" in
   *--check-config*) [ -f "$t/check_fail" ] && { echo "bad key" >&2; exit 1; }; exit 0 ;;
-  *--version*) echo "mtdd 0.1.0" ;;
+  *--version*) echo "mtdd 1.0.0" ;;
 esac
 EOF
 chmod +x "$t/mtdd"
@@ -172,7 +172,7 @@ assert sm["connections_total"] == 10 and sm["connections_bad_total"] == 3, sm
 assert sm["handshake_timeouts_total"] == 2, sm
 assert {c["class"] for c in sm["handshake_failures_by_class"]} == {"replay"}, sm
 assert sm["configured_users"] == len(s["users"]), sm
-assert s["health"]["status"] == "ok" and s["system_info"]["version"] == "0.1.0"
+assert s["health"]["status"] == "ok" and s["system_info"]["version"] == "1.0.0"
 # Медиа-DC −1…−5 тоже в покрытии; порядок: 1…5, затем −1…−5.
 assert [d["dc"] for d in s["dcs"]["dcs"]] == [2, -2], s["dcs"]
 assert not any(d.get("on_demand") for d in s["dcs"]["dcs"]), s["dcs"]

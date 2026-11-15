@@ -311,9 +311,9 @@ generate_mtdd_config() {
         esac
     done
     [ "$_ok" = true ] || { rm -f "$_cand"; log_error "mtdd не принял конфиг: ${_why}"; return 1; }
-    # Сборка до квот (0.1.0) знает unique_ip_stats_path, но читает только свой
-    # формат: файл, дописанный 1.0.0, она отвергает и не стартует (откат с dev).
-    # Историю на диске ведёт только сборка с квотами, как и раньше у старой.
+    # Сборка без квот знает unique_ip_stats_path, но читает только свой формат:
+    # файл, дописанный сборкой с квотами, она отвергает и не стартует (откат).
+    # Историю на диске ведёт только сборка с квотами.
     if ! jq -e 'has("usage_state_path")' "$_cand" >/dev/null 2>&1; then
         jq 'del(.unique_ip_stats_path)' "$_cand" > "${_cand}.n" && mv -f "${_cand}.n" "$_cand" \
             || { rm -f "$_cand" "${_cand}.n"; log_error "Не удалось собрать конфиг mtdd"; return 1; }
@@ -417,7 +417,7 @@ mtdd_mgr_uptime()         { _mtdd_mgr_as binengine_uptime; }
 mtdd_mgr_stop()           { _mtdd_mgr_as binengine_stop; }
 mtdd_mgr_remove_service() { _mtdd_mgr_as binengine_remove_service; }
 
-# «0.1.0 (main)» — без сети: статус зовёт это часто.
+# «1.0.0 (main)» — без сети: статус зовёт это часто.
 mtdd_mgr_version() {
     mtdd_mgr_names
     local _v _ch

@@ -213,8 +213,7 @@ export function UsersPage() {
   // telemt-эндпоинтов, а запись через них отклоняет.
   const { enabled: mtproxylEnabled, mode: mtproxylMode, engineKind } = useMtproxyl();
   const usersOwnedByMtproxyl = mtproxylEnabled && (mtproxylMode === 'manager' || engineKind === 'mtdd');
-  // Метку на пользователя держат telemt и mtdd 1.0.0+. Старая сборка mtdd
-  // 0.1.0 её не знает: MTProxyL сохранит метку и предупредит, что она не действует.
+  // Метку на пользователя держат telemt и mtdd 1.0.0+.
   const adTagSupported = true;
 
   const [editUser, setEditUser] = useState<UserInfo | null>(null);

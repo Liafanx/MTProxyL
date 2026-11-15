@@ -715,22 +715,60 @@ _selfmask_collect_params() {
 _selfmask_install_deps() {
     log_info "Установка зависимостей..."
 
-    local _missing=()
+    local _os _missing=() _pkg
+    _os=$(detect_os)
 
     if [ "${SELFMASK_CERT_MODE:-letsencrypt}" != "selfsigned" ]; then
         command -v certbot &>/dev/null || _missing+=("certbot")
     fi
-    dpkg -s libpcre2-8-0 &>/dev/null 2>&1 || _missing+=("libpcre2-8-0")
-    dpkg -s zlib1g &>/dev/null 2>&1 || _missing+=("zlib1g")
-    dpkg -s ca-certificates &>/dev/null 2>&1 || _missing+=("ca-certificates")
+    # Имена пакетов зависят от дистрибутива: libpcre2-8-0/zlib1g у Debian,
+    # pcre2/zlib у RHEL и Alpine, ca-certificates везде одинаково.
+    case "$_os" in
+        rhel)
+            rpm -q pcre2 &>/dev/null 2>&1 || _missing+=("pcre2")
+            rpm -q zlib &>/dev/null 2>&1 || _missing+=("zlib")
+            rpm -q ca-certificates &>/dev/null 2>&1 || _missing+=("ca-certificates")
+            ;;
+        alpine)
+            apk info -e pcre2 &>/dev/null 2>&1 || _missing+=("pcre2")
+            apk info -e zlib &>/dev/null 2>&1 || _missing+=("zlib")
+            apk info -e ca-certificates &>/dev/null 2>&1 || _missing+=("ca-certificates")
+            ;;
+        *)
+            dpkg -s libpcre2-8-0 &>/dev/null 2>&1 || _missing+=("libpcre2-8-0")
+            dpkg -s zlib1g &>/dev/null 2>&1 || _missing+=("zlib1g")
+            dpkg -s ca-certificates &>/dev/null 2>&1 || _missing+=("ca-certificates")
+            ;;
+    esac
 
     if [ ${#_missing[@]} -gt 0 ]; then
-        _wait_apt
-        apt-get update -qq || true
-        apt-get install -y -qq "${_missing[@]}" || {
-            log_error "Не удалось установить зависимости: ${_missing[*]}"
-            return 1
-        }
+        case "$_os" in
+            rhel)
+                _pkg=$(command -v dnf || command -v yum) || {
+                    log_error "Нет dnf/yum — установите вручную: ${_missing[*]}"
+                    return 1
+                }
+                "$_pkg" install -y "${_missing[@]}" || {
+                    log_error "Не удалось установить зависимости: ${_missing[*]}"
+                    log_info "certbot на RHEL и AlmaLinux берётся из EPEL: dnf install epel-release && dnf install certbot"
+                    return 1
+                }
+                ;;
+            alpine)
+                apk add --no-cache "${_missing[@]}" || {
+                    log_error "Не удалось установить зависимости: ${_missing[*]}"
+                    return 1
+                }
+                ;;
+            *)
+                _wait_apt
+                apt-get update -qq || true
+                apt-get install -y -qq "${_missing[@]}" || {
+                    log_error "Не удалось установить зависимости: ${_missing[*]}"
+                    return 1
+                }
+                ;;
+        esac
     fi
 
     log_success "Зависимости установлены"

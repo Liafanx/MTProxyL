@@ -60,10 +60,10 @@ case "\$*" in
     [ -f "$t/no_usage" ] && grep -q usage_state_path "\$cfg" && { echo "mtdd: unknown configuration option: usage_state_path" >&2; exit 1; }
     [ -f "$t/no_usage" ] && grep -q metrics_host "\$cfg" && { echo "mtdd: unknown configuration option: metrics_host" >&2; exit 1; }
     [ -f "$t/no_usage" ] && grep -q metrics_port "\$cfg" && { echo "mtdd: unknown configuration option: metrics_port" >&2; exit 1; }
-    # Как настоящая 0.1.0: unique_ip_stats_path она знает (свой формат файла).
+    # Как сборка без квот: unique_ip_stats_path она знает, формат файла свой.
     grep -q '"bogus_key"' "\$cfg" && { echo "mtdd: unknown configuration option: bogus_key" >&2; exit 1; }
     exit 0 ;;
-  *--version*) echo "mtdd 0.1.0" ;;
+  *--version*) echo "mtdd 0.9.0" ;;
 esac
 EOF
 chmod +x "$t/fakebin"
@@ -101,7 +101,7 @@ generate_mtdd_config && [ "$MTDD_MGR_CONFIG_CHANGE" = restart ] || fail "сме�
 MASKING_HOST=""; MASKING_PORT=443; generate_mtdd_config
 touch "$t/no_usage"; generate_mtdd_config || fail "сборка без квот"
 [ "$(cfg '.usage_state_path // "нет"')|$(cfg '.metrics_port // "нет"')|$(cfg '.metrics_host // "нет"')|$(cfg '.unique_ip_stats_path // "нет"')" = "нет|нет|нет|нет" ] \
-    || fail "ключи, которых не знает старая сборка, остались (или файл истории IP, который 0.1.0 не прочтёт после 1.0.0)"
+    || fail "ключи, которых не знает старая сборка, остались (или файл истории IP, который она не прочтёт)"
 mtdd_config_set 'bogus_key=1' >/dev/null 2>&1 && fail "неизвестный ключ из tune.json принят"
 jq -e 'has("bogus_key") | not' "$MTDD_MGR_TUNE" >/dev/null 2>&1 || [ ! -f "$MTDD_MGR_TUNE" ] || fail "tune.json не откатился после bogus_key"
 rm -f "$t/no_usage"; generate_mtdd_config
