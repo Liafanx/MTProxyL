@@ -69,7 +69,9 @@ _engine_api_get() {
     printf '%s' "$_json"
 }
 
-# Строки "dc|rtt_ms|alive|required|coverage|available" из ответа /v1/stats/dcs.
+# Строки "dc|rtt_ms|alive|required|coverage|available|on_demand" из ответа
+# /v1/stats/dcs. on_demand=1 — DC, который движок поднимает только под клиента
+# (у mtdd CDN 203): без писателей это не сбой, в покрытие он не идёт.
 # Разбор тем же приёмом, что и пользователи цели: один awk на весь ответ,
 # записи режутся по ключу "dc": (в "dcs": он не попадает — там другой ключ).
 _dc_rows() {
@@ -96,8 +98,9 @@ _dc_rows() {
             alive = num($0, "alive_writers") + 0
             required = num($0, "required_writers") + 0
             coverage = required > 0 ? int(100 * (alive < required ? alive : required) / required + .5) : 0
-            printf "%s|%s|%s|%s|%s|%s\n", d, \
-                num($0, "rtt_ms"), alive, required, coverage, num($0, "available_pct")
+            od = ($0 ~ /"on_demand"[ \t]*:[ \t]*true/) ? 1 : 0
+            printf "%s|%s|%s|%s|%s|%s|%s\n", d, \
+                num($0, "rtt_ms"), alive, required, coverage, num($0, "available_pct"), od
         }
     '
 }
@@ -107,7 +110,7 @@ _dc_rows() {
 _dc_summary() {
     local _rows="$1"
     printf '%s\n' "$_rows" | awk -F'|' '
-        NF >= 4 { a += $3 + 0; r += $4 + 0; covered += ($3 < $4 ? $3 : $4); n++ }
+        NF >= 4 && $7 != 1 { a += $3 + 0; r += $4 + 0; covered += ($3 < $4 ? $3 : $4); n++ }
         END {
             if (n == 0) { print "0|0|0|0|0"; exit }
             pct = (r > 0) ? (covered * 100 / r) : 0
@@ -175,15 +178,15 @@ dc_status_json() {
         [ "$_pct" -eq 0 ] && _verdict="down"
     fi
 
-    local _first=1 _out="" _d _rtt _aw _rw _cov _avl _ok
-    while IFS='|' read -r _d _rtt _aw _rw _cov _avl; do
+    local _first=1 _out="" _d _rtt _aw _rw _cov _avl _od _ok
+    while IFS='|' read -r _d _rtt _aw _rw _cov _avl _od; do
         [ -n "$_d" ] || continue
         _ok=true
-        [ "${_cov%%.*}" -lt "$_mark" ] 2>/dev/null && _ok=false
+        [ "${_od:-0}" = 1 ] || { [ "${_cov%%.*}" -lt "$_mark" ] 2>/dev/null && _ok=false; }
         [ $_first -eq 1 ] || _out+=","
         _first=0
-        _out+=$(printf '{"dc":%s,"rtt_ms":%.0f,"alive_writers":%d,"required_writers":%d,"coverage_pct":%.0f,"available_pct":%.0f,"ok":%s}' \
-            "$_d" "${_rtt:-0}" "${_aw:-0}" "${_rw:-0}" "${_cov:-0}" "${_avl:-0}" "$_ok")
+        _out+=$(printf '{"dc":%s,"rtt_ms":%.0f,"alive_writers":%d,"required_writers":%d,"coverage_pct":%.0f,"available_pct":%.0f,"ok":%s,"on_demand":%s}' \
+            "$_d" "${_rtt:-0}" "${_aw:-0}" "${_rw:-0}" "${_cov:-0}" "${_avl:-0}" "$_ok" "$([ "${_od:-0}" = 1 ] && echo true || echo false)")
     done <<< "$_rows"
 
     printf '{"available":true,"middle_proxy":%s,"threshold":%d,"verdict":"%s","auto_restart":%s,' \
@@ -227,9 +230,14 @@ dc_show() {
     local _thr _lim; _thr=$(_dc_threshold); _lim=$(_dc_mark_threshold)
     printf "     %-8s %6s  %10s  %8s\n" "DC" "RTT" "Писатели" "Покрытие"
     echo -e "  ${DIM}$(_repeat '─' 42)${NC}"
-    local _d _rtt _aw _rw _cov _avl _mark
-    while IFS='|' read -r _d _rtt _aw _rw _cov _avl; do
+    local _d _rtt _aw _rw _cov _avl _od _mark _has_od=0
+    while IFS='|' read -r _d _rtt _aw _rw _cov _avl _od; do
         [ -n "$_d" ] || continue
+        if [ "${_od:-0}" = 1 ]; then
+            _has_od=1
+            printf "  %s %-8s %6s  %10s  %8s\n" "💤" "DC ${_d}" "—" "—" "по треб."
+            continue
+        fi
         if [ "${_cov%%.*}" -ge "$_lim" ] 2>/dev/null; then _mark="✅"; else _mark="⚠️"; fi
         printf "  %s %-8s %3.0f мс %5d / %-4d %6.0f%%\n" \
             "$_mark" "DC ${_d}" "${_rtt:-0}" "${_aw:-0}" "${_rw:-0}" "${_cov:-0}"
@@ -240,6 +248,7 @@ dc_show() {
     echo ""
     local _note="порог ${_thr}%, в зачёт ${_covered} из ${_req}, живых всего ${_alive}"
     [ "$_thr" -eq 0 ] && _note="порог выключен, в зачёт ${_covered} из ${_req}, живых всего ${_alive}"
+    [ "$_has_od" = 1 ] && echo -e "  ${DIM}💤 по требованию: движок поднимает этот DC только под клиента (CDN), в покрытие не входит${NC}"
     if [ "$_thr" -gt 0 ] && [ "$_pct" -lt "$_thr" ]; then
         echo -e "  ${YELLOW}Общее покрытие: ${_pct}%${NC} ${DIM}(${_note})${NC}"
     else

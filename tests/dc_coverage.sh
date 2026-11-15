@@ -14,4 +14,15 @@ json_escape() { printf '%s' "$1"; }
 DC_THRESHOLD=80
 report=$(dc_status_json)
 jq -e '.coverage_pct == 50 and .covered_writers == 10 and .alive_writers == 20 and .zero_writer_dcs == 1 and .verdict == "down"' <<< "$report" >/dev/null
+
+# mtdd: медиа-DC −1…−5 в покрытии, CDN 203 «по требованию» без писателя —
+# вне покрытия и не «упавший» DC.
+_engine_api_get() {
+    printf '%s' '{"data":{"middle_proxy_enabled":true,"dcs":[{"dc":1,"rtt_ms":10,"alive_writers":2,"required_writers":2,"coverage_pct":100,"available_pct":100},{"dc":-1,"rtt_ms":12,"alive_writers":1,"required_writers":1,"coverage_pct":100,"available_pct":100},{"dc":203,"rtt_ms":0,"alive_writers":0,"required_writers":0,"coverage_pct":0,"available_pct":0,"on_demand":true}]}}'
+}
+report=$(dc_status_json)
+jq -e '.coverage_pct == 100 and .zero_writer_dcs == 0 and .verdict != "down"
+       and ([.dcs[] | select(.dc == 203)][0] | .on_demand == true and .ok == true)
+       and ([.dcs[] | select(.dc == -1)][0] | .on_demand == false)' <<< "$report" >/dev/null \
+    || { echo "mtdd DC: $report"; exit 1; }
 echo 'DC coverage: OK'

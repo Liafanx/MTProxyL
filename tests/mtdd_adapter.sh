@@ -173,7 +173,9 @@ assert sm["handshake_timeouts_total"] == 2, sm
 assert {c["class"] for c in sm["handshake_failures_by_class"]} == {"replay"}, sm
 assert sm["configured_users"] == len(s["users"]), sm
 assert s["health"]["status"] == "ok" and s["system_info"]["version"] == "0.1.0"
-assert [d["dc"] for d in s["dcs"]["dcs"]] == [2], s["dcs"]
+# Медиа-DC −1…−5 тоже в покрытии; порядок: 1…5, затем −1…−5.
+assert [d["dc"] for d in s["dcs"]["dcs"]] == [2, -2], s["dcs"]
+assert not any(d.get("on_demand") for d in s["dcs"]["dcs"]), s["dcs"]
 assert s["dcs"]["dcs"][0]["coverage_pct"] == 100.0
 assert s["active_ips"] and s["active_ips"][0]["active_ips"] == ["198.51.100.7"], s["active_ips"]
 assert any(q["username"] == "robert" for q in s["quota"]["users"]), s["quota"]

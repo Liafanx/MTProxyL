@@ -44,6 +44,16 @@ def die(rc, msg=""):
         sys.stderr.write(msg + "\n")
     sys.exit(rc)
 
+def cfg_hash():
+    # sha256 конфига, как config_hash у telemt; файл недоступен — пусто.
+    import hashlib
+    try:
+        with open(CFG, "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()
+    except OSError:
+        return ""
+
+
 def load_cfg():
     try:
         with open(CFG, encoding="utf-8") as f:
@@ -587,25 +597,34 @@ def cmd_active_ips(cfg):
 def dcs_telemt(me):
     # Форма /v1/stats/dcs telemt. У mtdd пул ME растёт от одного writer по
     # нагрузке: «нужно» — его текущая цель (pool_target), «живо» — готовые.
+    # Основные DC 1–5 и медиа −1…−5 mtdd прогревает сам — они в покрытии.
+    # CDN 203 (и −203) он поднимает только под клиента: без пула это не сбой,
+    # а «по требованию» — такой DC в покрытие не идёт (required_writers 0).
     d = me or {}
     out = []
     for dc in d.get("dcs") or []:
         try:
             n = int(str(dc.get("dc")))
         except ValueError:
+            continue  # "other" — сводка прочих id
+        if n == 0:
             continue
-        if n <= 0:
-            continue  # медиа-DC (−1…−5) у telemt в этой таблице нет
         ready = num(dc.get("ready_connections"))
         if ready is None:
             ready = 1 if dc.get("connected") else 0
-        target = num(dc.get("pool_target")) or 1
+        target = num(dc.get("pool_target")) or 0
+        lazy = abs(n) not in (1, 2, 3, 4, 5)
+        on_demand = lazy and ready == 0
         rtt = (num(dc.get("ping_rtt_us")) or 0) / 1000.0
         pct = 100.0 if ready > 0 else 0.0
-        out.append({"dc": n, "rtt_ms": round(rtt, 3), "alive_writers": ready,
-                    "required_writers": max(target, 1),
-                    "available_pct": pct, "coverage_pct": pct})
-    out.sort(key=lambda x: x["dc"])
+        row = {"dc": n, "rtt_ms": round(rtt, 3), "alive_writers": ready,
+               "required_writers": 0 if on_demand else max(target, 1),
+               "available_pct": pct, "coverage_pct": pct}
+        if on_demand:
+            row["on_demand"] = True
+        out.append(row)
+    # 1…5, затем медиа −1…−5, затем прочие (203).
+    out.sort(key=lambda x: (0 if 1 <= x["dc"] <= 5 else 1 if -5 <= x["dc"] <= -1 else 2, abs(x["dc"]), x["dc"] < 0))
     return {"middle_proxy_enabled": True, "dcs": out}
 
 def cmd_dcs_telemt(cfg):
@@ -640,7 +659,10 @@ def cmd_snapshot(cfg):
         "engine": "mtdd", "version": version, "full_api": full, "taken_at": int(time.time()),
         "users": rows,
         "summary": summary,
-        "system_info": {"version": version, "config_path": "", "config_hash": ""},
+        # config_path панель трогает и правит как конфиг telemt (touch для
+        # hot-reload, редактор) — у mtdd он пуст; путь для показа — config_file.
+        "system_info": {"version": version, "config_path": "", "config_file": CFG,
+                        "config_hash": cfg_hash()},
         "health": {"status": "ok", "read_only": False},
         "dcs": dcs_telemt(st.get("me") or {}),
         "active_ips": active,
@@ -1109,9 +1131,8 @@ mtdd_media_set() {
 
 # ── Подозрительные адреса (mtdd 1.0.0+) ────────────────────────
 # Детектор mtdd копит адреса с признаками сканера/зонда (/v1/suspects).
-# Таблица — как у `mtdd-ctl suspects`; жёсткая блокировка — набор nftables
-# (до перезагрузки), мягкая — теневой бан самого mtdd (suspect_ban_score).
-MTDD_SUSPECTS_NFT_TABLE="mtproxyl_suspects"
+# Таблица — как у `mtdd-ctl suspects`; жёсткая блокировка — записи в общей
+# «Блокировке IP» MTProxyL, мягкая — теневой бан самого mtdd (suspect_ban_score).
 
 mtdd_suspects_list() {
     local _min="${1:-0}" _json
@@ -1176,60 +1197,167 @@ PY
     echo ""
 }
 
-# Правила nftables для блока подозрительных адресов (stdout). Только порт
-# прокси: блок не должен закрывать SSH администратору, который сам набрал
-# признаки, проверяя прокси. auto-merge склеивает пересекающиеся подсети.
-_mtdd_suspects_nft_rules() {
-    local _port="$1" _ips="$2" _v4="" _v6="" _ip
-    MTDD_SUSPECTS_COUNT=0
-    while IFS= read -r _ip; do
-        [ -n "$_ip" ] || continue
-        # Адреса уже проверены и приведены помощником (suspects-ips);
-        # здесь — только раскладка по семействам и защита от мусора в nft.
-        if [[ "$_ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}(/[0-9]{1,2})?$ ]]; then _v4+="${_v4:+, }${_ip}"
-        elif [[ "$_ip" =~ ^[0-9a-fA-F:]*:[0-9a-fA-F:]*(/[0-9]{1,3})?$ ]]; then _v6+="${_v6:+, }${_ip}"
-        else continue; fi
-        MTDD_SUSPECTS_COUNT=$((MTDD_SUSPECTS_COUNT + 1))
-    done <<< "$_ips"
-    local _e4="" _e6=""
-    [ -n "$_v4" ] && _e4=" elements = { ${_v4} };"
-    [ -n "$_v6" ] && _e6=" elements = { ${_v6} };"
-    echo "table inet ${MTDD_SUSPECTS_NFT_TABLE}"
-    echo "delete table inet ${MTDD_SUSPECTS_NFT_TABLE}"
-    echo "table inet ${MTDD_SUSPECTS_NFT_TABLE} {"
-    echo "  set v4 { type ipv4_addr; flags interval; auto-merge;${_e4} }"
-    echo "  set v6 { type ipv6_addr; flags interval; auto-merge;${_e6} }"
-    echo "  chain input { type filter hook input priority -5; policy accept;"
-    echo "    tcp dport ${_port} ip saddr @v4 drop"
-    echo "    tcp dport ${_port} ip6 saddr @v6 drop"
-    echo "  }"
-    echo "}"
+# Блок подозрительных адресов — записи в общей «Блокировке IP» (ipblock.list)
+# с пометкой. Один список блокировок, переживает перезагрузку (служба
+# mtproxyl-block), снимается здесь же — только помеченные записи.
+MTDD_SUSPECTS_TAG="mtdd suspects"
+
+# Адреса и подсети, которые suspects block уже положил в ipblock.list.
+mtdd_suspects_blocked() {
+    declare -F ipblock_ensure_file >/dev/null || return 0
+    ipblock_ensure_file
+    awk -v t="# ${MTDD_SUSPECTS_TAG}" 'index($0, t) { l=$0; sub(/#.*/,"",l); gsub(/[[:space:]]/,"",l); if (l != "") print l }' \
+        "$IPBLOCK_FILE" 2>/dev/null
+}
+
+# Свои адреса: сам администратор легко набирает признаки, проверяя прокси, а
+# блок режет все порты. Не блокируем адрес SSH-сессии и всех, с кем сейчас
+# открыто соединение не на порт прокси (SSH, панель): из панели CLI идёт
+# через sudo, и SSH_CONNECTION там нет.
+_mtdd_suspects_own_ips() {
+    local _c="${SSH_CONNECTION:-${SSH_CLIENT:-}}"
+    [ -n "$_c" ] && echo "${_c%% *}"
+    command -v ss >/dev/null 2>&1 || return 0
+    ss -Htn state established 2>/dev/null | awk -v p="${PROXY_PORT:-443}" '{
+        l = $(NF-1); r = $NF; lp = l; sub(/.*:/, "", lp)
+        if (lp == p) next
+        sub(/:[0-9]+$/, "", r); gsub(/[][]/, "", r); sub(/^::ffff:/, "", r); print r }'
+}
+
+# Отбор новых записей: адрес/подсеть mtdd, пересекающиеся с тем, что уже в
+# списке, пропускаем (nft с flags interval отвергает пересечения, и весь список
+# не применился бы); из пересекающихся между собой остаётся более широкая;
+# запись, накрывающая свой адрес, не блокируется.
+# Строки: "add X", "have X", "own X Y" (Y — свой адрес внутри X).
+_mtdd_suspects_pick() {
+    MTDD_PICK_NEW="$1" MTDD_PICK_HAVE="$2" MTDD_PICK_OWN="$3" python3 -I - <<'PY'
+import ipaddress, os
+def nets(text):
+    out = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append((line, ipaddress.ip_network(line, strict=False)))
+        except ValueError:
+            pass
+    return out
+have = [n for _, n in nets(os.environ["MTDD_PICK_HAVE"])]
+own = []
+for line in os.environ["MTDD_PICK_OWN"].splitlines():
+    try:
+        own.append(ipaddress.ip_address(line.strip()))
+    except ValueError:
+        pass
+cand = nets(os.environ["MTDD_PICK_NEW"])
+cand.sort(key=lambda x: x[1].prefixlen)
+taken, seen = [], set()
+for text, n in cand:
+    if text in seen:
+        continue
+    seen.add(text)
+    if any(n.version == h.version and n.overlaps(h) for h in have + taken):
+        print("have", text)
+        continue
+    mine = [a for a in own if a.version == n.version and a in n]
+    if mine:
+        print("own", text, mine[0])
+        continue
+    taken.append(n)
+    print("add", text)
+PY
 }
 
 mtdd_suspects_block() {
-    local _score="${1:-60}" _ips _port _rules
+    local _score="${1:-60}" _ips _new=() _skip=0 _kind _x _y
     [[ "$_score" =~ ^[0-9]+$ ]] && [ "$((10#$_score))" -ge 1 ] && [ "$((10#$_score))" -le 100 ] \
         || { log_error "Мин. score: 1–100"; return 1; }
-    command -v nft >/dev/null 2>&1 || { log_error "Нужен nftables (nft)"; return 1; }
-    _port=$(mtdd_cfg_get proxy_port)
-    [[ "${_port:-}" =~ ^[0-9]+$ ]] || _port="${PROXY_PORT:-}"
-    [[ "${_port:-}" =~ ^[0-9]+$ ]] || { log_error "Не удалось узнать порт прокси mtdd"; return 1; }
-    _ips=$(_mtdd_py suspects-ips "$((10#$_score))" 2>&1) || { log_error "Адреса не получены: ${_ips}"; return 1; }
-    _rules=$(_mtdd_suspects_nft_rules "$_port" "$_ips")
-    nft -f - <<< "$_rules" || { log_error "nft не применил правила"; return 1; }
-    _mtdd_suspects_nft_rules "$_port" "$_ips" >/dev/null   # счётчик в этой оболочке
-    log_success "В блоке адресов и подсетей: ${MTDD_SUSPECTS_COUNT} на порту ${_port} (score ≥ $((10#$_score))). Снять: mtproxyl suspects unblock"
-    # За фронтом с PROXY protocol на порт прокси приходит адрес фронта, а не
-    # клиента — такой блок клиентов не поймает.
+    _score=$((10#$_score))
+    declare -F ipblock_add >/dev/null || { log_error "Нет модуля «Блокировка IP»"; return 1; }
+    _ips=$(_mtdd_py suspects-ips "$_score" 2>&1) || { log_error "Адреса не получены: ${_ips}"; return 1; }
+    _mtdd_suspects_drop_legacy
+    ipblock_ensure_file
+    local _picked
+    _picked=$(_mtdd_suspects_pick "$_ips" "$(ipblock_entries)" "$(_mtdd_suspects_own_ips)") \
+        || { log_error "Не удалось разобрать адреса"; return 1; }
+    while read -r _kind _x _y; do
+        case "$_kind" in
+            add)  ipblock_family "$_x" >/dev/null && _new+=("$_x") ;;
+            have) _skip=$((_skip + 1)) ;;
+            own)  log_warn "${_x} не блокируем: внутри ваш адрес ${_y} (SSH или панель)" ;;
+        esac
+    done <<< "$_picked"
+    if [ "${#_new[@]}" -gt 0 ]; then
+        local _d; _d=$(date +%Y-%m-%d)
+        for _ip in "${_new[@]}"; do
+            printf '%-18s # %s score>=%d %s\n' "$_ip" "$MTDD_SUSPECTS_TAG" "$_score" "$_d"
+        done >> "$IPBLOCK_FILE"
+        chmod 600 "$IPBLOCK_FILE"
+        ipblock_apply || return 1
+    fi
+    log_success "В «Блокировку IP» добавлено: ${#_new[@]} (score ≥ ${_score})$([ "$_skip" -gt 0 ] && echo ", уже в списке или пересекаются с ним: ${_skip}")"
+    log_info "Всего от suspects: $(mtdd_suspects_blocked | wc -l | tr -d ' '). Снять только их: mtproxyl suspects unblock"
+    if [ "${IPBLOCK_ENABLED:-false}" != true ]; then
+        log_warn "«Блокировка IP» выключена — адреса в списке, но не блокируются. Включить: mtproxyl block on"
+    else
+        log_info "Блок на все порты и переживает перезагрузку, как вся «Блокировка IP». Мягче — теневой бан mtdd: mtproxyl suspects ban <score>"
+    fi
+    # За фронтом с PROXY protocol адрес клиента приходит в заголовке, а TCP —
+    # от фронта: блок по адресу источника таких клиентов не остановит.
     [ "$(mtdd_cfg_get proxy_protocol)" = true ] \
         && log_warn "Включён PROXY protocol: клиенты приходят через фронт, этот блок их не остановит — блокируйте адреса на фронте"
-    log_info "Блокировка до перезагрузки. Мгновенный отказ сам по себе заметен — мягче теневой бан: mtproxyl suspects ban <score>"
+    return 0
 }
 
 mtdd_suspects_unblock() {
-    command -v nft >/dev/null 2>&1 || { log_error "Нужен nftables (nft)"; return 1; }
-    if nft delete table inet "$MTDD_SUSPECTS_NFT_TABLE" 2>/dev/null; then log_success "Блокировка снята"
-    else log_info "Блокировки не было"; fi
+    declare -F ipblock_apply >/dev/null || { log_error "Нет модуля «Блокировка IP»"; return 1; }
+    _mtdd_suspects_drop_legacy
+    ipblock_ensure_file
+    local _n; _n=$(mtdd_suspects_blocked | wc -l | tr -d ' ')
+    [ "$_n" -gt 0 ] || { log_info "Записей от suspects в «Блокировке IP» нет"; return 0; }
+    local _tmp; _tmp=$(mktemp "${INSTALL_DIR}/.ipblock.XXXXXX") || return 1
+    awk -v t="# ${MTDD_SUSPECTS_TAG}" '!index($0, t)' "$IPBLOCK_FILE" > "$_tmp" \
+        && chmod 600 "$_tmp" && mv -f "$_tmp" "$IPBLOCK_FILE" \
+        || { rm -f "$_tmp"; log_error "Не удалось изменить список блокировки"; return 1; }
+    ipblock_apply || return 1
+    log_success "Снято записей от suspects: ${_n}"
+}
+
+# Для панели: учёт, пороги, сколько уже в «Блокировке IP» и сама таблица.
+# Ключи — одним чтением конфига, а не помощником на каждый.
+mtdd_suspects_status_json() {
+    local _list _ok=true _cfg="${DETECTED_CONFIG_PATH:-$MTDD_CONFIG_DEFAULT}" _err="" _tmp
+    # Без $(…): причину отказа _mtdd_call оставляет в MTDD_LAST_ERROR, а из
+    # подоболочки она бы не вернулась.
+    _tmp=$(mktemp "${TMPDIR:-/tmp}/mtproxyl-susp.XXXXXX") || return 1
+    # Таблица — через файл, а не аргументом: 500 строк больше предела длины
+    # одного аргумента (~128 КиБ).
+    if ! _mtdd_call GET "/v1/suspects?limit=500" > "$_tmp" 2>/dev/null; then
+        _ok=false; _err="${MTDD_LAST_ERROR:-}"
+    fi
+    jq -e 'type == "object"' "$_tmp" >/dev/null 2>&1 || { _ok=false; echo '{}' > "$_tmp"; }
+    local _conf; _conf=$(jq -c '{suspects, fingerprint, suspect_ban_score, suspect_watch_score, proxy_protocol}' "$_cfg" 2>/dev/null) || _conf='{}'
+    local _blocked; _blocked=$(mtdd_suspects_blocked | wc -l | tr -d ' ')
+    jq -nc --slurpfile ls "$_tmp" --argjson c "$_conf" --argjson ok "$_ok" --arg err "$_err" \
+        --argjson blocked "${_blocked:-0}" --arg ipb "${IPBLOCK_ENABLED:-false}" '
+        $ls[0] as $l |
+        {available: $ok, error: (if $ok then "" else $err end),
+         enabled: ($c.suspects == true), fingerprint: ($c.fingerprint == true),
+         ban_score: ($c.suspect_ban_score // 0), watch_score: ($c.suspect_watch_score // 60),
+         proxy_protocol: ($c.proxy_protocol == true),
+         blocked: $blocked, ipblock_enabled: ($ipb == "true"),
+         total: ($l.total // 0), watched: ($l.watched // 0), shadow_banned: ($l.shadow_banned // 0),
+         by_matches: ($l.by_matches // {}), suspects: ($l.suspects // [])}'
+    local _rc=$?
+    rm -f "$_tmp"
+    return $_rc
+}
+
+# Прежняя версия держала отдельную таблицу inet mtproxyl_suspects — убираем.
+_mtdd_suspects_drop_legacy() {
+    command -v nft >/dev/null 2>&1 && nft delete table inet mtproxyl_suspects 2>/dev/null
+    return 0
 }
 
 handle_suspects_command() {
@@ -1239,6 +1367,8 @@ handle_suspects_command() {
         ''|list|[0-9]) [[ "$_sub" =~ ^[0-9]$ ]] && set -- list "$_sub"
                   mtdd_suspects_list "${2:-0}" ;;
         json)     _mtdd_call GET "/v1/suspects?limit=100000" || _mtdd_fail "Список не получен" ;;
+        status)   [ "${2:-}" = --json ] || { log_error "Использование: suspects status --json"; return 1; }
+                  mtdd_suspects_status_json ;;
         block)    check_root; mtdd_suspects_block "${2:-60}" ;;
         unblock)  check_root; mtdd_suspects_unblock ;;
         on)       check_root; mtdd_tune_set suspects true ;;
@@ -1251,10 +1381,11 @@ handle_suspects_command() {
             echo -e "  ${BOLD}Подозрительные адреса (mtdd):${NC}"
             echo -e "    ${GREEN}suspects${NC} [мин. совпадений 0–9]  Таблица"
             echo -e "    ${GREEN}suspects json${NC}                 Как есть, JSON"
+            echo -e "    ${GREEN}suspects status --json${NC}        Сводка и таблица для панели"
             echo -e "    ${GREEN}suspects on|off${NC}               Учёт (ключ suspects)"
             echo -e "    ${GREEN}suspects ban${NC} <score|0>         Теневой бан mtdd: такие уходят на маскировку"
-            echo -e "    ${GREEN}suspects block${NC} [score]         nftables-блок на порт прокси, score ≥ (по умолч. 60)"
-            echo -e "    ${GREEN}suspects unblock${NC}              Снять nftables-блок" ;;
+            echo -e "    ${GREEN}suspects block${NC} [score]         В «Блокировку IP» адреса со score ≥ (по умолч. 60)"
+            echo -e "    ${GREEN}suspects unblock${NC}              Убрать из «Блокировки IP» только эти записи" ;;
     esac
 }
 
@@ -1873,93 +2004,27 @@ handle_mtdd_user_command() {
 }
 
 # ── tune для mtdd ──────────────────────────────────────────────
-# ключ:проверка. Доступ, токены и пути хранилищ сюда не входят — они меняют
-# то, через что MTProxyL вообще разговаривает с mtdd.
-_MTDD_TUNE_WHITELIST=(
-    "workers:^[0-9]+$"
-    "max_connections:^[0-9]+$"
-    "max_handshakes:^[0-9]+$"
-    "handshake_timeout_seconds:^[0-9]+$"
-    "idle_timeout_seconds:^[0-9]+$"
-    "client_keepalive_seconds:^[0-9]+$"
-    "client_ack_timeout_seconds:^[0-9]+$"
-    "shutdown_timeout_seconds:^[0-9]+$"
-    "me_connections_per_dc:^[0-9]+$"
-    "me_clients_per_writer:^[0-9]+$"
-    "metadata_refresh_seconds:^[0-9]+$"
-    "global_buffer_bytes:^[0-9]+$"
-    "connection_queue_bytes:^[0-9]+$"
-    "max_frame_bytes:^[0-9]+$"
-    "cpu_affinity:^(true|false)$"
-    "masking:^(true|false)$"
-    "direct_fallback_enabled:^(true|false)$"
-    "direct_fallback_dcs:^\\[[-0-9, ]*\\]$"
-    "media_user_rate_kbps:^[0-9]+$"
-    "media_total_rate_kbps:^[0-9]+$"
-    "device_window_seconds:^[0-9]+$"
-    "unique_ip_min_bytes:^[0-9]+$"
-    "suspects:^(true|false)$"
-    "fingerprint:^(true|false)$"
-    "suspect_watch_score:^[0-9]+$"
-    "suspect_ban_score:^[0-9]+$"
-    "suspect_ttl_hours:^[0-9]+$"
-)
-
-_mtdd_tune_lookup() {
-    local _e
-    for _e in "${_MTDD_TUNE_WHITELIST[@]}"; do
-        [ "${_e%%:*}" = "$1" ] && { echo "${_e#*:}"; return 0; }
-    done
-    return 1
-}
-
+# Старое имя «Экспертных параметров mtdd» (lib/mtdd_expert.sh): тот же
+# каталог, умолчания и проверки. Список DC можно и в прежнем виде [1,2].
 mtdd_handle_tune() {
     local _sub="${1:-list}"; shift 2>/dev/null || true
     case "$_sub" in
-        list)
-            echo ""; draw_header "ПАРАМЕТРЫ ТЮНИНГА MTDD"; echo ""
-            local _e _k _v _mgr=false _managed="${MTDD_MGR_MANAGED_KEYS:-}"
-            if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
-                _mgr=true
-                # При WARP или AWG без ME Direct для всех DC задаёт MTProxyL
-                # (поверх tune); без них ключи остаются за пользователем.
-                declare -F _mtdd_mgr_route_state >/dev/null \
-                    && [ "$(_mtdd_mgr_route_state | cut -d'|' -f1)" = 1 ] \
-                    && _managed+=" direct_fallback_enabled direct_fallback_dcs"
-            fi
-            for _e in "${_MTDD_TUNE_WHITELIST[@]}"; do
-                _k="${_e%%:*}"; _v=$(mtdd_cfg_get "$_k")
-                # Значение — %s (как есть), пометка — %b: цвета заданы строками
-                # с \033, их раскрывает printf.
-                if [ "$_mgr" = true ] && [[ " ${_managed} " == *" ${_k} "* ]]; then
-                    printf "  %-30s %s %b\n" "$_k" "${_v:-—}" "${DIM}(задаёт MTProxyL)${NC}"
-                elif [ -n "$_v" ]; then
-                    printf "  %-30s %s\n" "$_k" "$_v"
-                else
-                    printf "  %-30s %b\n" "$_k" "${DIM}по умолчанию${NC}"
-                fi
-            done
-            echo ""
-            echo -e "  ${DIM}Без обрыва клиентов (reload): me_*, media_*. Остальное — с перезапуском.${NC}"
-            echo "" ;;
+        list) mtdd_expert_show ;;
         get)
-            [ -n "${1:-}" ] || { mtdd_handle_tune list; return; }
+            [ -n "${1:-}" ] || { mtdd_expert_show; return; }
             local _v; _v=$(mtdd_cfg_get "$1")
             [ -n "$_v" ] && echo "  ${1} = ${_v}" || echo -e "  ${DIM}${1}: по умолчанию${NC}" ;;
         set)
             check_root
-            local _k="${1:-}" _v="${2:-}" _re
+            local _k="${1:-}" _v="${2:-}"
             [ -n "$_k" ] && [ -n "$_v" ] || { log_error "Использование: tune set <параметр> <значение>"; return 1; }
-            _re=$(_mtdd_tune_lookup "$_k") || { log_error "Неизвестный параметр mtdd. Выполните: mtproxyl tune list"; return 1; }
-            [[ "$_v" =~ $_re ]] || { log_error "Некорректное значение (ожидается: ${_re})"; return 1; }
-            mtdd_tune_set "$_k" "$_v" ;;
+            [ "$_k" = direct_fallback_dcs ] && { _v="${_v#[}"; _v="${_v%]}"; }
+            mtdd_expert_set "$_k" "$_v" ;;
         clear)
             check_root
-            local _k="${1:-}"
-            [ -n "$_k" ] && [ "$_k" != all ] || { log_error "Использование: tune clear <параметр>"; return 1; }
-            _mtdd_tune_lookup "$_k" >/dev/null || { log_error "Неизвестный параметр mtdd"; return 1; }
-            mtdd_tune_clear "$_k" ;;
-        *) log_error "Использование: mtproxyl tune list|get|set|clear" ; return 1 ;;
+            [ -n "${1:-}" ] || { log_error "Использование: tune clear <параметр>|all"; return 1; }
+            mtdd_expert_clear "$1" ;;
+        *) log_error "Использование: mtproxyl tune list|get|set|clear (или mtproxyl expert …)" ; return 1 ;;
     esac
 }
 

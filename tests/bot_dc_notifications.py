@@ -42,6 +42,26 @@ class DCNotifications(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(broadcast.await_count, 1)
             self.assertNotIn("dc_bad", state)
 
+    async def test_on_demand_dc_is_not_a_zero_writer_alert(self):
+        # mtdd: CDN 203 поднимается только под клиента — без писателей это не сбой.
+        cfg = config.Config()
+        report = {"available": True, "threshold": 80, "coverage_pct": 100, "dcs": [
+            {"dc": 1, "required_writers": 2, "alive_writers": 2, "ok": True},
+            {"dc": -1, "required_writers": 1, "alive_writers": 1, "ok": True},
+            {"dc": 203, "required_writers": 0, "alive_writers": 0, "ok": True, "on_demand": True}]}
+        state = {}
+        with patch.object(notify.cli, "dc_status", AsyncMock(return_value=report)), \
+             patch.object(notify.config, "load", return_value=cfg), \
+             patch.object(notify, "broadcast", AsyncMock()) as broadcast:
+            await notify.check_dc(None, state)
+            self.assertEqual(broadcast.await_count, 0)
+        from bot import format as fmt
+        text = fmt.dc_text(report)
+        self.assertIn("💤", text)
+        self.assertIn("-1", text)
+        self.assertIn("по требованию", text)
+        self.assertNotIn("0/0", text)
+
     async def test_engine_restart_is_reported_once(self):
         cfg = config.Config()
         auto = {"enabled": True, "threshold": 50, "cooldown_min": 5, "pause_min": 5,

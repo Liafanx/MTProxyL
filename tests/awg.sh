@@ -218,8 +218,27 @@ awg_load
 AWG_ENABLED=true AWG_ACTIVE=My_Server AWG_ME_MODE=natip AWG_EGRESS_IP=203.0.113.153; awg_save
 [ "$(awg_general_toml)" = $'middle_proxy_nat_ip = "203.0.113.153"\nmiddle_proxy_nat_probe = false' ]
 awg_is_enabled
+# Маршрут поверх таблицы upstream: AWG никогда не пишет upstreams.conf, и без
+# этой строки «upstream list» показывал бы только Direct.
+source "$repo/lib/upstream.sh"
+j=$(upstream_overlay_json)
+jq -e 'length == 1 and .[0].kind == "awg" and .[0].enabled and (.[0].title | test("mtpawg.*My_Server"))
+       and (.[0].detail | test("NAT IP 203.0.113.153"))' <<< "$j" >/dev/null || { echo "overlay AWG: $j" >&2; exit 1; }
+AWG_ME_DISABLED=manager; awg_save
+upstream_overlay_json | jq -e '.[0].detail | test("ME выключен")' >/dev/null || { echo "overlay AWG без ME: $(upstream_overlay_json)" >&2; exit 1; }
+AWG_ME_DISABLED=""; awg_save
+_warp_mode() { echo socks; }; _warp_configured_proto() { echo masque; }
+WARP_ENABLED=true upstream_overlay_json | jq -e 'length == 2 and .[1].kind == "warp" and (.[1].title | test("вариант A")) and .[1].detail == "протокол masque"' >/dev/null \
+    || { echo "overlay WARP: $(WARP_ENABLED=true upstream_overlay_json)" >&2; exit 1; }
+# Вариант C — строка самой таблицы маршрутов, поверх неё не показывается.
+_warp_mode() { echo upstream; }
+[ "$(WARP_ENABLED=true upstream_overlay_json | jq 'length')" = 1 ] || { echo "overlay WARP C: $(WARP_ENABLED=true upstream_overlay_json)" >&2; exit 1; }
+_warp_mode() { echo socks; }
+WARP_ENABLED=true upstream_overlay_show > "$test_dir/ov.txt" 2>&1 || true; grep -q "Поверх таблицы" "$test_dir/ov.txt" || { echo "overlay show: $(cat "$test_dir/ov.txt")" >&2; exit 1; }
+unset -f _warp_mode _warp_configured_proto
 fails awg_remove My_Server
 AWG_ENABLED=false; awg_save
+[ "$(upstream_overlay_json)" = "[]" ] || { echo "overlay без AWG: $(upstream_overlay_json)" >&2; exit 1; }
 awg_remove piped >/dev/null
 [ ! -f "$INSTALL_DIR/awg/configs/piped.conf" ]
 

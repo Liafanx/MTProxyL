@@ -21,6 +21,7 @@ _SETTINGS_SETTABLE=(
     "PROXY_CONCURRENCY|range:1:1000000|Максимум одновременных соединений"
     "FAKE_CERT_LEN|range:512:65536|Длина поддельного сертификата"
     "PROXY_PROTOCOL|bool|Принимать PROXY protocol от вышестоящего балансировщика"
+    "PROXY_PROTOCOL_TRUSTED_CIDRS|custom:_validate_cidr_list|Доверенные адреса фронта для PROXY protocol (CIDR через запятую)"
     "PROXY_METRICS_PORT|range:1:65535|Порт метрик Prometheus (только localhost)"
     "PROXY_API_PORT|range:1:65535|Порт REST API движка (через него работает панель)"
     "BACKUP_RETENTION_DAYS|range:0:3650|Сколько дней хранить бэкапы (0 — не удалять)"
@@ -98,21 +99,32 @@ _settings_find() {
     return 1
 }
 
+# Ключ конфига telemt, которого у движка mtdd (Manager) нет: молча сохранить
+# и ничего не сделать хуже отказа. Панель скрывает их по "supported":false.
+_settings_mtdd_unsupported() {
+    declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active || return 1
+    case "$1" in
+        UNKNOWN_SNI_ACTION|PROXY_LOG_LEVEL|FAKE_CERT_LEN|PROXY_CONCURRENCY|PROXY_SECRET_URL|PROXY_CONFIG_V4_URL|PROXY_CONFIG_V6_URL) return 0 ;;
+    esac
+    return 1
+}
+
 # Список настроек с текущими значениями — панель строит по нему форму.
 settings_settable_json() {
     local PROXY_LOG_LEVEL; PROXY_LOG_LEVEL=$(proxy_log_level)
-    local _entry _key _validator _desc _rest _first=1
+    local _entry _key _validator _desc _rest _first=1 _sup
     printf '['
     for _entry in "${_SETTINGS_SETTABLE[@]}"; do
         _key="${_entry%%|*}"
         _rest="${_entry#*|}"
         _validator="${_rest%%|*}"
         _desc="${_rest#*|}"
+        _sup=true; _settings_mtdd_unsupported "$_key" && _sup=false
         [ $_first -eq 1 ] || printf ','
         _first=0
-        printf '{"key":"%s","validator":"%s","description":"%s","value":"%s"}' \
+        printf '{"key":"%s","validator":"%s","description":"%s","value":"%s","supported":%s}' \
             "$(json_escape "$_key")" "$(json_escape "$_validator")" \
-            "$(json_escape "$_desc")" "$(json_escape "${!_key:-}")"
+            "$(json_escape "$_desc")" "$(json_escape "${!_key:-}")" "$_sup"
     done
     printf ']\n'
 }
@@ -140,6 +152,15 @@ settings_set_param() {
         log_error "Недопустимое значение для ${_key}: ${_err}"
         return 1
     }
+
+    # До любых действий: PROXY_LOG_LEVEL ниже писал оверрайд telemt и при mtdd.
+    if _settings_mtdd_unsupported "$_key"; then
+        case "$_key" in
+            PROXY_CONCURRENCY) mtdd_unsupported "PROXY_CONCURRENCY — настройка telemt; у mtdd лимит подключений: mtproxyl expert set connections max_connections N" ;;
+            *) mtdd_unsupported "${_key} — настройка telemt" ;;
+        esac
+        return 1
+    fi
 
     case "$_key" in
         PROXY_API_PORT)
@@ -229,16 +250,19 @@ settings_set_param() {
     # Ключи конфига telemt, которых у mtdd нет: молча не действовать хуже отказа.
     if mtdd_mgr_active; then
         case "$_key" in
-            UNKNOWN_SNI_ACTION|PROXY_SECRET_URL|PROXY_CONFIG_V4_URL|PROXY_CONFIG_V6_URL|PROXY_LOG_LEVEL)
-                mtdd_unsupported "${_key} — настройка telemt"; return 1 ;;
             PROXY_MODE)
                 [ "$_val" = mtproto ] || { mtdd_unsupported "WEB Proxy"; return 1; } ;;
         esac
     fi
 
+    local _prev="${!_key:-}"
     printf -v "$_key" '%s' "$_val"
     save_settings
-    log_success "${_key} = ${_val:-<пусто>}"
+    # mtdd: конфиг проверяет сама сборка (старая 0.1.0 не знает, например,
+    # proxy_protocol). Об успехе — после пересборки, а не принятое — откатываем.
+    local _mtdd_cfg=false
+    mtdd_mgr_active && [ "$_own_setting" != "true" ] && [ "$_key" != PROXY_METRICS_PORT ] && _mtdd_cfg=true
+    [ "$_mtdd_cfg" = true ] || log_success "${_key} = ${_val:-<пусто>}"
 
     # Порты метрик и API попадают в конфиг движка, но на лету не подхватываются:
     # движок открывает сокеты при старте.
@@ -275,7 +299,18 @@ settings_set_param() {
             [ "$_val" = "0" ] && log_info "Снимки выключены: история пополняется, только пока открыта панель"
             ;;
         *)
-            reload_proxy_config >/dev/null 2>&1 || true
+            if [ "$_mtdd_cfg" = true ]; then
+                if ! mtdd_mgr_config_check; then
+                    printf -v "$_key" '%s' "$_prev"
+                    save_settings
+                    log_error "${_key} не изменён: mtdd не принял конфиг (прежнее значение: ${_prev:-<пусто>})"
+                    return 1
+                fi
+                log_success "${_key} = ${_val:-<пусто>}"
+                reload_proxy_config || { log_warn "Настройка сохранена, но применить её сейчас не удалось — проверьте: mtproxyl status"; return 1; }
+            else
+                reload_proxy_config >/dev/null 2>&1 || true
+            fi
             ;;
     esac
     return 0
