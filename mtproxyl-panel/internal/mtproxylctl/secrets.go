@@ -32,6 +32,9 @@ type Secret struct {
 	// ([access.user_rate_limits]); 0 means no cap in that direction.
 	RateUpBps   int64 `json:"rate_limit_up_bps"`
 	RateDownBps int64 `json:"rate_limit_down_bps"`
+	// MaxDevices is the mtdd per-user device cap (devices.conf); 0 — no cap
+	// or not the mtdd engine.
+	MaxDevices int64 `json:"max_devices"`
 	// TotalIn and TotalOut are 0 when the traffic source cannot tell
 	// direction apart (the reanimator's API-only path) — TotalBytes stays
 	// authoritative in that case, same as on the Traffic page.
@@ -283,6 +286,19 @@ func (c *Client) SetSecretNote(ctx context.Context, label, note string) (string,
 		note = "-"
 	}
 	out, err := c.run(ctx, "secret", "note", label, note)
+	return stripANSI(out), err
+}
+
+// SetSecretDevices sets the mtdd per-user device cap; 0 lifts it. Only the
+// mtdd engine in Manager mode has it — MTProxyL refuses otherwise.
+func (c *Client) SetSecretDevices(ctx context.Context, label string, n int64) (string, error) {
+	if err := ValidateSecretLabel(label); err != nil {
+		return "", err
+	}
+	if n < 0 || n > 1_000_000 {
+		return "", fmt.Errorf("лимит устройств: от 0 до 1000000")
+	}
+	out, err := c.run(ctx, "secret", "setdevices", label, strconv.FormatInt(n, 10))
 	return stripANSI(out), err
 }
 

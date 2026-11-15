@@ -62,6 +62,9 @@ interface DcEntry {
   alive_writers: number;
   required_writers: number;
   coverage_pct: number;
+  /** DC, который движок поднимает только под клиента (CDN 203 у mtdd): без
+   * писателей это не сбой, в покрытие он не входит. */
+  on_demand?: boolean;
 }
 
 interface DcsData {
@@ -347,7 +350,10 @@ export function DashboardPage() {
         {system && (
           <CollapsibleSection title="Информация о системе">
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2 lg:gap-3">
-              {Object.entries(system).map(([key, value]) => {
+              {Object.entries(system)
+                // mtdd: путь — в config_file, пустой config_path не дублируем.
+                .filter(([key, value]) => !(key === 'config_path' && !value && 'config_file' in system))
+                .map(([key, value]) => {
                 const { label, text, hint } = describeSystemField(key, value);
                 return (
                   <div key={key} className="min-w-0">
@@ -478,6 +484,21 @@ function DcCard({
       </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
         {rows.map((d) => {
+          if (d.on_demand) {
+            return (
+              <div key={d.dc} className="flex gap-3 rounded-lg bg-bg p-3">
+                <div className="flex h-14 w-2 shrink-0 rounded-full bg-bar-track" aria-hidden="true" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-row font-semibold text-text">DC {d.dc}</span>
+                    <span className="text-micro text-text-faint">по требованию</span>
+                  </div>
+                  <div className="mt-1 text-micro text-text-muted">0 пис. — нет клиентов</div>
+                  <div className="text-micro text-text-faint">в покрытие не входит</div>
+                </div>
+              </div>
+            );
+          }
           const cov = Math.round(d.coverage_pct ?? 0);
           const ok = rowOk(cov);
           const empty = d.required_writers > 0 && d.alive_writers === 0;
@@ -521,6 +542,7 @@ const SYSTEM_LABELS: Record<string, string> = {
   build_profile: 'Профиль сборки',
   config_hash: 'Хеш конфига',
   config_path: 'Путь к конфигу',
+  config_file: 'Путь к конфигу',
   config_reload_count: 'Перечитываний конфига',
   process_started_at_epoch_secs: 'Запущен',
   uptime_seconds: 'Работает',

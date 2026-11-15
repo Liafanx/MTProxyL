@@ -7,8 +7,18 @@ import { ErrorAlert } from '@/components/ErrorAlert';
 import { CollapsibleSection } from '@/components/CollapsibleSection';
 import { ParamField } from '@/components/ParamField';
 import { ManagerOnlyNotice } from '@/components/ManagerOnlyNotice';
-import { useManagerOnly } from '@/hooks/useMtproxyl';
+import { useManagerOnly, useMtproxyl } from '@/hooks/useMtproxyl';
 import { mtproxylExpertApi, type ExpertParam, type SuperExpertStatus } from '@/lib/api';
+
+/**
+ * Значение поля без правки: override, иначе умолчание. Умолчание словами
+ * («без лимита», «авто» у mtdd) в числовое поле не кладём — поле пустое.
+ */
+function baseValue(p: ExpertParam): string {
+  if (p.has_override) return p.override;
+  if (p.validator.startsWith('range:') && !/^\d+$/.test(p.default)) return '';
+  return p.default;
+}
 
 /** Совпадает ли параметр со строкой поиска. */
 function matches(p: ExpertParam, q: string): boolean {
@@ -35,6 +45,8 @@ export function ExpertPage() {
   const [superExpert, setSuperExpert] = useState<SuperExpertStatus | null>(null);
 
   const { allowed, loading: modeLoading } = useManagerOnly();
+  const { engineKind } = useMtproxyl();
+  const isMtdd = engineKind === 'mtdd';
 
   const load = useCallback(async () => {
     // Экспертные параметры правят собственный конфиг движка, которого в
@@ -69,14 +81,14 @@ export function ExpertPage() {
   const idOf = (p: ExpertParam) => `${p.section}.${p.key}`;
 
   // Эффективное значение: правка → override → значение по умолчанию.
-  const valueOf = (p: ExpertParam) => edits[idOf(p)] ?? (p.has_override ? p.override : p.default);
+  const valueOf = (p: ExpertParam) => edits[idOf(p)] ?? baseValue(p);
 
   const dirty = useMemo(
     () =>
       params.filter((p) => {
         const e = edits[idOf(p)];
         if (e === undefined) return false;
-        return e !== (p.has_override ? p.override : p.default);
+        return e !== baseValue(p);
       }),
     [edits, params],
   );
@@ -111,9 +123,13 @@ export function ExpertPage() {
       const needsRestart = dirty.some((p) => !p.hot_reload);
       setNotice(
         `Сохранено параметров: ${dirty.length}, конфиг пересобран.` +
-          (needsRestart
-            ? ' Часть значений вступит в силу только после перезапуска прокси.'
-            : ' Все значения применены на лету.'),
+          (isMtdd
+            ? needsRestart
+              ? ' mtdd перезапущен: часть значений применяется только так.'
+              : ' Применено без обрыва клиентов.'
+            : needsRestart
+              ? ' Часть значений вступит в силу только после перезапуска прокси.'
+              : ' Все значения применены на лету.'),
       );
       setError(null);
       await load();
@@ -141,8 +157,13 @@ export function ExpertPage() {
       <div>
         <h1 className="text-xl font-semibold text-text-primary">Экспертные параметры</h1>
         <p className="text-sm text-text-secondary mt-1">
-          Точечная правка конфигурации движка telemt. Значения накладываются поверх
-          сгенерированного конфига, поэтому переустановка и смена настроек их не затирают.
+          {isMtdd
+            ? 'Ключи JSON-конфига mtdd: умолчания и допустимые значения — как у самого mtdd. ' +
+              'Значения хранятся отдельно (tune.json) и переживают переустановку и смену настроек. ' +
+              '«На лету» — без обрыва клиентов, остальное применяется перезапуском mtdd. ' +
+              'Порт, домен, маскировку и рекламный тег задают «Настройки прокси».'
+            : 'Точечная правка конфигурации движка telemt. Значения накладываются поверх ' +
+              'сгенерированного конфига, поэтому переустановка и смена настроек их не затирают.'}
         </p>
       </div>
 

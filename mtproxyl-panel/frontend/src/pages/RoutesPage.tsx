@@ -9,7 +9,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ManagerOnlyNotice } from '@/components/ManagerOnlyNotice';
 import { useManagerOnly } from '@/hooks/useMtproxyl';
-import { mtproxylNetApi, type Upstream, type UpstreamSpec } from '@/lib/api';
+import { mtproxylNetApi, type Upstream, type UpstreamOverlay, type UpstreamSpec } from '@/lib/api';
 
 const EMPTY_SPEC: UpstreamSpec = {
   name: '',
@@ -56,6 +56,8 @@ const TYPE_ORDER = ['socks5', 'socks4', 'direct', 'shadowsocks'];
 
 export function RoutesPage() {
   const [routes, setRoutes] = useState<Upstream[]>([]);
+  // Свой AWG и WARP — поверх таблицы: без этой строки видно только Direct.
+  const [overlay, setOverlay] = useState<UpstreamOverlay[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
@@ -87,6 +89,8 @@ export function RoutesPage() {
     setLoading(true);
     try {
       setRoutes(await mtproxylNetApi.upstreams());
+      // Старый MTProxyL без `upstream overlay` — просто без строки.
+      setOverlay(await mtproxylNetApi.upstreamOverlay().catch(() => []));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось получить маршруты');
@@ -174,6 +178,26 @@ export function RoutesPage() {
       {allowed && (
         <>
       {error && <ErrorAlert message={error} onRetry={load} />}
+
+      {overlay.some((o) => o.enabled) && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Поверх таблицы</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {overlay.filter((o) => o.enabled).map((o) => (
+              <div key={o.kind} className="text-sm">
+                <span className="text-text-primary font-medium">{o.title}</span>
+                {o.detail && <span className="text-text-secondary"> — {o.detail}</span>}
+              </div>
+            ))}
+            <p className="text-xs text-text-secondary">
+              Эти маршруты включаются на своих страницах («Telegram через свой AWG», «Telegram через WARP») и
+              действуют поверх маршрутов ниже.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

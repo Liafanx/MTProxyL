@@ -71,3 +71,52 @@ func (c *Client) SetMediaLimits(ctx context.Context, userMbps, totalMbps float64
 		strconv.FormatFloat(userMbps, 'f', -1, 64), strconv.FormatFloat(totalMbps, 'f', -1, 64))
 	return stripANSI(out), err
 }
+
+// GetMtddSuspects returns `mtproxyl suspects status --json`: mtdd's suspect
+// table plus its settings and how many addresses are already in the IP block
+// list. The document is passed through as is.
+func (c *Client) GetMtddSuspects(ctx context.Context) (json.RawMessage, error) {
+	out, err := c.run(ctx, "suspects", "status", "--json")
+	if err != nil {
+		return nil, err
+	}
+	line := firstJSONLine(out)
+	if !json.Valid([]byte(line)) {
+		return nil, fmt.Errorf("suspects status: invalid JSON")
+	}
+	return json.RawMessage(line), nil
+}
+
+// SetMtddSuspectsEnabled turns mtdd's suspect accounting on or off.
+func (c *Client) SetMtddSuspectsEnabled(ctx context.Context, on bool) (string, error) {
+	arg := "off"
+	if on {
+		arg = "on"
+	}
+	out, err := c.run(ctx, "suspects", arg)
+	return stripANSI(out), err
+}
+
+// SetMtddSuspectsBan sets mtdd's shadow-ban score; 0 turns the ban off.
+func (c *Client) SetMtddSuspectsBan(ctx context.Context, score int) (string, error) {
+	if score < 0 || score > 100 {
+		return "", fmt.Errorf("score: от 0 до 100")
+	}
+	out, err := c.run(ctx, "suspects", "ban", strconv.Itoa(score))
+	return stripANSI(out), err
+}
+
+// MtddSuspectsBlock adds suspects with score >= minScore to the IP block list.
+func (c *Client) MtddSuspectsBlock(ctx context.Context, minScore int) (string, error) {
+	if minScore < 1 || minScore > 100 {
+		return "", fmt.Errorf("score: от 1 до 100")
+	}
+	out, err := c.run(ctx, "suspects", "block", strconv.Itoa(minScore))
+	return stripANSI(out), err
+}
+
+// MtddSuspectsUnblock removes only the entries suspects block added.
+func (c *Client) MtddSuspectsUnblock(ctx context.Context) (string, error) {
+	out, err := c.run(ctx, "suspects", "unblock")
+	return stripANSI(out), err
+}

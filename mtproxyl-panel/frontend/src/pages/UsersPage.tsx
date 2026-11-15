@@ -71,6 +71,9 @@ async function applyMtproxylLimits(label: string, data: Record<string, unknown>,
   if ('rate_limit_up_bps' in data || 'rate_limit_down_bps' in data) {
     await mtproxylUsersApi.setRate(label, Number(data.rate_limit_up_bps ?? 0), Number(data.rate_limit_down_bps ?? 0));
   }
+  if ('max_devices' in data) {
+    await mtproxylUsersApi.setDevices(label, Number(data.max_devices ?? 0));
+  }
 }
 
 function QuotaCell({ user, entry }: { user: UserInfo; entry?: QuotaEntry }) {
@@ -219,6 +222,11 @@ export function UsersPage() {
   const editRate = useMemo(
     () => ({ up: editUser?.rate_limit_up_bps ?? 0, down: editUser?.rate_limit_down_bps ?? 0 }),
     [editUser],
+  );
+  // Лимит устройств mtdd знает только MTProxyL (secret list --json).
+  const editDevices = useMemo(
+    () => (mtproxylUsers ?? []).find((m) => m.label === editUser?.username)?.max_devices ?? 0,
+    [mtproxylUsers, editUser],
   );
   const [deleteUser, setDeleteUser] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -699,6 +707,7 @@ export function UsersPage() {
         mode="create"
         notesEditable={usersOwnedByMtproxyl}
         adTagEditable={adTagSupported}
+        engine={usersOwnedByMtproxyl ? engineKind : 'telemt'}
       />
 
       <UserFormDialog
@@ -713,6 +722,8 @@ export function UsersPage() {
         initialRate={editRate}
         notesEditable={usersOwnedByMtproxyl}
         adTagEditable={adTagSupported}
+        engine={usersOwnedByMtproxyl ? engineKind : 'telemt'}
+        initialDevices={editDevices}
       />
 
       <ConfirmDialog

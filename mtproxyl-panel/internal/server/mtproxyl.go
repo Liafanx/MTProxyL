@@ -715,6 +715,30 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 
+	mux.Handle("POST /api/mtproxyl/users/{label}/devices", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			MaxDevices int64 `json:"max_devices"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		if err := mtproxylctl.ValidateSecretLabel(r.PathValue("label")); err != nil || req.MaxDevices < 0 || req.MaxDevices > 1_000_000 {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Лимит устройств: от 0 до 1000000")
+			return
+		}
+		out, err := client.SetSecretDevices(r.Context(), r.PathValue("label"), req.MaxDevices)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		invalidateUsersCache()
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
 	// ── Уникальные IP mtdd (seen/active, HyperLogLog) ───────────────────────
 	mux.Handle("GET /api/mtproxyl/mtdd/ips", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
@@ -726,6 +750,60 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 			return
 		}
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: doc})
+	}))
+
+	// ── Подозрительные адреса mtdd (/v1/suspects) ───────────────────────────
+	// Жёсткий блок — записи в общей «Блокировке IP», мягкий — теневой бан mtdd.
+	mux.Handle("GET /api/mtproxyl/mtdd/suspects", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		doc, err := client.GetMtddSuspects(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: doc})
+	}))
+	mux.Handle("POST /api/mtproxyl/mtdd/suspects", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			Action string `json:"action"`
+			Score  int    `json:"score"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		if (req.Action == "ban" && (req.Score < 0 || req.Score > 100)) ||
+			(req.Action == "block" && (req.Score < 1 || req.Score > 100)) {
+			writeError(w, http.StatusBadRequest, "invalid_request", "score: ban 0–100, block 1–100")
+			return
+		}
+		var out string
+		var err error
+		switch req.Action {
+		case "on":
+			out, err = client.SetMtddSuspectsEnabled(r.Context(), true)
+		case "off":
+			out, err = client.SetMtddSuspectsEnabled(r.Context(), false)
+		case "ban":
+			out, err = client.SetMtddSuspectsBan(r.Context(), req.Score)
+		case "block":
+			out, err = client.MtddSuspectsBlock(r.Context(), req.Score)
+		case "unblock":
+			out, err = client.MtddSuspectsUnblock(r.Context())
+		default:
+			writeError(w, http.StatusBadRequest, "invalid_request", "action: on, off, ban, block или unblock")
+			return
+		}
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 
 	// ── Медиа-лимиты mtdd ───────────────────────────────────────────────────
@@ -1529,6 +1607,20 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 			return
 		}
 		list, err := client.UpstreamList(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: list})
+	}))
+
+	// Свой AWG и WARP работают поверх таблицы маршрутов: без них страница
+	// показывала бы только Direct, хотя Telegram идёт туннелем.
+	mux.Handle("GET /api/mtproxyl/upstreams/overlay", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		list, err := client.UpstreamOverlayList(r.Context())
 		if err != nil {
 			writeCLIError(w, "mtproxyl_error", err)
 			return
