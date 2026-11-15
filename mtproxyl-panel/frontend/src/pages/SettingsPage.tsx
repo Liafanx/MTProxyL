@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ErrorAlert } from '@/components/ErrorAlert';
+import { MtddAdTagCard } from '@/components/MtddAdTagCard';
 import { ParamField } from '@/components/ParamField';
 import { ManagerOnlyNotice } from '@/components/ManagerOnlyNotice';
 import { useManagerOnly, useMtproxyl } from '@/hooks/useMtproxyl';
@@ -156,6 +157,8 @@ export function SettingsPage() {
               {notice}
             </div>
           )}
+
+          {isMtdd && <MtddAdTagCard />}
 
           {loading && params.length === 0 ? (
             <div className="text-sm text-text-secondary">Загрузка…</div>

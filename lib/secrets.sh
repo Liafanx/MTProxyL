@@ -729,11 +729,20 @@ _secret_limits_text_v() {
         [ -n "$_out" ] && _out+=" · "
         _out+="IP ${_mi}"
     fi
-    # Лимит устройств mtdd (devices.conf; заполняет mtdd_devices_load).
-    local _dv="${_MTDD_DEV[${SECRETS_LABELS[$_i]:-}]:-}"
+    # Поля mtdd (devices.conf; заполняет mtdd_devices_load).
+    local _lbl="${SECRETS_LABELS[$_i]:-}" _dv _dm _cn
+    _dv="${_MTDD_DEV[$_lbl]:-}"; _dm="${_MTDD_DOM[$_lbl]:-}"; _cn="${_MTDD_CAN[$_lbl]:-}"
     if [ -n "$_dv" ]; then
         [ -n "$_out" ] && _out+=" · "
         _out+="устр ${_dv}"
+    fi
+    if [ -n "$_dm" ]; then
+        [ -n "$_out" ] && _out+=" · "
+        _out+="домен ${_dm}"
+    fi
+    if [ -n "$_cn" ]; then
+        [ -n "$_out" ] && _out+=" · "
+        _out+="ловушка"
     fi
     if [ "$_q" != "0" ] && [ -n "$_q" ] && [[ "$_q" =~ ^[0-9]+$ ]]; then
         [ -n "$_out" ] && _out+=" · "
@@ -810,7 +819,7 @@ secret_list_json() {
     local _i _l _rows=""
     for _i in "${!SECRETS_LABELS[@]}"; do
         _l="${SECRETS_LABELS[$_i]}"
-        _rows+="${_l}|${SECRETS_KEYS[$_i]}|${SECRETS_CREATED[$_i]:-0}|${SECRETS_ENABLED[$_i]}|${SECRETS_MAX_CONNS[$_i]:-0}|${SECRETS_MAX_IPS[$_i]:-0}|${SECRETS_QUOTA[$_i]:-0}|${SECRETS_EXPIRES[$_i]:-0}|${SECRETS_NOTES[$_i]:-}|${SECRETS_ADTAG[$_i]:-}|${SECRETS_RATE[$_i]:-}|${_US_TOT_IN[$_l]:-0}|${_US_TOT_OUT[$_l]:-0}|${_MTDD_DEV[$_l]:-0}"$'\n'
+        _rows+="${_l}|${SECRETS_KEYS[$_i]}|${SECRETS_CREATED[$_i]:-0}|${SECRETS_ENABLED[$_i]}|${SECRETS_MAX_CONNS[$_i]:-0}|${SECRETS_MAX_IPS[$_i]:-0}|${SECRETS_QUOTA[$_i]:-0}|${SECRETS_EXPIRES[$_i]:-0}|${SECRETS_NOTES[$_i]:-}|${SECRETS_ADTAG[$_i]:-}|${SECRETS_RATE[$_i]:-}|${_US_TOT_IN[$_l]:-0}|${_US_TOT_OUT[$_l]:-0}|${_MTDD_DEV[$_l]:-0}|${_MTDD_DOM[$_l]:-}|${_MTDD_CAN[$_l]:-}"$'\n'
     done
     printf '%s' "$_rows" | awk -F'|' -v ipdb="$_USER_IPS_DB" '
         # Как json_escape: \ и ", табуляция, перевод строки; CR выкидываем.
@@ -837,9 +846,9 @@ secret_list_json() {
         {
             up = 0; down = 0
             if ($11 ~ /^[0-9]+:[0-9]+$/) { split($11, r, ":"); up = r[1]; down = r[2] }
-            printf "%s{\"label\":\"%s\",\"secret\":\"%s\",\"created\":%s,\"enabled\":%s,\"max_conns\":%s,\"max_ips\":%s,\"quota_bytes\":%s,\"expires\":\"%s\",\"notes\":\"%s\",\"ad_tag\":\"%s\",\"rate_limit_up_bps\":%s,\"rate_limit_down_bps\":%s,\"total_in\":%s,\"total_out\":%s,\"total_bytes\":%s,\"max_devices\":%s,\"ip_history\":[%s]}", \
+            printf "%s{\"label\":\"%s\",\"secret\":\"%s\",\"created\":%s,\"enabled\":%s,\"max_conns\":%s,\"max_ips\":%s,\"quota_bytes\":%s,\"expires\":\"%s\",\"notes\":\"%s\",\"ad_tag\":\"%s\",\"rate_limit_up_bps\":%s,\"rate_limit_down_bps\":%s,\"total_in\":%s,\"total_out\":%s,\"total_bytes\":%s,\"max_devices\":%s,\"tls_domain\":\"%s\",\"canary\":%s,\"ip_history\":[%s]}", \
                 (NR > 1 ? "," : ""), esc($1), esc($2), $3, ($4 == "true" ? "true" : "false"), $5, $6, $7, \
-                esc($8), esc($9), $10, up, down, $12, $13, sprintf("%.0f", $12 + $13), ($14 ~ /^[0-9]+$/ ? $14 : 0), hist[$1]
+                esc($8), esc($9), $10, up, down, $12, $13, sprintf("%.0f", $12 + $13), ($14 ~ /^[0-9]+$/ ? $14 : 0), esc($15), ($16 != "" ? "true" : "false"), hist[$1]
         }
         END { printf "]\n" }
     ' 
@@ -1693,6 +1702,18 @@ target_user_adtag() {
     _target_users_apply
 }
 
+# Персональный домен и ловушка у цели: только mtdd (1.0.0+).
+target_user_domain() {
+    _target_is_mtdd && { mtdd_user_domain "$@"; return; }
+    log_error "Персональный FakeTLS-домен есть только у движка mtdd"
+    return 1
+}
+target_user_canary() {
+    _target_is_mtdd && { mtdd_user_canary "$@"; return; }
+    log_error "Пользователь-ловушка есть только у движка mtdd"
+    return 1
+}
+
 target_users_list_json() {
     _target_is_mtdd && { mtdd_users_list_json "$@"; return; }
     _target_users_ready || { printf '[]\n'; return 1; }
@@ -1897,6 +1918,8 @@ handle_target_user_command() {
             target_user_setlimits "$_l" "${1:-0}" "${2:-0}" "${3:-0}" "${4:-}" ;;
         limits)   target_user_show_limits "${1:-}" ;;
         adtag)    check_root; target_user_adtag "${1:-}" "${2:-}" ;;
+        domain)   check_root; target_user_domain "${1:-}" "${2:-}" ;;
+        canary)   check_root; target_user_canary "${1:-}" "${2:-}" ;;
         note)     log_error "Заметки хранит только режим менеджера: в конфиге цели им нет места"; return 1 ;;
         setrate)  check_root; target_user_setrate "${1:-}" "${2:-0}" "${3:-0}" ;;
         reset-quota) check_root; secret_reset_quota "${1:-}" ;;
@@ -2158,6 +2181,8 @@ handle_secret_command() {
         setrate)  check_root; secret_set_rate "$1" "${2:-0}" "${3:-0}" ;;
         setdevices) check_root; secret_set_devices "${1:-}" "${2:-}" ;;
         devices)  secret_show_devices "${1:-}" ;;
+        domain)   check_root; secret_set_domain "${1:-}" "${2:-}" ;;
+        canary)   check_root; secret_set_canary "${1:-}" "${2:-}" ;;
         reset-quota) check_root; secret_reset_quota "${1:-}" ;;
         setlimits)
             check_root
@@ -2188,6 +2213,8 @@ handle_secret_command() {
             echo -e "    ${GREEN}secret adtag${NC} <метка> <32hex|remove>  Рекламная метка"
             echo -e "    ${GREEN}secret setdevices${NC} <метка> <N|0>  Лимит устройств (mtdd)"
             echo -e "    ${GREEN}secret devices${NC} <метка>    Устройства пользователя (mtdd)"
+            echo -e "    ${GREEN}secret domain${NC} <метка> [домен|remove]  Персональный FakeTLS-домен (mtdd)"
+            echo -e "    ${GREEN}secret canary${NC} <метка> [on|off]        Пользователь-ловушка (mtdd)"
             echo -e "    ${GREEN}secret reset-quota${NC} <метка>  Обнулить израсходованную квоту"
             echo -e "    ${GREEN}secret link${NC} [метка]       Ссылка"
             echo -e "    ${GREEN}secret qr${NC} [метка]         Ссылки (устар., = link)"

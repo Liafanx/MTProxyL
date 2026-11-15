@@ -11,14 +11,15 @@ main: только список, ссылки, создание и удален�
 """
 import json, os, sys, threading
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 if len(sys.argv) < 3:
     print(__doc__); sys.exit(0)
 D, TOKEN = sys.argv[1], sys.argv[2]
 DOM = "example.org".encode().hex()
+ad_tag = [None]
 lock = threading.Lock()
 users = {"admin": {"name": "admin", "secret": "00112233445566778899aabbccddeeff", "enabled": True}}
-FULL_FIELDS = {"name", "secret", "enabled", "max_connections", "max_unique_ips", "max_devices",
+FULL_FIELDS = {"name", "secret", "enabled", "max_connections", "max_unique_ips", "max_devices", "canary",
                "data_quota_bytes", "expires_at", "note", "rate_limit_up_bytes_per_sec",
                "rate_limit_down_bytes_per_sec", "tls_domain", "ad_tag"}
 OLD_FIELDS = {"name", "secret", "max_connections"}
@@ -65,7 +66,7 @@ def view(u):
                      "unique_ips_active": 1}}
     if full:
         for k in ("max_unique_ips", "data_quota_bytes", "expires_at", "rate_limit_up_bytes_per_sec",
-                  "rate_limit_down_bytes_per_sec", "tls_domain", "max_devices", "ad_tag"):
+                  "rate_limit_down_bytes_per_sec", "tls_domain", "max_devices", "ad_tag", "canary"):
             out[k] = u.get(k)
         out["note"] = u.get("note", "")
         out["stats"].update({"quota_used_bytes": u.get("used", 0), "unique_ips_seen": 2,
@@ -126,6 +127,31 @@ class H(BaseHTTPRequestHandler):
                                        "me": {"connected_dcs": 1, "dcs": [
                                            {"dc": "2", "connected": True, "ping_rtt_us": 41000, "pool_target": 2, "ready_connections": 2},
                                            {"dc": "-2", "connected": True, "ping_rtt_us": 0, "pool_target": 1, "ready_connections": 1}]}})
+            if path == "/v1/ad-tag":
+                if not full:
+                    return nf()
+                if method == "GET":
+                    return self.send(200, {"override": ad_tag[0] is not None, "ad_tag": ad_tag[0]})
+                if method == "POST":
+                    tag = (self.body() or {}).get("ad_tag") or ""
+                    if len(tag) != 32 or tag == "0" * 32:
+                        return self.send(400, etype="invalid_field", msg="ad_tag must be 32 hex")
+                    ad_tag[0] = tag.lower()
+                    return self.send(200, {"applied": True})
+                if method == "DELETE":
+                    ad_tag[0] = None
+                    return self.send(200, {"applied": True})
+            if method == "GET" and path == "/v1/events":
+                if not full:
+                    return nf()
+                lim = 50
+                q = parse_qs(urlsplit(self.path).query).get("limit")
+                if q and q[0].isdigit():
+                    lim = max(1, min(256, int(q[0])))
+                ev = [{"id": 1, "at": "2026-11-15T10:00:00Z", "action": "user.update", "user": "alice",
+                       "source": "127.0.0.1", "revision": 2, "request_id": 7, "applied": True,
+                       "fields": ["enabled"]}][:lim]
+                return self.send(200, {"events": ev, "next_after": 1, "oldest_id": 1, "capacity": 256})
             if method == "GET" and path == "/v1/suspects" and "format=ips" in self.path:
                 if not full:
                     return nf()

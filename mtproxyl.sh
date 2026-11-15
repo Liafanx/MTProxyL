@@ -369,6 +369,16 @@ cli_main() {
             handle_suspects_command "$@"
             ;;
 
+        adtag)
+            load_settings; load_detect_settings
+            handle_adtag_command "$@"
+            ;;
+
+        events)
+            load_settings; load_detect_settings
+            handle_events_command "$@"
+            ;;
+
         target-api)
             # Снимок цели mtdd в форме ответов telemt — для панели: её
             # страницы и история читают API telemt, а у mtdd он другой.

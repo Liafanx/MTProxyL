@@ -502,6 +502,39 @@ export interface UpstreamOverlay {
   detail: string;
 }
 
+/** mtdd: временная подмена рекламного тега и журнал изменений движка. */
+export const mtddApi = {
+  adTag: () => request<{ override: boolean; ad_tag: string | null }>(MTPROXYL_BASE, '/mtdd/ad-tag'),
+  setAdTag: (adTag: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/mtdd/ad-tag', {
+      method: 'POST',
+      body: JSON.stringify({ ad_tag: adTag }),
+    }),
+  resetAdTag: () =>
+    request<{ output: string }>(MTPROXYL_BASE, '/mtdd/ad-tag', { method: 'DELETE' }),
+  events: (limit = 50) =>
+    request<MtddEventsDoc>(MTPROXYL_BASE, `/mtdd/events?limit=${limit}`),
+};
+
+export interface MtddEvent {
+  id: number;
+  at: string;
+  action: string;
+  user?: string;
+  source?: string;
+  revision?: number;
+  request_id?: number;
+  applied?: boolean;
+  fields?: string[];
+}
+
+export interface MtddEventsDoc {
+  events: MtddEvent[];
+  next_after?: number;
+  oldest_id?: number;
+  capacity?: number;
+}
+
 export const mtproxylApi = {
   status: () => request<MtproxylAvailability>(MTPROXYL_BASE, '/status'),
 
@@ -766,6 +799,10 @@ export interface MtproxylUser {
   rate_limit_down_bps?: number | null;
   /** Лимит устройств mtdd (Manager); 0 — без лимита или не mtdd. */
   max_devices?: number;
+  /** Персональный FakeTLS-домен mtdd; пусто — общий. */
+  tls_domain?: string;
+  /** Пользователь-ловушка mtdd. */
+  canary?: boolean;
   /** 0, если источник не разделяет направления — тогда актуален total_bytes. */
   total_in: number;
   total_out: number;
@@ -819,6 +856,12 @@ export const mtproxylUsersApi = {
     request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/devices`, {
       method: 'POST',
       body: JSON.stringify({ max_devices: maxDevices }),
+    }),
+  /** Поля mtdd: домен FakeTLS и ловушка. Шлём только изменённые. */
+  setMtdd: (label: string, fields: { tls_domain?: string; canary?: boolean }) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/mtdd`, {
+      method: 'POST',
+      body: JSON.stringify(fields),
     }),
   setRate: (label: string, upBps: number, downBps: number) =>
     request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/rate`, {

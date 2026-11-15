@@ -1225,7 +1225,7 @@ show_cli_help() {
     echo -e "  ${BOLD}API управления:${NC} api status|on|off|key|set"
     echo -e "  ${BOLD}Переезд:${NC}        migrate <[user@]хост[:порт]> [--dry-run] ${DIM}(только менеджер)${NC}"
     echo -e "  ${BOLD}Подкачка:${NC}       swap status|on [МБ]|off"
-    echo -e "  ${BOLD}Reanimator:${NC}     mode [manager|reanimator] | detect | edit-config | target-config show|write\n                  install-telemt | uninstall-telemt\n                  install-mtdd [--channel main|dev] | uninstall-mtdd | media status|set|off\n  ${BOLD}mtdd:${NC}           media status|set|off | suspects [мин]|on|off|ban|block|unblock | metrics engine [live] | metrics ips [--json]\n                  secret devices|setdevices <метка> | secret adtag <метка> <hex|remove>"
+    echo -e "  ${BOLD}Reanimator:${NC}     mode [manager|reanimator] | detect | edit-config | target-config show|write\n                  install-telemt | uninstall-telemt\n                  install-mtdd [--channel main|dev] | uninstall-mtdd | media status|set|off\n  ${BOLD}mtdd:${NC}           media status|set|off | suspects [мин]|on|off|ban|block|unblock | metrics engine [live] | metrics ips [--json]\n                  adtag show|set <hex>|reset | events [--limit N] [--json]\n                  secret devices|setdevices <метка> | secret adtag <метка> <hex|remove>\n                  secret domain <метка> [домен|remove] | secret canary <метка> [on|off]"
     echo -e "  ${BOLD}Система:${NC}        install [аргументы] | menu | update-check | uninstall | version | help"
     echo -e "  ${BOLD}Обновление:${NC}     update [--version X.Y.Z | --rollback] [--yes] [--no-restart] | update --list"
     echo -e "  ${DIM}Установка без вопросов: mtproxyl install --help${NC}"

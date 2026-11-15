@@ -479,55 +479,99 @@ mtdd_mgr_reload_config() {
 }
 
 # secrets.conf → mtdd. Без полного API выключенные не заводятся (и снимаются).
-# ── Лимит устройств (Manager) ──────────────────────────────────
-# devices.conf рядом с secrets.conf, строки «метка|N». Отдельный файл, а не
-# 12-е поле secrets.conf: у telemt такого лимита нет, а старая версия MTProxyL
-# (откат) на 12 полях потеряла бы скорость пользователей.
+# ── Поля пользователя mtdd (Manager) ───────────────────────────
+# devices.conf рядом с secrets.conf: «метка|устройства|домен FakeTLS|ловушка».
+# Отдельный файл, а не поле secrets.conf: у telemt этих полей нет, а старая
+# версия MTProxyL (откат) на новых полях потеряла бы скорость пользователей.
+# Хвостовые пустые поля не пишутся — старая строка «метка|N» читается как раньше.
 mtdd_devices_file() { echo "${INSTALL_DIR}/devices.conf"; }
 
-# Лимиты устройств всех пользователей одним чтением (для таблиц: без форков
-# на каждого). Пусто, если движок не mtdd в Manager.
-declare -gA _MTDD_DEV=()
+# Строка пользователя «устройства|домен|ловушка»; пусто, если строки нет.
+_mtdd_extra_row() {
+    awk -F'|' -v u="$1" '$1 == u { print $2 "|" $3 "|" $4; exit }' "$(mtdd_devices_file)" 2>/dev/null
+}
+
+# mtdd_extra_get МЕТКА ПОЛЕ — 2: устройства, 3: домен, 4: ловушка.
+mtdd_extra_get() {
+    local _row; _row=$(_mtdd_extra_row "$1"); [ -n "$_row" ] || return 0
+    printf '%s\n' "$_row" | cut -d'|' -f"${2:-2}"
+}
+
+# mtdd_extra_set МЕТКА ПОЛЕ ЗНАЧЕНИЕ — остальные поля сохраняются.
+mtdd_extra_set() {
+    local _f _tmp _row _dev="" _dom="" _can="" _line
+    _f=$(mtdd_devices_file)
+    _row=$(_mtdd_extra_row "$1")
+    if [ -n "$_row" ]; then
+        _dev=${_row%%|*}; _row=${_row#*|}
+        _dom=${_row%%|*}; _can=${_row#*|}
+    fi
+    case "${2:-}" in
+        2) _dev="${3:-}" ;;
+        3) _dom="${3:-}" ;;
+        4) _can="${3:-}" ;;
+        *) log_error "mtdd_extra_set: поле 2..4"; return 1 ;;
+    esac
+    [ "$_dev" = 0 ] && _dev=""
+    _tmp=$(_mktemp "$INSTALL_DIR") || return 1
+    { [ -f "$_f" ] && awk -F'|' -v u="$1" '$1 != u' "$_f"
+      _line="$1|$_dev|$_dom|$_can"
+      while [ "${_line%|}" != "$_line" ]; do _line=${_line%|}; done
+      [ "$_line" != "$1" ] && printf '%s\n' "$_line"
+      true; } > "$_tmp"
+    chmod 600 "$_tmp" && mv -f "$_tmp" "$_f"
+}
+
+# mtdd_extra_drop МЕТКА — убрать строку целиком.
+mtdd_extra_drop() {
+    local _f _tmp; _f=$(mtdd_devices_file); [ -f "$_f" ] || return 0
+    _tmp=$(_mktemp "$INSTALL_DIR") || return 1
+    awk -F'|' -v u="$1" '$1 != u' "$_f" > "$_tmp" && chmod 600 "$_tmp" && mv -f "$_tmp" "$_f"
+}
+
+# Поля всех пользователей одним чтением (для таблиц: без форков на каждого).
+# Пусто, если движок не mtdd в Manager.
+declare -gA _MTDD_DEV=() _MTDD_DOM=() _MTDD_CAN=()
 mtdd_devices_load() {
-    _MTDD_DEV=()
+    _MTDD_DEV=(); _MTDD_DOM=(); _MTDD_CAN=()
     declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active || return 0
-    local _f _l _n; _f=$(mtdd_devices_file)
+    local _f _l _n _d _c; _f=$(mtdd_devices_file)
     [ -f "$_f" ] || return 0
-    while IFS='|' read -r _l _n; do
-        [ -n "$_l" ] && [[ "$_n" =~ ^[0-9]+$ ]] && [ "$_n" != 0 ] && _MTDD_DEV[$_l]="$_n"
+    while IFS='|' read -r _l _n _d _c; do
+        [ -n "$_l" ] || continue
+        [ "${_l#\#}" != "$_l" ] && continue
+        [[ "$_n" =~ ^[0-9]+$ ]] && [ "$_n" != 0 ] && _MTDD_DEV[$_l]="$_n"
+        [ -n "$_d" ] && _MTDD_DOM[$_l]="$_d"
+        [ -n "$_c" ] && _MTDD_CAN[$_l]="$_c"
     done < "$_f"
     return 0
 }
 
-mtdd_devices_get() {
-    awk -F'|' -v u="$1" '$1 == u { print $2; exit }' "$(mtdd_devices_file)" 2>/dev/null
-}
+mtdd_devices_get() { mtdd_extra_get "$1" 2; }
 
-# mtdd_devices_put МЕТКА N — 0 снимает строку.
-mtdd_devices_put() {
-    local _f _tmp; _f=$(mtdd_devices_file)
-    _tmp=$(_mktemp "$INSTALL_DIR") || return 1
-    { [ -f "$_f" ] && awk -F'|' -v u="$1" '$1 != u' "$_f"
-      [ "${2:-0}" != 0 ] && echo "${1}|${2}"; } > "$_tmp"
-    chmod 600 "$_tmp" && mv -f "$_tmp" "$_f"
-}
+# mtdd_devices_put МЕТКА N — 0 снимает лимит.
+mtdd_devices_put() { mtdd_extra_set "$1" 2 "${2:-0}"; }
 
 mtdd_devices_rename() {
-    local _f; _f=$(mtdd_devices_file); [ -f "$_f" ] || return 0
-    local _n; _n=$(mtdd_devices_get "$1"); [ -n "$_n" ] || return 0
-    mtdd_devices_put "$1" 0 && mtdd_devices_put "$2" "$_n"
+    local _row; _row=$(_mtdd_extra_row "$1"); [ -n "$_row" ] || return 0
+    local _n _d _c; _n=${_row%%|*}; _row=${_row#*|}; _d=${_row%%|*}; _c=${_row#*|}
+    mtdd_extra_set "$2" 2 "$_n" && mtdd_extra_set "$2" 3 "$_d" && mtdd_extra_set "$2" 4 "$_c" \
+        && mtdd_extra_drop "$1"
 }
 
-mtdd_devices_drop() {
-    [ -f "$(mtdd_devices_file)" ] && [ -n "$(mtdd_devices_get "$1")" ] || return 0
-    mtdd_devices_put "$1" 0
+mtdd_devices_drop() { mtdd_extra_drop "$1"; }
+
+_mtdd_secret_label_exists() {
+    local _i; for _i in "${!SECRETS_LABELS[@]}"; do
+        [ "${SECRETS_LABELS[$_i]}" = "$1" ] && return 0
+    done
+    return 1
 }
 
 secret_set_devices() {
-    local _label="$1" _n _i _found=false
+    local _label="$1" _n
     mtdd_mgr_active || { log_error "Лимит устройств есть только у движка mtdd"; return 1; }
-    for _i in "${!SECRETS_LABELS[@]}"; do [ "${SECRETS_LABELS[$_i]}" = "$_label" ] && _found=true; done
-    [ "$_found" = true ] || { log_error "Секрет '${_label}' не найден"; return 1; }
+    _mtdd_secret_label_exists "$_label" || { log_error "Секрет '${_label}' не найден"; return 1; }
     _n=$(_mtdd_devices_value "${2:-}") || return 1
     local _old; _old=$(mtdd_devices_get "$_label")
     mtdd_devices_put "$_label" "$_n" || { log_error "Не удалось сохранить $(mtdd_devices_file)"; return 1; }
@@ -537,6 +581,61 @@ secret_set_devices() {
     fi
     if [ "$_n" -eq 0 ]; then log_success "Лимит устройств снят с '${_label}'"
     else log_success "Лимит устройств '${_label}': ${_n}"; fi
+}
+
+# Персональный FakeTLS-домен (mtdd 1.0.0+): ссылка и маскировка пользователя
+# идут с ним вместо общего домена сервера.
+_mtdd_domain_value() {
+    local _d="${1,,}"
+    case "$_d" in
+        remove|none|-|0) echo ""; return 0 ;;
+    esac
+    [ -n "$_d" ] && [ "${#_d}" -le 253 ] && [[ "$_d" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] \
+        && [[ "$_d" == *.* ]] && [[ "$_d" != *..* ]] \
+        || { log_error "Домен: DNS-имя в нижнем регистре, например example.org (убрать — remove)"; return 1; }
+    echo "$_d"
+}
+
+secret_set_domain() {
+    local _label="$1" _dom _old
+    mtdd_mgr_active || { log_error "Персональный домен есть только у движка mtdd"; return 1; }
+    _mtdd_secret_label_exists "$_label" || { log_error "Секрет '${_label}' не найден"; return 1; }
+    if [ -z "${2:-}" ]; then mtdd_domain_show "$_label"; return 0; fi
+    _dom=$(_mtdd_domain_value "$2") || return 1
+    _old=$(mtdd_extra_get "$_label" 3)
+    mtdd_extra_set "$_label" 3 "$_dom" || { log_error "Не удалось сохранить $(mtdd_devices_file)"; return 1; }
+    if ! mtdd_mgr_sync_users; then
+        mtdd_extra_set "$_label" 3 "$_old"
+        return 1
+    fi
+    if [ -n "$_dom" ]; then log_success "Домен '${_label}': ${_dom}"
+    else log_success "Домен снят с '${_label}' — общий домен сервера"; fi
+}
+
+mtdd_domain_show() {
+    local _d; _d=$(mtdd_extra_get "$1" 3)
+    echo -e "  ${BOLD}${1}:${NC} ${_d:-общий домен сервера}"
+}
+
+# Пользователь-ловушка (canary): каждое подключение пишется признаком canary.
+secret_set_canary() {
+    local _label="$1" _v _old
+    mtdd_mgr_active || { log_error "Ловушка есть только у движка mtdd"; return 1; }
+    _mtdd_secret_label_exists "$_label" || { log_error "Секрет '${_label}' не найден"; return 1; }
+    case "${2:-}" in
+        '') [ -n "$(mtdd_extra_get "$_label" 4)" ] && echo "  ${_label}: ловушка включена" || echo "  ${_label}: ловушка выключена"
+            return 0 ;;
+        on|true|yes|1)  _v=1 ;;
+        off|false|no|0|remove) _v="" ;;
+        *) log_error "Ловушка: on или off"; return 1 ;;
+    esac
+    _old=$(mtdd_extra_get "$_label" 4)
+    mtdd_extra_set "$_label" 4 "$_v" || { log_error "Не удалось сохранить $(mtdd_devices_file)"; return 1; }
+    if ! mtdd_mgr_sync_users; then
+        mtdd_extra_set "$_label" 4 "$_old"
+        return 1
+    fi
+    [ -n "$_v" ] && log_success "Ловушка '${_label}': включена" || log_success "Ловушка '${_label}': выключена"
 }
 
 secret_show_devices() {

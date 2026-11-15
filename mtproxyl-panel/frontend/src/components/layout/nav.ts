@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, ToggleLeft, Globe, Globe2, Archive, ShieldAlert, MapPin, Route, SlidersHorizontal, Gauge, FileCode, Puzzle, Radar, Wrench, Bot, Waypoints, ShieldBan, PanelTop, Cable, KeyRound, Router, Fingerprint, ScanSearch } from 'lucide-react';
+import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, ToggleLeft, Globe, Globe2, Archive, ShieldAlert, MapPin, Route, SlidersHorizontal, Gauge, FileCode, Puzzle, Radar, Wrench, Bot, Waypoints, ShieldBan, PanelTop, Cable, KeyRound, Router, Fingerprint, ScanSearch, History } from 'lucide-react';
 
 export interface NavItem {
   to: string;
@@ -39,6 +39,7 @@ export const MTPROXYL_NAV_ITEMS: NavItem[] = [
   { to: '/traffic', icon: Gauge, label: 'Трафик', primary: true },
   { to: '/mtdd-ips', icon: Fingerprint, label: 'Уникальные IP (mtdd)', mtddOnly: true },
   { to: '/mtdd-suspects', icon: ScanSearch, label: 'Подозрительные адреса (mtdd)', mtddOnly: true },
+  { to: '/mtdd-events', icon: History, label: 'Журнал движка (mtdd)', mtddOnly: true },
   { to: '/shaping', icon: Gauge, label: 'Ограничение скорости' },
   { to: '/nft', icon: ShieldAlert, label: 'Лимитер и защита' },
   { to: '/geoblock', icon: MapPin, label: 'Блокировка стран' },

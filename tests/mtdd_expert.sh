@@ -45,7 +45,7 @@ _mtdd_py() { [ "$1" = full ]; }
 generate_mtdd_config || fail "generate_mtdd_config"
 
 # ── Каталог: 27 ключей, без «|» внутри полей, все разделы известны ──
-[ "${#_MTDD_CATALOG[@]}" -eq 27 ] || fail "ключей в каталоге: ${#_MTDD_CATALOG[@]}"
+[ "${#_MTDD_CATALOG[@]}" -eq 30 ] || fail "ключей в каталоге: ${#_MTDD_CATALOG[@]}"
 for e in "${_MTDD_CATALOG[@]}"; do
     [ "$(tr -cd '|' <<< "$e" | wc -c)" -eq 7 ] || fail "лишний | в записи: $e"
     [[ " $_MTDD_SECTIONS " == *" ${e%%|*} "* ]] || fail "раздел вне списка: $e"

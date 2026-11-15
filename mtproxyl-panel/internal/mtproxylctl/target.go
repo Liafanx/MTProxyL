@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
+	"strings"
 )
 
 // TargetSnapshot returns `mtproxyl target-api snapshot`: an mtdd target's
@@ -119,4 +121,52 @@ func (c *Client) MtddSuspectsBlock(ctx context.Context, minScore int) (string, e
 func (c *Client) MtddSuspectsUnblock(ctx context.Context) (string, error) {
 	out, err := c.run(ctx, "suspects", "unblock")
 	return stripANSI(out), err
+}
+
+// GetMtddAdTag returns `mtproxyl adtag show --json`: the temporary ad tag
+// override and whether one is active. The document is passed through as is.
+func (c *Client) GetMtddAdTag(ctx context.Context) (json.RawMessage, error) {
+	out, err := c.run(ctx, "adtag", "show", "--json")
+	if err != nil {
+		return nil, err
+	}
+	line := firstJSONLine(out)
+	if !json.Valid([]byte(line)) {
+		return nil, fmt.Errorf("adtag show: invalid JSON")
+	}
+	return json.RawMessage(line), nil
+}
+
+// SetMtddAdTag overrides the shared ad tag at runtime, without a restart and
+// without touching the config file.
+func (c *Client) SetMtddAdTag(ctx context.Context, tag string) (string, error) {
+	tag = strings.ToLower(strings.TrimSpace(tag))
+	if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(tag) || tag == strings.Repeat("0", 32) {
+		return "", fmt.Errorf("тег: 32 шестнадцатеричных символа, не из одних нулей")
+	}
+	out, err := c.run(ctx, "adtag", "set", tag)
+	return stripANSI(out), err
+}
+
+// ResetMtddAdTag drops the runtime override, returning to the configured tag.
+func (c *Client) ResetMtddAdTag(ctx context.Context) (string, error) {
+	out, err := c.run(ctx, "adtag", "reset")
+	return stripANSI(out), err
+}
+
+// GetMtddEvents returns `mtproxyl events --limit N --json`: the engine's ring
+// buffer of the last successful admin changes.
+func (c *Client) GetMtddEvents(ctx context.Context, limit int) (json.RawMessage, error) {
+	if limit < 1 || limit > 256 {
+		return nil, fmt.Errorf("limit: 1..256")
+	}
+	out, err := c.run(ctx, "events", "--limit", strconv.Itoa(limit), "--json")
+	if err != nil {
+		return nil, err
+	}
+	line := firstJSONLine(out)
+	if !json.Valid([]byte(line)) {
+		return nil, fmt.Errorf("events: invalid JSON")
+	}
+	return json.RawMessage(line), nil
 }

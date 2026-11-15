@@ -47,7 +47,8 @@ const users = ['short', 'long_username_'.repeat(4), 'other'].map((username, inde
 
 async function mock(page) {
   const mtdd = process.argv.includes('--mtdd');
-  const state = { brandingWait: null, statsWait: null, failBranding: false, writes: [], sockets: [], hold: new Set(), upstreamAddress: '203.0.113.17:1080',
+  const state = {
+  adTagOverride: null, brandingWait: null, statsWait: null, failBranding: false, writes: [], sockets: [], hold: new Set(), upstreamAddress: '203.0.113.17:1080',
     theme: { theme: 'light', colors: {}, configured: true }, imported: false, panelCheckFails: false,
     warpPatches: [], warp: { enabled: false, mode: 'upstream', proto: 'awg', endpoint: '', location: '', exclude: 'DME',
       mtu: 1280, installed: true, version: '0.16.1-mtproxyl.1', socks_active: false, redirect_active: false, iface_active: false, nft_applied: false,
@@ -143,6 +144,19 @@ async function mock(page) {
       }
       data = state.suspectStatus;
     }
+    else if (url.pathname.endsWith('/mtproxyl/mtdd/ad-tag')) {
+      if (route.request().method() === 'POST') {
+        state.adTagOverride = route.request().postDataJSON().ad_tag;
+      } else if (route.request().method() === 'DELETE') {
+        state.adTagOverride = null;
+      }
+      data = { override: Boolean(state.adTagOverride), ad_tag: state.adTagOverride ?? null };
+    }
+    else if (url.pathname.endsWith('/mtproxyl/mtdd/events')) data = {
+      events: [{ id: 2, at: '2026-11-15T10:00:00Z', action: 'user.update', user: 'alice',
+                 source: '127.0.0.1', fields: ['enabled'] }],
+      next_after: 2, oldest_id: 1, capacity: 256,
+    };
     else if (url.pathname.endsWith('/mtproxyl/mtdd/ips')) data = {
       available: true, online: { seen: 12, active: 5 },
       hour: { seen: 40, active: 18, started_at: now - 3600 },
@@ -546,6 +560,22 @@ async function checkMtdd(page, state, width) {
   assert.deepEqual(state.suspectActions.at(-1), { action: 'block', score: 60 }, 'block action payload');
   await page.getByText(/Уже в «Блокировке IP» от этой страницы: 3/).waitFor();
   await page.screenshot({ path: path.join(output, `mtdd-suspects-${width}.png`), fullPage: true });
+
+  await page.goto(`${base}/mtdd-events`);
+  await page.getByRole('heading', { name: 'Журнал движка (mtdd)', exact: true }).waitFor();
+  await page.getByText('Изменён пользователь', { exact: true }).waitFor();
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `mtdd events overflow ${width}`);
+  await page.screenshot({ path: path.join(output, `mtdd-events-${width}.png`), fullPage: true });
+
+  await page.goto(`${base}/proxy-settings`);
+  await page.getByText('Временный рекламный тег', { exact: true }).waitFor();
+  await page.getByLabel('Новый тег (32 hex)').fill('abcdefabcdefabcdefabcdefabcdefab');
+  await page.getByRole('button', { name: 'Подменить', exact: true }).click();
+  await page.getByText(/Сейчас действует подмена/).waitFor();
+  assert.equal(state.adTagOverride, 'abcdefabcdefabcdefabcdefabcdefab', 'ad tag override payload');
+  await page.getByRole('button', { name: 'Вернуть тег из настроек', exact: true }).click();
+  await page.waitForFunction(() => !document.body.innerText.includes('Сейчас действует подмена'));
+  assert.equal(state.adTagOverride, null, 'ad tag reset payload');
 
   await page.goto(`${base}/mtdd-ips`);
   await page.getByRole('heading', { name: 'Уникальные IP (mtdd)', exact: true }).waitFor();

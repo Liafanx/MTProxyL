@@ -35,6 +35,11 @@ type Secret struct {
 	// MaxDevices is the mtdd per-user device cap (devices.conf); 0 — no cap
 	// or not the mtdd engine.
 	MaxDevices int64 `json:"max_devices"`
+	// TLSDomain is the mtdd per-user FakeTLS domain; empty means the shared
+	// one from settings.
+	TLSDomain string `json:"tls_domain"`
+	// Canary marks the mtdd user-trap account.
+	Canary bool `json:"canary"`
 	// TotalIn and TotalOut are 0 when the traffic source cannot tell
 	// direction apart (the reanimator's API-only path) — TotalBytes stays
 	// authoritative in that case, same as on the Traffic page.
@@ -299,6 +304,50 @@ func (c *Client) SetSecretDevices(ctx context.Context, label string, n int64) (s
 		return "", fmt.Errorf("лимит устройств: от 0 до 1000000")
 	}
 	out, err := c.run(ctx, "secret", "setdevices", label, strconv.FormatInt(n, 10))
+	return stripANSI(out), err
+}
+
+// domainRe mirrors mtdd's rule for per-user FakeTLS domains.
+var domainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
+
+// ValidateMtddDomain checks a per-user FakeTLS domain before it reaches the CLI.
+func ValidateMtddDomain(domain string) error {
+	if !domainRe.MatchString(domain) || len(domain) > 253 || !strings.Contains(domain, ".") {
+		return fmt.Errorf("домен: DNS-имя в нижнем регистре, например example.org")
+	}
+	return nil
+}
+
+// SetSecretDomain sets the mtdd per-user FakeTLS domain; an empty value
+// restores the shared domain. Only the mtdd engine in Manager mode has it.
+func (c *Client) SetSecretDomain(ctx context.Context, label, domain string) (string, error) {
+	if err := ValidateSecretLabel(label); err != nil {
+		return "", err
+	}
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	args := []string{"secret", "domain", label}
+	if domain == "" {
+		args = append(args, "remove")
+	} else {
+		if err := ValidateMtddDomain(domain); err != nil {
+			return "", err
+		}
+		args = append(args, domain)
+	}
+	out, err := c.run(ctx, args...)
+	return stripANSI(out), err
+}
+
+// SetSecretCanary turns the mtdd user-trap flag on or off.
+func (c *Client) SetSecretCanary(ctx context.Context, label string, on bool) (string, error) {
+	if err := ValidateSecretLabel(label); err != nil {
+		return "", err
+	}
+	arg := "off"
+	if on {
+		arg = "on"
+	}
+	out, err := c.run(ctx, "secret", "canary", label, arg)
 	return stripANSI(out), err
 }
 

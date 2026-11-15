@@ -325,17 +325,29 @@ def utc_rfc3339(v):
         d = d.replace(tzinfo=datetime.timezone.utc)
     return d.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-def devices_limits():
-    # devices.conf рядом с secrets.conf: «метка|N» — лимит устройств mtdd.
-    # Отдельный файл: у telemt такого лимита нет, формат secrets.conf общий.
+def user_extras():
+    # devices.conf рядом с secrets.conf: «метка|устройства|домен FakeTLS|ловушка».
+    # Отдельный файл: у telemt этих полей нет, формат secrets.conf общий.
     path = os.environ.get("MTDD_DEVICES_FILE") or ""
     out = {}
     try:
         with open(path, encoding="utf-8") as f:
             for line in f:
-                name, _, n = line.strip().partition("|")
-                if name and not name.startswith("#") and n.isdigit() and 0 < int(n) <= 1000000:
-                    out[name] = int(n)
+                line = line.rstrip("\n")
+                if not line or line.startswith("#"):
+                    continue
+                f2 = (line.split("|") + ["", "", ""])[:4]
+                name, dev, dom, can = f2[0], f2[1], f2[2].strip().lower(), f2[3]
+                if not name:
+                    continue
+                e = {}
+                if dev.isdigit() and 0 < int(dev) <= 1000000:
+                    e["max_devices"] = int(dev)
+                if dom:
+                    e["tls_domain"] = dom
+                if can not in ("", "0", "false"):
+                    e["canary"] = True
+                out[name] = e
     except OSError:
         pass
     return out
@@ -343,7 +355,7 @@ def devices_limits():
 def desired_users(text):
     # Строки secrets.conf: LABEL|SECRET|CREATED|ENABLED|MAX_CONNS|MAX_IPS|QUOTA|EXPIRES|NOTES|AD_TAG|RATE
     out = []
-    devs = devices_limits()
+    extras = user_extras()
     for line in text.splitlines():
         if not line.strip() or line.lstrip().startswith("#"):
             continue
@@ -362,12 +374,15 @@ def desired_users(text):
             a, b = f[10].split(":", 1)
             up = pos(a) // 8 if pos(a) else None
             down = pos(b) // 8 if pos(b) else None
+        e = extras.get(name) or {}
         out.append({"name": name, "secret": secret, "enabled": f[3] != "false",
                     "max_connections": pos(f[4]), "max_unique_ips": pos(f[5]),
                     "data_quota_bytes": pos(f[6]), "expires_at": utc_rfc3339(f[7]),
                     "note": utf8_cut(f[8], 256),   # mtdd: строка до 256 байт, null не принимает
                     "rate_limit_up_bytes_per_sec": up, "rate_limit_down_bytes_per_sec": down,
-                    "max_devices": devs.get(name),
+                    "max_devices": e.get("max_devices"),
+                    "tls_domain": e.get("tls_domain"),
+                    "canary": bool(e.get("canary")),
                     "ad_tag": f[9].lower() if len(f[9]) == 32 else None})
     return out
 
@@ -375,7 +390,7 @@ POLICY = ("max_connections", "max_unique_ips", "data_quota_bytes", "expires_at",
           "rate_limit_up_bytes_per_sec", "rate_limit_down_bytes_per_sec")
 # Поля mtdd 1.0.0+: отправляем, только когда заданы или уже есть у пользователя,
 # чтобы сборка постарше не получала незнакомых ключей.
-POLICY_NEW = ("max_devices", "ad_tag")
+POLICY_NEW = ("max_devices", "tls_domain", "canary", "ad_tag")
 
 def cmd_sync(cfg, text):
     # secrets.conf → mtdd: завести недостающих с их ключами, убрать лишних,
@@ -435,8 +450,15 @@ def cmd_sync(cfg, text):
                     continue
                 changed = True
             patch = {k: w[k] for k in POLICY if norm(u.get(k)) != norm(w[k])}
-            patch.update({k: w[k] for k in POLICY_NEW
-                          if (k in u or w[k] is not None) and norm(u.get(k)) != norm(w[k])})
+            # canary — булево: false у движка и отсутствие поля означают одно.
+            for k in POLICY_NEW:
+                if norm(u.get(k)) == norm(w[k]):
+                    continue
+                if k == "canary":
+                    if w[k] or u.get(k):
+                        patch[k] = w[k]
+                elif k in u or w[k] is not None:
+                    patch[k] = w[k]
             if patch:
                 if not attempt(n, lambda: call(cfg, "PATCH", "/v1/users/%s" % n, patch)):
                     continue
@@ -481,6 +503,12 @@ def cmd_probe(cfg):
             st["full"] = 1
             st["version"] = info.get("version") or ""
             st["ready"] = 1 if info.get("ready") else 0
+            # Точнее: готовность = включённый пользователь и живой ME.
+            try:
+                r = call(cfg, "GET", "/v1/ready")
+                st["ready"] = 1 if r.get("ready") else 0
+            except ApiError:
+                pass
             st["uptime"] = info.get("uptime_seconds") or 0
         except ApiError as e:
             if e.rc != 5:
@@ -549,7 +577,7 @@ def cmd_users_telemt(cfg, want_links=True, want_ips=True):
 
 def cmd_users_tsv(cfg, with_links=True):
     # Строка на пользователя для bash:
-    # name|enabled|secret|max_conns|max_ips|quota|expires|note|rate_up_bps|rate_down_bps|conns|ips|c2s|s2c|quota_used|tls_domain
+    # name|enabled|secret|max_conns|max_ips|quota|expires|note|rate_up_bps|rate_down_bps|conns|ips|c2s|s2c|quota_used|tls_domain|max_devices|devices|ad_tag|canary
     # Секрет есть только в ссылке, это запрос на пользователя; --no-links
     # оставляет поле пустым и обходится одним запросом списка.
     lst, rev = users_doc(cfg)
@@ -576,7 +604,7 @@ def cmd_users_tsv(cfg, with_links=True):
              num(s.get("payload_bytes_c2s")) or 0, num(s.get("payload_bytes_s2c")) or 0,
              num(s.get("quota_used_bytes")) or 0, u.get("tls_domain") or "",
              num(u.get("max_devices")) or 0, num(s.get("devices_connected")) or 0,
-             u.get("ad_tag") or ""]
+             u.get("ad_tag") or "", "true" if u.get("canary") else ""]
         print("|".join(str(x) for x in f))
 
 def cmd_active_ips(cfg):
@@ -1644,6 +1672,131 @@ mtdd_user_adtag() {
     log_success "Свой тег '${_label}': ${_tag,,}"
 }
 
+# Временная подмена общего рекламного тега (mtdd 1.0.0+): на лету, без
+# перезапуска и без записи в конфигурацию; после перезапуска действует AD_TAG.
+mtdd_adtag_show() {
+    local _json _out _ov _tag
+    _json=$(_mtdd_call GET "/v1/ad-tag") || { _mtdd_fail "Подмена тега не получена"; return 1; }
+    _out=$(printf '%s' "$_json" | python3 -I -c '
+import json, sys
+d = json.load(sys.stdin)
+print("%s|%s" % ("1" if d.get("override") else "", d.get("ad_tag") or ""))
+' 2>/dev/null) || { log_error "Ответ /v1/ad-tag не разобран"; return 1; }
+    _ov="${_out%%|*}"; _tag="${_out#*|}"
+    if [ -n "$_ov" ] && [ -n "$_tag" ]; then
+        echo -e "  ${BOLD}Подмена:${NC} ${_tag}"
+        echo "  Действует до перезапуска движка, снять — mtproxyl adtag reset"
+    else
+        echo -e "  ${BOLD}Подмена:${NC} нет, действует тег из настроек"
+    fi
+}
+
+mtdd_adtag_set() {
+    local _tag="${1:-}"
+    [[ "$_tag" =~ ^[0-9a-fA-F]{32}$ ]] && [ "${_tag,,}" != "00000000000000000000000000000000" ] \
+        || { log_error "Тег: 32 шестнадцатеричных символа, не из одних нулей"; return 1; }
+    _mtdd_call POST "/v1/ad-tag" "{\"ad_tag\":\"${_tag,,}\"}" >/dev/null \
+        || { _mtdd_fail "Тег не подменён"; return 1; }
+    log_success "Рекламный тег подменён: ${_tag,,} (до перезапуска движка)"
+}
+
+mtdd_adtag_reset() {
+    _mtdd_call DELETE "/v1/ad-tag" >/dev/null || { _mtdd_fail "Подмена не снята"; return 1; }
+    log_success "Подмена снята, действует тег из настроек"
+}
+
+handle_adtag_command() {
+    engine_is_mtdd || { log_error "Подмена тега есть только у движка mtdd"; return 1; }
+    case "${1:-show}" in
+        show|status)
+            if [ "${2:-}" = --json ]; then
+                _mtdd_call GET "/v1/ad-tag" || { _mtdd_fail "Подмена тега не получена"; return 1; }
+            else
+                mtdd_adtag_show
+            fi ;;
+        set)         check_root; mtdd_adtag_set "${2:-}" ;;
+        reset|off)   check_root; mtdd_adtag_reset ;;
+        *) log_error "Использование: mtproxyl adtag [show|set <32hex>|reset]"; return 1 ;;
+    esac
+}
+
+# Журнал изменений движка (кольцевой буфер в памяти, сбрасывается при перезапуске).
+mtdd_events() {
+    local _limit=20 _json=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --json)  _json=1 ;;
+            --limit) _limit="${2:-20}"; shift ;;
+            [0-9]*)  _limit="$1" ;;
+            *) log_error "Использование: mtproxyl events [--limit N] [--json]"; return 1 ;;
+        esac
+        shift
+    done
+    [[ "$_limit" =~ ^[0-9]+$ ]] && [ "$_limit" -ge 1 ] && [ "$_limit" -le 256 ] \
+        || { log_error "limit: 1..256"; return 1; }
+    local _doc; _doc=$(_mtdd_call GET "/v1/events?limit=${_limit}") \
+        || { _mtdd_fail "Журнал не получен"; return 1; }
+    if [ "$_json" = 1 ]; then printf '%s\n' "$_doc"; return 0; fi
+    printf '%s' "$_doc" | python3 -I -c '
+import json, sys
+d = json.load(sys.stdin)
+ev = d.get("events") or []
+print()
+if not ev:
+    print("  Событий нет: журнал ведётся с запуска движка")
+    sys.exit(0)
+print("  %-19s %-16s %-14s %s" % ("Время (UTC)", "Действие", "Пользователь", "Поля"))
+for e in ev:
+    at = (e.get("at") or "").replace("T", " ").replace("Z", "")
+    print("  %-19s %-16s %-14s %s" % (at[:19], e.get("action") or "", e.get("user") or "—",
+                                       ", ".join(e.get("fields") or [])))
+print()
+print("  Всего: %d · дальше: after=%s" % (len(ev), d.get("next_after")))
+' || { log_error "Ответ /v1/events не разобран"; return 1; }
+}
+
+handle_events_command() {
+    engine_is_mtdd || { log_error "Журнал изменений есть только у движка mtdd"; return 1; }
+    mtdd_events "$@"
+}
+
+# Персональный FakeTLS-домен (mtdd 1.0.0+).
+mtdd_user_domain() {
+    local _label="$1" _dom
+    _mtdd_valid_label "$_label" || return 1
+    if [ -z "${2:-}" ]; then
+        local _cur; _cur=$(_mtdd_user_row "$_label" | cut -d'|' -f16)
+        echo -e "  ${BOLD}${_label}:${NC} ${_cur:-общий домен сервера}"
+        return 0
+    fi
+    _dom=$(_mtdd_domain_value "$2") || return 1
+    if [ -n "$_dom" ]; then
+        _mtdd_patch "$_label" "{\"tls_domain\":\"${_dom}\"}" "менять домен пользователя" || return 1
+        log_success "Домен '${_label}': ${_dom}"
+    else
+        _mtdd_patch "$_label" '{"tls_domain":null}' "менять домен пользователя" || return 1
+        log_success "Домен снят с '${_label}' — общий домен сервера"
+    fi
+}
+
+# Пользователь-ловушка (mtdd 1.0.0+).
+mtdd_user_canary() {
+    local _label="$1" _v
+    _mtdd_valid_label "$_label" || return 1
+    if [ -z "${2:-}" ]; then
+        local _cur; _cur=$(_mtdd_user_row "$_label" | cut -d'|' -f20)
+        [ "$_cur" = "true" ] && echo "  ${_label}: ловушка включена" || echo "  ${_label}: ловушка выключена"
+        return 0
+    fi
+    case "$2" in
+        on|true|yes|1)  _v=true ;;
+        off|false|no|0) _v=false ;;
+        *) log_error "Ловушка: on или off"; return 1 ;;
+    esac
+    _mtdd_patch "$_label" "{\"canary\":${_v}}" "менять ловушку" || return 1
+    [ "$_v" = true ] && log_success "Ловушка '${_label}': включена" || log_success "Ловушка '${_label}': выключена"
+}
+
 # Лимит устройств (mtdd 1.0.0+): устройство — ключ auth_key_id на DC.
 # Новый ключ сверх лимита вытесняет самый давний простаивающий.
 _mtdd_devices_value() {
@@ -1823,9 +1976,9 @@ mtdd_users_list_json() {
         done < "$_TARGET_USER_IPS_DB"
     fi
 
-    local _first=1 _n _en _sec _mc _mi _q _ex _note _ru _rd _c _ips _c2s _s2c _qu _dom _md _dc _at _rest _ln _sn _nn _xn
+    local _first=1 _n _en _sec _mc _mi _q _ex _note _ru _rd _c _ips _c2s _s2c _qu _dom _md _dc _at _can _rest _ln _sn _nn _xn
     printf '['
-    while IFS='|' read -r _n _en _sec _mc _mi _q _ex _note _ru _rd _c _ips _c2s _s2c _qu _dom _md _dc _at _rest; do
+    while IFS='|' read -r _n _en _sec _mc _mi _q _ex _note _ru _rd _c _ips _c2s _s2c _qu _dom _md _dc _at _can _rest; do
         [ -n "$_n" ] || continue
         [ $_first -eq 1 ] || printf ','
         _first=0
@@ -1833,8 +1986,8 @@ mtdd_users_list_json() {
         json_escape_fast "$_sec";  _sn="$_JSON_ESCAPE_OUT"
         json_escape_fast "$_note"; _nn="$_JSON_ESCAPE_OUT"
         json_escape_fast "$_ex";   _xn="$_JSON_ESCAPE_OUT"
-        printf '{"label":"%s","secret":"%s","created":0,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"%s","ad_tag":"%s","max_devices":%s,"rate_limit_up_bps":%s,"rate_limit_down_bps":%s,"total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":[%s]}' \
-            "$_ln" "$_sn" "$_en" "${_mc:-0}" "${_mi:-0}" "${_q:-0}" "$_xn" "$_nn" "${_at//[^0-9a-f]/}" "${_md:-0}" "${_ru:-0}" "${_rd:-0}" \
+        printf '{"label":"%s","secret":"%s","created":0,"enabled":%s,"max_conns":%s,"max_ips":%s,"quota_bytes":%s,"expires":"%s","notes":"%s","ad_tag":"%s","max_devices":%s,"tls_domain":"%s","canary":%s,"rate_limit_up_bps":%s,"rate_limit_down_bps":%s,"total_in":%s,"total_out":%s,"total_bytes":%s,"ip_history":[%s]}' \
+            "$_ln" "$_sn" "$_en" "${_mc:-0}" "${_mi:-0}" "${_q:-0}" "$_xn" "$_nn" "${_at//[^0-9a-f]/}" "${_md:-0}" "${_dom//[^a-z0-9.-]/}" "$([ "$_can" = true ] && echo true || echo false)" "${_ru:-0}" "${_rd:-0}" \
             "${_TDB_IN[$_n]:-0}" "${_TDB_OUT[$_n]:-0}" "${_TDB_TOTAL[$_n]:-0}" "${_IP_HIST[$_n]:-}"
     done <<< "$_rows"
     printf ']\n'

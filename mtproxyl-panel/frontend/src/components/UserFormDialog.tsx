@@ -18,6 +18,10 @@ interface UserFormData {
   notes?: string;
   /** Лимит устройств mtdd. */
   max_devices?: number | '';
+  /** Персональный FakeTLS-домен mtdd; пусто — общий. */
+  tls_domain?: string;
+  /** Пользователь-ловушка mtdd. */
+  canary?: boolean;
 }
 
 interface UserFormDialogProps {
@@ -55,6 +59,10 @@ interface UserFormDialogProps {
   engine?: string;
   /** Текущий лимит устройств mtdd (0 — без лимита). */
   initialDevices?: number;
+  /** Текущий персональный домен mtdd (пусто — общий). */
+  initialDomain?: string;
+  /** Текущая ловушка mtdd. */
+  initialCanary?: boolean;
 }
 
 // Пределы API mtdd 1.0.0 (src/config.cpp, users API).
@@ -117,6 +125,8 @@ export function UserFormDialog({
   adTagEditable = true,
   engine = 'telemt',
   initialDevices,
+  initialDomain,
+  initialCanary,
 }: UserFormDialogProps) {
   const isMtdd = engine === 'mtdd';
   const [form, setForm] = useState<UserFormData>(emptyForm);
@@ -135,11 +145,13 @@ export function UserFormDialog({
       init.rate_up_mbps = initialRate?.up ? initialRate.up / MBIT : '';
       init.rate_down_mbps = initialRate?.down ? initialRate.down / MBIT : '';
       init.max_devices = initialDevices ? initialDevices : '';
+      init.tls_domain = initialDomain ?? '';
+      init.canary = Boolean(initialCanary);
       setForm(init);
       setError('');
       setSecretShown(false);
     }
-  }, [open, initialData, initialRate, initialDevices]);
+  }, [open, initialData, initialRate, initialDevices, initialDomain, initialCanary]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -159,6 +171,10 @@ export function UserFormDialog({
         for (const [v, name] of [[form.rate_down_mbps, 'к клиенту'], [form.rate_up_mbps, 'от клиента']] as const) {
           const bps = mbpsToBps(v);
           if (bps > 0 && bps < MTDD_MIN_RATE_BPS) throw new Error(`Скорость ${name}: у mtdd не меньше 8192 бит/с (0.0082 Мбит/с)`);
+        }
+        const dom = String(form.tls_domain ?? '').trim().toLowerCase();
+        if (dom && (!/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(dom) || dom.length > 253 || !dom.includes('.'))) {
+          throw new Error('Домен: DNS-имя в нижнем регистре, например example.org');
         }
         if (notesEditable && utf8Bytes(String(form.notes ?? '').trim()) > MTDD_NOTE_BYTES) {
           throw new Error('Заметка: у mtdd не длиннее 256 байт (≈128 букв кириллицы)');
@@ -208,6 +224,9 @@ export function UserFormDialog({
       if (isMtdd) {
         const dev = form.max_devices === '' || form.max_devices === undefined ? 0 : Math.max(0, Math.floor(Number(form.max_devices)));
         if (dev !== (initialDevices ?? 0)) payload.max_devices = dev;
+        const dom = String(form.tls_domain ?? '').trim().toLowerCase();
+        if (dom !== String(initialDomain ?? '')) payload.tls_domain = dom;
+        if (Boolean(form.canary) !== Boolean(initialCanary)) payload.canary = Boolean(form.canary);
       }
 
       await onSubmit(payload);
@@ -357,6 +376,34 @@ export function UserFormDialog({
                 Сколько разных устройств может работать по ссылке (1–1 000 000). Пусто или 0 — без ограничения.
               </p>
             </div>
+          )}
+
+          {isMtdd && (
+            <div className="space-y-1.5">
+              <Label htmlFor="tls_domain">Свой домен FakeTLS</Label>
+              <Input
+                id="tls_domain"
+                value={form.tls_domain ?? ''}
+                onChange={set('tls_domain')}
+                placeholder="example.org"
+                maxLength={253}
+              />
+              <p className="text-xs text-text-secondary">
+                Пусто — общий домен сервера. С домена идёт ссылка и маскировка пользователя.
+              </p>
+            </div>
+          )}
+
+          {isMtdd && (
+            <label className="flex items-center gap-2 text-sm text-text-primary cursor-pointer">
+              <input
+                type="checkbox"
+                checked={Boolean(form.canary)}
+                onChange={(e) => setForm((prev) => ({ ...prev, canary: e.target.checked }))}
+                className="accent-[var(--color-accent,#3b82f6)]"
+              />
+              Пользователь-ловушка (каждое подключение помечается как canary)
+            </label>
           )}
 
           <div className="space-y-1.5">

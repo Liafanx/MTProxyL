@@ -37,10 +37,13 @@ declare -a _MTDD_CATALOG=(
 "suspects|suspect_watch_score|u32|60|✘|range:0:100|0–100|С какого score адрес попадает под наблюдение"
 "suspects|suspect_ban_score|u32|0|✘|range:0:100|0–100, 0 — выкл|Теневой бан: с этого score соединения уходят на маскировку"
 "suspects|suspect_ttl_hours|u32|168|✘|range:1:720|1–720 ч|Сколько хранить неактивный адрес"
+"clients|watch_ips|list||✘|custom:_mtdd_valid_addrs|IP или CIDR через запятую, до 64|Подробный лог подключений с этих адресов"
+"access|control_allow|list||✘|custom:_mtdd_valid_addrs|IP или CIDR через запятую, до 64|Кому разрешён API управления вне loopback"
+"access|metrics_allow|list||✘|custom:_mtdd_valid_addrs|IP или CIDR через запятую, до 64|Кому открыт /metrics"
 )
 
 # Порядок и подписи разделов в меню.
-_MTDD_SECTIONS="connections timeouts middle_proxy buffers routing media clients suspects"
+_MTDD_SECTIONS="connections timeouts middle_proxy buffers routing media clients suspects access"
 _mtdd_section_title() {
     case "$1" in
         connections)  echo "Подключения" ;;
@@ -51,6 +54,7 @@ _mtdd_section_title() {
         media)        echo "Медиа-лимиты" ;;
         clients)      echo "Устройства и IP" ;;
         suspects)     echo "Подозрительные адреса" ;;
+        access)       echo "Доступ к API и метрикам" ;;
         *)            echo "$1" ;;
     esac
 }
@@ -58,6 +62,18 @@ _mtdd_section_title() {
 _mtdd_valid_ack_timeout() {
     [[ "$1" =~ ^[0-9]+$ ]] || { echo "Должно быть целым числом"; return 1; }
     [ "$1" -eq 0 ] || { [ "$1" -ge 10 ] && [ "$1" -le 3600 ]; } || { echo "0 или 10..3600"; return 1; }
+}
+
+# Список IP/CIDR через запятую: до 64 значений, каждое проверяется как сеть.
+_mtdd_valid_addrs() {
+    local _v="${1// /}" _a
+    [ -n "$_v" ] || { echo "Список IP или CIDR через запятую"; return 1; }
+    IFS=',' read -ra _arr <<< "$_v"
+    [ "${#_arr[@]}" -le 64 ] || { echo "Не больше 64 адресов"; return 1; }
+    for _a in "${_arr[@]}"; do
+        python3 -I -c 'import ipaddress, sys; ipaddress.ip_network(sys.argv[1], strict=False)' "$_a" 2>/dev/null \
+            || { echo "Не IP и не CIDR: ${_a}"; return 1; }
+    done
 }
 
 # DC через запятую: ±1…5, без 0 и повторов (203 mtdd для прямого маршрута не знает).
@@ -196,7 +212,15 @@ mtdd_expert_show() {
 _mtdd_expert_json() {
     local _type="$1" _v="$2"
     case "$_type" in
-        list) echo "[${_v// /}]" ;;
+        list)
+            # DC — числа без кавычек, адреса и CIDR — строки.
+            local _arr _item _res=""
+            IFS=',' read -ra _arr <<< "${_v// /}"
+            for _item in "${_arr[@]}"; do
+                if [[ "$_item" =~ ^-?[0-9]+$ ]]; then _res+="${_res:+,}${_item}"
+                else _res+="${_res:+,}\"${_item}\""; fi
+            done
+            echo "[${_res}]" ;;
         bool) echo "$_v" ;;
         u32|u64) echo "$((10#$_v))" ;;
         *) python3 -I -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$_v" ;;

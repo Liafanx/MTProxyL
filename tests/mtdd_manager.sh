@@ -247,6 +247,56 @@ j=$(secret_list_json); jq -e '(.[] | select(.label == "bob") | .max_devices) == 
 secret_set_devices bob 0 >/dev/null 2>&1 || fail "лимит устройств не снят"
 [ "$(_mtdd_py users-tsv --no-links | awk -F'|' '$1=="bob"{print $17}')" = 0 ] || fail "max_devices не снят в mtdd"
 out=$(secret_show_devices bob 2>&1) && grep -q "198.51.100.7" <<< "$out" || fail "устройства: $out"
+
+# Персональный домен и ловушка (mtdd 1.0.0+): поля 3 и 4 devices.conf.
+secret_set_domain bob sub.example.org >/dev/null 2>&1 || fail "домен не задан"
+[ "$(_mtdd_py users-tsv --no-links | awk -F'|' '$1=="bob"{print $16}')" = sub.example.org ] || fail "tls_domain не дошёл до mtdd"
+grep -qx 'bob||sub.example.org' "$INSTALL_DIR/devices.conf" || fail "devices.conf домен: $(cat "$INSTALL_DIR/devices.conf")"
+out=$(secret_list 2>&1); grep -E '^ +[0-9]+ +bob ' <<< "$out" | grep -q "домен sub.example.org" || fail "в списке нет домена: $(grep bob <<< "$out")"
+j=$(secret_list_json); jq -e '(.[] | select(.label == "bob") | .tls_domain) == "sub.example.org"' <<< "$j" >/dev/null \
+    || fail "tls_domain в list --json: $(jq -c '[.[] | {l: .label, d: .tls_domain}]' <<< "$j")"
+secret_set_domain bob remove >/dev/null 2>&1 || fail "домен не снят"
+[ -z "$(_mtdd_py users-tsv --no-links | awk -F'|' '$1=="bob"{print $16}')" ] || fail "tls_domain не снят в mtdd"
+secret_set_domain bob 'не-домен' >/dev/null 2>&1 && fail "кривой домен принят"
+
+secret_set_canary bob on >/dev/null 2>&1 || fail "ловушка не задана"
+[ "$(_mtdd_py users-tsv --no-links | awk -F'|' '$1=="bob"{print $20}')" = true ] || fail "canary не дошёл до mtdd"
+grep -qx 'bob|||1' "$INSTALL_DIR/devices.conf" || fail "devices.conf ловушка: $(cat "$INSTALL_DIR/devices.conf")"
+j=$(secret_list_json); jq -e '(.[] | select(.label == "bob") | .canary) == true' <<< "$j" >/dev/null \
+    || fail "canary в list --json: $(jq -c '[.[] | {l: .label, c: .canary}]' <<< "$j")"
+echo 0 > "$t/mock_count"; mtdd_mgr_sync_users || fail "sync с ловушкой"
+[ "$(cat "$t/mock_count")" -le 3 ] || fail "повторный sync с canary сделал $(cat "$t/mock_count") запросов"
+secret_set_canary bob off >/dev/null 2>&1 || fail "ловушка не снята"
+[ -z "$(_mtdd_py users-tsv --no-links | awk -F'|' '$1=="bob"{print $20}')" ] || fail "canary не выключен в mtdd"
+secret_set_canary bob maybe >/dev/null 2>&1 && fail "неверное значение ловушки принято"
+
+# Подмена рекламного тега: /v1/ad-tag.
+TAG=abcdefabcdefabcdefabcdefabcdefab
+mtdd_adtag_set "$TAG" >/dev/null || fail "adtag set"
+[ "$(jq -r .override <<< "$(_mtdd_call GET /v1/ad-tag)")" = true ] || fail "подмена не включилась"
+out=$(mtdd_adtag_show 2>&1); grep -q "$TAG" <<< "$out" || fail "adtag show: $out"
+mtdd_adtag_reset >/dev/null || fail "adtag reset"
+[ "$(jq -r .override <<< "$(_mtdd_call GET /v1/ad-tag)")" = false ] || fail "подмена не снята"
+mtdd_adtag_set zz >/dev/null 2>&1 && fail "кривой тег принят"
+
+# Журнал изменений: /v1/events.
+out=$(mtdd_events --limit 5 --json) || fail "events"
+[ "$(jq -r '.events[0].action' <<< "$out")" = user.update ] || fail "журнал: $out"
+mtdd_events --limit 0 >/dev/null 2>&1 && fail "limit 0 принят"
+
+# Списки адресов в экспертных параметрах.
+_mtdd_valid_addrs "192.0.2.0/24, 2001:db8::/32" >/dev/null || fail "CIDR-список отвергнут"
+_mtdd_valid_addrs "не-ip" >/dev/null 2>&1 && fail "мусор в списке адресов принят"
+cat_json=$(mtdd_expert_catalog_json)
+for k in watch_ips control_allow metrics_allow; do
+    jq -e --arg k "$k" 'any(.[]; .key == $k)' <<< "$cat_json" >/dev/null || fail "нет ключа $k в каталоге"
+done
+# Список адресов в tune.json — JSON-массив строк, DC — числа.
+mtdd_expert_set clients watch_ips "192.0.2.0/24,2001:db8::/32" --no-apply >/dev/null 2>&1 || fail "watch_ips не записан"
+jq -e '.watch_ips == ["192.0.2.0/24", "2001:db8::/32"]' "$MTDD_MGR_TUNE" >/dev/null \
+    || fail "watch_ips в tune.json: $(jq -c '.watch_ips' "$MTDD_MGR_TUNE" 2>/dev/null)"
+mtdd_expert_set clients watch_ips "не-ip" --no-apply >/dev/null 2>&1 && fail "мусор в watch_ips принят"
+mtdd_expert_clear watch_ips --no-apply >/dev/null 2>&1 || true
 long=$(printf 'я%.0s' $(seq 150))
 secret_set_note bob "$long" >/dev/null 2>&1 && fail "заметка 300 байт принята для mtdd"
 secret_set_note bob "коротко" >/dev/null 2>&1 || fail "заметка"

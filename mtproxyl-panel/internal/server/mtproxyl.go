@@ -739,6 +739,111 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 
+	// ── Поля mtdd на пользователя: домен FakeTLS и ловушка ──────────────────
+	// Поля необязательные: панель шлёт только изменённые, чтобы не трогать
+	// остальные при правке карточки.
+	mux.Handle("POST /api/mtproxyl/users/{label}/mtdd", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			TLSDomain *string `json:"tls_domain"`
+			Canary    *bool   `json:"canary"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		label := r.PathValue("label")
+		if err := mtproxylctl.ValidateSecretLabel(label); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+			return
+		}
+		var out string
+		if req.TLSDomain != nil {
+			o, err := client.SetSecretDomain(r.Context(), label, *req.TLSDomain)
+			if err != nil {
+				writeCLIError(w, "mtproxyl_error", err)
+				return
+			}
+			out = o
+		}
+		if req.Canary != nil {
+			o, err := client.SetSecretCanary(r.Context(), label, *req.Canary)
+			if err != nil {
+				writeCLIError(w, "mtproxyl_error", err)
+				return
+			}
+			out = o
+		}
+		invalidateUsersCache()
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	// ── Временная подмена рекламного тега mtdd (/v1/ad-tag) ─────────────────
+	mux.Handle("GET /api/mtproxyl/mtdd/ad-tag", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		doc, err := client.GetMtddAdTag(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: doc})
+	}))
+	mux.Handle("POST /api/mtproxyl/mtdd/ad-tag", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		var req struct {
+			AdTag string `json:"ad_tag"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
+			return
+		}
+		out, err := client.SetMtddAdTag(r.Context(), req.AdTag)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+	mux.Handle("DELETE /api/mtproxyl/mtdd/ad-tag", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) || busy(w) {
+			return
+		}
+		out, err := client.ResetMtddAdTag(r.Context())
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+	}))
+
+	// ── Журнал изменений mtdd (/v1/events) ──────────────────────────────────
+	mux.Handle("GET /api/mtproxyl/mtdd/events", protected(func(w http.ResponseWriter, r *http.Request) {
+		if !guard(w) {
+			return
+		}
+		limit := 50
+		if v := r.URL.Query().Get("limit"); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 || n > 256 {
+				writeError(w, http.StatusBadRequest, "invalid_request", "limit: 1..256")
+				return
+			}
+			limit = n
+		}
+		doc, err := client.GetMtddEvents(r.Context(), limit)
+		if err != nil {
+			writeCLIError(w, "mtproxyl_error", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: doc})
+	}))
+
 	// ── Уникальные IP mtdd (seen/active, HyperLogLog) ───────────────────────
 	mux.Handle("GET /api/mtproxyl/mtdd/ips", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {

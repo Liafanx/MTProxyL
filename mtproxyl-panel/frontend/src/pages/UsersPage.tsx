@@ -74,6 +74,12 @@ async function applyMtproxylLimits(label: string, data: Record<string, unknown>,
   if ('max_devices' in data) {
     await mtproxylUsersApi.setDevices(label, Number(data.max_devices ?? 0));
   }
+  if ('tls_domain' in data || 'canary' in data) {
+    const fields: { tls_domain?: string; canary?: boolean } = {};
+    if ('tls_domain' in data) fields.tls_domain = String(data.tls_domain ?? '');
+    if ('canary' in data) fields.canary = Boolean(data.canary);
+    await mtproxylUsersApi.setMtdd(label, fields);
+  }
 }
 
 function QuotaCell({ user, entry }: { user: UserInfo; entry?: QuotaEntry }) {
@@ -225,6 +231,10 @@ export function UsersPage() {
   // Лимит устройств mtdd знает только MTProxyL (secret list --json).
   const editDevices = useMemo(
     () => (mtproxylUsers ?? []).find((m) => m.label === editUser?.username)?.max_devices ?? 0,
+    [mtproxylUsers, editUser],
+  );
+  const editMtdd = useMemo(
+    () => (mtproxylUsers ?? []).find((m) => m.label === editUser?.username),
     [mtproxylUsers, editUser],
   );
   const [deleteUser, setDeleteUser] = useState<string | null>(null);
@@ -723,6 +733,8 @@ export function UsersPage() {
         adTagEditable={adTagSupported}
         engine={usersOwnedByMtproxyl ? engineKind : 'telemt'}
         initialDevices={editDevices}
+        initialDomain={editMtdd?.tls_domain ?? ''}
+        initialCanary={Boolean(editMtdd?.canary)}
       />
 
       <ConfirmDialog

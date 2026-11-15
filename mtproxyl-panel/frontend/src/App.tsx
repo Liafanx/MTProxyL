@@ -29,6 +29,7 @@ import { TrafficPage } from '@/pages/TrafficPage';
 import { ShapingPage } from '@/pages/ShapingPage';
 import { MtddIpsPage } from '@/pages/MtddIpsPage';
 import { MtddSuspectsPage } from '@/pages/MtddSuspectsPage';
+import { MtddEventsPage } from '@/pages/MtddEventsPage';
 import { ExpertPage } from '@/pages/ExpertPage';
 import { SuperExpertPage } from '@/pages/SuperExpertPage';
 import { AddonsPage } from '@/pages/AddonsPage';
@@ -88,6 +89,7 @@ function AuthenticatedApp() {
           <Route path="/shaping" element={<ShapingPage />} />
           <Route path="/mtdd-ips" element={<MtddIpsPage />} />
           <Route path="/mtdd-suspects" element={<MtddSuspectsPage />} />
+          <Route path="/mtdd-events" element={<MtddEventsPage />} />
           <Route path="/expert" element={<ExpertPage />} />
           <Route path="/superexpert" element={<SuperExpertPage />} />
           <Route path="/addons" element={<AddonsPage />} />
