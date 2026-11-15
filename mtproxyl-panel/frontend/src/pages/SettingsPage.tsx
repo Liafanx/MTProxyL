@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { ParamField } from '@/components/ParamField';
 import { ManagerOnlyNotice } from '@/components/ManagerOnlyNotice';
-import { useManagerOnly } from '@/hooks/useMtproxyl';
+import { useManagerOnly, useMtproxyl } from '@/hooks/useMtproxyl';
 import { mtproxylSettingsApi, type MtproxylSetting } from '@/lib/api';
 import { MAINTENANCE_KEYS } from '@/pages/MaintenancePage';
 import { AVAILABILITY_KEYS } from '@/pages/AvailabilityPage';
@@ -28,7 +28,7 @@ const GROUPS: { title: string; description: string; keys: string[] }[] = [
   {
     title: 'Нагрузка и протокол',
     description: 'Ограничения движка и приём заголовка от вышестоящего балансировщика.',
-    keys: ['PROXY_CONCURRENCY', 'PROXY_PROTOCOL', 'PROXY_LOG_LEVEL'],
+    keys: ['PROXY_CONCURRENCY', 'PROXY_PROTOCOL', 'PROXY_PROTOCOL_TRUSTED_CIDRS', 'PROXY_LOG_LEVEL'],
   },
   {
     title: 'Метрики и API',
@@ -67,6 +67,8 @@ export function SettingsPage() {
   const [saving, setSaving] = useState(false);
 
   const { allowed, loading: modeLoading } = useManagerOnly();
+  const { engineKind } = useMtproxyl();
+  const isMtdd = engineKind === 'mtdd';
 
   const load = useCallback(async () => {
     // Настройки принадлежат собственному прокси MTProxyL. В реаниматоре его
@@ -77,7 +79,9 @@ export function SettingsPage() {
     }
     setLoading(true);
     try {
-      setParams(await mtproxylSettingsApi.list());
+      // Ключи telemt, которых у движка нет (mtdd: SNI-политика, длина
+      // сертификата, уровень логов…), MTProxyL помечает supported:false.
+      setParams((await mtproxylSettingsApi.list()).filter((p) => p.supported !== false));
       setEdits({});
       setError(null);
     } catch (e) {
@@ -133,9 +137,12 @@ export function SettingsPage() {
       <div>
         <h1 className="text-xl font-semibold text-text-primary">Настройки прокси</h1>
         <p className="text-sm text-text-secondary mt-1">
-          Настройки MTProxyL, из которых он собирает конфиг движка. Меняются через его CLI:
-          в режиме Manager конфигурацией управляет MTProxyL для Docker и бинарного движка.
-          Уровень логирования применяется на лету; переменная RUST_LOG движка имеет приоритет.
+          {isMtdd
+            ? 'Настройки MTProxyL, из которых он собирает конфиг mtdd. Меняются через его CLI, как в терминале. ' +
+              'Ключи конфига mtdd (таймауты, буферы, middle proxy, подозрительные адреса) — в «Экспертных параметрах».'
+            : 'Настройки MTProxyL, из которых он собирает конфиг движка. Меняются через его CLI: ' +
+              'в режиме Manager конфигурацией управляет MTProxyL для Docker и бинарного движка. ' +
+              'Уровень логирования применяется на лету; переменная RUST_LOG движка имеет приоритет.'}
         </p>
       </div>
 

@@ -298,7 +298,7 @@ show_main_menu() {
             fi
             echo -e "  ${BRIGHT_CYAN}[10]${NC}   Обновление, бэкапы и миграция"
             if [ "$_mm" = true ]; then
-                echo -e "  ${BRIGHT_CYAN}[11]${NC}  Тюнинг mtdd (свои ключи конфига)"
+                echo -e "  ${BRIGHT_CYAN}[11]${NC}  Экспертные параметры mtdd"
                 echo -e "  ${BRIGHT_CYAN}[12]${NC}  Сменить движок на telemt"
             else
                 echo -e "  ${BRIGHT_CYAN}[11]${NC}  Режим эксперта (override поверх конфига движка)"
@@ -325,7 +325,7 @@ show_main_menu() {
                 8)  tui_nft_menu ;;
                 9)  tui_engine_menu ;;
                 10)  tui_backup_menu ;;
-                11) if [ "$_mm" = true ]; then tui_mtdd_tune_menu; else tui_expert_menu; fi ;;
+                11) if [ "$_mm" = true ]; then tui_mtdd_expert_menu; else tui_expert_menu; fi ;;
                 12) if [ "$_mm" = true ]; then engine_switch_kind telemt; load_settings; press_any_key
                     else tui_superexpert_menu; fi ;;
                 13) tui_tgbot_menu ;;

@@ -327,6 +327,18 @@ generate_mtdd_config() {
     return 0
 }
 
+# Примет ли сборка конфиг из текущих настроек — на копии, без записи и
+# перезапуска (settings set откатывает только то, что сборка отвергла).
+mtdd_mgr_config_check() {
+    mtdd_mgr_names
+    local _tmp _rc
+    _tmp=$(mktemp "${MTDD_MGR_DIR}/.check.XXXXXX") || return 1
+    [ -f "$MTDD_MGR_CONFIG" ] && cp -p "$MTDD_MGR_CONFIG" "$_tmp"
+    MTDD_MGR_CONFIG="$_tmp" generate_mtdd_config; _rc=$?
+    rm -f "$_tmp"
+    return $_rc
+}
+
 # ── Служба ─────────────────────────────────────────────────────
 # Как юнит установщика mtdd: свой пользователь, порт ниже 1024 через
 # capability, система только для чтения кроме каталога состояния. CPU/RAM —
@@ -472,6 +484,20 @@ mtdd_mgr_reload_config() {
 # 12-е поле secrets.conf: у telemt такого лимита нет, а старая версия MTProxyL
 # (откат) на 12 полях потеряла бы скорость пользователей.
 mtdd_devices_file() { echo "${INSTALL_DIR}/devices.conf"; }
+
+# Лимиты устройств всех пользователей одним чтением (для таблиц: без форков
+# на каждого). Пусто, если движок не mtdd в Manager.
+declare -gA _MTDD_DEV=()
+mtdd_devices_load() {
+    _MTDD_DEV=()
+    declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active || return 0
+    local _f _l _n; _f=$(mtdd_devices_file)
+    [ -f "$_f" ] || return 0
+    while IFS='|' read -r _l _n; do
+        [ -n "$_l" ] && [[ "$_n" =~ ^[0-9]+$ ]] && [ "$_n" != 0 ] && _MTDD_DEV[$_l]="$_n"
+    done < "$_f"
+    return 0
+}
 
 mtdd_devices_get() {
     awk -F'|' -v u="$1" '$1 == u { print $2; exit }' "$(mtdd_devices_file)" 2>/dev/null

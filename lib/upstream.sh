@@ -278,6 +278,7 @@ upstream_list() {
         echo -e "  $(_pad "$((i+1))" 4)$(_pad "${UPSTREAM_NAMES[$i]}" 15)$(_pad "${UPSTREAM_TYPES[$i]}" 14)$(_pad "$addr_plain" 23)$(_pad "${UPSTREAM_WEIGHTS[$i]}" 6)$(_pad "$scopes_plain" 12)${status_str}"
     done
     echo ""
+    upstream_overlay_show
     if [ "$has_scopes" -eq 1 ]; then
         echo -e "  ${DIM}Область — теги маршрута. Запрос со scope идёт только через маршруты${NC}"
         echo -e "  ${DIM}с этим тегом; запрос без scope — только через маршруты «все».${NC}"
@@ -398,6 +399,8 @@ handle_upstream_command() {
                 upstream_list
             fi
             ;;
+        overlay)
+            if [ "${1:-}" = "--json" ]; then upstream_overlay_json; else upstream_overlay_show; fi ;;
         add)     check_root; upstream_add "$@" ;;
         remove)  check_root; upstream_remove "$1" ;;
         enable)  check_root; upstream_toggle "$1" enable ;;
@@ -411,6 +414,7 @@ handle_upstream_command() {
             echo -e "    ${GREEN}upstream enable${NC} <имя>                     Включить"
             echo -e "    ${GREEN}upstream disable${NC} <имя>                    Выключить"
             echo -e "    ${GREEN}upstream test${NC} <имя>                       Проверить"
+            echo -e "    ${GREEN}upstream overlay${NC} [--json]                 Свой AWG и WARP поверх таблицы"
             echo ""
             echo -e "  ${BOLD}Типы:${NC}"
             echo -e "    ${DIM}direct${NC}        прямое соединение; адрес не нужен, в интерфейс можно"
@@ -426,6 +430,61 @@ handle_upstream_command() {
             echo -e "  маршруты с пустой областью."
             ;;
     esac
+}
+
+# Маршруты к Telegram поверх таблицы upstream: свой AWG и WARP (варианты A/B)
+# работают на уровне системы (туннель, метки, redsocks), а не строками
+# upstreams.conf — без этой сводки при включённом AWG видно лишь «direct».
+# Строки "вид|включён|описание|подробность".
+_upstream_overlay_rows() {
+    if declare -F awg_load >/dev/null && declare -F _awg_state_file >/dev/null && [ -f "$(_awg_state_file)" ]; then
+        local AWG_ENABLED="false" AWG_ACTIVE="" AWG_ME_MODE="" AWG_ME_DISABLED="" AWG_EGRESS_IP=""
+        awg_load 2>/dev/null
+        if [ "${AWG_ENABLED:-false}" = true ]; then
+            local _me="ME: как обычно"
+            if [ -n "${AWG_ME_DISABLED:-}" ]; then
+                _me="ME выключен — все DC напрямую через туннель"
+            elif [ "${AWG_ME_MODE:-}" = natip ] && [ -n "${AWG_EGRESS_IP:-}" ]; then
+                _me="ME через туннель, NAT IP ${AWG_EGRESS_IP}"
+            fi
+            printf 'awg|true|Свой AWG (%s%s): подсети Telegram — через туннель|%s\n' \
+                "${AWG_IFACE:-mtpawg}" "${AWG_ACTIVE:+, конфиг ${AWG_ACTIVE}}" "$_me"
+        fi
+    fi
+    if [ "${WARP_ENABLED:-false}" = true ] && declare -F _warp_mode >/dev/null; then
+        case "$(_warp_mode)" in
+            socks)    printf 'warp|true|WARP, вариант A: подсети Telegram — через SOCKS5 и redsocks|протокол %s\n' "$(_warp_configured_proto)" ;;
+            iface)    printf 'warp|true|WARP, вариант B: подсети Telegram — через интерфейс WireGuard|\n' ;;
+            # Вариант C — строка самой таблицы маршрутов, не «поверх» неё.
+        esac
+    fi
+}
+
+upstream_overlay_show() {
+    local _rows; _rows=$(_upstream_overlay_rows)
+    [ -n "$_rows" ] || return 0
+    echo -e "  ${BOLD}Поверх таблицы:${NC}"
+    local _k _on _t _d
+    while IFS='|' read -r _k _on _t _d; do
+        [ -n "$_k" ] || continue
+        echo -e "  ${GREEN}${SYM_OK}${NC} ${_t}"
+        [ -n "$_d" ] && echo -e "    ${DIM}${_d}${NC}"
+    done <<< "$_rows"
+    echo ""
+}
+
+upstream_overlay_json() {
+    local _rows _first=1 _k _on _t _d
+    _rows=$(_upstream_overlay_rows)
+    printf '['
+    while IFS='|' read -r _k _on _t _d; do
+        [ -n "$_k" ] || continue
+        [ $_first -eq 1 ] || printf ','
+        _first=0
+        printf '{"kind":"%s","enabled":%s,"title":"%s","detail":"%s"}' \
+            "$(json_escape "$_k")" "$_on" "$(json_escape "$_t")" "$(json_escape "$_d")"
+    done <<< "$_rows"
+    printf ']\n'
 }
 
 # Машинный список маршрутов для панели.

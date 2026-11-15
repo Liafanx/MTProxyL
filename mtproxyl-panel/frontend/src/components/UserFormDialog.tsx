@@ -16,6 +16,8 @@ interface UserFormData {
   rate_up_mbps?: number | '';
   rate_down_mbps?: number | '';
   notes?: string;
+  /** Лимит устройств mtdd. */
+  max_devices?: number | '';
 }
 
 interface UserFormDialogProps {
@@ -49,6 +51,20 @@ interface UserFormDialogProps {
   notesEditable?: boolean;
   /** false — движок не поддерживает метку на пользователя (mtdd): поле скрыто. */
   adTagEditable?: boolean;
+  /** Движок: у mtdd свои пределы полей и лимит устройств. */
+  engine?: string;
+  /** Текущий лимит устройств mtdd (0 — без лимита). */
+  initialDevices?: number;
+}
+
+// Пределы API mtdd 1.0.0 (src/config.cpp, users API).
+const MTDD_MIN_RATE_BPS = 8192;
+const MTDD_MAX_COUNT = 1_000_000;
+const MTDD_NOTE_BYTES = 256;
+const MTDD_MAX_QUOTA = 2 ** 60;
+
+function utf8Bytes(s: string): number {
+  return new TextEncoder().encode(s).length;
 }
 
 /** Байты трудно читать глазами — показываем, сколько это на самом деле. */
@@ -76,6 +92,7 @@ const emptyForm: UserFormData = {
   rate_up_mbps: '',
   rate_down_mbps: '',
   notes: '',
+  max_devices: '',
 };
 
 const MBIT = 1_000_000;
@@ -98,7 +115,10 @@ export function UserFormDialog({
   initialRate,
   notesEditable,
   adTagEditable = true,
+  engine = 'telemt',
+  initialDevices,
 }: UserFormDialogProps) {
+  const isMtdd = engine === 'mtdd';
   const [form, setForm] = useState<UserFormData>(emptyForm);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -114,11 +134,12 @@ export function UserFormDialog({
       if (init.max_unique_ips === 0) init.max_unique_ips = '';
       init.rate_up_mbps = initialRate?.up ? initialRate.up / MBIT : '';
       init.rate_down_mbps = initialRate?.down ? initialRate.down / MBIT : '';
+      init.max_devices = initialDevices ? initialDevices : '';
       setForm(init);
       setError('');
       setSecretShown(false);
     }
-  }, [open, initialData, initialRate]);
+  }, [open, initialData, initialRate, initialDevices]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -127,6 +148,22 @@ export function UserFormDialog({
 
     try {
       const payload: Record<string, unknown> = {};
+
+      // У mtdd пределы уже, чем у telemt: проверяем до отправки, чтобы не
+      // получить отказ API на полпути (лимиты, затем скорость, затем заметка).
+      if (isMtdd) {
+        for (const [v, name] of [[form.max_tcp_conns, 'Соединений'], [form.max_unique_ips, 'Уникальных IP'], [form.max_devices, 'Устройств']] as const) {
+          if (v !== '' && v !== undefined && Number(v) > MTDD_MAX_COUNT) throw new Error(`${name}: у mtdd не больше 1 000 000`);
+        }
+        if (Number(form.data_quota_bytes) > MTDD_MAX_QUOTA) throw new Error('Квота: у mtdd не больше 2^60 байт');
+        for (const [v, name] of [[form.rate_down_mbps, 'к клиенту'], [form.rate_up_mbps, 'от клиента']] as const) {
+          const bps = mbpsToBps(v);
+          if (bps > 0 && bps < MTDD_MIN_RATE_BPS) throw new Error(`Скорость ${name}: у mtdd не меньше 8192 бит/с (0.0082 Мбит/с)`);
+        }
+        if (notesEditable && utf8Bytes(String(form.notes ?? '').trim()) > MTDD_NOTE_BYTES) {
+          throw new Error('Заметка: у mtdd не длиннее 256 байт (≈128 букв кириллицы)');
+        }
+      }
 
       const username = form.username.trim();
       if (mode === 'create' || username !== String(initialData?.username ?? '')) {
@@ -166,6 +203,11 @@ export function UserFormDialog({
       if (notesEditable) {
         const notes = String(form.notes ?? '').trim();
         if (notes !== String(initialData?.notes ?? '')) payload.notes = notes;
+      }
+
+      if (isMtdd) {
+        const dev = form.max_devices === '' || form.max_devices === undefined ? 0 : Math.max(0, Math.floor(Number(form.max_devices)));
+        if (dev !== (initialDevices ?? 0)) payload.max_devices = dev;
       }
 
       await onSubmit(payload);
@@ -283,6 +325,7 @@ export function UserFormDialog({
                 value={form.max_tcp_conns}
                 onChange={set('max_tcp_conns')}
                 min={0}
+                max={isMtdd ? MTDD_MAX_COUNT : undefined}
               />
             </div>
             <div className="space-y-1.5">
@@ -293,9 +336,28 @@ export function UserFormDialog({
                 value={form.max_unique_ips}
                 onChange={set('max_unique_ips')}
                 min={0}
+                max={isMtdd ? MTDD_MAX_COUNT : undefined}
               />
             </div>
           </div>
+
+          {isMtdd && (
+            <div className="space-y-1.5">
+              <Label htmlFor="max_devices">Лимит устройств</Label>
+              <Input
+                id="max_devices"
+                type="number"
+                value={form.max_devices}
+                onChange={set('max_devices')}
+                min={0}
+                max={MTDD_MAX_COUNT}
+                placeholder="без ограничения"
+              />
+              <p className="text-xs text-text-secondary">
+                Сколько разных устройств может работать по ссылке (1–1 000 000). Пусто или 0 — без ограничения.
+              </p>
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label htmlFor="quota">Квота трафика, байт</Label>
@@ -305,6 +367,7 @@ export function UserFormDialog({
               value={form.data_quota_bytes}
               onChange={set('data_quota_bytes')}
               min={0}
+              max={isMtdd ? MTDD_MAX_QUOTA : undefined}
               placeholder="без ограничения"
             />
             <p className="text-xs text-text-secondary">
@@ -338,7 +401,11 @@ export function UserFormDialog({
               />
             </div>
           </div>
-          <p className="-mt-2 text-xs text-text-secondary">Нужен telemt 3.4.1+. Пусто или 0 — без ограничения.</p>
+          <p className="-mt-2 text-xs text-text-secondary">
+            {isMtdd
+              ? 'Пусто или 0 — без ограничения. У mtdd не меньше 8192 бит/с (0.0082 Мбит/с).'
+              : 'Нужен telemt 3.4.1+. Пусто или 0 — без ограничения.'}
+          </p>
 
           <div className="space-y-1.5">
             <Label htmlFor="expiration">Действует до</Label>
@@ -363,6 +430,11 @@ export function UserFormDialog({
                 placeholder="кому выдан, оплата — видно только вам"
                 maxLength={200}
               />
+              {isMtdd && (
+                <p className="text-xs text-text-secondary">
+                  У mtdd до 256 байт (≈128 букв кириллицы): {utf8Bytes(String(form.notes ?? '').trim())} / 256.
+                </p>
+              )}
             </div>
           )}
 

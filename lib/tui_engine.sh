@@ -30,25 +30,8 @@ _tui_engine_service_name() {
     esac
 }
 
-# Тюнинг mtdd: ключи из белого списка, порт/домен/тег — в настройках MTProxyL.
-tui_mtdd_tune_menu() {
-    while true; do
-        clear_screen
-        mtdd_handle_tune list
-        echo -e "  ${DIM}[1]${NC} Задать параметр"
-        echo -e "  ${DIM}[2]${NC} Сбросить параметр (значение mtdd по умолчанию)"
-        echo -e "  ${DIM}[0]${NC} Назад"
-        local _c _k _v; _c=$(read_choice "выбор" "0")
-        case "$_c" in
-            1) read_line _k "  ${BOLD}Параметр:${NC} "; [ -n "$_k" ] || continue
-               read_line _v "  ${BOLD}Значение:${NC} "; [ -n "$_v" ] || continue
-               mtdd_handle_tune set "$_k" "$_v"; press_any_key ;;
-            2) read_line _k "  ${BOLD}Параметр:${NC} "; [ -n "$_k" ] || continue
-               mtdd_handle_tune clear "$_k"; press_any_key ;;
-            *) return ;;
-        esac
-    done
-}
+# Прежнее имя меню: теперь это «Экспертные параметры mtdd».
+tui_mtdd_tune_menu() { tui_mtdd_expert_menu; }
 
 # Движок Manager — mtdd: каналы сборок вместо версий, смена на telemt.
 tui_mtdd_mgr_engine_menu() {
@@ -63,7 +46,7 @@ tui_mtdd_mgr_engine_menu() {
         echo -e "  ${DIM}[1]${NC} Сборки main и dev"
         echo -e "  ${DIM}[2]${NC} Обновить / сменить канал"
         echo -e "  ${DIM}[3]${NC} Откатить на предыдущую сборку"
-        echo -e "  ${DIM}[4]${NC} Тюнинг mtdd (свои ключи конфига)"
+        echo -e "  ${DIM}[4]${NC} Экспертные параметры mtdd"
         echo -e "  ${DIM}[5]${NC} Медиа-лимиты mtdd"
         echo -e "  ${DIM}[6]${NC} Сменить движок на telemt ${DIM}(ключи и ссылки сохранятся)${NC}"
         echo -e "  ${DIM}[0]${NC} Назад"
@@ -80,18 +63,18 @@ tui_mtdd_mgr_engine_menu() {
     done
 }
 
-# Подозрительные адреса mtdd: таблица, учёт, теневой бан, nftables-блок.
+# Подозрительные адреса mtdd: таблица, учёт, теневой бан, блок через «Блокировку IP».
 tui_mtdd_suspects_menu() {
     while true; do
         clear_screen
         mtdd_suspects_list 0 || true
         local _on _ban; _on=$(mtdd_cfg_get suspects 2>/dev/null); _ban=$(mtdd_cfg_get suspect_ban_score 2>/dev/null)
-        echo -e "  ${DIM}Учёт: $([ "$_on" = true ] && echo включён || echo выключен) · теневой бан: $([ "${_ban:-0}" -gt 0 ] 2>/dev/null && echo "score ≥ ${_ban}" || echo выкл)${NC}"
+        echo -e "  ${DIM}Учёт: $([ "$_on" = true ] && echo включён || echo выключен) · теневой бан: $([ "${_ban:-0}" -gt 0 ] 2>/dev/null && echo "score ≥ ${_ban}" || echo выкл) · в «Блокировке IP»: $(mtdd_suspects_blocked | wc -l | tr -d ' ')${NC}"
         echo ""
         echo -e "  ${DIM}[1]${NC} $([ "$_on" = true ] && echo Выключить || echo Включить) учёт"
         echo -e "  ${DIM}[2]${NC} Теневой бан по score ${DIM}(такие соединения уходят на маскировку)${NC}"
-        echo -e "  ${DIM}[3]${NC} Заблокировать в nftables по score ${DIM}(порт прокси, до перезагрузки)${NC}"
-        echo -e "  ${DIM}[4]${NC} Снять nftables-блок"
+        echo -e "  ${DIM}[3]${NC} Добавить в «Блокировку IP» по score ${DIM}(все порты, переживает перезагрузку)${NC}"
+        echo -e "  ${DIM}[4]${NC} Убрать их из «Блокировки IP»"
         echo -e "  ${DIM}[0]${NC} Назад"
         local _c; _c=$(read_choice "выбор" "0")
         case "$_c" in
@@ -102,6 +85,10 @@ tui_mtdd_suspects_menu() {
                press_any_key ;;
             3) local _s; read_line _s "  ${BOLD}Мин. score [60]:${NC} "
                handle_suspects_command block "${_s:-60}" || true
+               if [ "${IPBLOCK_ENABLED:-false}" != true ]; then
+                   local _yn; read_line _yn "  ${BOLD}Включить «Блокировку IP» сейчас? [y/N]:${NC} "
+                   [[ "$_yn" =~ ^[yYдД] ]] && { ipblock_enable || true; }
+               fi
                press_any_key ;;
             4) handle_suspects_command unblock || true; press_any_key ;;
             0|"") return ;;

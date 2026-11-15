@@ -52,7 +52,7 @@ tui_settings_menu() {
         echo -e "  ${DIM}[10]${NC} Управление движком"
         echo -e "  ${DIM}[11]${NC} Изменить порт метрик"        
         echo -e "  ${DIM}[12]${NC} Просмотр текущего конфига"
-        echo -e "  ${DIM}[13]${NC} Тюнинг движка (tune) $(mtdd_mgr_active && echo mtdd || echo Telemt)"
+        echo -e "  ${DIM}[13]${NC} $(mtdd_mgr_active && echo "Экспертные параметры mtdd" || echo "Тюнинг движка (tune) Telemt")"
         echo -e "  ${DIM}[14]${NC} Пользовательские URL Telegram"
         echo -e "  ${DIM}[15]${NC} Selfmask (заглушка + сертификат)"
         echo -e "  ${DIM}[16]${NC} Изменить порт API движка [$(api_port_current 2>/dev/null)]"
@@ -63,7 +63,7 @@ tui_settings_menu() {
         if mtdd_mgr_active; then
             case "$choice" in
                 8|14|17) mtdd_unsupported "этот пункт есть только у telemt"; press_any_key; continue ;;
-                13) tui_mtdd_tune_menu; continue ;;
+                13) tui_mtdd_expert_menu; continue ;;
             esac
         fi
         case "$choice" in

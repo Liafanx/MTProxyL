@@ -1,6 +1,11 @@
 #!/bin/bash
 # MTProxyL — управление секретами пользователей
 
+# Лимиты устройств mtdd (заполняет mtdd_devices_load из mtdd_mgr.sh). Объявлен
+# и здесь: без ассоциативного массива метка «a-b» под set -u считалась бы
+# арифметикой. Уже заполненный (mtdd_mgr.sh раньше) не трогаем.
+declare -p _MTDD_DEV >/dev/null 2>&1 || declare -gA _MTDD_DEV=()
+
 # Массивы секретов
 declare -a SECRETS_LABELS=()
 declare -a SECRETS_KEYS=()
@@ -724,6 +729,12 @@ _secret_limits_text_v() {
         [ -n "$_out" ] && _out+=" · "
         _out+="IP ${_mi}"
     fi
+    # Лимит устройств mtdd (devices.conf; заполняет mtdd_devices_load).
+    local _dv="${_MTDD_DEV[${SECRETS_LABELS[$_i]:-}]:-}"
+    if [ -n "$_dv" ]; then
+        [ -n "$_out" ] && _out+=" · "
+        _out+="устр ${_dv}"
+    fi
     if [ "$_q" != "0" ] && [ -n "$_q" ] && [[ "$_q" =~ ^[0-9]+$ ]]; then
         [ -n "$_out" ] && _out+=" · "
         _fmt_bytes_v "$_q"
@@ -794,10 +805,12 @@ secret_list_json() {
     # цикл bash с экранированием каждого поля и каждого IP стоил ~1 с на
     # 300 пользователей.
     _user_stats_bulk
+    # Лимит устройств — у mtdd Manager (devices.conf), иначе 0.
+    declare -F mtdd_devices_load >/dev/null && mtdd_devices_load
     local _i _l _rows=""
     for _i in "${!SECRETS_LABELS[@]}"; do
         _l="${SECRETS_LABELS[$_i]}"
-        _rows+="${_l}|${SECRETS_KEYS[$_i]}|${SECRETS_CREATED[$_i]:-0}|${SECRETS_ENABLED[$_i]}|${SECRETS_MAX_CONNS[$_i]:-0}|${SECRETS_MAX_IPS[$_i]:-0}|${SECRETS_QUOTA[$_i]:-0}|${SECRETS_EXPIRES[$_i]:-0}|${SECRETS_NOTES[$_i]:-}|${SECRETS_ADTAG[$_i]:-}|${SECRETS_RATE[$_i]:-}|${_US_TOT_IN[$_l]:-0}|${_US_TOT_OUT[$_l]:-0}"$'\n'
+        _rows+="${_l}|${SECRETS_KEYS[$_i]}|${SECRETS_CREATED[$_i]:-0}|${SECRETS_ENABLED[$_i]}|${SECRETS_MAX_CONNS[$_i]:-0}|${SECRETS_MAX_IPS[$_i]:-0}|${SECRETS_QUOTA[$_i]:-0}|${SECRETS_EXPIRES[$_i]:-0}|${SECRETS_NOTES[$_i]:-}|${SECRETS_ADTAG[$_i]:-}|${SECRETS_RATE[$_i]:-}|${_US_TOT_IN[$_l]:-0}|${_US_TOT_OUT[$_l]:-0}|${_MTDD_DEV[$_l]:-0}"$'\n'
     done
     printf '%s' "$_rows" | awk -F'|' -v ipdb="$_USER_IPS_DB" '
         # Как json_escape: \ и ", табуляция, перевод строки; CR выкидываем.
@@ -824,9 +837,9 @@ secret_list_json() {
         {
             up = 0; down = 0
             if ($11 ~ /^[0-9]+:[0-9]+$/) { split($11, r, ":"); up = r[1]; down = r[2] }
-            printf "%s{\"label\":\"%s\",\"secret\":\"%s\",\"created\":%s,\"enabled\":%s,\"max_conns\":%s,\"max_ips\":%s,\"quota_bytes\":%s,\"expires\":\"%s\",\"notes\":\"%s\",\"ad_tag\":\"%s\",\"rate_limit_up_bps\":%s,\"rate_limit_down_bps\":%s,\"total_in\":%s,\"total_out\":%s,\"total_bytes\":%s,\"ip_history\":[%s]}", \
+            printf "%s{\"label\":\"%s\",\"secret\":\"%s\",\"created\":%s,\"enabled\":%s,\"max_conns\":%s,\"max_ips\":%s,\"quota_bytes\":%s,\"expires\":\"%s\",\"notes\":\"%s\",\"ad_tag\":\"%s\",\"rate_limit_up_bps\":%s,\"rate_limit_down_bps\":%s,\"total_in\":%s,\"total_out\":%s,\"total_bytes\":%s,\"max_devices\":%s,\"ip_history\":[%s]}", \
                 (NR > 1 ? "," : ""), esc($1), esc($2), $3, ($4 == "true" ? "true" : "false"), $5, $6, $7, \
-                esc($8), esc($9), $10, up, down, $12, $13, sprintf("%.0f", $12 + $13), hist[$1]
+                esc($8), esc($9), $10, up, down, $12, $13, sprintf("%.0f", $12 + $13), ($14 ~ /^[0-9]+$/ ? $14 : 0), hist[$1]
         }
         END { printf "]\n" }
     ' 
@@ -851,6 +864,7 @@ secret_list() {
     # Строки собираем без подшеллов: статистика всех пользователей — одним
     # проходом, форматирование — в переменные.
     _user_stats_bulk
+    declare -F mtdd_devices_load >/dev/null && mtdd_devices_load
     local i label status_plain status_color created_fmt u_in u_out _num _lbl _fin _fout _out=""
     for i in "${!SECRETS_LABELS[@]}"; do
         label="${SECRETS_LABELS[$i]}"
@@ -1013,16 +1027,30 @@ secret_show_limits() {
         echo ""
         draw_header "ЛИМИТЫ ПОЛЬЗОВАТЕЛЕЙ"
         echo ""
-        printf "  ${BOLD}%-4s %-16s %-10s %-8s %-12s %-14s${NC}\n" "#" "МЕТКА" "СОЕД." "IP" "КВОТА" "СРОК"
-        echo -e "  ${DIM}$(_repeat '─' 70)${NC}"
+        # У mtdd в Manager — ещё лимит устройств (max_devices).
+        local _dev=false
+        declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active && { _dev=true; mtdd_devices_load; }
+        if [ "$_dev" = true ]; then
+            printf "  ${BOLD}%-4s %-16s %-10s %-8s %-8s %-12s %-14s${NC}\n" "#" "МЕТКА" "СОЕД." "IP" "УСТР." "КВОТА" "СРОК"
+            echo -e "  ${DIM}$(_repeat '─' 78)${NC}"
+        else
+            printf "  ${BOLD}%-4s %-16s %-10s %-8s %-12s %-14s${NC}\n" "#" "МЕТКА" "СОЕД." "IP" "КВОТА" "СРОК"
+            echo -e "  ${DIM}$(_repeat '─' 70)${NC}"
+        fi
         local i
         for i in "${!SECRETS_LABELS[@]}"; do
             local c="${SECRETS_MAX_CONNS[$i]:-0}" p="${SECRETS_MAX_IPS[$i]:-0}"
             local q="${SECRETS_QUOTA[$i]:-0}" e="${SECRETS_EXPIRES[$i]:-0}"
+            local d="${_MTDD_DEV[${SECRETS_LABELS[$i]}]:-0}"
             [ "$c" = "0" ] && c="${DIM}∞${NC}" ; [ "$p" = "0" ] && p="${DIM}∞${NC}"
+            [ "$d" = "0" ] && d="${DIM}∞${NC}"
             [ "$q" = "0" ] && q="${DIM}∞${NC}" || q="$(format_bytes "$q")"
             [ "$e" = "0" ] && e="${DIM}нет${NC}" || e="${e%%T*}"
-            printf "  %-4s %-16s %-10b %-8b %-12b %-14b\n" "$((i+1))" "${SECRETS_LABELS[$i]}" "$c" "$p" "$q" "$e"
+            if [ "$_dev" = true ]; then
+                printf "  %-4s %-16s %-10b %-8b %-8b %-12b %-14b\n" "$((i+1))" "${SECRETS_LABELS[$i]}" "$c" "$p" "$d" "$q" "$e"
+            else
+                printf "  %-4s %-16s %-10b %-8b %-12b %-14b\n" "$((i+1))" "${SECRETS_LABELS[$i]}" "$c" "$p" "$q" "$e"
+            fi
         done
         echo ""
     else
@@ -1035,6 +1063,10 @@ secret_show_limits() {
         echo -e "  ${BOLD}Лимиты '${label}':${NC}"
         echo -e "  Макс. TCP соединений: $([ "$c" = "0" ] && echo "без ограничений" || echo "$c")"
         echo -e "  Макс. уникальных IP:  $([ "$p" = "0" ] && echo "без ограничений" || echo "$p")"
+        if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
+            local _dv; _dv=$(mtdd_devices_get "$label")
+            echo -e "  Устройств (mtdd):     ${_dv:-без ограничений}"
+        fi
         echo -e "  Квота трафика:        $([ "$q" = "0" ] && echo "без ограничений" || echo "$(format_bytes "$q")")"
         echo -e "  Срок действия:        $([ "$e" = "0" ] && echo "бессрочно" || echo "$e")"
         local _rt="${SECRETS_RATE[$idx]:-}"

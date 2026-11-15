@@ -231,6 +231,31 @@ func (c *Client) UpstreamList(ctx context.Context) ([]Upstream, error) {
 	return list, nil
 }
 
+// UpstreamOverlay is a route that works on top of the upstream table: own
+// AWG or WARP. MTProxyL lists them so the page does not show «Direct» only.
+type UpstreamOverlay struct {
+	Kind    string `json:"kind"`
+	Enabled bool   `json:"enabled"`
+	Title   string `json:"title"`
+	Detail  string `json:"detail"`
+}
+
+// UpstreamOverlayList returns `mtproxyl upstream overlay --json`.
+func (c *Client) UpstreamOverlayList(ctx context.Context) ([]UpstreamOverlay, error) {
+	out, err := c.run(ctx, "upstream", "overlay", "--json")
+	if err != nil {
+		return nil, err
+	}
+	var list []UpstreamOverlay
+	if err := json.Unmarshal([]byte(firstJSONLine(out)), &list); err != nil {
+		return nil, fmt.Errorf("parse upstream overlay: %w", err)
+	}
+	if list == nil {
+		list = []UpstreamOverlay{}
+	}
+	return list, nil
+}
+
 // UpstreamAdd creates a route.
 func (c *Client) UpstreamAdd(ctx context.Context, s UpstreamSpec) (string, error) {
 	s.Scopes = NormalizeScopes(s.Scopes)

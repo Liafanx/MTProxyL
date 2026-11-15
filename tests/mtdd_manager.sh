@@ -22,7 +22,7 @@ port=$(cat "$t/mock_port" 2>/dev/null) || fail "mock не поднялся"
 INSTALL_DIR="$t/install"; VERSION=test
 mkdir -p "$INSTALL_DIR/relay_stats"
 source "$repo/lib/colors.sh" || true
-for _lib in utils settings detect mtdd mtdd_mgr secrets config docker binengine traffic stats shaping settings_cli; do
+for _lib in utils settings detect mtdd mtdd_mgr secrets config docker binengine traffic stats shaping settings_cli expert_catalog expert_mode mtdd_expert; do
     source "$repo/lib/$_lib.sh" || fail "source $_lib"
 done
 SETTINGS_FILE="$INSTALL_DIR/settings.conf"; SECRETS_FILE="$INSTALL_DIR/secrets.conf"
@@ -136,10 +136,10 @@ generate_mtdd_config && jq -e '.direct_fallback_dcs == [2]' "$MTDD_MGR_CONFIG" >
     || fail "direct_fallback из tune потерян без WARP: $(jq -c .direct_fallback_dcs "$MTDD_MGR_CONFIG")"
 _cfgget_orig=$(declare -f mtdd_cfg_get)
 mtdd_cfg_get() { jq -r --arg k "$1" '.[$k] // empty | tostring' "$MTDD_MGR_CONFIG"; }
-mtdd_handle_tune list | grep -E '^ +direct_fallback_dcs ' | grep -q "задаёт MTProxyL" && fail "direct_fallback помечен без WARP"
+mtdd_handle_tune list | grep -E ' direct_fallback_dcs ' | grep -q "задаёт MTProxyL" && fail "direct_fallback помечен без WARP"
 WARP_ENABLED=true; generate_mtdd_config || fail "конфиг с WARP"
 jq -e '.direct_fallback_enabled == true and (.direct_fallback_dcs | length) == 10' "$MTDD_MGR_CONFIG" >/dev/null || fail "WARP: не все DC на Direct"
-mtdd_handle_tune list | grep -E '^ +direct_fallback_dcs ' | grep -q "задаёт MTProxyL" || fail "direct_fallback при WARP не помечен"
+mtdd_handle_tune list | grep -E ' direct_fallback_dcs ' | grep -q "задаёт MTProxyL" || fail "direct_fallback при WARP не помечен"
 eval "$_cfgget_orig"
 WARP_ENABLED=false; cp "$t/tune.bak" "$MTDD_MGR_TUNE"
 _route_orig=$(declare -f _mtdd_mgr_route_state)
@@ -238,6 +238,12 @@ secret_set_devices bob 2000000 >/dev/null 2>&1 && fail "лимит устрой�
 mtdd_devices_rename bob bob2 && grep -qx 'bob2|3' "$INSTALL_DIR/devices.conf" && ! grep -q '^bob|' "$INSTALL_DIR/devices.conf" \
     || fail "переименование не перенесло лимит устройств"
 mtdd_devices_rename bob2 bob
+# Лимит виден в терминале (текст лимитов списка «СЕКРЕТЫ») и панели (list --json).
+secret_set_devices bob 3 >/dev/null 2>&1
+out=$(secret_list 2>&1); grep -E '^ +[0-9]+ +bob ' <<< "$out" | grep -q "устр 3" || fail "в списке нет лимита устройств: $(grep bob <<< "$out")"
+out=$(secret_show_limits 2>&1); grep -q "УСТР" <<< "$out" || fail "в таблице лимитов нет колонки устройств"
+j=$(secret_list_json); jq -e '(.[] | select(.label == "bob") | .max_devices) == 3 and (.[] | select(.label == "alice") | .max_devices) == 0' <<< "$j" >/dev/null \
+    || fail "max_devices в list --json: $(jq -c '[.[] | {l: .label, d: .max_devices}]' <<< "$j")"
 secret_set_devices bob 0 >/dev/null 2>&1 || fail "лимит устройств не снят"
 [ "$(_mtdd_py users-tsv --no-links | awk -F'|' '$1=="bob"{print $17}')" = 0 ] || fail "max_devices не снят в mtdd"
 out=$(secret_show_devices bob 2>&1) && grep -q "198.51.100.7" <<< "$out" || fail "устройства: $out"
@@ -247,6 +253,35 @@ secret_set_note bob "коротко" >/dev/null 2>&1 || fail "заметка"
 [ "$(_mtdd_py users-tsv --no-links | awk -F'|' '$1=="bob"{print $8}')" = коротко ] || fail "заметка не дошла до mtdd"
 secret_set_rate bob 1000 0 >/dev/null 2>&1 && fail "скорость ниже 8192 бит/с принята"
 _target_toml_guard 2>/dev/null && fail "TOML-писатель пропущен для mtdd"
+
+# ── settings set: ключи telemt у mtdd — отказ до любых действий ──
+for k in PROXY_LOG_LEVEL:debug UNKNOWN_SNI_ACTION:drop FAKE_CERT_LEN:4096 PROXY_CONCURRENCY:100; do
+    rm -f "$INSTALL_DIR/expert_overrides.conf"
+    out=$(settings_set_param "${k%%:*}" "${k#*:}" 2>&1) && fail "settings set ${k%%:*} у mtdd принят: $out"
+    grep -q "У mtdd этого нет" <<< "$out" || fail "${k%%:*}: $out"
+    [ ! -s "$INSTALL_DIR/expert_overrides.conf" ] || fail "${k%%:*} записал оверрайд telemt"
+done
+grep -q "max_connections" <<< "$(settings_set_param PROXY_CONCURRENCY 100 2>&1)" || fail "нет подсказки про max_connections"
+j=$(settings_settable_json)
+jq -e '([.[] | select(.supported == false) | .key] | sort) == (["FAKE_CERT_LEN","PROXY_CONCURRENCY","PROXY_LOG_LEVEL","UNKNOWN_SNI_ACTION"])
+       and ([.[] | select(.key == "PROXY_PORT")][0].supported == true)' <<< "$j" >/dev/null \
+    || fail "supported в settings list: $(jq -c '[.[] | select(.supported == false) | .key]' <<< "$j")"
+
+# Значение, которое сборка не приняла, не остаётся в настройках (раньше
+# «✓» печаталось, а конфиг оставался прежним).
+pp_before="${PROXY_PROTOCOL:-false}"; touch "$t/check_fail"
+_save_orig=$(declare -f save_settings); save_settings() { echo "PROXY_PROTOCOL=${PROXY_PROTOCOL}" >> "$t/saved_pp"; }
+out=$(settings_set_param PROXY_PROTOCOL true 2>&1) && fail "непринятый конфиг: settings set вернул успех: $out"
+grep -q "не изменён" <<< "$out" && ! grep -q "✓.*PROXY_PROTOCOL" <<< "$out" || fail "сообщение об откате: $out"
+[ "$(tail -1 "$t/saved_pp")" = "PROXY_PROTOCOL=${pp_before}" ] || fail "PROXY_PROTOCOL не откатан: $(cat "$t/saved_pp")"
+eval "$_save_orig"
+rm -f "$t/check_fail"
+
+# ── Снимок для панели: путь конфига для показа, config_path пуст ──
+snap=$(_mtdd_py snapshot) || fail "snapshot"
+want_hash=$(sha256sum "$MTDD_MGR_CONFIG" | cut -d' ' -f1)
+jq -e --arg p "$MTDD_MGR_CONFIG" --arg h "$want_hash" '.system_info.config_path == "" and .system_info.config_file == $p and .system_info.config_hash == $h' <<< "$snap" >/dev/null \
+    || fail "system_info: $(jq -c .system_info <<< "$snap")"
 
 # telemt-путь Manager не задет: без ENGINE_KIND=mtdd предикаты ложны.
 ENGINE_KIND=telemt; mtdd_mgr_ctx

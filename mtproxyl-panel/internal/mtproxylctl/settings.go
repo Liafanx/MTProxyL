@@ -15,15 +15,19 @@ type Setting struct {
 	Validator   string `json:"validator"`
 	Description string `json:"description"`
 	Value       string `json:"value"`
+	// Supported is false for a key the current engine does not have (telemt
+	// keys under mtdd); nil from an older MTProxyL means supported.
+	Supported *bool `json:"supported,omitempty"`
 }
 
 // settingKeyRe matches the SHOUTY_SNAKE names MTProxyL uses for settings.
 var settingKeyRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 
 // settingValueRe covers ports, domains, hex tags, booleans, enum words and
-// comma-separated address lists (SERVER_IPS). Brackets, quotes and whitespace
+// comma-separated address and CIDR lists (SERVER_IPS, PROXY_PROTOCOL_TRUSTED_CIDRS).
+// Brackets, quotes and whitespace
 // stay out; empty is allowed — that is how an ad tag or a pinned IP is cleared.
-var settingValueRe = regexp.MustCompile(`^[A-Za-z0-9_.:@%+,-]*$`)
+var settingValueRe = regexp.MustCompile(`^[A-Za-z0-9_.:@%+,/-]*$`)
 
 // ValidateSetting checks a key/value pair before it reaches the CLI. MTProxyL
 // validates again against its own catalog; this is the near-side guard.

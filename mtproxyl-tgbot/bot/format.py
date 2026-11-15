@@ -415,6 +415,10 @@ def dc_text(report: dict) -> str:
     table = _table(
         [("", 1, False), ("DC", 6, False), ("RTT", 6, True), ("Писат.", 7, True), ("Покр.", 5, True)],
         [
+            # «По требованию» — DC, который движок поднимает только под клиента
+            # (CDN 203 у mtdd): без писателей это не сбой, в покрытие он не идёт.
+            ["💤", str(d.get("dc")), "—", "—", "—"]
+            if d.get("on_demand") else
             [
                 "✅" if d.get("ok") else "⚠️",
                 str(d.get("dc")),
@@ -424,6 +428,10 @@ def dc_text(report: dict) -> str:
             ]
             for d in rows
         ],
+    )
+    lazy_note = (
+        "\n<i>💤 — по требованию: движок поднимает DC только под клиента, в покрытие не входит.</i>"
+        if any(d.get("on_demand") for d in rows) else ""
     )
     coverage = int(report.get("coverage_pct") or 0)
     covered = report.get("covered_writers", report.get("alive_writers", 0))
@@ -436,5 +444,6 @@ def dc_text(report: dict) -> str:
         f"{covered} из {report.get('required_writers', 0)}, живых всего "
         f"{report.get('alive_writers', 0)}\n{table}\n"
         "<i>Писатели: живых / нужно. Это связь движка с Telegram, не доступность прокси.</i>"
+        f"{lazy_note}"
         f"{tail}"
     )

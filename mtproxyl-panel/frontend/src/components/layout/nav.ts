@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, ToggleLeft, Globe, Globe2, Archive, ShieldAlert, MapPin, Route, SlidersHorizontal, Gauge, FileCode, Puzzle, Radar, Wrench, Bot, Waypoints, ShieldBan, PanelTop, Cable, KeyRound, Router, Fingerprint } from 'lucide-react';
+import { LayoutDashboard, Users, Activity, Shield, Network, Settings, ArrowUpCircle, ScrollText, ToggleLeft, Globe, Globe2, Archive, ShieldAlert, MapPin, Route, SlidersHorizontal, Gauge, FileCode, Puzzle, Radar, Wrench, Bot, Waypoints, ShieldBan, PanelTop, Cable, KeyRound, Router, Fingerprint, ScanSearch } from 'lucide-react';
 
 export interface NavItem {
   to: string;
@@ -33,11 +33,12 @@ export const PANEL_NAV_ITEMS: NavItem[] = [
 // Показываются только при включённом мосте MTProxyL.
 export const MTPROXYL_NAV_ITEMS: NavItem[] = [
   { to: '/mode', icon: ToggleLeft, label: 'Режим работы' },
-  { to: '/proxy-settings', icon: SlidersHorizontal, label: 'Настройки прокси', managerOnly: true, telemtOnly: true },
+  { to: '/proxy-settings', icon: SlidersHorizontal, label: 'Настройки прокси', managerOnly: true, telemtOnly: true, mtddManager: true },
   { to: '/selfmask', icon: Globe, label: 'Selfmask' },
   { to: '/web', icon: Globe2, label: 'WEB Proxy', telemtOnly: true },
   { to: '/traffic', icon: Gauge, label: 'Трафик', primary: true },
   { to: '/mtdd-ips', icon: Fingerprint, label: 'Уникальные IP (mtdd)', mtddOnly: true },
+  { to: '/mtdd-suspects', icon: ScanSearch, label: 'Подозрительные адреса (mtdd)', mtddOnly: true },
   { to: '/shaping', icon: Gauge, label: 'Ограничение скорости' },
   { to: '/nft', icon: ShieldAlert, label: 'Лимитер и защита' },
   { to: '/geoblock', icon: MapPin, label: 'Блокировка стран' },
@@ -47,7 +48,7 @@ export const MTPROXYL_NAV_ITEMS: NavItem[] = [
   { to: '/awg', icon: Router, label: 'Telegram через свой AWG', telemtOnly: true, mtddManager: true },
   { to: '/backups', icon: Archive, label: 'Бэкапы', managerOnly: true },
   { to: '/routes', icon: Route, label: 'Маршруты', managerOnly: true, telemtOnly: true, mtddManager: true },
-  { to: '/expert', icon: SlidersHorizontal, label: 'Экспертные параметры', managerOnly: true, telemtOnly: true },
+  { to: '/expert', icon: SlidersHorizontal, label: 'Экспертные параметры', managerOnly: true, telemtOnly: true, mtddManager: true },
   { to: '/superexpert', icon: FileCode, label: 'Супер эксперт', managerOnly: true, telemtOnly: true },
   { to: '/maintenance', icon: Wrench, label: 'Обслуживание' },
   { to: '/control-api', icon: KeyRound, label: 'API управления' },

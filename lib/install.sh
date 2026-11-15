@@ -576,7 +576,7 @@ installer_pick_engine_backend() {
     echo -e "  ${BOLD}[2]${NC} Docker-образ ${DIM}— контейнер mtproxyl${_mark2}${NC}"
     echo -e "  ${BOLD}[3]${NC} Свой бинарник telemt по ссылке ${DIM}— тоже служба systemd${NC}"
     [ "$_mtdd_ok" = true ] && \
-        echo -e "  ${BOLD}[4]${NC} mtdd ${DIM}— другой движок (ugDeDe/mtdd), служба systemd; без WEB, WARP, upstream${_mark4}${NC}"
+        echo -e "  ${BOLD}[4]${NC} mtdd ${DIM}— другой движок (ugDeDe/mtdd), служба systemd; без WEB-режима${_mark4}${NC}"
     echo ""
     echo -e "  ${DIM}Бинарник ставится за секунды и не тянет за собой Docker: на${NC}"
     echo -e "  ${DIM}свежей машине это минус несколько минут и сотни мегабайт.${NC}"

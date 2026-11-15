@@ -256,6 +256,8 @@ func TestPhase2RoutesRequireAuth(t *testing.T) {
 		"/api/mtproxyl/nft",
 		"/api/mtproxyl/geoblock",
 		"/api/mtproxyl/upstreams",
+		"/api/mtproxyl/upstreams/overlay",
+		"/api/mtproxyl/mtdd/suspects",
 	} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
@@ -354,6 +356,33 @@ func TestSelfmaskParamRejectsInjection(t *testing.T) {
 		mux.ServeHTTP(rec, authedRequest(t, http.MethodPost, "/api/mtproxyl/selfmask/params", body))
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("params %s: got %d, want 400", body, rec.Code)
+		}
+	}
+}
+
+func TestMtddSuspectsAndDevicesRejectBadInput(t *testing.T) {
+	mux := newMtproxylMux(t, config.MtproxylConfig{Enabled: true, InstallDir: t.TempDir()})
+	for _, c := range []struct{ path, body string }{
+		{"/api/mtproxyl/mtdd/suspects", `{"action":"rm -rf"}`},
+		{"/api/mtproxyl/mtdd/suspects", `{"action":"block","score":0}`},
+		{"/api/mtproxyl/mtdd/suspects", `{"action":"block","score":101}`},
+		{"/api/mtproxyl/mtdd/suspects", `{"action":"ban","score":-1}`},
+		{"/api/mtproxyl/mtdd/suspects", `not json`},
+		{"/api/mtproxyl/users/alice/devices", `{"max_devices":-1}`},
+		{"/api/mtproxyl/users/alice/devices", `{"max_devices":1000001}`},
+		{"/api/mtproxyl/users/" + url.PathEscape("a;b") + "/devices", `{"max_devices":1}`},
+	} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, authedRequest(t, http.MethodPost, c.path, c.body))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s %s: got %d, want 400", c.path, c.body, rec.Code)
+		}
+	}
+	for _, path := range []string{"/api/mtproxyl/mtdd/suspects", "/api/mtproxyl/users/alice/devices"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`)))
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s without auth: got %d, want 401", path, rec.Code)
 		}
 	}
 }

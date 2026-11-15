@@ -456,8 +456,61 @@ export interface MtddIpStats {
   timezone: string;
 }
 
+/** Строка таблицы /v1/suspects mtdd. */
+export interface MtddSuspect {
+  ip: string;
+  score: number;
+  matches: number;
+  hits: number;
+  last_seen: string;
+  signals?: Record<string, number>;
+  platform?: string;
+  user?: string | null;
+  watched?: boolean;
+  shadow_banned?: boolean;
+  real_client?: boolean;
+  syn?: { layout?: string };
+}
+
+/** `suspects status --json`: учёт, пороги, уже заблокированные и таблица. */
+export interface MtddSuspectsStatus {
+  available: boolean;
+  error: string;
+  enabled: boolean;
+  fingerprint: boolean;
+  ban_score: number;
+  watch_score: number;
+  proxy_protocol: boolean;
+  blocked: number;
+  ipblock_enabled: boolean;
+  total: number;
+  watched: number;
+  shadow_banned: number;
+  by_matches: Record<string, number>;
+  suspects: MtddSuspect[];
+}
+
+export type MtddSuspectsAction =
+  | { action: 'on' | 'off' | 'unblock' }
+  | { action: 'ban' | 'block'; score: number };
+
+/** Маршрут поверх таблицы upstream: свой AWG или WARP. */
+export interface UpstreamOverlay {
+  kind: string;
+  enabled: boolean;
+  title: string;
+  detail: string;
+}
+
 export const mtproxylApi = {
   status: () => request<MtproxylAvailability>(MTPROXYL_BASE, '/status'),
+
+  getMtddSuspects: () => request<MtddSuspectsStatus>(MTPROXYL_BASE, '/mtdd/suspects'),
+  mtddSuspects: (a: MtddSuspectsAction) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/mtdd/suspects', {
+      method: 'POST',
+      body: JSON.stringify(a),
+    }),
 
   getMtddIps: () => request<MtddIpStats>(MTPROXYL_BASE, '/mtdd/ips'),
 
@@ -604,6 +657,8 @@ export interface MtproxylSetting {
   validator: string;
   description: string;
   value: string;
+  /** false — у текущего движка ключа нет (mtdd: настройки telemt). */
+  supported?: boolean;
 }
 
 export type FrontServer = 'nginx' | 'caddy' | 'haproxy';
@@ -709,6 +764,8 @@ export interface MtproxylUser {
   ad_tag?: string;
   rate_limit_up_bps?: number | null;
   rate_limit_down_bps?: number | null;
+  /** Лимит устройств mtdd (Manager); 0 — без лимита или не mtdd. */
+  max_devices?: number;
   /** 0, если источник не разделяет направления — тогда актуален total_bytes. */
   total_in: number;
   total_out: number;
@@ -757,6 +814,11 @@ export const mtproxylUsersApi = {
     request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/note`, {
       method: 'POST',
       body: JSON.stringify({ note }),
+    }),
+  setDevices: (label: string, maxDevices: number) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/devices`, {
+      method: 'POST',
+      body: JSON.stringify({ max_devices: maxDevices }),
     }),
   setRate: (label: string, upBps: number, downBps: number) =>
     request<{ output: string }>(MTPROXYL_BASE, `/users/${encodeURIComponent(label)}/rate`, {
@@ -972,6 +1034,7 @@ export const mtproxylNetApi = {
     }),
 
   upstreams: () => request<Upstream[]>(MTPROXYL_BASE, '/upstreams'),
+  upstreamOverlay: () => request<UpstreamOverlay[]>(MTPROXYL_BASE, '/upstreams/overlay'),
   upstreamAdd: (spec: UpstreamSpec) =>
     request<{ output: string }>(MTPROXYL_BASE, '/upstreams', {
       method: 'POST',

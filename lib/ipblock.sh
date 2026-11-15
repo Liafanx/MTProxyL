@@ -113,7 +113,6 @@ ipblock_apply() {
     v6=$(ipblock_entries | _ipblock_elements 6)
     case "${IPBLOCK_ACTION}" in reject) verdict="reject" ;; *) verdict="drop" ;; esac
 
-    ipblock_remove_rules
     local rules=""
     rules+="table inet ${IPBLOCK_TABLE} {\n"
     rules+="  set v4 {\n    type ipv4_addr\n    flags interval\n    counter\n"
@@ -128,6 +127,14 @@ ipblock_apply() {
     rules+="    ip6 saddr @v6 counter ${verdict}\n"
     rules+="  }\n"
     rules+="}\n"
+    # Сначала проверка на пробной таблице: иначе ошибка в списке (например,
+    # пересекающиеся подсети) сняла бы уже действующую блокировку целиком.
+    local _probe="${IPBLOCK_TABLE}_check" _err
+    if ! _err=$(printf "%b" "${rules/table inet ${IPBLOCK_TABLE} /table inet ${_probe} }" | nft -c -f - 2>&1); then
+        log_error "Список блокировки не применён, действующие правила оставлены: ${_err}"
+        return 1
+    fi
+    ipblock_remove_rules
     if ! printf "%b" "$rules" | nft -f - 2>/dev/null; then
         log_error "Не удалось применить правила блокировки"
         return 1

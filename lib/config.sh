@@ -818,12 +818,10 @@ _expert_apply_prompt() {
 }
 
 handle_expert_command() {
-    # Цель mtdd: этой функции у него нет, показываем только состояние.
+    # mtdd: свой каталог ключей JSON-конфига (lib/mtdd_expert.sh), те же команды.
     if engine_is_mtdd; then
-        case "${1:-status}" in
-            status|list|--json|json) ;;
-            *) mtdd_unsupported "режим эксперта — каталог ключей telemt; для mtdd есть mtproxyl tune list"; return 1 ;;
-        esac
+        handle_mtdd_expert_command "$@"
+        return
     fi
     local subcmd="${1:-list}"; shift 2>/dev/null || true
     if [ "${MTPROXYL_MODE:-manager}" = "reanimator" ]; then

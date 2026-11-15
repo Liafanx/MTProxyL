@@ -36,7 +36,8 @@ MTDD_DASH_HISTORY="${INSTALL_DIR:-/opt/mtproxyl}/cache/mtdd-metrics-history.tsv"
 # Палитра лаунчера mtdd. Без терминала или при NO_COLOR — без цвета.
 _mtdd_dash_run() {
     local _c=0
-    [ -t 1 ] && [ "${TERM:-dumb}" != dumb ] && [ -z "${NO_COLOR+x}" ] && _c=1
+    # Живой режим снимает кадр в переменную — терминал за ним, MTDD_DASH_TTY=1.
+    { [ -t 1 ] || [ "${MTDD_DASH_TTY:-0}" = 1 ]; } && [ "${TERM:-dumb}" != dumb ] && [ -z "${NO_COLOR+x}" ] && _c=1
     local _script; _script=$(mktemp "${TMPDIR:-/tmp}/mtproxyl-dash.XXXXXX") || return 1
     _mtdd_dash_py > "$_script"
     if [ "$_c" = 1 ]; then
@@ -73,34 +74,51 @@ mtdd_metrics_dashboard() {
         rm -rf "$_work"
         return 0
     fi
-    # Живой режим: как `mtdd-ctl metrics --watch` — обновление раз в 2 с,
-    # выход по q или Ctrl+C. История живого режима своя, во временном каталоге.
-    # Ctrl+C только ставит флаг: return из trap вышел бы из той функции, что
-    # работала в момент нажатия (fetch, рендер), а не из цикла. Прежний trap
-    # меню восстанавливается.
-    local _stop=0 _old_int; _old_int=$(trap -p INT)
+    # Живой режим: обновление раз в 5 с, выход по q или Ctrl+C. История живого
+    # режима своя, во временном каталоге. Ctrl+C только ставит флаг: return из
+    # trap вышел бы из той функции, что работала в момент нажатия (fetch,
+    # рендер), а не из цикла. Прежний trap меню восстанавливается.
+    # Кадр рисуется на отдельном экране терминала (как top) поверх прежнего:
+    # курсор в начало, каждая строка с очисткой хвоста, ниже — очистка. Так
+    # ничего не уходит в прокрутку, и на телефоне кадры не дописываются снизу.
+    # Высоту и ширину рендер берёт из LINES/COLUMNS: вывод идёт в переменную.
+    local _stop=0 _old_int _tty=0 _frame _rows _cols _int=5; _old_int=$(trap -p INT)
+    [ -t 1 ] && _tty=1
     trap '_stop=1' INT
+    [ "$_tty" = 1 ] && printf '\033[?1049h\033[?25l'
     while [ "$_stop" = 0 ]; do
-        [ -t 1 ] && printf '\033[H\033[2J'
+        _rows=24; _cols=80
+        if [ "$_tty" = 1 ]; then
+            read -r _rows _cols < <(stty size </dev/tty 2>/dev/null) || true
+            [[ "$_rows" =~ ^[0-9]+$ ]] && [ "$_rows" -gt 0 ] || _rows=24
+            [[ "$_cols" =~ ^[0-9]+$ ]] && [ "$_cols" -gt 0 ] || _cols=80
+        fi
         if _mtdd_dash_fetch "$_work"; then
             [ "$_stop" = 0 ] || break
-            MTDD_LIVE=1 MTDD_METRICS_FORCE=1 MTDD_HISTORY_FILE="$_work/live.tsv" \
-            MTDD_JSON="$_work/status.json" MTDD_METRICS_TXT="$_work/metrics.txt" _mtdd_dash_run 2>"$_work/err"
+            _frame=$(LINES="$_rows" COLUMNS="$_cols" MTDD_DASH_TTY="$_tty" \
+                MTDD_LIVE=1 MTDD_METRICS_FORCE=1 MTDD_HISTORY_FILE="$_work/live.tsv" \
+                MTDD_JSON="$_work/status.json" MTDD_METRICS_TXT="$_work/metrics.txt" _mtdd_dash_run 2>"$_work/err")
             # Ctrl+C посреди отрисовки — без трейсбека Python; иначе ошибку показываем.
-            [ "$_stop" = 0 ] && [ -s "$_work/err" ] && cat "$_work/err" >&2
+            [ "$_stop" = 0 ] && [ -s "$_work/err" ] && _frame+=$'\n'"$(cat "$_work/err")"
         else
             [ "$_stop" = 0 ] || break
-            log_warn "API mtdd не отвечает — повторяю… ($(mtdd_api_unavailable_reason))"
+            _frame=$(log_warn "API mtdd не отвечает — повторяю… ($(mtdd_api_unavailable_reason))" 2>&1)
+            _frame+=$'\n'"$(echo -e "  ${DIM}q или Ctrl+C — выход${NC}")"
         fi
         [ "$_stop" = 0 ] || break
-        echo -e "  ${DIM}q или Ctrl+C — выход${NC}"
-        # Без терминала read сразу падает (а не ждёт 2 с) — тогда пауза сном.
-        if { read -rsn1 -t 2 _key </dev/tty; } 2>/dev/null; then
+        if [ "$_tty" = 1 ]; then
+            printf '\033[H%s\033[J' "${_frame//$'\n'/$'\033[K\n'}"$'\033[K'
+        else
+            printf '%s\n' "$_frame"
+        fi
+        # Без терминала read сразу падает (а не ждёт) — тогда пауза сном.
+        if { read -rsn1 -t "$_int" _key </dev/tty; } 2>/dev/null; then
             case "$_key" in q|Q) break ;; esac
         else
-            [ $? -gt 128 ] || [ "$_stop" != 0 ] || sleep 2
+            [ $? -gt 128 ] || [ "$_stop" != 0 ] || sleep "$_int"
         fi
     done
+    [ "$_tty" = 1 ] && printf '\033[?25h\033[?1049l'
     if [ -n "$_old_int" ]; then eval "$_old_int"; else trap - INT; fi
     rm -rf "$_work"
     return 0
@@ -232,6 +250,10 @@ def pad(text, size):
 
 def rpad(text, size):
     return " " * max(0, size - width(text)) + text
+
+
+def lines_of(block):
+    return len("\n".join(block).split("\n")) if block else 0
 
 
 def clip(text, size):
@@ -797,10 +819,9 @@ def dynamics(rows, live):
     for title, values, fmt, extra in specs:
         out += graph(title, values, fmt, axis, **extra)
     out.append(note("\u0441\u043b\u0435\u0432\u0430 \u2014 {} \u043d\u0430\u0437\u0430\u0434, \u0441\u043f\u0440\u0430\u0432\u0430 \u2014 \u0441\u0435\u0439\u0447\u0430\u0441".format(human_duration(span))))
-    out += wrap_note(
-        "q \u2014 \u0432\u044b\u0445\u043e\u0434 \u0438\u0437 \u0436\u0438\u0432\u043e\u0433\u043e \u0440\u0435\u0436\u0438\u043c\u0430" if live
-        else "\u0442\u043e\u0447\u043a\u0430 \u043a\u0430\u0436\u0434\u044b\u0435 ~25 \u0441 \u00b7 \u0436\u0438\u0432\u043e\u0439 \u0440\u0435\u0436\u0438\u043c: mtproxyl metrics engine live"
-    )
+    # В живом режиме подсказку выхода пишет render() последней строкой.
+    if not live:
+        out += wrap_note("\u0442\u043e\u0447\u043a\u0430 \u043a\u0430\u0436\u0434\u044b\u0435 ~25 \u0441 \u00b7 \u0436\u0438\u0432\u043e\u0439 \u0440\u0435\u0436\u0438\u043c: mtproxyl metrics engine live")
     return out
 
 
@@ -1007,23 +1028,54 @@ def render(data, prom):
     rows = history_load(history_path())
     rates = rate_series(rows[-HISTORY_POINTS:])
 
-    out = header(data, dcs, live)
-    out.append("")
-    out += render_cards([
+    top = header(data, dcs, live) + [""] + render_cards([
         connections_card(data),
         ips_card(data, history),
         traffic_card(dcs, rates),
         rtt_card(dcs),
     ])
-    out += ip_notes(data, history, prom)
-    out += dynamics(rows, live)
-    out += connections_section(data, prom)
-    out += buffers_section(data, me, dcs, prom)
-    out += me_section(me, dcs)
-    out += traffic_section(dcs)
+    if not live:
+        out = top
+        out += ip_notes(data, history, prom)
+        out += dynamics(rows, live)
+        out += connections_section(data, prom)
+        out += buffers_section(data, me, dcs, prom)
+        out += me_section(me, dcs)
+        out += traffic_section(dcs)
+    else:
+        # Живой режим перерисовывает экран на месте: вывод выше окна
+        # прокрутился бы, и на телефоне кадры шли бы один под другим. Блоки —
+        # по важности, каждый только если влезает целиком; последняя строка —
+        # подсказка выхода.
+        budget = shutil.get_terminal_size((80, 24)).lines - 1
+        blocks = [
+            ("dyn", dynamics(rows, live)),
+            ("DC", me_section(me, dcs)),
+            ("conn", connections_section(data, prom)),
+            ("buf", buffers_section(data, me, dcs, prom)),
+            ("traffic", traffic_section(dcs)),
+            ("ip", ip_notes(data, history, prom)),
+        ]
+        out = top
+        skipped = 0
+        for _name, block in blocks:
+            if lines_of(out) + lines_of(block) <= budget:
+                out = out + block
+            else:
+                skipped += 1
+        hint = "q \u2014 \u0432\u044b\u0445\u043e\u0434 \xb7 \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435 \u0440\u0430\u0437 \u0432 5 \u0441"
+        if skipped:
+            hint += " \xb7 \u0431\u043b\u043e\u043a\u043e\u0432 \u043d\u0435 \u0432\u043b\u0435\u0437\u043b\u043e: {}".format(skipped)
+        out = out + [note(hint)]
 
-    # Страховка: ни одна строка не должна переноситься терминалом.
-    return "\n".join(clip(line, WIDTH) for line in "\n".join(out).split("\n"))
+    # Страховка: ни одна строка не должна переноситься терминалом, а живой
+    # кадр — быть выше окна (даже если не влезла и верхняя часть).
+    lines = "\n".join(out).split("\n")
+    if live:
+        rows = shutil.get_terminal_size((80, 24)).lines
+        if len(lines) > rows:
+            lines = lines[:rows - 1] + [lines[-1]]
+    return "\n".join(clip(line, WIDTH) for line in lines)
 
 
 def main():
