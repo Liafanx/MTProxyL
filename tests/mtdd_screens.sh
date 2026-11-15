@@ -81,18 +81,26 @@ nft() { echo "nft $*" >> "$t/nft.log"; return 0; }
 ipblock_hits_sample() { :; }
 ipblock_apply() { echo apply >> "$t/ipapply.log"; }
 # Вход — уже приведённый помощником (suspects-ips, см. mtdd_adapter): адрес и
-# накрывающая его подсеть, адрес из списка, адреса SSH и панели, клиент прокси.
+# накрывающая его подсеть, адрес из списка, адрес SSH-сессии, подсеть панели,
+# клиент прокси.
 _mtdd_py() { [ "$1" = suspects-ips ] && printf '%s\n' 1.2.3.4 1.2.3.0/24 5.6.7.8 2001:db8::1 198.51.100.9 203.0.113.0/28 192.0.2.7 'мусор' ''; }
-# Соединения сервера: панель (8080) и клиент прокси (порт прокси 443).
+# Соединения сервера: SSH (защищается), панель (8080) и клиент прокси (443).
 PROXY_PORT=443
-ss() { printf '%s\n' '0 0 10.0.0.1:8080 [::ffff:203.0.113.5]:51000' '0 0 10.0.0.1:443 192.0.2.7:40000'; }
+ss() {
+    case "$*" in
+        *-Hltnp*) printf '%s\n' 'LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=1,fd=3))' ;;
+        *) printf '%s\n' '0 0 10.0.0.1:22 198.51.100.9:50000' '0 0 10.0.0.1:8080 [::ffff:203.0.113.5]:51000' '0 0 10.0.0.1:443 192.0.2.7:40000' ;;
+    esac
+}
 SSH_CONNECTION="198.51.100.9 50000 10.0.0.1 22"; IPBLOCK_ENABLED=false
 out=$(mtdd_suspects_block 60 2>&1) || fail "suspects block: $out"
 grep -q "198.51.100.9" "$IPBLOCK_FILE" && fail "адрес SSH-сессии заблокирован"
-grep -q "203.0.113.0/28" "$IPBLOCK_FILE" && fail "подсеть с адресом панели заблокирована"
-grep -q "внутри ваш адрес 203.0.113.5" <<< "$out" && grep -q "внутри ваш адрес 198.51.100.9" <<< "$out" || fail "нет предупреждения про свои адреса: $out"
+# Панель ходит с localhost, её клиент — обычный адрес: подсеть блокируется.
+grep -q "203.0.113.0/28" "$IPBLOCK_FILE" || fail "подсеть с адресом панели не заблокирована"
+grep -q "внутри ваш адрес 198.51.100.9" <<< "$out" || fail "нет предупреждения про свой адрес: $out"
+grep -q "203.0.113.5" <<< "$out" && fail "адрес панели считается своим: $out"
 # Пересечения: /24 накрывает 1.2.3.4 — остаётся одна запись (nft отверг бы обе).
-[ "$(mtdd_suspects_blocked | sort | tr '\n' ' ')" = "1.2.3.0/24 192.0.2.7 2001:db8::1 " ] \
+[ "$(mtdd_suspects_blocked | sort | tr '\n' ' ')" = "1.2.3.0/24 192.0.2.7 2001:db8::1 203.0.113.0/28 " ] \
     || fail "помеченные записи: $(mtdd_suspects_blocked | tr '\n' ' ')"
 [ "$(grep -c '^5.6.7.8' "$IPBLOCK_FILE")" = 1 ] || fail "уже бывший в списке адрес продублирован"
 grep -q "мусор" "$IPBLOCK_FILE" && fail "мусор попал в список"
@@ -104,7 +112,7 @@ _mtdd_py() { [ "$1" = suspects-ips ] && printf '%s\n' 9.9.9.0/24; }
 mtdd_suspects_block 60 >/dev/null 2>&1; grep -q '^9.9.9.0/24' "$IPBLOCK_FILE" && fail "подсеть поверх ручного 9.9.9.9 добавлена"
 _mtdd_py() { [ "$1" = suspects-ips ] && printf '%s\n' 1.2.3.4 1.2.3.0/24 5.6.7.8 2001:db8::1 198.51.100.9 203.0.113.0/28 192.0.2.7; }
 # Повтор не дублирует.
-mtdd_suspects_block 60 >/dev/null 2>&1; [ "$(grep -c 'mtdd suspects' "$IPBLOCK_FILE")" = 3 ] || fail "повтор продублировал: $(cat "$IPBLOCK_FILE")"
+mtdd_suspects_block 60 >/dev/null 2>&1; [ "$(grep -c 'mtdd suspects' "$IPBLOCK_FILE")" = 4 ] || fail "повтор продублировал: $(cat "$IPBLOCK_FILE")"
 mtdd_suspects_block 0 >/dev/null 2>&1 && fail "score 0 пропущен"
 # Снятие — только своих: ручные записи и комментарии остаются.
 mtdd_suspects_unblock >/dev/null 2>&1 || fail "unblock"
@@ -117,7 +125,7 @@ echo '{"suspects":true,"fingerprint":false,"suspect_ban_score":70,"proxy_protoco
 DETECTED_CONFIG_PATH="$t/sus-cfg.json"
 _mtdd_call() { echo '{"total":2,"watched":1,"shadow_banned":0,"by_matches":{"2":1},"suspects":[{"ip":"1.2.3.4","score":80,"matches":2}]}'; }
 j=$(handle_suspects_command status --json) || fail "suspects status --json"
-jq -e '.available and .enabled and (.fingerprint | not) and .ban_score == 70 and .watch_score == 60 and .blocked == 3
+jq -e '.available and .enabled and (.fingerprint | not) and .ban_score == 70 and .watch_score == 60 and .blocked == 4
        and (.ipblock_enabled | not) and .total == 2 and (.suspects | length) == 1' <<< "$j" >/dev/null || fail "status json: $j"
 _mtdd_call() { MTDD_LAST_ERROR="не знает маршрут"; return 1; }
 j=$(handle_suspects_command status --json)

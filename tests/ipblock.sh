@@ -55,4 +55,16 @@ if ipblock_has 188.130.209.0/24; then
 fi
 grep -q '66.132.186.0/24 # проверка' "$IPBLOCK_FILE"
 
+# Файл, сохранённый ручной правкой без перевода строки: новая запись не
+# должна склеиться с последней.
+saved_file="$IPBLOCK_FILE"
+IPBLOCK_FILE="$test_dir/nonl.list"
+printf '%s' '203.0.113.77' > "$IPBLOCK_FILE"
+ipblock_ensure_file
+ipblock_add '198.51.100.88' 'после ручной правки'
+[ "$(mawk 'END { print NR }' "$IPBLOCK_FILE")" = 2 ] || { echo "запись склеилась с последней строкой" >&2; exit 1; }
+ipblock_has 203.0.113.77
+ipblock_has 198.51.100.88
+IPBLOCK_FILE="$saved_file"
+
 echo 'ipblock tests: ok'

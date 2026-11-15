@@ -1211,17 +1211,19 @@ mtdd_suspects_blocked() {
 }
 
 # Свои адреса: сам администратор легко набирает признаки, проверяя прокси, а
-# блок режет все порты. Не блокируем адрес SSH-сессии и всех, с кем сейчас
-# открыто соединение не на порт прокси (SSH, панель): из панели CLI идёт
-# через sudo, и SSH_CONNECTION там нет.
+# блок режет все порты. Не блокируем адрес SSH-сессии: остальные соединения
+# (панель, фронт) к этому серверу чужие и защищать их не нужно.
 _mtdd_suspects_own_ips() {
-    local _c="${SSH_CONNECTION:-${SSH_CLIENT:-}}"
+    local _c="${SSH_CONNECTION:-${SSH_CLIENT:-}}" _ports
     [ -n "$_c" ] && echo "${_c%% *}"
     command -v ss >/dev/null 2>&1 || return 0
-    ss -Htn state established 2>/dev/null | awk -v p="${PROXY_PORT:-443}" '{
-        l = $(NF-1); r = $NF; lp = l; sub(/.*:/, "", lp)
-        if (lp == p) next
-        sub(/:[0-9]+$/, "", r); gsub(/[][]/, "", r); sub(/^::ffff:/, "", r); print r }'
+    _ports=$(ss -Hltnp 2>/dev/null | awk '/sshd/ { l = $4; sub(/.*:/, "", l); if (l ~ /^[0-9]+$/) print l }' | sort -u)
+    [ -n "$_ports" ] || return 0
+    ss -Htn state established 2>/dev/null | awk -v ports="$_ports" '
+        BEGIN { n = split(ports, a, "\n"); for (i = 1; i <= n; i++) ssh[a[i]] = 1 }
+        { l = $(NF-1); lp = l; sub(/.*:/, "", lp)
+          if (!(lp in ssh)) next
+          r = $NF; sub(/:[0-9]+$/, "", r); gsub(/[][]/, "", r); sub(/^::ffff:/, "", r); print r }'
 }
 
 # Отбор новых записей: адрес/подсеть mtdd, пересекающиеся с тем, что уже в

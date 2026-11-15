@@ -84,7 +84,7 @@ export function MtddSuspectsPage() {
   };
 
   const scoreOk = (v: string, min: number) => /^\d+$/.test(v) && Number(v) >= min && Number(v) <= 100;
-  const toBlock = data ? data.suspects.filter((s) => Math.round(s.score) >= Number(blockScore)).length : 0;
+  const toBlock = data ? data.suspects.filter((s) => s.score >= Number(blockScore)).length : 0;
 
   return (
     <div className="p-4 lg:p-6 space-y-4">
@@ -156,7 +156,7 @@ export function MtddSuspectsPage() {
               </Button>
             </div>
             <div className="text-xs text-text-secondary space-y-1">
-              <p>Уже в «Блокировке IP» от этой страницы: {data.blocked}. Не блокируются адреса, с которых сейчас открыты соединения к серверу не на порт прокси (SSH, панель), и подсети, в которые они попадают. Адрес, с которого вы зайдёте позже, это не защищает.</p>
+              <p>Уже в «Блокировке IP» от этой страницы: {data.blocked}. Не блокируются адрес вашей SSH-сессии и подсети, в которые он попадает. Адрес, с которого вы зайдёте позже, это не защищает.</p>
               {!data.ipblock_enabled && (
                 <p className="text-warning">«Блокировка IP» выключена: адреса попадут в список, но блокироваться не будут, пока её не включить.</p>
               )}

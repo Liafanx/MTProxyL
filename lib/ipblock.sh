@@ -44,7 +44,11 @@ ipblock_family() {
 # Список живёт в файле: так в нём можно держать комментарии и переносить
 # его целиком между серверами.
 ipblock_ensure_file() {
-    [ -f "$IPBLOCK_FILE" ] && return 0
+    if [ -f "$IPBLOCK_FILE" ]; then
+        # Ручная правка без перевода строки склеила бы первую новую запись.
+        [ -s "$IPBLOCK_FILE" ] && [ -n "$(tail -c1 "$IPBLOCK_FILE")" ] && echo >> "$IPBLOCK_FILE"
+        return 0
+    fi
     mkdir -p "$INSTALL_DIR"
     {
         echo "# Список заблокированных адресов и подсетей MTProxyL."

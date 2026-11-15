@@ -46,12 +46,27 @@ const users = ['short', 'long_username_'.repeat(4), 'other'].map((username, inde
 }));
 
 async function mock(page) {
+  const mtdd = process.argv.includes('--mtdd');
   const state = { brandingWait: null, statsWait: null, failBranding: false, writes: [], sockets: [], hold: new Set(), upstreamAddress: '203.0.113.17:1080',
     theme: { theme: 'light', colors: {}, configured: true }, imported: false, panelCheckFails: false,
     warpPatches: [], warp: { enabled: false, mode: 'upstream', proto: 'awg', endpoint: '', location: '', exclude: 'DME',
       mtu: 1280, installed: true, version: '0.16.1-mtproxyl.1', socks_active: false, redirect_active: false, iface_active: false, nft_applied: false,
       cidr_count: 0, socks_port: 2536, redirect_port: 12345, matched_packets: 0, exit: { ip: '', loc: '', colo: '', confirmed: false } },
-    panelUpdate: { current_version: '1.3.14', latest_version: 'mtproxyl-panel-v1.3.15', update_available: true } };
+    panelUpdate: { current_version: '1.3.14', latest_version: 'mtproxyl-panel-v1.3.15', update_available: true },
+    suspectActions: [],
+    suspectStatus: {
+      available: true, error: '', enabled: true, fingerprint: true, ban_score: 0, watch_score: 60,
+      proxy_protocol: false, blocked: 2, ipblock_enabled: true, total: 2, watched: 1, shadow_banned: 0,
+      by_matches: { 3: 1, 2: 1 },
+      suspects: [
+        { ip: '203.0.113.9', score: 72.4, matches: 3, hits: 9, last_seen: new Date((now - 120) * 1000).toISOString(),
+          platform: 'Linux', user: null, shadow_banned: false, watched: true, real_client: false,
+          signals: { probe_session: 2, wrong_secret: 1 }, syn: { layout: 'linux' } },
+        { ip: '198.51.100.4', score: 58.6, matches: 2, hits: 4, last_seen: new Date((now - 600) * 1000).toISOString(),
+          platform: 'Windows', user: 'short', shadow_banned: false, watched: false, real_client: true,
+          signals: { port_check: 1, repeat_visits: 1 }, syn: { layout: 'windows' } },
+      ],
+    } };
   await page.addInitScript(() => localStorage.setItem('mtproxyl-panel-theme', 'light'));
   await page.addInitScript(() => {
     window.__testSockets = [];
@@ -117,7 +132,27 @@ async function mock(page) {
       state.awgImport = route.request().postDataJSON();
       data = { output: 'Конфиг сохранён' };
     }
-    else if (url.pathname.endsWith('/mtproxyl/status')) data = { enabled: false };
+    else if (url.pathname.endsWith('/mtproxyl/status')) data = mtdd
+      ? { enabled: true, mode: 'manager', engine_kind: 'mtdd' }
+      : { enabled: false };
+    else if (url.pathname.endsWith('/mtproxyl/mtdd/suspects')) {
+      if (route.request().method() === 'POST') {
+        const action = route.request().postDataJSON();
+        state.suspectActions.push(action);
+        if (action.action === 'block') state.suspectStatus = { ...state.suspectStatus, blocked: state.suspectStatus.blocked + 1 };
+      }
+      data = state.suspectStatus;
+    }
+    else if (url.pathname.endsWith('/mtproxyl/mtdd/ips')) data = {
+      available: true, online: { seen: 12, active: 5 },
+      hour: { seen: 40, active: 18, started_at: now - 3600 },
+      day: { seen: 300, active: 120, started_at: now - 86400 },
+      week: { seen: 1200, active: 500, started_at: now - 604800 },
+      min_bytes: 1048576, collection_started_at: now - 604800,
+      relative_error: 0.032, persistent: true, timezone: 'UTC',
+    };
+    else if (url.pathname.endsWith('/mtproxyl/media')) data = { user_kbps: 0, total_kbps: 0 };
+    else if (url.pathname.endsWith('/mtproxyl/upstreams/overlay')) data = [];
     else if (url.pathname.endsWith('/branding')) {
       if (state.brandingWait) await state.brandingWait;
       if (state.failBranding) {
@@ -498,6 +533,29 @@ async function checkLayout(page, width) {
   console.log(`panel visual ${width}: ok`);
 }
 
+async function checkMtdd(page, state, width) {
+  await page.goto(`${base}/mtdd-suspects`);
+  await page.getByRole('heading', { name: 'Подозрительные адреса (mtdd)', exact: true }).waitFor();
+  await page.getByText('203.0.113.9', { exact: false }).waitFor();
+  await page.getByText(/Уже в «Блокировке IP» от этой страницы: 2/).waitFor();
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `suspects overflow ${width}`);
+  await page.getByRole('button', { name: 'Заблокировать', exact: true }).first().click();
+  await page.getByText(/попадут в «Блокировку IP»/).waitFor();
+  await page.getByRole('button', { name: 'Заблокировать', exact: true }).last().click();
+  await page.getByText('Адреса добавлены', { exact: true }).waitFor();
+  assert.deepEqual(state.suspectActions.at(-1), { action: 'block', score: 60 }, 'block action payload');
+  await page.getByText(/Уже в «Блокировке IP» от этой страницы: 3/).waitFor();
+  await page.screenshot({ path: path.join(output, `mtdd-suspects-${width}.png`), fullPage: true });
+
+  await page.goto(`${base}/mtdd-ips`);
+  await page.getByRole('heading', { name: 'Уникальные IP (mtdd)', exact: true }).waitFor();
+  await page.getByText('Онлайн сейчас', { exact: true }).waitFor();
+  await page.getByText('1200', { exact: true }).waitFor();
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `mtdd ips overflow ${width}`);
+  await page.screenshot({ path: path.join(output, `mtdd-ips-${width}.png`), fullPage: true });
+  console.log(`panel mtdd ${width}: ok`);
+}
+
 (async () => {
   let server;
   if (process.argv[2] === '--dist') {
@@ -528,6 +586,7 @@ async function checkLayout(page, width) {
         page.on('pageerror', (error) => errors.push(error.message));
         const state = await mock(page);
         if (process.argv.includes('--awg-ipv6')) await checkAwgIPv6(page, state, width);
+        else if (process.argv.includes('--mtdd')) await checkMtdd(page, state, width);
         else if (process.argv.includes('--warp-mtu')) await checkWarpMTU(page, state, width);
         else if (process.argv.includes('--web')) await checkWeb(page, state, width);
         else if (process.argv.includes('--enhancements')) await checkEnhancements(page, state, width);
