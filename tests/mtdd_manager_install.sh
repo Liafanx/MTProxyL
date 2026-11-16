@@ -75,11 +75,14 @@ DC_RESTART_ENABLED=true; WEB_ENABLED=false
 SECRETS_LABELS=(alice); SECRETS_KEYS=("$TAG"); SECRETS_CREATED=(1700000000); SECRETS_ENABLED=(true)
 SECRETS_MAX_CONNS=(0); SECRETS_MAX_IPS=(0); SECRETS_QUOTA=(0); SECRETS_EXPIRES=(0); SECRETS_NOTES=(""); SECRETS_ADTAG=(""); SECRETS_RATE=("")
 zapret2_in_effect() { return 1; }
+mkdir -p "$MTDD_MGR_DIR"
+echo '{"workers":2,"media_user_rate_kbps":20000,"media_total_rate_kbps":500000}' > "$MTDD_MGR_TUNE"
 _argsgen_defaults >/dev/null 2>&1
 _AG_ON[dcrestart]=yes; _AG_ON[adtag]=no
 cmd=$(_argsgen_build)
 [[ "$cmd" == *"--engine mtdd --mtdd-channel dev --service-name random"* ]] || fail "argsgen: движок: $cmd"
 [[ "$cmd" == *"--ad-tag $TAG"* ]] || fail "argsgen: тег mtdd обязателен: $cmd"
+[[ "$cmd" == *"--mtdd-media-user-mbps 20.000"* && "$cmd" == *"--mtdd-media-total-mbps 500.000"* && "$cmd" == *"workers=2"* ]] || fail "argsgen: медиа и параметры: $cmd"
 [[ "$cmd" != *"--sni-policy"* && "$cmd" != *"--dc-restart"* && "$cmd" != *"--web"* ]] || fail "argsgen: лишние флаги: $cmd"
 eval "args=($cmd)"
 out=$(ia "${args[@]}") || fail "argsgen: команда не принимается установкой: $out"
@@ -90,6 +93,7 @@ source lib/install_args.sh >/dev/null 2>&1; _install_args_parse "${args[@]}" >/d
 binengine_is_custom() { return 1; }
 m=$(_mig_build_args | tr '\n' ' ')
 [[ "$m" == *"--engine mtdd --mtdd-channel dev --service-name random"* ]] || fail "migrate: движок: $m"
+[[ "$m" == *"--mtdd-media-user-mbps 20.000"* && "$m" == *"--mtdd-media-total-mbps 500.000"* && "$m" == *"workers=2"* ]] || fail "migrate: медиа и параметры: $m"
 [[ "$m" != *"--sni-policy"* && "$m" != *"--dc-restart"* ]] || fail "migrate: лишние флаги: $m"
 
 # telemt не задет: та же команда без mtdd.

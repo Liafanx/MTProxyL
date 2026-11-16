@@ -43,6 +43,8 @@ _IA_SHAPING_PROFILES=(); _IA_SHAPING_IPS=()
 _IA_FORCE="false"
 # Реаниматор аргументами: пока только mtdd, который ставим сами.
 _IA_MODE="manager"; _IA_TARGET=""; _IA_MTDD_CHANNEL=""
+_IA_MTDD_MEDIA_USER=""; _IA_MTDD_MEDIA_TOTAL=""
+_IA_MTDD_TUNE=(); _IA_MTDD_PAIRS=(); _IA_MTDD_RESTART=false
 _IA_SEEN=()
 
 install_args_help() {
@@ -67,7 +69,12 @@ install_args_help() {
     --mtdd-channel main|dev    сборка mtdd (по умолчанию main)
                                У mtdd нет: --engine-version/url/sha256, WEB,
                                --sni-policy, --dc-restart*; скорость --user
-                               от 8192 бит/с; тег у пользователя не действует
+                               от 8192 бит/с; свой тег пользователя поддержан
+    --mtdd-media-user-mbps N   скачивание медиа на профиль, Мбит/с (все IP вместе)
+    --mtdd-media-total-mbps N  скачивание медиа на весь сервер, Мбит/с
+                               0 — без лимита; до 3 знаков после точки/запятой
+    --mtdd-tune ключ=значение  параметр каталога expert mtdd; можно повторять
+                               числа, true/false, списки через запятую
 
   Прокси
     --proxy-mode mtproto|web|combined
@@ -230,6 +237,9 @@ _install_args_parse() {
                     main|dev) _IA_MTDD_CHANNEL="${_v,,}" ;;
                     *) log_error "--mtdd-channel: main или dev"; return 1 ;;
                 esac ;;
+            --mtdd-media-user-mbps) _IA_MTDD_MEDIA_USER="$_v" ;;
+            --mtdd-media-total-mbps) _IA_MTDD_MEDIA_TOTAL="$_v" ;;
+            --mtdd-tune) _IA_MTDD_TUNE+=("$_v") ;;
             --engine)
                 case "${_v,,}" in
                     docker|контейнер) _IA_ENGINE="docker" ;;
@@ -691,6 +701,7 @@ _install_args_validate() {
         log_error "Параметры WEB заданы без --web yes"; _ok=false
     fi
     _install_args_validate_mgr_mtdd || _ok=false
+    _install_args_validate_mtdd_options || _ok=false
 
     if [ -n "$_IA_SELFMASK_CERT" ] || [ -n "$_IA_SELFMASK_EMAIL" ] || \
        [ -n "$_IA_SELFMASK_TEMPLATE" ] || [ -n "$_IA_SELFMASK_BACKEND_PORT" ]; then
@@ -699,6 +710,66 @@ _install_args_validate() {
     fi
 
     [ "$_ok" = "true" ]
+}
+
+# Проверяем mtdd до установки зависимостей и изменения службы.
+_install_args_validate_mtdd_options() {
+    _IA_MTDD_PAIRS=(); _IA_MTDD_RESTART=false
+    if [ -n "$_IA_TARGET" ] && [ "$_IA_MODE" != reanimator ]; then
+        log_error '--target применяется только с --mode reanimator'; return 1
+    fi
+    [ -n "$_IA_MTDD_MEDIA_USER$_IA_MTDD_MEDIA_TOTAL" ] || [ ${#_IA_MTDD_TUNE[@]} -gt 0 ] || return 0
+    if ! { [ "$_IA_MODE" = manager ] && [ "$_IA_ENGINE_KIND" = mtdd ]; } \
+       && ! { [ "$_IA_MODE" = reanimator ] && [ "$_IA_TARGET" = mtdd ]; }; then
+        log_error 'Параметры --mtdd-media-* и --mtdd-tune требуют движок mtdd'; return 1
+    fi
+    local -a _pairs=("${_IA_MTDD_TUNE[@]}")
+    local _scope _v _key _pair _entry _err _json
+    for _scope in user total; do
+        if [ "$_scope" = user ]; then _v="$_IA_MTDD_MEDIA_USER"; else _v="$_IA_MTDD_MEDIA_TOTAL"; fi
+        [ -n "$_v" ] || continue
+        if ! [[ "$_v" =~ ^[0-9]{1,6}([.,][0-9]{1,3})?$ ]] \
+           || ! awk -v v="${_v/,/.}" 'BEGIN { exit !(v <= 100000) }'; then
+            log_error "--mtdd-media-${_scope}-mbps: 0–100000 Мбит/с, до 3 знаков после точки/запятой"; return 1
+        fi
+        _v=$(_mtdd_mbit_to_kbps "$_v") || return 1
+        _pairs+=("media_${_scope}_rate_kbps=${_v}")
+    done
+    local -A _seen=()
+    for _pair in "${_pairs[@]}"; do
+        [[ "$_pair" == *=* ]] || { log_error '--mtdd-tune: ключ=значение'; return 1; }
+        _key="${_pair%%=*}"; _v="${_pair#*=}"
+        _entry=$(_mtdd_expert_find "$_key") || { log_error "Параметра ${_key} нет в каталоге mtdd"; return 1; }
+        [ -z "${_seen[$_key]:-}" ] || { log_error "Параметр ${_key} задан несколько раз"; return 1; }
+        _seen[$_key]=1
+        if [ "$_IA_MODE" = manager ] && { _mtdd_mgr_is_managed_key "$_key" || _mtdd_expert_managed "$_key"; }; then
+            log_error "${_key} задаёт MTProxyL; используйте параметры установки прокси"; return 1
+        fi
+        _expert_parse "$_entry"
+        case "$EXPERT_P_TYPE" in
+            u32|u64) [[ "$_v" =~ ^[0-9]{1,14}$ ]] || { log_error "${_key}: требуется целое число в диапазоне каталога"; return 1; } ;;
+        esac
+        _err=""
+        if [ "$EXPERT_P_TYPE" != list ] || [ -n "$_v" ]; then
+            _err=$(_expert_validate "$EXPERT_P_VALIDATOR" "$_v" 2>&1)
+        fi
+        [ -z "$_err" ] || { log_error "${_key}: ${_err}"; return 1; }
+        _json=$(_mtdd_expert_json "$EXPERT_P_TYPE" "$_v") || return 1
+        _IA_MTDD_PAIRS+=("${_key}=${_json}")
+        [ "$EXPERT_P_HOT" = '✔' ] || _IA_MTDD_RESTART=true
+    done
+    return 0
+}
+
+_install_args_apply_mtdd_options() {
+    [ ${#_IA_MTDD_PAIRS[@]} -gt 0 ] || return 0
+    mtdd_config_set "${_IA_MTDD_PAIRS[@]}" || return 1
+    # Manager запустит движок ниже, Reanimator применяет конфиг цели сейчас.
+    if [ "$_IA_MODE" = reanimator ]; then
+        if [ "$_IA_MTDD_RESTART" = true ]; then mtdd_restart || return 1
+        else mtdd_reload || return 1; fi
+    fi
+    log_success 'Настройки mtdd и медиа-лимиты сохранены'
 }
 
 # Порт: что просили; иначе прежний из настроек (его держит наш же контейнер и
@@ -859,6 +930,9 @@ run_installer_args() {
     chmod "${_INSTALL_DIR_MODE:-711}" "$INSTALL_DIR"
     save_settings
     save_secrets
+    if mtdd_mgr_active; then
+        _install_args_apply_mtdd_options || return 1
+    fi
     ln -sf "${INSTALL_DIR}/mtproxyl.sh" /usr/local/bin/mtproxyl
 
     if mtproto_is_enabled; then
@@ -1379,6 +1453,7 @@ run_installer_args_mtdd() {
             *) mtdd_config_set masking=true && mtdd_restart >/dev/null 2>&1 || true ;;
         esac
     fi
+    _install_args_apply_mtdd_options || return 1
     { [ -n "$_IA_CPUS" ] || [ -n "$_IA_MEMORY" ]; } && mtdd_apply_limits
 
     ln -sf "${INSTALL_DIR}/mtproxyl.sh" /usr/local/bin/mtproxyl

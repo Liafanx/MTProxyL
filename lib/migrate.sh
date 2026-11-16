@@ -336,6 +336,8 @@ _mig_build_args() {
         case "$_ch" in main|dev) ;; *) _ch=main ;; esac
         _a+=(--engine mtdd --mtdd-channel "$_ch")
         _a+=(--service-name "$([ -n "${MTDD_SERVICE_NAME:-}" ] && echo random || echo standard)")
+        _mtdd_install_export_args || return 1
+        _a+=("${_MTDD_INSTALL_ARGS[@]}")
     elif [ "$(engine_backend)" = "binary" ] && binengine_is_custom; then
         _a+=(--engine binary --engine-url "$(binengine_source)")
         [ -n "${ENGINE_CUSTOM_SHA256:-}" ] && _a+=(--engine-sha256 "$ENGINE_CUSTOM_SHA256")

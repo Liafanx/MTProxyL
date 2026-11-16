@@ -24,6 +24,7 @@ _AG_ITEMS=(
     "selfmask|Selfmask|yes"
     "web|WEB Proxy|yes"
     "shaping|Шейпинг по IPv4|no"
+    "mtdd_tune|Параметры и медиа-лимиты mtdd|no"
     "geoip|База GeoIP|no"
     "api|API управления (новый ключ)|no"
     "block|Список блокировок|no"
@@ -36,6 +37,7 @@ _AG_ITEMS=(
 _argsgen_is_mtdd() { [ "${MTPROXYL_MODE:-manager}" = "reanimator" ] && _target_is_mtdd; }
 # Пользователи mtdd строками secrets.conf; заполняется в _argsgen_defaults.
 _AG_MTDD_USERS=()
+_AG_MTDD_OPTIONS=()
 
 _argsgen_defaults_mtdd() {
     local _ch _guess="" _host _mask _name _en _sec _mc _mi _q _ex _note _ru _rd _rest _now
@@ -185,6 +187,12 @@ _argsgen_defaults() {
     _AG_ON[force]="no"; _AG_VAL[force]="--force"
     # Поверх общего: то, что у mtdd иначе или чего у него нет.
     _argsgen_is_mtdd && _argsgen_defaults_mtdd
+    _AG_ON[mtdd_tune]=no; _AG_VAL[mtdd_tune]='только mtdd'; _AG_MTDD_OPTIONS=()
+    if mtdd_mgr_active || _argsgen_is_mtdd; then
+        _mtdd_install_export_args || return 1
+        _AG_MTDD_OPTIONS=("${_MTDD_INSTALL_ARGS[@]}")
+        _AG_ON[mtdd_tune]=yes; _AG_VAL[mtdd_tune]='медиа и каталог expert'
+    fi
     return 0
 }
 
@@ -207,6 +215,10 @@ _argsgen_build() {
         _a=(--mode reanimator --target mtdd --mtdd-channel "${_AG_VAL[engine]#mtdd:}")
     fi
     [ "${_AG_ON[force]}" = "yes" ] && _a+=(--force)
+    if [ "${_AG_ON[mtdd_tune]:-no}" = yes ] \
+       && { [ "$_mtdd" = true ] || { [ "${_AG_ON[engine]}" = yes ] && [[ "${_AG_VAL[engine]}" == mtdd:* ]]; }; }; then
+        _a+=("${_AG_MTDD_OPTIONS[@]}")
+    fi
     if [ "$_mtdd" = true ]; then
         :
     elif [ "${_AG_ON[engine]}" = "yes" ]; then

@@ -33,7 +33,7 @@ echo "MTDD_API_TOKEN=${TOKEN}" > "$t/credentials.env"
 INSTALL_DIR="$t/install"; VERSION=test
 mkdir -p "$INSTALL_DIR"
 source "$repo/lib/colors.sh" || true
-for _lib in utils settings detect mtdd secrets tgbot shaping install_args argsgen; do
+for _lib in utils settings detect mtdd mtdd_mgr expert_catalog expert_mode mtdd_expert secrets tgbot shaping install_args argsgen; do
     source "$repo/lib/$_lib.sh" || fail "source $_lib"
 done
 SETTINGS_FILE="$INSTALL_DIR/settings.conf"; SECRETS_FILE="$INSTALL_DIR/secrets.conf"
@@ -51,7 +51,7 @@ _own_install_exists() { return 1; }
 run_fix_arsenal_wizard() { :; }
 install_ip_history_timer() { :; }
 install_availability_timer() { :; }
-mtdd_restart() { :; }
+mtdd_restart() { echo restart >> "$t/applied"; }; mtdd_reload() { echo reload >> "$t/applied"; }
 mtdd_build_label() { echo "main"; }
 ln() { :; }
 zapret2_in_effect() { return 1; }
@@ -99,7 +99,11 @@ _install_args_validate_mtdd > "$t/out" 2>&1 || fail "без --ad-tag отвер�
 # ── Свежая установка с ключами (полная сборка) ───────────────
 run_ia --mode reanimator --target mtdd --mtdd-channel dev --ad-tag "$ALICE" --sni example.org --port 8443 \
     --secret "alice:${ALICE}" --user "bob|${BOBK}|1700000000|true|5|2|0|0|заметка||" \
+    --mtdd-media-user-mbps 20.5 --mtdd-media-total-mbps 500 \
+    --mtdd-tune me_clients_per_writer=200 \
     || fail "установка: $(cat "$t/out")"
+jq -e '.media_user_rate_kbps == 20500 and .media_total_rate_kbps == 500000 and .me_clients_per_writer == 200' "$t/config.json" >/dev/null || fail "медиа/настройки не записаны"
+[ "$(cat "$t/applied")" = reload ] || fail "горячие параметры потребовали перезапуск"
 grep -qx -- "--channel" "$t/installer_args" && grep -qx dev "$t/installer_args" || fail "канал не передан"
 grep -qx "mtproxyl-init" "$t/installer_args" || fail "установщику не дали служебного пользователя"
 grep -qx -- "--yes" "$t/installer_args" || fail "установщик запущен без --yes"
@@ -115,7 +119,7 @@ grep -q '^admin|' <<< "$rows" && fail "на пустом сервере появ
 # ── «Перенос аргументами» и обратный разбор ──────────────────
 cmd=$(_argsgen_defaults >/dev/null 2>&1; _argsgen_build)
 [[ "$cmd" == "--mode reanimator --target mtdd --mtdd-channel main "* ]] || fail "начало команды: $cmd"
-for want in "--port 8443" "--sni example.org" "--ad-tag 0123456789abcdef0123456789abcdef" "--mask on"; do
+for want in "--mtdd-media-user-mbps 20.500" "--mtdd-media-total-mbps 500.000" "me_clients_per_writer=200" "--port 8443" "--sni example.org" "--ad-tag 0123456789abcdef0123456789abcdef" "--mask on"; do
     [[ "$cmd" == *"$want"* ]] || fail "в команде нет '$want': $cmd"
 done
 eval "args=($cmd)"

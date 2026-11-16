@@ -139,6 +139,28 @@ _mtdd_expert_values() {
     return 0
 }
 
+# Переносим только каталог настроек, без токенов, путей и адресов сервера.
+_mtdd_install_export_args() {
+    _MTDD_INSTALL_ARGS=()
+    _mtdd_expert_values
+    local _e _v _scope
+    for _scope in user total; do
+        _v="${_MTDD_EV_CUR[media_${_scope}_rate_kbps]:-${_MTDD_EV_OVR[media_${_scope}_rate_kbps]:-0}}"
+        [[ "$_v" =~ ^[0-9]{1,9}$ ]] && [ "$_v" -le 100000000 ] || return 1
+        _v=$(awk -v v="$_v" 'BEGIN { printf "%.3f", v / 1000 }')
+        _MTDD_INSTALL_ARGS+=("--mtdd-media-${_scope}-mbps" "$_v")
+    done
+    for _e in "${_MTDD_CATALOG[@]}"; do
+        _expert_parse "$_e"
+        case "$EXPERT_P_KEY" in masking|media_user_rate_kbps|media_total_rate_kbps) continue ;; esac
+        _mtdd_expert_managed "$EXPERT_P_KEY" && continue
+        [ "${_MTDD_EV_OVR[$EXPERT_P_KEY]+set}" = set ] || continue
+        _v="${_MTDD_EV_OVR[$EXPERT_P_KEY]}"
+        _MTDD_INSTALL_ARGS+=(--mtdd-tune "${EXPERT_P_KEY}=${_v}")
+    done
+    return 0
+}
+
 # Каталог для панели — та же форма, что expert_catalog_json у telemt.
 mtdd_expert_catalog_json() {
     _mtdd_expert_values
