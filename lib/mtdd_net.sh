@@ -11,7 +11,7 @@ mtdd_net_is_enabled() {
 _mtdd_net_worker() {
     python3 -I - "$1" "$MTDD_NET_STATE" "${MTDD_NET_PROC_ROOT:-/proc}" \
         "${MTDD_NET_SYS_ROOT:-/sys}" "$MTDD_NET_CONF" "${MTDD_NET_IFACES:-}" <<'PY'
-import fcntl, hashlib, json, os, re, subprocess, sys, tempfile
+import fcntl, hashlib, json, os, re, shutil, subprocess, sys, tempfile
 from pathlib import Path
 
 action, directory, proc, sysfs, config, forced_ifaces = sys.argv[1:]
@@ -143,6 +143,35 @@ def start():
     state.pop('conf_previous_sha256', None)
     save()
 
+def show_status():
+    if not state['sysctl'] and not state['interfaces']:
+        print('  Нет сохранённых изменений параметров.')
+        return
+    width = max(40, shutil.get_terminal_size((80, 24)).columns)
+    print('\n  Изменения профиля: было → применено')
+    def row(key, record, unit=''):
+        old = ' '.join(map(str, record['old']))
+        new = ' '.join(map(str, record['new']))
+        values = f'{old} → {new}{unit}'
+        line = f'    {key}: {values}'
+        if len(line) <= width:
+            print(line)
+        else:
+            print(f'    {key}:')
+            print(f'      Было: {old}{unit}')
+            print(f'      Применено: {new}{unit}')
+    if state['sysctl']:
+        print('  Ядро:')
+        for key, record in sorted(state['sysctl'].items()):
+            row(key, record)
+    previous = None
+    for key, record in sorted(state['interfaces'].items()):
+        dev, knob = key.split('/', 1)
+        if dev != previous:
+            print(f'  Интерфейс {dev}:')
+            previous = dev
+        row(knob, record, ' нс' if knob == 'gro_flush_timeout' else '')
+
 try:
     if action == 'start':
         try: start()
@@ -152,7 +181,7 @@ try:
     elif action == 'stop':
         if not stop(): sys.exit(1)
     elif action == 'status':
-        print(json.dumps({'sysctl': state['sysctl'], 'interfaces': state['interfaces']}))
+        show_status()
     else: raise ValueError('Команда: start, stop или status')
 except (OSError, ValueError, subprocess.SubprocessError) as error:
     print(f'Сетевая оптимизация mtdd: {error}', file=sys.stderr)

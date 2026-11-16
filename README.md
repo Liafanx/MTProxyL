@@ -817,7 +817,7 @@ API и другие настройки MTProxyL задают отдельные 
 «Цель / режим → Версия движка → Сетевая оптимизация mtdd»).
 
 ```bash
-mtproxyl engine net-opt status   # состояние и журнал изменённых значений
+mtproxyl engine net-opt status   # состояние и список изменений: было → применено
 mtproxyl engine net-opt on       # включить сейчас и после перезагрузки
 mtproxyl engine net-opt off      # выключить и восстановить свои изменения
 
