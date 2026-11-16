@@ -140,3 +140,6 @@ jobs:
             bash -n "$f" || exit 1
           done
           sh -n mtproxyl-panel/install.sh
+
+      - name: Availability target regression
+        run: bash tests/availability_target.sh

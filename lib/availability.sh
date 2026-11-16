@@ -261,6 +261,24 @@ _availability_public_ip() {
     return 1
 }
 
+# Домен в CUSTOM_IP может быть чужим; для самоподписанного Selfmask нужен IP.
+_availability_server_ip() {
+    local _ip
+    if validate_ip_literal "${CUSTOM_IP:-}"; then
+        printf '%s' "$CUSTOM_IP"
+        return 0
+    fi
+    while IFS= read -r _ip; do
+        if validate_ip_literal "$_ip"; then
+            printf '%s' "$_ip"
+            return 0
+        fi
+    done < <(server_ips 2>/dev/null; server_detect_public_ips 2>/dev/null)
+    _ip=$(_availability_public_ip) || return 1
+    validate_ip_literal "$_ip" || return 1
+    printf '%s' "$_ip"
+}
+
 # public_host из конфига движка. Именно это имя видит клиент, и оно бывает
 # задано там, где ни Selfmask, ни CUSTOM_IP ничего не подсказывают.
 _availability_config_public_host() {
@@ -332,6 +350,13 @@ availability_target() {
     [ -z "$_h" ] && _h="${CUSTOM_IP:-}"
     [ -z "$_h" ] && _h=$(_availability_web_host 2>/dev/null)
     [ -z "$_h" ] && _h=$(_availability_public_ip)
+
+    # Самоподписанный сертификат не требует DNS; домен остаётся только в SNI.
+    if [ -z "${AVAILABILITY_HOST:-}" ] && [ "${SELFMASK_ENABLED:-false}" = "true" ] \
+        && [ "${SELFMASK_CERT_MODE:-letsencrypt}" = "selfsigned" ] \
+        && [ "$_h" = "${SELFMASK_DOMAIN:-}" ]; then
+        _h=$(_availability_server_ip) || _h=""
+    fi
 
     printf '%s|%s|%s' "$_h" "$_p" "$_s"
 }
