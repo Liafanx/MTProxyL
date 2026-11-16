@@ -25,6 +25,7 @@ _AG_ITEMS=(
     "web|WEB Proxy|yes"
     "shaping|Шейпинг по IPv4|no"
     "mtdd_tune|Параметры и медиа-лимиты mtdd|no"
+    "mtdd_net|Сетевая оптимизация mtdd|no"
     "geoip|База GeoIP|no"
     "api|API управления (новый ключ)|no"
     "block|Список блокировок|no"
@@ -188,10 +189,16 @@ _argsgen_defaults() {
     # Поверх общего: то, что у mtdd иначе или чего у него нет.
     _argsgen_is_mtdd && _argsgen_defaults_mtdd
     _AG_ON[mtdd_tune]=no; _AG_VAL[mtdd_tune]='только mtdd'; _AG_MTDD_OPTIONS=()
+    _AG_ON[mtdd_net]=no; _AG_VAL[mtdd_net]='только mtdd'
     if mtdd_mgr_active || _argsgen_is_mtdd; then
         _mtdd_install_export_args || return 1
         _AG_MTDD_OPTIONS=("${_MTDD_INSTALL_ARGS[@]}")
         _AG_ON[mtdd_tune]=yes; _AG_VAL[mtdd_tune]='медиа и каталог expert'
+        if mtdd_net_is_enabled; then
+            _AG_ON[mtdd_net]=yes; _AG_VAL[mtdd_net]='включена'
+        else
+            _AG_VAL[mtdd_net]='выключена'
+        fi
     fi
     return 0
 }
@@ -218,6 +225,10 @@ _argsgen_build() {
     if [ "${_AG_ON[mtdd_tune]:-no}" = yes ] \
        && { [ "$_mtdd" = true ] || { [ "${_AG_ON[engine]}" = yes ] && [[ "${_AG_VAL[engine]}" == mtdd:* ]]; }; }; then
         _a+=("${_AG_MTDD_OPTIONS[@]}")
+    fi
+    if [ "${_AG_ON[mtdd_net]:-no}" = yes ] \
+       && { [ "$_mtdd" = true ] || { [ "${_AG_ON[engine]}" = yes ] && [[ "${_AG_VAL[engine]}" == mtdd:* ]]; }; }; then
+        _a+=(--mtdd-net-opt yes)
     fi
     if [ "$_mtdd" = true ]; then
         :

@@ -21,11 +21,13 @@ _tui_target_engine() {
         echo -e "  ${DIM}[1]${NC} Поставить версию из списка"
     fi
     echo -e "  ${DIM}[2]${NC} Откатить на предыдущую"
+    _target_is_mtdd && echo -e "  ${DIM}[3]${NC} Сетевая оптимизация mtdd"
     echo -e "  ${DIM}[0]${NC} Назад"
     local _c; _c=$(read_choice "выбор" "0")
     case "$_c" in
         1) handle_engine_command update || true; press_any_key ;;
         2) handle_engine_command rollback || true; press_any_key ;;
+        3) _target_is_mtdd && tui_mtdd_net_menu ;;
     esac
 }
 

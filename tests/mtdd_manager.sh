@@ -20,9 +20,10 @@ for _ in $(seq 50); do [ -s "$t/mock_port" ] && break; sleep 0.1; done
 port=$(cat "$t/mock_port" 2>/dev/null) || fail "mock не поднялся"
 
 INSTALL_DIR="$t/install"; VERSION=test
+MTDD_NET_UNIT="$t/mtproxyl-mtdd-net.service"; MTDD_NET_STATE="$t/net-state"
 mkdir -p "$INSTALL_DIR/relay_stats"
 source "$repo/lib/colors.sh" || true
-for _lib in utils settings detect mtdd mtdd_mgr secrets config docker binengine traffic stats shaping settings_cli expert_catalog expert_mode mtdd_expert; do
+for _lib in utils settings detect mtdd mtdd_mgr mtdd_net secrets config docker binengine traffic stats shaping settings_cli expert_catalog expert_mode mtdd_expert; do
     source "$repo/lib/$_lib.sh" || fail "source $_lib"
 done
 SETTINGS_FILE="$INSTALL_DIR/settings.conf"; SECRETS_FILE="$INSTALL_DIR/secrets.conf"
@@ -376,14 +377,26 @@ engine_switch_kind mtdd --yes > "$t/out" 2>&1 || fail "переход на mtdd:
 [ "$(tr '\n' ' ' < "$t/switch.log")" = "fetch:mtdd remove:telemt autostart:mtdd run:mtdd:mgr " ] || fail "порядок перехода: $(cat "$t/switch.log")"
 [ "$ENGINE_KIND" = mtdd ] && mtdd_mgr_active && [ "$(tail -1 "$t/saved")" = ENGINE_KIND=mtdd ] || fail "вид движка после перехода"
 : > "$t/switch.log"; _run_fail=telemt
+touch "$MTDD_NET_UNIT"
+mtdd_net_is_enabled() { [ -f "$MTDD_NET_UNIT" ]; }
+mtdd_net_disable() { echo net-off >> "$t/switch.log"; rm -f "$MTDD_NET_UNIT"; }
+mtdd_net_enable() { echo "net-on:$ENGINE_KIND" >> "$t/switch.log"; touch "$MTDD_NET_UNIT"; }
 # Без Docker в PATH telemt ставится бинарником, с Docker — остаётся в нём.
 _no_docker=""; command -v docker >/dev/null 2>&1 || _no_docker="fetch-telemt:binary "
 engine_switch_kind telemt --yes >/dev/null 2>&1 && fail "провал telemt не замечен"
-[ "$(tr '\n' ' ' < "$t/switch.log")" = "${_no_docker}remove:mtdd autostart:telemt run:telemt:tm remove:telemt autostart:mtdd run:mtdd:mgr " ] || fail "откат: $(cat "$t/switch.log")"
+[ "$(tr '\n' ' ' < "$t/switch.log")" = "${_no_docker}net-off remove:mtdd autostart:telemt run:telemt:tm remove:telemt autostart:mtdd run:mtdd:mgr net-on:mtdd " ] || fail "откат: $(cat "$t/switch.log")"
+[ -f "$MTDD_NET_UNIT" ] || fail "профиль не возвращён после отката"
 [ -z "$_no_docker" ] || [ "$ENGINE_BACKEND" = binary ] || fail "без Docker telemt не ушёл на бинарник: $ENGINE_BACKEND"
 [ "$ENGINE_KIND" = mtdd ] && [ "$(tail -1 "$t/saved")" = ENGINE_KIND=mtdd ] || fail "после отката вид не mtdd"
 : > "$t/switch.log"; _run_fail=""
+_net_disable_orig=$(declare -f mtdd_net_disable)
+mtdd_net_disable() { return 1; }
+engine_switch_kind telemt --yes > "$t/out" 2>&1 && fail "переход при ошибке восстановления сети"
+! grep -q '^remove:' "$t/switch.log" && [ "$ENGINE_KIND" = mtdd ] || fail "движок остановлен до восстановления сети"
+eval "$_net_disable_orig"
+: > "$t/switch.log"
 engine_switch_kind telemt --yes >/dev/null 2>&1 || fail "обратно на telemt"
+[ ! -e "$MTDD_NET_UNIT" ] && grep -q '^net-off$' "$t/switch.log" || fail "профиль остался у telemt"
 [ "$ENGINE_KIND" = telemt ] && ! mtdd_mgr_active && [ -z "$DETECTED_CONFIG_PATH" ] || fail "контекст после возврата на telemt"
 ENGINE_KIND=mtdd; mtdd_mgr_ctx
 mkdir -p "$INSTALL_DIR/cache"; printf 'main|2026-10-29T00:00:00Z|1|u|s\n' > "$INSTALL_DIR/cache/mtdd_channels"

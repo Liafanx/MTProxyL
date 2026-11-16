@@ -44,6 +44,7 @@ _IA_FORCE="false"
 # Реаниматор аргументами: пока только mtdd, который ставим сами.
 _IA_MODE="manager"; _IA_TARGET=""; _IA_MTDD_CHANNEL=""
 _IA_MTDD_MEDIA_USER=""; _IA_MTDD_MEDIA_TOTAL=""
+_IA_MTDD_NET_OPT=""
 _IA_MTDD_TUNE=(); _IA_MTDD_PAIRS=(); _IA_MTDD_RESTART=false
 _IA_SEEN=()
 
@@ -75,6 +76,7 @@ install_args_help() {
                                0 — без лимита; до 3 знаков после точки/запятой
     --mtdd-tune ключ=значение  параметр каталога expert mtdd; можно повторять
                                числа, true/false, списки через запятую
+    --mtdd-net-opt yes|no      оптимизация ядра и NAPI для mtdd (по умолчанию no)
 
   Прокси
     --proxy-mode mtproto|web|combined
@@ -240,6 +242,12 @@ _install_args_parse() {
             --mtdd-media-user-mbps) _IA_MTDD_MEDIA_USER="$_v" ;;
             --mtdd-media-total-mbps) _IA_MTDD_MEDIA_TOTAL="$_v" ;;
             --mtdd-tune) _IA_MTDD_TUNE+=("$_v") ;;
+            --mtdd-net-opt)
+                case "${_v,,}" in
+                    yes|y|true|on) _IA_MTDD_NET_OPT=yes ;;
+                    no|n|false|off) _IA_MTDD_NET_OPT=no ;;
+                    *) log_error '--mtdd-net-opt: yes или no'; return 1 ;;
+                esac ;;
             --engine)
                 case "${_v,,}" in
                     docker|контейнер) _IA_ENGINE="docker" ;;
@@ -718,10 +726,10 @@ _install_args_validate_mtdd_options() {
     if [ -n "$_IA_TARGET" ] && [ "$_IA_MODE" != reanimator ]; then
         log_error '--target применяется только с --mode reanimator'; return 1
     fi
-    [ -n "$_IA_MTDD_MEDIA_USER$_IA_MTDD_MEDIA_TOTAL" ] || [ ${#_IA_MTDD_TUNE[@]} -gt 0 ] || return 0
+    [ -n "$_IA_MTDD_MEDIA_USER$_IA_MTDD_MEDIA_TOTAL$_IA_MTDD_NET_OPT" ] || [ ${#_IA_MTDD_TUNE[@]} -gt 0 ] || return 0
     if ! { [ "$_IA_MODE" = manager ] && [ "$_IA_ENGINE_KIND" = mtdd ]; } \
        && ! { [ "$_IA_MODE" = reanimator ] && [ "$_IA_TARGET" = mtdd ]; }; then
-        log_error 'Параметры --mtdd-media-* и --mtdd-tune требуют движок mtdd'; return 1
+        log_error 'Параметры --mtdd-media-*, --mtdd-tune и --mtdd-net-opt требуют движок mtdd'; return 1
     fi
     local -a _pairs=("${_IA_MTDD_TUNE[@]}")
     local _scope _v _key _pair _entry _err _json
@@ -941,6 +949,8 @@ run_installer_args() {
         log_info "MTProto-фиксы пропущены: выбран режим «Только WEB»"
         run_meko_optimization_wizard
     fi
+
+    mtdd_net_install_wizard "$_IA_MTDD_NET_OPT" || return 1
 
     install_autostart_unit
     engine_clear_other_carrier
@@ -1458,6 +1468,7 @@ run_installer_args_mtdd() {
 
     ln -sf "${INSTALL_DIR}/mtproxyl.sh" /usr/local/bin/mtproxyl
     run_fix_arsenal_wizard
+    mtdd_net_install_wizard "$_IA_MTDD_NET_OPT" || return 1
     command -v systemctl &>/dev/null && install_ip_history_timer
     install_availability_timer
 

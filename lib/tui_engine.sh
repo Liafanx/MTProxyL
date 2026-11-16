@@ -49,6 +49,7 @@ tui_mtdd_mgr_engine_menu() {
         echo -e "  ${DIM}[4]${NC} Экспертные параметры mtdd"
         echo -e "  ${DIM}[5]${NC} Медиа-лимиты mtdd"
         echo -e "  ${DIM}[6]${NC} Сменить движок на telemt ${DIM}(ключи и ссылки сохранятся)${NC}"
+        echo -e "  ${DIM}[7]${NC} Сетевая оптимизация mtdd"
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
@@ -58,6 +59,7 @@ tui_mtdd_mgr_engine_menu() {
             4) tui_mtdd_tune_menu ;;
             5) tui_mtdd_media_menu ;;
             6) engine_switch_kind telemt; load_settings; press_any_key ;;
+            7) tui_mtdd_net_menu ;;
             0|"") return ;;
         esac
     done

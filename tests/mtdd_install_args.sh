@@ -33,7 +33,7 @@ echo "MTDD_API_TOKEN=${TOKEN}" > "$t/credentials.env"
 INSTALL_DIR="$t/install"; VERSION=test
 mkdir -p "$INSTALL_DIR"
 source "$repo/lib/colors.sh" || true
-for _lib in utils settings detect mtdd mtdd_mgr expert_catalog expert_mode mtdd_expert secrets tgbot shaping install_args argsgen; do
+for _lib in utils settings detect mtdd mtdd_mgr expert_catalog expert_mode mtdd_expert mtdd_net engine secrets tgbot shaping install_args argsgen; do
     source "$repo/lib/$_lib.sh" || fail "source $_lib"
 done
 SETTINGS_FILE="$INSTALL_DIR/settings.conf"; SECRETS_FILE="$INSTALL_DIR/secrets.conf"

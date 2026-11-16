@@ -2697,13 +2697,13 @@ _mtdd_run_installer() {
 # install_original_mtdd [--channel main|dev] [--yes] [--no-tune] [-- аргументы установщика]
 # Без аргументов установщика он сам спросит домен, ad-tag, порт, имя и адрес.
 install_original_mtdd() {
-    local _ch="" _yes=false
+    local _ch="" _yes=false _skip_tune=false
     local -a _args=()
     while [ $# -gt 0 ]; do
         case "$1" in
             --channel) _ch="${2:-}"; shift 2 ;;
             --yes)     _yes=true; shift ;;
-            --no-tune) shift ;;
+            --no-tune) _skip_tune=true; shift ;;
             --)        shift; _args=("$@"); break ;;
             *)         log_error "Неизвестный аргумент: $1"; return 1 ;;
         esac
@@ -2731,7 +2731,7 @@ install_original_mtdd() {
         echo -e "  ${DIM}Он спросит домен FakeTLS, рекламный тег (32 hex, по желанию),${NC}"
         echo -e "  ${DIM}порт, имя первого пользователя и публичный адрес; поставит${NC}"
         echo -e "  ${DIM}/usr/local/bin/mtdd, /etc/mtdd/config.json и службу ${MTDD_UNIT}${NC}"
-        echo -e "  ${DIM}с API на 127.0.0.1:9090. MTProxyL ничего в нём не подменяет.${NC}"
+        echo -e "  ${DIM}с API на 127.0.0.1:9090. Сетевой тюнинг предлагается отдельно [y/N].${NC}"
         echo ""
         echo -e "  ${DIM}У mtdd нет WEB Proxy и upstream-маршрутов (WARP, AWG, донор).${NC}"
         echo ""
@@ -2745,6 +2745,7 @@ install_original_mtdd() {
 
     local _script _rc=0
     _script=$(_mtdd_fetch_installer "$_ch") || return 1
+    _mtdd_installer_skip_network "$_script" || { rm -f "$_script"; return 1; }
     _mtdd_run_installer "$_script" --branch "$_ch" "${_args[@]}" || _rc=$?
     rm -f "$_script"
     [ "$_rc" -eq 0 ] || { log_warn "Установщик mtdd завершился с кодом ${_rc}"; return 1; }
@@ -2757,6 +2758,9 @@ install_original_mtdd() {
         return 1
     fi
     save_detect_settings
+    if [ "$_yes" != true ] && [ "$_skip_tune" != true ]; then
+        mtdd_net_install_wizard || return 1
+    fi
     if [ "$_yes" = true ]; then
         PROXY_PORT="${DETECTED_PORT:-$PROXY_PORT}"; save_settings
     else
@@ -2788,6 +2792,7 @@ uninstall_original_mtdd() {
         _tmp=$(_mtdd_fetch_installer "$(cat "$MTDD_CHANNEL_FILE" 2>/dev/null || echo main)") || return 1
         _ctl="$_tmp"
     fi
+    mtdd_net_disable || { [ -z "$_tmp" ] || rm -f "$_tmp"; return 1; }
     _mtdd_run_installer "$_ctl" uninstall "$@" || _rc=$?
     [ -n "$_tmp" ] && rm -f "$_tmp"
     [ "$_rc" -eq 0 ] || { log_warn "Удаление mtdd завершилось с кодом ${_rc}"; return 1; }
