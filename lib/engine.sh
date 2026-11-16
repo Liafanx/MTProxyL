@@ -574,6 +574,10 @@ target_engine_status() {
 handle_engine_command() {
     local subcmd="${1:-status}"
     shift 2>/dev/null || true
+    if [ "$subcmd" = net-opt ]; then
+        handle_mtdd_net_command "$@"
+        return
+    fi
     # Вид движка Manager: telemt или mtdd.
     if [ "$subcmd" = kind ]; then
         engine_switch_kind "$@"

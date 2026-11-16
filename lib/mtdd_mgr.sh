@@ -815,6 +815,11 @@ engine_switch_kind() {
             return 1
         fi
     fi
+    local _net_was_enabled=false
+    if [ "$_to" = telemt ] && { [ -f "$MTDD_NET_UNIT" ] || [ -d "$MTDD_NET_STATE" ]; }; then
+        mtdd_net_is_enabled && _net_was_enabled=true
+        mtdd_net_disable || return 1
+    fi
     remove_own_container || true
     # Счётчики сессии у нового движка начнутся с нуля.
     rm -f "${INSTALL_DIR}/relay_stats/session_snapshot" "${INSTALL_DIR}/relay_stats/user_session_snapshot" 2>/dev/null
@@ -835,6 +840,7 @@ engine_switch_kind() {
     install_autostart_unit >/dev/null 2>&1 || true
     if run_proxy_container; then
         shaping_restore 2>/dev/null || true
+        [ "$_net_was_enabled" != true ] || mtdd_net_enable || log_warn 'Не удалось вернуть сетевую оптимизацию mtdd'
         log_info "Прокси снова работает на ${_from}"
     else
         log_error "${_from} тоже не поднялся — mtproxyl logs"

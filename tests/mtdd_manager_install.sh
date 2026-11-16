@@ -77,9 +77,12 @@ SECRETS_MAX_CONNS=(0); SECRETS_MAX_IPS=(0); SECRETS_QUOTA=(0); SECRETS_EXPIRES=(
 zapret2_in_effect() { return 1; }
 mkdir -p "$MTDD_MGR_DIR"
 echo '{"workers":2,"media_user_rate_kbps":20000,"media_total_rate_kbps":500000}' > "$MTDD_MGR_TUNE"
+mtdd_net_is_enabled() { [ "${_net_enabled:-false}" = true ]; }
+_net_enabled=true
 _argsgen_defaults >/dev/null 2>&1
 _AG_ON[dcrestart]=yes; _AG_ON[adtag]=no
 cmd=$(_argsgen_build)
+[[ "$cmd" == *"--mtdd-net-opt yes"* ]] || fail "argsgen: оптимизация сети потеряна: $cmd"
 [[ "$cmd" == *"--engine mtdd --mtdd-channel dev --service-name random"* ]] || fail "argsgen: движок: $cmd"
 [[ "$cmd" == *"--ad-tag $TAG"* ]] || fail "argsgen: тег mtdd обязателен: $cmd"
 [[ "$cmd" == *"--mtdd-media-user-mbps 20.000"* && "$cmd" == *"--mtdd-media-total-mbps 500.000"* && "$cmd" == *"workers=2"* ]] || fail "argsgen: медиа и параметры: $cmd"
@@ -92,9 +95,15 @@ source lib/install_args.sh >/dev/null 2>&1; _install_args_parse "${args[@]}" >/d
 # ── Переезд ─────────────────────────────────────────────────
 binengine_is_custom() { return 1; }
 m=$(_mig_build_args | tr '\n' ' ')
+[[ "$m" == *"--mtdd-net-opt yes"* ]] || fail "migrate: оптимизация сети потеряна: $m"
 [[ "$m" == *"--engine mtdd --mtdd-channel dev --service-name random"* ]] || fail "migrate: движок: $m"
 [[ "$m" == *"--mtdd-media-user-mbps 20.000"* && "$m" == *"--mtdd-media-total-mbps 500.000"* && "$m" == *"workers=2"* ]] || fail "migrate: медиа и параметры: $m"
 [[ "$m" != *"--sni-policy"* && "$m" != *"--dc-restart"* ]] || fail "migrate: лишние флаги: $m"
+_net_enabled=false
+m=$(_mig_build_args | tr '\n' ' ')
+[[ "$m" == *"--mtdd-net-opt no"* ]] || fail "migrate: выключенная оптимизация: $m"
+_argsgen_defaults >/dev/null 2>&1
+[[ "$(_argsgen_build)" != *"--mtdd-net-opt"* ]] || fail "argsgen: выключенная оптимизация включилась"
 
 # telemt не задет: та же команда без mtdd.
 ENGINE_KIND=telemt; mtdd_mgr_ctx

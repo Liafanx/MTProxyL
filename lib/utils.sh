@@ -1201,6 +1201,7 @@ show_cli_help() {
     echo -e "  ${BOLD}Секреты:${NC}        secret add|remove|list|rotate|enable|disable|limits|setlimits|setrate|adtag|note|link|qr|clone|rename|export|import"
     echo -e "  ${BOLD}Настройки:${NC}      port | ip | ips | domain | mask-backend | config | settings list|set"
     echo -e "  ${BOLD}Движок:${NC}         engine status|list|update|rollback|rebuild|backend|kind | tune list|set|clear"
+    echo -e "  ${BOLD}Сеть mtdd:${NC}      engine net-opt on|off|status ${DIM}(sysctl и NAPI, по умолчанию выключено)${NC}"
     echo -e "  ${BOLD}Скорость:${NC}       shaping status|set|off|exempt"
     echo -e "  ${BOLD}Эксперт:${NC}        expert list|set|clear|edit"
     echo -e "  ${BOLD}Супер эксперт:${NC}  superexpert status|on|off|edit|show|write"

@@ -2158,6 +2158,7 @@ run_reanimator_installer() {
 
     run_fix_arsenal_wizard
 
+    mtdd_net_install_wizard || return 1
     run_reanimator_tuning_wizard || true
 
     echo ""
