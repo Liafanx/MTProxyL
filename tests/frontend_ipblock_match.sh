@@ -18,9 +18,9 @@ node - "$tmp/ipblock-match.js" <<'JS'
 const assert = require('node:assert/strict');
 const { findBlockingEntry } = require(process.argv[2]);
 
-assert.equal(findBlockingEntry('93.123.84.196', ['93.123.84.196']), '93.123.84.196');
-assert.equal(findBlockingEntry('93.123.84.196', ['93.123.84.0/24']), '93.123.84.0/24');
-assert.equal(findBlockingEntry('93.123.85.196', ['93.123.84.0/24']), null);
+assert.equal(findBlockingEntry('192.0.2.196', ['192.0.2.196']), '192.0.2.196');
+assert.equal(findBlockingEntry('192.0.2.196', ['192.0.2.0/24']), '192.0.2.0/24');
+assert.equal(findBlockingEntry('198.51.100.196', ['192.0.2.0/24']), null);
 assert.equal(findBlockingEntry('192.0.2.1', ['0.0.0.0/0']), '0.0.0.0/0');
 assert.equal(findBlockingEntry('2001:db8::2', ['2001:db8::/32']), '2001:db8::/32');
 assert.equal(findBlockingEntry('2001:db9::2', ['2001:db8::/32']), null);

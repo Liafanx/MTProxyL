@@ -54,7 +54,7 @@ net=$(ip() { :; }; _donor_pick_net)
 [ $(( ${net##*.} % 4 )) = 0 ]
 
 # Проверка ввода.
-_donor_valid_ipv4 31.76.78.135
+_donor_valid_ipv4 198.51.100.27
 fails _donor_valid_ipv4 127.0.0.1
 fails _donor_valid_ipv4 300.1.1.1
 fails _donor_valid_ipv4 "1.2.3.4; rm -rf /"
@@ -65,15 +65,15 @@ fails _donor_valid_user "root; id"
 
 # Донор по домену: имя проходит, мусор нет; разрешение — только в IPv4.
 _donor_valid_host donor.example.com
-_donor_valid_host 31.76.78.135
+_donor_valid_host 198.51.100.27
 fails _donor_valid_host "-oProxyCommand=id"
 fails _donor_valid_host "donor.example.com; id"
 fails _donor_valid_host localhost
 _donor_host_is_name donor.example.com
-fails _donor_host_is_name 31.76.78.135
+fails _donor_host_is_name 198.51.100.27
 getent() { [ "$2" = donor.example.com ] && printf '%s STREAM donor.example.com\n' 203.0.113.7; }
 [ "$(_donor_resolve donor.example.com)" = 203.0.113.7 ]
-[ "$(_donor_resolve 31.76.78.135)" = 31.76.78.135 ]
+[ "$(_donor_resolve 198.51.100.27)" = 198.51.100.27 ]
 fails _donor_resolve gone.example.com
 # Тот же сервер под доменом — интерфейс на доноре прежний.
 DONOR_HOST=203.0.113.7; DONOR_REMOTE_IFACE=mtpl1b49d2; DONOR_RESOLVED_IP=203.0.113.7
@@ -105,12 +105,12 @@ source "$repo/lib/donor.sh"
 
 # Состояние: круг сохранения, мусор в числах отбрасывается.
 _donor_reset_vars
-DONOR_HOST=31.76.78.135; DONOR_NET=10.222.3.8; DONOR_AWG_PORT=47321; DONOR_STAGE=ready
+DONOR_HOST=198.51.100.27; DONOR_NET=10.222.3.8; DONOR_AWG_PORT=47321; DONOR_STAGE=ready
 DONOR_DISABLED_UPSTREAMS="direct,backup"; DONOR_CHECK_RTT="abc"
 donor_save
 [ "$(stat -c %a "$(_donor_state_file)")" = 600 ]
 donor_load
-[ "$DONOR_HOST" = 31.76.78.135 ] && [ "$DONOR_AWG_PORT" = 47321 ] && [ -z "$DONOR_CHECK_RTT" ]
+[ "$DONOR_HOST" = 198.51.100.27 ] && [ "$DONOR_AWG_PORT" = 47321 ] && [ -z "$DONOR_CHECK_RTT" ]
 [ "$DONOR_DISABLED_UPSTREAMS" = "direct,backup" ]
 [ "$(_donor_local_ip)" = 10.222.3.10 ] && [ "$(_donor_remote_ip)" = 10.222.3.9 ]
 [ "$(_donor_socks_addr)" = 10.222.3.9:1080 ]
@@ -119,7 +119,7 @@ donor_load; [ ! -e "$test_dir/pwned" ]
 
 # Агент собирается в корректную программу.
 _donor_gen_params
-bash -n <(_donor_agent_program setup 0 "QZcNc85hYh8MVnlMymhaUFy28PXqWauJ0s9SLRvRZ3c=" 2.27.21.167)
+bash -n <(_donor_agent_program setup 0 "QZcNc85hYh8MVnlMymhaUFy28PXqWauJ0s9SLRvRZ3c=" 203.0.113.28)
 [ "$(_donor_agent_program setup 0 KEY 1.2.3.4 | tail -1)" = '_mtpd_main </dev/null' ]
 _DONOR_AGENT_OUT=$'MTPD:pub=abc\nMTPD:port=123\nMTPD:port=456'
 [ "$(_donor_agent_value port)" = 456 ]
@@ -219,25 +219,25 @@ unset MTPROXYL_ASSUME_YES
 # Ключ хоста: одно соединение на тип ключа, повторный скан не нужен, если
 # ключ уже подтверждён (защита от перебора на доноре считает соединения).
 ssh-keygen -q -t ed25519 -N "" -f "$test_dir/hk" >/dev/null
-hk_line="31.76.78.135 $(cut -d' ' -f1,2 "$test_dir/hk.pub")"
+hk_line="198.51.100.27 $(cut -d' ' -f1,2 "$test_dir/hk.pub")"
 hk_fp=$(ssh-keygen -lf "$test_dir/hk.pub" -E sha256 | awk '{print $2}')
 scans="$test_dir/scans"; : > "$scans"; scan_mode=ok
 ssh-keyscan() {
     echo "$*" >> "$scans"
     case "$scan_mode" in
-        ok) echo "# 31.76.78.135:22 SSH-2.0-OpenSSH_9.6"; [[ "$*" == *"-t ed25519"* ]] && echo "$hk_line" ;;
-        noed) echo "# 31.76.78.135:22 SSH-2.0-OpenSSH_9.6"; [[ "$*" == *"-t ecdsa"* ]] && echo "$hk_line" ;;
+        ok) echo "# 198.51.100.27:22 SSH-2.0-OpenSSH_9.6"; [[ "$*" == *"-t ed25519"* ]] && echo "$hk_line" ;;
+        noed) echo "# 198.51.100.27:22 SSH-2.0-OpenSSH_9.6"; [[ "$*" == *"-t ecdsa"* ]] && echo "$hk_line" ;;
         down) : ;;
     esac
     return 0
 }
-DONOR_HOST=31.76.78.135; DONOR_SSH_PORT=22
+DONOR_HOST=198.51.100.27; DONOR_SSH_PORT=22
 _donor_scan_host; [ "$(wc -l < "$scans")" = 1 ]; grep -qF "$hk_fp (ED25519)" <<< "$_DONOR_FPS"
 : > "$scans"; scan_mode=noed; _donor_scan_host; [ "$(wc -l < "$scans")" = 2 ]
 : > "$scans"; scan_mode=down; fails _donor_scan_host; [ "$(wc -l < "$scans")" = 1 ]
 # Шаг «Получить ключ хоста» сохраняет скан — настройка его не повторяет.
 scan_mode=ok; rm -f "$(_donor_known_hosts)"
-donor_hostkey 31.76.78.135 --json | grep -qF "$hk_fp"
+donor_hostkey 198.51.100.27 --json | grep -qF "$hk_fp"
 : > "$scans"
 _donor_trust_host "$hk_fp" >/dev/null; [ "$(wc -l < "$scans")" = 0 ]
 grep -qF "$(cut -d' ' -f2 "$test_dir/hk.pub")" "$(_donor_known_hosts)"
@@ -266,7 +266,7 @@ json=$(donor_status_json)
 python3 - "$json" <<'PY'
 import json, sys
 d = json.loads(sys.argv[1])
-assert d["configured"] and d["stage"] == "ready" and d["host"] == "31.76.78.135", d
+assert d["configured"] and d["stage"] == "ready" and d["host"] == "198.51.100.27", d
 assert d["socks"] == "10.222.3.9:1080" and d["awg_port"] == 47321, d
 assert d["engine_mode"] == "manager" and d["tunnel_up"] is False and d["check"]["rtt_ms"] is None, d
 PY
