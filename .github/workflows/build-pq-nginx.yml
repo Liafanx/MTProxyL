@@ -6,11 +6,11 @@ on:
       openssl_version:
         description: 'Версия OpenSSL'
         required: true
-        default: '3.5.7'
+        default: '4.1.0'
       nginx_version:
         description: 'Версия nginx'
         required: true
-        default: '1.28.3'
+        default: '1.31.9'
       # Пересборка тех же версий с другими ключами configure: без суффикса
       # тег совпал бы с уже опубликованным.
       build_rev:
@@ -29,21 +29,20 @@ on:
 jobs:
   build:
     name: Сборка ${{ matrix.arch }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
 
     permissions:
       contents: write
 
     steps:
-      - name: Подготовка QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
       - name: Подготовка Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -120,15 +119,18 @@ jobs:
           RUN cp /tmp/openssl-static/bin/openssl ${PREFIX}/bin/openssl
 
           # Проверка: nginx запускается
-          RUN ${PREFIX}/sbin/nginx -V 2>&1 | tee /tmp/nginx-version.txt
+          RUN ${PREFIX}/sbin/nginx -V > /tmp/nginx-version.txt 2>&1 && \
+              cat /tmp/nginx-version.txt && \
+              grep -F "nginx/${NGINX_VER}" /tmp/nginx-version.txt && \
+              grep -F "built with OpenSSL ${OPENSSL_VER}" /tmp/nginx-version.txt
 
           # Проверка: openssl запускается
-          RUN ${PREFIX}/bin/openssl version
+          RUN ${PREFIX}/bin/openssl version && \
+              ${PREFIX}/bin/openssl list -kem-algorithms | grep -Ei 'ML[-_]?KEM[-_]?768'
 
           # Проверка: OpenSSL НЕ в динамических зависимостях
-          RUN ldd ${PREFIX}/sbin/nginx | grep -Ei 'ssl|crypto' && \
-              (echo "ОШИБКА: OpenSSL слинкован динамически!" && exit 1) || \
-              echo "OK: OpenSSL слинкован статически"
+          RUN ldd ${PREFIX}/sbin/nginx > /tmp/nginx-ldd.txt && \
+              ! grep -Eiq 'libssl|libcrypto|not found' /tmp/nginx-ldd.txt
 
           # Проверка: бинарь использует PCRE2, а не старый PCRE1
           RUN ldd ${PREFIX}/sbin/nginx | tee /tmp/nginx-ldd.txt && \
@@ -148,18 +150,24 @@ jobs:
 
       - name: Сборка архива ${{ matrix.arch }}
         shell: bash
+        env:
+          OPENSSL_VER: ${{ inputs.openssl_version }}
+          NGINX_VER: ${{ inputs.nginx_version }}
         run: |
+          [[ "$OPENSSL_VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$NGINX_VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           mkdir -p out
 
           docker buildx build \
             --platform linux/${{ matrix.arch }} \
-            --build-arg OPENSSL_VER=${{ github.event.inputs.openssl_version }} \
-            --build-arg NGINX_VER=${{ github.event.inputs.nginx_version }} \
+            --build-arg OPENSSL_VER="$OPENSSL_VER" \
+            --build-arg NGINX_VER="$NGINX_VER" \
             --output type=local,dest=./out \
             -f Dockerfile.pq .
 
-          ARCHIVE="mtproxyl-pq-nginx-${{ github.event.inputs.nginx_version }}-openssl${{ github.event.inputs.openssl_version }}-linux-${{ matrix.arch }}.tar.gz"
+          ARCHIVE="mtproxyl-pq-nginx-${NGINX_VER}-openssl${OPENSSL_VER}-linux-${{ matrix.arch }}.tar.gz"
           tar czf "${ARCHIVE}" -C out opt/mtproxyl-nginx
+          sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
 
           echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
 
@@ -167,7 +175,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pq-nginx-${{ matrix.arch }}
-          path: ${{ env.ARCHIVE }}
+          path: |
+            ${{ env.ARCHIVE }}
+            ${{ env.ARCHIVE }}.sha256
           retention-days: 7
 
   release:
@@ -192,6 +202,8 @@ jobs:
         with:
           tag_name: pq-nginx-${{ github.event.inputs.nginx_version }}-openssl${{ github.event.inputs.openssl_version }}${{ github.event.inputs.build_rev && format('-{0}', github.event.inputs.build_rev) || '' }}
           name: "PQ Nginx ${{ github.event.inputs.nginx_version }} + OpenSSL ${{ github.event.inputs.openssl_version }}"
+          target_commitish: ${{ github.sha }}
+          make_latest: false
           body: |
             ## nginx ${{ github.event.inputs.nginx_version }} + OpenSSL ${{ github.event.inputs.openssl_version }}
 
@@ -226,7 +238,7 @@ jobs:
             ldd /opt/mtproxyl-nginx/sbin/nginx | grep 'libpcre.so.3'    # должно быть пусто
             ```
           files: |
-            artifacts/pq-nginx-amd64/*.tar.gz
-            artifacts/pq-nginx-arm64/*.tar.gz
+            artifacts/pq-nginx-amd64/*.tar.gz*
+            artifacts/pq-nginx-arm64/*.tar.gz*
           draft: false
           prerelease: false

@@ -1252,7 +1252,7 @@ mtproxyl block import list.txt append     # добавить к текущему
 **Оптимизация By-MEKO** — TCP keepalive, BBR, расширенные очереди.
 
 ### Selfmask — маскировка под реальный сайт
-- PQ nginx (nginx 1.28.3 + OpenSSL 3.5.7 статическая линковка)
+- PQ nginx (nginx 1.31.9 + статически слинкованный OpenSSL 4.1.0)
 - X25519MLKEM768, 3 шаблона сайтов
 - Два типа сертификата: **Let's Encrypt** (реальный домен с A-записью) либо
   **самоподписанный** (любой домен, в т.ч. несуществующий — A-запись и порт 80 не нужны)
@@ -3020,7 +3020,7 @@ mask-backend, поэтому «снаружи» домен не открывае
 
 | Компонент | Путь | Описание |
 |-----------|------|----------|
-| PQ nginx | `/opt/mtproxyl-nginx/sbin/nginx` | nginx 1.28.3 + OpenSSL 3.5.7 (статический) |
+| PQ nginx | `/opt/mtproxyl-nginx/sbin/nginx` | nginx 1.31.9 + OpenSSL 4.1.0 (статический) |
 | PQ OpenSSL | `/opt/mtproxyl-nginx/bin/openssl` | Для PQ-проверок |
 | Стандартный конфиг | `/opt/mtproxyl-nginx/conf/nginx.conf` | Генерируется автоматически |
 | Пользовательский конфиг | `/opt/mtproxyl/nginx-custom.conf` | После включения принадлежит пользователю |
