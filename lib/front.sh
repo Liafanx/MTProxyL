@@ -952,7 +952,7 @@ front_pick_tui() {
     fi
     echo ""
     echo -e "  ${BOLD}Чем держать заглушку и TLS${NC} ${DIM}(у всех постквантовый X25519MLKEM768)${NC}"
-    echo -e "  ${DIM}[1]${NC} nginx   ${DIM}OpenSSL 3.5.7 — вариант по умолчанию${NC}"
+    echo -e "  ${DIM}[1]${NC} nginx   ${DIM}OpenSSL ${SELFMASK_PQ_OPENSSL_VERSION} — вариант по умолчанию${NC}"
     echo -e "  ${DIM}[2]${NC} Caddy   ${DIM}с модулем layer4 для общего :443${NC}"
     echo -e "  ${DIM}[3]${NC} HAProxy ${DIM}OpenSSL 3.5.7, файлы сайта отдаёт mtproxyl-static${NC}"
     local _def=1 _c

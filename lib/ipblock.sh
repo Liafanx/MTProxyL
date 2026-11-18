@@ -117,12 +117,15 @@ ipblock_apply() {
     v6=$(ipblock_entries | _ipblock_elements 6)
     case "${IPBLOCK_ACTION}" in reject) verdict="reject" ;; *) verdict="drop" ;; esac
 
-    local rules=""
+    local rules="" _err _line
+    if ipblock_rules_active; then
+        rules+="delete table inet ${IPBLOCK_TABLE}\n"
+    fi
     rules+="table inet ${IPBLOCK_TABLE} {\n"
-    rules+="  set v4 {\n    type ipv4_addr\n    flags interval\n    counter\n"
+    rules+="  set v4 {\n    type ipv4_addr\n    flags interval\n    auto-merge\n    counter\n"
     [ -n "$v4" ] && rules+="    elements = { ${v4} }\n"
     rules+="  }\n"
-    rules+="  set v6 {\n    type ipv6_addr\n    flags interval\n    counter\n"
+    rules+="  set v6 {\n    type ipv6_addr\n    flags interval\n    auto-merge\n    counter\n"
     [ -n "$v6" ] && rules+="    elements = { ${v6} }\n"
     rules+="  }\n"
     rules+="  chain prerouting {\n"
@@ -131,16 +134,10 @@ ipblock_apply() {
     rules+="    ip6 saddr @v6 counter ${verdict}\n"
     rules+="  }\n"
     rules+="}\n"
-    # Сначала проверка на пробной таблице: иначе ошибка в списке (например,
-    # пересекающиеся подсети) сняла бы уже действующую блокировку целиком.
-    local _probe="${IPBLOCK_TABLE}_check" _err
-    if ! _err=$(printf "%b" "${rules/table inet ${IPBLOCK_TABLE} /table inet ${_probe} }" | nft -c -f - 2>&1); then
-        log_error "Список блокировки не применён, действующие правила оставлены: ${_err}"
-        return 1
-    fi
-    ipblock_remove_rules
-    if ! printf "%b" "$rules" | nft -f - 2>/dev/null; then
-        log_error "Не удалось применить правила блокировки"
+    # nft применяет удаление и создание в одной транзакции.
+    if ! _err=$(printf '%b' "$rules" | nft -f - 2>&1); then
+        _line=$(awk '/Error:/ {sub(/^.*Error: */, ""); print; exit}' <<< "$_err")
+        log_error "Правила блокировки не изменены: ${_line:-ошибка nftables}"
         return 1
     fi
     return 0
@@ -279,8 +276,13 @@ ipblock_remove_unit() {
 }
 
 ipblock_enable() {
-    IPBLOCK_ENABLED="true"; save_settings
-    ipblock_apply || return 1
+    local _previous="$IPBLOCK_ENABLED"
+    IPBLOCK_ENABLED="true"
+    if ! ipblock_apply; then
+        IPBLOCK_ENABLED="$_previous"
+        return 1
+    fi
+    save_settings
     ipblock_install_unit
     log_success "Блокировка включена (${IPBLOCK_ACTION})"
 }
@@ -294,12 +296,16 @@ ipblock_disable() {
 }
 
 ipblock_set_action() {
+    local _previous="$IPBLOCK_ACTION"
     case "${1:-}" in
         drop|reject) IPBLOCK_ACTION="$1" ;;
         *) log_error "Допустимо: drop | reject"; return 1 ;;
     esac
+    if ! ipblock_apply; then
+        IPBLOCK_ACTION="$_previous"
+        return 1
+    fi
     save_settings
-    ipblock_apply || return 1
     log_success "Действие: $(ipblock_action_title)"
 }
 

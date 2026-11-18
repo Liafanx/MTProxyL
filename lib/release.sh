@@ -442,8 +442,10 @@ _release_after_install() {
         "${INSTALL_DIR}/mtproxyl.sh" awg refresh \
             || log_warn "Выход через AWG требует обновления: mtproxyl awg refresh"
     fi
+    "${INSTALL_DIR}/mtproxyl.sh" selfmask pq-upgrade \
+        || log_warn "PQ nginx требует обновления: mtproxyl selfmask pq-upgrade"
     # Новая раскладка zapret2 — только у работающего и только если изменилась.
-    "${INSTALL_DIR}/mtproxyl.sh" nft zapret2-refresh \
+    MTPROXYL_PQ_UPGRADE_DONE=1 "${INSTALL_DIR}/mtproxyl.sh" nft zapret2-refresh \
         || log_warn "Zapret2 не перезапустился — проверьте: mtproxyl nft zapret2-start"
 
     # Права панели и API пишет уже установленная версия.

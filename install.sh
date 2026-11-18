@@ -342,6 +342,9 @@ fi
 if [ -n "$_old_ver" ] && [ "$_old_ver" != "$_new_ver" ]; then
     printf '%s\n' "$_old_ver" > "${INSTALL_DIR}/releases/previous"
 fi
+
+"${INSTALL_DIR}/mtproxyl.sh" selfmask pq-upgrade \
+    || echo '  PQ nginx: повторите mtproxyl selfmask pq-upgrade' >&2
 if [ -n "$_INSTALL_ARCHIVE" ]; then
     mkdir -p "${INSTALL_DIR}/releases"; chmod 700 "${INSTALL_DIR}/releases"
     mv -f "$_INSTALL_ARCHIVE" "${INSTALL_DIR}/releases/mtproxyl-${_new_ver}.tar.gz"

@@ -4,9 +4,9 @@
 
 SELFMASK_PQ_PREFIX="/opt/mtproxyl-nginx"
 SELFMASK_PQ_SERVICE="mtproxyl-pq-nginx.service"
-SELFMASK_PQ_RELEASE_TAG="pq-nginx-1.28.3-openssl3.5.7-r2"
-SELFMASK_PQ_NGINX_VERSION="1.28.3"
-SELFMASK_PQ_OPENSSL_VERSION="3.5.7"
+SELFMASK_PQ_RELEASE_TAG="pq-nginx-1.31.9-openssl4.1.0"
+SELFMASK_PQ_NGINX_VERSION="1.31.9"
+SELFMASK_PQ_OPENSSL_VERSION="4.1.0"
 
 _selfmask_pq_nginx_bin() {
     echo "${SELFMASK_PQ_PREFIX}/sbin/nginx"
@@ -806,81 +806,81 @@ _selfmask_install_pq_nginx() {
         return 0
     fi
 
-    log_info "Скачивание PQ nginx (OpenSSL ${SELFMASK_PQ_OPENSSL_VERSION} + nginx ${SELFMASK_PQ_NGINX_VERSION})..."
+    _selfmask_replace_pq_nginx
+}
 
-    # Свой конфиг откладываем до распаковки: она сносит префикс целиком и
-    # приносит стоковый. Копию держим вне префикса — внутри её съест rm -rf.
-    local _conf_backup="" _generated_conf
-    _generated_conf="$(_selfmask_generated_pq_conf)"
-    if [ -f "$_generated_conf" ] && grep -q 'mtproxyl' "$_generated_conf" 2>/dev/null; then
-        _conf_backup="/tmp/.mtproxyl-nginx-conf.$$"
-        cp -f "$_generated_conf" "$_conf_backup" 2>/dev/null || _conf_backup=""
+_selfmask_replace_pq_nginx() (
+    local _prefix="$SELFMASK_PQ_PREFIX" _arch _stage _archive _url _sha _next
+    local _nginx _openssl _info _ssl _pid _conf _restart=false
+    _arch=$(_front_arch) || { log_error "Архитектура не поддерживается"; return 1; }
+    _stage=$(mktemp -d "${_prefix%/*}/.mtproxyl-pq.XXXXXX") || return 1
+    trap 'rm -rf -- "$_stage"' EXIT
+
+    _archive="mtproxyl-pq-nginx-${SELFMASK_PQ_NGINX_VERSION}-openssl${SELFMASK_PQ_OPENSSL_VERSION}-linux-${_arch}.tar.gz"
+    _url="https://github.com/${GITHUB_REPO}/releases/download/${SELFMASK_PQ_RELEASE_TAG}/${_archive}"
+    log_info "Скачивание PQ nginx ${SELFMASK_PQ_NGINX_VERSION} и OpenSSL ${SELFMASK_PQ_OPENSSL_VERSION}..."
+    if ! curl -fsSL --max-time 180 "$_url" -o "$_stage/$_archive" ||
+       ! curl -fsSL --max-time 30 "$_url.sha256" -o "$_stage/checksum" ||
+       ! read -r _sha _ < "$_stage/checksum" ||
+       ! [[ "$_sha" =~ ^[[:xdigit:]]{64}$ ]] ||
+       ! printf '%s  %s\n' "$_sha" "$_stage/$_archive" | sha256sum -c --status; then
+        log_error "Не удалось скачать PQ nginx или проверить SHA256"
+        return 1
     fi
-
-    local _arch
-    case "$(uname -m)" in
-        x86_64|amd64) _arch="amd64" ;;
-        aarch64|arm64) _arch="arm64" ;;
-        *)
-            log_error "Архитектура $(uname -m) не поддерживается"
-            return 1
-            ;;
-    esac
-
-    local _archive="mtproxyl-pq-nginx-${SELFMASK_PQ_NGINX_VERSION}-openssl${SELFMASK_PQ_OPENSSL_VERSION}-linux-${_arch}.tar.gz"
-    local _url="https://github.com/${GITHUB_REPO}/releases/download/${SELFMASK_PQ_RELEASE_TAG}/${_archive}"
-    local _tmp="/tmp/${_archive}"
-
-    if ! curl -fsSL --max-time 180 "$_url" -o "$_tmp" 2>/dev/null; then
-        log_error "Не удалось скачать PQ nginx"
-        log_info "Проверьте Release asset: ${_url}"
+    tar xzf "$_stage/$_archive" -C "$_stage" || return 1
+    _next="$_stage/opt/mtproxyl-nginx"
+    _nginx=$(_selfmask_pq_nginx_bin)
+    _openssl=$(_selfmask_pq_openssl_bin)
+    if ! _info=$("$_next/sbin/nginx" -V 2>&1) ||
+       ! _ssl=$("$_next/bin/openssl" version 2>/dev/null) ||
+       [[ "$_info" != *"nginx/${SELFMASK_PQ_NGINX_VERSION}"$'\n'* ||
+          "$_info" != *"built with OpenSSL ${SELFMASK_PQ_OPENSSL_VERSION} "* ||
+          "$_ssl" != "OpenSSL ${SELFMASK_PQ_OPENSSL_VERSION} "* ]]; then
+        log_error "Не удалось проверить версии nginx и OpenSSL в архиве"
         return 1
     fi
 
-    rm -rf "$_prefix" /opt/opt/mtproxyl-nginx
-    tar xzf "$_tmp" -C / || {
-        log_error "Не удалось распаковать PQ nginx"
-        rm -f "$_tmp"
-        return 1
-    }
-    rm -f "$_tmp"
-
-    # Обратная совместимость: если архив всё же был распакован в /opt/opt
-    if [ ! -d "$_prefix" ] && [ -d "/opt/opt/mtproxyl-nginx" ]; then
-        mkdir -p /opt
-        mv /opt/opt/mtproxyl-nginx /opt/mtproxyl-nginx 2>/dev/null || true
-        rmdir /opt/opt 2>/dev/null || true
+    # Служба MTProxyL может использовать системный nginx. Обновляем только свой бинарник.
+    _pid=$(systemctl show "$SELFMASK_PQ_SERVICE" -p MainPID --value 2>/dev/null) || _pid=""
+    if [[ "$_pid" =~ ^[1-9][0-9]*$ ]] && [ "/proc/${_pid}/exe" -ef "$_nginx" ]; then
+        _conf=$(_selfmask_pq_conf)
+        "$_next/sbin/nginx" -t -c "$_conf" || { log_error "Новая сборка не приняла конфиг nginx"; return 1; }
+        _restart=true
     fi
 
-    mkdir -p /var/log/mtproxyl-nginx
-    mkdir -p /var/lib/mtproxyl-nginx/body
-    mkdir -p /var/lib/mtproxyl-nginx/proxy
-    mkdir -p /var/lib/mtproxyl-nginx/fastcgi
-    mkdir -p /var/lock
-    mkdir -p "${_prefix}/logs"
-    mkdir -p "${_prefix}/conf"
-
-    if [ ! -x "$(_selfmask_pq_nginx_bin)" ]; then
-        log_error "После распаковки nginx-pq не найден"
-        log_info "Ожидался путь: $(_selfmask_pq_nginx_bin)"
+    mkdir -p /var/log/mtproxyl-nginx /var/lib/mtproxyl-nginx/{body,proxy,fastcgi} /var/lock \
+        "$_prefix"/{sbin,bin,logs,conf,html} || return 1
+    if [ -e "$_nginx" ]; then cp -p "$_nginx" "$_stage/old-nginx" || return 1; fi
+    if [ -e "$_openssl" ]; then cp -p "$_openssl" "$_stage/old-openssl" || return 1; fi
+    # Действующие сертификаты, конфиг и вспомогательные файлы остаются на месте.
+    cp -an "$_next/conf/." "$_prefix/conf/" || return 1
+    cp -an "$_next/html/." "$_prefix/html/" || return 1
+    if ! mv -f "$_next/sbin/nginx" "$_nginx" ||
+       ! mv -f "$_next/bin/openssl" "$_openssl" ||
+       { $_restart && ! systemctl restart "$SELFMASK_PQ_SERVICE"; }; then
+        if [ -e "$_stage/old-nginx" ]; then mv -f "$_stage/old-nginx" "$_nginx"; else rm -f "$_nginx"; fi
+        if [ -e "$_stage/old-openssl" ]; then mv -f "$_stage/old-openssl" "$_openssl"; else rm -f "$_openssl"; fi
+        if $_restart; then
+            systemctl restart "$SELFMASK_PQ_SERVICE" || log_error "Не удалось запустить прежний nginx"
+        fi
+        log_error "Не удалось обновить PQ nginx"
         return 1
     fi
+    log_success "PQ nginx ${SELFMASK_PQ_NGINX_VERSION} установлен (OpenSSL ${SELFMASK_PQ_OPENSSL_VERSION})"
+)
 
-    if [ ! -x "$(_selfmask_pq_openssl_bin)" ]; then
-        log_error "После распаковки openssl-pq не найден"
-        return 1
+_selfmask_update_bundled_pq() {
+    local _nginx _ssl
+    [ -x "$(_selfmask_pq_nginx_bin)" ] || [ -x "$(_selfmask_pq_openssl_bin)" ] || return 0
+    _nginx=$("$(_selfmask_pq_nginx_bin)" -v 2>&1) || _nginx=""
+    _nginx="${_nginx##*nginx/}"
+    _ssl=$("$(_selfmask_pq_openssl_bin)" version 2>/dev/null | awk '{print $2}') || _ssl=""
+    if [[ "$_nginx" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$_ssl" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] &&
+       _version_ge "$_nginx" "$SELFMASK_PQ_NGINX_VERSION" &&
+       _version_ge "$_ssl" "$SELFMASK_PQ_OPENSSL_VERSION"; then
+        return 0
     fi
-
-    local _ver
-    _ver=$("$(_selfmask_pq_openssl_bin)" version 2>/dev/null | awk '{print $2}')
-    log_success "PQ nginx установлен (OpenSSL ${_ver:-?})"
-
-    # Архив разворачивается поверх префикса и приносит свой conf/nginx.conf.
-    # Настроенный при этом теряется, а с ним и публичный порт — возвращаем.
-    if [ -n "$_conf_backup" ] && [ -f "$_conf_backup" ]; then
-        mv -f "$_conf_backup" "$_generated_conf" 2>/dev/null || true
-        log_info "Настроенный конфиг nginx возвращён на место"
-    fi
+    _selfmask_replace_pq_nginx
 }
 
 _selfmask_install_pq_service() {
@@ -3091,6 +3091,7 @@ handle_selfmask_command() {
         apply)   selfmask_apply ;;
         pq-install) selfmask_install_pq_tools ;;
         pq-nginx)   selfmask_refresh_pq_nginx ;;
+        pq-upgrade) check_root; _selfmask_update_bundled_pq ;;
         nginx-config) handle_nginx_custom_command "$@" ;;
         panel-cert) check_root; selfmask_sync_panel_cert ;;
         set)     selfmask_set_param "$1" "$2" ;;
@@ -3106,6 +3107,7 @@ handle_selfmask_command() {
             echo -e "    ${GREEN}selfmask set${NC} K V   Изменить параметр"
             echo -e "    ${GREEN}selfmask settable${NC} Список параметров (JSON)"
             echo -e "    ${GREEN}selfmask pq-nginx${NC}  Обновить nginx из состава MTProxyL (нужен stream для WEB)"
+            echo -e "    ${GREEN}selfmask pq-upgrade${NC}  Обновить установленную сборку PQ nginx"
             echo -e "    ${GREEN}selfmask nginx-config${NC} Свой конфиг держателя (nginx/Caddy/HAProxy)"
             echo -e "    ${GREEN}selfmask panel-cert${NC} Отдать сертификат веб-панели"
             echo -e "    ${GREEN}selfmask verify${NC}   Проверка"

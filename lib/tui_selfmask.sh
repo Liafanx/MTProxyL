@@ -160,7 +160,7 @@ tui_front_menu() {
     front_show_status
     echo -e "  ${DIM}Держит сайт Selfmask, публичный TLS WEB Proxy и порт 80 для сертификата.${NC}"
     echo ""
-    echo -e "  ${CYAN}[1]${NC}  nginx   ${DIM}OpenSSL 3.5.7${NC}"
+    echo -e "  ${CYAN}[1]${NC}  nginx   ${DIM}OpenSSL ${SELFMASK_PQ_OPENSSL_VERSION}${NC}"
     echo -e "  ${CYAN}[2]${NC}  Caddy   ${DIM}с модулем layer4${NC}"
     echo -e "  ${CYAN}[3]${NC}  HAProxy ${DIM}OpenSSL 3.5.7 + mtproxyl-static${NC}"
     echo -e "  ${CYAN}[4]${NC}  Переустановить сборку $(front_title)"
