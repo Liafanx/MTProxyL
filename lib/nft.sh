@@ -70,17 +70,21 @@ ZAPRET2_CONF="${ZAPRET2_ETC_DIR}/mtproto.conf"
 ZAPRET2_LUA="${ZAPRET2_LUA_DIR}/mtproto.lua"
 ZAPRET2_SERVICE="mtproxyl-zapret2.service"
 ZAPRET2_NFT_TABLE="MTProtoL"
-ZAPRET2_RELEASE="v1.0.5.2"
+ZAPRET2_RELEASE="v1.0.7"
+ZAPRET2_RELEASE_SHA256="547a5dce3f4820721a425680ea3f7f3971b7e9c772b8c795dd2d623148da0928"
 ZAPRET2_CACHE_DIR="${ZAPRET2_DIR}/cache"
 
 zapret2_bundle_cache_file() {
     printf '%s/zapret2-%s.tar.gz\n' "$ZAPRET2_CACHE_DIR" "${1:-$ZAPRET2_RELEASE}"
 }
 
-# Битый архив кэшем не считаем: иначе распаковка падала бы каждый раз.
+zapret2_bundle_verified() {
+    printf '%s  %s\n' "$ZAPRET2_RELEASE_SHA256" "$1" | sha256sum --check --status
+}
+
 zapret2_bundle_cached() {
-    local _f; _f=$(zapret2_bundle_cache_file "${1:-$ZAPRET2_RELEASE}")
-    [ -s "$_f" ] && tar tzf "$_f" >/dev/null 2>&1
+    local _f; _f=$(zapret2_bundle_cache_file)
+    [ -s "$_f" ] && zapret2_bundle_verified "$_f"
 }
 
 # Мимо очереди пропускаем только пакеты с данными. Если мимо пройдёт FIN,
@@ -1511,114 +1515,119 @@ zapret2_detect_arch() {
     esac
 }
 
-zapret2_download_bundle() {
-    ensure_nftables_installed || return 1
+zapret2_check_bundle_config() {
+    local _stage="$1" _conf _line
+    install -m 600 /dev/null "$_stage/check.conf" || return 1
+    for _conf in "$ZAPRET2_CONF" "${ZAPRET2_CONF%.conf}-"*.conf; do
+        [ -f "$_conf" ] || continue
+        {
+            printf '%s\n' --dry-run
+            while IFS= read -r _line || [ -n "$_line" ]; do
+                [[ "$_line" == --debug[=\ ]* ]] && continue
+                printf '%s\n' "${_line//"@$ZAPRET2_LUA_DIR/zapret-"/"@$_stage/new/lua/zapret-"}"
+            done < "$_conf"
+        } > "$_stage/check.conf" || return 1
+        "$_stage/new/bin/nfqws2" "@$_stage/check.conf" >/dev/null || return 1
+    done
+}
 
-    local _arch
-    _arch=$(zapret2_detect_arch)
-    if [ -z "$_arch" ]; then
-        log_error "Неподдерживаемая архитектура: $(uname -m)"
-        return 1
+zapret2_download_bundle() (
+    local _arch _force="${1:-}" _mode="${2:-}" _restart=false
+    if [ "$_mode" != upgrade ]; then
+        ensure_nftables_installed || return 1
     fi
-
-    local _zapret_arch
-    case "$_arch" in
-        amd64) _zapret_arch="linux-x86_64" ;;
-        arm64) _zapret_arch="linux-arm64" ;;
-        *) log_error "Неподдерживаемая архитектура: $_arch"; return 1 ;;
+    case "$(zapret2_detect_arch)" in
+        amd64) _arch="linux-x86_64" ;;
+        arm64) _arch="linux-arm64" ;;
+        *) log_error "Неподдерживаемая архитектура: $(uname -m)"; return 1 ;;
     esac
 
-    local _force="${1:-}"
-    local _ver="$ZAPRET2_RELEASE"
-    local _url="https://github.com/bol-van/zapret2/releases/download/${_ver}/zapret2-${_ver}.tar.gz"
-    local _tar; _tar=$(zapret2_bundle_cache_file "$_ver")
-    local _tmpdir="/tmp/zapret2-unpack-$$"
-
-    log_info "Архитектура: ${_arch} (${_zapret_arch})"
-
-    [ "$_force" = "force" ] && rm -f "$_tar"
-    if zapret2_bundle_cached "$_ver"; then
-        log_info "Архив уже скачан: ${_tar}"
-    else
-        log_info "Скачивание: ${_url}"
-        mkdir -p "$(dirname "$_tar")"
-        if ! curl -fsSL --max-time 120 -o "${_tar}.part" "$_url"; then
-            log_error "Не удалось скачать zapret2 релиз"
-            rm -f "${_tar}.part"
+    local _tar _stage _root="zapret2-${ZAPRET2_RELEASE}" _file _version_out
+    _tar=$(zapret2_bundle_cache_file)
+    mkdir -p "$ZAPRET2_CACHE_DIR" "$ZAPRET2_ETC_DIR" "$ZAPRET2_DIR/bin" "$ZAPRET2_LUA_DIR" || return 1
+    exec 9>"$ZAPRET2_DIR/.bundle.lock" && flock -x 9 || return 1
+    if [ "$_mode" = upgrade ]; then
+        local _prefix _label _installed
+        read -r _prefix _label _installed _ < <("$ZAPRET2_BIN" --version 2>&1)
+        if [ "$_prefix" != github ] || [ "$_label" != version ] ||
+           [[ ! "$_installed" =~ ^v[0-9]+(\.[0-9]+){2,3}$ ]]; then
+            log_warn "Не удалось определить версию установленного Zapret2"
             return 1
         fi
-        mv -f "${_tar}.part" "$_tar"
+        _version_gt "${ZAPRET2_RELEASE#v}" "${_installed#v}" || return 0
+    fi
+    _stage=$(mktemp -d "$ZAPRET2_DIR/.bundle.XXXXXX") || return 1
+    trap 'rm -rf -- "$_stage"' EXIT
+    chmod 711 "$_stage" || return 1
+
+    if [ "$_force" = force ] || ! zapret2_bundle_cached; then
+        log_info "Скачивание Zapret2 ${ZAPRET2_RELEASE} (${_arch})..."
+        if ! curl -fsSL --max-time 120 -o "$_stage/bundle.tar.gz" \
+                "https://github.com/bol-van/zapret2/releases/download/${ZAPRET2_RELEASE}/${_root}.tar.gz" ||
+           ! zapret2_bundle_verified "$_stage/bundle.tar.gz"; then
+            log_error "Не удалось скачать или проверить SHA256 архива Zapret2"
+            return 1
+        fi
+        mv -f -- "$_stage/bundle.tar.gz" "$_tar" || return 1
     fi
 
-    log_info "Распаковка..."
-    rm -rf "$_tmpdir"
-    mkdir -p "$_tmpdir"
-    if ! tar xzf "$_tar" -C "$_tmpdir"; then
-        log_error "Не удалось распаковать архив"
-        rm -f "$_tar"; rm -rf "$_tmpdir"
-        log_info "Архив удалён — повторите установку, он скачается заново"
-        return 1
-    fi
-
-    local _root
-    _root=$(find "$_tmpdir" -maxdepth 1 -mindepth 1 -type d | head -1)
-    if [ -z "$_root" ]; then
-        log_error "Не удалось найти корень архива"
-        rm -rf "$_tmpdir"; return 1
-    fi
-
-    local _bindir="${_root}/binaries/${_zapret_arch}"
-    if [ ! -d "$_bindir" ] || [ ! -f "${_bindir}/nfqws2" ]; then
-        log_error "nfqws2 не найден для архитектуры ${_zapret_arch}"
-        rm -rf "$_tmpdir"; return 1
-    fi
-
-    local _luasrc=""
-    local _lua_candidates=("${_root}/nfq2/lua" "${_root}/lua" "${_root}/nfq/lua")
-    for _candidate in "${_lua_candidates[@]}"; do
-        if [ -d "$_candidate" ] && ls "$_candidate"/zapret-lib.lua* &>/dev/null; then
-            _luasrc="$_candidate"; break
+    mkdir -p "$_stage/new/bin" "$_stage/new/lua" "$_stage/old/bin" "$_stage/old/lua" || return 1
+    chmod 755 "$_stage/new" "$_stage/new/lua" || return 1
+    tar -xzf "$_tar" -C "$_stage" "$_root/binaries/$_arch" "$_root/lua" || return 1
+    local -a _files=(bin/nfqws2 bin/mdig bin/ip2net lua/zapret-lib.lua lua/zapret-antidpi.lua lua/zapret-auto.lua version)
+    for _file in "${_files[@]}"; do
+        case "$_file" in
+            bin/*) install -m 755 "$_stage/$_root/binaries/$_arch/${_file##*/}" "$_stage/new/$_file" || return 1 ;;
+            lua/*) install -m 644 "$_stage/$_root/$_file" "$_stage/new/$_file" || return 1 ;;
+        esac
+        if [ -e "$ZAPRET2_DIR/$_file" ] || [ -L "$ZAPRET2_DIR/$_file" ]; then
+            cp -a -- "$ZAPRET2_DIR/$_file" "$_stage/old/$_file" || return 1
         fi
     done
+    _version_out=$("$_stage/new/bin/nfqws2" --version 2>&1) || return 1
+    if [[ "$_version_out" != "github version $ZAPRET2_RELEASE "* ]]; then
+        log_error "Неожиданная версия nfqws2 в архиве Zapret2"
+        return 1
+    fi
+    if [ "$_mode" = upgrade ] && ! zapret2_check_bundle_config "$_stage"; then
+        log_error "Zapret2 ${ZAPRET2_RELEASE} отклонил текущую конфигурацию"
+        return 1
+    fi
+    printf 'zapret2 %s (%s)\n' "$ZAPRET2_RELEASE" "$(date -u +%F)" > "$_stage/new/version" || return 1
 
-    if [ -z "$_luasrc" ]; then
-        log_error "Lua файлы не найдены в архиве"
-        rm -rf "$_tmpdir"; return 1
+    if [ "$_mode" = upgrade ] && systemctl is-active --quiet "$ZAPRET2_SERVICE"; then
+        _restart=true
+    fi
+    local -a _applied=()
+    for _file in "${_files[@]}"; do
+        mv -fT -- "$_stage/new/$_file" "$ZAPRET2_DIR/$_file" || break
+        _applied+=("$_file")
+    done
+    if [ "${#_applied[@]}" -eq "${#_files[@]}" ]; then
+        if ! $_restart || { systemctl restart "$ZAPRET2_SERVICE" && sleep 1 &&
+                            systemctl is-active --quiet "$ZAPRET2_SERVICE"; }; then
+            log_success "Zapret2 ${ZAPRET2_RELEASE} установлен"
+            return 0
+        fi
     fi
 
-    mkdir -p "${ZAPRET2_DIR}/bin" "${ZAPRET2_LUA_DIR}" "${ZAPRET2_ETC_DIR}"
-
-    cp -f "${_bindir}/nfqws2" "${ZAPRET2_DIR}/bin/"
-    [ -f "${_bindir}/mdig" ]   && cp -f "${_bindir}/mdig"   "${ZAPRET2_DIR}/bin/"
-    [ -f "${_bindir}/ip2net" ] && cp -f "${_bindir}/ip2net" "${ZAPRET2_DIR}/bin/"
-    chmod +x "${ZAPRET2_DIR}/bin/"*
-
-    local _lua_files="zapret-lib zapret-antidpi zapret-auto"
-    for _name in $_lua_files; do
-        if [ -f "${_luasrc}/${_name}.lua" ]; then
-            cp -f "${_luasrc}/${_name}.lua" "${ZAPRET2_LUA_DIR}/"
-        elif [ -f "${_luasrc}/${_name}.lua.gz" ]; then
-            cp -f "${_luasrc}/${_name}.lua.gz" "${ZAPRET2_LUA_DIR}/"
+    log_warn "Не удалось применить Zapret2 ${ZAPRET2_RELEASE}, возвращаем прежние файлы"
+    local _restored=true
+    for _file in "${_applied[@]}"; do
+        if [ -e "$_stage/old/$_file" ] || [ -L "$_stage/old/$_file" ]; then
+            mv -fT -- "$_stage/old/$_file" "$ZAPRET2_DIR/$_file" || _restored=false
         else
-            log_warn "Lua файл ${_name}.lua не найден"
+            rm -f -- "$ZAPRET2_DIR/$_file" || _restored=false
         fi
     done
-
-    echo "zapret2 ${_ver} ($(date -u +%Y-%m-%d))" > "${ZAPRET2_DIR}/version"
-    rm -rf "$_tmpdir"
-
-    if [ -x "$ZAPRET2_BIN" ]; then
-        local _version_out
-        _version_out=$("$ZAPRET2_BIN" --version 2>&1 | head -1 || echo "ok")
-        log_success "nfqws2 установлен: ${_version_out}"
-    else
-        log_error "Бинарник nfqws2 не работает"
-        return 1
+    if ! $_restored; then
+        trap - EXIT
+        log_error "Не удалось восстановить часть файлов Zapret2. Резервная копия: $_stage/old"
+    elif $_restart && ! systemctl restart "$ZAPRET2_SERVICE"; then
+        log_error "Прежние файлы Zapret2 возвращены, но служба не запустилась"
     fi
-
-    log_success "zapret2 ${_ver} установлен в ${ZAPRET2_DIR}"
-    return 0
-}
+    return 1
+)
 
 # Основной порт активного транспорта; явный ZAPRET2_PORT его перекрывает.
 zapret2_main_port() {
@@ -2546,6 +2555,9 @@ zapret2_refresh_lua() {
 
 zapret2_refresh_if_needed() {
     [ "${ZAPRET2_APPLIED:-false}" = "true" ] || return 0
+    if [ -x "$ZAPRET2_BIN" ]; then
+        zapret2_download_bundle "" upgrade || return 1
+    fi
     systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null || return 0
     zapret2_conntrack_acct
     zapret2_refresh_lua
@@ -2613,12 +2625,11 @@ zapret2_install() {
     local _yn; read_line _yn
     [[ "$_yn" =~ ^[nN] ]] && { log_info "Отменено"; return 0; }
 
+    zapret2_download_bundle "$_force" || return 1
     # Свой экземпляр снимаем до проверки очереди в любом случае: и при
     # переустановке, и когда настройки говорят «не установлен», а служба
     # или процесс от прошлой попытки ещё живы.
     zapret2_free_own_queue
-
-    zapret2_download_bundle "$_force" || return 1
 
     # Проверяем занятость NFQUEUE и подбираем свободную
     if zapret2_range_in_use "${ZAPRET2_QNUM}"; then

@@ -1602,10 +1602,16 @@ mtproxyl nft smart            # Переприменить правила (smart
 
 ```bash
 mtproxyl nft zapret2          # Установить / переустановить
+mtproxyl nft zapret2-refresh  # Обновить установленную сборку
 mtproxyl nft zapret2-stop     # Остановить
 mtproxyl nft zapret2-rm       # Удалить
 mtproxyl nft zapret2-wscale   # Проверить wscale / win ACK
 ```
+
+MTProxyL использует [Zapret2 v1.0.7](https://github.com/bol-van/zapret2/releases/tag/v1.0.7).
+При обновлении MTProxyL установленная сборка Zapret2 обновляется с сохранением
+конфигурации. Архив проверяется по SHA256. Активная служба перезапускается, при
+сбое возвращается прежняя сборка. Остановленная служба остаётся выключенной.
 
 <a id="cli-web"></a>
 

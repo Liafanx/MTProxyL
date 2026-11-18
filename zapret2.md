@@ -54,7 +54,7 @@ modprobe nfnetlink_queue
 
 ```bash
 ARCH=linux-x86_64            # для ARM64: linux-arm64
-VER=v1.0.5.2
+VER=v1.0.7
 
 curl -fsSL -o /tmp/zapret2.tar.gz \
   "https://github.com/bol-van/zapret2/releases/download/${VER}/zapret2-${VER}.tar.gz"

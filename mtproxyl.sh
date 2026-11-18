@@ -537,6 +537,7 @@ cli_main() {
                     echo ""
                     echo -e "  ${BOLD}Zapret2:${NC}"
                     echo -e "    ${GREEN}nft zapret2${NC}      Установить / переустановить Zapret2 fix"
+                    echo -e "    ${GREEN}nft zapret2-refresh${NC} Обновить установленную сборку Zapret2"
                     echo -e "    ${GREEN}nft zapret2-start${NC} Запустить Zapret2 (после остановки)"
                     echo -e "    ${GREEN}nft zapret2-stop${NC} Остановить Zapret2"
                     echo -e "    ${GREEN}nft zapret2-rm${NC}   Удалить Zapret2"

@@ -444,9 +444,9 @@ _release_after_install() {
     fi
     "${INSTALL_DIR}/mtproxyl.sh" selfmask pq-upgrade \
         || log_warn "PQ nginx требует обновления: mtproxyl selfmask pq-upgrade"
-    # Новая раскладка zapret2 — только у работающего и только если изменилась.
+    # Обновляем установленную сборку Zapret2 и при необходимости число очередей.
     MTPROXYL_PQ_UPGRADE_DONE=1 "${INSTALL_DIR}/mtproxyl.sh" nft zapret2-refresh \
-        || log_warn "Zapret2 не перезапустился — проверьте: mtproxyl nft zapret2-start"
+        || log_warn "Zapret2 требует обновления: mtproxyl nft zapret2-refresh"
 
     # Права панели и API пишет уже установленная версия.
     if panel_installed 2>/dev/null; then

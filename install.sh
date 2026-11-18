@@ -345,6 +345,8 @@ fi
 
 "${INSTALL_DIR}/mtproxyl.sh" selfmask pq-upgrade \
     || echo '  PQ nginx: повторите mtproxyl selfmask pq-upgrade' >&2
+MTPROXYL_PQ_UPGRADE_DONE=1 "${INSTALL_DIR}/mtproxyl.sh" nft zapret2-refresh \
+    || echo '  Zapret2: повторите mtproxyl nft zapret2-refresh' >&2
 if [ -n "$_INSTALL_ARCHIVE" ]; then
     mkdir -p "${INSTALL_DIR}/releases"; chmod 700 "${INSTALL_DIR}/releases"
     mv -f "$_INSTALL_ARCHIVE" "${INSTALL_DIR}/releases/mtproxyl-${_new_ver}.tar.gz"
