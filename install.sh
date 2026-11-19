@@ -170,6 +170,27 @@ install_from_archive() {
     _INSTALL_STAGE="$tmp" _INSTALL_ROOT="$root" _INSTALL_ARCHIVE="${tmp}/a.tar.gz"
 }
 
+install_from_branch_snapshot() {
+    _INSTALL_STAGE=$(mktemp -d "${INSTALL_DIR}/.install.XXXXXX") || return 1
+    local archive="${_INSTALL_STAGE}/branch.tar.gz"
+    curl -fsSL --retry 2 --connect-timeout 10 --max-time 60 \
+        "https://codeload.github.com/${REPO}/tar.gz/refs/heads/${BRANCH}" -o "$archive" 2>>"$INSTALL_LOG" || return 1
+    tar -tzf "$archive" > "${_INSTALL_STAGE}/paths" 2>>"$INSTALL_LOG" &&
+        tar -tvzf "$archive" > "${_INSTALL_STAGE}/types" 2>>"$INSTALL_LOG" || return 1
+    if ! awk -F/ -v prefix="${REPO##*/}-" '
+        NR == 1 {root = $1; if (index(root, prefix) != 1 || NF != 2 || $2 != "") exit 1}
+        $1 != root || $0 ~ /(^|\/)\.\.(\/|$)/ {exit 1}
+        END {if (!NR) exit 1}
+    ' "${_INSTALL_STAGE}/paths" || grep -qvE '^[-d]' "${_INSTALL_STAGE}/types"; then
+        echo "  ОШИБКА: неожиданные файлы в снимке ветки" >&2
+        return 1
+    fi
+    _INSTALL_ROOT="${_INSTALL_STAGE}/branch"
+    mkdir -p "$_INSTALL_ROOT" &&
+        tar -xzf "$archive" -C "$_INSTALL_ROOT" --strip-components=1 \
+            --no-same-owner --no-same-permissions 2>>"$INSTALL_LOG"
+}
+
 ARCHIVE_DONE=false
 if [ -n "$WANT_VERSION" ] || [ "$BRANCH" = "main" ]; then
     ver="$WANT_VERSION"
@@ -188,7 +209,7 @@ if [ -n "$WANT_VERSION" ] || [ "$BRANCH" = "main" ]; then
             echo "  Версии с архивом: https://github.com/${REPO}/releases" >&2
             exit 1
         else
-            echo "  Архива v${ver} пока нет — качаем файлы ветки"
+            echo "  Не удалось скачать архив v${ver} — пробуем получить код ветки"
         fi
     elif [ -n "$WANT_VERSION" ]; then
         echo "ОШИБКА: неверный номер версии: ${WANT_VERSION}" >&2
@@ -197,10 +218,20 @@ if [ -n "$WANT_VERSION" ] || [ "$BRANCH" = "main" ]; then
 fi
 
 if [ "$ARCHIVE_DONE" != true ]; then
+    _sha=$(curl -fsS --max-time 15 -H 'Accept: application/vnd.github.sha' \
+        "https://api.github.com/repos/${REPO}/commits/${BRANCH}" 2>>"$INSTALL_LOG") || _sha=''
+    if [[ ! "$_sha" =~ ^[0-9a-f]{40}$ ]]; then
+        echo "  GitHub API не вернул SHA. Скачиваем снимок ветки ${BRANCH}..."
+        if ! install_from_branch_snapshot; then
+            echo "  ОШИБКА: не удалось получить снимок ветки, установленный код не изменён" >&2
+            echo "  Подробности: ${INSTALL_LOG}" >&2
+            exit 1
+        fi
+    fi
+fi
+
+if [ -z "$_INSTALL_ROOT" ]; then
 echo "  Скачивание файлов..."
-_sha=$(curl -fsS --max-time 15 -H 'Accept: application/vnd.github.sha' \
-    "https://api.github.com/repos/${REPO}/commits/${BRANCH}" 2>>"$INSTALL_LOG") || _sha=''
-[[ "$_sha" =~ ^[0-9a-f]{40}$ ]] || { echo '  ОШИБКА: не удалось закрепить ветку, файлы не изменены — повторите позже' >&2; exit 1; }
 SCRIPT_URL="https://raw.githubusercontent.com/${REPO}/${_sha}"
 SCRIPT_URL_REFS="$SCRIPT_URL"
 _INSTALL_STAGE=$(mktemp -d "${INSTALL_DIR}/.install.XXXXXX")
