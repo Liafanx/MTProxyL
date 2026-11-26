@@ -58,6 +58,9 @@ case "$1 $2 $3" in
   "mode manager ")
     echo "  [✓] Режим: manager"
     ;;
+  "vless on "*|"vless off "*|"vless recover "*)
+    printf 'arg=%s\n' "$@"
+    ;;
   "traffic --json ")
     echo "  [i] чтение базы трафика"
     echo '{"mode":"manager","source":"db","directional":true,"persistent":true,"totals":{"in":2460700,"out":211900000,"total":214360700,"session_in":190600,"session_out":14040000,"connections":1},"users":[{"user":"default","in":370700,"out":32430000,"total":32800700,"session_in":190600,"session_out":14040000,"connections":1,"unique_ips":0,"enabled":true}]}'
@@ -212,5 +215,36 @@ func TestRestoreRejectsBadNameBeforeInvokingScript(t *testing.T) {
 	// here proves validation happened before the command ran.
 	if _, err := c.RestoreBackup(context.Background(), "../../etc/shadow"); err == nil {
 		t.Fatal("traversal name was accepted")
+	}
+}
+
+func TestVlessPanelActionsDeferEngineRestart(t *testing.T) {
+	c := newStubClient(t)
+	ctx := context.Background()
+
+	on, err := c.VlessOn(ctx, true, true)
+	if err != nil {
+		t.Fatalf("VlessOn: %v", err)
+	}
+	for _, want := range []string{"arg=vless", "arg=on", "arg=--yes", "arg=--allow-disable-me", "arg=--defer-restart"} {
+		if !strings.Contains(on, want) {
+			t.Errorf("VlessOn output %q missing %q", on, want)
+		}
+	}
+
+	off, err := c.VlessOff(ctx)
+	if err != nil {
+		t.Fatalf("VlessOff: %v", err)
+	}
+	if !strings.Contains(off, "arg=--defer-restart") {
+		t.Errorf("VlessOff output %q missing --defer-restart", off)
+	}
+
+	recoverOut, err := c.VlessRecover(ctx)
+	if err != nil {
+		t.Fatalf("VlessRecover: %v", err)
+	}
+	if !strings.Contains(recoverOut, "arg=--defer-restart") {
+		t.Errorf("VlessRecover output %q missing --defer-restart", recoverOut)
 	}
 }

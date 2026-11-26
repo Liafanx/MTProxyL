@@ -38,8 +38,12 @@ upstream_remove() { echo "rm $1" >> "$t/up.log"; }
 upstream_toggle() { echo "toggle $1 $2" >> "$t/up.log"; }
 generate_telemt_config() { :; }; is_proxy_running() { return 1; }; restart_proxy_container() { :; }
 _engine_calls=0
-_vless_engine_apply() { _engine_calls=$((_engine_calls + 1)); }
+_vless_engine_apply() {
+    if [ "${VLESS_DEFER_RESTART:-false}" = true ]; then VLESS_ENGINE_PENDING=true; return 0; fi
+    _engine_calls=$((_engine_calls + 1))
+}
 mtdd_mgr_active() { return 1; }
+systemd-run() { echo "$*" >> "$t/systemd-run.log"; return 0; }
 systemctl() {
     case "$1" in
         restart) echo restart >> "$t/restart.log" ;;
@@ -105,6 +109,13 @@ grep -q "add vless socks5 127.0.0.1:$(_vless_port) 1 " "$t/up.log" || fail "upst
 grep -q '^add vlesslocal' "$t/up.log" && fail "лишний local-маршрут без локальной маскировки"
 [ "$VLESS_ENABLED" = true ] || fail "enabled не выставлен"
 
+# Панельный путь: рестарт движка отложен, ответ на запрос успевает уйти.
+: > "$t/systemd-run.log"; _engine_calls=0
+vless_on --defer-restart >/dev/null || fail "vless_on --defer-restart"
+[ "$_engine_calls" = 0 ] || fail "defer-restart перезапустил движок синхронно"
+grep -q 'vless engine-apply' "$t/systemd-run.log" || fail "нет отложенного применения"
+grep -q -- '--on-active=3' "$t/systemd-run.log" || fail "нет задержки применения"
+
 # Повторное включение при включённом WARP: отказ без --yes, выключение с ним.
 WARP_ENABLED=true
 vless_on >/dev/null 2>&1 && fail "конфликт с WARP проигнорирован"
@@ -118,10 +129,13 @@ vless_on >/dev/null 2>&1 && fail "mtdd без согласия на Direct"
 vless_on --yes --allow-disable-me >/dev/null 2>&1 || fail "mtdd с согласием"
 mtdd_mgr_active() { return 1; }
 
-# Выключение: upstream снят.
-vless_off >/dev/null || fail "vless_off"
+# Выключение: upstream снят; панельный путь тоже откладывает рестарт.
+: > "$t/systemd-run.log"; _engine_calls=0
+vless_off --defer-restart >/dev/null || fail "vless_off --defer-restart"
 grep -q '^rm vless$' "$t/up.log" || fail "upstream не снят"
 [ "$VLESS_ENABLED" = false ] || fail "enabled не снят"
+[ "$_engine_calls" = 0 ] || fail "vless_off --defer-restart перезапустил движок"
+grep -q 'vless engine-apply' "$t/systemd-run.log" || fail "vless_off: нет отложенного применения"
 
 # Подписка: base64 из двух ссылок заменяет прошлые sub-ссылки, ручные целы.
 URI3='vless://33333333-3333-3333-3333-333333333333@sub1.example.org:443?security=tls&sni=sub1.example.org&type=grpc&serviceName=grpc#Sub1'
@@ -237,5 +251,10 @@ grep -q "|$B1|" "$(_vless_links)" && fail "Bulk1 осталась"
 [ -f "$repo/lib/vless_parse.sh" ] || fail "нет lib/vless_parse.sh"
 bash -n "$repo/lib/vless_parse.sh" || fail "синтаксис lib/vless_parse.sh"
 bash "$repo/lib/vless_parse.sh" check "$URI1" >/dev/null || fail "парсер как CLI"
+
+# Служебная команда таймера применяет конфиг сразу, без повторной отсрочки.
+_engine_calls=0
+handle_vless_command engine-apply >/dev/null || fail "engine-apply"
+[ "$_engine_calls" = 1 ] || fail "engine-apply не применил конфиг"
 
 echo "OK vless"

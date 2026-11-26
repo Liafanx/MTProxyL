@@ -484,6 +484,10 @@ vless_reload_active() {
 }
 
 _vless_engine_apply() {
+    if [ "${VLESS_DEFER_RESTART:-false}" = true ]; then
+        VLESS_ENGINE_PENDING=true
+        return 0
+    fi
     if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
         generate_mtdd_config >/dev/null 2>&1 || true
         mtdd_restart >/dev/null 2>&1 || true
@@ -491,6 +495,21 @@ _vless_engine_apply() {
         generate_telemt_config >/dev/null 2>&1 || true
         is_proxy_running 2>/dev/null && restart_proxy_container >/dev/null 2>&1 || true
     fi
+}
+
+# Панель публикуется через движок на 443: синхронный рестарт обрывает ответ
+# на запрос. Откладываем применение, чтобы сначала вернуть результат.
+_vless_schedule_engine_apply() {
+    [ "${VLESS_ENGINE_PENDING:-false}" = true ] || return 0
+    VLESS_ENGINE_PENDING=false
+    local _unit="mtproxyl-vless-apply-$(date +%s)-${RANDOM}"
+    if systemd-run --quiet --collect --on-active=3 --unit="$_unit" \
+        "${INSTALL_DIR}/mtproxyl.sh" vless engine-apply >/dev/null 2>&1; then
+        return 0
+    fi
+    log_warn "Не удалось отложить перезапуск движка, применяю сразу"
+    VLESS_DEFER_RESTART=false
+    _vless_engine_apply
 }
 
 # ── Upstream движка ────────────────────────────────────────
@@ -653,13 +672,16 @@ _vless_me_disable() {
 }
 
 vless_on() {
-    local _assume="${MTPROXYL_ASSUME_YES:-false}" _consent=false _arg
+    local _assume="${MTPROXYL_ASSUME_YES:-false}" _consent=false _defer=false _arg
     for _arg in "$@"; do
         case "$_arg" in
             --yes) _assume=true ;;
             --allow-disable-me) _consent=true ;;
+            --defer-restart) _defer=true ;;
         esac
     done
+    VLESS_DEFER_RESTART="$_defer"
+    VLESS_ENGINE_PENDING=false
     check_root
     [ -n "${VLESS_ACTIVE:-}" ] && [ -n "$(_vless_link_row "$VLESS_ACTIVE")" ] \
         || VLESS_ACTIVE=$(awk -F'|' 'NR==1 {print $1}' "$(_vless_links)" 2>/dev/null)
@@ -686,12 +708,19 @@ vless_on() {
             log_info "Middle proxy включён: проверьте покрытие DC (mtproxyl dc status). Если ME не поднялся, выход VLESS не сохраняет адрес:порт"
         fi
         vless_test
+        _vless_schedule_engine_apply
     else
         return 1
     fi
 }
 
 vless_off() {
+    local _defer=false _arg
+    for _arg in "$@"; do
+        [ "$_arg" = "--defer-restart" ] && _defer=true
+    done
+    VLESS_DEFER_RESTART="$_defer"
+    VLESS_ENGINE_PENDING=false
     check_root
     systemctl disable --now "${VLESS_WATCH_UNIT}.timer" >/dev/null 2>&1 || true
     systemctl disable --now "$VLESS_UNIT" >/dev/null 2>&1 || true
@@ -704,6 +733,7 @@ vless_off() {
         log_info "Middle proxy остался выключенным: вернуть — mtproxyl expert clear general use_middle_proxy"
         VLESS_ME_DISABLED="false"; save_settings
     fi
+    _vless_schedule_engine_apply
 }
 
 _vless_links_json() {
@@ -849,10 +879,10 @@ vless_sub_set_ua() {
 }
 
 handle_vless_command() {
-    local _sub="${1:-status}"
+    local _sub="${1:-status}" _arg
     case "$_sub" in
         on|enable)   shift; vless_on "$@" ;;
-        off|disable) vless_off ;;
+        off|disable) shift; vless_off "$@" ;;
         status|"")
             if [ "${2:-}" = --json ]; then vless_status_json; else vless_status; fi ;;
         link)
@@ -884,9 +914,19 @@ handle_vless_command() {
         update)   check_root; _vless_core_install true && { [ "${VLESS_ENABLED:-false}" = true ] && vless_service_restart; } ;;
         rollback) check_root; vless_core_rollback ;;
         recover)
+            shift
             check_root
             [ "${VLESS_ENABLED:-false}" = true ] || { log_error "VLESS выключен"; return 1; }
-            vless_apply ;;
+            VLESS_DEFER_RESTART=false
+            VLESS_ENGINE_PENDING=false
+            for _arg in "$@"; do
+                [ "$_arg" = "--defer-restart" ] && VLESS_DEFER_RESTART=true
+            done
+            vless_apply && _vless_schedule_engine_apply ;;
+        engine-apply)
+            check_root
+            VLESS_DEFER_RESTART=false
+            _vless_engine_apply ;;
         watch)    vless_watch ;;
         help|*)
             echo -e "  ${BOLD}VLESS (Xray-core):${NC}"
