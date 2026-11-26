@@ -440,6 +440,7 @@ vless_apply() {
 vless_reload_active() {
     local _port; _port=$(_vless_port)
     vless_config_write || return 1
+    vless_service_write || return 1
     vless_service_restart || { log_error "Служба VLESS не запустилась: journalctl -u ${VLESS_UNIT}"; return 1; }
     log_success "VLESS переключён: socks5 127.0.0.1:${_port} → $(_vless_mask_uri "$(_vless_link_uri "$VLESS_ACTIVE")")"
 }

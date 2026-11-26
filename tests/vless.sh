@@ -46,6 +46,8 @@ systemctl() {
     esac
 }
 vless_watchdog_install() { :; }
+_vless_unit_dir() { echo "$t/systemd"; }
+mkdir -p "$t/systemd"
 warp_disable() { echo "warp-off" >> "$t/conf.log"; }
 donor_load() { DONOR_ENABLED=false; }
 donor_disable() { echo "donor-off" >> "$t/conf.log"; }
@@ -90,6 +92,8 @@ _engine_calls=0
 vless_link_use "$ID2" >/dev/null || fail "link use при включённом VLESS"
 [ "$_engine_calls" = 0 ] || fail "link use перезапустил движок"
 grep -q '^restart$' "$t/restart.log" || fail "link use не перезапустил Xray"
+grep -q "ExecStart=$INSTALL_DIR/vless/xray run -c $INSTALL_DIR/vless/config.json" "$t/systemd/mtproxyl-vless.service" \
+    || fail "unit ссылается не на рабочий каталог"
 VLESS_ACTIVE=$ID1
 VLESS_ENABLED=false
 
