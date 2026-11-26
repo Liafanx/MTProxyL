@@ -545,11 +545,11 @@ export interface VlessTest {
 export const vlessApi = {
   status: () => request<VlessStatus>(MTPROXYL_BASE, '/vless'),
   on: (force = false, allowDisableME = false) =>
-    request<{ output: string }>(MTPROXYL_BASE, '/vless/on', {
+    request<MtproxylOperation>(MTPROXYL_BASE, '/vless/on', {
       method: 'POST',
       body: JSON.stringify({ force, allow_disable_me: allowDisableME }),
     }),
-  off: () => request<{ output: string }>(MTPROXYL_BASE, '/vless/off', { method: 'POST' }),
+  off: () => request<MtproxylOperation>(MTPROXYL_BASE, '/vless/off', { method: 'POST' }),
   test: () => request<VlessTest>(MTPROXYL_BASE, '/vless/test'),
   addLink: (uri: string, name: string) =>
     request<{ output: string }>(MTPROXYL_BASE, '/vless/links', {
@@ -584,7 +584,7 @@ export const vlessApi = {
   subOff: () => request<{ output: string }>(MTPROXYL_BASE, '/vless/sub', { method: 'DELETE' }),
   update: () => request<{ output: string }>(MTPROXYL_BASE, '/vless/update', { method: 'POST' }),
   rollback: () => request<{ output: string }>(MTPROXYL_BASE, '/vless/rollback', { method: 'POST' }),
-  recover: () => request<{ output: string }>(MTPROXYL_BASE, '/vless/recover', { method: 'POST' }),
+  recover: () => request<MtproxylOperation>(MTPROXYL_BASE, '/vless/recover', { method: 'POST' }),
 };
 
 /** mtdd: временная подмена рекламного тега и журнал изменений движка. */
@@ -1825,7 +1825,7 @@ export const awgApi = {
 };
 
 // ── Выход к Telegram ─────────────────────────────────────────────────────
-export type EgressVia = 'direct' | 'warp' | 'donor' | 'awg';
+export type EgressVia = 'direct' | 'warp' | 'donor' | 'awg' | 'vless';
 
 export interface Egress {
   via: EgressVia;
@@ -1850,15 +1850,15 @@ export const egressApi = {
   get: () => request<{ supported: boolean; egress?: Egress }>(`${BASE}/api`, '/egress'),
 };
 
-const EGRESS_NAMES: Record<Exclude<EgressVia, 'direct'>, string> = {
+const EGRESS_NAMES: Record<Exclude<EgressVia, 'direct' | 'vless'>, string> = {
   warp: 'WARP',
   donor: 'туннель до донора',
   awg: 'свой AWG',
 };
 
 /** Другие включённые выходы, кроме своего: для вопроса «выключить и включить этот?». */
-export function otherEgress(e: Egress | undefined | null, self: Exclude<EgressVia, 'direct'>): string | null {
-  if (!e || e.via === 'direct' || e.via === self) return null;
+export function otherEgress(e: Egress | undefined | null, self: Exclude<EgressVia, 'direct' | 'vless'>): string | null {
+  if (!e || e.via === 'direct' || e.via === 'vless' || e.via === self) return null;
   return EGRESS_NAMES[e.via];
 }
 

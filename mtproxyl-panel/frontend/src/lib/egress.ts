@@ -11,6 +11,8 @@ export function egressText(e: Egress): string {
       return `донор ${e.name}${e.egress_ip ? ` · ${e.egress_ip}` : ''}`;
     case 'warp':
       return `WARP${e.name ? ` · ${e.name}` : ''}`;
+    case 'vless':
+      return 'VLESS';
     default:
       return 'напрямую';
   }
@@ -26,6 +28,8 @@ export function egressShort(e: Egress): string {
       return 'донор';
     case 'warp':
       return 'WARP';
+    case 'vless':
+      return 'VLESS';
     default:
       return 'напрямую';
   }

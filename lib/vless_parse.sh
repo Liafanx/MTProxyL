@@ -171,10 +171,10 @@ _vless_parse_uri() {
     V_ENC=$enc
 
     flow=$(_vless_q flow)
-    if [ -n "$flow" ] && [ "$flow" != xtls-rprx-vision ]; then
-        _vless_parse_fail "flow: допустим только xtls-rprx-vision"
-        return 1
-    fi
+    case "$flow" in
+        ""|xtls-rprx-vision|xtls-rprx-vision-udp443) ;;
+        *) _vless_parse_fail "flow: допустимы xtls-rprx-vision и xtls-rprx-vision-udp443"; return 1 ;;
+    esac
     V_FLOW=$flow
 
     sec=$(_vless_q security)
@@ -204,7 +204,7 @@ _vless_parse_uri() {
         *) _vless_parse_fail "транспорт type=${net} не поддерживается Xray-сборкой MTProxyL"; return 1 ;;
     esac
     if [ -n "$flow" ] && [ "$net" != tcp ]; then
-        _vless_parse_fail "flow=xtls-rprx-vision работает только с type=tcp"
+        _vless_parse_fail "Vision flow требует type=tcp"
         return 1
     fi
     V_NET=$net

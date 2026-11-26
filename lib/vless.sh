@@ -469,7 +469,7 @@ vless_apply() {
     vless_service_write || return 1
     vless_service_restart || { log_error "Служба VLESS не запустилась: journalctl -u ${VLESS_UNIT}"; return 1; }
     _vless_apply_upstream || return 1
-    _vless_engine_apply
+    _vless_engine_apply || return 1
     log_success "VLESS включён: socks5 127.0.0.1:${_port} → $(_vless_mask_uri "$(_vless_link_uri "$VLESS_ACTIVE")")"
 }
 
@@ -488,12 +488,14 @@ _vless_engine_apply() {
         VLESS_ENGINE_PENDING=true
         return 0
     fi
+    load_secrets || return 1
+    load_upstreams || return 1
     if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
-        generate_mtdd_config >/dev/null 2>&1 || true
-        mtdd_restart >/dev/null 2>&1 || true
+        generate_mtdd_config || return 1
+        mtdd_restart
     else
-        generate_telemt_config >/dev/null 2>&1 || true
-        is_proxy_running 2>/dev/null && restart_proxy_container >/dev/null 2>&1 || true
+        generate_telemt_config || return 1
+        if is_proxy_running 2>/dev/null; then restart_proxy_container; fi
     fi
 }
 
@@ -654,11 +656,11 @@ _vless_me_gate() {
     fi
     log_warn "Middle proxy несовместим с VLESS: выход не сохраняет адрес:порт, писатели ME не поднимутся"
     log_info "Движок пойдёт к DC напрямую через VLESS; рекламный тег действовать не будет"
-    [ "$_consent" = true ] && { _vless_me_disable; return $?; }
+    [ "$_consent" = true ] && return 0
     if [ "$_assume" != true ]; then
         local _yn; read_line _yn "  ${BOLD}Выключить middle proxy и продолжить? [y/N]:${NC} "
         [[ "$_yn" =~ ^[yY] ]] || { log_info "Ничего не меняем"; return 1; }
-        _vless_me_disable; return $?
+        return 0
     fi
     log_error "Нужно явное согласие на выключение middle proxy: --allow-disable-me"
     return 1
@@ -687,18 +689,26 @@ vless_on() {
         || VLESS_ACTIVE=$(awk -F'|' 'NR==1 {print $1}' "$(_vless_links)" 2>/dev/null)
     [ -n "$VLESS_ACTIVE" ] || { log_error "Сначала добавьте ссылку: mtproxyl vless link add '<vless://…>'"; return 1; }
     local _conflict; _conflict=$(_vless_exit_conflicts)
+    if [ -n "$_conflict" ] && [ "$_assume" != true ]; then
+        log_error "Уже включён другой выход: ${_conflict}"
+        log_info "Выключите его или повторите с --yes: mtproxyl vless on --yes"
+        return 1
+    fi
+    _vless_me_gate "$_assume" "$_consent" || return 1
     if [ -n "$_conflict" ]; then
-        if [ "$_assume" != true ]; then
-            log_error "Уже включён другой выход: ${_conflict}"
-            log_info "Выключите его или повторите с --yes: mtproxyl vless on --yes"
-            return 1
-        fi
         log_warn "Выключаем прежний выход: ${_conflict}"
         [ "${WARP_ENABLED:-false}" = true ] && warp_disable >/dev/null 2>&1 || true
         _vless_donor_on && donor_disable >/dev/null 2>&1 || true
         declare -F awg_is_enabled >/dev/null && awg_is_enabled 2>/dev/null && awg_disable >/dev/null 2>&1 || true
+        _conflict=$(_vless_exit_conflicts)
+        if [ -n "$_conflict" ]; then
+            log_error "Не удалось выключить прежний выход: ${_conflict}"
+            return 1
+        fi
     fi
-    _vless_me_gate "$_assume" "$_consent" || return 1
+    if ! mtdd_mgr_active && _vless_me_enabled; then
+        _vless_me_disable || return 1
+    fi
     # mtdd собирает маршрут по VLESS_ENABLED: Direct вместо ME.
     VLESS_ENABLED="true"
     if vless_apply; then
@@ -723,11 +733,11 @@ vless_off() {
     VLESS_ENGINE_PENDING=false
     check_root
     systemctl disable --now "${VLESS_WATCH_UNIT}.timer" >/dev/null 2>&1 || true
-    systemctl disable --now "$VLESS_UNIT" >/dev/null 2>&1 || true
     _vless_drop_upstream
-    _vless_engine_apply
     VLESS_ENABLED="false"
     save_settings
+    _vless_engine_apply || return 1
+    systemctl disable --now "$VLESS_UNIT" >/dev/null 2>&1 || true
     log_success "VLESS выключен — трафик движка идёт по прежним маршрутам"
     if [ "${VLESS_ME_DISABLED:-false}" = true ]; then
         log_info "Middle proxy остался выключенным: вернуть — mtproxyl expert clear general use_middle_proxy"

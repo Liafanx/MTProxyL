@@ -54,7 +54,7 @@ async function mock(page) {
       mtu: 1280, installed: true, version: '0.16.1-mtproxyl.1', socks_active: false, redirect_active: false, iface_active: false, nft_applied: false,
       cidr_count: 0, socks_port: 2536, redirect_port: 12345, matched_packets: 0, exit: { ip: '', loc: '', colo: '', confirmed: false } },
     panelUpdate: { current_version: '1.3.14', latest_version: 'mtproxyl-panel-v1.3.15', update_available: true },
-    vlessActive: '3e2d9d21',
+    vlessActive: '3e2d9d21', vlessEnabled: true, vlessOperation: null, vlessStatusInterrupted: false,
     vlessLinks: [
       { id: '3e2d9d21', name: 'Reality', source: 'manual', host: 'example.org', port: 443,
         security: 'reality', transport: 'tcp', encryption: 'none' },
@@ -141,9 +141,18 @@ async function mock(page) {
       state.awgImport = route.request().postDataJSON();
       data = { output: 'Конфиг сохранён' };
     }
-    else if (url.pathname.endsWith('/mtproxyl/status')) data = mtdd
-      ? { enabled: true, mode: 'manager', engine_kind: 'mtdd' }
-      : { enabled: false };
+    else if (url.pathname.endsWith('/mtproxyl/status')) {
+      data = mtdd ? { enabled: true, mode: 'manager', engine_kind: 'mtdd' } : { enabled: false };
+      if (state.vlessOperation?.phase === 'running') {
+        if (!state.vlessStatusInterrupted) {
+          state.vlessStatusInterrupted = true;
+          return route.abort('connectionreset');
+        }
+        state.vlessEnabled = state.vlessOperation.name === 'vless:on';
+        state.vlessOperation = { ...state.vlessOperation, phase: 'done', output: 'Выход переключён' };
+      }
+      data.operation = state.vlessOperation ?? { phase: 'idle' };
+    }
     else if (url.pathname.endsWith('/mtproxyl/mtdd/suspects')) {
       if (route.request().method() === 'POST') {
         const action = route.request().postDataJSON();
@@ -168,12 +177,17 @@ async function mock(page) {
     else if (url.pathname.endsWith('/mtproxyl/vless')) {
       const links = state.vlessLinks.map((link) => ({ ...link, active: link.id === state.vlessActive }));
       data = {
-        enabled: true, service: 'active', core_version: '26.11.9', socks_port: 41100,
+        enabled: state.vlessEnabled, service: state.vlessEnabled ? 'active' : 'inactive',
+        core_version: '26.11.9', socks_port: 41100,
         active: links.find((link) => link.active) ?? links[0],
         links, links_count: links.length, subscription: state.vlessSubscription, watchdog: true,
         hwid: 'a1b2c3d4e5f60718293a4b5c6d7e8f90', hwid_enabled: true,
         sub_ua: 'Happ/3.23.0', sub_notice: 'Выберите приложение поддерживающие передачу HWID устройства',
       };
+    }
+    else if (/\/mtproxyl\/vless\/(on|off)$/.test(url.pathname)) {
+      state.vlessStatusInterrupted = false;
+      data = state.vlessOperation = { phase: 'running', name: `vless:${url.pathname.split('/').at(-1)}` };
     }
     else if (/\/mtproxyl\/vless\/links\/[^/]+$/.test(url.pathname) && route.request().method() === 'DELETE') {
       const id = decodeURIComponent(url.pathname.split('/').at(-1));
@@ -625,6 +639,12 @@ async function checkVless(page, width) {
   await page.goto(`${base}/vless`);
   await page.getByRole('heading', { name: 'Telegram через VLESS', exact: true }).waitFor();
   await page.getByText('example.org:443', { exact: false }).first().waitFor();
+  for (const [action, label] of [['Выключить', 'Выключение VLESS'], ['Включить', 'Включение VLESS']]) {
+    await page.getByRole('button', { name: action, exact: true }).click();
+    await page.getByText(`${label}…`, { exact: true }).waitFor();
+    await page.getByText('Выход переключён', { exact: true }).waitFor();
+    assert.equal(await page.getByText('Failed to fetch', { exact: false }).count(), 0);
+  }
   await page.getByRole('button', { name: 'Проверить', exact: true }).click();
   await page.getByText('203.0.113.25', { exact: false }).waitFor();
   const wsRow = page.locator('tr').filter({ hasText: 'WS' });

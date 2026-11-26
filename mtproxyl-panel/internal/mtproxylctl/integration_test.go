@@ -218,7 +218,7 @@ func TestRestoreRejectsBadNameBeforeInvokingScript(t *testing.T) {
 	}
 }
 
-func TestVlessPanelActionsDeferEngineRestart(t *testing.T) {
+func TestVlessOperationsWaitForEngineRestart(t *testing.T) {
 	c := newStubClient(t)
 	ctx := context.Background()
 
@@ -226,7 +226,7 @@ func TestVlessPanelActionsDeferEngineRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("VlessOn: %v", err)
 	}
-	for _, want := range []string{"arg=vless", "arg=on", "arg=--yes", "arg=--allow-disable-me", "arg=--defer-restart"} {
+	for _, want := range []string{"arg=vless", "arg=on", "arg=--yes", "arg=--allow-disable-me"} {
 		if !strings.Contains(on, want) {
 			t.Errorf("VlessOn output %q missing %q", on, want)
 		}
@@ -236,15 +236,15 @@ func TestVlessPanelActionsDeferEngineRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("VlessOff: %v", err)
 	}
-	if !strings.Contains(off, "arg=--defer-restart") {
-		t.Errorf("VlessOff output %q missing --defer-restart", off)
+	if !strings.Contains(off, "arg=off") || strings.Contains(off, "arg=--defer-restart") {
+		t.Errorf("VlessOff should wait for route application: %q", off)
 	}
 
 	recoverOut, err := c.VlessRecover(ctx)
 	if err != nil {
 		t.Fatalf("VlessRecover: %v", err)
 	}
-	if !strings.Contains(recoverOut, "arg=--defer-restart") {
-		t.Errorf("VlessRecover output %q missing --defer-restart", recoverOut)
+	if !strings.Contains(recoverOut, "arg=recover") || strings.Contains(recoverOut, "arg=--defer-restart") {
+		t.Errorf("VlessRecover should wait for route application: %q", recoverOut)
 	}
 }

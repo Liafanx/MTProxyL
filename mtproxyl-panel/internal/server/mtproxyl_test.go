@@ -386,3 +386,41 @@ func TestMtddSuspectsAndDevicesRejectBadInput(t *testing.T) {
 		}
 	}
 }
+
+func TestVlessActionsAcknowledgeBeforeApplying(t *testing.T) {
+	for _, name := range []string{"on", "off", "recover"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			script := filepath.Join(dir, "mtproxyl")
+			gate := filepath.Join(dir, "continue")
+			done := filepath.Join(dir, "done")
+			code := "#!/bin/sh\nfor _ in $(seq 200); do\n" +
+				"  if [ -f " + gate + " ]; then printf '%s' \"$2\" > " + done + "; exit 0; fi\n" +
+				"  sleep .02\ndone\nexit 1\n"
+			if err := os.WriteFile(script, []byte(code), 0700); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.WriteFile(gate, nil, 0600) })
+			mux := newMtproxylMux(t, config.MtproxylConfig{Enabled: true, ScriptPath: script})
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, authedRequest(t, http.MethodPost, "/api/mtproxyl/vless/"+name, ""))
+			var result struct {
+				Data struct{ Name, Phase string }
+			}
+			if rec.Code != http.StatusAccepted || !rec.Flushed ||
+				json.Unmarshal(rec.Body.Bytes(), &result) != nil ||
+				result.Data.Name != "vless:"+name || result.Data.Phase != "running" {
+				t.Fatalf("response before apply: %d %s", rec.Code, rec.Body.String())
+			}
+			if err := os.WriteFile(gate, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+				if data, _ := os.ReadFile(done); string(data) == name {
+					return
+				}
+			}
+			t.Fatal("VLESS operation did not continue after the response")
+		})
+	}
+}

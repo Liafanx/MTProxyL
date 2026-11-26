@@ -18,6 +18,7 @@ egress_label() {
         warp)  echo "маршрут через WARP" ;;
         donor) echo "туннель до донора" ;;
         awg)   echo "выход через свой AWG" ;;
+        vless) echo "выход через VLESS" ;;
     esac
 }
 
@@ -89,7 +90,12 @@ egress_restore() {
 egress_status_json() {
     local _via="direct" _name="" _ip="" _ok="null" _err="" _since=0 _now _extra=""
     _now=$(date +%s)
-    if awg_is_enabled 2>/dev/null; then
+    if [ "${VLESS_ENABLED:-false}" = true ]; then
+        _via="vless"
+        if ! systemctl is-active --quiet "$VLESS_UNIT"; then
+            _ok=false; _err="служба Xray не запущена"
+        fi
+    elif awg_is_enabled 2>/dev/null; then
         awg_load
         _via="awg"; _name="$AWG_ACTIVE"; _ip="$AWG_EGRESS_IP"
         if [ -n "$AWG_FAIL_SINCE" ]; then
@@ -139,6 +145,7 @@ egress_status() {
         warp)   echo -e "  ${BOLD}Выход к Telegram:${NC} WARP${_name:+ (${_name})}" ;;
         donor)  echo -e "  ${BOLD}Выход к Telegram:${NC} донор ${_name}${_ip:+, адрес ${_ip}}" ;;
         awg)    echo -e "  ${BOLD}Выход к Telegram:${NC} свой AWG «${_name}»${_ip:+, адрес ${_ip}}" ;;
+        vless)  echo -e "  ${BOLD}Выход к Telegram:${NC} VLESS" ;;
     esac
     case "$_ok" in
         true)  echo -e "  ${BOLD}Состояние:${NC}        ${GREEN}работает${NC}" ;;

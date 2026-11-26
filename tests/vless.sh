@@ -12,6 +12,19 @@ mkdir -p "$INSTALL_DIR/vless"
 VERSION=test
 source "$repo/lib/colors.sh" 2>/dev/null || true
 for l in utils settings detect vless tui_vless; do source "$repo/lib/$l.sh" || fail "source $l"; done
+(
+    source "$repo/lib/egress.sh"
+    load_secrets() { users_loaded=true; }
+    load_upstreams() { upstreams_loaded=true; }
+    mtdd_mgr_active() { return 0; }
+    generate_mtdd_config() { [ "$users_loaded" = true ] && [ "$upstreams_loaded" = true ]; }
+    mtdd_restart() { return 1; }
+    if _vless_engine_apply; then fail "ошибка перезапуска mtdd потеряна"; fi
+    [ "$users_loaded" = true ] && [ "$upstreams_loaded" = true ] || fail "перед применением не загружены пользователи и маршруты"
+    systemctl() { return 1; }
+    VLESS_ENABLED=true
+    egress_status_json | jq -e '.via == "vless" and .ok == false' >/dev/null || fail "выключенный Xray не виден в статусе выхода"
+) || exit 1
 log_info() { :; }; log_success() { :; }; log_warn() { :; }
 log_error() { echo "ERR: $*" >&2; }
 check_root() { :; }
@@ -54,7 +67,7 @@ systemctl() {
 vless_watchdog_install() { :; }
 _vless_unit_dir() { echo "$t/systemd"; }
 mkdir -p "$t/systemd"
-warp_disable() { echo "warp-off" >> "$t/conf.log"; }
+warp_disable() { WARP_ENABLED=false; echo "warp-off" >> "$t/conf.log"; }
 donor_load() { DONOR_ENABLED=false; }
 donor_disable() { echo "donor-off" >> "$t/conf.log"; }
 awg_is_enabled() { return 1; }
@@ -119,6 +132,10 @@ grep -q -- '--on-active=3' "$t/systemd-run.log" || fail "нет задержки
 # Повторное включение при включённом WARP: отказ без --yes, выключение с ним.
 WARP_ENABLED=true
 vless_on >/dev/null 2>&1 && fail "конфликт с WARP проигнорирован"
+mtdd_mgr_active() { return 0; }
+vless_on --yes >/dev/null 2>&1 && fail "переход на Direct без согласия"
+[ "$WARP_ENABLED" = true ] || fail "действующий WARP выключен до согласия на Direct"
+mtdd_mgr_active() { return 1; }
 vless_on --yes >/dev/null 2>&1 || fail "vless on --yes"
 grep -q warp-off "$t/conf.log" || fail "WARP не выключен"
 WARP_ENABLED=false
@@ -251,6 +268,9 @@ grep -q "|$B1|" "$(_vless_links)" && fail "Bulk1 осталась"
 [ -f "$repo/lib/vless_parse.sh" ] || fail "нет lib/vless_parse.sh"
 bash -n "$repo/lib/vless_parse.sh" || fail "синтаксис lib/vless_parse.sh"
 bash "$repo/lib/vless_parse.sh" check "$URI1" >/dev/null || fail "парсер как CLI"
+URI_UDP443="${URI1/flow=xtls-rprx-vision/flow=xtls-rprx-vision-udp443}"
+bash "$repo/lib/vless_parse.sh" check "$URI_UDP443" | jq -e '.flow == "xtls-rprx-vision-udp443"' >/dev/null \
+    || fail "парсер отбросил Vision UDP/443"
 
 # Служебная команда таймера применяет конфиг сразу, без повторной отсрочки.
 _engine_calls=0
