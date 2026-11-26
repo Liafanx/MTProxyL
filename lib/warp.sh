@@ -103,7 +103,11 @@ _warp_variant_letter() {
 
 _warp_mode()  { case "${WARP_MODE:-socks}" in iface) echo "iface" ;; upstream) echo "upstream" ;; *) echo "socks" ;; esac; }
 _warp_configured_proto() {
-    case "${WARP_PROTO:-awg}" in wg|awg31|masque|masque-h2) echo "${WARP_PROTO}" ;; *) echo "awg" ;; esac
+    case "${WARP_PROTO:-awg}" in
+        awg3.1|awg31) echo "awg31" ;;
+        wg|masque|masque-h2) echo "${WARP_PROTO}" ;;
+        *) echo "awg" ;;
+    esac
 }
 _warp_proto() {
     # У интерфейса выбора нет: awg и masque живут только в туннеле warpscout.
@@ -170,7 +174,7 @@ _warp_bin_supports_mtu() {
     grep -q -- '-tunnel-mtu' <<< "$_help"
 }
 
-# AmneziaWG 3.1 (-p awg31) появился в warpscout 0.17.0.
+# AmneziaWG 3.1 (warpscout -p awg31) появился в warpscout 0.17.0.
 _warp_bin_supports_awg31() {
     local _help; _help=$("${1:-$(_warp_bin)}" socks -h 2>&1)
     grep -q -- 'awg31' <<< "$_help"
@@ -1750,8 +1754,9 @@ warp_set_endpoint() {
 warp_set_proto() {
     check_root
     case "${1:-}" in
-        awg|wg|awg31|masque|masque-h2) WARP_PROTO="$1" ;;
-        *) log_error "Протокол: awg, awg31 (AmneziaWG 3.1), wg, masque или masque-h2"; return 1 ;;
+        awg|wg|masque|masque-h2) WARP_PROTO="$1" ;;
+        awg3.1|awg31) WARP_PROTO="awg31" ;;
+        *) log_error "Протокол: awg, awg3.1 (AmneziaWG 3.1), wg, masque или masque-h2"; return 1 ;;
     esac
     if [ "$WARP_PROTO" = awg31 ] && [ -x "$(_warp_bin)" ] && ! _warp_bin_supports_awg31; then
         log_error "AmneziaWG 3.1 умеет warpscout 0.17.0 и новее: обновите — mtproxyl warp update"
@@ -1833,7 +1838,11 @@ warp_set_exclude() {
 
 warp_set_settings() {
     local _proto="${1:-keep}" _location="${2:-keep}" _ep="${3:-keep}" _exclude="${4:-keep}" _mtu="${5:-keep}"
-    case "$_proto" in keep|awg|awg31|wg|masque|masque-h2) ;; *) log_error "Неверный протокол WARP"; return 1 ;; esac
+    case "$_proto" in
+        keep|awg|wg|masque|masque-h2) ;;
+        awg3.1|awg31) _proto="awg31" ;;
+        *) log_error "Неверный протокол WARP"; return 1 ;;
+    esac
     if [ "$_exclude" != keep ]; then
         _exclude=$(_warp_parse_exclude "$_exclude") || { log_error "Неверный список исключённых узлов"; return 1; }
     fi
@@ -2201,7 +2210,7 @@ _warp_dispatch() {
             echo -e "    ${GREEN}warp exclude${NC} <N>      Исключить узлы (DME,LED); none — без исключений, default — DME"
             echo -e "    ${GREEN}warp endpoint${NC} <A>     Закрепить адрес, clear — выбирать разведкой"
             echo -e "    ${GREEN}warp mtu${NC} <1000–1500> MTU туннеля; по умолчанию 1280, затем warp apply"
-            echo -e "    ${GREEN}warp proto${NC} <P>        awg (по умолчанию), awg31 (AmneziaWG 3.1), wg, masque, masque-h2"
+            echo -e "    ${GREEN}warp proto${NC} <P>        awg (по умолчанию), awg3.1 (AmneziaWG 3.1), wg, masque, masque-h2"
             echo -e "    ${GREEN}warp update${NC}           Обновить warpscout до сборки MTProxyL"
             echo -e "    ${GREEN}warp hint${NC}             Что дописать в конфиг чужой цели для варианта C"
             echo -e "    ${GREEN}warp reapply${NC}          Переприменить правила и список подсетей"

@@ -3315,7 +3315,7 @@ mtproxyl warp scan --last       # Показать результат прошл
 mtproxyl warp scan --json       # То же в JSON (для панели и скриптов)
 mtproxyl warp location DE,NL    # Страна узла Cloudflare (clear — автовыбор)
 mtproxyl warp endpoint A:PORT   # Закрепить адрес (clear — искать разведкой)
-mtproxyl warp proto awg|awg31|wg|masque|masque-h2
+mtproxyl warp proto awg|awg3.1|wg|masque|masque-h2
 mtproxyl warp mtu               # Сохранённый MTU (по умолчанию 1280)
 mtproxyl warp mtu 1280          # Сохранить MTU: целое число 1000–1500
 mtproxyl warp apply             # Применить сохранённый выбор к работающему WARP
@@ -3331,8 +3331,8 @@ mtproxyl warp reapply           # Обновить список подсетей
 Меню: **Безопасность и маршрутизация → Telegram через WARP**. В панели —
 раздел «Telegram через WARP». Включённый маршрут виден строкой в главном меню.
 
-Протокол `awg31` — AmneziaWG с параметрами 3.1 (дополнительные диапазоны
-обфускации, случайные trailers, отключение cookies). Он есть только в A и C:
+Протокол `awg3.1` — AmneziaWG 3.1: расширенная обфускация и тайминги (padding,
+rekey, random trailers; в warpscout это `-p awg31`). Он есть только в A и C:
 вариант B работает на обычном WireGuard в ядре. Нужен warpscout 0.17.0+, то есть
 сборка MTProxyL; при выборе на старом бинарнике команда попросит обновиться.
 

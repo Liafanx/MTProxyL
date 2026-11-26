@@ -817,14 +817,14 @@ function SettingsForm({ status, onSaved, disabled }: { status: WarpStatus; onSav
             className="h-9 rounded-md border border-border bg-surface px-3 text-sm text-text-primary"
           >
             <option value="awg">awg — обфусцированный, проходит чаще всего</option>
-            <option value="awg31">awg31 — AmneziaWG 3.1, колючие параметры (warpscout 0.17+)</option>
+            <option value="awg31">awg3.1 — AmneziaWG 3.1: расширенная обфускация и тайминги (padding, rekey, trailers)</option>
             <option value="wg">wg — обычный WireGuard, быстрее</option>
             <option value="masque">masque — поверх QUIC</option>
             <option value="masque-h2">masque-h2 — поверх HTTP/2</option>
           </select>
           <span className="text-[11px] text-text-secondary/80">
-            Вариант B всегда идёт по чистому wg: awg, awg31 и masque умеет только
-            userspace-туннель warpscout. Для awg31 нужен warpscout 0.17.0 и новее
+            Вариант B всегда идёт по чистому wg: awg, awg3.1 и masque умеет только
+            userspace-туннель warpscout. Для awg3.1 нужен warpscout 0.17.0 и новее
             («Обновить warpscout» на странице).
           </span>
         </label>

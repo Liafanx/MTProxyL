@@ -18,6 +18,7 @@ WARP_PROTO=awg
 
 # Разбор настройки: awg31 допустим, мусор превращается в awg.
 WARP_PROTO=awg31; [ "$(_warp_configured_proto)" = awg31 ] || fail "_warp_configured_proto"
+WARP_PROTO=awg3.1; [ "$(_warp_configured_proto)" = awg31 ] || fail "алиас awg3.1 в настройке"
 WARP_PROTO=awgs; [ "$(_warp_configured_proto)" = awg ] || fail "мусорный протокол принят"
 
 # Старый бинарник (без awg31) не проходит и выбор отклоняется.
@@ -41,6 +42,8 @@ chmod 700 "$(_warp_bin)"
 _warp_bin_supports_awg31 || fail "новый бинарник без awg31"
 WARP_PROTO=awg31; _warp_bin_usable || fail "новый бинарник не прошёл _warp_bin_usable"
 warp_set_proto awg31 >/dev/null || fail "awg31 не сохранён"
+warp_set_proto awg3.1 >/dev/null || fail "алиас awg3.1 не принят"
+[ "$WARP_PROTO" = awg31 ] || fail "алиас сохранён не канонично: $WARP_PROTO"
 [ "$WARP_PROTO" = awg31 ] || fail "протокол не применился: $WARP_PROTO"
 warp_set_proto nope >/dev/null 2>&1 && fail "неверный протокол принят"
 

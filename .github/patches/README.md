@@ -2,7 +2,7 @@
 
 Источник: [vernette/warpscout, v0.17.0](https://github.com/vernette/warpscout/tree/v0.17.0),
 лицензия MIT сохраняется в архиве бинарника. Сборка MTProxyL: `0.17.0-mtproxyl.1`.
-Патч проверен на v0.17.0 без изменений и вместе с ней даёт протокол `awg31`.
+Патч проверен на v0.17.0 без изменений и вместе с ней даёт протокол `awg3.1` (в warpscout — `-p awg31`).
 
 `warpscout-tunnel-mtu.patch` добавляет параметр `socks -tunnel-mtu N` (1000–1500,
 по умолчанию 1280). Его использует сетевой стек WG/AWG и MASQUE. Параметр
