@@ -184,7 +184,7 @@ vless_link_use() {
     VLESS_ACTIVE="$_id"; save_settings
     log_success "Активная ссылка: ${_id}"
     if [ "${VLESS_ENABLED:-false}" = true ]; then
-        vless_apply || return 1
+        vless_reload_active || return 1
     fi
     return 0
 }
@@ -200,7 +200,7 @@ vless_link_remove() {
         VLESS_ACTIVE=$(awk -F'|' 'NR==1 {print $1}' "$_f")
         save_settings
         if [ "${VLESS_ENABLED:-false}" = true ]; then
-            if [ -n "$VLESS_ACTIVE" ]; then vless_apply; else vless_off; fi
+            if [ -n "$VLESS_ACTIVE" ]; then vless_reload_active; else vless_off; fi
         fi
     fi
     log_success "Ссылка ${_id} удалена"
@@ -358,7 +358,7 @@ PY
         VLESS_ACTIVE=$(awk -F'|' 'NR==1 {print $1}' "$(_vless_links)" 2>/dev/null)
         save_settings
     fi
-    [ "${VLESS_ENABLED:-false}" = true ] && [ -n "${VLESS_ACTIVE:-}" ] && vless_apply >/dev/null 2>&1 || true
+    [ "${VLESS_ENABLED:-false}" = true ] && [ -n "${VLESS_ACTIVE:-}" ] && vless_reload_active >/dev/null 2>&1 || true
 }
 
 # ── Конфиг и служба ────────────────────────────────────────
@@ -433,6 +433,15 @@ vless_apply() {
     _vless_apply_upstream || return 1
     _vless_engine_apply
     log_success "VLESS включён: socks5 127.0.0.1:${_port} → $(_vless_mask_uri "$(_vless_link_uri "$VLESS_ACTIVE")")"
+}
+
+# Смена ссылки не меняет upstream движка: перезапускаем только Xray, иначе
+# панель, опубликованная через движок на 443, пропадает на время рестарта.
+vless_reload_active() {
+    local _port; _port=$(_vless_port)
+    vless_config_write || return 1
+    vless_service_restart || { log_error "Служба VLESS не запустилась: journalctl -u ${VLESS_UNIT}"; return 1; }
+    log_success "VLESS переключён: socks5 127.0.0.1:${_port} → $(_vless_mask_uri "$(_vless_link_uri "$VLESS_ACTIVE")")"
 }
 
 _vless_engine_apply() {
@@ -818,7 +827,7 @@ vless_watch() {
         if [ -n "$_next" ] && [ "$_next" != "${VLESS_ACTIVE:-}" ]; then
             log_warn "Переключаем VLESS на ссылку ${_next}"
             VLESS_ACTIVE="$_next"; save_settings
-            vless_apply >/dev/null 2>&1 || true
+            vless_reload_active >/dev/null 2>&1 || true
         else
             vless_service_restart >/dev/null 2>&1 || true
         fi

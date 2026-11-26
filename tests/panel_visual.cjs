@@ -216,6 +216,26 @@ async function mock(page) {
     else if (url.pathname.endsWith('/mtproxyl/mode')) data = { mode: 'manager' };
     else if (url.pathname.endsWith('/mtproxyl/settings')) data = [];
     else if (url.pathname.endsWith('/availability/status')) data = { supported: false };
+    else if (url.pathname.endsWith('/availability/details')) data = {
+      enabled: true, auto_check: true, interval: 15, probes: 5, threshold: 50, history_limit: 100,
+      result: {
+        percentage: 100, level: 'green', total_probes: 5, success_probes: 5,
+        target: 'example.org:443', measurement_id: 'test', checked_at: new Date((now - 60) * 1000).toISOString(),
+        probes: [],
+      },
+      quota: { budget: 500, spent: 5, remaining: 495, reset_in_seconds: 3600, has_token: true },
+    };
+    else if (url.pathname.endsWith('/availability/history')) data = {
+      limit: 100,
+      points: Array.from({ length: 8 }, (_, i) => ({
+        percentage: 100, level: 'green', total_probes: 5, success_probes: 5,
+        target: 'example.org:443', measurement_id: `test-${i}`,
+        checked_at: new Date((now - (7 - i) * 300) * 1000).toISOString(),
+      })),
+    };
+    else if (url.pathname.endsWith('/availability/target')) data = {
+      override: {}, resolved: { host: 'example.org', port: 443, sni: 'example.org' },
+    };
     else if (url.pathname.endsWith('/history')) {
       data = { range: '30m', requested_from_epoch_secs: now - 1800, retention_secs: 7200,
         series: (url.searchParams.get('metric') || '').split(',').map((metric) => ({
@@ -450,6 +470,23 @@ async function checkWeb(page, state, width) {
   console.log(`panel WEB ${width}: ok`);
 }
 
+async function checkAvailability(page, width) {
+  await page.goto(`${base}/availability`);
+  await page.getByRole('heading', { name: 'История доступности', exact: true }).waitFor();
+  await page.getByText('Хранить проверок', { exact: true }).waitFor();
+  await page.evaluate(() => document.querySelector('button[aria-label="Свернуть историю доступности"]')?.click());
+  await page.getByRole('button', { name: 'Развернуть историю доступности', exact: true }).waitFor();
+  assert.equal(await page.getByText('Хранить проверок', { exact: true }).count(), 0, 'history controls visible when collapsed');
+  await page.reload();
+  await page.getByRole('button', { name: 'Развернуть историю доступности', exact: true }).waitFor();
+  assert.equal(await page.getByText('Хранить проверок', { exact: true }).count(), 0, 'collapsed state not persisted');
+  await page.getByRole('button', { name: 'Развернуть историю доступности', exact: true }).click();
+  await page.getByText('Хранить проверок', { exact: true }).waitFor();
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `availability overflow ${width}`);
+  await page.screenshot({ path: path.join(output, `availability-${width}.png`), fullPage: true });
+  console.log(`panel availability ${width}: ok`);
+}
+
 async function checkSettings(page, state, width) {
   let release;
   state.brandingWait = new Promise((resolve) => { release = resolve; });
@@ -647,6 +684,7 @@ async function checkMtdd(page, state, width) {
         else if (process.argv.includes('--mtdd')) { await checkMtdd(page, state, width); await checkVless(page, width); }
         else if (process.argv.includes('--warp-mtu')) await checkWarpMTU(page, state, width);
         else if (process.argv.includes('--web')) await checkWeb(page, state, width);
+        else if (process.argv.includes('--availability')) await checkAvailability(page, width);
         else if (process.argv.includes('--enhancements')) await checkEnhancements(page, state, width);
         else if (process.argv.includes('--navigation')) await checkNavigation(page, state, width);
         else {

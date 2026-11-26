@@ -35,9 +35,12 @@ upstream_add() { echo "add $1 $2 $3 $6 $8" >> "$t/up.log"; }
 upstream_remove() { echo "rm $1" >> "$t/up.log"; }
 upstream_toggle() { echo "toggle $1 $2" >> "$t/up.log"; }
 generate_telemt_config() { :; }; is_proxy_running() { return 1; }; restart_proxy_container() { :; }
+_engine_calls=0
+_vless_engine_apply() { _engine_calls=$((_engine_calls + 1)); }
 mtdd_mgr_active() { return 1; }
 systemctl() {
     case "$1" in
+        restart) echo restart >> "$t/restart.log" ;;
         is-active) echo active ;;
         *) return 0 ;;
     esac
@@ -63,6 +66,7 @@ vless_link_add "$URI2" WS >/dev/null || fail "add 2"
 vless_link_add "$URI1" Reality >/dev/null || fail "повтор add"
 [ "$(grep -c . "$(_vless_links)")" = 2 ] || fail "дубликат ссылки"
 ID1=$(_vless_uri_id "$URI1")
+ID2=$(_vless_uri_id "$URI2")
 mask=$(_vless_mask_uri "$(_vless_link_uri "$ID1")")
 [[ "$mask" != *11111111* && "$mask" != *AAAAAAAA* ]] || fail "маска светит секрет: $mask"
 
@@ -76,6 +80,18 @@ vless_config_write || fail "config_write"
 grep -q '"realitySettings"' "$(_vless_conf)" || fail "нет reality в конфиге"
 grep -q "\"port\": $(_vless_port)" "$(_vless_conf)" || fail "нет socks-порта"
 grep -q "$ID1" "$(_vless_conf)" && fail "id попал в конфиг"
+
+# Смена ссылки при включённом VLESS перезапускает только Xray, не движок:
+# иначе панель на 443 движка пропадает вместе с ответом на запрос.
+VLESS_ENABLED=true
+VLESS_ACTIVE=$ID1
+_engine_calls=0
+: > "$t/restart.log"
+vless_link_use "$ID2" >/dev/null || fail "link use при включённом VLESS"
+[ "$_engine_calls" = 0 ] || fail "link use перезапустил движок"
+grep -q '^restart$' "$t/restart.log" || fail "link use не перезапустил Xray"
+VLESS_ACTIVE=$ID1
+VLESS_ENABLED=false
 
 # Включение: upstream socks5 + локальная замаскировка не нужна.
 vless_on >/dev/null || fail "vless_on"
