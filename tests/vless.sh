@@ -106,15 +106,64 @@ $URI4
 EOF
 base64 -w0 "$t/feed" > "$t/feed.b64"
 curl() {
-    local _out="" _prev=""
-    for a in "$@"; do [ "$_prev" = "-o" ] && _out="$a"; _prev="$a"; done
+    local _out="" _hdr="" _prev=""
+    printf '%s\n' "$@" >> "$t/curl.log"
+    for a in "$@"; do
+        [ "$_prev" = "-o" ] && _out="$a"
+        [ "$_prev" = "-D" ] && _hdr="$a"
+        _prev="$a"
+    done
+    : > "$_hdr" 2>/dev/null
+    printf 'profile-title: VTest\n' > "$_hdr" 2>/dev/null
     cp "$t/feed.b64" "$_out" 2>/dev/null
+    printf '200'
 }
 VLESS_ACTIVE=$ID1
 vless_sub_set "https://example.org/sub" >/dev/null 2>&1 || fail "sub set"
 [ "$(grep -c '|sub|' "$(_vless_links)")" = 2 ] || fail "sub-ссылки: $(cat "$(_vless_links)")"
 grep -q '|manual|' "$(_vless_links)" || fail "ручные ссылки пропали"
+# JSON-подписка (Xray): VLESS из outbounds, имена из remarks, прочее пропускается.
+PBK=$(python3 -I -c 'import base64; print(base64.urlsafe_b64encode(b"0"*32).decode().rstrip("="))')
+cat > "$t/sub.json" <<JSON
+[{"remarks":"JSON node","outbounds":[
+ {"tag":"proxy","protocol":"vless","settings":{"vnext":[{"address":"example.org","port":443,"users":[{"id":"77777777-7777-7777-7777-777777777777","encryption":"none"}]}]},"streamSettings":{"network":"xhttp","security":"reality","realitySettings":{"serverName":"example.org","publicKey":"$PBK","shortId":"ab12","fingerprint":"chrome"},"xhttpSettings":{"path":"/xhttp","mode":"auto"}}},
+ {"tag":"hy","protocol":"hysteria"},
+ {"tag":"block","protocol":"blackhole"}
+]}]
+JSON
+python3 -I "$repo/lib/vless_parse.py" from-json "$t/sub.json" > "$t/sub.uris" || fail "from-json"
+[ "$(grep -c '^vless://' "$t/sub.uris")" = 1 ] || fail "JSON: не один VLESS"
+python3 -I "$repo/lib/vless_parse.py" check "$(cat "$t/sub.uris")" | jq -e '.security=="reality" and .transport=="xhttp" and .name=="JSON node"' >/dev/null || fail "JSON: поля VLESS"
+cp "$t/sub.json" "$t/feed.b64"
+vless_sub_refresh >/dev/null 2>&1 || fail "JSON-подписка"
+[ "$(grep -c '|sub|' "$(_vless_links)")" = 1 ] || fail "JSON-ссылка не импортирована"
+vless_sub_off >/dev/null || fail "sub off JSON"
+
+# HWID: стабильный, допустимого формата, уходит заголовками вместе с UA Happ.
+VLESS_HWID_ENABLED=true; VLESS_HWID=""
+vless_sub_set "https://example.org/sub" >/dev/null 2>&1 || fail "sub set перед HWID"
+h1=$(_vless_hwid); h2=$(_vless_hwid)
+[ "$h1" = "$h2" ] || fail "HWID нестабилен"
+[[ "$h1" =~ ^[A-Za-z0-9=-]{10,64}$ ]] || fail "HWID формат: $h1"
+vless_sub_refresh >/dev/null 2>&1 || fail "sub refresh с HWID"
+grep -qx -- "-A" "$t/curl.log" || fail "UA не задан"
+grep -qx -- "Happ/3.23.0" "$t/curl.log" || fail "UA не Happ"
+grep -qx -- "x-hwid: $h1" "$t/curl.log" || fail "x-hwid не передан"
+grep -qx -- "X-Device-ID: $h1" "$t/curl.log" || fail "X-Device-ID не передан"
+grep -q "VTest" "$(_vless_sub_title_file)" || fail "profile-title не сохранён"
+: > "$t/curl.log"
+VLESS_HWID_ENABLED=false
+vless_sub_refresh >/dev/null 2>&1 || fail "sub refresh без HWID"
+grep -q '^x-hwid:' "$t/curl.log" && fail "HWID отправлен при выключенном"
+VLESS_HWID_ENABLED=true
+# Ссылка-подсказка провайдера (0.0.0.0) не импортируется, текст сохраняется.
+printf 'vless://55555555-5555-5555-5555-555555555555@0.0.0.0:443?security=none&type=tcp#Выберите приложение поддерживающие передачу HWID\n' > "$t/feed.raw"
+base64 -w0 "$t/feed.raw" > "$t/feed.b64"
+vless_sub_refresh >/dev/null 2>&1 || fail "sub refresh с подсказкой"
+[ "$(grep -c '|sub|' "$(_vless_links)")" = 0 ] || fail "подсказка импортирована"
+grep -q 'HWID' "$(_vless_sub_notice_file)" || fail "текст подсказки не сохранён"
 vless_sub_off >/dev/null || fail "sub off"
+vless_status_json | jq -e '(.hwid|length) > 0 and .hwid_enabled == true and (.sub_ua|length) > 0' >/dev/null || fail "status: HWID и UA"
 
 # Отказ: первые две проверки — перезапуск, четвёртая — смена ссылки.
 VLESS_ENABLED=true

@@ -3557,7 +3557,7 @@ mtproxyl vless link add 'vless://…' имя   # добавить ссылку
 mtproxyl vless link list                  # id, имя, тип и адрес (без секретов)
 mtproxyl vless link use <id>              # сделать активной
 mtproxyl vless link remove <id>           # удалить
-mtproxyl vless sub set https://…           # подписка: base64 или список vless://
+mtproxyl vless sub set https://…           # подписка: base64, список vless:// или JSON
 mtproxyl vless sub refresh                 # обновить подписку
 mtproxyl vless on                          # весь трафик движка через VLESS
 mtproxyl vless status [--json]             # состояние, активная ссылка, ядро
@@ -3581,6 +3581,20 @@ Telegram, а socks5 отдаёт клиенту собственный адре�
 идёт к DC маршрутом Direct через VLESS. Рекламный тег при этом не действует.
 После `vless off` ME нужно вернуть: `mtproxyl expert clear general use_middle_proxy`
 (MTProxyL напомнит).
+
+**HWID и User-Agent подписки.** Провайдеры Happ и INCY считают устройства по
+заголовку `x-hwid` и могут отдавать вместо ссылок подсказку «выберите приложение,
+поддерживающее HWID». MTProxyL отправляет стабильный HWID (32 hex, создаётся из
+`/etc/machine-id`), `X-Device-ID`, `x-device-os: Linux`, `x-ver-os`, `x-device-model`
+и `User-Agent: Happ/3.23.0`; последний меняется командой `vless sub ua <строка>`.
+HWID можно показать, пересоздать или отключить: `vless hwid [show|regen|on|off]`.
+Подписка принимается в трёх видах: base64 от списка ссылок, обычный список
+`vless://` и JSON профиля Xray или sing-box. Из JSON берутся VLESS-выходы
+(Reality/TLS, XHTTP, WS, gRPC, HTTPUpgrade, mKCP), имена — из `remarks` и `tag`;
+остальные протоколы (Hysteria2, TUIC, Shadowsocks) пропускаются, потому что
+работают через Xray только как отдельные выходы. Ссылки-заглушки с адресом
+`0.0.0.0` не импортируются, их текст показывается на странице VLESS как сообщение
+подписки. Пересоздание HWID провайдер увидит как новое устройство.
 
 Ссылки и подписка хранятся в `/opt/mtproxyl/vless/` с правами 0600: в них UUID
 и ключи Reality. В списках, панели и `report` секреты не показываются, в бэкап

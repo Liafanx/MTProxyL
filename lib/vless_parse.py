@@ -11,7 +11,7 @@ import json
 import os
 import re
 import sys
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
 
 FINGERPRINTS = {
     "chrome", "firefox", "safari", "ios", "android", "edge", "360", "qq",
@@ -277,6 +277,168 @@ def config(uri, port):
     }
 
 
+def _first(value, default=""):
+    if isinstance(value, list):
+        return value[0] if value else default
+    return value if value is not None else default
+
+
+def _join_name(*parts):
+    return " · ".join(str(p) for p in parts if p)
+
+
+def _uri(host, port, uid, enc, flow, params, name):
+    q = {k: v for k, v in params.items() if v not in (None, "", [])}
+    if enc and enc != "none":
+        q["encryption"] = enc
+    if flow:
+        q["flow"] = flow
+    h = "[%s]" % host if ":" in host else host
+    return "vless://%s@%s:%s?%s#%s" % (quote(uid, safe=""), h, port,
+                                       urlencode(q, quote_via=quote),
+                                       quote(name or host, safe=""))
+
+
+def xray_to_uri(out, remarks=""):
+    settings = out.get("settings") or {}
+    vnext = (settings.get("vnext") or [{}])[0]
+    user = (vnext.get("users") or [{}])[0]
+    host = vnext.get("address") or ""
+    port = vnext.get("port")
+    uid = user.get("id") or ""
+    if not host or not port or not uid:
+        return None
+    ss = out.get("streamSettings") or {}
+    net = (ss.get("network") or "tcp").lower()
+    if net == "raw":
+        net = "tcp"
+    sec = (ss.get("security") or "none").lower()
+    tls = ss.get("tlsSettings") or {}
+    reality = ss.get("realitySettings") or {}
+    p = {"security": sec, "type": net}
+    if sec in ("tls", "reality"):
+        p["sni"] = reality.get("serverName") or tls.get("serverName") or host
+        fp = reality.get("fingerprint") or tls.get("fingerprint")
+        if fp:
+            p["fp"] = fp
+        alpn = tls.get("alpn")
+        if alpn:
+            p["alpn"] = ",".join(alpn) if isinstance(alpn, list) else str(alpn)
+        if tls.get("allowInsecure") or ss.get("allowInsecure"):
+            p["allowInsecure"] = "1"
+    if sec == "reality":
+        p["pbk"] = reality.get("publicKey")
+        p["sid"] = reality.get("shortId")
+        p["spx"] = reality.get("spiderX") or "/"
+        if reality.get("mldsa65Verify"):
+            p["pqv"] = reality["mldsa65Verify"]
+    if net == "tcp":
+        hdr = ((ss.get("tcpSettings") or {}).get("header") or {})
+        ht = (hdr.get("type") or "none").lower()
+        if ht == "http":
+            p["headerType"] = "http"
+            req = hdr.get("request") or {}
+            p["path"] = _first(req.get("path"), "/")
+            p["host"] = _first((req.get("headers") or {}).get("Host"))
+    elif net == "ws":
+        w = ss.get("wsSettings") or {}
+        path = w.get("path") or "/"
+        if w.get("maxEarlyData"):
+            path += ("&" if "?" in path else "?") + "ed=%s" % w["maxEarlyData"]
+        p["path"] = path
+        p["host"] = _first((w.get("headers") or {}).get("Host"))
+    elif net == "grpc":
+        g = ss.get("grpcSettings") or {}
+        p["serviceName"] = g.get("serviceName")
+        p["authority"] = g.get("authority")
+    elif net == "httpupgrade":
+        u = ss.get("httpupgradeSettings") or {}
+        p["path"] = u.get("path") or "/"
+        p["host"] = u.get("host")
+    elif net == "xhttp":
+        x = ss.get("xhttpSettings") or {}
+        p["path"] = x.get("path") or "/"
+        p["host"] = x.get("host")
+        p["mode"] = x.get("mode")
+        if x.get("extra"):
+            p["extra"] = json.dumps(x["extra"], separators=(",", ":"), ensure_ascii=False)
+    elif net == "kcp":
+        k = ss.get("kcpSettings") or {}
+        p["headerType"] = (k.get("header") or {}).get("type")
+        p["seed"] = k.get("seed")
+    name = _join_name(remarks, out.get("tag") if out.get("tag") not in ("proxy", "vless-out") else "")
+    return _uri(host, port, uid, user.get("encryption") or "none", user.get("flow"), p, name)
+
+
+def singbox_to_uri(out, remarks=""):
+    host = out.get("server")
+    port = out.get("server_port")
+    uid = out.get("uuid")
+    if not host or not port or not uid:
+        return None
+    tls = out.get("tls") or {}
+    reality = tls.get("reality") or {}
+    utls = tls.get("utls") or {}
+    tr = out.get("transport") or {}
+    net = (tr.get("type") or "tcp").lower()
+    sec = "reality" if reality.get("enabled") else ("tls" if tls.get("enabled") else "none")
+    p = {"security": sec, "type": net}
+    if sec in ("tls", "reality"):
+        p["sni"] = tls.get("server_name") or host
+        fp = utls.get("fingerprint") or "chrome"
+        p["fp"] = fp
+        if tls.get("alpn"):
+            p["alpn"] = ",".join(tls["alpn"])
+        if tls.get("insecure"):
+            p["allowInsecure"] = "1"
+    if sec == "reality":
+        p["pbk"] = reality.get("public_key")
+        p["sid"] = reality.get("short_id")
+    if net == "ws":
+        p["path"] = tr.get("path") or "/"
+        p["host"] = _first((tr.get("headers") or {}).get("Host"))
+        if tr.get("max_early_data"):
+            p["path"] += ("&" if "?" in p["path"] else "?") + "ed=%s" % tr["max_early_data"]
+    elif net == "grpc":
+        p["serviceName"] = tr.get("service_name")
+    elif net == "httpupgrade":
+        p["path"] = tr.get("path") or "/"
+        p["host"] = tr.get("host")
+    elif net == "xhttp":
+        p["path"] = tr.get("path") or "/"
+        p["host"] = tr.get("host")
+        p["mode"] = tr.get("mode")
+    return _uri(host, port, uid, out.get("encryption") or "none", out.get("flow"), p,
+                _join_name(remarks, out.get("tag")))
+
+
+def cmd_from_json(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        fail("JSON подписки не прочитан: %s" % e)
+    profiles = data if isinstance(data, list) else [data]
+    found = 0
+    for item in profiles:
+        if not isinstance(item, dict):
+            continue
+        remarks = item.get("remarks") or (item.get("meta") or {}).get("name") or ""
+        outs = item.get("outbounds") or []
+        for out in outs:
+            uri = None
+            proto = out.get("protocol") or out.get("type")
+            if proto == "vless" and "vnext" in (out.get("settings") or {}):
+                uri = xray_to_uri(out, remarks)
+            elif proto == "vless":
+                uri = singbox_to_uri(out, remarks)
+            if uri:
+                print(uri)
+                found += 1
+    if not found:
+        fail("в JSON-подписке нет VLESS-выходов")
+
+
 def cmd_check(uri):
     _, meta = parse(uri)
     print(json.dumps(meta, ensure_ascii=False))
@@ -320,6 +482,10 @@ def main(argv):
         if len(argv) < 5:
             fail("использование: vless_parse.py build URI PORT FILE")
         cmd_build(argv[2], argv[3], argv[4])
+    elif cmd == "from-json":
+        if len(argv) < 3:
+            fail("использование: vless_parse.py from-json FILE")
+        cmd_from_json(argv[2])
     elif cmd == "probe":
         if len(argv) < 5:
             fail("использование: vless_parse.py probe PORT HOST TPORT")

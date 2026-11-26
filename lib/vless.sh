@@ -203,6 +203,36 @@ vless_link_remove() {
     log_success "Ссылка ${_id} удалена"
 }
 
+# ── HWID ────────────────────────────────────────────────────
+# Провайдеры (Remnawave, Happ, INCY) считают устройства по x-hwid и отдают
+# ссылки только знакомому User-Agent. Идентификатор стабилен для установки:
+# иначе каждая проверка подписки считалась бы новым устройством.
+_vless_hwid() {
+    if [ -n "${VLESS_HWID:-}" ]; then printf '%s\n' "$VLESS_HWID"; return 0; fi
+    local _seed=""
+    [ -r /etc/machine-id ] && _seed=$(tr -d ' \n' < /etc/machine-id 2>/dev/null)
+    [ -n "$_seed" ] || _seed=$(hostname 2>/dev/null)
+    VLESS_HWID=$(printf 'mtproxyl-vless:%s' "$_seed" | sha256sum | cut -c1-32)
+    save_settings
+    printf '%s\n' "$VLESS_HWID"
+}
+
+vless_hwid_regen() {
+    check_root
+    VLESS_HWID=$(head -c16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+    save_settings
+    log_success "Новый HWID: ${VLESS_HWID}"
+    log_info "Провайдер увидит новое устройство; старые привязки останутся на прежнем"
+}
+
+_vless_sub_notice_file() { echo "$(_vless_dir)/sub.notice"; }
+
+_vless_sub_title_file() { echo "$(_vless_dir)/sub.title"; }
+
+_vless_placeholder_host() {
+    case "$1" in 0.0.0.0|127.0.0.1|::|::1|localhost|"") return 0 ;; *) return 1 ;; esac
+}
+
 # ── Подписка ────────────────────────────────────────────────
 _vless_sub_url() { awk -F'|' 'NR==1 {print $2}' "$(_vless_subs)" 2>/dev/null; }
 
@@ -227,16 +257,46 @@ vless_sub_refresh() {
     check_root
     local _url; _url=$(_vless_sub_url)
     [ -n "$_url" ] || { log_error "Подписка не задана: mtproxyl vless sub set <https-url>"; return 1; }
-    local _tmp; _tmp=$(mktemp /tmp/mtproxyl-sub.XXXXXX) || return 1
-    if ! curl -fsSL --max-time 45 -A "MTProxyL/${VERSION:-dev}" "$_url" -o "$_tmp" 2>/dev/null; then
-        rm -f "$_tmp"; log_error "Подписка не скачалась"; return 1
+    local _tmp _hdrfile _code _hwid
+    _tmp=$(mktemp /tmp/mtproxyl-sub.XXXXXX) || return 1
+    _hdrfile=$(mktemp /tmp/mtproxyl-sub-h.XXXXXX) || { rm -f "$_tmp"; return 1; }
+    local -a _hh=(-A "${VLESS_SUB_UA:-Happ/3.23.0}" -H "Accept: */*")
+    if [ "${VLESS_HWID_ENABLED:-true}" = true ]; then
+        _hwid=$(_vless_hwid)
+        _hh+=(-H "x-hwid: ${_hwid}" -H "X-Device-ID: ${_hwid}"
+              -H "x-device-os: Linux" -H "x-ver-os: $(uname -r)"
+              -H "x-device-model: MTProxyL" -H "x-xray-core: ${VLESS_VERSION}")
     fi
+    _code=$(curl -sS --compressed --max-time 45 "${_hh[@]}" -D "$_hdrfile" -o "$_tmp" -w '%{http_code}' "$_url" 2>/dev/null) || _code=""
+    if [ -z "$_code" ] && [ ! -s "$_tmp" ]; then
+        rm -f "$_tmp" "$_hdrfile"; log_error "Подписка не скачалась"; return 1
+    fi
+    if [ -n "$_code" ] && [ "$_code" != 200 ] && [ "$_code" != 204 ]; then
+        rm -f "$_tmp" "$_hdrfile"
+        if [ "$_code" = 403 ] || [ "$_code" = 404 ]; then
+            log_error "Подписка ответила ${_code}: провайдер ограничивает устройства или требует HWID"
+        else
+            log_error "Подписка ответила HTTP ${_code}"
+        fi
+        return 1
+    fi
+    # Заголовки профиля: title приходит и в base64, и обычным текстом.
+    local _title; _title=$(sed -n 's/^[Pp]rofile-[Tt]itle: *//p' "$_hdrfile" | tr -d '\r' | head -1)
+    if [ -n "$_title" ]; then
+        printf '%s' "$_title" | base64 -d > "$(_vless_sub_title_file)" 2>/dev/null \
+            || printf '%s' "$_title" > "$(_vless_sub_title_file)"
+    fi
+    rm -f "$_hdrfile"
     local _list; _list=$(mktemp /tmp/mtproxyl-sub-list.XXXXXX) || { rm -f "$_tmp"; return 1; }
     if grep -q 'vless://' "$_tmp"; then
         cp "$_tmp" "$_list"
     else
-        # Обычная подписка — base64 от списка ссылок.
-        python3 -I - "$_tmp" "$_list" <<'PY' || { rm -f "$_tmp" "$_list"; log_error "Подписка не разобрана"; return 1; }
+        # Может быть base64 от списка ссылок или JSON (Xray/sing-box).
+        local _first; _first=$(head -c 1 "$_tmp" | tr -d '[:space:]')
+        if [ "$_first" = "{" ] || [ "$_first" = "[" ]; then
+            cp "$_tmp" "$_list"
+        else
+            python3 -I - "$_tmp" "$_list" <<'PY' || { rm -f "$_tmp" "$_list"; log_error "Подписка не разобрана"; return 1; }
 import base64, sys
 raw = open(sys.argv[1], "rb").read()
 try:
@@ -245,6 +305,16 @@ except Exception:
     text = raw.decode("utf-8", "replace")
 open(sys.argv[2], "w", encoding="utf-8").write(text)
 PY
+        fi
+        _first=$(head -c 1 "$_list" | tr -d '[:space:]')
+        if [ "$_first" = "{" ] || [ "$_first" = "[" ]; then
+            if ! python3 -I "$(_vless_parser)" from-json "$_list" > "${_list}.json" 2>/dev/null; then
+                rm -f "$_tmp" "$_list" "${_list}.json"
+                log_error "В JSON-подписке нет VLESS-выходов"
+                return 1
+            fi
+            mv -f "${_list}.json" "$_list"
+        fi
     fi
     rm -f "$_tmp"
 
@@ -254,18 +324,29 @@ PY
         local _t; _t=$(mktemp "${_f}.XXXXXX") || { rm -f "$_list"; return 1; }
         awk -F'|' '$3 != "sub"' "$_f" > "$_t" && chmod 600 "$_t" && mv -f "$_t" "$_f"
     fi
-    local _added=0 _bad=0 _line
+    local _added=0 _bad=0 _notice="" _line _meta _host _lname
     while IFS= read -r _line; do
         _line=$(tr -d '\r' <<< "$_line")
         [ -n "$_line" ] || continue
         case "$_line" in vless://*) ;; *) continue ;; esac
         if _vless_valid_uri "$_line"; then
+            _meta=$(_vless_parse check "$_line" 2>/dev/null || echo '{}')
+            _host=$(python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("host",""))' <<< "$_meta" 2>/dev/null)
+            if _vless_placeholder_host "$_host"; then
+                # Провайдер вставляет ссылку-подсказку с именем вместо адреса.
+                _lname=$(python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("name",""))' <<< "$_meta" 2>/dev/null)
+                [ -n "$_lname" ] && _notice="$_lname"
+                _bad=$((_bad + 1))
+                continue
+            fi
             vless_link_add "$_line" "" sub >/dev/null 2>&1 && _added=$((_added + 1))
         else
             _bad=$((_bad + 1))
         fi
     done < "$_list"
     rm -f "$_list"
+    if [ -n "$_notice" ]; then printf '%s\n' "$_notice" > "$(_vless_sub_notice_file)"
+    else rm -f "$(_vless_sub_notice_file)"; fi
     local _f2; _f2=$(_vless_subs); _url=$(_vless_sub_url)
     [ -n "$_url" ] && printf '%s|%s|%s\n' "$(_vless_uri_id "$_url")" "$_url" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$_f2"
     chmod 600 "$_f2" 2>/dev/null || true
@@ -622,7 +703,8 @@ PY
         "$_ver" "$(_vless_port)" "$_active" \
         "$(_vless_links_json)" \
         "$([ -s "$(_vless_subs)" ] && echo true || echo false)" \
-        "${VLESS_WATCHDOG_ENABLED:-true}" <<'PY'
+        "${VLESS_WATCHDOG_ENABLED:-true}" "$(_vless_hwid 2>/dev/null)" "${VLESS_HWID_ENABLED:-true}" \
+        "${VLESS_SUB_UA:-}" "$(cat "$(_vless_sub_notice_file)" 2>/dev/null | head -1)" <<'PY'
 import json, sys
 active = json.loads(sys.argv[5]) if sys.argv[5] else None
 links = json.loads(sys.argv[6]) if sys.argv[6] else []
@@ -636,6 +718,10 @@ print(json.dumps({
     "links_count": len(links),
     "subscription": sys.argv[7] == "true",
     "watchdog": sys.argv[8] == "true",
+    "hwid": sys.argv[9] if len(sys.argv) > 9 else "",
+    "hwid_enabled": sys.argv[10] == "true" if len(sys.argv) > 10 else True,
+    "sub_ua": sys.argv[11] if len(sys.argv) > 11 else "",
+    "sub_notice": sys.argv[12] if len(sys.argv) > 12 else "",
 }, ensure_ascii=False))
 PY
 }
@@ -654,6 +740,10 @@ if d["active"]:
 else:
     print("  Активная ссылка не выбрана")
 print("  SOCKS5: 127.0.0.1:%s · ссылок: %s · подписка: %s" % (d["socks_port"], d.get("links_count", 0), "да" if d["subscription"] else "нет"))
+if d.get("hwid"):
+    print("  HWID: %s%s · клиент подписки: %s" % (d["hwid"], "" if d.get("hwid_enabled", True) else " (не отправляется)", d.get("sub_ua") or "MTProxyL"))
+if d.get("sub_notice"):
+    print("  Подписка: %s" % d["sub_notice"])
 print()
 PY
 }
@@ -721,6 +811,13 @@ vless_watch() {
 }
 
 # ── CLI ─────────────────────────────────────────────────────
+vless_sub_set_ua() {
+    local _ua="$*"
+    [ -n "$_ua" ] || { log_error "Укажите User-Agent, например Happ/3.23.0"; return 1; }
+    VLESS_SUB_UA="$_ua"; save_settings
+    log_success "User-Agent подписки: ${VLESS_SUB_UA}"
+}
+
 handle_vless_command() {
     local _sub="${1:-status}"
     case "$_sub" in
@@ -741,7 +838,16 @@ handle_vless_command() {
                 set)     vless_sub_set "${3:-}" ;;
                 refresh) vless_sub_refresh ;;
                 off)     vless_sub_off ;;
-                *) log_error "vless sub [set <url>|refresh|off]"; return 1 ;;
+                ua)      vless_sub_set_ua "${3:-}" ;;
+                *) log_error "vless sub [set <url>|refresh|off|ua <строка>]"; return 1 ;;
+            esac ;;
+        hwid)
+            case "${2:-show}" in
+                show|"") _vless_hwid ;;
+                regen|new) vless_hwid_regen ;;
+                on|enable)  VLESS_HWID_ENABLED="true"; save_settings; log_success "HWID отправляется в подписке" ;;
+                off|disable) VLESS_HWID_ENABLED="false"; save_settings; log_success "HWID не отправляется" ;;
+                *) log_error "vless hwid [show|regen|on|off]"; return 1 ;;
             esac ;;
         test)
             if [ "${2:-}" = --json ]; then vless_test_json; else vless_test; fi ;;
@@ -761,6 +867,8 @@ handle_vless_command() {
             echo -e "    ${GREEN}vless link list|use|remove${NC} <ID>  Список и выбор активной"
             echo -e "    ${GREEN}vless sub set${NC} <URL>     Подписка (base64 или список ссылок)"
             echo -e "    ${GREEN}vless sub refresh|off${NC}   Обновить или отключить подписку"
+            echo -e "    ${GREEN}vless sub ua${NC} <строка>   User-Agent подписки (Happ/3.23.0 по умолчанию)"
+            echo -e "    ${GREEN}vless hwid${NC} [show|regen|on|off]  Идентификатор устройства для подписки"
             echo -e "    ${GREEN}vless test${NC} [--json]     Выходной IP, Telegram, DC"
             echo -e "    ${GREEN}vless update${NC}            Обновить Xray-core"
             echo -e "    ${GREEN}vless rollback${NC}          Предыдущая сборка Xray"

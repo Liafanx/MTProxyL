@@ -977,6 +977,32 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		}
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
+	mux.Handle("POST /api/mtproxyl/vless/hwid", protected(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Action string `json:"action"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		out, err := client.VlessHwid(r.Context(), req.Action)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "vless_hwid_failed", err.Error())
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"output": out})
+	}))
+
+	mux.Handle("POST /api/mtproxyl/vless/sub/ua", protected(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			UA string `json:"ua"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		out, err := client.VlessSubUA(r.Context(), req.UA)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "vless_ua_invalid", err.Error())
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"output": out})
+	}))
+
 	mux.Handle("POST /api/mtproxyl/vless/update", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) || busy(w) {
 			return

@@ -524,6 +524,10 @@ export interface VlessStatus {
   links_count: number;
   subscription: boolean;
   watchdog: boolean;
+  hwid: string;
+  hwid_enabled: boolean;
+  sub_ua: string;
+  sub_notice: string;
 }
 
 export interface VlessTest {
@@ -560,6 +564,16 @@ export const vlessApi = {
     request<{ output: string }>(MTPROXYL_BASE, '/vless/sub', {
       method: 'POST',
       body: JSON.stringify({ url }),
+    }),
+  hwid: (action: 'regen' | 'on' | 'off') =>
+    request<{ output: string }>(MTPROXYL_BASE, '/vless/hwid', {
+      method: 'POST',
+      body: JSON.stringify({ action }),
+    }),
+  subUA: (ua: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/vless/sub/ua', {
+      method: 'POST',
+      body: JSON.stringify({ ua }),
     }),
   subRefresh: () =>
     request<{ output: string }>(MTPROXYL_BASE, '/vless/sub/refresh', { method: 'POST' }),

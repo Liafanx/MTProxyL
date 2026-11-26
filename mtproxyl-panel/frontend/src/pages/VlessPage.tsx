@@ -13,8 +13,8 @@ const typeLabel = (l: VlessLink) =>
 
 /**
  * VLESS: локальный Xray поднимает SOCKS5, и весь трафик движка идёт через
- * выбранную ссылку (или подписку). Middle proxy при этом остаётся включённым —
- * в отличие от WARP, выход здесь обычный сервер, а не CGNAT Cloudflare.
+ * выбранную ссылку (или подписку). Middle proxy с VLESS не работает: socks5
+ * не сохраняет адрес и порт, поэтому ME выключается с согласия администратора.
  */
 export function VlessPage() {
   const { data, error, loading, refresh } = usePolling(() => vlessApi.status(), 10000);
@@ -28,6 +28,7 @@ export function VlessPage() {
   const [test, setTest] = useState<VlessTest | null>(null);
   const [conflict, setConflict] = useState('');
   const [allowME, setAllowME] = useState(false);
+  const [ua, setUA] = useState('');
 
   const run = useCallback(async (fn: () => Promise<{ output?: string } | void>, ok = '') => {
     setBusy(true);
@@ -70,6 +71,8 @@ export function VlessPage() {
   };
 
   const active = data?.active ?? null;
+
+  const subUAChanged = !!data && ua.trim() !== (data.sub_ua || '');
 
   return (
     <div className="p-4 lg:p-6 space-y-4">
@@ -156,6 +159,62 @@ export function VlessPage() {
                   <div>api.telegram.org: {test.telegram} · TCP до DC: {test.dc}</div>
                 </div>
               )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>HWID и клиент подписки</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-text-secondary">
+                Провайдеры Happ и INCY считают устройства по заголовку <span className="font-mono">x-hwid</span>
+                {' '}и могут отдавать ссылки только знакомому клиенту. Идентификатор стабилен для этой установки.
+              </p>
+              {data.sub_notice && (
+                <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm break-words">
+                  Подписка вернула подсказку вместо ссылки: {data.sub_notice}
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <span className="text-text-secondary">HWID:</span>
+                <span className="font-mono break-all min-w-0 flex-1 sm:flex-none">{data.hwid || 'не создан'}</span>
+                <label className="flex items-center gap-2 text-text-secondary cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={data.hwid_enabled}
+                    disabled={busy}
+                    onChange={(e) => void run(() => vlessApi.hwid(e.target.checked ? 'on' : 'off'), e.target.checked ? 'HWID отправляется' : 'HWID не отправляется')}
+                    className="accent-[var(--color-accent,#3b82f6)]"
+                  />
+                  Передавать в подписке
+                </label>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void run(() => vlessApi.hwid('regen'), 'HWID обновлён')}
+                >
+                  Новый HWID
+                </Button>
+              </div>
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="flex-1 min-w-[260px]">
+                  <Label htmlFor="vless-ua" className="text-xs">User-Agent подписки</Label>
+                  <Input
+                    id="vless-ua"
+                    value={ua || data.sub_ua}
+                    onChange={(e) => setUA(e.target.value)}
+                    placeholder="Happ/3.23.0"
+                    className="font-mono"
+                  />
+                </div>
+                <Button
+                  variant="outline"
+                  disabled={busy || !subUAChanged}
+                  onClick={() => void run(() => vlessApi.subUA(ua), 'User-Agent сохранён')}
+                >
+                  Сохранить
+                </Button>
+              </div>
             </CardContent>
           </Card>
 

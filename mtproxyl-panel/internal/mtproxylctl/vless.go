@@ -134,6 +134,29 @@ func (c *Client) VlessSubOff(ctx context.Context) (string, error) {
 	return stripANSI(out), err
 }
 
+// VlessHwid shows or regenerates the device identifier sent with subscription
+// requests, or toggles whether it is sent.
+func (c *Client) VlessHwid(ctx context.Context, action string) (string, error) {
+	switch action {
+	case "", "show", "regen", "on", "off":
+	default:
+		return "", fmt.Errorf("неизвестное действие HWID")
+	}
+	if action == "" {
+		action = "show"
+	}
+	return c.run(ctx, "vless", "hwid", action)
+}
+
+// VlessSubUA sets the User-Agent used for subscription requests.
+func (c *Client) VlessSubUA(ctx context.Context, ua string) (string, error) {
+	ua = strings.TrimSpace(ua)
+	if ua == "" || len(ua) > 200 {
+		return "", fmt.Errorf("User-Agent должен быть от 1 до 200 символов")
+	}
+	return c.run(ctx, "vless", "sub", "ua", ua)
+}
+
 // VlessUpdate installs the pinned Xray-core build.
 func (c *Client) VlessUpdate(ctx context.Context) (string, error) {
 	out, err := c.run(ctx, "vless", "update")

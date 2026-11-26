@@ -168,6 +168,8 @@ async function mock(page) {
           security: 'tls', transport: 'ws', encryption: 'none', active: false },
       ],
       links_count: 2, subscription: true, watchdog: true,
+      hwid: 'a1b2c3d4e5f60718293a4b5c6d7e8f90', hwid_enabled: true,
+      sub_ua: 'Happ/3.23.0', sub_notice: 'Выберите приложение поддерживающие передачу HWID устройства', 
     };
     else if (url.pathname.endsWith('/mtproxyl/vless/test')) data = {
       exit_ip: '203.0.113.25', telegram: 'ok', dc: 'ok', ok: true,
