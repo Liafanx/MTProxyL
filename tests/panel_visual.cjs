@@ -157,6 +157,21 @@ async function mock(page) {
                  source: '127.0.0.1', fields: ['enabled'] }],
       next_after: 2, oldest_id: 1, capacity: 256,
     };
+    else if (url.pathname.endsWith('/mtproxyl/vless')) data = {
+      enabled: true, service: 'active', core_version: '26.11.9', socks_port: 41100,
+      active: { id: '3e2d9d21', name: 'Reality', source: 'manual', host: 'example.org', port: 443,
+                security: 'reality', transport: 'tcp', encryption: 'none', active: true },
+      links: [
+        { id: '3e2d9d21', name: 'Reality', source: 'manual', host: 'example.org', port: 443,
+          security: 'reality', transport: 'tcp', encryption: 'none', active: true },
+        { id: '37b35564', name: 'WS', source: 'sub', host: 'example.net', port: 8443,
+          security: 'tls', transport: 'ws', encryption: 'none', active: false },
+      ],
+      links_count: 2, subscription: true, watchdog: true,
+    };
+    else if (url.pathname.endsWith('/mtproxyl/vless/test')) data = {
+      exit_ip: '203.0.113.25', telegram: 'ok', dc: 'ok', ok: true,
+    };
     else if (url.pathname.endsWith('/mtproxyl/mtdd/ips')) data = {
       available: true, online: { seen: 12, active: 5 },
       hour: { seen: 40, active: 18, started_at: now - 3600 },
@@ -547,6 +562,17 @@ async function checkLayout(page, width) {
   console.log(`panel visual ${width}: ok`);
 }
 
+async function checkVless(page, width) {
+  await page.goto(`${base}/vless`);
+  await page.getByRole('heading', { name: 'Telegram через VLESS', exact: true }).waitFor();
+  await page.getByText('example.org:443', { exact: false }).first().waitFor();
+  await page.getByRole('button', { name: 'Проверить', exact: true }).click();
+  await page.getByText('203.0.113.25', { exact: false }).waitFor();
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `vless overflow ${width}`);
+  await page.screenshot({ path: path.join(output, `vless-${width}.png`), fullPage: true });
+  console.log(`panel vless ${width}: ok`);
+}
+
 async function checkMtdd(page, state, width) {
   await page.goto(`${base}/mtdd-suspects`);
   await page.getByRole('heading', { name: 'Подозрительные адреса (mtdd)', exact: true }).waitFor();
@@ -616,7 +642,7 @@ async function checkMtdd(page, state, width) {
         page.on('pageerror', (error) => errors.push(error.message));
         const state = await mock(page);
         if (process.argv.includes('--awg-ipv6')) await checkAwgIPv6(page, state, width);
-        else if (process.argv.includes('--mtdd')) await checkMtdd(page, state, width);
+        else if (process.argv.includes('--mtdd')) { await checkMtdd(page, state, width); await checkVless(page, width); }
         else if (process.argv.includes('--warp-mtu')) await checkWarpMTU(page, state, width);
         else if (process.argv.includes('--web')) await checkWeb(page, state, width);
         else if (process.argv.includes('--enhancements')) await checkEnhancements(page, state, width);
@@ -625,6 +651,7 @@ async function checkMtdd(page, state, width) {
           await checkLayout(page, width);
           await checkSettings(page, state, width);
           await checkUsers(page, state, width);
+          await checkVless(page, width);
         }
         assert.deepEqual(errors, [], `browser errors at ${width}`);
       } finally { await context.close(); }

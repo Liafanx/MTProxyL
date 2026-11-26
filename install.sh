@@ -249,7 +249,7 @@ chmod +x "${_INSTALL_ROOT}/mtproxyl.sh"
 download_file "${SCRIPT_URL}/version" "${_INSTALL_ROOT}/version" version
 
 # Библиотеки
-for lib in colors utils settings mtdd mtdd_mgr mtdd_dash mtdd_expert mtdd_net secrets config docker binengine engine traffic stats availability dc warp donor awg egress geoblock geoip upstream backup release report nft ipblock shaping selfmask web web_hosts panel tgbot detect api front tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_donor tui_awg tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
+for lib in colors utils settings mtdd mtdd_mgr mtdd_dash mtdd_expert mtdd_net secrets config docker binengine engine traffic stats availability dc warp donor awg vless egress geoblock geoip upstream backup release report nft ipblock shaping selfmask web web_hosts panel tgbot detect api front tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_donor tui_awg tui_vless tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
     echo "  → lib/${lib}.sh"
     if ! download_file "${SCRIPT_URL}/lib/${lib}.sh" "${_INSTALL_ROOT}/lib/${lib}.sh" "lib/${lib}.sh"; then
         # 404 у отдельного файла — это почти всегда несовпадение веток: список
@@ -271,6 +271,11 @@ for lib in colors utils settings mtdd mtdd_mgr mtdd_dash mtdd_expert mtdd_net se
     fi
     sleep 0.2
 done
+# Разбор ссылок VLESS (Xray): отдельный .py рядом с библиотеками.
+if [ -f "${_INSTALL_ROOT}/lib/vless.sh" ]; then
+    echo "  → lib/vless_parse.py"
+    download_file "${SCRIPT_URL}/lib/vless_parse.py" "${_INSTALL_ROOT}/lib/vless_parse.py" "lib/vless_parse.py" || exit 1
+fi
 _bot_files=$(sed -n '/^_TGBOT_FILES=(/,/^)/{s/^ *"\(.*\)"$/\1/p}' "${_INSTALL_ROOT}/lib/tgbot.sh")
 for _file in $_bot_files; do
     mkdir -p "${_INSTALL_ROOT}/mtproxyl-tgbot/$(dirname "$_file")"

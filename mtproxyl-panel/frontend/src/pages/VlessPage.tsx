@@ -1,0 +1,259 @@
+import { useCallback, useState } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { ErrorAlert } from '@/components/ErrorAlert';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { usePolling } from '@/hooks/usePolling';
+import { vlessApi, type VlessLink, type VlessTest } from '@/lib/api';
+
+const typeLabel = (l: VlessLink) =>
+  `${l.security || '?'}/${l.transport || '?'}${l.encryption && l.encryption !== 'none' ? ' +enc' : ''}`;
+
+/**
+ * VLESS: локальный Xray поднимает SOCKS5, и весь трафик движка идёт через
+ * выбранную ссылку (или подписку). Middle proxy при этом остаётся включённым —
+ * в отличие от WARP, выход здесь обычный сервер, а не CGNAT Cloudflare.
+ */
+export function VlessPage() {
+  const { data, error, loading, refresh } = usePolling(() => vlessApi.status(), 10000);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [uri, setUri] = useState('');
+  const [name, setName] = useState('');
+  const [subURL, setSubURL] = useState('');
+  const [removeLink, setRemoveLink] = useState<VlessLink | null>(null);
+  const [test, setTest] = useState<VlessTest | null>(null);
+  const [conflict, setConflict] = useState('');
+
+  const run = useCallback(async (fn: () => Promise<{ output?: string } | void>, ok = '') => {
+    setBusy(true);
+    setActionError('');
+    setNotice('');
+    setConflict('');
+    try {
+      const res = await fn();
+      if (ok || (res && 'output' in res && res.output)) setNotice(ok || String(res && 'output' in res ? res.output : ''));
+      refresh();
+      return true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setActionError(msg);
+      if (/другой выход|Уже включён/i.test(msg)) setConflict(msg);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }, [refresh]);
+
+  const doTest = async () => {
+    setBusy(true);
+    setActionError('');
+    try {
+      setTest(await vlessApi.test());
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addLink = async () => {
+    if (!uri.trim()) return;
+    if (await run(() => vlessApi.addLink(uri.trim(), name.trim()), 'Ссылка добавлена')) {
+      setUri('');
+      setName('');
+    }
+  };
+
+  const active = data?.active ?? null;
+
+  return (
+    <div className="p-4 lg:p-6 space-y-4">
+      <div>
+        <h1 className="text-xl font-semibold text-text-primary">Telegram через VLESS</h1>
+        <p className="text-sm text-text-secondary mt-1">
+          Локальный Xray принимает SOCKS5 от движка и отправляет трафик на ваш сервер
+          VLESS (Reality, TLS, VLESS Encryption, XHTTP). Хост и другие службы не затрагиваются,
+          Middle proxy остаётся доступен, если выход сохраняет адрес.
+        </p>
+      </div>
+
+      {(error || actionError) && (
+        <ErrorAlert message={actionError || error?.message || ''} onRetry={refresh} />
+      )}
+      {conflict && (
+        <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm space-y-2">
+          <div>Включён другой выход (WARP, донор или свой AWG). Одновременно работает только один.</div>
+          <Button
+            variant="outline"
+            disabled={busy}
+            onClick={() => void run(() => vlessApi.on(true), 'Прежний выход выключен, VLESS включён')}
+          >
+            Выключить другие и включить VLESS
+          </Button>
+        </div>
+      )}
+      {notice && <div className="rounded-lg border border-success/40 bg-success/10 p-3 text-sm">{notice}</div>}
+      {loading && !data && <div className="text-sm text-text-secondary">Загрузка…</div>}
+
+      {data && (
+        <>
+          <Card>
+            <CardHeader><CardTitle>Маршрут</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              <div className="text-sm space-y-1">
+                <div>
+                  Состояние:{' '}
+                  <b className={data.enabled ? 'text-success' : 'text-text-secondary'}>
+                    {data.enabled ? 'включён' : 'выключен'}
+                  </b>
+                  {' '}· служба: {data.service} · Xray: {data.core_version}
+                </div>
+                <div>Локальный SOCKS5: <span className="font-mono">127.0.0.1:{data.socks_port}</span></div>
+                <div>
+                  Активная ссылка: {active
+                    ? <><b>{active.name || active.id}</b> — <span className="font-mono">{active.host}:{active.port}</span> ({typeLabel(active)})</>
+                    : 'не выбрана'}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button disabled={busy || data.enabled || !data.links.length} onClick={() => void run(() => vlessApi.on(false), 'VLESS включён')}>
+                  Включить
+                </Button>
+                <Button variant="outline" disabled={busy || !data.enabled} onClick={() => void run(() => vlessApi.off(), 'VLESS выключен')}>
+                  Выключить
+                </Button>
+                <Button variant="outline" disabled={busy || !data.enabled} onClick={() => void run(() => vlessApi.recover(), 'Маршрут переприменён')}>
+                  Перезапустить
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Проверка выхода</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              <Button variant="outline" disabled={busy || !data.enabled} onClick={() => void doTest()}>
+                Проверить
+              </Button>
+              {test && (
+                <div className="text-sm space-y-1">
+                  <div>{test.ok ? 'Туннель работает' : 'Проверка не прошла'}</div>
+                  <div>Выходной IP: <span className="font-mono">{test.exit_ip || 'не определён'}</span></div>
+                  <div>api.telegram.org: {test.telegram} · TCP до DC: {test.dc}</div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Ссылки</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              {data.links.length === 0 && <p className="text-sm text-text-secondary">Ссылок нет.</p>}
+              {data.links.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-text-secondary">
+                        <th className="pb-2 pr-4 font-normal">ID</th>
+                        <th className="pb-2 pr-4 font-normal">Имя</th>
+                        <th className="pb-2 pr-4 font-normal">Тип</th>
+                        <th className="pb-2 pr-4 font-normal">Адрес</th>
+                        <th className="pb-2 font-normal">Действия</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.links.map((l) => (
+                        <tr key={l.id} className="border-t border-border">
+                          <td className="py-2 pr-4 font-mono">{l.id}</td>
+                          <td className="py-2 pr-4">{l.name || '—'}{l.active && <span className="text-success"> · активная</span>}</td>
+                          <td className="py-2 pr-4">{typeLabel(l)}</td>
+                          <td className="py-2 pr-4 font-mono">{l.host}:{l.port}</td>
+                          <td className="py-2">
+                            <div className="flex flex-wrap gap-2">
+                              <Button size="sm" variant="outline" disabled={busy || l.active} onClick={() => void run(() => vlessApi.useLink(l.id), 'Активная ссылка изменена')}>
+                                Использовать
+                              </Button>
+                              <Button size="sm" variant="ghost" disabled={busy} onClick={() => setRemoveLink(l)}>
+                                Удалить
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div className="grid gap-2 sm:grid-cols-[1fr_220px_auto]">
+                <div className="space-y-1">
+                  <Label htmlFor="vless-uri">Ссылка vless://</Label>
+                  <Input id="vless-uri" value={uri} onChange={(e) => setUri(e.target.value)} placeholder="vless://…" className="font-mono" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="vless-name">Имя</Label>
+                  <Input id="vless-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="необязательно" maxLength={64} />
+                </div>
+                <div className="flex items-end">
+                  <Button disabled={busy || !uri.trim()} onClick={() => void addLink()}>Добавить</Button>
+                </div>
+              </div>
+              <p className="text-xs text-text-secondary">
+                Ссылка содержит секрет и показывается только при вставке. В списке видны адрес и тип.
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Подписка</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+                <Input value={subURL} onChange={(e) => setSubURL(e.target.value)} placeholder="https://… (base64 или список ссылок)" />
+                <Button disabled={busy || !subURL.trim()} onClick={() => void run(() => vlessApi.subSet(subURL.trim()), 'Подписка обновлена')}>
+                  Задать и обновить
+                </Button>
+                <Button variant="outline" disabled={busy || !data.subscription} onClick={() => void run(() => vlessApi.subRefresh(), 'Подписка обновлена')}>
+                  Обновить
+                </Button>
+              </div>
+              <div className="flex items-center gap-3 text-sm text-text-secondary">
+                <span>Подписка: {data.subscription ? 'задана' : 'не задана'}</span>
+                {data.subscription && (
+                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run(() => vlessApi.subOff(), 'Подписка отключена')}>
+                    Отключить
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Ядро Xray</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              <div className="text-sm">Установлено: <span className="font-mono">{data.core_version}</span></div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" disabled={busy} onClick={() => void run(() => vlessApi.update(), 'Xray обновлён')}>Обновить</Button>
+                <Button variant="ghost" disabled={busy} onClick={() => void run(() => vlessApi.rollback(), 'Выполнен откат Xray')}>Откатить</Button>
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      <ConfirmDialog
+        open={Boolean(removeLink)}
+        onClose={() => setRemoveLink(null)}
+        onConfirm={() => {
+          if (!removeLink) return;
+          void run(() => vlessApi.removeLink(removeLink.id), 'Ссылка удалена').then(() => setRemoveLink(null));
+        }}
+        title="Удалить ссылку"
+        message={removeLink ? `Удалить ${removeLink.id} (${removeLink.host}:${removeLink.port})?` : ''}
+        loading={busy}
+      />
+    </div>
+  );
+}

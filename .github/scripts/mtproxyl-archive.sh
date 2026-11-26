@@ -6,7 +6,7 @@ set -euo pipefail
 
 # Файлы из git, а не всё подряд: в рабочем каталоге раннера бывает мусор.
 _files() {
-    git -C "$1" ls-files -- mtproxyl.sh version install.sh LICENSE 'lib/*.sh' \
+    git -C "$1" ls-files -- mtproxyl.sh version install.sh LICENSE 'lib/*.sh' 'lib/*.py' \
         mtproxyl-tgbot/requirements.txt 'mtproxyl-tgbot/bot/*.py'
 }
 

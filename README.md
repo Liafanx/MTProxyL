@@ -3540,6 +3540,57 @@ MTProxyL его автоматически не ставит.
 
 <a id="donor"></a>
 
+## Telegram через VLESS
+
+Весь исходящий трафик движка идёт через ваш сервер **VLESS** (Xray-core). На
+сервере MTProxyL поднимается локальный Xray: он слушает SOCKS5 на `127.0.0.1`,
+движок ходит в него обычным upstream — как вариант C у WARP. Хост, SSH и другие
+службы не затрагиваются, правила nftables не нужны.
+
+Поддерживаются ссылки `vless://` с Reality, TLS и VLESS Encryption, `flow=xtls-rprx-vision`,
+транспортами `tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp` и `kcp`. Ядро —
+[Xray-core](https://github.com/XTLS/Xray-core), версия закреплена в MTProxyL и
+проверяется по SHA256; обновление и откат — отдельными командами.
+
+```bash
+mtproxyl vless link add 'vless://…' имя   # добавить ссылку
+mtproxyl vless link list                  # id, имя, тип и адрес (без секретов)
+mtproxyl vless link use <id>              # сделать активной
+mtproxyl vless link remove <id>           # удалить
+mtproxyl vless sub set https://…           # подписка: base64 или список vless://
+mtproxyl vless sub refresh                 # обновить подписку
+mtproxyl vless on                          # весь трафик движка через VLESS
+mtproxyl vless status [--json]             # состояние, активная ссылка, ядро
+mtproxyl vless test [--json]               # выходной IP, api.telegram.org, DC
+mtproxyl vless off                         # выключить, вернуть прежние маршруты
+mtproxyl vless update                      # обновить Xray-core
+mtproxyl vless rollback                    # предыдущая сборка Xray
+mtproxyl vless recover                     # перезапустить и переприменить
+```
+
+При включении MTProxyL выключает другие выходы (WARP, донор, свой AWG): они
+меняют тот же маршрут движка. Без `--yes` команда откажется, если такой выход
+уже включён; в панели есть отдельная кнопка согласия. Выключенные upstream-маршруты
+без области запоминаются и возвращаются при `vless off`.
+
+**Middle proxy.** Выход через VLESS — обычный сервер, а не CGNAT Cloudflare,
+поэтому ME может работать: ключи выводятся из адреса и порта, с которых движок
+пришёл к Telegram. Это зависит от того, сохраняет ли выход `адрес:порт`
+(собственный VPS с честным SOCKS5 — да). После включения проверьте покрытие DC
+(`mtproxyl dc status`); если ME не поднялся, выключите его:
+`mtproxyl expert set general use_middle_proxy false`. Рекламная метка живёт
+только в режиме ME.
+
+Ссылки и подписка хранятся в `/opt/mtproxyl/vless/` с правами 0600: в них UUID
+и ключи Reality. В списках, панели и `report` секреты не показываются, в бэкап
+и переезд файлы входят. Таймер `mtproxyl-vless-watch` раз в три минуты проверяет
+туннель: после двух сбоев перезапускает Xray, после четырёх — переключается на
+следующую ссылку. В панели — страница «Telegram через VLESS».
+
+Ограничения: только Xray (Hysteria2, TUIC и Shadowsocks-выходы не
+поддерживаются), UDP через SOCKS не проксируется, а для VLESS без TLS/Reality
+Xray требует приватный адрес или VLESS Encryption.
+
 ## Туннель AWG до сервера-донора
 
 Для серверов, откуда не открываются Telegram или его дата-центры. Движок

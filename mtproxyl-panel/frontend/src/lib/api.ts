@@ -502,6 +502,73 @@ export interface UpstreamOverlay {
   detail: string;
 }
 
+export interface VlessLink {
+  id: string;
+  name: string;
+  source: 'manual' | 'sub' | string;
+  host: string;
+  port: number;
+  security: string;
+  transport: string;
+  encryption: string;
+  active: boolean;
+}
+
+export interface VlessStatus {
+  enabled: boolean;
+  service: string;
+  core_version: string;
+  socks_port: number;
+  active: VlessLink | null;
+  links: VlessLink[];
+  links_count: number;
+  subscription: boolean;
+  watchdog: boolean;
+}
+
+export interface VlessTest {
+  exit_ip: string;
+  telegram: string;
+  dc: string;
+  ok: boolean;
+}
+
+/** VLESS (Xray-core): ссылки, подписка, проверка и обновление ядра. */
+export const vlessApi = {
+  status: () => request<VlessStatus>(MTPROXYL_BASE, '/vless'),
+  on: (force = false) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/vless/on', {
+      method: 'POST',
+      body: JSON.stringify({ force }),
+    }),
+  off: () => request<{ output: string }>(MTPROXYL_BASE, '/vless/off', { method: 'POST' }),
+  test: () => request<VlessTest>(MTPROXYL_BASE, '/vless/test'),
+  addLink: (uri: string, name: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/vless/links', {
+      method: 'POST',
+      body: JSON.stringify({ uri, name }),
+    }),
+  useLink: (id: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/vless/links/${encodeURIComponent(id)}/use`, {
+      method: 'POST',
+    }),
+  removeLink: (id: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/vless/links/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
+  subSet: (url: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/vless/sub', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    }),
+  subRefresh: () =>
+    request<{ output: string }>(MTPROXYL_BASE, '/vless/sub/refresh', { method: 'POST' }),
+  subOff: () => request<{ output: string }>(MTPROXYL_BASE, '/vless/sub', { method: 'DELETE' }),
+  update: () => request<{ output: string }>(MTPROXYL_BASE, '/vless/update', { method: 'POST' }),
+  rollback: () => request<{ output: string }>(MTPROXYL_BASE, '/vless/rollback', { method: 'POST' }),
+  recover: () => request<{ output: string }>(MTPROXYL_BASE, '/vless/recover', { method: 'POST' }),
+};
+
 /** mtdd: временная подмена рекламного тега и журнал изменений движка. */
 export const mtddApi = {
   adTag: () => request<{ override: boolean; ad_tag: string | null }>(MTPROXYL_BASE, '/mtdd/ad-tag'),
