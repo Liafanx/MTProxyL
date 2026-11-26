@@ -44,7 +44,8 @@ systemctl() {
 }
 vless_watchdog_install() { :; }
 warp_disable() { echo "warp-off" >> "$t/conf.log"; }
-donor_is_enabled() { return 1; }
+donor_load() { DONOR_ENABLED=false; }
+donor_disable() { echo "donor-off" >> "$t/conf.log"; }
 awg_is_enabled() { return 1; }
 
 URI1='vless://11111111-1111-1111-1111-111111111111@example.org:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.example.org&fp=chrome&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=ab12&type=tcp#Reality'
@@ -84,6 +85,12 @@ vless_on >/dev/null 2>&1 && fail "конфликт с WARP проигнорир�
 vless_on --yes >/dev/null 2>&1 || fail "vless on --yes"
 grep -q warp-off "$t/conf.log" || fail "WARP не выключен"
 WARP_ENABLED=false
+
+# ME с VLESS несовместим: mtdd требует явного согласия.
+mtdd_mgr_active() { return 0; }
+vless_on >/dev/null 2>&1 && fail "mtdd без согласия на Direct"
+vless_on --yes --allow-disable-me >/dev/null 2>&1 || fail "mtdd с согласием"
+mtdd_mgr_active() { return 1; }
 
 # Выключение: upstream снят.
 vless_off >/dev/null || fail "vless_off"

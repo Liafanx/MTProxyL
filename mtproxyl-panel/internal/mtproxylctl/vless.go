@@ -43,11 +43,15 @@ func (c *Client) GetVlessStatus(ctx context.Context) (json.RawMessage, error) {
 }
 
 // VlessOn routes all engine traffic through VLESS. force confirms disabling a
-// conflicting exit (WARP, donor, own AWG).
-func (c *Client) VlessOn(ctx context.Context, force bool) (string, error) {
+// conflicting exit (WARP, donor, own AWG); allowME confirms turning off the
+// middle proxy, which cannot work through a SOCKS5 exit.
+func (c *Client) VlessOn(ctx context.Context, force, allowME bool) (string, error) {
 	args := []string{"vless", "on"}
 	if force {
 		args = append(args, "--yes")
+	}
+	if allowME {
+		args = append(args, "--allow-disable-me")
 	}
 	out, err := c.run(ctx, args...)
 	return stripANSI(out), err

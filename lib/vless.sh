@@ -455,17 +455,74 @@ PY
 }
 
 # ── Состояние и включение ──────────────────────────────────
+_vless_donor_on() {
+    declare -F donor_load >/dev/null || return 1
+    donor_load 2>/dev/null || return 1
+    [ "${DONOR_ENABLED:-false}" = true ]
+}
+
 _vless_exit_conflicts() {
     local _out=""
     [ "${WARP_ENABLED:-false}" = true ] && _out+="${_out:+, }WARP"
-    declare -F donor_is_enabled >/dev/null && donor_is_enabled 2>/dev/null && _out+="${_out:+, }донор"
+    _vless_donor_on && _out+="${_out:+, }донор"
     declare -F awg_is_enabled >/dev/null && awg_is_enabled 2>/dev/null && _out+="${_out:+, }свой AWG"
     echo "$_out"
 }
 
+# ME и VLESS несовместимы: ключи рукопожатия выводятся из адреса и порта,
+# с которых движок пришёл к Telegram, а локальный SOCKS5 отдаёт свой адрес.
+# Проверено на mtdd: с VLESS через socks ни один DC не поднимается.
+_vless_me_enabled() {
+    if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then return 0; fi
+    local _cfg; _cfg=$(_engine_config_path 2>/dev/null)
+    [ -n "$_cfg" ] && [ -r "$_cfg" ] || return 1
+    grep -qE '^[[:space:]]*use_middle_proxy[[:space:]]*=[[:space:]]*false' "$_cfg" && return 1
+    return 0
+}
+
+_vless_me_gate() {
+    local _assume="${1:-false}" _consent="${2:-false}"
+    _vless_me_enabled || return 0
+    if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
+        log_warn "Middle proxy несовместим с VLESS: ключи ME зависят от адреса и порта, а socks5 их не сохраняет"
+        log_info "mtdd пойдёт к дата-центрам маршрутом Direct через VLESS; рекламный тег действовать не будет"
+        [ "$_consent" = true ] && return 0
+        if [ "$_assume" != true ]; then
+            local _yn; read_line _yn "  ${BOLD}Продолжить с Direct вместо ME? [y/N]:${NC} "
+            [[ "$_yn" =~ ^[yY] ]] || { log_info "Ничего не меняем"; return 1; }
+        else
+            log_error "Нужно явное согласие: добавьте --allow-disable-me"
+            return 1
+        fi
+        return 0
+    fi
+    log_warn "Middle proxy несовместим с VLESS: выход не сохраняет адрес:порт, писатели ME не поднимутся"
+    log_info "Движок пойдёт к DC напрямую через VLESS; рекламный тег действовать не будет"
+    [ "$_consent" = true ] && { _vless_me_disable; return $?; }
+    if [ "$_assume" != true ]; then
+        local _yn; read_line _yn "  ${BOLD}Выключить middle proxy и продолжить? [y/N]:${NC} "
+        [[ "$_yn" =~ ^[yY] ]] || { log_info "Ничего не меняем"; return 1; }
+        _vless_me_disable; return $?
+    fi
+    log_error "Нужно явное согласие на выключение middle proxy: --allow-disable-me"
+    return 1
+}
+
+_vless_me_disable() {
+    handle_expert_command set general use_middle_proxy false --no-apply >/dev/null 2>&1 || {
+        log_error "Не удалось выключить middle proxy"; return 1; }
+    VLESS_ME_DISABLED="true"
+    log_success "Middle proxy выключен на время VLESS"
+}
+
 vless_on() {
-    local _assume="${MTPROXYL_ASSUME_YES:-false}" _arg
-    for _arg in "$@"; do [ "$_arg" = --yes ] && _assume=true; done
+    local _assume="${MTPROXYL_ASSUME_YES:-false}" _consent=false _arg
+    for _arg in "$@"; do
+        case "$_arg" in
+            --yes) _assume=true ;;
+            --allow-disable-me) _consent=true ;;
+        esac
+    done
     check_root
     [ -n "${VLESS_ACTIVE:-}" ] && [ -n "$(_vless_link_row "$VLESS_ACTIVE")" ] \
         || VLESS_ACTIVE=$(awk -F'|' 'NR==1 {print $1}' "$(_vless_links)" 2>/dev/null)
@@ -479,11 +536,13 @@ vless_on() {
         fi
         log_warn "Выключаем прежний выход: ${_conflict}"
         [ "${WARP_ENABLED:-false}" = true ] && warp_disable >/dev/null 2>&1 || true
-        declare -F donor_is_enabled >/dev/null && donor_is_enabled 2>/dev/null && donor_disable >/dev/null 2>&1 || true
+        _vless_donor_on && donor_disable >/dev/null 2>&1 || true
         declare -F awg_is_enabled >/dev/null && awg_is_enabled 2>/dev/null && awg_disable >/dev/null 2>&1 || true
     fi
+    _vless_me_gate "$_assume" "$_consent" || return 1
+    # mtdd собирает маршрут по VLESS_ENABLED: Direct вместо ME.
+    VLESS_ENABLED="true"
     if vless_apply; then
-        VLESS_ENABLED="true"
         save_settings
         vless_watchdog_install
         if declare -F _upstream_me_enabled >/dev/null && _upstream_me_enabled; then
@@ -504,6 +563,10 @@ vless_off() {
     VLESS_ENABLED="false"
     save_settings
     log_success "VLESS выключен — трафик движка идёт по прежним маршрутам"
+    if [ "${VLESS_ME_DISABLED:-false}" = true ]; then
+        log_info "Middle proxy остался выключенным: вернуть — mtproxyl expert clear general use_middle_proxy"
+        VLESS_ME_DISABLED="false"; save_settings
+    fi
 }
 
 _vless_links_json() {
@@ -555,7 +618,7 @@ PY
 )
     fi
     python3 -I - \
-        "${VLESS_ENABLED:-false}" "$(systemctl is-active "$VLESS_UNIT" 2>/dev/null || echo inactive)" \
+        "${VLESS_ENABLED:-false}" "$(systemctl is-active "$VLESS_UNIT" 2>/dev/null | head -1)" \
         "$_ver" "$(_vless_port)" "$_active" \
         "$(_vless_links_json)" \
         "$([ -s "$(_vless_subs)" ] && echo true || echo false)" \
@@ -691,7 +754,7 @@ handle_vless_command() {
         watch)    vless_watch ;;
         help|*)
             echo -e "  ${BOLD}VLESS (Xray-core):${NC}"
-            echo -e "    ${GREEN}vless on${NC} [--yes]        Включить: весь трафик движка через VLESS"
+            echo -e "    ${GREEN}vless on${NC} [--yes] [--allow-disable-me]  Включить: весь трафик движка через VLESS"
             echo -e "    ${GREEN}vless off${NC}              Выключить, вернуть прежние маршруты"
             echo -e "    ${GREEN}vless status${NC} [--json]  Состояние, активная ссылка, ядро"
             echo -e "    ${GREEN}vless link add${NC} <URI> [имя]  Добавить ссылку vless://"

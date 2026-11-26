@@ -27,6 +27,7 @@ export function VlessPage() {
   const [removeLink, setRemoveLink] = useState<VlessLink | null>(null);
   const [test, setTest] = useState<VlessTest | null>(null);
   const [conflict, setConflict] = useState('');
+  const [allowME, setAllowME] = useState(false);
 
   const run = useCallback(async (fn: () => Promise<{ output?: string } | void>, ok = '') => {
     setBusy(true);
@@ -77,7 +78,7 @@ export function VlessPage() {
         <p className="text-sm text-text-secondary mt-1">
           Локальный Xray принимает SOCKS5 от движка и отправляет трафик на ваш сервер
           VLESS (Reality, TLS, VLESS Encryption, XHTTP). Хост и другие службы не затрагиваются,
-          Middle proxy остаётся доступен, если выход сохраняет адрес.
+          Middle proxy с таким выходом не работает: MTProxyL выключит его с вашего согласия.
         </p>
       </div>
 
@@ -90,7 +91,7 @@ export function VlessPage() {
           <Button
             variant="outline"
             disabled={busy}
-            onClick={() => void run(() => vlessApi.on(true), 'Прежний выход выключен, VLESS включён')}
+            onClick={() => void run(() => vlessApi.on(true, allowME), 'Прежний выход выключен, VLESS включён')}
           >
             Выключить другие и включить VLESS
           </Button>
@@ -119,8 +120,17 @@ export function VlessPage() {
                     : 'не выбрана'}
                 </div>
               </div>
+              <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={allowME}
+                  onChange={(e) => setAllowME(e.target.checked)}
+                  className="accent-[var(--color-accent,#3b82f6)]"
+                />
+                Выключить middle proxy (иначе VLESS не поднимется; рекламный тег перестанет действовать)
+              </label>
               <div className="flex flex-wrap gap-2">
-                <Button disabled={busy || data.enabled || !data.links.length} onClick={() => void run(() => vlessApi.on(false), 'VLESS включён')}>
+                <Button disabled={busy || data.enabled || !data.links.length} onClick={() => void run(() => vlessApi.on(false, allowME), 'VLESS включён')}>
                   Включить
                 </Button>
                 <Button variant="outline" disabled={busy || !data.enabled} onClick={() => void run(() => vlessApi.off(), 'VLESS выключен')}>

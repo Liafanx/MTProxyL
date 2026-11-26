@@ -142,7 +142,10 @@ WARP_ENABLED=true; generate_mtdd_config || fail "конфиг с WARP"
 jq -e '.direct_fallback_enabled == true and (.direct_fallback_dcs | length) == 10' "$MTDD_MGR_CONFIG" >/dev/null || fail "WARP: не все DC на Direct"
 mtdd_handle_tune list | grep -E ' direct_fallback_dcs ' | grep -q "задаёт MTProxyL" || fail "direct_fallback при WARP не помечен"
 eval "$_cfgget_orig"
-WARP_ENABLED=false; cp "$t/tune.bak" "$MTDD_MGR_TUNE"
+WARP_ENABLED=false
+VLESS_ENABLED=true; generate_mtdd_config || fail "конфиг с VLESS"
+jq -e '.direct_fallback_enabled == true and (.direct_fallback_dcs | length) == 10' "$MTDD_MGR_CONFIG" >/dev/null || fail "VLESS: не все DC на Direct"
+VLESS_ENABLED=false; cp "$t/tune.bak" "$MTDD_MGR_TUNE"
 _route_orig=$(declare -f _mtdd_mgr_route_state)
 _mtdd_mgr_route_state() { echo "0|198.51.100.20"; }
 generate_mtdd_config && [ "$(cfg .me_nat_ip)" = 198.51.100.20 ] || fail "AWG: me_nat_ip"

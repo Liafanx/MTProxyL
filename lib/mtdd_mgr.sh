@@ -132,6 +132,7 @@ _mtdd_mgr_upstream_rows() {
 _mtdd_mgr_route_state() {
     local _direct=0 _awg=""
     [ "${WARP_ENABLED:-false}" = true ] && _direct=1
+    [ "${VLESS_ENABLED:-false}" = true ] && _direct=1
     if declare -F awg_load >/dev/null && [ -f "$(_awg_state_file 2>/dev/null)" ]; then
         _awg=$(awg_load 2>/dev/null; echo "${AWG_ENABLED}|${AWG_ME_MODE}|${AWG_EGRESS_IP}|${AWG_ME_DISABLED}")
     fi

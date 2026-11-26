@@ -536,10 +536,10 @@ export interface VlessTest {
 /** VLESS (Xray-core): ссылки, подписка, проверка и обновление ядра. */
 export const vlessApi = {
   status: () => request<VlessStatus>(MTPROXYL_BASE, '/vless'),
-  on: (force = false) =>
+  on: (force = false, allowDisableME = false) =>
     request<{ output: string }>(MTPROXYL_BASE, '/vless/on', {
       method: 'POST',
-      body: JSON.stringify({ force }),
+      body: JSON.stringify({ force, allow_disable_me: allowDisableME }),
     }),
   off: () => request<{ output: string }>(MTPROXYL_BASE, '/vless/off', { method: 'POST' }),
   test: () => request<VlessTest>(MTPROXYL_BASE, '/vless/test'),

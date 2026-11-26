@@ -861,10 +861,11 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 			return
 		}
 		var req struct {
-			Force bool `json:"force"`
+			Force   bool `json:"force"`
+			AllowME bool `json:"allow_disable_me"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
-		out, err := client.VlessOn(r.Context(), req.Force)
+		out, err := client.VlessOn(r.Context(), req.Force, req.AllowME)
 		if err != nil {
 			writeCLIError(w, "mtproxyl_error", err)
 			return
