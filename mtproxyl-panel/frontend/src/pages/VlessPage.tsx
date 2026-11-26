@@ -24,7 +24,9 @@ export function VlessPage() {
   const [uri, setUri] = useState('');
   const [name, setName] = useState('');
   const [subURL, setSubURL] = useState('');
-  const [removeLink, setRemoveLink] = useState<VlessLink | null>(null);
+  const [removeIDs, setRemoveIDs] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [confirmSubOff, setConfirmSubOff] = useState(false);
   const [test, setTest] = useState<VlessTest | null>(null);
   const [conflict, setConflict] = useState('');
   const [allowME, setAllowME] = useState(false);
@@ -71,6 +73,34 @@ export function VlessPage() {
   };
 
   const active = data?.active ?? null;
+  const links = data?.links ?? [];
+  const selectedLinks = links.filter((l) => selected.includes(l.id));
+  const allSelected = links.length > 0 && selectedLinks.length === links.length;
+  const removeLinks = links.filter((l) => removeIDs.includes(l.id));
+
+  const toggleSelected = (id: string) => {
+    setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const toggleAll = () => {
+    setSelected(allSelected ? [] : links.map((l) => l.id));
+  };
+
+  const deleteLinks = async (ids: string[]) => {
+    // Активную ссылку удаляем последней: иначе каждая следующая смена
+    // перезапускает Xray, а он нужен для ответа панели.
+    const ordered = [
+      ...ids.filter((id) => !links.find((l) => l.id === id)?.active),
+      ...ids.filter((id) => links.find((l) => l.id === id)?.active),
+    ];
+    const ok = await run(async () => {
+      for (const id of ordered) await vlessApi.removeLink(id);
+    }, ids.length === 1 ? 'Ссылка удалена' : `Удалено ссылок: ${ids.length}`);
+    if (ok) {
+      setRemoveIDs([]);
+      setSelected((prev) => prev.filter((id) => !ids.includes(id)));
+    }
+  };
 
   // Результат проверки относится к конкретной активной ссылке: после смены
   // локации старый IP вводит в заблуждение, пока не нажата «Проверить».
@@ -244,10 +274,37 @@ export function VlessPage() {
             <CardContent className="space-y-3">
               {data.links.length === 0 && <p className="text-sm text-text-secondary">Ссылок нет.</p>}
               {data.links.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-text-secondary">Выбрано: {selectedLinks.length}</span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy || selectedLinks.length === 0}
+                    onClick={() => setRemoveIDs(selectedLinks.map((l) => l.id))}
+                  >
+                    Удалить выбранные
+                  </Button>
+                  {selectedLinks.length > 0 && (
+                    <Button size="sm" variant="ghost" disabled={busy} onClick={() => setSelected([])}>
+                      Снять выбор
+                    </Button>
+                  )}
+                </div>
+              )}
+              {data.links.length > 0 && (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="text-left text-text-secondary">
+                        <th className="pb-2 pr-4 font-normal">
+                          <input
+                            type="checkbox"
+                            aria-label="Выбрать все ссылки"
+                            checked={allSelected}
+                            onChange={toggleAll}
+                            className="accent-[var(--color-accent,#3b82f6)]"
+                          />
+                        </th>
                         <th className="pb-2 pr-4 font-normal">ID</th>
                         <th className="pb-2 pr-4 font-normal">Имя</th>
                         <th className="pb-2 pr-4 font-normal">Тип</th>
@@ -258,6 +315,15 @@ export function VlessPage() {
                     <tbody>
                       {data.links.map((l) => (
                         <tr key={l.id} className="border-t border-border">
+                          <td className="py-2 pr-4">
+                            <input
+                              type="checkbox"
+                              aria-label={`Выбрать ${l.name || l.id}`}
+                              checked={selected.includes(l.id)}
+                              onChange={() => toggleSelected(l.id)}
+                              className="accent-[var(--color-accent,#3b82f6)]"
+                            />
+                          </td>
                           <td className="py-2 pr-4 font-mono">{l.id}</td>
                           <td className="py-2 pr-4">{l.name || '—'}{l.active && <span className="text-success"> · активная</span>}</td>
                           <td className="py-2 pr-4">{typeLabel(l)}</td>
@@ -267,7 +333,7 @@ export function VlessPage() {
                               <Button size="sm" variant="outline" disabled={busy || l.active} onClick={() => void run(() => vlessApi.useLink(l.id), 'Активная ссылка изменена')}>
                                 Использовать
                               </Button>
-                              <Button size="sm" variant="ghost" disabled={busy} onClick={() => setRemoveLink(l)}>
+                              <Button size="sm" variant="ghost" disabled={busy} onClick={() => setRemoveIDs([l.id])}>
                                 Удалить
                               </Button>
                             </div>
@@ -312,8 +378,8 @@ export function VlessPage() {
               <div className="flex items-center gap-3 text-sm text-text-secondary">
                 <span>Подписка: {data.subscription ? 'задана' : 'не задана'}</span>
                 {data.subscription && (
-                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run(() => vlessApi.subOff(), 'Подписка отключена')}>
-                    Отключить
+                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => setConfirmSubOff(true)}>
+                    Отключить и удалить ссылки
                   </Button>
                 )}
               </div>
@@ -334,14 +400,27 @@ export function VlessPage() {
       )}
 
       <ConfirmDialog
-        open={Boolean(removeLink)}
-        onClose={() => setRemoveLink(null)}
+        open={removeIDs.length > 0}
+        onClose={() => setRemoveIDs([])}
+        onConfirm={() => void deleteLinks(removeIDs)}
+        title={removeIDs.length === 1 ? 'Удалить ссылку' : 'Удалить выбранные ссылки'}
+        message={removeIDs.length === 1
+          ? (removeLinks[0] ? `Удалить ${removeLinks[0].id} (${removeLinks[0].host}:${removeLinks[0].port})?` : '')
+          : `Удалить выбранные ссылки (${removeIDs.length})? Если среди них активная, будет выбрана первая оставшаяся или VLESS выключится.`}
+        loading={busy}
+      />
+      <ConfirmDialog
+        open={confirmSubOff}
+        onClose={() => setConfirmSubOff(false)}
         onConfirm={() => {
-          if (!removeLink) return;
-          void run(() => vlessApi.removeLink(removeLink.id), 'Ссылка удалена').then(() => setRemoveLink(null));
+          void run(() => vlessApi.subOff(), 'Подписка отключена, ссылки подписки удалены').then((ok) => {
+            setConfirmSubOff(false);
+            if (ok) setSelected([]);
+          });
         }}
-        title="Удалить ссылку"
-        message={removeLink ? `Удалить ${removeLink.id} (${removeLink.host}:${removeLink.port})?` : ''}
+        title="Отключить подписку"
+        message="Удалить подписку и все ссылки, полученные из неё? Ручные ссылки останутся. Если активная ссылка была из подписки, будет выбрана первая оставшаяся или VLESS выключится."
+        confirmLabel="Отключить и удалить"
         loading={busy}
       />
     </div>

@@ -55,6 +55,13 @@ async function mock(page) {
       cidr_count: 0, socks_port: 2536, redirect_port: 12345, matched_packets: 0, exit: { ip: '', loc: '', colo: '', confirmed: false } },
     panelUpdate: { current_version: '1.3.14', latest_version: 'mtproxyl-panel-v1.3.15', update_available: true },
     vlessActive: '3e2d9d21',
+    vlessLinks: [
+      { id: '3e2d9d21', name: 'Reality', source: 'manual', host: 'example.org', port: 443,
+        security: 'reality', transport: 'tcp', encryption: 'none' },
+      { id: '37b35564', name: 'WS', source: 'sub', host: 'example.net', port: 8443,
+        security: 'tls', transport: 'ws', encryption: 'none' },
+    ],
+    vlessSubscription: true,
     suspectActions: [],
     suspectStatus: {
       available: true, error: '', enabled: true, fingerprint: true, ban_score: 0, watch_score: 60,
@@ -159,19 +166,26 @@ async function mock(page) {
       next_after: 2, oldest_id: 1, capacity: 256,
     };
     else if (url.pathname.endsWith('/mtproxyl/vless')) {
-      const links = [
-        { id: '3e2d9d21', name: 'Reality', source: 'manual', host: 'example.org', port: 443,
-          security: 'reality', transport: 'tcp', encryption: 'none' },
-        { id: '37b35564', name: 'WS', source: 'sub', host: 'example.net', port: 8443,
-          security: 'tls', transport: 'ws', encryption: 'none' },
-      ].map((link) => ({ ...link, active: link.id === state.vlessActive }));
+      const links = state.vlessLinks.map((link) => ({ ...link, active: link.id === state.vlessActive }));
       data = {
         enabled: true, service: 'active', core_version: '26.11.9', socks_port: 41100,
         active: links.find((link) => link.active) ?? links[0],
-        links, links_count: 2, subscription: true, watchdog: true,
+        links, links_count: links.length, subscription: state.vlessSubscription, watchdog: true,
         hwid: 'a1b2c3d4e5f60718293a4b5c6d7e8f90', hwid_enabled: true,
         sub_ua: 'Happ/3.23.0', sub_notice: 'Выберите приложение поддерживающие передачу HWID устройства',
       };
+    }
+    else if (/\/mtproxyl\/vless\/links\/[^/]+$/.test(url.pathname) && route.request().method() === 'DELETE') {
+      const id = decodeURIComponent(url.pathname.split('/').at(-1));
+      state.vlessLinks = state.vlessLinks.filter((link) => link.id !== id);
+      if (state.vlessActive === id) state.vlessActive = state.vlessLinks[0]?.id ?? '';
+      data = { output: 'Ссылка удалена' };
+    }
+    else if (url.pathname.endsWith('/mtproxyl/vless/sub') && route.request().method() === 'DELETE') {
+      state.vlessLinks = state.vlessLinks.filter((link) => link.source !== 'sub');
+      if (!state.vlessLinks.some((link) => link.id === state.vlessActive)) state.vlessActive = state.vlessLinks[0]?.id ?? '';
+      state.vlessSubscription = false;
+      data = { output: 'Подписка отключена' };
     }
     else if (/\/mtproxyl\/vless\/links\/[^/]+\/use$/.test(url.pathname)) {
       state.vlessActive = decodeURIComponent(url.pathname.split('/').at(-2));
@@ -620,6 +634,33 @@ async function checkVless(page, width) {
   await page.waitForFunction(() => !document.body.innerText.includes('203.0.113.25'));
   assert.equal(await page.getByText('203.0.113.25', { exact: false }).count(), 0,
     'старый выходной IP остался после смены ссылки');
+
+  await page.getByLabel('Выбрать Reality', { exact: true }).check();
+  await page.getByLabel('Выбрать WS', { exact: true }).check();
+  await page.getByText('Выбрано: 2', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Удалить выбранные', exact: true }).click();
+  const removeDialog = page.getByRole('dialog');
+  await removeDialog.getByText('Удалить выбранные ссылки', { exact: true }).waitFor();
+  await removeDialog.getByRole('button', { name: 'Удалить', exact: true }).click();
+  await page.getByText('Удалено ссылок: 2', { exact: true }).waitFor();
+  await page.waitForFunction(() => !document.body.innerText.includes('example.org:443')
+    && !document.body.innerText.includes('example.net:8443'));
+  await page.getByText('Ссылок нет.', { exact: true }).waitFor();
+  assert.equal(await page.getByText('example.org:443', { exact: false }).count(), 0,
+    'удалённая ссылка осталась в таблице');
+  assert.equal(await page.getByText('example.net:8443', { exact: false }).count(), 0,
+    'удалённая ссылка подписки осталась в таблице');
+
+  await page.getByRole('button', { name: 'Отключить и удалить ссылки', exact: true }).click();
+  const subDialog = page.getByRole('dialog');
+  await subDialog.getByText('Отключить подписку', { exact: true }).waitFor();
+  await subDialog.getByRole('button', { name: 'Отключить и удалить', exact: true }).click();
+  await page.getByText('Подписка отключена, ссылки подписки удалены', { exact: true }).waitFor();
+  await page.waitForFunction(() => !document.body.innerText.includes('example.net:8443'));
+  await page.getByText('Ссылок нет.', { exact: true }).waitFor();
+  assert.equal(await page.getByText('example.net:8443', { exact: false }).count(), 0,
+    'ссылка подписки осталась после отключения');
+
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `vless overflow ${width}`);
   await page.screenshot({ path: path.join(output, `vless-${width}.png`), fullPage: true });
   console.log(`panel vless ${width}: ok`);

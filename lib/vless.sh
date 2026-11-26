@@ -190,20 +190,37 @@ vless_link_use() {
 }
 
 vless_link_remove() {
-    local _id="${1:-}" _f _tmp
+    local _id _f _tmp _active_removed=false
     check_root
-    [ -n "$(_vless_link_row "$_id")" ] || { log_error "Ссылки ${_id} нет"; return 1; }
+    [ "$#" -gt 0 ] || { log_error "Использование: mtproxyl vless link remove <ID> [ID…]"; return 1; }
+    local -a _ids=()
+    for _id in "$@"; do
+        [ -n "$_id" ] || continue
+        [ -n "$(_vless_link_row "$_id")" ] || { log_error "Ссылки ${_id} нет"; return 1; }
+        _ids+=("$_id")
+    done
+    [ "${#_ids[@]}" -gt 0 ] || { log_error "Не указаны ID ссылок"; return 1; }
     _f=$(_vless_links); _tmp=$(mktemp "${_f}.XXXXXX") || return 1
-    awk -F'|' -v id="$_id" '$1 != id' "$_f" > "$_tmp"
-    chmod 600 "$_tmp" && mv -f "$_tmp" "$_f" || return 1
-    if [ "${VLESS_ACTIVE:-}" = "$_id" ]; then
+    awk -F'|' -v ids="${_ids[*]}" '
+        BEGIN { n=split(ids, a, " "); for (i=1; i<=n; i++) drop[a[i]]=1 }
+        !($1 in drop)
+    ' "$_f" > "$_tmp"
+    chmod 600 "$_tmp" && mv -f "$_tmp" "$_f" || { rm -f "$_tmp"; return 1; }
+    for _id in "${_ids[@]}"; do
+        [ "${VLESS_ACTIVE:-}" = "$_id" ] && _active_removed=true
+    done
+    if [ "$_active_removed" = true ]; then
         VLESS_ACTIVE=$(awk -F'|' 'NR==1 {print $1}' "$_f")
         save_settings
         if [ "${VLESS_ENABLED:-false}" = true ]; then
             if [ -n "$VLESS_ACTIVE" ]; then vless_reload_active; else vless_off; fi
         fi
     fi
-    log_success "Ссылка ${_id} удалена"
+    if [ "${#_ids[@]}" = 1 ]; then
+        log_success "Ссылка ${_ids[0]} удалена"
+    else
+        log_success "Удалено ссылок: ${#_ids[@]}"
+    fi
 }
 
 # ── HWID ────────────────────────────────────────────────────
@@ -252,8 +269,25 @@ vless_sub_set() {
 
 vless_sub_off() {
     check_root
-    rm -f "$(_vless_subs)"
-    log_success "Подписка отключена; ссылки из неё остались в списке"
+    local _f _tmp _removed=0
+    _f=$(_vless_links)
+    if [ -f "$_f" ]; then
+        _removed=$(awk -F'|' '$3 == "sub" {n++} END {print n+0}' "$_f")
+        if [ "$_removed" -gt 0 ]; then
+            _tmp=$(mktemp "${_f}.XXXXXX") || return 1
+            awk -F'|' '$3 != "sub"' "$_f" > "$_tmp"
+            chmod 600 "$_tmp" && mv -f "$_tmp" "$_f" || { rm -f "$_tmp"; return 1; }
+        fi
+    fi
+    rm -f "$(_vless_subs)" "$(_vless_sub_notice_file)" "$(_vless_sub_title_file)"
+    if [ -n "${VLESS_ACTIVE:-}" ] && [ -z "$(_vless_link_row "$VLESS_ACTIVE")" ]; then
+        VLESS_ACTIVE=$(awk -F'|' 'NR==1 {print $1}' "$_f" 2>/dev/null)
+        save_settings
+        if [ "${VLESS_ENABLED:-false}" = true ]; then
+            if [ -n "$VLESS_ACTIVE" ]; then vless_reload_active; else vless_off; fi
+        fi
+    fi
+    log_success "Подписка отключена; удалено ссылок: ${_removed}"
 }
 
 vless_sub_refresh() {
@@ -856,7 +890,7 @@ handle_vless_command() {
                 list|"") vless_link_list ;;
                 add)     vless_link_add "${3:-}" "${4:-}" ;;
                 use)     vless_link_use "${3:-}" ;;
-                remove|rm) vless_link_remove "${3:-}" ;;
+                remove|rm) shift 2; vless_link_remove "$@" ;;
                 *) log_error "vless link [list|add|use|remove]"; return 1 ;;
             esac ;;
         sub)
@@ -890,9 +924,9 @@ handle_vless_command() {
             echo -e "    ${GREEN}vless off${NC}              Выключить, вернуть прежние маршруты"
             echo -e "    ${GREEN}vless status${NC} [--json]  Состояние, активная ссылка, ядро"
             echo -e "    ${GREEN}vless link add${NC} <URI> [имя]  Добавить ссылку vless://"
-            echo -e "    ${GREEN}vless link list|use|remove${NC} <ID>  Список и выбор активной"
+            echo -e "    ${GREEN}vless link list|use|remove${NC} <ID…>  Список, выбор и удаление ссылок"
             echo -e "    ${GREEN}vless sub set${NC} <URL>     Подписка (base64 или список ссылок)"
-            echo -e "    ${GREEN}vless sub refresh|off${NC}   Обновить или отключить подписку"
+            echo -e "    ${GREEN}vless sub refresh|off${NC}   Обновить; off удаляет ссылки подписки"
             echo -e "    ${GREEN}vless sub ua${NC} <строка>   User-Agent подписки (Happ/3.23.0 по умолчанию)"
             echo -e "    ${GREEN}vless hwid${NC} [show|regen|on|off]  Идентификатор устройства для подписки"
             echo -e "    ${GREEN}vless test${NC} [--json]     Выходной IP, Telegram, DC"

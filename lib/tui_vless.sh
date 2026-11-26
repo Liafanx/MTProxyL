@@ -56,7 +56,7 @@ _tui_vless_links() {
         vless_link_list
         echo -e "  ${DIM}[1]${NC} Добавить ссылку vless://"
         echo -e "  ${DIM}[2]${NC} Сделать активной"
-        echo -e "  ${DIM}[3]${NC} Удалить"
+        echo -e "  ${DIM}[3]${NC} Удалить (один или несколько ID через пробел)"
         echo -e "  ${DIM}[0]${NC} Назад"
         echo ""
         local c; c=$(read_choice "выбор" "0")
@@ -71,8 +71,11 @@ _tui_vless_links() {
                 local id; read_line id "  ID: "
                 vless_link_use "$id" ;;
             3)
-                local id; read_line id "  ID: "
-                vless_link_remove "$id" ;;
+                local id
+                read_line id "  ID (несколько через пробел): "
+                [ -n "$id" ] || continue
+                # shellcheck disable=SC2086
+                vless_link_remove $id ;;
             0|"") return ;;
         esac
         press_any_key
@@ -92,7 +95,7 @@ _tui_vless_sub() {
     echo ""
     echo -e "  ${DIM}[1]${NC} Задать или заменить URL"
     echo -e "  ${DIM}[2]${NC} Обновить сейчас"
-    echo -e "  ${DIM}[3]${NC} Отключить подписку"
+    echo -e "  ${DIM}[3]${NC} Отключить и удалить ссылки подписки"
     echo -e "  ${DIM}[0]${NC} Назад"
     echo ""
     local c; c=$(read_choice "выбор" "0")

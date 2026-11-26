@@ -128,7 +128,7 @@ func (c *Client) VlessSubRefresh(ctx context.Context) (string, error) {
 	return stripANSI(out), err
 }
 
-// VlessSubOff removes the subscription; its links stay in the list.
+// VlessSubOff removes the subscription and the links imported from it.
 func (c *Client) VlessSubOff(ctx context.Context) (string, error) {
 	out, err := c.run(ctx, "vless", "sub", "off")
 	return stripANSI(out), err

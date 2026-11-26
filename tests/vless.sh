@@ -162,6 +162,9 @@ cp "$t/sub.json" "$t/feed.b64"
 vless_sub_refresh >/dev/null 2>&1 || fail "JSON-подписка"
 [ "$(grep -c '|sub|' "$(_vless_links)")" = 1 ] || fail "JSON-ссылка не импортирована"
 vless_sub_off >/dev/null || fail "sub off JSON"
+[ "$(grep -c '|sub|' "$(_vless_links)")" = 0 ] || fail "sub-ссылки остались после off"
+[ "$(grep -c '|manual|' "$(_vless_links)")" = 2 ] || fail "ручные ссылки удалены вместе с подпиской"
+[ ! -e "$(_vless_sub_title_file)" ] || fail "заголовок подписки остался"
 
 # HWID: стабильный, допустимого формата, уходит заголовками вместе с UA Happ.
 VLESS_HWID_ENABLED=true; VLESS_HWID=""
@@ -187,6 +190,9 @@ vless_sub_refresh >/dev/null 2>&1 || fail "sub refresh с подсказкой"
 [ "$(grep -c '|sub|' "$(_vless_links)")" = 0 ] || fail "подсказка импортирована"
 grep -q 'HWID' "$(_vless_sub_notice_file)" || fail "текст подсказки не сохранён"
 vless_sub_off >/dev/null || fail "sub off"
+[ "$(grep -c '|sub|' "$(_vless_links)")" = 0 ] || fail "sub-ссылки остались после off"
+[ "$(grep -c '|manual|' "$(_vless_links)")" = 2 ] || fail "ручные ссылки удалены вместе с подпиской"
+[ ! -e "$(_vless_sub_notice_file)" ] || fail "сообщение подписки осталось"
 vless_status_json | jq -e '(.hwid|length) > 0 and .hwid_enabled == true and (.sub_ua|length) > 0' >/dev/null || fail "status: HWID и UA"
 # Состояние middle proxy видно в статусе: при VLESS и выключенном ME — disabled.
 VLESS_ENABLED=true
@@ -210,5 +216,17 @@ vless_watch; vless_watch
 [ "$(grep -c restart "$t/restart.log")" = 1 ] || fail "перезапуск после двух сбоев"
 vless_watch; vless_watch
 [ "$VLESS_ACTIVE" != "$ID1" ] || fail "не переключился на запасную ссылку"
+
+# Массовое удаление: несколько ID одним вызовом, активная не меняется.
+URI5='vless://66666666-6666-6666-6666-666666666666@example.org:443?security=tls&sni=example.org&type=tcp#Bulk1'
+URI6='vless://77777777-7777-7777-7777-777777777777@example.org:443?security=tls&sni=example.org&type=tcp#Bulk2'
+vless_link_add "$URI5" Bulk1 >/dev/null || fail "add Bulk1"
+vless_link_add "$URI6" Bulk2 >/dev/null || fail "add Bulk2"
+B1=$(_vless_uri_id "$URI5"); B2=$(_vless_uri_id "$URI6")
+ACTIVE_BEFORE=$VLESS_ACTIVE
+handle_vless_command link remove "$B1" "$B2" >/dev/null || fail "массовое удаление"
+[ "$(grep -c '|manual|' "$(_vless_links)")" = 2 ] || fail "массовое удаление задело другие ссылки"
+grep -q "|$B1|" "$(_vless_links)" && fail "Bulk1 осталась"
+[ "$VLESS_ACTIVE" = "$ACTIVE_BEFORE" ] || fail "массовое удаление сменило активную ссылку"
 
 echo "OK vless"
