@@ -34,13 +34,14 @@ root=$(_release_root)
 _release_snapshot || fail "снимок"
 [ -f "$(_release_local 9.0.0)" ] || fail "нет снимка"
 _release_apply "$root" || fail "подмена"
+[ -f "$LIB_DIR/vless_parse.sh" ] || fail "vless_parse.sh не установлен"
 _release_stage_cleanup
 grep -q "^VERSION=\"$cur\"" "$INSTALL_DIR/mtproxyl.sh" || fail "mtproxyl.sh не заменён"
 grep -q '# old' "$LIB_DIR/colors.sh" && fail "lib не заменена"
 [ -z "$(ls -A "$INSTALL_DIR" | grep release-stage)" ] || fail "не убран каталог распаковки"
 
 # Откат из снимка возвращает ровно прежний код.
-_release_unpack "$(_release_local 9.0.0)" 9.0.0 || fail "распаковка снимка"
+_release_unpack "$(_release_local 9.0.0)" 9.0.0 true || fail "распаковка снимка"
 _release_apply "$(_release_root)" || fail "откат"
 _release_stage_cleanup
 grep -q '^VERSION="9.0.0"' "$INSTALL_DIR/mtproxyl.sh" || fail "откат mtproxyl.sh"
@@ -72,6 +73,14 @@ mkdir -p "$t/bad" && tar -xzf "$t/good.tgz" -C "$t/bad"
 echo 'if' >> "$t/bad/mtproxyl-$cur/lib/utils.sh"
 tar -czf "$t/bad.tgz" -C "$t/bad" "mtproxyl-$cur"
 _release_unpack "$t/bad.tgz" "$cur" 2>/dev/null && fail "принят архив с изменённым файлом"
+
+# Архив без shell-парсера VLESS не принимается.
+mkdir -p "$t/nopy" && tar -xzf "$t/good.tgz" -C "$t/nopy"
+rm -f "$t/nopy/mtproxyl-$cur/lib/vless_parse.sh"
+(cd "$t/nopy/mtproxyl-$cur" && find . -type f ! -name SHA256SUMS -printf '%P\n' \
+    | LC_ALL=C sort | xargs -d '\n' sha256sum > SHA256SUMS)
+tar -czf "$t/nopy.tgz" -C "$t/nopy" "mtproxyl-$cur"
+_release_unpack "$t/nopy.tgz" "$cur" 2>/dev/null && fail "принят архив без vless_parse.sh"
 
 # Одинаковый код под другим номером — CI откажет.
 "$repo/.github/scripts/mtproxyl-archive.sh" same "$t/good.tgz" "$t/good.tgz" || fail "same на одном архиве"

@@ -32,6 +32,13 @@ export function VlessPage() {
   const [allowME, setAllowME] = useState(false);
   const [ua, setUA] = useState('');
 
+  // Сетевой сбой мог оборвать ответ, хотя действие уже применилось: как только
+  // статус снова получен, старый «Failed to fetch» больше не актуален.
+  useEffect(() => {
+    if (!data) return;
+    setActionError((prev) => (/^(Failed to fetch|NetworkError|Load failed)/i.test(prev) ? '' : prev));
+  }, [data]);
+
   const run = useCallback(async (fn: () => Promise<{ output?: string } | void>, ok = '') => {
     setBusy(true);
     setActionError('');

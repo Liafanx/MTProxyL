@@ -27,6 +27,8 @@ cat > "$(_vless_bin)" <<'BIN'
 exit 0
 BIN
 chmod 755 "$(_vless_bin)"
+# Проверка выхода в тесте не ходит в сеть.
+vless_test_json() { echo '{"ok": false, "exit_ip": "", "telegram": "fail", "dc": "fail"}'; }
 
 # Заглушки движка и upstream.
 UPSTREAM_NAMES=(); UPSTREAM_ENABLED=(); UPSTREAM_SCOPES=()
@@ -36,8 +38,12 @@ upstream_remove() { echo "rm $1" >> "$t/up.log"; }
 upstream_toggle() { echo "toggle $1 $2" >> "$t/up.log"; }
 generate_telemt_config() { :; }; is_proxy_running() { return 1; }; restart_proxy_container() { :; }
 _engine_calls=0
-_vless_engine_apply() { _engine_calls=$((_engine_calls + 1)); }
+_vless_engine_apply() {
+    if [ "${VLESS_DEFER_RESTART:-false}" = true ]; then VLESS_ENGINE_PENDING=true; return 0; fi
+    _engine_calls=$((_engine_calls + 1))
+}
 mtdd_mgr_active() { return 1; }
+systemd-run() { echo "$*" >> "$t/systemd-run.log"; return 0; }
 systemctl() {
     case "$1" in
         restart) echo restart >> "$t/restart.log" ;;
@@ -57,10 +63,10 @@ URI1='vless://11111111-1111-1111-1111-111111111111@example.org:443?encryption=no
 URI2='vless://22222222-2222-2222-2222-222222222222@example.net:8443?encryption=none&security=tls&sni=example.net&type=ws&path=%2Fws%3Fed%3D2048&host=example.net#WS'
 
 # Разбор: публичный VLESS без TLS запрещён, Reality принимается.
-python3 -I "$repo/lib/vless_parse.py" check 'vless://u@example.org:443?security=none&type=tcp' >/dev/null 2>&1 \
+bash "$repo/lib/vless_parse.sh" check 'vless://u@example.org:443?security=none&type=tcp' >/dev/null 2>&1 \
     && fail "VLESS без TLS принят"
-python3 -I "$repo/lib/vless_parse.py" check "$URI1" >/dev/null || fail "Reality не разобран"
-python3 -I "$repo/lib/vless_parse.py" check "$URI2" >/dev/null || fail "WS не разобран"
+bash "$repo/lib/vless_parse.sh" check "$URI1" >/dev/null || fail "Reality не разобран"
+bash "$repo/lib/vless_parse.sh" check "$URI2" >/dev/null || fail "WS не разобран"
 
 # Список и маска.
 vless_link_add "$URI1" Reality >/dev/null || fail "add 1"
@@ -103,6 +109,13 @@ grep -q "add vless socks5 127.0.0.1:$(_vless_port) 1 " "$t/up.log" || fail "upst
 grep -q '^add vlesslocal' "$t/up.log" && fail "лишний local-маршрут без локальной маскировки"
 [ "$VLESS_ENABLED" = true ] || fail "enabled не выставлен"
 
+# Панельный путь: рестарт движка отложен, ответ на запрос успевает уйти.
+: > "$t/systemd-run.log"; _engine_calls=0
+vless_on --defer-restart >/dev/null || fail "vless_on --defer-restart"
+[ "$_engine_calls" = 0 ] || fail "defer-restart перезапустил движок синхронно"
+grep -q 'vless engine-apply' "$t/systemd-run.log" || fail "нет отложенного применения"
+grep -q -- '--on-active=3' "$t/systemd-run.log" || fail "нет задержки применения"
+
 # Повторное включение при включённом WARP: отказ без --yes, выключение с ним.
 WARP_ENABLED=true
 vless_on >/dev/null 2>&1 && fail "конфликт с WARP проигнорирован"
@@ -116,10 +129,13 @@ vless_on >/dev/null 2>&1 && fail "mtdd без согласия на Direct"
 vless_on --yes --allow-disable-me >/dev/null 2>&1 || fail "mtdd с согласием"
 mtdd_mgr_active() { return 1; }
 
-# Выключение: upstream снят.
-vless_off >/dev/null || fail "vless_off"
+# Выключение: upstream снят; панельный путь тоже откладывает рестарт.
+: > "$t/systemd-run.log"; _engine_calls=0
+vless_off --defer-restart >/dev/null || fail "vless_off --defer-restart"
 grep -q '^rm vless$' "$t/up.log" || fail "upstream не снят"
 [ "$VLESS_ENABLED" = false ] || fail "enabled не снят"
+[ "$_engine_calls" = 0 ] || fail "vless_off --defer-restart перезапустил движок"
+grep -q 'vless engine-apply' "$t/systemd-run.log" || fail "vless_off: нет отложенного применения"
 
 # Подписка: base64 из двух ссылок заменяет прошлые sub-ссылки, ручные целы.
 URI3='vless://33333333-3333-3333-3333-333333333333@sub1.example.org:443?security=tls&sni=sub1.example.org&type=grpc&serviceName=grpc#Sub1'
@@ -147,7 +163,7 @@ vless_sub_set "https://example.org/sub" >/dev/null 2>&1 || fail "sub set"
 [ "$(grep -c '|sub|' "$(_vless_links)")" = 2 ] || fail "sub-ссылки: $(cat "$(_vless_links)")"
 grep -q '|manual|' "$(_vless_links)" || fail "ручные ссылки пропали"
 # JSON-подписка (Xray): VLESS из outbounds, имена из remarks, прочее пропускается.
-PBK=$(python3 -I -c 'import base64; print(base64.urlsafe_b64encode(b"0"*32).decode().rstrip("="))')
+PBK='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
 cat > "$t/sub.json" <<JSON
 [{"remarks":"JSON node","outbounds":[
  {"tag":"proxy","protocol":"vless","settings":{"vnext":[{"address":"example.org","port":443,"users":[{"id":"77777777-7777-7777-7777-777777777777","encryption":"none"}]}]},"streamSettings":{"network":"xhttp","security":"reality","realitySettings":{"serverName":"example.org","publicKey":"$PBK","shortId":"ab12","fingerprint":"chrome"},"xhttpSettings":{"path":"/xhttp","mode":"auto"}}},
@@ -155,9 +171,9 @@ cat > "$t/sub.json" <<JSON
  {"tag":"block","protocol":"blackhole"}
 ]}]
 JSON
-python3 -I "$repo/lib/vless_parse.py" from-json "$t/sub.json" > "$t/sub.uris" || fail "from-json"
+bash "$repo/lib/vless_parse.sh" from-json "$t/sub.json" > "$t/sub.uris" || fail "from-json"
 [ "$(grep -c '^vless://' "$t/sub.uris")" = 1 ] || fail "JSON: не один VLESS"
-python3 -I "$repo/lib/vless_parse.py" check "$(cat "$t/sub.uris")" | jq -e '.security=="reality" and .transport=="xhttp" and .name=="JSON node"' >/dev/null || fail "JSON: поля VLESS"
+bash "$repo/lib/vless_parse.sh" check "$(cat "$t/sub.uris")" | jq -e '.security=="reality" and .transport=="xhttp" and .name=="JSON node"' >/dev/null || fail "JSON: поля VLESS"
 cp "$t/sub.json" "$t/feed.b64"
 vless_sub_refresh >/dev/null 2>&1 || fail "JSON-подписка"
 [ "$(grep -c '|sub|' "$(_vless_links)")" = 1 ] || fail "JSON-ссылка не импортирована"
@@ -194,6 +210,9 @@ vless_sub_off >/dev/null || fail "sub off"
 [ "$(grep -c '|manual|' "$(_vless_links)")" = 2 ] || fail "ручные ссылки удалены вместе с подпиской"
 [ ! -e "$(_vless_sub_notice_file)" ] || fail "сообщение подписки осталось"
 vless_status_json | jq -e '(.hwid|length) > 0 and .hwid_enabled == true and (.sub_ua|length) > 0' >/dev/null || fail "status: HWID и UA"
+_status_text=$(vless_status)
+[[ "$_status_text" == *"VLESS: выключен"* && "$_status_text" == *"SOCKS5: 127.0.0.1:41100"* ]] \
+    || fail "status: текст состояния"
 # Состояние middle proxy видно в статусе: при VLESS и выключенном ME — disabled.
 VLESS_ENABLED=true
 _vless_me_enabled() { return 1; }
@@ -203,7 +222,6 @@ VLESS_ENABLED=false
 # Отказ: первые две проверки — перезапуск, четвёртая — смена ссылки.
 VLESS_ENABLED=true
 VLESS_ACTIVE=$ID1
-vless_test_json() { echo '{"ok": false, "exit_ip": "", "telegram": "fail", "dc": "fail"}'; }
 : > "$t/restart.log"
 systemctl() {
     case "$1" in
@@ -228,5 +246,15 @@ handle_vless_command link remove "$B1" "$B2" >/dev/null || fail "массово�
 [ "$(grep -c '|manual|' "$(_vless_links)")" = 2 ] || fail "массовое удаление задело другие ссылки"
 grep -q "|$B1|" "$(_vless_links)" && fail "Bulk1 осталась"
 [ "$VLESS_ACTIVE" = "$ACTIVE_BEFORE" ] || fail "массовое удаление сменило активную ссылку"
+
+# Парсер — обычная библиотека из списка, без отдельного Python-файла.
+[ -f "$repo/lib/vless_parse.sh" ] || fail "нет lib/vless_parse.sh"
+bash -n "$repo/lib/vless_parse.sh" || fail "синтаксис lib/vless_parse.sh"
+bash "$repo/lib/vless_parse.sh" check "$URI1" >/dev/null || fail "парсер как CLI"
+
+# Служебная команда таймера применяет конфиг сразу, без повторной отсрочки.
+_engine_calls=0
+handle_vless_command engine-apply >/dev/null || fail "engine-apply"
+[ "$_engine_calls" = 1 ] || fail "engine-apply не применил конфиг"
 
 echo "OK vless"

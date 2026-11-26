@@ -52,6 +52,13 @@ _release_check() {
     for _f in "${_root}/mtproxyl.sh" "${_root}"/lib/*.sh; do
         bash -n "$_f" 2>/dev/null || { log_error "Ошибка синтаксиса: ${_f#"${_root}"/}"; return 1; }
     done
+    if command -v python3 >/dev/null 2>&1; then
+        for _f in "${_root}"/lib/*.py; do
+            [ -f "$_f" ] || continue
+            python3 -I -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' "$_f" 2>/dev/null \
+                || { log_error "Ошибка синтаксиса: ${_f#"${_root}"/}"; return 1; }
+        done
+    fi
     if command -v python3 >/dev/null 2>&1 && [ -d "${_root}/mtproxyl-tgbot/bot" ]; then
         for _f in "${_root}"/mtproxyl-tgbot/bot/*.py; do
             python3 -m py_compile "$_f" 2>/dev/null \
@@ -172,8 +179,11 @@ _release_snapshot() {
     _tmp=$(mktemp -d "${RELEASE_CACHE_DIR}/.snap.XXXXXX") || return 1
     _root="${_tmp}/mtproxyl-${VERSION}"
     mkdir -p "${_root}/lib"
-    cp "${INSTALL_DIR}/mtproxyl.sh" "${_root}/" && cp "${LIB_DIR}"/*.sh "${_root}/lib/" \
-        || { rm -rf "$_tmp"; return 1; }
+    cp "${INSTALL_DIR}/mtproxyl.sh" "${_root}/" || { rm -rf "$_tmp"; return 1; }
+    for _f in "${LIB_DIR}"/*.sh "${LIB_DIR}"/*.py; do
+        [ -f "$_f" ] || continue
+        cp "$_f" "${_root}/lib/" || { rm -rf "$_tmp"; return 1; }
+    done
     echo "$VERSION" > "${_root}/version"
     if [ -d "${TGBOT_DIR:-/nonexistent}/bot" ]; then
         for _f in "${_TGBOT_FILES[@]}"; do
@@ -196,7 +206,8 @@ _release_snapshot() {
 _release_apply() {
     local _root="$1" _f _n
     mkdir -p "$LIB_DIR"
-    for _f in "${_root}"/lib/*.sh; do
+    for _f in "${_root}"/lib/*.sh "${_root}"/lib/*.py; do
+        [ -f "$_f" ] || continue
         _n=$(basename "$_f")
         install -m 644 "$_f" "${LIB_DIR}/.${_n}.new" && mv -f "${LIB_DIR}/.${_n}.new" "${LIB_DIR}/${_n}" || return 1
     done

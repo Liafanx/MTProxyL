@@ -3550,7 +3550,8 @@ MTProxyL его автоматически не ставит.
 Поддерживаются ссылки `vless://` с Reality, TLS и VLESS Encryption, `flow=xtls-rprx-vision`,
 транспортами `tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp` и `kcp`. Ядро —
 [Xray-core](https://github.com/XTLS/Xray-core), версия закреплена в MTProxyL и
-проверяется по SHA256; обновление и откат — отдельными командами.
+проверяется по SHA256; обновление и откат — отдельными командами. Разбор ссылок
+и подписок — на shell и `jq`, без Python.
 
 ```bash
 mtproxyl vless link add 'vless://…' имя   # добавить ссылку
