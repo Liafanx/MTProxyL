@@ -34,7 +34,7 @@ _release_lib_list() {
 
 # Проверка распакованной версии. Печатает номер версии.
 _release_check() {
-    local _root="$1" _want="${2:-}" _ver _libs _l _f
+    local _root="$1" _want="${2:-}" _allow_missing_py="${3:-false}" _ver _libs _l _f
     [ -f "${_root}/mtproxyl.sh" ] || { log_error "В архиве нет mtproxyl.sh"; return 1; }
     _ver=$(sed -n 's/^VERSION="\(.*\)"$/\1/p' "${_root}/mtproxyl.sh" | head -1)
     _release_valid_version "$_ver" || { log_error "Не удалось определить версию в архиве"; return 1; }
@@ -49,9 +49,20 @@ _release_check() {
     for _l in $_libs; do
         [ -f "${_root}/lib/${_l}.sh" ] || { log_error "В версии ${_ver} нет lib/${_l}.sh"; return 1; }
     done
+    if [ "$_allow_missing_py" != true ] && [ -f "${_root}/lib/vless.sh" ] \
+        && [ ! -f "${_root}/lib/vless_parse.py" ]; then
+        log_error "В версии ${_ver} нет lib/vless_parse.py"; return 1
+    fi
     for _f in "${_root}/mtproxyl.sh" "${_root}"/lib/*.sh; do
         bash -n "$_f" 2>/dev/null || { log_error "Ошибка синтаксиса: ${_f#"${_root}"/}"; return 1; }
     done
+    if command -v python3 >/dev/null 2>&1; then
+        for _f in "${_root}"/lib/*.py; do
+            [ -f "$_f" ] || continue
+            python3 -I -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' "$_f" 2>/dev/null \
+                || { log_error "Ошибка синтаксиса: ${_f#"${_root}"/}"; return 1; }
+        done
+    fi
     if command -v python3 >/dev/null 2>&1 && [ -d "${_root}/mtproxyl-tgbot/bot" ]; then
         for _f in "${_root}"/mtproxyl-tgbot/bot/*.py; do
             python3 -m py_compile "$_f" 2>/dev/null \
@@ -65,7 +76,7 @@ _release_check() {
 # Распаковать архив во временный каталог. Внутри — только обычные файлы и
 # каталоги под mtproxyl-<версия>/, иначе архив мог бы писать мимо.
 _release_unpack() {
-    local _arc="$1" _ver="$2" _names _types _bad
+    local _arc="$1" _ver="$2" _allow_missing_py="${3:-false}" _names _types _bad
     _names=$(tar -tzf "$_arc" 2>/dev/null) && _types=$(tar -tvzf "$_arc" 2>/dev/null) \
         || { log_error "Архив повреждён: ${_arc}"; return 1; }
     _bad=$(awk -v top="mtproxyl-${_ver}" '
@@ -79,7 +90,7 @@ _release_unpack() {
     local _root="${_RELEASE_STAGE}/mtproxyl-${_ver}"
     (cd "$_root" && sha256sum -c --quiet --strict SHA256SUMS >/dev/null 2>&1) \
         || { log_error "Контрольные суммы внутри архива не сходятся"; _release_stage_cleanup; return 1; }
-    _release_check "$_root" "$_ver" >/dev/null || { _release_stage_cleanup; return 1; }
+    _release_check "$_root" "$_ver" "$_allow_missing_py" >/dev/null || { _release_stage_cleanup; return 1; }
 }
 
 # Скачать архив релиза в кэш и сверить с опубликованной суммой.
@@ -110,7 +121,7 @@ _release_stage_version() {
     if [ "$_prefer" = local ] && [ -f "$(_release_local "$_ver")" ]; then
         log_info "Берём сохранённую копию v${_ver}"
         _RELEASE_FROM="сохранённая копия v${_ver}"
-        _release_unpack "$(_release_local "$_ver")" "$_ver" && { _RELEASE_FROM="сохранённая копия v${_ver}"; return 0; }
+        _release_unpack "$(_release_local "$_ver")" "$_ver" true && { _RELEASE_FROM="сохранённая копия v${_ver}"; return 0; }
     fi
     _RELEASE_FROM="архив v${_ver}"
     _arc=$(_release_cached "$_ver")
@@ -130,7 +141,7 @@ _release_stage_version() {
     if [ "$_prefer" != local ] && [ -f "$(_release_local "$_ver")" ]; then
         log_info "Берём сохранённую копию v${_ver}"
         _RELEASE_FROM="сохранённая копия v${_ver}"
-        _release_unpack "$(_release_local "$_ver")" "$_ver" && { _RELEASE_FROM="сохранённая копия v${_ver}"; return 0; }
+        _release_unpack "$(_release_local "$_ver")" "$_ver" true && { _RELEASE_FROM="сохранённая копия v${_ver}"; return 0; }
     fi
     return 1
 }
@@ -155,6 +166,9 @@ _release_stage_branch() {
     for _l in $_libs; do
         _fetch "lib/${_l}.sh" || { log_error "Не удалось скачать lib/${_l}.sh"; _release_stage_cleanup; return 1; }
     done
+    if [[ " $_libs " == *" vless "* ]]; then
+        _fetch "lib/vless_parse.py" || { log_error "Не удалось скачать lib/vless_parse.py"; _release_stage_cleanup; return 1; }
+    fi
     # Список файлов бота — из новой tgbot.sh.
     _bot=$(sed -n '/^_TGBOT_FILES=(/,/^)/{s/^ *"\(.*\)"$/\1/p}' "${_root}/lib/tgbot.sh" 2>/dev/null)
     for _f in $_bot; do
@@ -172,8 +186,11 @@ _release_snapshot() {
     _tmp=$(mktemp -d "${RELEASE_CACHE_DIR}/.snap.XXXXXX") || return 1
     _root="${_tmp}/mtproxyl-${VERSION}"
     mkdir -p "${_root}/lib"
-    cp "${INSTALL_DIR}/mtproxyl.sh" "${_root}/" && cp "${LIB_DIR}"/*.sh "${_root}/lib/" \
-        || { rm -rf "$_tmp"; return 1; }
+    cp "${INSTALL_DIR}/mtproxyl.sh" "${_root}/" || { rm -rf "$_tmp"; return 1; }
+    for _f in "${LIB_DIR}"/*.sh "${LIB_DIR}"/*.py; do
+        [ -f "$_f" ] || continue
+        cp "$_f" "${_root}/lib/" || { rm -rf "$_tmp"; return 1; }
+    done
     echo "$VERSION" > "${_root}/version"
     if [ -d "${TGBOT_DIR:-/nonexistent}/bot" ]; then
         for _f in "${_TGBOT_FILES[@]}"; do
@@ -182,7 +199,7 @@ _release_snapshot() {
             cp "${TGBOT_DIR}/${_f}" "${_root}/mtproxyl-tgbot/${_f}" || { rm -rf "$_tmp"; return 1; }
         done
     fi
-    _release_check "$_root" "$VERSION" >/dev/null || { rm -rf "$_tmp"; return 1; }
+    _release_check "$_root" "$VERSION" true >/dev/null || { rm -rf "$_tmp"; return 1; }
     (cd "$_root" && find . -type f ! -name SHA256SUMS -printf '%P\n' | LC_ALL=C sort | xargs -d '\n' sha256sum > SHA256SUMS) || { rm -rf "$_tmp"; return 1; }
     tar -czf "${_tmp}/a.tar.gz" -C "$_tmp" "mtproxyl-${VERSION}" \
         && mv -f "${_tmp}/a.tar.gz" "$(_release_local "$VERSION")"
@@ -196,7 +213,8 @@ _release_snapshot() {
 _release_apply() {
     local _root="$1" _f _n
     mkdir -p "$LIB_DIR"
-    for _f in "${_root}"/lib/*.sh; do
+    for _f in "${_root}"/lib/*.sh "${_root}"/lib/*.py; do
+        [ -f "$_f" ] || continue
         _n=$(basename "$_f")
         install -m 644 "$_f" "${LIB_DIR}/.${_n}.new" && mv -f "${LIB_DIR}/.${_n}.new" "${LIB_DIR}/${_n}" || return 1
     done
@@ -380,7 +398,7 @@ self_update() {
     log_info "Шаг 3/3: Замена файлов..."
     if ! _release_apply "$_root"; then
         log_error "Замена прервалась — возвращаем v${VERSION}"
-        if _release_stage_cleanup && _release_unpack "$(_release_local "$VERSION")" "$VERSION"; then
+        if _release_stage_cleanup && _release_unpack "$(_release_local "$VERSION")" "$VERSION" true; then
             _release_apply "$(_release_root)" || log_error "Не удалось вернуть файлы: сохранённая копия — $(_release_local "$VERSION")"
         fi
         _release_stage_cleanup

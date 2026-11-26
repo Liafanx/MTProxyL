@@ -293,6 +293,14 @@ _libs=$(sed -n 's/^for _lib in \(.*\); do$/\1/p' "${_INSTALL_ROOT}/mtproxyl.sh" 
 for lib in $_libs; do
     [ -f "${_INSTALL_ROOT}/lib/${lib}.sh" ] || { echo "  ОШИБКА: нет lib/${lib}.sh" >&2; exit 1; }
 done
+if [ -f "${_INSTALL_ROOT}/lib/vless.sh" ] && [ ! -f "${_INSTALL_ROOT}/lib/vless_parse.py" ]; then
+    echo '  ОШИБКА: нет lib/vless_parse.py' >&2; exit 1
+fi
+if command -v python3 >/dev/null && [ -f "${_INSTALL_ROOT}/lib/vless_parse.py" ]; then
+    python3 -I -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
+        "${_INSTALL_ROOT}/lib/vless_parse.py" 2>/dev/null \
+        || { echo '  ОШИБКА: код lib/vless_parse.py' >&2; exit 1; }
+fi
 if command -v python3 >/dev/null && [ -d "${_INSTALL_ROOT}/mtproxyl-tgbot/bot" ]; then
     for _file in "${_INSTALL_ROOT}"/mtproxyl-tgbot/bot/*.py; do
         python3 -m py_compile "$_file" || { echo "  ОШИБКА: код бота ${_file}" >&2; exit 1; }
@@ -307,7 +315,7 @@ mkdir -p "${_old}/lib"
 for _file in mtproxyl.sh version; do
     [ ! -f "${INSTALL_DIR}/${_file}" ] || cp -p "${INSTALL_DIR}/${_file}" "${_old}/${_file}"
 done
-for _file in "${INSTALL_DIR}"/lib/*.sh; do
+for _file in "${INSTALL_DIR}"/lib/*.sh "${INSTALL_DIR}"/lib/*.py; do
     [ ! -f "$_file" ] || cp -p "$_file" "${_old}/lib/"
 done
 _install_save_recovery() {
@@ -350,7 +358,7 @@ fi
 
 _install_apply_files() {
     local root="$1" f
-    for f in "${root}"/lib/*.sh; do
+    for f in "${root}"/lib/*.sh "${root}"/lib/*.py; do
         [ -f "$f" ] || continue
         install -m 644 "$f" "${INSTALL_DIR}/lib/.$(basename "$f").new" \
             && mv -f "${INSTALL_DIR}/lib/.$(basename "$f").new" "${INSTALL_DIR}/lib/$(basename "$f")" || return 1
@@ -366,7 +374,8 @@ _install_apply_files() {
 }
 if ! _install_apply_files "$_INSTALL_ROOT"; then
     echo '  ОШИБКА: замена прервалась, восстанавливаем прежний код' >&2
-    for _file in "${_INSTALL_ROOT}"/lib/*.sh; do
+    for _file in "${_INSTALL_ROOT}"/lib/*.sh "${_INSTALL_ROOT}"/lib/*.py; do
+        [ -f "$_file" ] || continue
         [ -f "${_old}/lib/$(basename "$_file")" ] || rm -f "${INSTALL_DIR}/lib/$(basename "$_file")"
     done
     if ! _install_apply_files "$_old"; then

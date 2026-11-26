@@ -20,7 +20,34 @@ _vless_conf()    { echo "$(_vless_dir)/config.json"; }
 _vless_links()   { echo "$(_vless_dir)/links.conf"; }
 _vless_subs()    { echo "$(_vless_dir)/subscriptions.conf"; }
 _vless_state()   { echo "$(_vless_dir)/state.json"; }
-_vless_parser()  { echo "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/vless_parse.py"; }
+_vless_parser()  {
+    local _p
+    _p="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/vless_parse.py"
+    [ -f "$_p" ] || _vless_restore_parser "$_p" || return 1
+    echo "$_p"
+}
+
+# Комплект 1.8.4 не копировал .py при обновлении: достаём из кэша релиза.
+_vless_restore_parser() {
+    local _dst="$1" _arc _tmp _url
+    [ -n "${VERSION:-}" ] || { log_error "Не найден lib/vless_parse.py"; return 1; }
+    _arc="${INSTALL_DIR:-/opt/mtproxyl}/releases/mtproxyl-${VERSION}.tar.gz"
+    _tmp=$(mktemp) || return 1
+    if [ -f "$_arc" ]; then
+        tar -xzOf "$_arc" "mtproxyl-${VERSION}/lib/vless_parse.py" > "$_tmp" 2>/dev/null \
+            || { rm -f "$_tmp"; log_error "Не удалось восстановить lib/vless_parse.py из архива ${VERSION}"; return 1; }
+    else
+        _url="https://raw.githubusercontent.com/${GITHUB_REPO:-Liafanx/MTProxyL}/v${VERSION}/lib/vless_parse.py"
+        curl -fsSL --retry 2 --max-time 30 "$_url" -o "$_tmp" 2>/dev/null \
+            || { rm -f "$_tmp"; log_error "Не найден lib/vless_parse.py; выполните mtproxyl update или переустановите MTProxyL"; return 1; }
+    fi
+    python3 -I -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' "$_tmp" 2>/dev/null \
+        || { rm -f "$_tmp"; log_error "Повреждён lib/vless_parse.py для ${VERSION}"; return 1; }
+    install -m 644 "$_tmp" "${_dst}.new" && mv -f "${_dst}.new" "$_dst" \
+        || { rm -f "$_tmp"; return 1; }
+    rm -f "$_tmp"
+    printf '  Восстановлен lib/vless_parse.py из версии %s\n' "$VERSION" >&2
+}
 _vless_port() {
     local _p="${VLESS_PORT:-41100}"
     [[ "$_p" =~ ^[0-9]+$ ]] && [ "$_p" -ge 1 ] && [ "$_p" -le 65535 ] || _p=41100

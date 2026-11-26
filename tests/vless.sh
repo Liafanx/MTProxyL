@@ -229,4 +229,16 @@ handle_vless_command link remove "$B1" "$B2" >/dev/null || fail "массово�
 grep -q "|$B1|" "$(_vless_links)" && fail "Bulk1 осталась"
 [ "$VLESS_ACTIVE" = "$ACTIVE_BEFORE" ] || fail "массовое удаление сменило активную ссылку"
 
+# Комплект 1.8.4 не ставил vless_parse.py: новый lib/vless.sh достаёт его из
+# кэша релиза, поэтому VLESS работает и после обновления старого стенда.
+mkdir -p "$t/heal/lib" "$t/heal/releases" "$t/heal/src/mtproxyl-1.8.5/lib"
+cp "$repo/lib/vless_parse.py" "$t/heal/src/mtproxyl-1.8.5/lib/"
+tar -czf "$t/heal/releases/mtproxyl-1.8.5.tar.gz" -C "$t/heal/src" mtproxyl-1.8.5
+cp "$repo/lib/vless.sh" "$t/heal/lib/vless.sh"
+INSTALL_DIR="$t/heal" VERSION=1.8.5
+source "$t/heal/lib/vless.sh" || fail "source vless для восстановления парсера"
+P=$(_vless_parser) || fail "парсер не восстановлен"
+[ "$P" = "$t/heal/lib/vless_parse.py" ] || fail "путь парсера: $P"
+python3 -I "$P" check "$URI1" >/dev/null || fail "восстановленный парсер не работает"
+
 echo "OK vless"
