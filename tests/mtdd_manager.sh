@@ -142,7 +142,10 @@ WARP_ENABLED=true; generate_mtdd_config || fail "конфиг с WARP"
 jq -e '.direct_fallback_enabled == true and (.direct_fallback_dcs | length) == 10' "$MTDD_MGR_CONFIG" >/dev/null || fail "WARP: не все DC на Direct"
 mtdd_handle_tune list | grep -E ' direct_fallback_dcs ' | grep -q "задаёт MTProxyL" || fail "direct_fallback при WARP не помечен"
 eval "$_cfgget_orig"
-WARP_ENABLED=false; cp "$t/tune.bak" "$MTDD_MGR_TUNE"
+WARP_ENABLED=false
+VLESS_ENABLED=true; generate_mtdd_config || fail "конфиг с VLESS"
+jq -e '.direct_fallback_enabled == true and (.direct_fallback_dcs | length) == 10' "$MTDD_MGR_CONFIG" >/dev/null || fail "VLESS: не все DC на Direct"
+VLESS_ENABLED=false; cp "$t/tune.bak" "$MTDD_MGR_TUNE"
 _route_orig=$(declare -f _mtdd_mgr_route_state)
 _mtdd_mgr_route_state() { echo "0|198.51.100.20"; }
 generate_mtdd_config && [ "$(cfg .me_nat_ip)" = 198.51.100.20 ] || fail "AWG: me_nat_ip"
@@ -344,6 +347,17 @@ MASKING_ENABLED=false; [ "$(engine_link_modes | tr '\n' ' ')" = "secure tls " ] 
 
 
 # ── Смена движка telemt ⇄ mtdd ───────────────────────────────
+# Selfmask после смены движка переприменяется: конфиг цели собирается заново,
+# и без этого masking/fallback теряются.
+: > "$t/selfmask.log"
+SELFMASK_ENABLED=true; SELFMASK_DOMAIN=example.org
+_selfmask_configure_nginx() { echo conf >> "$t/selfmask.log"; }
+_selfmask_apply_mtproxyl_settings() { echo apply >> "$t/selfmask.log"; }
+_selfmask_refresh_after_engine_switch
+[ "$(tr '\n' ' ' < "$t/selfmask.log")" = "conf apply " ] || fail "Selfmask после смены движка: $(cat "$t/selfmask.log")"
+SELFMASK_ENABLED=false; : > "$t/selfmask.log"
+_selfmask_refresh_after_engine_switch
+[ ! -s "$t/selfmask.log" ] || fail "Selfmask применён при SELFMASK_ENABLED=false"
 for _lib in engine utils; do source "$repo/lib/$_lib.sh" || fail "source $_lib"; done
 uname() { [ "${1:-}" = -m ] && echo x86_64 || command uname "$@"; }
 save_settings() { echo "ENGINE_KIND=$ENGINE_KIND" >> "$t/saved"; }

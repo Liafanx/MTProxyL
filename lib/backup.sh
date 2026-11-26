@@ -3,7 +3,7 @@
 
 # Что входит в бэкап. Восстанавливается только это: архив распаковывается от
 # root прямо в каталог установки и иначе мог бы подменить сам скрипт.
-_BACKUP_FILES="settings.conf secrets.conf devices.conf upstreams.conf nft-rules.conf shaping.json expert.conf expert-target.conf tunings.conf superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf backup_meta.txt availability/last.json availability/history.jsonl warp/account.json quota-state/telemt.limit.json mtdd/tune.json"
+_BACKUP_FILES="settings.conf secrets.conf devices.conf upstreams.conf nft-rules.conf shaping.json expert.conf expert-target.conf tunings.conf superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf backup_meta.txt availability/last.json availability/history.jsonl warp/account.json quota-state/telemt.limit.json mtdd/tune.json vless/links.conf vless/subscriptions.conf vless/state.json"
 _BACKUP_DIRS="relay_stats geoblock"
 
 # Имена из архива, которые можно распаковать. Остальные — в stderr.
@@ -18,7 +18,7 @@ _backup_allowed_members() {
             [[ " $_BACKUP_FILES " == *" ${_f} "* ]] && _ok=true
             for _d in $_BACKUP_DIRS; do [[ "$_f" == "$_d/"* ]] && _ok=true; done
         elif [ "$_t" = "d" ]; then
-            for _d in $_BACKUP_DIRS availability warp; do
+            for _d in $_BACKUP_DIRS availability warp vless; do
                 [[ "${_f%/}" == "$_d" || "$_f" == "$_d/"* ]] && _ok=true
             done
             $_ok && continue
@@ -321,6 +321,12 @@ migrate_export() {
             cp "${INSTALL_DIR}/availability/$f" "$tmp/availability/$f" && count=$((count + 1))
         fi
     done
+    for f in links.conf subscriptions.conf state.json; do
+        if [ -f "${INSTALL_DIR}/vless/$f" ]; then
+            mkdir -p "$tmp/vless"
+            cp "${INSTALL_DIR}/vless/$f" "$tmp/vless/$f" && chmod 600 "$tmp/vless/$f" && count=$((count + 1))
+        fi
+    done
     if [ -d "${GEOBLOCK_CACHE_DIR}" ]; then
         cp -a "${GEOBLOCK_CACHE_DIR}" "$tmp/geoblock" && count=$((count + 1))
     fi
@@ -351,6 +357,14 @@ migrate_import() {
     for f in settings.conf secrets.conf devices.conf upstreams.conf nft-rules.conf shaping.json expert.conf expert-target.conf tunings.conf \
              superexpert.toml nginx-custom.conf selfmask-manager.conf selfmask-reanimator.conf; do
         [ -f "${tmp}/${f}" ] && { cp "${tmp}/${f}" "${INSTALL_DIR}/$f" && chmod 600 "${INSTALL_DIR}/$f" && restored=$((restored + 1)); }
+    done
+    for f in links.conf subscriptions.conf state.json; do
+        if [ -f "${tmp}/vless/$f" ]; then
+            mkdir -p "${INSTALL_DIR}/vless"
+            cp "${tmp}/vless/$f" "${INSTALL_DIR}/vless/$f"
+            chmod 600 "${INSTALL_DIR}/vless/$f"
+            restored=$((restored + 1))
+        fi
     done
     for f in last.json history.jsonl; do
         if [ -f "${tmp}/availability/$f" ]; then

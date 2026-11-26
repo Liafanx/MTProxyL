@@ -54,9 +54,14 @@ tui_security_menu() {
             echo -e "  ${DIM}[7]${NC} Туннель AWG до сервера-донора: $(_tui_donor_state_label)"
             echo -e "  ${DIM}[8]${NC} Telegram через свой AWG (конфиг): $(_tui_awg_state_label)"
         fi
+        if [ "$_mtdd_noroute" = true ]; then
+            echo -e "  ${DIM}[9]${NC} Telegram через VLESS: ${DIM}у цели mtdd — нет (есть в Manager)${NC}"
+        else
+            echo -e "  ${DIM}[9]${NC} Telegram через VLESS: $(_tui_vless_state_label)"
+        fi
         if [ "$_mtdd" = true ]; then
-            echo -e "  ${DIM}[9]${NC} Медиа-лимиты mtdd ${DIM}(скачивание файлов)${NC}"
-            echo -e "  ${DIM}[10]${NC} Подозрительные адреса ${DIM}(детектор mtdd: $([ "$(mtdd_cfg_get suspects 2>/dev/null)" = true ] && echo вкл || echo выкл))${NC}"
+            echo -e "  ${DIM}[10]${NC} Медиа-лимиты mtdd ${DIM}(скачивание файлов)${NC}"
+            echo -e "  ${DIM}[11]${NC} Подозрительные адреса ${DIM}(детектор mtdd: $([ "$(mtdd_cfg_get suspects 2>/dev/null)" = true ] && echo вкл || echo выкл))${NC}"
         fi
         echo -e "  ${DIM}[0]${NC} Назад"
         local choice; choice=$(read_choice "выбор" "0")
@@ -71,8 +76,13 @@ tui_security_menu() {
                     mtdd_unsupported "маршруты (WARP, AWG, донор) для цели mtdd; в режиме Manager они есть"; press_any_key; continue
                 fi
                 case "$choice" in 2) tui_warp_menu ;; 7) tui_donor_menu ;; 8) tui_awg_menu ;; esac ;;
-            9) [ "$_mtdd" = true ] && tui_mtdd_media_menu ;;
-            10) [ "$_mtdd" = true ] && tui_mtdd_suspects_menu ;;
+            9)
+                if [ "$_mtdd_noroute" = true ]; then
+                    mtdd_unsupported "VLESS для цели mtdd; в режиме Manager он есть"; press_any_key; continue
+                fi
+                tui_vless_menu ;;
+            10) [ "$_mtdd" = true ] && tui_mtdd_media_menu ;;
+            11) [ "$_mtdd" = true ] && tui_mtdd_suspects_menu ;;
             3)
                 _require_manager_mode || { press_any_key; continue; }
                 _require_no_superexpert || { press_any_key; continue; }

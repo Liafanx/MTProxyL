@@ -280,6 +280,8 @@ func (c *Client) WarpSetSettings(ctx context.Context, proto, location, endpoint,
 		p = *proto
 		switch p {
 		case "awg", "wg", "masque", "masque-h2":
+		case "awg3.1", "awg31":
+			p = "awg31"
 		default:
 			return "", fmt.Errorf("неверный протокол WARP")
 		}
@@ -327,8 +329,10 @@ func (c *Client) WarpSetSettings(ctx context.Context, proto, location, endpoint,
 func (c *Client) WarpSetProto(ctx context.Context, proto string) (string, error) {
 	switch proto {
 	case "awg", "wg", "masque", "masque-h2":
+	case "awg3.1", "awg31":
+		proto = "awg31"
 	default:
-		return "", fmt.Errorf("протокол: awg, wg, masque или masque-h2")
+		return "", fmt.Errorf("протокол: awg, awg3.1, wg, masque или masque-h2")
 	}
 	out, err := c.run(ctx, "warp", "proto", proto)
 	return stripANSI(out), err

@@ -3292,9 +3292,9 @@ mtproxyl dc autorestart cooldown 5      # Охлаждение после пер
 исходящие соединения telemt (кроме отдельно выведенного локального TLS-бэкенда).
 Доступность варианта C для чужой цели зависит от её конфигурации.
 
-Эндпоинты Cloudflare ищет [warpscout 0.16.1](https://github.com/vernette/warpscout):
+Эндпоинты Cloudflare ищет [warpscout 0.17.0](https://github.com/vernette/warpscout):
 он поднимает настоящий туннель к каждому кандидату и спрашивает, где тот
-выходит. Сначала скачивается сборка MTProxyL `0.16.1-mtproxyl.1` с настройкой
+выходит. Сначала скачивается сборка MTProxyL `0.17.0-mtproxyl.1` с настройкой
 MTU действующего SOCKS-туннеля. Патч и тест сетевого стека находятся в
 [`.github/patches/`](.github/patches/README.md). Запасной источник — оригинальный
 релиз: в A/C он поддерживает только MTU 1280, в B MTU задаётся интерфейсу
@@ -3315,14 +3315,14 @@ mtproxyl warp scan --last       # Показать результат прошл
 mtproxyl warp scan --json       # То же в JSON (для панели и скриптов)
 mtproxyl warp location DE,NL    # Страна узла Cloudflare (clear — автовыбор)
 mtproxyl warp endpoint A:PORT   # Закрепить адрес (clear — искать разведкой)
-mtproxyl warp proto awg|wg|masque|masque-h2
+mtproxyl warp proto awg|awg3.1|wg|masque|masque-h2
 mtproxyl warp mtu               # Сохранённый MTU (по умолчанию 1280)
 mtproxyl warp mtu 1280          # Сохранить MTU: целое число 1000–1500
 mtproxyl warp apply             # Применить сохранённый выбор к работающему WARP
 mtproxyl warp recover           # Восстановить текущий туннель и маршрут
 mtproxyl warp watchdog on       # Автопроверка запускается вместе с WARP
 mtproxyl warp watchdog off      # Только ручное восстановление
-mtproxyl warp install           # Обновить бинарник warpscout
+mtproxyl warp update            # Обновить бинарник warpscout (то же, что install)
 mtproxyl warp refresh           # Обновить службы после обновления MTProxyL
 mtproxyl warp hint              # Что дописать в конфиг чужой цели (вариант C)
 mtproxyl warp reapply           # Обновить список подсетей и правила
@@ -3330,6 +3330,11 @@ mtproxyl warp reapply           # Обновить список подсетей
 
 Меню: **Безопасность и маршрутизация → Telegram через WARP**. В панели —
 раздел «Telegram через WARP». Включённый маршрут виден строкой в главном меню.
+
+Протокол `awg3.1` — AmneziaWG 3.1: расширенная обфускация и тайминги (padding,
+rekey, random trailers; в warpscout это `-p awg31`). Он есть только в A и C:
+вариант B работает на обычном WireGuard в ядре. Нужен warpscout 0.17.0+, то есть
+сборка MTProxyL; при выборе на старом бинарнике команда попросит обновиться.
 
 MTU доступен в этом же разделе панели и пункте «MTU туннеля» терминального меню.
 Значение по умолчанию — **1280** для всех вариантов. MTU задаёт размер пакета
@@ -3534,6 +3539,75 @@ MTProxyL его автоматически не ставит.
 ---
 
 <a id="donor"></a>
+
+## Telegram через VLESS
+
+Весь исходящий трафик движка идёт через ваш сервер **VLESS** (Xray-core). На
+сервере MTProxyL поднимается локальный Xray: он слушает SOCKS5 на `127.0.0.1`,
+движок ходит в него обычным upstream — как вариант C у WARP. Хост, SSH и другие
+службы не затрагиваются, правила nftables не нужны.
+
+Поддерживаются ссылки `vless://` с Reality, TLS и VLESS Encryption, `flow=xtls-rprx-vision`,
+транспортами `tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp` и `kcp`. Ядро —
+[Xray-core](https://github.com/XTLS/Xray-core), версия закреплена в MTProxyL и
+проверяется по SHA256; обновление и откат — отдельными командами.
+
+```bash
+mtproxyl vless link add 'vless://…' имя   # добавить ссылку
+mtproxyl vless link list                  # id, имя, тип и адрес (без секретов)
+mtproxyl vless link use <id>              # сделать активной
+mtproxyl vless link remove <id> [id…]     # удалить одну или несколько
+mtproxyl vless sub set https://…           # подписка: base64, список vless:// или JSON
+mtproxyl vless sub refresh                 # обновить подписку
+mtproxyl vless sub off                     # отключить и удалить ссылки подписки
+mtproxyl vless on                          # весь трафик движка через VLESS
+mtproxyl vless status [--json]             # состояние, активная ссылка, ядро
+mtproxyl vless test [--json]               # выходной IP, api.telegram.org, DC
+mtproxyl vless off                         # выключить, вернуть прежние маршруты
+mtproxyl vless update                      # обновить Xray-core
+mtproxyl vless rollback                    # предыдущая сборка Xray
+mtproxyl vless recover                     # перезапустить и переприменить
+```
+
+При включении MTProxyL выключает другие выходы (WARP, донор, свой AWG): они
+меняют тот же маршрут движка. Без `--yes` команда откажется, если такой выход
+уже включён; в панели есть отдельная кнопка согласия. Выключенные upstream-маршруты
+без области запоминаются и возвращаются при `vless off`.
+
+**Middle proxy с VLESS не работает.** Проверено на mtdd: с выходом через
+локальный SOCKS5 не поднимается ни один DC, без него — все десять. Причина та же,
+что у WARP: ключи ME выводятся из адреса **и порта**, с которых движок пришёл к
+Telegram, а socks5 отдаёт клиенту собственный адрес, а не адрес выхода. Поэтому
+`vless on` требует явного согласия: telemt выключает `use_middle_proxy`, mtdd
+идёт к DC маршрутом Direct через VLESS. Рекламный тег при этом не действует.
+После `vless off` ME нужно вернуть: `mtproxyl expert clear general use_middle_proxy`
+(MTProxyL напомнит).
+
+**HWID и User-Agent подписки.** Провайдеры Happ и INCY считают устройства по
+заголовку `x-hwid` и могут отдавать вместо ссылок подсказку «выберите приложение,
+поддерживающее HWID». MTProxyL отправляет стабильный HWID (32 hex, создаётся из
+`/etc/machine-id`), `X-Device-ID`, `x-device-os: Linux`, `x-ver-os`, `x-device-model`
+и `User-Agent: Happ/3.23.0`; последний меняется командой `vless sub ua <строка>`.
+HWID можно показать, пересоздать или отключить: `vless hwid [show|regen|on|off]`.
+Подписка принимается в трёх видах: base64 от списка ссылок, обычный список
+`vless://` и JSON профиля Xray или sing-box. Из JSON берутся VLESS-выходы
+(Reality/TLS, XHTTP, WS, gRPC, HTTPUpgrade, mKCP), имена — из `remarks` и `tag`;
+остальные протоколы (Hysteria2, TUIC, Shadowsocks) пропускаются, потому что
+работают через Xray только как отдельные выходы. Ссылки-заглушки с адресом
+`0.0.0.0` не импортируются, их текст показывается на странице VLESS как сообщение
+подписки. Пересоздание HWID провайдер увидит как новое устройство. Отключение
+подписки удаляет импортированные ею ссылки; добавленные вручную остаются. В
+панели ссылки можно отметить и удалить выбранные одним действием.
+
+Ссылки и подписка хранятся в `/opt/mtproxyl/vless/` с правами 0600: в них UUID
+и ключи Reality. В списках, панели и `report` секреты не показываются, в бэкап
+и переезд файлы входят. Таймер `mtproxyl-vless-watch` раз в три минуты проверяет
+туннель: после двух сбоев перезапускает Xray, после четырёх — переключается на
+следующую ссылку. В панели — страница «Telegram через VLESS».
+
+Ограничения: только Xray (Hysteria2, TUIC и Shadowsocks-выходы не
+поддерживаются), UDP через SOCKS не проксируется, а для VLESS без TLS/Reality
+Xray требует приватный адрес или VLESS Encryption.
 
 ## Туннель AWG до сервера-донора
 

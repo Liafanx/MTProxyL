@@ -132,6 +132,7 @@ _mtdd_mgr_upstream_rows() {
 _mtdd_mgr_route_state() {
     local _direct=0 _awg=""
     [ "${WARP_ENABLED:-false}" = true ] && _direct=1
+    [ "${VLESS_ENABLED:-false}" = true ] && _direct=1
     if declare -F awg_load >/dev/null && [ -f "$(_awg_state_file 2>/dev/null)" ]; then
         _awg=$(awg_load 2>/dev/null; echo "${AWG_ENABLED}|${AWG_ME_MODE}|${AWG_EGRESS_IP}|${AWG_ME_DISABLED}")
     fi
@@ -761,6 +762,22 @@ _engine_kind_set() {
     mtdd_mgr_ctx
 }
 
+# Смена движка пересобирает его конфиг с нуля. Selfmask при этом остаётся
+# установленным, но его настройки (masking/fallback на локальный фронтенд) надо
+# применить заново — иначе после telemt → mtdd маскировка пропадает.
+_selfmask_refresh_after_engine_switch() {
+    [ "${SELFMASK_ENABLED:-false}" = true ] || return 0
+    declare -F _selfmask_configure_nginx >/dev/null || return 0
+    if ! _selfmask_configure_nginx >/dev/null 2>&1; then
+        log_warn "Selfmask: не удалось пересобрать конфиг фронтенда"
+    fi
+    if [ -n "${SELFMASK_DOMAIN:-}" ] && declare -F _selfmask_apply_mtproxyl_settings >/dev/null; then
+        _selfmask_apply_mtproxyl_settings >/dev/null 2>&1 \
+            || log_warn "Selfmask: настройки не применились, проверьте mtproxyl selfmask"
+    fi
+    return 0
+}
+
 engine_switch_kind() {
     local _to="${1:-}" _yes="${2:-}"
     _require_manager_mode || return 1
@@ -829,6 +846,7 @@ engine_switch_kind() {
     # зовёт «mtproxyl stop», и после старта оно остановило бы новый движок.
     install_autostart_unit >/dev/null 2>&1 || log_warn "Не удалось обновить автозапуск"
     if run_proxy_container; then
+        _selfmask_refresh_after_engine_switch
         shaping_restore 2>/dev/null || log_warn 'Не удалось восстановить ограничение скорости'
         log_success "Движок сменён: ${_from} → ${_to}"
         return 0
@@ -839,6 +857,7 @@ engine_switch_kind() {
     save_settings
     install_autostart_unit >/dev/null 2>&1 || true
     if run_proxy_container; then
+        _selfmask_refresh_after_engine_switch
         shaping_restore 2>/dev/null || true
         [ "$_net_was_enabled" != true ] || mtdd_net_enable || log_warn 'Не удалось вернуть сетевую оптимизацию mtdd'
         log_info "Прокси снова работает на ${_from}"

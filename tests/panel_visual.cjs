@@ -54,6 +54,14 @@ async function mock(page) {
       mtu: 1280, installed: true, version: '0.16.1-mtproxyl.1', socks_active: false, redirect_active: false, iface_active: false, nft_applied: false,
       cidr_count: 0, socks_port: 2536, redirect_port: 12345, matched_packets: 0, exit: { ip: '', loc: '', colo: '', confirmed: false } },
     panelUpdate: { current_version: '1.3.14', latest_version: 'mtproxyl-panel-v1.3.15', update_available: true },
+    vlessActive: '3e2d9d21',
+    vlessLinks: [
+      { id: '3e2d9d21', name: 'Reality', source: 'manual', host: 'example.org', port: 443,
+        security: 'reality', transport: 'tcp', encryption: 'none' },
+      { id: '37b35564', name: 'WS', source: 'sub', host: 'example.net', port: 8443,
+        security: 'tls', transport: 'ws', encryption: 'none' },
+    ],
+    vlessSubscription: true,
     suspectActions: [],
     suspectStatus: {
       available: true, error: '', enabled: true, fingerprint: true, ban_score: 0, watch_score: 60,
@@ -157,6 +165,35 @@ async function mock(page) {
                  source: '127.0.0.1', fields: ['enabled'] }],
       next_after: 2, oldest_id: 1, capacity: 256,
     };
+    else if (url.pathname.endsWith('/mtproxyl/vless')) {
+      const links = state.vlessLinks.map((link) => ({ ...link, active: link.id === state.vlessActive }));
+      data = {
+        enabled: true, service: 'active', core_version: '26.11.9', socks_port: 41100,
+        active: links.find((link) => link.active) ?? links[0],
+        links, links_count: links.length, subscription: state.vlessSubscription, watchdog: true,
+        hwid: 'a1b2c3d4e5f60718293a4b5c6d7e8f90', hwid_enabled: true,
+        sub_ua: 'Happ/3.23.0', sub_notice: 'Выберите приложение поддерживающие передачу HWID устройства',
+      };
+    }
+    else if (/\/mtproxyl\/vless\/links\/[^/]+$/.test(url.pathname) && route.request().method() === 'DELETE') {
+      const id = decodeURIComponent(url.pathname.split('/').at(-1));
+      state.vlessLinks = state.vlessLinks.filter((link) => link.id !== id);
+      if (state.vlessActive === id) state.vlessActive = state.vlessLinks[0]?.id ?? '';
+      data = { output: 'Ссылка удалена' };
+    }
+    else if (url.pathname.endsWith('/mtproxyl/vless/sub') && route.request().method() === 'DELETE') {
+      state.vlessLinks = state.vlessLinks.filter((link) => link.source !== 'sub');
+      if (!state.vlessLinks.some((link) => link.id === state.vlessActive)) state.vlessActive = state.vlessLinks[0]?.id ?? '';
+      state.vlessSubscription = false;
+      data = { output: 'Подписка отключена' };
+    }
+    else if (/\/mtproxyl\/vless\/links\/[^/]+\/use$/.test(url.pathname)) {
+      state.vlessActive = decodeURIComponent(url.pathname.split('/').at(-2));
+      data = { output: 'Активная ссылка изменена' };
+    }
+    else if (url.pathname.endsWith('/mtproxyl/vless/test')) data = {
+      exit_ip: '203.0.113.25', telegram: 'ok', dc: 'ok', ok: true,
+    };
     else if (url.pathname.endsWith('/mtproxyl/mtdd/ips')) data = {
       available: true, online: { seen: 12, active: 5 },
       hour: { seen: 40, active: 18, started_at: now - 3600 },
@@ -199,6 +236,26 @@ async function mock(page) {
     else if (url.pathname.endsWith('/mtproxyl/mode')) data = { mode: 'manager' };
     else if (url.pathname.endsWith('/mtproxyl/settings')) data = [];
     else if (url.pathname.endsWith('/availability/status')) data = { supported: false };
+    else if (url.pathname.endsWith('/availability/details')) data = {
+      enabled: true, auto_check: true, interval: 15, probes: 5, threshold: 50, history_limit: 100,
+      result: {
+        percentage: 100, level: 'green', total_probes: 5, success_probes: 5,
+        target: 'example.org:443', measurement_id: 'test', checked_at: new Date((now - 60) * 1000).toISOString(),
+        probes: [],
+      },
+      quota: { budget: 500, spent: 5, remaining: 495, reset_in_seconds: 3600, has_token: true },
+    };
+    else if (url.pathname.endsWith('/availability/history')) data = {
+      limit: 100,
+      points: Array.from({ length: 8 }, (_, i) => ({
+        percentage: 100, level: 'green', total_probes: 5, success_probes: 5,
+        target: 'example.org:443', measurement_id: `test-${i}`,
+        checked_at: new Date((now - (7 - i) * 300) * 1000).toISOString(),
+      })),
+    };
+    else if (url.pathname.endsWith('/availability/target')) data = {
+      override: {}, resolved: { host: 'example.org', port: 443, sni: 'example.org' },
+    };
     else if (url.pathname.endsWith('/history')) {
       data = { range: '30m', requested_from_epoch_secs: now - 1800, retention_secs: 7200,
         series: (url.searchParams.get('metric') || '').split(',').map((metric) => ({
@@ -433,6 +490,23 @@ async function checkWeb(page, state, width) {
   console.log(`panel WEB ${width}: ok`);
 }
 
+async function checkAvailability(page, width) {
+  await page.goto(`${base}/availability`);
+  await page.getByRole('heading', { name: 'История доступности', exact: true }).waitFor();
+  await page.getByText('Хранить проверок', { exact: true }).waitFor();
+  await page.evaluate(() => document.querySelector('button[aria-label="Свернуть историю доступности"]')?.click());
+  await page.getByRole('button', { name: 'Развернуть историю доступности', exact: true }).waitFor();
+  assert.equal(await page.getByText('Хранить проверок', { exact: true }).count(), 0, 'history controls visible when collapsed');
+  await page.reload();
+  await page.getByRole('button', { name: 'Развернуть историю доступности', exact: true }).waitFor();
+  assert.equal(await page.getByText('Хранить проверок', { exact: true }).count(), 0, 'collapsed state not persisted');
+  await page.getByRole('button', { name: 'Развернуть историю доступности', exact: true }).click();
+  await page.getByText('Хранить проверок', { exact: true }).waitFor();
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `availability overflow ${width}`);
+  await page.screenshot({ path: path.join(output, `availability-${width}.png`), fullPage: true });
+  console.log(`panel availability ${width}: ok`);
+}
+
 async function checkSettings(page, state, width) {
   let release;
   state.brandingWait = new Promise((resolve) => { release = resolve; });
@@ -547,6 +621,51 @@ async function checkLayout(page, width) {
   console.log(`panel visual ${width}: ok`);
 }
 
+async function checkVless(page, width) {
+  await page.goto(`${base}/vless`);
+  await page.getByRole('heading', { name: 'Telegram через VLESS', exact: true }).waitFor();
+  await page.getByText('example.org:443', { exact: false }).first().waitFor();
+  await page.getByRole('button', { name: 'Проверить', exact: true }).click();
+  await page.getByText('203.0.113.25', { exact: false }).waitFor();
+  const wsRow = page.locator('tr').filter({ hasText: 'WS' });
+  await wsRow.getByRole('button', { name: 'Использовать', exact: true }).click();
+  await page.getByText('Активная ссылка изменена', { exact: true }).waitFor();
+  await page.getByText('example.net:8443', { exact: false }).first().waitFor();
+  await page.waitForFunction(() => !document.body.innerText.includes('203.0.113.25'));
+  assert.equal(await page.getByText('203.0.113.25', { exact: false }).count(), 0,
+    'старый выходной IP остался после смены ссылки');
+
+  await page.getByLabel('Выбрать Reality', { exact: true }).check();
+  await page.getByLabel('Выбрать WS', { exact: true }).check();
+  await page.getByText('Выбрано: 2', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Удалить выбранные', exact: true }).click();
+  const removeDialog = page.getByRole('dialog');
+  await removeDialog.getByText('Удалить выбранные ссылки', { exact: true }).waitFor();
+  await removeDialog.getByRole('button', { name: 'Удалить', exact: true }).click();
+  await page.getByText('Удалено ссылок: 2', { exact: true }).waitFor();
+  await page.waitForFunction(() => !document.body.innerText.includes('example.org:443')
+    && !document.body.innerText.includes('example.net:8443'));
+  await page.getByText('Ссылок нет.', { exact: true }).waitFor();
+  assert.equal(await page.getByText('example.org:443', { exact: false }).count(), 0,
+    'удалённая ссылка осталась в таблице');
+  assert.equal(await page.getByText('example.net:8443', { exact: false }).count(), 0,
+    'удалённая ссылка подписки осталась в таблице');
+
+  await page.getByRole('button', { name: 'Отключить и удалить ссылки', exact: true }).click();
+  const subDialog = page.getByRole('dialog');
+  await subDialog.getByText('Отключить подписку', { exact: true }).waitFor();
+  await subDialog.getByRole('button', { name: 'Отключить и удалить', exact: true }).click();
+  await page.getByText('Подписка отключена, ссылки подписки удалены', { exact: true }).waitFor();
+  await page.waitForFunction(() => !document.body.innerText.includes('example.net:8443'));
+  await page.getByText('Ссылок нет.', { exact: true }).waitFor();
+  assert.equal(await page.getByText('example.net:8443', { exact: false }).count(), 0,
+    'ссылка подписки осталась после отключения');
+
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `vless overflow ${width}`);
+  await page.screenshot({ path: path.join(output, `vless-${width}.png`), fullPage: true });
+  console.log(`panel vless ${width}: ok`);
+}
+
 async function checkMtdd(page, state, width) {
   await page.goto(`${base}/mtdd-suspects`);
   await page.getByRole('heading', { name: 'Подозрительные адреса (mtdd)', exact: true }).waitFor();
@@ -616,15 +735,17 @@ async function checkMtdd(page, state, width) {
         page.on('pageerror', (error) => errors.push(error.message));
         const state = await mock(page);
         if (process.argv.includes('--awg-ipv6')) await checkAwgIPv6(page, state, width);
-        else if (process.argv.includes('--mtdd')) await checkMtdd(page, state, width);
+        else if (process.argv.includes('--mtdd')) { await checkMtdd(page, state, width); await checkVless(page, width); }
         else if (process.argv.includes('--warp-mtu')) await checkWarpMTU(page, state, width);
         else if (process.argv.includes('--web')) await checkWeb(page, state, width);
+        else if (process.argv.includes('--availability')) await checkAvailability(page, width);
         else if (process.argv.includes('--enhancements')) await checkEnhancements(page, state, width);
         else if (process.argv.includes('--navigation')) await checkNavigation(page, state, width);
         else {
           await checkLayout(page, width);
           await checkSettings(page, state, width);
           await checkUsers(page, state, width);
+          await checkVless(page, width);
         }
         assert.deepEqual(errors, [], `browser errors at ${width}`);
       } finally { await context.close(); }

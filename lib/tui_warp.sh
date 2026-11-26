@@ -260,12 +260,14 @@ _tui_warp_proto() {
     echo -e "  ${DIM}[2]${NC} wg  ${DIM}— обычный WireGuard, быстрее, но заметнее${NC}"
     echo -e "  ${DIM}[3]${NC} masque ${DIM}— второй транспорт Cloudflare поверх QUIC${NC}"
     echo -e "  ${DIM}[4]${NC} masque-h2 ${DIM}— транспорт Cloudflare поверх HTTP/2${NC}"
+    echo -e "  ${DIM}[5]${NC} awg3.1 ${DIM}— AmneziaWG 3.1: расширенная обфускация и тайминги (padding, rekey, trailers)${NC}"
     local _c; _c=$(read_choice "выбор" "0")
     case "$_c" in
         1) handle_warp_command proto awg ;;
         2) handle_warp_command proto wg ;;
         3) handle_warp_command proto masque ;;
         4) handle_warp_command proto masque-h2 ;;
+        5) handle_warp_command proto awg3.1 ;;
         *) return 0 ;;
     esac
     press_any_key

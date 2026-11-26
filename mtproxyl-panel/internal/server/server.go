@@ -791,8 +791,11 @@ func (s *Server) Run(version string, distFS fs.FS) error {
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		// Долгие операции CLI (смена движка, vless on, обновление ядра)
+		// укладываются в таймаут команды 10 минут; прежние 60 секунд
+		// обрывали соединение, и браузер показывал «Failed to fetch».
+		WriteTimeout: 12 * time.Minute,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	// TLS: ACME (Let's Encrypt)

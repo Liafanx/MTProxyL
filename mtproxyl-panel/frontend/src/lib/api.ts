@@ -12,7 +12,10 @@ export class ApiError extends Error {
 async function request<T>(base: string, path: string, options?: RequestInit): Promise<T> {
   const url = `${base}${path}`;
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 60_000);
+  // Долгие операции CLI (смена движка, vless on, обновление ядра) идут до
+  // 10 минут; 60 секунд обрывали их, и браузер показывал «Failed to fetch».
+  const timeoutMs = 11 * 60_000;
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   let res: Response;
   let json: any;
   try {
@@ -32,7 +35,7 @@ async function request<T>(base: string, path: string, options?: RequestInit): Pr
     json = await res.json();
   } catch (error) {
     if (!options?.signal && controller.signal.aborted) {
-      throw new ApiError('timeout', `Сервер панели не ответил за 60 секунд (${options?.method || 'GET'} ${path})`);
+      throw new ApiError('timeout', `Сервер панели не ответил за ${Math.round(timeoutMs / 60_000)} минут (${options?.method || 'GET'} ${path})`);
     }
     throw error;
   } finally {
@@ -501,6 +504,88 @@ export interface UpstreamOverlay {
   title: string;
   detail: string;
 }
+
+export interface VlessLink {
+  id: string;
+  name: string;
+  source: 'manual' | 'sub' | string;
+  host: string;
+  port: number;
+  security: string;
+  transport: string;
+  encryption: string;
+  active: boolean;
+}
+
+export interface VlessStatus {
+  enabled: boolean;
+  service: string;
+  core_version: string;
+  socks_port: number;
+  active: VlessLink | null;
+  links: VlessLink[];
+  links_count: number;
+  subscription: boolean;
+  watchdog: boolean;
+  hwid: string;
+  hwid_enabled: boolean;
+  sub_ua: string;
+  sub_notice: string;
+  me_state: 'enabled' | 'disabled' | 'direct' | string;
+}
+
+export interface VlessTest {
+  exit_ip: string;
+  telegram: string;
+  dc: string;
+  ok: boolean;
+}
+
+/** VLESS (Xray-core): ссылки, подписка, проверка и обновление ядра. */
+export const vlessApi = {
+  status: () => request<VlessStatus>(MTPROXYL_BASE, '/vless'),
+  on: (force = false, allowDisableME = false) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/vless/on', {
+      method: 'POST',
+      body: JSON.stringify({ force, allow_disable_me: allowDisableME }),
+    }),
+  off: () => request<{ output: string }>(MTPROXYL_BASE, '/vless/off', { method: 'POST' }),
+  test: () => request<VlessTest>(MTPROXYL_BASE, '/vless/test'),
+  addLink: (uri: string, name: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/vless/links', {
+      method: 'POST',
+      body: JSON.stringify({ uri, name }),
+    }),
+  useLink: (id: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/vless/links/${encodeURIComponent(id)}/use`, {
+      method: 'POST',
+    }),
+  removeLink: (id: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, `/vless/links/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
+  subSet: (url: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/vless/sub', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    }),
+  hwid: (action: 'regen' | 'on' | 'off') =>
+    request<{ output: string }>(MTPROXYL_BASE, '/vless/hwid', {
+      method: 'POST',
+      body: JSON.stringify({ action }),
+    }),
+  subUA: (ua: string) =>
+    request<{ output: string }>(MTPROXYL_BASE, '/vless/sub/ua', {
+      method: 'POST',
+      body: JSON.stringify({ ua }),
+    }),
+  subRefresh: () =>
+    request<{ output: string }>(MTPROXYL_BASE, '/vless/sub/refresh', { method: 'POST' }),
+  subOff: () => request<{ output: string }>(MTPROXYL_BASE, '/vless/sub', { method: 'DELETE' }),
+  update: () => request<{ output: string }>(MTPROXYL_BASE, '/vless/update', { method: 'POST' }),
+  rollback: () => request<{ output: string }>(MTPROXYL_BASE, '/vless/rollback', { method: 'POST' }),
+  recover: () => request<{ output: string }>(MTPROXYL_BASE, '/vless/recover', { method: 'POST' }),
+};
 
 /** mtdd: временная подмена рекламного тега и журнал изменений движка. */
 export const mtddApi = {

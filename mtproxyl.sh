@@ -20,7 +20,7 @@ export LC_NUMERIC=C
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-VERSION="1.8.3"
+VERSION="1.8.4"
 SCRIPT_NAME="mtproxyl"
 INSTALL_DIR="/opt/mtproxyl"
 CONFIG_DIR="${INSTALL_DIR}/mtproxy"
@@ -71,7 +71,7 @@ fi
 
 # Загрузка библиотек
 LIB_DIR="${INSTALL_DIR}/lib"
-for _lib in colors utils settings detect mtdd mtdd_mgr mtdd_dash mtdd_expert mtdd_net secrets config docker binengine engine traffic stats availability dc warp donor awg egress geoblock geoip upstream backup release report nft ipblock shaping selfmask front api web web_hosts panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_donor tui_awg tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
+for _lib in colors utils settings detect mtdd mtdd_mgr mtdd_dash mtdd_expert mtdd_net secrets config docker binengine engine traffic stats availability dc warp donor awg vless egress geoblock geoip upstream backup release report nft ipblock shaping selfmask front api web web_hosts panel tgbot tui_main tui_proxy tui_secrets tui_links tui_settings tui_security tui_traffic tui_engine tui_backup tui_expert tui_nft tui_ipblock tui_selfmask tui_web tui_addons tui_tgbot tui_warp tui_donor tui_awg tui_vless tui_detect expert_catalog expert_mode settings_cli install install_args migrate argsgen; do
     if [ -f "${LIB_DIR}/${_lib}.sh" ]; then
         # shellcheck source=/dev/null
         source "${LIB_DIR}/${_lib}.sh"
@@ -600,6 +600,11 @@ cli_main() {
             # Для ME правится конфиг менеджера или цели — нужны оба набора.
             load_settings; load_secrets; load_upstreams; load_detect_settings
             handle_awg_command "$@"
+            ;;
+
+        vless)
+            load_settings; load_detect_settings
+            handle_vless_command "$@"
             ;;
 
         availability)

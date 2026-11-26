@@ -689,6 +689,16 @@ function TargetForm({ onSaved }: { onSaved: () => void }) {
 
 type HistoryScope = 50 | 200 | 'all';
 
+const HISTORY_COLLAPSED_KEY = 'mtproxyl.availability.history.collapsed';
+
+function historyCollapsedInitial(): boolean {
+  try {
+    return localStorage.getItem(HISTORY_COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Временной график строится по проценту, но каждая точка показывает свою
  * фактическую дробь successful/total. Это важно: число доступных российских
@@ -712,8 +722,17 @@ function AvailabilityHistoryCard({
   const [limitValue, setLimitValue] = useState(String(limit));
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState(historyCollapsedInitial);
 
   useEffect(() => setLimitValue(String(limit)), [limit]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(HISTORY_COLLAPSED_KEY, collapsed ? '1' : '0');
+    } catch {
+      // Настройка не критична: без localStorage карточка просто не запоминает вид.
+    }
+  }, [collapsed]);
 
   const ordered = useMemo(
     () => points
@@ -757,88 +776,108 @@ function AvailabilityHistoryCard({
   return (
     <Card className="p-4 lg:p-5 space-y-4">
       <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h3 className="text-sm font-medium text-text-primary flex items-center gap-2">
-            <Activity size={16} className="text-accent" />
-            История доступности
-          </h3>
-          <p className="text-xs text-text-secondary mt-1">
-            Процент нормализует проверки с разным числом зондов; наведите или нажмите точку,
-            чтобы увидеть фактический результат. Уменьшение лимита удаляет старые точки.
-          </p>
-        </div>
-        <div className="flex items-end gap-2 flex-wrap">
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] text-text-secondary">Хранить проверок</span>
-            <Input
-              type="number"
-              min={1}
-              max={100000}
-              value={limitValue}
-              onChange={(e) => setLimitValue(e.target.value)}
-              className="w-32 h-9"
-            />
-          </label>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={saving || limitValue === String(limit)}
-            onClick={saveLimit}
-          >
-            {saving ? 'Сохраняем…' : 'Применить'}
-          </Button>
-        </div>
-      </div>
-
-      {saveError && <ErrorAlert message={saveError} />}
-      {error && <ErrorAlert message={`История недоступна: ${error}`} />}
-
-      {!error && ordered.length === 0 ? (
-        <div className="h-40 flex items-center justify-center text-sm text-text-secondary border border-dashed border-border rounded-lg">
-          График появится после первой проверки
-        </div>
-      ) : !error ? (
-        <>
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div className="flex items-center gap-1" aria-label="Период графика">
-              {([50, 200, 'all'] as HistoryScope[]).map((value) => (
-                <Chip key={String(value)} active={scope === value} onClick={() => setScope(value)}>
-                  {value === 'all' ? 'Все' : `Последние ${value}`}
-                </Chip>
-              ))}
-            </div>
-            <span className="text-xs text-text-secondary">
-              Показано {visible.length} из {ordered.length} · лимит {limit}
-            </span>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-medium text-text-primary flex items-center gap-2">
+              <Activity size={16} className="text-accent" />
+              История доступности
+            </h3>
+            <button
+              type="button"
+              onClick={() => setCollapsed((value) => !value)}
+              aria-expanded={!collapsed}
+              aria-label={collapsed ? 'Развернуть историю доступности' : 'Свернуть историю доступности'}
+              title={collapsed ? 'Развернуть' : 'Свернуть'}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-surface-hover hover:text-text-primary"
+            >
+              {collapsed ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+            </button>
           </div>
-
-          <AvailabilityChart points={chartPoints} threshold={threshold} selected={selected} onSelect={setSelected} />
-
-          {chartPoints.length > 1 && (
-            <label className="block">
-              <span className="sr-only">Выбрать точку истории</span>
-              <input
-                type="range"
-                min={0}
-                max={chartPoints.length - 1}
-                value={Math.max(0, chartPoints.indexOf(selected ?? chartPoints[chartPoints.length - 1]))}
-                onChange={(e) => setSelected(chartPoints[Number(e.target.value)])}
-                className="w-full accent-accent cursor-pointer"
-                aria-label="Выбрать точку истории"
-              />
-            </label>
-          )}
-
-          {chartPoints.length < visible.length && (
-            <p className="text-[11px] text-text-secondary">
-              Для быстрого отображения {visible.length} проверок график уплотнён до {chartPoints.length} точек
-              с сохранением минимумов и максимумов каждого периода.
+          {!collapsed && (
+            <p className="text-xs text-text-secondary mt-1">
+              Процент нормализует проверки с разным числом зондов; наведите или нажмите точку,
+              чтобы увидеть фактический результат. Уменьшение лимита удаляет старые точки.
             </p>
           )}
+        </div>
+        {!collapsed && (
+          <div className="flex items-end gap-2 flex-wrap">
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] text-text-secondary">Хранить проверок</span>
+              <Input
+                type="number"
+                min={1}
+                max={100000}
+                value={limitValue}
+                onChange={(e) => setLimitValue(e.target.value)}
+                className="w-32 h-9"
+              />
+            </label>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={saving || limitValue === String(limit)}
+              onClick={saveLimit}
+            >
+              {saving ? 'Сохраняем…' : 'Применить'}
+            </Button>
+          </div>
+        )}
+      </div>
 
-          {selected && <HistoryPointSummary point={selected} />}
+      {!collapsed && (
+        <>
+          {saveError && <ErrorAlert message={saveError} />}
+          {error && <ErrorAlert message={`История недоступна: ${error}`} />}
+
+          {!error && ordered.length === 0 ? (
+            <div className="h-40 flex items-center justify-center text-sm text-text-secondary border border-dashed border-border rounded-lg">
+              График появится после первой проверки
+            </div>
+          ) : !error ? (
+            <>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-1" aria-label="Период графика">
+                  {([50, 200, 'all'] as HistoryScope[]).map((value) => (
+                    <Chip key={String(value)} active={scope === value} onClick={() => setScope(value)}>
+                      {value === 'all' ? 'Все' : `Последние ${value}`}
+                    </Chip>
+                  ))}
+                </div>
+                <span className="text-xs text-text-secondary">
+                  Показано {visible.length} из {ordered.length} · лимит {limit}
+                </span>
+              </div>
+
+              <AvailabilityChart points={chartPoints} threshold={threshold} selected={selected} onSelect={setSelected} />
+
+              {chartPoints.length > 1 && (
+                <label className="block">
+                  <span className="sr-only">Выбрать точку истории</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={chartPoints.length - 1}
+                    value={Math.max(0, chartPoints.indexOf(selected ?? chartPoints[chartPoints.length - 1]))}
+                    onChange={(e) => setSelected(chartPoints[Number(e.target.value)])}
+                    className="w-full accent-accent cursor-pointer"
+                    aria-label="Выбрать точку истории"
+                  />
+                </label>
+              )}
+
+              {chartPoints.length < visible.length && (
+                <p className="text-[11px] text-text-secondary">
+                  Для быстрого отображения {visible.length} проверок график уплотнён до {chartPoints.length} точек
+                  с сохранением минимумов и максимумов каждого периода.
+                </p>
+              )}
+
+              {selected && <HistoryPointSummary point={selected} />}
+            </>
+          ) : null}
         </>
-      ) : null}
+      )}
     </Card>
   );
 }
