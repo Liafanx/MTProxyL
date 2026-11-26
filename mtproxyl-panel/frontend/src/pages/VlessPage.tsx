@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -71,6 +71,13 @@ export function VlessPage() {
   };
 
   const active = data?.active ?? null;
+
+  // Результат проверки относится к конкретной активной ссылке: после смены
+  // локации старый IP вводит в заблуждение, пока не нажата «Проверить».
+  useEffect(() => {
+    setTest(null);
+  }, [active?.id, data?.enabled]);
+
   const meLabel = data?.me_state === 'direct'
     ? 'mtdd: весь DC-трафик через Direct (рекламный тег не действует)'
     : data?.me_state === 'disabled'
@@ -162,6 +169,10 @@ export function VlessPage() {
               <Button variant="outline" disabled={busy || !data.enabled} onClick={() => void doTest()}>
                 Проверить
               </Button>
+              <p className="text-xs text-text-secondary">
+                Проверка идёт через активную ссылку. После смены локации нажмите «Проверить»:
+                выходной IP зависит от сервера и у разных локаций может совпадать.
+              </p>
               {test && (
                 <div className="text-sm space-y-1">
                   <div>{test.ok ? 'Туннель работает' : 'Проверка не прошла'}</div>
