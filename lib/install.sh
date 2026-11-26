@@ -51,9 +51,10 @@ run_installer() {
     command -v curl &>/dev/null || missing+=("curl")
     command -v awk &>/dev/null || missing+=("awk")
     command -v openssl &>/dev/null || missing+=("openssl")
-    # jq не нужен самому MTProxyL (JSON API цели разбирается awk/sed), но им
-    # пользуются штатные команды telemt вида: curl /v1/users | jq
+    # jq нужен VLESS-парсеру и штатным командам telemt вида curl /v1/users | jq.
     command -v jq &>/dev/null || missing+=("jq")
+    # unzip распаковывает архив Xray-core при vless update.
+    command -v unzip &>/dev/null || missing+=("unzip")
     command -v nano &>/dev/null || command -v vim &>/dev/null || missing+=("nano")
     if [ ${#missing[@]} -gt 0 ]; then
         log_info "Установка: ${missing[*]}"

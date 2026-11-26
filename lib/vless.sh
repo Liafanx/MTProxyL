@@ -20,33 +20,22 @@ _vless_conf()    { echo "$(_vless_dir)/config.json"; }
 _vless_links()   { echo "$(_vless_dir)/links.conf"; }
 _vless_subs()    { echo "$(_vless_dir)/subscriptions.conf"; }
 _vless_state()   { echo "$(_vless_dir)/state.json"; }
-_vless_parser()  {
-    local _p
-    _p="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/vless_parse.py"
-    [ -f "$_p" ] || _vless_restore_parser "$_p" || return 1
-    echo "$_p"
-}
 
-# Комплект 1.8.4 не копировал .py при обновлении: достаём из кэша релиза.
-_vless_restore_parser() {
-    local _dst="$1" _arc _tmp _url
-    [ -n "${VERSION:-}" ] || { log_error "Не найден lib/vless_parse.py"; return 1; }
-    _arc="${INSTALL_DIR:-/opt/mtproxyl}/releases/mtproxyl-${VERSION}.tar.gz"
-    _tmp=$(mktemp) || return 1
-    if [ -f "$_arc" ]; then
-        tar -xzOf "$_arc" "mtproxyl-${VERSION}/lib/vless_parse.py" > "$_tmp" 2>/dev/null \
-            || { rm -f "$_tmp"; log_error "Не удалось восстановить lib/vless_parse.py из архива ${VERSION}"; return 1; }
-    else
-        _url="https://raw.githubusercontent.com/${GITHUB_REPO:-Liafanx/MTProxyL}/v${VERSION}/lib/vless_parse.py"
-        curl -fsSL --retry 2 --max-time 30 "$_url" -o "$_tmp" 2>/dev/null \
-            || { rm -f "$_tmp"; log_error "Не найден lib/vless_parse.py; выполните mtproxyl update или переустановите MTProxyL"; return 1; }
-    fi
-    python3 -I -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' "$_tmp" 2>/dev/null \
-        || { rm -f "$_tmp"; log_error "Повреждён lib/vless_parse.py для ${VERSION}"; return 1; }
-    install -m 644 "$_tmp" "${_dst}.new" && mv -f "${_dst}.new" "$_dst" \
-        || { rm -f "$_tmp"; return 1; }
-    rm -f "$_tmp"
-    printf '  Восстановлен lib/vless_parse.py из версии %s\n' "$VERSION" >&2
+# Разбор ссылок — lib/vless_parse.sh (bash + jq). При обычном запуске он уже
+# загружен диспетчером; при прямом source подтягиваем соседний файл.
+if ! declare -F vless_parse_main >/dev/null 2>&1; then
+    _vless_parser_file="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/vless_parse.sh"
+    # shellcheck source=/dev/null
+    [ ! -f "$_vless_parser_file" ] || source "$_vless_parser_file"
+    unset _vless_parser_file
+fi
+
+_vless_parse() {
+    declare -F vless_parse_main >/dev/null 2>&1 || {
+        log_error "Не найден lib/vless_parse.sh; выполните mtproxyl update"
+        return 1
+    }
+    vless_parse_main "$@"
 }
 _vless_port() {
     local _p="${VLESS_PORT:-41100}"
@@ -68,8 +57,6 @@ _vless_core_version() {
     [ -x "$_b" ] || return 1
     "$_b" version 2>/dev/null | awk 'NR==1 {print $2}'
 }
-
-_vless_parse() { python3 -I "$(_vless_parser)" "$@"; }
 
 # ── Ядро ────────────────────────────────────────────────────
 _vless_core_usable() {
@@ -103,12 +90,10 @@ _vless_core_install() {
     if [ -z "$_want" ] || [ "$_want" != "$_got" ]; then
         rm -rf "$_tmp"; log_error "SHA256 Xray не совпала"; return 1
     fi
-    if ! python3 -I - "${_tmp}/${_zip}" "$_tmp" <<'PY'
-import sys, zipfile
-with zipfile.ZipFile(sys.argv[1]) as z:
-    z.extract("xray", sys.argv[2])
-PY
-    then
+    if ! command -v unzip >/dev/null 2>&1; then
+        rm -rf "$_tmp"; log_error "Для распаковки Xray нужен unzip: apt install unzip"; return 1
+    fi
+    if ! unzip -p "${_tmp}/${_zip}" xray > "${_tmp}/xray" 2>/dev/null; then
         rm -rf "$_tmp"; log_error "Архив Xray не распаковался"; return 1
     fi
     chmod 755 "${_tmp}/xray"
@@ -146,22 +131,15 @@ _vless_link_uri() { _vless_link_row "$1" | cut -d'|' -f4-; }
 
 _vless_mask_uri() {
     # Оставляем схему, хост, порт и параметры безопасности; id/ключи скрыты.
-    local _uri="$1" _host _sec
-    _host=$(python3 -I -c '
-import sys
-from urllib.parse import urlsplit, parse_qs
-u = urlsplit(sys.argv[1])
-q = parse_qs(u.query)
-print("%s:%s" % (u.hostname or "?", u.port or ""))
-' "$_uri" 2>/dev/null) || _host="?"
-    _sec=$(_vless_parse check "$_uri" 2>/dev/null | python3 -I -c '
-import json,sys
-try: d=json.load(sys.stdin)
-except Exception: d={}
-print("%s/%s%s" % (d.get("security","?"), d.get("transport","?"),
-                   "+enc" if d.get("encryption") not in (None,"","none") else ""))
-' 2>/dev/null)
-    echo "vless://***@${_host:-?} (${_sec:-?})"
+    local _uri="$1" _meta _host _port _sec _tr _enc
+    _meta=$(_vless_parse check "$_uri" 2>/dev/null) || _meta='{}'
+    _host=$(jq -r '.host // "?"' <<< "$_meta" 2>/dev/null)
+    _port=$(jq -r '.port // ""' <<< "$_meta" 2>/dev/null)
+    _sec=$(jq -r '.security // "?"' <<< "$_meta" 2>/dev/null)
+    _tr=$(jq -r '.transport // "?"' <<< "$_meta" 2>/dev/null)
+    _enc=$(jq -r '.encryption // "none"' <<< "$_meta" 2>/dev/null)
+    [ "$_enc" = none ] && _enc="" || _enc="+enc"
+    echo "vless://***@${_host:-?}:${_port} (${_sec:-?}/${_tr:-?}${_enc})"
 }
 
 vless_link_add() {
@@ -173,7 +151,7 @@ vless_link_add() {
     _id=$(_vless_uri_id "$_uri")
     _exist=$(_vless_link_row "$_id")
     [ -n "$_exist" ] && { log_warn "Такая ссылка уже есть: ${_id}"; return 0; }
-    [ -n "$_name" ] || _name=$(_vless_parse check "$_uri" | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("name",""))' 2>/dev/null)
+    [ -n "$_name" ] || _name=$(_vless_parse check "$_uri" 2>/dev/null | jq -r '.name // ""' 2>/dev/null)
     _name=${_name//|//}
     local _f; _f=$(_vless_links)
     local _tmp; _tmp=$(mktemp "${_f}.XXXXXX") || return 1
@@ -195,9 +173,9 @@ vless_link_list() {
         [ -n "$_id" ] || continue
         _meta=$(_vless_parse check "$_uri" 2>/dev/null || echo '{}')
         local _h _sec _tr
-        _h=$(python3 -I -c 'import json,sys; d=json.load(sys.stdin); print("%s:%s"%(d.get("host","?"),d.get("port","")))' <<<"$_meta" 2>/dev/null)
-        _sec=$(python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(d.get("security","?"))' <<<"$_meta" 2>/dev/null)
-        _tr=$(python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(d.get("transport","?"))' <<<"$_meta" 2>/dev/null)
+        _h=$(jq -r 'if .host then "\(.host):\(.port // "")" else "?" end' <<< "$_meta" 2>/dev/null)
+        _sec=$(jq -r '.security // "?"' <<< "$_meta" 2>/dev/null)
+        _tr=$(jq -r '.transport // "?"' <<< "$_meta" 2>/dev/null)
         printf "  %-9s %-22s %-8s %s%s\n" "$_id" "${_name:0:22}" "${_sec}/${_tr}" "$_h" \
             "$([ "$_id" = "${VLESS_ACTIVE:-}" ] && echo '  ← активная')"
     done < "$_f"
@@ -360,19 +338,18 @@ vless_sub_refresh() {
         if [ "$_first" = "{" ] || [ "$_first" = "[" ]; then
             cp "$_tmp" "$_list"
         else
-            python3 -I - "$_tmp" "$_list" <<'PY' || { rm -f "$_tmp" "$_list"; log_error "Подписка не разобрана"; return 1; }
-import base64, sys
-raw = open(sys.argv[1], "rb").read()
-try:
-    text = base64.b64decode(b"".join(raw.split()), validate=False).decode("utf-8", "replace")
-except Exception:
-    text = raw.decode("utf-8", "replace")
-open(sys.argv[2], "w", encoding="utf-8").write(text)
-PY
+            local _b64
+            _b64=$(tr -d ' \t\r\n' < "$_tmp" | tr '_-' '/+')
+            case $(( ${#_b64} % 4 )) in
+                2) _b64+="==" ;;
+                3) _b64+="=" ;;
+            esac
+            printf '%s' "$_b64" | base64 -d > "$_list" 2>/dev/null || cp "$_tmp" "$_list"
+            [ -s "$_list" ] || cp "$_tmp" "$_list"
         fi
         _first=$(head -c 1 "$_list" | tr -d '[:space:]')
         if [ "$_first" = "{" ] || [ "$_first" = "[" ]; then
-            if ! python3 -I "$(_vless_parser)" from-json "$_list" > "${_list}.json" 2>/dev/null; then
+            if ! _vless_parse from-json "$_list" > "${_list}.json" 2>/dev/null; then
                 rm -f "$_tmp" "$_list" "${_list}.json"
                 log_error "В JSON-подписке нет VLESS-выходов"
                 return 1
@@ -395,10 +372,10 @@ PY
         case "$_line" in vless://*) ;; *) continue ;; esac
         if _vless_valid_uri "$_line"; then
             _meta=$(_vless_parse check "$_line" 2>/dev/null || echo '{}')
-            _host=$(python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("host",""))' <<< "$_meta" 2>/dev/null)
+            _host=$(jq -r '.host // ""' <<< "$_meta" 2>/dev/null)
             if _vless_placeholder_host "$_host"; then
                 # Провайдер вставляет ссылку-подсказку с именем вместо адреса.
-                _lname=$(python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("name",""))' <<< "$_meta" 2>/dev/null)
+                _lname=$(jq -r '.name // ""' <<< "$_meta" 2>/dev/null)
                 [ -n "$_lname" ] && _notice="$_lname"
                 _bad=$((_bad + 1))
                 continue
@@ -589,24 +566,20 @@ vless_test_json() {
         curl -fsS --max-time 12 --socks5-hostname "127.0.0.1:${_port}" -o /dev/null https://api.telegram.org 2>/dev/null && _tg="ok"
         _vless_probe 149.154.167.51 443 >/dev/null 2>&1 && _dc="ok"
     fi
-    python3 -I - "$_exit" "$_tg" "$_dc" <<'PY'
-import json, sys
-print(json.dumps({"exit_ip": sys.argv[1], "telegram": sys.argv[2], "dc": sys.argv[3],
-                  "ok": sys.argv[2] == "ok" and sys.argv[3] == "ok"}, ensure_ascii=False))
-PY
+    jq -nc --arg exit_ip "$_exit" --arg telegram "$_tg" --arg dc "$_dc" \
+        '{exit_ip:$exit_ip, telegram:$telegram, dc:$dc,
+          ok:($telegram == "ok" and $dc == "ok")}'
 }
 
 vless_test() {
     local _j; _j=$(vless_test_json)
-    python3 -I - "$_j" <<'PY'
-import json, sys
-d = json.loads(sys.argv[1])
-print()
-print("  VLESS: %s" % ("работает" if d["ok"] else "проверка не прошла"))
-print("  Выходной IP: %s" % (d["exit_ip"] or "не определён"))
-print("  api.telegram.org: %s · TCP до DC: %s" % (d["telegram"], d["dc"]))
-print()
-PY
+    jq -r '
+      "",
+      "  VLESS: \(if .ok then "работает" else "проверка не прошла" end)",
+      "  Выходной IP: \(if .exit_ip != "" then .exit_ip else "не определён" end)",
+      "  api.telegram.org: \(.telegram) · TCP до DC: \(.dc)",
+      ""
+    ' <<< "$_j"
 }
 
 # ── Состояние и включение ──────────────────────────────────
@@ -736,103 +709,73 @@ vless_off() {
 _vless_links_json() {
     local _f; _f=$(_vless_links)
     [ -s "$_f" ] || { echo '[]'; return 0; }
-    local _id _name _src _uri _meta _arr="[]"
-    _arr=$(python3 -I - "$_f" "$(_vless_parser)" "${VLESS_ACTIVE:-}" <<'PY'
-import json, subprocess, sys
-path, parser, active = sys.argv[1], sys.argv[2], sys.argv[3]
-out = []
-for line in open(path, encoding="utf-8"):
-    line = line.rstrip("\n")
-    if not line:
-        continue
-    f = (line.split("|") + ["", "", "", ""])[:4]
-    meta = {}
-    try:
-        r = subprocess.run([sys.executable, "-I", parser, "check", f[3]],
-                           capture_output=True, text=True, timeout=10)
-        if r.returncode == 0:
-            meta = json.loads(r.stdout)
-    except Exception:
-        pass
-    out.append({
-        "id": f[0], "name": f[1], "source": f[2] or "manual",
-        "host": meta.get("host", ""), "port": meta.get("port", 0),
-        "security": meta.get("security", ""), "transport": meta.get("transport", ""),
-        "encryption": meta.get("encryption", "none"),
-        "active": f[0] == active,
-    })
-print(json.dumps(out, ensure_ascii=False))
-PY
-)
-    printf '%s' "${_arr:-[]}"
+    local _id _name _src _uri _meta
+    while IFS='|' read -r _id _name _src _uri; do
+        [ -n "$_id" ] || continue
+        _meta=$(_vless_parse check "$_uri" 2>/dev/null) || _meta='{}'
+        jq -nc --arg id "$_id" --arg name "$_name" --arg source "${_src:-manual}" \
+            --argjson meta "$_meta" --arg active "${VLESS_ACTIVE:-}" '
+            {id:$id, name:$name, source:$source,
+             host:($meta.host // ""), port:($meta.port // 0),
+             security:($meta.security // ""), transport:($meta.transport // ""),
+             encryption:($meta.encryption // "none"),
+             active:($id == $active)}'
+    done < "$_f" | jq -s -c '.'
 }
 
 vless_status_json() {
     local _ver="-" _sid="${VLESS_ACTIVE:-}" _meta="{}" _uri="" _active="null"
+    local _enabled=false _service="" _subscription=false _watchdog=false _hwid_enabled=true
+    local _hwid="" _ua="" _notice="" _me="" _links="[]" _port
     _ver=$(_vless_core_version 2>/dev/null || echo "-")
+    _port=$(_vless_port)
     if [ -n "$_sid" ] && [ -n "$(_vless_link_row "$_sid")" ]; then
         _uri=$(_vless_link_uri "$_sid")
         _meta=$(_vless_parse check "$_uri" 2>/dev/null || echo '{}')
-        _active=$(python3 -I - "$_sid" "$_meta" <<'PY'
-import json, sys
-d = json.loads(sys.argv[2])
-d["id"] = sys.argv[1]
-print(json.dumps(d, ensure_ascii=False))
-PY
-)
+        _active=$(jq -c --arg id "$_sid" '. + {id:$id}' <<< "$_meta" 2>/dev/null || echo 'null')
     fi
-    python3 -I - \
-        "${VLESS_ENABLED:-false}" "$(systemctl is-active "$VLESS_UNIT" 2>/dev/null | head -1)" \
-        "$_ver" "$(_vless_port)" "$_active" \
-        "$(_vless_links_json)" \
-        "$([ -s "$(_vless_subs)" ] && echo true || echo false)" \
-        "${VLESS_WATCHDOG_ENABLED:-true}" "$(_vless_hwid 2>/dev/null)" "${VLESS_HWID_ENABLED:-true}" \
-        "${VLESS_SUB_UA:-}" "$(cat "$(_vless_sub_notice_file)" 2>/dev/null | head -1)" \
-        "$(_vless_me_state)" <<'PY'
-import json, sys
-active = json.loads(sys.argv[5]) if sys.argv[5] else None
-links = json.loads(sys.argv[6]) if sys.argv[6] else []
-print(json.dumps({
-    "enabled": sys.argv[1] == "true",
-    "service": sys.argv[2],
-    "core_version": sys.argv[3],
-    "socks_port": int(sys.argv[4]),
-    "active": active,
-    "links": links,
-    "links_count": len(links),
-    "subscription": sys.argv[7] == "true",
-    "watchdog": sys.argv[8] == "true",
-    "hwid": sys.argv[9] if len(sys.argv) > 9 else "",
-    "hwid_enabled": sys.argv[10] == "true" if len(sys.argv) > 10 else True,
-    "sub_ua": sys.argv[11] if len(sys.argv) > 11 else "",
-    "sub_notice": sys.argv[12] if len(sys.argv) > 12 else "",
-    "me_state": sys.argv[13] if len(sys.argv) > 13 else "enabled",
-}, ensure_ascii=False))
-PY
+    [ "${VLESS_ENABLED:-false}" = true ] && _enabled=true
+    _service=$(systemctl is-active "$VLESS_UNIT" 2>/dev/null | head -1)
+    _links=$(_vless_links_json)
+    [ -s "$(_vless_subs)" ] && _subscription=true
+    [ "${VLESS_WATCHDOG_ENABLED:-true}" = true ] && _watchdog=true
+    [ "${VLESS_HWID_ENABLED:-true}" = true ] || _hwid_enabled=false
+    _hwid=$(_vless_hwid 2>/dev/null)
+    _ua="${VLESS_SUB_UA:-}"
+    _notice=$(cat "$(_vless_sub_notice_file)" 2>/dev/null | head -1)
+    _me=$(_vless_me_state)
+    jq -nc \
+        --argjson enabled "$_enabled" --arg service "$_service" \
+        --arg core_version "$_ver" --argjson socks_port "${_port:-0}" \
+        --argjson active "$_active" --argjson links "$_links" \
+        --argjson subscription "$_subscription" --argjson watchdog "$_watchdog" \
+        --arg hwid "$_hwid" --argjson hwid_enabled "$_hwid_enabled" \
+        --arg sub_ua "$_ua" --arg sub_notice "$_notice" --arg me_state "$_me" \
+        '{enabled:$enabled, service:$service, core_version:$core_version,
+          socks_port:$socks_port, active:$active, links:$links,
+          links_count:($links | length), subscription:$subscription,
+          watchdog:$watchdog, hwid:$hwid, hwid_enabled:$hwid_enabled,
+          sub_ua:$sub_ua, sub_notice:$sub_notice, me_state:$me_state}'
 }
 
 vless_status() {
     local _j; _j=$(vless_status_json)
-    python3 -I - "$_j" <<'PY'
-import json, sys
-d = json.loads(sys.argv[1])
-print()
-print("  VLESS: %s · служба %s · Xray %s" % ("включён" if d["enabled"] else "выключен", d["service"], d["core_version"]))
-if d["active"]:
-    a = d["active"]
-    print("  Ссылка: %s %s → %s:%s (%s/%s%s)" % (a.get("id",""), a.get("name",""), a.get("host",""), a.get("port",""),
-          a.get("security",""), a.get("transport",""), "+enc" if a.get("encryption") not in (None,"","none") else ""))
-else:
-    print("  Активная ссылка не выбрана")
-print("  SOCKS5: 127.0.0.1:%s · ссылок: %s · подписка: %s" % (d["socks_port"], d.get("links_count", 0), "да" if d["subscription"] else "нет"))
-_me = d.get("me_state", "enabled")
-print("  Middle proxy: %s" % {"direct": "mtdd: весь DC-трафик через Direct", "disabled": "выключен", "enabled": "включён"}.get(_me, _me))
-if d.get("hwid"):
-    print("  HWID: %s%s · клиент подписки: %s" % (d["hwid"], "" if d.get("hwid_enabled", True) else " (не отправляется)", d.get("sub_ua") or "MTProxyL"))
-if d.get("sub_notice"):
-    print("  Подписка: %s" % d["sub_notice"])
-print()
-PY
+    jq -r '
+      "",
+      "  VLESS: \(if .enabled then "включён" else "выключен" end) · служба \(.service) · Xray \(.core_version)",
+      (if .active then
+         "  Ссылка: \(.active.id) \(.active.name) → \(.active.host):\(.active.port) (\(.active.security)/\(.active.transport)\(if (.active.encryption // "none") != "none" then "+enc" else "" end))"
+       else
+         "  Активная ссылка не выбрана"
+       end),
+      "  SOCKS5: 127.0.0.1:\(.socks_port) · ссылок: \(.links_count) · подписка: \(if .subscription then "да" else "нет" end)",
+      "  Middle proxy: \(if .me_state == "direct" then "mtdd: весь DC-трафик через Direct" elif .me_state == "disabled" then "выключен" elif .me_state == "enabled" then "включён" else .me_state end)",
+      (if .hwid != "" then
+         "  HWID: \(.hwid)\(if .hwid_enabled then "" else " (не отправляется)" end) · клиент подписки: \(if .sub_ua != "" then .sub_ua else "MTProxyL" end)"
+       else empty end),
+      (if .sub_notice != "" then "  Подписка: \(.sub_notice)" else empty end),
+      ""
+    ' <<< "$_j"
 }
 
 # ── Watchdog ────────────────────────────────────────────────
@@ -871,14 +814,14 @@ _vless_next_link() {
 vless_watch() {
     [ "${VLESS_ENABLED:-false}" = true ] || return 0
     local _st; _st=$(vless_test_json)
-    local _ok; _ok=$(python3 -I -c 'import json,sys; print("1" if json.loads(sys.argv[1])["ok"] else "")' "$_st")
+    local _ok; _ok=$(jq -r 'if .ok then "1" else "" end' <<< "$_st" 2>/dev/null)
     local _f; _f=$(_vless_state)
     if [ -n "$_ok" ]; then
         echo '{"fails":0}' > "$_f" 2>/dev/null || true
         return 0
     fi
     local _n=0
-    [ -s "$_f" ] && _n=$(python3 -I -c 'import json,sys; print(int(json.load(open(sys.argv[1])).get("fails",0)))' "$_f" 2>/dev/null || echo 0)
+    [ -s "$_f" ] && _n=$(jq -r '(.fails // 0) | tonumber' "$_f" 2>/dev/null || echo 0)
     _n=$((_n + 1))
     printf '{"fails":%d}\n' "$_n" > "$_f" 2>/dev/null || true
     if [ "$_n" -eq 2 ]; then
