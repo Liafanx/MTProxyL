@@ -763,13 +763,13 @@ _engine_kind_set() {
 }
 
 # Смена движка пересобирает его конфиг с нуля. Selfmask при этом остаётся
-# установленным, но его настройки (masking/fallback на локальный nginx) надо
+# установленным, но его настройки (masking/fallback на локальный фронтенд) надо
 # применить заново — иначе после telemt → mtdd маскировка пропадает.
 _selfmask_refresh_after_engine_switch() {
     [ "${SELFMASK_ENABLED:-false}" = true ] || return 0
     declare -F _selfmask_configure_nginx >/dev/null || return 0
     if ! _selfmask_configure_nginx >/dev/null 2>&1; then
-        log_warn "Selfmask: не удалось пересобрать конфиг nginx"
+        log_warn "Selfmask: не удалось пересобрать конфиг фронтенда"
     fi
     if [ -n "${SELFMASK_DOMAIN:-}" ] && declare -F _selfmask_apply_mtproxyl_settings >/dev/null; then
         _selfmask_apply_mtproxyl_settings >/dev/null 2>&1 \
