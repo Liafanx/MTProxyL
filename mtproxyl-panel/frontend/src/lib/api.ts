@@ -12,7 +12,10 @@ export class ApiError extends Error {
 async function request<T>(base: string, path: string, options?: RequestInit): Promise<T> {
   const url = `${base}${path}`;
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 60_000);
+  // Долгие операции CLI (смена движка, vless on, обновление ядра) идут до
+  // 10 минут; 60 секунд обрывали их, и браузер показывал «Failed to fetch».
+  const timeoutMs = 11 * 60_000;
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   let res: Response;
   let json: any;
   try {
@@ -32,7 +35,7 @@ async function request<T>(base: string, path: string, options?: RequestInit): Pr
     json = await res.json();
   } catch (error) {
     if (!options?.signal && controller.signal.aborted) {
-      throw new ApiError('timeout', `Сервер панели не ответил за 60 секунд (${options?.method || 'GET'} ${path})`);
+      throw new ApiError('timeout', `Сервер панели не ответил за ${Math.round(timeoutMs / 60_000)} минут (${options?.method || 'GET'} ${path})`);
     }
     throw error;
   } finally {
@@ -528,6 +531,7 @@ export interface VlessStatus {
   hwid_enabled: boolean;
   sub_ua: string;
   sub_notice: string;
+  me_state: 'enabled' | 'disabled' | 'direct' | string;
 }
 
 export interface VlessTest {

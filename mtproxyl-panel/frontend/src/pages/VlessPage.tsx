@@ -71,6 +71,11 @@ export function VlessPage() {
   };
 
   const active = data?.active ?? null;
+  const meLabel = data?.me_state === 'direct'
+    ? 'mtdd: весь DC-трафик через Direct (рекламный тег не действует)'
+    : data?.me_state === 'disabled'
+      ? 'выключен'
+      : 'включён';
 
   const subUAChanged = !!data && ua.trim() !== (data.sub_ua || '');
 
@@ -122,16 +127,21 @@ export function VlessPage() {
                     ? <><b>{active.name || active.id}</b> — <span className="font-mono">{active.host}:{active.port}</span> ({typeLabel(active)})</>
                     : 'не выбрана'}
                 </div>
+                <div>
+                  Middle proxy: <b className={data.me_state === 'enabled' ? 'text-success' : 'text-warning'}>{meLabel}</b>
+                </div>
               </div>
-              <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={allowME}
-                  onChange={(e) => setAllowME(e.target.checked)}
-                  className="accent-[var(--color-accent,#3b82f6)]"
-                />
-                Выключить middle proxy (иначе VLESS не поднимется; рекламный тег перестанет действовать)
-              </label>
+              {!data.enabled && (
+                <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={allowME}
+                    onChange={(e) => setAllowME(e.target.checked)}
+                    className="accent-[var(--color-accent,#3b82f6)]"
+                  />
+                  Выключить middle proxy (иначе VLESS не поднимется; рекламный тег перестанет действовать)
+                </label>
+              )}
               <div className="flex flex-wrap gap-2">
                 <Button disabled={busy || data.enabled || !data.links.length} onClick={() => void run(() => vlessApi.on(false, allowME), 'VLESS включён')}>
                   Включить

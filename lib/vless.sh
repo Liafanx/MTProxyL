@@ -183,7 +183,10 @@ vless_link_use() {
     [ -n "$(_vless_link_row "$_id")" ] || { log_error "Ссылки ${_id} нет"; return 1; }
     VLESS_ACTIVE="$_id"; save_settings
     log_success "Активная ссылка: ${_id}"
-    [ "${VLESS_ENABLED:-false}" = true ] && vless_apply
+    if [ "${VLESS_ENABLED:-false}" = true ]; then
+        vless_apply || return 1
+    fi
+    return 0
 }
 
 vless_link_remove() {
@@ -561,6 +564,15 @@ _vless_me_enabled() {
     return 0
 }
 
+# Что происходит с middle proxy на самом деле: у mtdd при VLESS он не
+# выключается, а весь DC-трафик идёт маршрутом Direct через SOCKS5.
+_vless_me_state() {
+    if [ "${VLESS_ENABLED:-false}" = true ] && declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
+        echo direct; return 0
+    fi
+    if _vless_me_enabled; then echo enabled; else echo disabled; fi
+}
+
 _vless_me_gate() {
     local _assume="${1:-false}" _consent="${2:-false}"
     _vless_me_enabled || return 0
@@ -704,7 +716,8 @@ PY
         "$(_vless_links_json)" \
         "$([ -s "$(_vless_subs)" ] && echo true || echo false)" \
         "${VLESS_WATCHDOG_ENABLED:-true}" "$(_vless_hwid 2>/dev/null)" "${VLESS_HWID_ENABLED:-true}" \
-        "${VLESS_SUB_UA:-}" "$(cat "$(_vless_sub_notice_file)" 2>/dev/null | head -1)" <<'PY'
+        "${VLESS_SUB_UA:-}" "$(cat "$(_vless_sub_notice_file)" 2>/dev/null | head -1)" \
+        "$(_vless_me_state)" <<'PY'
 import json, sys
 active = json.loads(sys.argv[5]) if sys.argv[5] else None
 links = json.loads(sys.argv[6]) if sys.argv[6] else []
@@ -722,6 +735,7 @@ print(json.dumps({
     "hwid_enabled": sys.argv[10] == "true" if len(sys.argv) > 10 else True,
     "sub_ua": sys.argv[11] if len(sys.argv) > 11 else "",
     "sub_notice": sys.argv[12] if len(sys.argv) > 12 else "",
+    "me_state": sys.argv[13] if len(sys.argv) > 13 else "enabled",
 }, ensure_ascii=False))
 PY
 }
@@ -740,6 +754,8 @@ if d["active"]:
 else:
     print("  Активная ссылка не выбрана")
 print("  SOCKS5: 127.0.0.1:%s · ссылок: %s · подписка: %s" % (d["socks_port"], d.get("links_count", 0), "да" if d["subscription"] else "нет"))
+_me = d.get("me_state", "enabled")
+print("  Middle proxy: %s" % {"direct": "mtdd: весь DC-трафик через Direct", "disabled": "выключен", "enabled": "включён"}.get(_me, _me))
 if d.get("hwid"):
     print("  HWID: %s%s · клиент подписки: %s" % (d["hwid"], "" if d.get("hwid_enabled", True) else " (не отправляется)", d.get("sub_ua") or "MTProxyL"))
 if d.get("sub_notice"):

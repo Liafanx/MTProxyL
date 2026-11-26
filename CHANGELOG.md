@@ -12,6 +12,7 @@
 - warpscout обновлён до 0.17.0: сборка MTProxyL `0.17.0-mtproxyl.1` с прежним патчем MTU туннеля. `mtproxyl warp update` (и пункт меню) ставит новую сборку, действующий туннель перезапускается через `warp recover`.
 - WARP: протокол `awg3.1` — AmneziaWG 3.1: расширенная обфускация и тайминги (padding, rekey, random trailers). Доступен в вариантах A и C, требует warpscout 0.17.0+; в панели появился выбор `awg3.1`.
 - VLESS (Xray-core 26.11.9): весь трафик движка через локальный SOCKS5, ссылки `vless://` (Reality, TLS, VLESS Encryption, Vision, WS/gRPC/HTTPUpgrade/XHTTP/mKCP) и подписка с HWID и User-Agent Happ/INCY: base64, список ссылок или JSON профиля Xray/sing-box. Команды `vless on|off|status|test|link|sub|hwid|update|rollback|recover`, страница панели, таймер проверки и переключения ссылок, бэкап ссылок. Middle proxy с VLESS несовместим (проверено): telemt выключает ME с явного согласия, mtdd идёт маршрутом Direct.
+- Панель: долгие операции CLI больше не обрываются через 60 секунд; в карточке VLESS видно состояние middle proxy, а выбор ссылки при выключенном VLESS завершается успешно. После смены движка настройки Selfmask применяются заново.
 
 ## v1.8.3 — 18.11.2026
 

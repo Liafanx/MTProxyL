@@ -66,6 +66,10 @@ ID1=$(_vless_uri_id "$URI1")
 mask=$(_vless_mask_uri "$(_vless_link_uri "$ID1")")
 [[ "$mask" != *11111111* && "$mask" != *AAAAAAAA* ]] || fail "маска светит секрет: $mask"
 
+# Выбор ссылки при выключенном VLESS — успешная операция, а не exit 1.
+VLESS_ENABLED=false
+vless_link_use "$ID1" >/dev/null || fail "link use при выключенном VLESS"
+
 # Конфиг под активную ссылку.
 VLESS_ACTIVE=$ID1
 vless_config_write || fail "config_write"
@@ -164,6 +168,11 @@ vless_sub_refresh >/dev/null 2>&1 || fail "sub refresh с подсказкой"
 grep -q 'HWID' "$(_vless_sub_notice_file)" || fail "текст подсказки не сохранён"
 vless_sub_off >/dev/null || fail "sub off"
 vless_status_json | jq -e '(.hwid|length) > 0 and .hwid_enabled == true and (.sub_ua|length) > 0' >/dev/null || fail "status: HWID и UA"
+# Состояние middle proxy видно в статусе: при VLESS и выключенном ME — disabled.
+VLESS_ENABLED=true
+_vless_me_enabled() { return 1; }
+vless_status_json | jq -e '.me_state == "disabled"' >/dev/null || fail "status: ME выключен"
+VLESS_ENABLED=false
 
 # Отказ: первые две проверки — перезапуск, четвёртая — смена ссылки.
 VLESS_ENABLED=true
