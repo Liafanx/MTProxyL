@@ -2,7 +2,7 @@
 # MTProxyL — маршрут до Telegram через Cloudflare WARP (warpscout).
 # Вариант A — SOCKS5 + redsocks, вариант B — интерфейс WireGuard.
 
-WARPSCOUT_VERSION="0.16.1"
+WARPSCOUT_VERSION="0.17.0"
 WARPSCOUT_BUILD="${WARPSCOUT_VERSION}-mtproxyl.1"
 WARPSCOUT_UPSTREAM_REPO="vernette/warpscout"
 
@@ -103,7 +103,7 @@ _warp_variant_letter() {
 
 _warp_mode()  { case "${WARP_MODE:-socks}" in iface) echo "iface" ;; upstream) echo "upstream" ;; *) echo "socks" ;; esac; }
 _warp_configured_proto() {
-    case "${WARP_PROTO:-awg}" in wg|masque|masque-h2) echo "${WARP_PROTO}" ;; *) echo "awg" ;; esac
+    case "${WARP_PROTO:-awg}" in wg|awg31|masque|masque-h2) echo "${WARP_PROTO}" ;; *) echo "awg" ;; esac
 }
 _warp_proto() {
     # У интерфейса выбора нет: awg и masque живут только в туннеле warpscout.
@@ -170,6 +170,12 @@ _warp_bin_supports_mtu() {
     grep -q -- '-tunnel-mtu' <<< "$_help"
 }
 
+# AmneziaWG 3.1 (-p awg31) появился в warpscout 0.17.0.
+_warp_bin_supports_awg31() {
+    local _help; _help=$("${1:-$(_warp_bin)}" socks -h 2>&1)
+    grep -q -- 'awg31' <<< "$_help"
+}
+
 # ── Бинарник ────────────────────────────────────────────────────────────────
 
 _warp_arch() {
@@ -197,6 +203,9 @@ _warp_bin_usable() {
     done
     if [ "$(_warp_mode)" != iface ] && [ "$(_warp_mtu)" != 1280 ]; then
         _warp_bin_supports_mtu "$_b" || return 1
+    fi
+    if [ "$(_warp_proto)" = awg31 ]; then
+        _warp_bin_supports_awg31 "$_b" || return 1
     fi
     return 0
 }
@@ -1741,9 +1750,13 @@ warp_set_endpoint() {
 warp_set_proto() {
     check_root
     case "${1:-}" in
-        awg|wg|masque|masque-h2) WARP_PROTO="$1" ;;
-        *) log_error "Протокол: awg, wg, masque или masque-h2"; return 1 ;;
+        awg|wg|awg31|masque|masque-h2) WARP_PROTO="$1" ;;
+        *) log_error "Протокол: awg, awg31 (AmneziaWG 3.1), wg, masque или masque-h2"; return 1 ;;
     esac
+    if [ "$WARP_PROTO" = awg31 ] && [ -x "$(_warp_bin)" ] && ! _warp_bin_supports_awg31; then
+        log_error "AmneziaWG 3.1 умеет warpscout 0.17.0 и новее: обновите — mtproxyl warp update"
+        return 1
+    fi
     save_settings
     log_success "Протокол: ${WARP_PROTO}"
     [ "$(_warp_mode)" = "iface" ] && log_warn "Вариант B работает только по wg — протокол учтётся при переходе на вариант A"
@@ -1820,7 +1833,7 @@ warp_set_exclude() {
 
 warp_set_settings() {
     local _proto="${1:-keep}" _location="${2:-keep}" _ep="${3:-keep}" _exclude="${4:-keep}" _mtu="${5:-keep}"
-    case "$_proto" in keep|awg|wg|masque|masque-h2) ;; *) log_error "Неверный протокол WARP"; return 1 ;; esac
+    case "$_proto" in keep|awg|awg31|wg|masque|masque-h2) ;; *) log_error "Неверный протокол WARP"; return 1 ;; esac
     if [ "$_exclude" != keep ]; then
         _exclude=$(_warp_parse_exclude "$_exclude") || { log_error "Неверный список исключённых узлов"; return 1; }
     fi
@@ -2132,7 +2145,7 @@ _warp_dispatch() {
             if [ "${2:-}" = "--json" ]; then warp_status_json; else warp_status; fi ;;
         on|enable)   warp_enable "${@:2}" ;;
         off|disable) warp_disable ;;
-        install)
+        install|update)
             check_root
             _warp_scan_dependencies && warp_install_binary || return 1
             if [ "${WARP_ENABLED:-false}" = true ]; then
@@ -2188,7 +2201,8 @@ _warp_dispatch() {
             echo -e "    ${GREEN}warp exclude${NC} <N>      Исключить узлы (DME,LED); none — без исключений, default — DME"
             echo -e "    ${GREEN}warp endpoint${NC} <A>     Закрепить адрес, clear — выбирать разведкой"
             echo -e "    ${GREEN}warp mtu${NC} <1000–1500> MTU туннеля; по умолчанию 1280, затем warp apply"
-            echo -e "    ${GREEN}warp proto${NC} <P>        awg (по умолчанию), wg, masque"
+            echo -e "    ${GREEN}warp proto${NC} <P>        awg (по умолчанию), awg31 (AmneziaWG 3.1), wg, masque, masque-h2"
+            echo -e "    ${GREEN}warp update${NC}           Обновить warpscout до сборки MTProxyL"
             echo -e "    ${GREEN}warp hint${NC}             Что дописать в конфиг чужой цели для варианта C"
             echo -e "    ${GREEN}warp reapply${NC}          Переприменить правила и список подсетей"
             echo -e "    ${GREEN}warp remove${NC}           Удалить warpscout и его службы"

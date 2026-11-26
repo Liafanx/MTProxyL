@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 env:
-  SOURCE_REF: v0.16.1
-  BUILD_VERSION: 0.16.1-mtproxyl.1
+  SOURCE_REF: v0.17.0
+  BUILD_VERSION: 0.17.0-mtproxyl.1
 
 jobs:
   build:
@@ -58,6 +58,7 @@ jobs:
             echo "$HELP" | grep -q -- "-${flag}" || { echo "Нет ключа -${flag}"; exit 1; }
           done
           test "$(./warpscout version)" = "$BUILD_VERSION"
+          ./warpscout socks -h 2>&1 | grep -q -- '-p, -proto wg|awg|awg31' || { echo "Нет протокола awg31"; exit 1; }
       - name: Упаковать
         working-directory: upstream
         run: |

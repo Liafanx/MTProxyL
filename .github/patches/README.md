@@ -1,7 +1,8 @@
 # warpscout: MTU действующего туннеля
 
-Источник: [vernette/warpscout, v0.16.1](https://github.com/vernette/warpscout/tree/v0.16.1),
-лицензия MIT сохраняется в архиве бинарника. Сборка MTProxyL: `0.16.1-mtproxyl.1`.
+Источник: [vernette/warpscout, v0.17.0](https://github.com/vernette/warpscout/tree/v0.17.0),
+лицензия MIT сохраняется в архиве бинарника. Сборка MTProxyL: `0.17.0-mtproxyl.1`.
+Патч проверен на v0.17.0 без изменений и вместе с ней даёт протокол `awg31`.
 
 `warpscout-tunnel-mtu.patch` добавляет параметр `socks -tunnel-mtu N` (1000–1500,
 по умолчанию 1280). Его использует сетевой стек WG/AWG и MASQUE. Параметр
@@ -9,7 +10,7 @@
 его поведение сохранено. Буфер MASQUE рассчитан на максимальный разрешённый MTU.
 
 Workflow `build-warpscout.yml` применяет патч к закреплённому тегу, запускает
-тесты и собирает linux/amd64 и linux/arm64. При теге `warpscout-0.16.1-mtproxyl.1`
+тесты и собирает linux/amd64 и linux/arm64. При теге `warpscout-0.17.0-mtproxyl.1`
 публикуется отдельная сборка зависимости, не изменяющая последний стабильный
 релиз MTProxyL. Ручной запуск workflow только проверяет и собирает артефакты.
 

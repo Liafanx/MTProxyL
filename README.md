@@ -3292,9 +3292,9 @@ mtproxyl dc autorestart cooldown 5      # Охлаждение после пер
 исходящие соединения telemt (кроме отдельно выведенного локального TLS-бэкенда).
 Доступность варианта C для чужой цели зависит от её конфигурации.
 
-Эндпоинты Cloudflare ищет [warpscout 0.16.1](https://github.com/vernette/warpscout):
+Эндпоинты Cloudflare ищет [warpscout 0.17.0](https://github.com/vernette/warpscout):
 он поднимает настоящий туннель к каждому кандидату и спрашивает, где тот
-выходит. Сначала скачивается сборка MTProxyL `0.16.1-mtproxyl.1` с настройкой
+выходит. Сначала скачивается сборка MTProxyL `0.17.0-mtproxyl.1` с настройкой
 MTU действующего SOCKS-туннеля. Патч и тест сетевого стека находятся в
 [`.github/patches/`](.github/patches/README.md). Запасной источник — оригинальный
 релиз: в A/C он поддерживает только MTU 1280, в B MTU задаётся интерфейсу
@@ -3315,14 +3315,14 @@ mtproxyl warp scan --last       # Показать результат прошл
 mtproxyl warp scan --json       # То же в JSON (для панели и скриптов)
 mtproxyl warp location DE,NL    # Страна узла Cloudflare (clear — автовыбор)
 mtproxyl warp endpoint A:PORT   # Закрепить адрес (clear — искать разведкой)
-mtproxyl warp proto awg|wg|masque|masque-h2
+mtproxyl warp proto awg|awg31|wg|masque|masque-h2
 mtproxyl warp mtu               # Сохранённый MTU (по умолчанию 1280)
 mtproxyl warp mtu 1280          # Сохранить MTU: целое число 1000–1500
 mtproxyl warp apply             # Применить сохранённый выбор к работающему WARP
 mtproxyl warp recover           # Восстановить текущий туннель и маршрут
 mtproxyl warp watchdog on       # Автопроверка запускается вместе с WARP
 mtproxyl warp watchdog off      # Только ручное восстановление
-mtproxyl warp install           # Обновить бинарник warpscout
+mtproxyl warp update            # Обновить бинарник warpscout (то же, что install)
 mtproxyl warp refresh           # Обновить службы после обновления MTProxyL
 mtproxyl warp hint              # Что дописать в конфиг чужой цели (вариант C)
 mtproxyl warp reapply           # Обновить список подсетей и правила
@@ -3330,6 +3330,11 @@ mtproxyl warp reapply           # Обновить список подсетей
 
 Меню: **Безопасность и маршрутизация → Telegram через WARP**. В панели —
 раздел «Telegram через WARP». Включённый маршрут виден строкой в главном меню.
+
+Протокол `awg31` — AmneziaWG с параметрами 3.1 (дополнительные диапазоны
+обфускации, случайные trailers, отключение cookies). Он есть только в A и C:
+вариант B работает на обычном WireGuard в ядре. Нужен warpscout 0.17.0+, то есть
+сборка MTProxyL; при выборе на старом бинарнике команда попросит обновиться.
 
 MTU доступен в этом же разделе панели и пункте «MTU туннеля» терминального меню.
 Значение по умолчанию — **1280** для всех вариантов. MTU задаёт размер пакета
