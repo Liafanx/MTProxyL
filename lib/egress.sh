@@ -70,20 +70,23 @@ egress_take_over() {
 
 # Новый выход не поднялся — возвращаем выключенные.
 egress_restore() {
-    local _o _list="${_EGRESS_REPLACED:-}"
+    local _o _list="${_EGRESS_REPLACED:-}" _rc=0
     _EGRESS_REPLACED=""
     [ -n "$_list" ] || return 0
     for _o in $_list; do
         log_info "Возвращаем $(egress_label "$_o")..."
-        case "$_o" in
-            warp)  ( export MTPROXYL_ASSUME_YES=1; handle_warp_command on ) ;;
-            donor) ( export MTPROXYL_ASSUME_YES=1; donor_enable --yes ) ;;
-            awg)   ( export MTPROXYL_ASSUME_YES=1; handle_awg_command on --yes ) ;;
-        esac >/dev/null 2>&1 || log_warn "Не удалось вернуть $(egress_label "$_o") — включите вручную: mtproxyl ${_o} on"
+        if ! case "$_o" in
+            warp)  ( export MTPROXYL_ASSUME_YES=1; handle_warp_command on --allow-disable-me --allow-disable-default-upstreams ) ;;
+            donor) ( export MTPROXYL_ASSUME_YES=1; donor_enable --yes --allow-disable-default-upstreams ) ;;
+            awg)   ( export MTPROXYL_ASSUME_YES=1; handle_awg_command on --yes --allow-disable-me ) ;;
+        esac >/dev/null 2>&1; then
+            log_warn "Не удалось вернуть $(egress_label "$_o") — включите вручную: mtproxyl ${_o} on"
+            _rc=1
+        fi
     done
     load_settings
     declare -F load_upstreams >/dev/null && load_upstreams
-    return 0
+    return "$_rc"
 }
 
 # Через что сейчас идёт Telegram. ok: true/false, null — давно не проверяли.

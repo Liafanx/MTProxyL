@@ -461,16 +461,22 @@ vless_service_restart() {
     return 0
 }
 
-vless_apply() {
-    local _port; _port=$(_vless_port)
+_vless_start_xray() {
     _vless_core_install || return 1
     _vless_ensure_user || return 1
     vless_config_write || return 1
     vless_service_write || return 1
     vless_service_restart || { log_error "Служба VLESS не запустилась: journalctl -u ${VLESS_UNIT}"; return 1; }
+}
+
+_vless_route_engine() {
     _vless_apply_upstream || return 1
-    _vless_engine_apply || return 1
-    log_success "VLESS включён: socks5 127.0.0.1:${_port} → $(_vless_mask_uri "$(_vless_link_uri "$VLESS_ACTIVE")")"
+    _vless_engine_apply "$@"
+}
+
+vless_apply() {
+    _vless_start_xray && _vless_route_engine && save_settings || return 1
+    log_success "Маршрут через VLESS применён"
 }
 
 # Смена ссылки не меняет upstream движка: перезапускаем только Xray, иначе
@@ -495,7 +501,7 @@ _vless_engine_apply() {
         mtdd_restart
     else
         generate_telemt_config || return 1
-        if is_proxy_running 2>/dev/null; then restart_proxy_container; fi
+        if [ "${1:-false}" = true ] || is_proxy_running 2>/dev/null; then restart_proxy_container; fi
     fi
 }
 
@@ -520,10 +526,9 @@ _vless_local_mask_backend() {
 }
 
 _vless_apply_upstream() {
-    load_upstreams 2>/dev/null || true
-    UPSTREAM_DEFER_RESTART="true"
-    local _rc=0 _port; _port=$(_vless_port)
-    local _others="" _i
+    load_upstreams || return 1
+    local UPSTREAM_DEFER_RESTART=true
+    local _port _others="" _i; _port=$(_vless_port)
     for _i in "${!UPSTREAM_NAMES[@]}"; do
         local _n="${UPSTREAM_NAMES[$_i]}"
         [ "$_n" = "$VLESS_UPSTREAM_NAME" ] || [ "$_n" = "$VLESS_UPSTREAM_LOCAL" ] && continue
@@ -537,25 +542,23 @@ _vless_apply_upstream() {
         local _name
         for _name in "${_list[@]}"; do
             [ -n "$_name" ] || continue
-            upstream_toggle "$_name" disable >/dev/null 2>&1 || { UPSTREAM_DEFER_RESTART=false; return 1; }
+            upstream_toggle "$_name" disable >/dev/null 2>&1 || return 1
             case ",${VLESS_DISABLED_UPSTREAMS:-}," in
                 *",${_name},"*) ;;
                 *) VLESS_DISABLED_UPSTREAMS+="${VLESS_DISABLED_UPSTREAMS:+,}${_name}" ;;
             esac
         done
-        save_settings
     fi
     upstream_remove "$VLESS_UPSTREAM_NAME" >/dev/null 2>&1 || true
     upstream_add "$VLESS_UPSTREAM_NAME" socks5 "127.0.0.1:${_port}" "" "" 1 "" "" >/dev/null \
-        || { log_error "Не удалось добавить upstream ${VLESS_UPSTREAM_NAME}"; _rc=1; }
+        || { log_error "Не удалось добавить upstream ${VLESS_UPSTREAM_NAME}"; return 1; }
     upstream_remove "$VLESS_UPSTREAM_LOCAL" >/dev/null 2>&1 || true
-    if [ $_rc -eq 0 ] && _vless_local_mask_backend; then
-        upstream_add "$VLESS_UPSTREAM_LOCAL" direct "" "" "" 1 "" "local" >/dev/null || true
+    if _vless_local_mask_backend; then
+        upstream_add "$VLESS_UPSTREAM_LOCAL" direct "" "" "" 1 "" "local" >/dev/null \
+            || { log_error "Не удалось добавить локальный маршрут для маскировки"; return 1; }
         mtdd_mgr_active || handle_expert_command set censorship tls_fetch_scope local --no-apply >/dev/null 2>&1 \
             || log_warn "Не удалось задать censorship.tls_fetch_scope — маскировка может не подтянуть сертификат"
     fi
-    UPSTREAM_DEFER_RESTART="false"
-    [ $_rc -eq 0 ] || return 1
     return 0
 }
 
@@ -582,7 +585,8 @@ _vless_probe() {
 vless_test_json() {
     local _port; _port=$(_vless_port)
     local _exit="" _tg="fail" _dc="fail"
-    if [ "$(systemctl is-active "$VLESS_UNIT" 2>/dev/null)" = active ]; then
+    if [ "$(systemctl is-active "$VLESS_UNIT" 2>/dev/null)" = active ] &&
+        timeout 4 bash -c 'until (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; do sleep 0.2; done' _ "$_port"; then
         _exit=$(curl -fsS --max-time 12 --socks5-hostname "127.0.0.1:${_port}" https://api.ipify.org 2>/dev/null | tr -dc '0-9a-fA-F.:' | head -c 64)
         curl -fsS --max-time 12 --socks5-hostname "127.0.0.1:${_port}" -o /dev/null https://api.telegram.org 2>/dev/null && _tg="ok"
         _vless_probe 149.154.167.51 443 >/dev/null 2>&1 && _dc="ok"
@@ -593,7 +597,7 @@ vless_test_json() {
 }
 
 vless_test() {
-    local _j; _j=$(vless_test_json)
+    local _j="${1:-}"; [ -n "$_j" ] || _j=$(vless_test_json)
     jq -r '
       "",
       "  VLESS: \(if .ok then "работает" else "проверка не прошла" end)",
@@ -638,9 +642,15 @@ _vless_me_state() {
     if _vless_me_enabled; then echo enabled; else echo disabled; fi
 }
 
+_vless_me_needs_consent() {
+    _vless_me_enabled && return 0
+    # При отключении собственного AWG может восстановиться ME.
+    awg_is_enabled 2>/dev/null && (awg_load; [ -n "${AWG_ME_DISABLED:-}" ])
+}
+
 _vless_me_gate() {
     local _assume="${1:-false}" _consent="${2:-false}"
-    _vless_me_enabled || return 0
+    _vless_me_needs_consent || return 0
     if declare -F mtdd_mgr_active >/dev/null && mtdd_mgr_active; then
         log_warn "Middle proxy несовместим с VLESS: ключи ME зависят от адреса и порта, а socks5 их не сохраняет"
         log_info "mtdd пойдёт к дата-центрам маршрутом Direct через VLESS; рекламный тег действовать не будет"
@@ -673,7 +683,56 @@ _vless_me_disable() {
     log_success "Middle proxy выключен на время VLESS"
 }
 
+_vless_snapshot_route() {
+    local _backup _file
+    _backup=$(mktemp -d "$INSTALL_DIR/vless-transition.XXXXXX") || return 1
+    for _file in "$@"; do
+        if [ -e "$_file" ] && ! cp -p "$_file" "$_backup/"; then
+            rm -rf -- "$_backup"
+            return 1
+        fi
+    done
+    printf '%s\n' "$_backup"
+}
+
+_vless_restore_route() {
+    local _backup="$1" _engine_running="$2" _file _rc=0
+    shift 2
+    for _file in "$@"; do
+        if [ -f "$_backup/${_file##*/}" ]; then
+            cp -p "$_backup/${_file##*/}" "$_file" || _rc=1
+        else
+            rm -f "$_file" || _rc=1
+        fi
+    done
+    save_settings || _rc=1
+    _vless_engine_apply "$_engine_running" || _rc=1
+    egress_restore || _rc=1
+    return "$_rc"
+}
+
+_vless_cancel_xray() {
+    systemctl disable --now "$VLESS_UNIT" >/dev/null 2>&1 ||
+        log_warn "Не удалось остановить Xray: journalctl -u ${VLESS_UNIT}"
+}
+
 vless_on() {
+    check_root
+    if [ -n "${MTPROXYL_LOCK_HELD:-}" ]; then
+        _vless_on "$@"
+        return
+    fi
+
+    # Меню и отложенный запуск systemd не получают блокировку от CLI.
+    local _rc=0
+    cli_lock "${MTPROXYL_LOCK_WAIT:-300}" vless || return 1
+    load_settings
+    _vless_on "$@" || _rc=$?
+    cli_unlock
+    return "$_rc"
+}
+
+_vless_on() {
     local _assume="${MTPROXYL_ASSUME_YES:-false}" _consent=false _defer=false _arg
     for _arg in "$@"; do
         case "$_arg" in
@@ -684,44 +743,96 @@ vless_on() {
     done
     VLESS_DEFER_RESTART="$_defer"
     VLESS_ENGINE_PENDING=false
-    check_root
-    [ -n "${VLESS_ACTIVE:-}" ] && [ -n "$(_vless_link_row "$VLESS_ACTIVE")" ] \
-        || VLESS_ACTIVE=$(awk -F'|' 'NR==1 {print $1}' "$(_vless_links)" 2>/dev/null)
-    [ -n "$VLESS_ACTIVE" ] || { log_error "Сначала добавьте ссылку: mtproxyl vless link add '<vless://…>'"; return 1; }
+    local _selected="${VLESS_ACTIVE:-}"
+    [ -n "$_selected" ] && [ -n "$(_vless_link_row "$_selected")" ] \
+        || _selected=$(awk -F'|' 'NR==1 {print $1}' "$(_vless_links)" 2>/dev/null)
+    [ -n "$_selected" ] || { log_error "Сначала добавьте ссылку: mtproxyl vless link add '<vless://…>'"; return 1; }
     local _conflict; _conflict=$(_vless_exit_conflicts)
     if [ -n "$_conflict" ] && [ "$_assume" != true ]; then
         log_error "Уже включён другой выход: ${_conflict}"
         log_info "Выключите его или повторите с --yes: mtproxyl vless on --yes"
         return 1
     fi
+    if [ "${VLESS_ENABLED:-false}" = true ]; then
+        log_info "VLESS уже включён. Для повторного применения: mtproxyl vless recover"
+        return 0
+    fi
     _vless_me_gate "$_assume" "$_consent" || return 1
-    if [ -n "$_conflict" ]; then
-        log_warn "Выключаем прежний выход: ${_conflict}"
-        [ "${WARP_ENABLED:-false}" = true ] && warp_disable >/dev/null 2>&1 || true
-        _vless_donor_on && donor_disable >/dev/null 2>&1 || true
-        declare -F awg_is_enabled >/dev/null && awg_is_enabled 2>/dev/null && awg_disable >/dev/null 2>&1 || true
-        _conflict=$(_vless_exit_conflicts)
-        if [ -n "$_conflict" ]; then
-            log_error "Не удалось выключить прежний выход: ${_conflict}"
+    if [ "$_defer" = true ]; then
+        local -a _args=()
+        [ "$_assume" = true ] && _args+=(--yes)
+        if [ "$_consent" = true ] || _vless_me_needs_consent; then _args+=(--allow-disable-me); fi
+        if ! systemd-run --quiet --collect --on-active=3 --unit="mtproxyl-vless-on-$(date +%s)-${RANDOM}" \
+            "${INSTALL_DIR}/mtproxyl.sh" vless on "${_args[@]}" >/dev/null 2>&1; then
+            log_error "Не удалось запланировать включение VLESS"
             return 1
         fi
+        log_info "Включение VLESS запланировано"
+        return 0
     fi
-    if ! mtdd_mgr_active && _vless_me_enabled; then
-        _vless_me_disable || return 1
-    fi
-    # mtdd собирает маршрут по VLESS_ENABLED: Direct вместо ME.
-    VLESS_ENABLED="true"
-    if vless_apply; then
-        save_settings
-        vless_watchdog_install
-        if declare -F _upstream_me_enabled >/dev/null && _upstream_me_enabled; then
-            log_info "Middle proxy включён: проверьте покрытие DC (mtproxyl dc status). Если ME не поднялся, выход VLESS не сохраняет адрес:порт"
-        fi
-        vless_test
-        _vless_schedule_engine_apply
-    else
+
+    local _engine_running=false _check _backup _EGRESS_REPLACED=""
+    local -a _files=("$UPSTREAMS_FILE" "$EXPERT_OVERRIDES_FILE")
+    local _active_before="${VLESS_ACTIVE:-}" _me_before="${VLESS_ME_DISABLED:-false}"
+    local _disabled_before="${VLESS_DISABLED_UPSTREAMS:-}"
+    is_proxy_running 2>/dev/null && _engine_running=true
+    load_secrets && load_upstreams || return 1
+    VLESS_ACTIVE="$_selected"
+    if ! _vless_start_xray; then
+        VLESS_ACTIVE="$_active_before"
+        _vless_cancel_xray
+        log_error "Не удалось подготовить Xray. Действующий маршрут сохранён"
         return 1
     fi
+    if ! _check=$(vless_test_json) || ! jq -e '.ok == true' <<< "$_check" >/dev/null; then
+        VLESS_ACTIVE="$_active_before"
+        _vless_cancel_xray
+        log_error "Через VLESS не удалось проверить Telegram и DC. Действующий маршрут сохранён"
+        return 1
+    fi
+    vless_test "$_check"
+    if ! egress_take_over vless "$_assume"; then
+        VLESS_ACTIVE="$_active_before"
+        _vless_cancel_xray
+        return 1
+    fi
+    _conflict=$(_vless_exit_conflicts)
+    if [ -n "$_conflict" ]; then
+        log_error "Не удалось выключить прежний выход: ${_conflict}"
+        VLESS_ACTIVE="$_active_before"
+        _vless_cancel_xray
+        egress_restore
+        return 1
+    fi
+    VLESS_ACTIVE="$_selected"
+    if ! _backup=$(_vless_snapshot_route "${_files[@]}"); then
+        log_error "Не удалось сохранить настройки для отката VLESS"
+        VLESS_ACTIVE="$_active_before"
+        _vless_cancel_xray
+        egress_restore
+        return 1
+    fi
+
+    # mtdd собирает маршрут по VLESS_ENABLED: Direct вместо ME.
+    VLESS_ENABLED="true"
+    if { mtdd_mgr_active || ! _vless_me_enabled || _vless_me_disable; } &&
+        _vless_route_engine "$_engine_running" && save_settings; then
+        rm -rf -- "$_backup"
+        vless_watchdog_install
+        log_success "Выход через VLESS включён"
+        return 0
+    fi
+
+    VLESS_ENABLED=false VLESS_ACTIVE="$_active_before"
+    VLESS_ME_DISABLED="$_me_before" VLESS_DISABLED_UPSTREAMS="$_disabled_before"
+    if _vless_restore_route "$_backup" "$_engine_running" "${_files[@]}"; then
+        rm -rf -- "$_backup"
+        log_error "VLESS не применён. Прежний маршрут восстановлен"
+    else
+        log_error "VLESS не применён. Откат завершился с ошибкой. Копия настроек: $_backup"
+    fi
+    _vless_cancel_xray
+    return 1
 }
 
 vless_off() {
