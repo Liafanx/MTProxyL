@@ -29,11 +29,11 @@ if zapret2_validate_v2 300 300 || zapret2_validate_v2 300 0 || zapret2_validate_
     echo "неверные параметры v2 приняты"
     exit 1
 fi
-zapret2_validate_v2 300 100
+zapret2_validate_v2 "$ZAPRET2_V2_WIN" "$ZAPRET2_V2_LEN"
 
-ZAPRET2_PROFILE=v2 ZAPRET2_V2_WIN=300 ZAPRET2_V2_LEN=100
+ZAPRET2_PROFILE=v2
 zapret2_write_lua "$tmp/v2.lua"
-grep -qFx 'local win, len, release_at = 300, 100, 1400' "$tmp/v2.lua"
+grep -qFx 'local win, len, release_at = 800, 300, 1400' "$tmp/v2.lua"
 
 if command -v lua >/dev/null; then
     lua - "$tmp/v2.lua" <<'LUA'
@@ -68,19 +68,20 @@ local function packet(outgoing, flags, offset, data)
     return verdict
 end
 assert(packet(true, TH_SYN + TH_ACK, 0) == VERDICT_MODIFY)
-assert(window.wsize == 300 and window.scale == 0)
-local a, b, c = ("a"):rep(100), ("b"):rep(100), ("c"):rep(100)
+assert(window.wsize == 800 and window.scale == 0)
+local a, b, c = ("a"):rep(300), ("b"):rep(300), ("c"):rep(200)
 assert(packet(false, TH_ACK, 0, a .. b .. c) == VERDICT_DROP)
 assert(sent[1][1] == a and sent[1][2] == 0 and not sent[1][3])
-assert(sent[2][1] == c and sent[2][2] == 200 and not sent[2][3])
-assert(sent[3][1] == b and sent[3][2] == 100 and sent[3][3])
-assert(packet(false, TH_ACK, 100, b) == VERDICT_PASS and #sent == 3)
-assert(packet(true, TH_ACK, 300) == VERDICT_MODIFY)
-assert(window.wsize == 300 and window.scale == nil)
-assert(packet(false, TH_ACK, 300, a .. b) == VERDICT_DROP and #sent == 5)
+assert(sent[2][1] == c and sent[2][2] == 600 and not sent[2][3])
+assert(sent[3][1] == b and sent[3][2] == 300 and sent[3][3])
+assert(packet(false, TH_ACK, 300, b) == VERDICT_PASS and #sent == 3)
+assert(packet(true, TH_ACK, 800) == VERDICT_MODIFY)
+assert(window.wsize == 800 and window.scale == nil)
 fail = true
-assert(packet(false, TH_ACK, 500, a .. b .. c) == VERDICT_PASS)
-assert(state.broken_upto == 500)
+assert(packet(false, TH_ACK, 800, a .. b) == VERDICT_PASS)
+assert(state.broken_upto == 800)
+fail = false
+assert(packet(false, TH_ACK, 800, a .. b) == VERDICT_DROP and #sent == 7)
 assert(packet(true, TH_ACK, 1400) == VERDICT_PASS and cutoff)
 assert(packet(false, TH_ACK, 1400, a .. b) == VERDICT_PASS)
 LUA
@@ -108,14 +109,14 @@ systemctl() {
     return 0
 }
 sleep() { :; }
-if zapret2_set_profile v2 300 100; then echo "перезапуск должен завершиться ошибкой"; exit 1; fi
+if zapret2_set_profile v2 800 300; then echo "перезапуск должен завершиться ошибкой"; exit 1; fi
 [ ! -e "$tmp/profile" ]
 cmp -s "$tmp/original.lua" "$ZAPRET2_LUA"
 cmp -s "$tmp/original.conf" "$ZAPRET2_CONF"
 grep -qxF -- '--in-range=p5' "$tmp/mtproto-1.conf"
 
 systemctl() { return 0; }
-zapret2_set_profile v2 300 100
+zapret2_set_profile v2 800 300
 grep -qxF v2 "$tmp/profile"
 cmp -s "$tmp/v2.lua" "$ZAPRET2_LUA"
 grep -qxF -- '--in-range=a' "$tmp/mtproto-1.conf"

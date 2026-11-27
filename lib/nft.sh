@@ -116,8 +116,8 @@ ZAPRET2_DEFAULT_IN_RANGE="a"
 ZAPRET2_DEFAULT_SPLIT_LEN="400"
 ZAPRET2_DEFAULT_WIN_SYNACK="1400"
 ZAPRET2_DEFAULT_WIN_ACK="10"
-ZAPRET2_DEFAULT_V2_WIN="300"
-ZAPRET2_DEFAULT_V2_LEN="100"
+ZAPRET2_DEFAULT_V2_WIN="800"
+ZAPRET2_DEFAULT_V2_LEN="300"
 # nobody:nogroup — под них nfqws2 сбрасывает привилегии. Без явного --uid он
 # берёт своё значение по умолчанию и в LXC падает на setgroups.
 ZAPRET2_DEFAULT_UID="65534"
