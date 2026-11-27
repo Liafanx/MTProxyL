@@ -116,6 +116,8 @@ ZAPRET2_DEFAULT_IN_RANGE="a"
 ZAPRET2_DEFAULT_SPLIT_LEN="400"
 ZAPRET2_DEFAULT_WIN_SYNACK="1400"
 ZAPRET2_DEFAULT_WIN_ACK="10"
+ZAPRET2_DEFAULT_V2_WIN="300"
+ZAPRET2_DEFAULT_V2_LEN="100"
 # nobody:nogroup — под них nfqws2 сбрасывает привилегии. Без явного --uid он
 # берёт своё значение по умолчанию и в LXC падает на setgroups.
 ZAPRET2_DEFAULT_UID="65534"
@@ -130,6 +132,9 @@ ZAPRET2_DEBUG="false"
 ZAPRET2_DEBUG_LOG="/var/log/mtproxyl-nfqws2.log"
 ZAPRET2_WIN_SYNACK="$ZAPRET2_DEFAULT_WIN_SYNACK"
 ZAPRET2_WIN_ACK="$ZAPRET2_DEFAULT_WIN_ACK"
+ZAPRET2_PROFILE="v1"
+ZAPRET2_V2_WIN="$ZAPRET2_DEFAULT_V2_WIN"
+ZAPRET2_V2_LEN="$ZAPRET2_DEFAULT_V2_LEN"
 ZAPRET2_UID="$ZAPRET2_DEFAULT_UID"
 ZAPRET2_GID="$ZAPRET2_DEFAULT_GID"
 # Доп. порты/диапазоны для --filter-tcp, через запятую (напр. "8443,9000-9100").
@@ -230,6 +235,9 @@ ZAPRET2_IN_RANGE='${ZAPRET2_IN_RANGE}'
 ZAPRET2_SPLIT_LEN='${ZAPRET2_SPLIT_LEN}'
 ZAPRET2_WIN_SYNACK='${ZAPRET2_WIN_SYNACK}'
 ZAPRET2_WIN_ACK='${ZAPRET2_WIN_ACK}'
+ZAPRET2_PROFILE='${ZAPRET2_PROFILE}'
+ZAPRET2_V2_WIN='${ZAPRET2_V2_WIN}'
+ZAPRET2_V2_LEN='${ZAPRET2_V2_LEN}'
 ZAPRET2_EXTRA_PORTS='${ZAPRET2_EXTRA_PORTS}'
 ZAPRET2_PORT='${ZAPRET2_PORT}'
 ZAPRET2_FILTER_IP_ENABLED='${ZAPRET2_FILTER_IP_ENABLED}'
@@ -285,6 +293,7 @@ load_nft_settings() {
                 ZAPRET2_APPLIED|ZAPRET2_SERVICE_ENABLED|\
                 ZAPRET2_OUT_RANGE|ZAPRET2_IN_RANGE|ZAPRET2_SPLIT_LEN|\
                 ZAPRET2_WIN_SYNACK|ZAPRET2_WIN_ACK|ZAPRET2_EXTRA_PORTS|\
+                ZAPRET2_PROFILE|ZAPRET2_V2_WIN|ZAPRET2_V2_LEN|\
                 ZAPRET2_PORT|ZAPRET2_FILTER_IP_ENABLED|ZAPRET2_FILTER_IP|\
                 ZAPRET2_EXCLUDE_IFACES|\
                 ZAPRET2_QNUM|ZAPRET2_FWMARK|ZAPRET2_DEBUG|ZAPRET2_ORIG_TW_REUSE|\
@@ -1498,7 +1507,9 @@ zapret2_status() {
         local _br=""
         zapret2_is_bridge_target && _br=" forward/${DETECT_BRIDGE_STRATEGY:-simple}"
         [ "${ZAPRET2_HOOK:-auto}" = "auto" ] || _br="${_br} hook=${ZAPRET2_HOOK}"
-        echo -e "${GREEN}активен${NC} (out-range=${ZAPRET2_OUT_RANGE} len=${ZAPRET2_SPLIT_LEN} win=${ZAPRET2_WIN_SYNACK}/${ZAPRET2_WIN_ACK}${_extra}${_br})${_dbg}"
+        local _params="len=${ZAPRET2_SPLIT_LEN} win=${ZAPRET2_WIN_SYNACK}/${ZAPRET2_WIN_ACK}"
+        [ "$ZAPRET2_PROFILE" != v2 ] || _params="len=${ZAPRET2_V2_LEN} win=${ZAPRET2_V2_WIN}"
+        echo -e "${GREEN}активен${NC} (${ZAPRET2_PROFILE} out-range=${ZAPRET2_OUT_RANGE} ${_params}${_extra}${_br})${_dbg}"
     else
         echo -e "${YELLOW}установлен, остановлен${NC}"
     fi
@@ -1758,6 +1769,8 @@ zapret2_write_conf() {
 
 zapret2_write_instance_conf() {
     local _i="$1" _port="$2" _debug_line="" _log="$ZAPRET2_DEBUG_LOG"
+    local _out="$ZAPRET2_OUT_RANGE" _in="$ZAPRET2_IN_RANGE"
+    if [ "$ZAPRET2_PROFILE" = v2 ]; then _out=a; _in=a; fi
     [ "$_i" -eq 0 ] || _log="${ZAPRET2_DEBUG_LOG%.log}-${_i}.log"
     [ "${ZAPRET2_DEBUG:-false}" = "true" ] && _debug_line="--debug=@${_log}"
 
@@ -1771,8 +1784,8 @@ ${_debug_line}
 --lua-init=@${ZAPRET2_LUA_DIR}/zapret-antidpi.lua
 --lua-init=@${ZAPRET2_LUA_DIR}/mtproto.lua
 --filter-tcp=${_port}
---out-range=${ZAPRET2_OUT_RANGE}
---in-range=${ZAPRET2_IN_RANGE}
+--out-range=${_out}
+--in-range=${_in}
 --payload-disable=all
 --lua-desync=lets_resend
 --new
@@ -1781,7 +1794,11 @@ EOF
 
 zapret2_write_lua() {
     local _dst="${1:-$ZAPRET2_LUA}"
-    mkdir -p "$(dirname "$_dst")"
+    mkdir -p "$(dirname "$_dst")" || return 1
+    if [ "$ZAPRET2_PROFILE" = v2 ]; then
+        zapret2_write_v2_lua "$_dst"
+        return
+    fi
     cat > "$_dst" << LUAEOF
 -- Zapret2 MTProto fix — MTProxyL
 -- Серверный обход: disorder + badsum + window control + iOS fwmark bypass
@@ -1843,7 +1860,184 @@ function lets_resend(ctx, desync)
     return VERDICT_DROP
 end
 LUAEOF
+    [ "$?" -eq 0 ] || return 1
     if [ "$_dst" = "$ZAPRET2_LUA" ]; then log_success "Lua скрипт записан: ${ZAPRET2_LUA}"; fi
+}
+
+zapret2_validate_v2() {
+    local _win="$1" _len="$2"
+    [[ "$_win" =~ ^[1-9][0-9]{0,3}$ && "$_len" =~ ^[1-9][0-9]{0,3}$ ]] &&
+        [ "$_win" -le 1400 ] && [ "$_len" -lt "$_win" ]
+}
+
+zapret2_write_v2_lua() {
+    zapret2_validate_v2 "$ZAPRET2_V2_WIN" "$ZAPRET2_V2_LEN" || return 1
+    cat > "$1" << LUAEOF
+-- Zapret2 MTProto fix v2 — MTProxyL
+local win, len, release_at = ${ZAPRET2_V2_WIN}, ${ZAPRET2_V2_LEN}, 1400
+local sequence_space = 4294967296
+
+function lets_resend(ctx, desync)
+    local dis = desync.dis
+    local tcp = dis.tcp
+    local payload = dis.payload or ""
+    local state = desync.track and desync.track.lua_state
+    if not tcp or not state then return VERDICT_PASS end
+    local flags = tcp.th_flags
+    if bitand(flags, TH_FIN + TH_RST) ~= 0 then return VERDICT_PASS end
+
+    if desync.outgoing then
+        if bitand(flags, TH_SYN + TH_ACK) == TH_SYN + TH_ACK then
+            state.ack0 = tcp.th_ack
+            state.broken_upto = 0
+            wsize_rewrite(dis, {wsize = win, scale = 0})
+            return VERDICT_MODIFY
+        end
+        if not state.ack0 or bitand(flags, TH_ACK) == 0 then return VERDICT_PASS end
+        if #payload > 0 or (tcp.th_ack - state.ack0) % sequence_space >= release_at then
+            instance_cutoff(ctx, nil)
+            return VERDICT_PASS
+        end
+        wsize_rewrite(dis, {wsize = win})
+        return VERDICT_MODIFY
+    end
+
+    if not state.ack0 or #payload == 0 then return VERDICT_PASS end
+    local offset = (tcp.th_seq - state.ack0) % sequence_space
+    if offset >= release_at or offset < state.broken_upto then return VERDICT_PASS end
+    if #payload <= len then return VERDICT_PASS end
+
+    local first = payload:sub(1, len)
+    local middle = payload:sub(len + 1, 2 * len)
+    local tail = payload:sub(2 * len + 1)
+    if not rawsend_payload_segmented(desync, first) then return VERDICT_PASS end
+    if #tail > 0 and not rawsend_payload_segmented(desync, tail, 2 * len) then return VERDICT_PASS end
+    local saved_badsum = desync.arg.badsum
+    desync.arg.badsum = true
+    local sent = rawsend_payload_segmented(desync, middle, len)
+    desync.arg.badsum = saved_badsum
+    if not sent then return VERDICT_PASS end
+
+    state.broken_upto = offset + #payload
+    return VERDICT_DROP
+end
+LUAEOF
+}
+
+_zapret2_validate_profile_lua() {
+    local _candidate="$1" _config="$2" _source="$3" _line _found=false
+    [ -r "$_source" ] || return 1
+    {
+        printf '%s\n' --dry-run
+        while IFS= read -r _line || [ -n "$_line" ]; do
+            case "$_line" in
+                "--lua-init=@$ZAPRET2_LUA") _line="--lua-init=@$_candidate"; _found=true ;;
+                --debug[=\ ]*) continue ;;
+            esac
+            printf '%s\n' "$_line"
+        done < "$_source"
+    } > "$_config" || return 1
+    [ "$_found" = true ] && "$ZAPRET2_BIN" "@$_config" >/dev/null
+}
+
+zapret2_set_profile() (
+    local _profile="$1" _win="$2" _len="$3"
+    local _reload=false _stage="" _running=false _out="$ZAPRET2_OUT_RANGE" _in="$ZAPRET2_IN_RANGE"
+    local _file _name _updated=true _restore_failed=false
+    local -a _changed=()
+    if [ "$_profile" = v2 ]; then
+        zapret2_validate_v2 "$_win" "$_len" || { log_error "Допустимо 1 ≤ len < win ≤ 1400"; return 1; }
+        _out=a _in=a
+    fi
+    if [ "$_profile" != "$ZAPRET2_PROFILE" ] ||
+        { [ "$_profile" = v2 ] && { [ "$_win" != "$ZAPRET2_V2_WIN" ] || [ "$_len" != "$ZAPRET2_V2_LEN" ]; }; }; then
+        _reload=true
+    fi
+    ZAPRET2_PROFILE="$_profile" ZAPRET2_V2_WIN="$_win" ZAPRET2_V2_LEN="$_len"
+
+    if [ "$_reload" = true ] && [ "$ZAPRET2_APPLIED" = true ]; then
+        _stage=$(mktemp -d "$ZAPRET2_LUA_DIR/.profile.XXXXXX") || return 1
+        trap 'rm -rf -- "$_stage"' EXIT
+        if ! chmod 711 "$_stage" || ! zapret2_write_lua "$_stage/next.lua" ||
+            ! chmod 644 "$_stage/next.lua"; then
+            log_error "Проверка нового профиля Zapret2 не прошла"
+            return 1
+        fi
+        for _file in "$ZAPRET2_CONF" "${ZAPRET2_CONF%.conf}"-*.conf; do
+            [ -f "$_file" ] || continue
+            _name="${_file##*/}"
+            awk -v out="$_out" -v inrange="$_in" '
+                /^--out-range=/ { $0 = "--out-range=" out }
+                /^--in-range=/ { $0 = "--in-range=" inrange }
+                { print }
+            ' "$_file" > "$_stage/next-$_name" || return 1
+            if ! cmp -s "$_file" "$_stage/next-$_name"; then
+                cp -p "$_file" "$_stage/prev-$_name" || return 1
+                _changed+=("$_file")
+            fi
+        done
+        if ! _zapret2_validate_profile_lua "$_stage/next.lua" "$_stage/check.conf" \
+            "$_stage/next-${ZAPRET2_CONF##*/}"; then
+            log_error "Проверка нового профиля Zapret2 не прошла"
+            return 1
+        fi
+        cp -p "$ZAPRET2_LUA" "$_stage/previous.lua" || return 1
+        systemctl is-active --quiet "$ZAPRET2_SERVICE" && _running=true
+        mv -f "$_stage/next.lua" "$ZAPRET2_LUA" || return 1
+    fi
+
+    for _file in "${_changed[@]}"; do
+        if ! cat "$_stage/next-${_file##*/}" > "$_file"; then _updated=false; break; fi
+    done
+    if [ "$_updated" = true ] && { [ "$_running" = false ] ||
+        { systemctl restart "$ZAPRET2_SERVICE" && sleep 1 && systemctl is-active --quiet "$ZAPRET2_SERVICE"; }; } &&
+        save_nft_settings; then
+        log_success "Zapret2 ${ZAPRET2_PROFILE} · v2 win=${ZAPRET2_V2_WIN} · len=${ZAPRET2_V2_LEN}"
+        return 0
+    fi
+
+    if [ -n "$_stage" ]; then
+        mv -f "$_stage/previous.lua" "$ZAPRET2_LUA" || _restore_failed=true
+        for _file in "${_changed[@]}"; do
+            cat "$_stage/prev-${_file##*/}" > "$_file" || _restore_failed=true
+        done
+        if [ "$_restore_failed" = true ]; then
+            trap - EXIT
+            log_error "Не удалось восстановить файлы Zapret2. Копии: $_stage"
+            return 1
+        fi
+        if [ "$_running" = true ] &&
+            ! { systemctl restart "$ZAPRET2_SERVICE" && sleep 1 && systemctl is-active --quiet "$ZAPRET2_SERVICE"; }; then
+            log_error "Прежний профиль восстановлен. Службу Zapret2 запустить не удалось"
+            return 1
+        fi
+    fi
+    log_error "Не удалось применить настройки Zapret2. Прежний профиль сохранён"
+    return 1
+)
+
+zapret2_v2_command() {
+    case "${1:-status}" in
+        status)
+            printf 'Zapret2 %s · v2 win=%s · len=%s\n' "$ZAPRET2_PROFILE" "$ZAPRET2_V2_WIN" "$ZAPRET2_V2_LEN"
+            ;;
+        on|off)
+            check_root
+            [ "$#" -eq 1 ] || { log_error "Использование: mtproxyl nft zapret2-v2 ${1}"; return 1; }
+            local _profile=v1
+            [ "$1" != on ] || _profile=v2
+            zapret2_set_profile "$_profile" "$ZAPRET2_V2_WIN" "$ZAPRET2_V2_LEN"
+            ;;
+        set)
+            check_root
+            if [ "$#" -ne 3 ] || ! zapret2_validate_v2 "$2" "$3"; then
+                log_error "Нужно 1 ≤ len < win ≤ 1400. Использование: mtproxyl nft zapret2-v2 set <win> <len>"
+                return 1
+            fi
+            zapret2_set_profile "$ZAPRET2_PROFILE" "$2" "$3"
+            ;;
+        *) log_error "Использование: mtproxyl nft zapret2-v2 status|on|off|set <win> <len>"; return 1 ;;
+    esac
 }
 
 # Хвост стартового скрипта: один экземпляр — exec, как раньше; несколько —
@@ -2491,6 +2685,7 @@ zapret2_update_config() {
         return 1
     fi
 
+    zapret2_write_lua || { log_error "Не удалось записать Lua для Zapret2"; return 1; }
     # Останавливаем текущий экземпляр перед проверкой занятости NFQUEUE —
     # иначе он сам же держит свою очередь, и она ложно кажется занятой.
     systemctl stop "$ZAPRET2_SERVICE" 2>/dev/null || true
@@ -2518,7 +2713,6 @@ zapret2_update_config() {
     fi
 
     zapret2_write_conf
-    zapret2_write_lua
     zapret2_write_service
     zapret2_apply_nft
     systemctl daemon-reload
@@ -2546,9 +2740,10 @@ zapret2_conntrack_acct() {
 # пересборки правил.
 zapret2_refresh_lua() {
     local _tmp; _tmp=$(mktemp) || return 0
-    zapret2_write_lua "$_tmp"
+    if ! zapret2_write_lua "$_tmp"; then rm -f "$_tmp"; return 1; fi
     if cmp -s "$_tmp" "$ZAPRET2_LUA"; then rm -f "$_tmp"; return 0; fi
-    install -m 644 "$_tmp" "$ZAPRET2_LUA" && rm -f "$_tmp"
+    if ! install -m 644 "$_tmp" "$ZAPRET2_LUA"; then rm -f "$_tmp"; return 1; fi
+    rm -f "$_tmp"
     log_info "Zapret2: обновлён скрипт Lua"
     systemctl restart "$ZAPRET2_SERVICE" 2>/dev/null || true
 }
@@ -2560,7 +2755,7 @@ zapret2_refresh_if_needed() {
     fi
     systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null || return 0
     zapret2_conntrack_acct
-    zapret2_refresh_lua
+    zapret2_refresh_lua || return 1
     local _script="/usr/local/sbin/mtproxyl-zapret2-start.sh"
     grep -qxF "QNUM=\"$(zapret2_queue_spec)\"" "$_script" 2>/dev/null \
         && grep -qxF "LIMIT_MATCH=\"$(zapret2_limit_match)\"" "$_script" 2>/dev/null && return 0
@@ -2599,10 +2794,16 @@ zapret2_install() {
     echo -e "  ${DIM}Работает на сервере — клиент ничего не ставит.${NC}"
     echo ""
     echo -e "  ${BOLD}Текущие параметры:${NC}"
-    echo -e "    out-range:   ${ZAPRET2_OUT_RANGE}"
-    echo -e "    split len:   ${ZAPRET2_SPLIT_LEN}"
-    echo -e "    win SYN+ACK: ${ZAPRET2_WIN_SYNACK}"
-    echo -e "    win ACK:     ${ZAPRET2_WIN_ACK}"
+    echo -e "    Профиль:     ${ZAPRET2_PROFILE}"
+    if [ "$ZAPRET2_PROFILE" = v2 ]; then
+        echo -e "    win:         ${ZAPRET2_V2_WIN}"
+        echo -e "    len:         ${ZAPRET2_V2_LEN}"
+    else
+        echo -e "    out-range:   ${ZAPRET2_OUT_RANGE}"
+        echo -e "    split len:   ${ZAPRET2_SPLIT_LEN}"
+        echo -e "    win SYN+ACK: ${ZAPRET2_WIN_SYNACK}"
+        echo -e "    win ACK:     ${ZAPRET2_WIN_ACK}"
+    fi
     echo ""
 
     local _reinstall="false"
@@ -2666,7 +2867,12 @@ zapret2_install() {
     zapret2_autoconfigure_scope
 
     zapret2_write_conf
-    zapret2_write_lua
+    if ! zapret2_write_lua; then
+        log_error "Не удалось записать Lua для Zapret2"
+        zapret2_cleanup_failed_install || true
+        _zapret2_restore_limiter "$_restore_limiter" "$_restore_limiter_service"
+        return 1
+    fi
     zapret2_write_service
     # До запуска: стартовый скрипт службы сам выставит tw_reuse, и прежнее
     # значение после него уже не узнать.
@@ -2780,6 +2986,11 @@ zapret2_check_wscale() {
     echo ""
     echo -e "  Рассчитанный wscale:      ${_wscale}"
     echo -e "  2^wscale (гранулярность): ${_scale} байт"
+    if [ "$ZAPRET2_PROFILE" = v2 ]; then
+        echo -e "  Zapret2 v2: wscale в SYN+ACK = 0, окно профиля = ${ZAPRET2_V2_WIN} байт"
+        echo -e "  Расчёт win ACK через системный wscale применяется к профилю v1"
+        return 0
+    fi
     echo -e "  Целевое окно:             < 1400 байт"
     echo ""
 
@@ -3112,9 +3323,10 @@ nft_status_json() {
     printf '"ios_fix_v1":{"enabled":%s},"ios_fix_v2":{"enabled":%s},' \
         "$([ "${IOS_FIX_ENABLED:-false}" = "true" ] && echo true || echo false)" \
         "$([ "${IOS2_FIX_ENABLED:-false}" = "true" ] && echo true || echo false)"
-    printf '"zapret2":{"applied":%s,"service_active":%s},' \
+    printf '"zapret2":{"applied":%s,"service_active":%s,"profile":"%s","v2_win":"%s","v2_len":"%s"},' \
         "$([ "${ZAPRET2_APPLIED:-false}" = "true" ] && echo true || echo false)" \
-        "$_zapret_active"
+        "$_zapret_active" "$(json_escape "$ZAPRET2_PROFILE")" \
+        "$(json_escape "$ZAPRET2_V2_WIN")" "$(json_escape "$ZAPRET2_V2_LEN")"
     printf '"meko_opt":{"applied":%s},' \
         "$([ "${MEKO_OPT_APPLIED:-false}" = "true" ] && echo true || echo false)"
     printf '"server_ips":%s,' "$(server_ips_show --json 2>/dev/null || echo null)"

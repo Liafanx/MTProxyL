@@ -787,11 +787,16 @@ tui_zapret2_menu() {
 
         if [ "${ZAPRET2_APPLIED:-false}" = "true" ]; then
             echo -e "  ${BOLD}Параметры:${NC}"
-            echo -e "    out-range:   ${ZAPRET2_OUT_RANGE}"
-            echo -e "    in-range:    ${ZAPRET2_IN_RANGE}"
-            echo -e "    split len:   ${ZAPRET2_SPLIT_LEN}"
-            echo -e "    win SYN+ACK: ${ZAPRET2_WIN_SYNACK}"
-            echo -e "    win ACK:     ${ZAPRET2_WIN_ACK}"
+            if [ "$ZAPRET2_PROFILE" = v2 ]; then
+                echo -e "    win:         ${ZAPRET2_V2_WIN}"
+                echo -e "    len:         ${ZAPRET2_V2_LEN}"
+            else
+                echo -e "    out-range:   ${ZAPRET2_OUT_RANGE}"
+                echo -e "    in-range:    ${ZAPRET2_IN_RANGE}"
+                echo -e "    split len:   ${ZAPRET2_SPLIT_LEN}"
+                echo -e "    win SYN+ACK: ${ZAPRET2_WIN_SYNACK}"
+                echo -e "    win ACK:     ${ZAPRET2_WIN_ACK}"
+            fi
             echo -e "    NFQUEUE:     $(zapret2_queue_spec)  (экземпляров nfqws2: $(zapret2_instance_count))"
             echo -e "    fwmark:      ${ZAPRET2_FWMARK}"
             echo -e "    UID:GID:     ${ZAPRET2_UID}:${ZAPRET2_GID}"
@@ -935,6 +940,7 @@ tui_zapret2_menu() {
                     echo -e "  ${BOLD}Сброс к дефолту:${NC}"
                     echo -e "    out-range: ${ZAPRET2_DEFAULT_OUT_RANGE}  in-range: ${ZAPRET2_DEFAULT_IN_RANGE}"
                     echo -e "    split len: ${ZAPRET2_DEFAULT_SPLIT_LEN}  win SYN+ACK: ${ZAPRET2_DEFAULT_WIN_SYNACK}  win ACK: ${ZAPRET2_DEFAULT_WIN_ACK}"
+                    echo -e "    v2 win: ${ZAPRET2_DEFAULT_V2_WIN}  len: ${ZAPRET2_DEFAULT_V2_LEN}"
                     echo -e "    NFQUEUE: ${ZAPRET2_DEFAULT_QNUM}  fwmark: ${ZAPRET2_DEFAULT_FWMARK}"
                     echo -e "    UID:GID: ${ZAPRET2_DEFAULT_UID}:${ZAPRET2_DEFAULT_GID}"
                     echo ""
@@ -945,6 +951,8 @@ tui_zapret2_menu() {
                         ZAPRET2_SPLIT_LEN="$ZAPRET2_DEFAULT_SPLIT_LEN"
                         ZAPRET2_WIN_SYNACK="$ZAPRET2_DEFAULT_WIN_SYNACK"
                         ZAPRET2_WIN_ACK="$ZAPRET2_DEFAULT_WIN_ACK"
+                        ZAPRET2_V2_WIN="$ZAPRET2_DEFAULT_V2_WIN"
+                        ZAPRET2_V2_LEN="$ZAPRET2_DEFAULT_V2_LEN"
                         ZAPRET2_QNUM="$ZAPRET2_DEFAULT_QNUM"
                         ZAPRET2_FWMARK="$ZAPRET2_DEFAULT_FWMARK"
                         ZAPRET2_UID="$ZAPRET2_DEFAULT_UID"
@@ -994,6 +1002,35 @@ tui_zapret2_menu() {
     done
 }
 
+tui_zapret2_v2_settings() {
+    while true; do
+        clear_screen
+        draw_header "ПРОФИЛЬ ZAPRET2 V2"
+        echo ""
+        zapret2_v2_command status
+        echo ""
+        echo -e "  ${DIM}[1]${NC} Выбрать v2"
+        echo -e "  ${DIM}[2]${NC} Вернуться к v1"
+        echo -e "  ${DIM}[3]${NC} Изменить win и len"
+        echo -e "  ${DIM}[0]${NC} Назад"
+        local choice; choice=$(read_choice "выбор" "0")
+        case "$choice" in
+            1) zapret2_v2_command on ;;
+            2) zapret2_v2_command off ;;
+            3)
+                local _win _len
+                read_line _win "  Окно win, байт [${ZAPRET2_V2_WIN}]: "
+                read_line _len "  Длина len, байт [${ZAPRET2_V2_LEN}]: "
+                zapret2_v2_command set "${_win:-$ZAPRET2_V2_WIN}" "${_len:-$ZAPRET2_V2_LEN}"
+                ;;
+            0) return ;;
+            *) continue ;;
+        esac
+        load_nft_settings
+        press_any_key
+    done
+}
+
 tui_zapret2_settings() {
     while true; do
         clear_screen
@@ -1035,6 +1072,7 @@ tui_zapret2_settings() {
         local _z_inst="${ZAPRET2_INSTANCES:-auto}"
         [ "$_z_inst" = "auto" ] && _z_inst="авто → $(zapret2_instance_count)"
         echo -e "  ${DIM}[17]${NC} Экземпляры nfqws2 [${_z_inst}]  ${DIM}— по одному на ядро, очереди $(zapret2_queue_spec)${NC}"
+        echo -e "  ${DIM}[18]${NC} Профиль Zapret2 [${ZAPRET2_PROFILE}] — настройки v2"
         local _z_bridge="false"
         if zapret2_is_bridge_target; then
             _z_bridge="true"
@@ -1045,6 +1083,7 @@ tui_zapret2_settings() {
         echo ""
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
+            18) tui_zapret2_v2_settings ;;
             1)
                 local _v; read_line _v "  out-range [${ZAPRET2_OUT_RANGE}]: "
                 if [ -n "$_v" ]; then

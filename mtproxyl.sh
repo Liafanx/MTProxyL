@@ -506,6 +506,7 @@ cli_main() {
                     zapret2_refresh_if_needed ;;
                 zapret2-rm)    check_root; load_nft_settings; zapret2_remove ;;
                 zapret2-wscale) load_nft_settings; zapret2_check_wscale "true" ;;
+                zapret2-v2) load_nft_settings; zapret2_v2_command "${@:2}" ;;
                 set)      check_root; nft_set_param "$2" "$3" ;;
                 settable) nft_settable_json ;;
                 status)
@@ -542,6 +543,7 @@ cli_main() {
                     echo -e "    ${GREEN}nft zapret2-stop${NC} Остановить Zapret2"
                     echo -e "    ${GREEN}nft zapret2-rm${NC}   Удалить Zapret2"
                     echo -e "    ${GREEN}nft zapret2-wscale${NC} Проверить wscale / win ACK"
+                    echo -e "    ${GREEN}nft zapret2-v2 [status|on|off|set <win> <len>]${NC} Профиль Zapret2 v2"
                     ;;
             esac
             ;;
