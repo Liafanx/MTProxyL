@@ -861,6 +861,12 @@ tui_zapret2_menu() {
         elif zapret2_has_residue; then
             echo -e "  ${YELLOW}[8]${NC}  Очистить следы неудачной установки"
         fi
+        if [ "$ZAPRET2_PROFILE" = v2 ]; then
+            echo -e "  ${CYAN}[11]${NC} Переключить на Zapret2 v1"
+        else
+            echo -e "  ${CYAN}[11]${NC} Переключить на Zapret2 v2"
+        fi
+        echo -e "  ${CYAN}[12]${NC} Настройки v2 (win=${ZAPRET2_V2_WIN}, len=${ZAPRET2_V2_LEN})"
         echo -e "  ${DIM}[0]${NC}  Назад"
         echo ""
         local choice; choice=$(read_choice "выбор" "0")
@@ -997,37 +1003,23 @@ tui_zapret2_menu() {
                     fi
                 fi
                 press_any_key ;;
-            0|"") return ;;
-        esac
-    done
-}
-
-tui_zapret2_v2_settings() {
-    while true; do
-        clear_screen
-        draw_header "ПРОФИЛЬ ZAPRET2 V2"
-        echo ""
-        zapret2_v2_command status
-        echo ""
-        echo -e "  ${DIM}[1]${NC} Выбрать v2"
-        echo -e "  ${DIM}[2]${NC} Вернуться к v1"
-        echo -e "  ${DIM}[3]${NC} Изменить win и len"
-        echo -e "  ${DIM}[0]${NC} Назад"
-        local choice; choice=$(read_choice "выбор" "0")
-        case "$choice" in
-            1) zapret2_v2_command on ;;
-            2) zapret2_v2_command off ;;
-            3)
+            11)
+                if [ "$ZAPRET2_PROFILE" = v2 ]; then
+                    zapret2_v2_command off
+                else
+                    zapret2_v2_command on
+                fi
+                load_nft_settings
+                press_any_key ;;
+            12)
                 local _win _len
                 read_line _win "  Окно win, байт [${ZAPRET2_V2_WIN}]: "
                 read_line _len "  Длина len, байт [${ZAPRET2_V2_LEN}]: "
                 zapret2_v2_command set "${_win:-$ZAPRET2_V2_WIN}" "${_len:-$ZAPRET2_V2_LEN}"
-                ;;
-            0) return ;;
-            *) continue ;;
+                load_nft_settings
+                press_any_key ;;
+            0|"") return ;;
         esac
-        load_nft_settings
-        press_any_key
     done
 }
 
@@ -1072,7 +1064,6 @@ tui_zapret2_settings() {
         local _z_inst="${ZAPRET2_INSTANCES:-auto}"
         [ "$_z_inst" = "auto" ] && _z_inst="авто → $(zapret2_instance_count)"
         echo -e "  ${DIM}[17]${NC} Экземпляры nfqws2 [${_z_inst}]  ${DIM}— по одному на ядро, очереди $(zapret2_queue_spec)${NC}"
-        echo -e "  ${DIM}[18]${NC} Профиль Zapret2 [${ZAPRET2_PROFILE}] — настройки v2"
         local _z_bridge="false"
         if zapret2_is_bridge_target; then
             _z_bridge="true"
@@ -1083,7 +1074,6 @@ tui_zapret2_settings() {
         echo ""
         local choice; choice=$(read_choice "выбор" "0")
         case "$choice" in
-            18) tui_zapret2_v2_settings ;;
             1)
                 local _v; read_line _v "  out-range [${ZAPRET2_OUT_RANGE}]: "
                 if [ -n "$_v" ]; then

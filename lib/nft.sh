@@ -116,8 +116,8 @@ ZAPRET2_DEFAULT_IN_RANGE="a"
 ZAPRET2_DEFAULT_SPLIT_LEN="400"
 ZAPRET2_DEFAULT_WIN_SYNACK="1400"
 ZAPRET2_DEFAULT_WIN_ACK="10"
-ZAPRET2_DEFAULT_V2_WIN="800"
-ZAPRET2_DEFAULT_V2_LEN="300"
+ZAPRET2_DEFAULT_V2_WIN="768"
+ZAPRET2_DEFAULT_V2_LEN="256"
 # nobody:nogroup — под них nfqws2 сбрасывает привилегии. Без явного --uid он
 # берёт своё значение по умолчанию и в LXC падает на setgroups.
 ZAPRET2_DEFAULT_UID="65534"
@@ -1877,6 +1877,12 @@ zapret2_write_v2_lua() {
 local win, len, release_at = ${ZAPRET2_V2_WIN}, ${ZAPRET2_V2_LEN}, 1400
 local sequence_space = 4294967296
 
+local function get_wscale(options)
+    local i = find_tcp_option(options, TCP_KIND_SCALE)
+    local data = i and options[i].data
+    return math.min(data and data:byte(1) or 0, 14)
+end
+
 function lets_resend(ctx, desync)
     local dis = desync.dis
     local tcp = dis.tcp
@@ -1890,7 +1896,9 @@ function lets_resend(ctx, desync)
         if bitand(flags, TH_SYN + TH_ACK) == TH_SYN + TH_ACK then
             state.ack0 = tcp.th_ack
             state.broken_upto = 0
-            wsize_rewrite(dis, {wsize = win, scale = 0})
+            state.win_ack = math.ceil(win / 2 ^ get_wscale(tcp.options))
+            -- На SYN+ACK масштаб объявляется, а поле окна передаётся в байтах.
+            wsize_rewrite(dis, {wsize = win})
             return VERDICT_MODIFY
         end
         if not state.ack0 or bitand(flags, TH_ACK) == 0 then return VERDICT_PASS end
@@ -1898,7 +1906,7 @@ function lets_resend(ctx, desync)
             instance_cutoff(ctx, nil)
             return VERDICT_PASS
         end
-        wsize_rewrite(dis, {wsize = win})
+        wsize_rewrite(dis, {wsize = state.win_ack})
         return VERDICT_MODIFY
     end
 
@@ -2987,8 +2995,8 @@ zapret2_check_wscale() {
     echo -e "  Рассчитанный wscale:      ${_wscale}"
     echo -e "  2^wscale (гранулярность): ${_scale} байт"
     if [ "$ZAPRET2_PROFILE" = v2 ]; then
-        echo -e "  Zapret2 v2: wscale в SYN+ACK = 0, окно профиля = ${ZAPRET2_V2_WIN} байт"
-        echo -e "  Расчёт win ACK через системный wscale применяется к профилю v1"
+        echo -e "  Zapret2 v2: окно SYN+ACK = ${ZAPRET2_V2_WIN} байт"
+        echo -e "  Окно в ACK рассчитывается по wscale из SYN+ACK для каждого соединения"
         return 0
     fi
     echo -e "  Целевое окно:             < 1400 байт"

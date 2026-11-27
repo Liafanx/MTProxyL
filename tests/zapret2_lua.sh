@@ -33,11 +33,12 @@ zapret2_validate_v2 "$ZAPRET2_V2_WIN" "$ZAPRET2_V2_LEN"
 
 ZAPRET2_PROFILE=v2
 zapret2_write_lua "$tmp/v2.lua"
-grep -qFx 'local win, len, release_at = 800, 300, 1400' "$tmp/v2.lua"
+grep -qFx 'local win, len, release_at = 768, 256, 1400' "$tmp/v2.lua"
 
 if command -v lua >/dev/null; then
     lua - "$tmp/v2.lua" <<'LUA'
 TH_FIN, TH_SYN, TH_RST, TH_ACK = 1, 2, 4, 16
+TCP_KIND_SCALE = 3
 VERDICT_PASS, VERDICT_MODIFY, VERDICT_DROP = 0, 1, 2
 function bitand(n, mask)
     local result, bit = 0, 1
@@ -48,6 +49,11 @@ function bitand(n, mask)
     return result
 end
 local window, cutoff, sent, fail = {}, false, {}, false
+function find_tcp_option(options, kind)
+    for i, option in ipairs(options or {}) do
+        if option.kind == kind then return i end
+    end
+end
 function wsize_rewrite(_, options) window = options end
 function instance_cutoff(_, direction) assert(direction == nil); cutoff = true end
 function rawsend_payload_segmented(desync, bytes, offset)
@@ -57,33 +63,45 @@ end
 dofile(arg[1])
 local state = {}
 local initial = 4294967200
-local function packet(outgoing, flags, offset, data)
+local function packet(outgoing, flags, offset, data, options)
     local seq = (initial + offset) % 4294967296
     local p = {
         outgoing = outgoing, track = {lua_state = state}, arg = {},
-        dis = {payload = data or "", tcp = {th_seq = seq, th_ack = seq, th_flags = flags}}
+        dis = {payload = data or "", tcp = {th_seq = seq, th_ack = seq, th_flags = flags, options = options}}
     }
     local verdict = lets_resend({}, p)
     assert(p.arg.badsum == nil)
     return verdict
 end
-assert(packet(true, TH_SYN + TH_ACK, 0) == VERDICT_MODIFY)
-assert(window.wsize == 800 and window.scale == 0)
-local a, b, c = ("a"):rep(300), ("b"):rep(300), ("c"):rep(200)
+local scale = {{kind = TCP_KIND_SCALE, data = string.char(7)}}
+assert(packet(true, TH_SYN + TH_ACK, 0, "", scale) == VERDICT_MODIFY)
+assert(window.wsize == 768 and window.scale == nil)
+local a, b, c = ("a"):rep(256), ("b"):rep(256), ("c"):rep(256)
 assert(packet(false, TH_ACK, 0, a .. b .. c) == VERDICT_DROP)
 assert(sent[1][1] == a and sent[1][2] == 0 and not sent[1][3])
-assert(sent[2][1] == c and sent[2][2] == 600 and not sent[2][3])
-assert(sent[3][1] == b and sent[3][2] == 300 and sent[3][3])
-assert(packet(false, TH_ACK, 300, b) == VERDICT_PASS and #sent == 3)
-assert(packet(true, TH_ACK, 800) == VERDICT_MODIFY)
-assert(window.wsize == 800 and window.scale == nil)
+assert(sent[2][1] == c and sent[2][2] == 512 and not sent[2][3])
+assert(sent[3][1] == b and sent[3][2] == 256 and sent[3][3])
+assert(packet(false, TH_ACK, 256, b) == VERDICT_PASS and #sent == 3)
+assert(packet(true, TH_ACK, 768) == VERDICT_MODIFY)
+assert(window.wsize == 6 and window.scale == nil)
 fail = true
-assert(packet(false, TH_ACK, 800, a .. b) == VERDICT_PASS)
-assert(state.broken_upto == 800)
+assert(packet(false, TH_ACK, 768, a .. b) == VERDICT_PASS)
+assert(state.broken_upto == 768)
 fail = false
-assert(packet(false, TH_ACK, 800, a .. b) == VERDICT_DROP and #sent == 7)
+assert(packet(false, TH_ACK, 768, a .. b) == VERDICT_DROP and #sent == 7)
+window = nil
 assert(packet(true, TH_ACK, 1400) == VERDICT_PASS and cutoff)
+assert(window == nil)
 assert(packet(false, TH_ACK, 1400, a .. b) == VERDICT_PASS)
+
+state = {}
+assert(packet(true, TH_SYN + TH_ACK, 0) == VERDICT_MODIFY)
+assert(packet(true, TH_ACK, 256) == VERDICT_MODIFY and window.wsize == 768)
+
+state = {}
+local larger_scale = {{kind = TCP_KIND_SCALE, data = string.char(9)}}
+assert(packet(true, TH_SYN + TH_ACK, 0, "", larger_scale) == VERDICT_MODIFY and window.wsize == 768)
+assert(packet(true, TH_ACK, 256) == VERDICT_MODIFY and window.wsize == 2)
 LUA
 fi
 
@@ -109,14 +127,14 @@ systemctl() {
     return 0
 }
 sleep() { :; }
-if zapret2_set_profile v2 800 300; then echo "перезапуск должен завершиться ошибкой"; exit 1; fi
+if zapret2_set_profile v2 768 256; then echo "перезапуск должен завершиться ошибкой"; exit 1; fi
 [ ! -e "$tmp/profile" ]
 cmp -s "$tmp/original.lua" "$ZAPRET2_LUA"
 cmp -s "$tmp/original.conf" "$ZAPRET2_CONF"
 grep -qxF -- '--in-range=p5' "$tmp/mtproto-1.conf"
 
 systemctl() { return 0; }
-zapret2_set_profile v2 800 300
+zapret2_set_profile v2 768 256
 grep -qxF v2 "$tmp/profile"
 cmp -s "$tmp/v2.lua" "$ZAPRET2_LUA"
 grep -qxF -- '--in-range=a' "$tmp/mtproto-1.conf"
