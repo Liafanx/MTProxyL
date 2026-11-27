@@ -8,13 +8,28 @@ trap 'rm -rf "$t"' EXIT
 fail() { echo "FAIL: $*"; exit 1; }
 
 INSTALL_DIR="$t"
+UPSTREAMS_FILE="$INSTALL_DIR/upstreams.conf"
 mkdir -p "$INSTALL_DIR/vless"
 VERSION=test
 source "$repo/lib/colors.sh" 2>/dev/null || true
-for l in utils settings detect vless tui_vless; do source "$repo/lib/$l.sh" || fail "source $l"; done
-log_info() { :; }; log_success() { :; }; log_warn() { :; }
+for l in utils settings detect vless egress expert_mode tui_vless; do source "$repo/lib/$l.sh" || fail "source $l"; done
+(
+    load_secrets() { users_loaded=true; }
+    load_upstreams() { upstreams_loaded=true; }
+    mtdd_mgr_active() { return 0; }
+    generate_mtdd_config() { [ "$users_loaded" = true ] && [ "$upstreams_loaded" = true ]; }
+    mtdd_restart() { return 1; }
+    if _vless_engine_apply; then fail "ошибка перезапуска mtdd потеряна"; fi
+    [ "$users_loaded" = true ] && [ "$upstreams_loaded" = true ] || fail "перед применением не загружены пользователи и маршруты"
+    systemctl() { return 1; }
+    VLESS_ENABLED=true
+    egress_status_json | jq -e '.via == "vless" and .ok == false' >/dev/null || fail "выключенный Xray не виден в статусе выхода"
+) || exit 1
+log_info() { :; }; log_success() { :; }; log_warn() { echo "WARN: $*" >&2; }
 log_error() { echo "ERR: $*" >&2; }
 check_root() { :; }
+cli_lock() { :; }
+cli_unlock() { :; }
 draw_header() { echo "$*"; }
 save_settings() { :; }
 press_any_key() { :; }
@@ -28,10 +43,11 @@ exit 0
 BIN
 chmod 755 "$(_vless_bin)"
 # Проверка выхода в тесте не ходит в сеть.
-vless_test_json() { echo '{"ok": false, "exit_ip": "", "telegram": "fail", "dc": "fail"}'; }
+vless_test_json() { jq -nc --argjson ok "${_test_online:-true}" '{ok: $ok}'; }
 
 # Заглушки движка и upstream.
 UPSTREAM_NAMES=(); UPSTREAM_ENABLED=(); UPSTREAM_SCOPES=()
+load_secrets() { :; }
 load_upstreams() { :; }
 upstream_add() { echo "add $1 $2 $3 $6 $8" >> "$t/up.log"; }
 upstream_remove() { echo "rm $1" >> "$t/up.log"; }
@@ -41,12 +57,15 @@ _engine_calls=0
 _vless_engine_apply() {
     if [ "${VLESS_DEFER_RESTART:-false}" = true ]; then VLESS_ENGINE_PENDING=true; return 0; fi
     _engine_calls=$((_engine_calls + 1))
+    printf '%s %s\n' "$VLESS_ENABLED" "${1:-false}" >> "$t/engine.log"
+    [ "${_test_engine_failure:-false}" != true ] || [ "$VLESS_ENABLED" != true ]
 }
 mtdd_mgr_active() { return 1; }
 systemd-run() { echo "$*" >> "$t/systemd-run.log"; return 0; }
 systemctl() {
     case "$1" in
         restart) echo restart >> "$t/restart.log" ;;
+        disable) printf '%s\n' "$*" >> "$t/disable.log" ;;
         is-active) echo active ;;
         *) return 0 ;;
     esac
@@ -54,10 +73,24 @@ systemctl() {
 vless_watchdog_install() { :; }
 _vless_unit_dir() { echo "$t/systemd"; }
 mkdir -p "$t/systemd"
-warp_disable() { echo "warp-off" >> "$t/conf.log"; }
-donor_load() { DONOR_ENABLED=false; }
-donor_disable() { echo "donor-off" >> "$t/conf.log"; }
-awg_is_enabled() { return 1; }
+load_settings() { if [ -f "$t/warp-on" ]; then WARP_ENABLED=true; else WARP_ENABLED=false; fi; }
+handle_warp_command() {
+    case "$1" in
+        off) rm -f "$t/warp-on"; echo "warp-off" >> "$t/conf.log" ;;
+        on) [ "${_test_restore_failure:-false}" != true ] && touch "$t/warp-on" ;;
+    esac
+}
+donor_load() { if [ -f "$t/donor-on" ]; then DONOR_ENABLED=true; else DONOR_ENABLED=false; fi; }
+donor_disable() { rm -f "$t/donor-on"; }
+donor_enable() { touch "$t/donor-on"; }
+awg_is_enabled() { [ -f "$t/awg-on" ]; }
+awg_load() { AWG_ME_DISABLED="${_test_awg_me_disabled:-}"; }
+handle_awg_command() {
+    case "$1" in
+        off) rm -f "$t/awg-on" ;;
+        on) touch "$t/awg-on" ;;
+    esac
+}
 
 URI1='vless://11111111-1111-1111-1111-111111111111@example.org:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.example.org&fp=chrome&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=ab12&type=tcp#Reality'
 URI2='vless://22222222-2222-2222-2222-222222222222@example.net:8443?encryption=none&security=tls&sni=example.net&type=ws&path=%2Fws%3Fed%3D2048&host=example.net#WS'
@@ -110,18 +143,23 @@ grep -q '^add vlesslocal' "$t/up.log" && fail "лишний local-маршрут
 [ "$VLESS_ENABLED" = true ] || fail "enabled не выставлен"
 
 # Панельный путь: рестарт движка отложен, ответ на запрос успевает уйти.
+vless_off >/dev/null || fail "vless_off"
 : > "$t/systemd-run.log"; _engine_calls=0
 vless_on --defer-restart >/dev/null || fail "vless_on --defer-restart"
 [ "$_engine_calls" = 0 ] || fail "defer-restart перезапустил движок синхронно"
-grep -q 'vless engine-apply' "$t/systemd-run.log" || fail "нет отложенного применения"
+grep -q 'vless on' "$t/systemd-run.log" || fail "включение не отложено целиком"
 grep -q -- '--on-active=3' "$t/systemd-run.log" || fail "нет задержки применения"
 
-# Повторное включение при включённом WARP: отказ без --yes, выключение с ним.
-WARP_ENABLED=true
+# При включённом WARP: отказ без --yes, выключение с ним.
+touch "$t/warp-on"; load_settings
 vless_on >/dev/null 2>&1 && fail "конфликт с WARP проигнорирован"
+mtdd_mgr_active() { return 0; }
+vless_on --yes >/dev/null 2>&1 && fail "переход на Direct без согласия"
+[ "$WARP_ENABLED" = true ] || fail "действующий WARP выключен до согласия на Direct"
+mtdd_mgr_active() { return 1; }
 vless_on --yes >/dev/null 2>&1 || fail "vless on --yes"
 grep -q warp-off "$t/conf.log" || fail "WARP не выключен"
-WARP_ENABLED=false
+vless_off >/dev/null || fail "vless_off после WARP"
 
 # ME с VLESS несовместим: mtdd требует явного согласия.
 mtdd_mgr_active() { return 0; }
@@ -131,11 +169,70 @@ mtdd_mgr_active() { return 1; }
 
 # Выключение: upstream снят; панельный путь тоже откладывает рестарт.
 : > "$t/systemd-run.log"; _engine_calls=0
+: > "$t/systemd-run.log"; _engine_calls=0
 vless_off --defer-restart >/dev/null || fail "vless_off --defer-restart"
 grep -q '^rm vless$' "$t/up.log" || fail "upstream не снят"
 [ "$VLESS_ENABLED" = false ] || fail "enabled не снят"
 [ "$_engine_calls" = 0 ] || fail "vless_off --defer-restart перезапустил движок"
 grep -q 'vless engine-apply' "$t/systemd-run.log" || fail "vless_off: нет отложенного применения"
+
+# Нерабочий Xray не должен отключать действующий выход.
+touch "$t/warp-on"; load_settings
+_test_online=false
+: > "$t/conf.log"
+vless_on --yes >/dev/null 2>&1 && fail "нерабочая ссылка VLESS применилась"
+[ -f "$t/warp-on" ] && [ ! -s "$t/conf.log" ] || fail "WARP затронут до проверки VLESS"
+rm "$t/warp-on"; load_settings
+_test_online=true
+
+touch "$t/awg-on"
+_test_awg_me_disabled=manager
+vless_on --yes >"$t/rollback.log" 2>&1 && fail "снятие AWG восстановит ME без согласия на его выключение"
+grep -q -- '--allow-disable-me' "$t/rollback.log" || fail "нет сообщения о согласии на ME при снятии AWG"
+rm "$t/awg-on"
+_test_awg_me_disabled=""
+
+# Сбой после записи маршрута восстанавливает файлы и возвращает прежний выход.
+(
+    _test_engine_failure=true
+    is_proxy_running() { return 0; }
+    _engine_config_path() { echo "$t/config.toml"; }
+    handle_expert_command() { echo changed > "$EXPERT_OVERRIDES_FILE"; }
+    upstream_add() { echo changed > "$UPSTREAMS_FILE"; }
+    echo '[general]' > "$t/config.toml"
+    for previous in direct warp donor awg; do
+        [ "$previous" = direct ] || touch "$t/$previous-on"
+        load_settings
+        echo original > "$UPSTREAMS_FILE"
+        echo original > "$EXPERT_OVERRIDES_FILE"
+        : > "$t/engine.log"; : > "$t/disable.log"
+        vless_on --yes --allow-disable-me >"$t/rollback.log" 2>&1 && fail "$previous: ошибка движка потеряна"
+        grep -q 'Прежний маршрут восстановлен' "$t/rollback.log" || fail "$previous: нет подтверждения отката"
+        [ "$VLESS_ENABLED" = false ] || fail "$previous: VLESS остался включён"
+        [ "$(cat "$UPSTREAMS_FILE")" = original ] || fail "$previous: upstream не восстановлен"
+        [ "$(cat "$EXPERT_OVERRIDES_FILE")" = original ] || fail "$previous: настройки эксперта не восстановлены"
+        grep -q '^false true$' "$t/engine.log" || fail "$previous: движок не запущен после отката"
+        grep -q '^disable --now mtproxyl-vless.service$' "$t/disable.log" || fail "$previous: Xray не выключен"
+        [ "$previous" = direct ] || rm "$t/$previous-on" || fail "$previous: выход не восстановлен"
+    done
+
+    touch "$t/warp-on"; load_settings
+    _test_restore_failure=true
+    vless_on --yes --allow-disable-me >"$t/rollback.log" 2>&1 && fail "сбой восстановления потерян"
+    grep -q 'Откат завершился с ошибкой' "$t/rollback.log" || fail "нет сообщения о неполном откате"
+    grep -q 'Не удалось вернуть.*WARP' "$t/rollback.log" || fail "не указан невосстановленный выход"
+    [ ! -f "$t/warp-on" ] || fail "тест не имитировал сбой WARP"
+) || fail "откат VLESS"
+
+# Чистая установка: при ошибке сохранения удаляются только созданные настройки.
+(
+    rm -f "$UPSTREAMS_FILE" "$EXPERT_OVERRIDES_FILE"
+    save_settings() { [ "$VLESS_ENABLED" != true ]; }
+    upstream_add() { echo changed > "$UPSTREAMS_FILE"; }
+    vless_on >"$t/rollback.log" 2>&1 && fail "ошибка сохранения VLESS потеряна"
+    grep -q 'Прежний маршрут восстановлен' "$t/rollback.log" || fail "откат на чистой установке"
+    [ ! -e "$UPSTREAMS_FILE" ] || fail "остался новый маршрут VLESS"
+) || fail "откат VLESS после ошибки сохранения"
 
 # Подписка: base64 из двух ссылок заменяет прошлые sub-ссылки, ручные целы.
 URI3='vless://33333333-3333-3333-3333-333333333333@sub1.example.org:443?security=tls&sni=sub1.example.org&type=grpc&serviceName=grpc#Sub1'
@@ -230,10 +327,12 @@ systemctl() {
         *) return 0 ;;
     esac
 }
+_test_online=false
 vless_watch; vless_watch
 [ "$(grep -c restart "$t/restart.log")" = 1 ] || fail "перезапуск после двух сбоев"
 vless_watch; vless_watch
 [ "$VLESS_ACTIVE" != "$ID1" ] || fail "не переключился на запасную ссылку"
+_test_online=true
 
 # Массовое удаление: несколько ID одним вызовом, активная не меняется.
 URI5='vless://66666666-6666-6666-6666-666666666666@example.org:443?security=tls&sni=example.org&type=tcp#Bulk1'
@@ -251,6 +350,9 @@ grep -q "|$B1|" "$(_vless_links)" && fail "Bulk1 осталась"
 [ -f "$repo/lib/vless_parse.sh" ] || fail "нет lib/vless_parse.sh"
 bash -n "$repo/lib/vless_parse.sh" || fail "синтаксис lib/vless_parse.sh"
 bash "$repo/lib/vless_parse.sh" check "$URI1" >/dev/null || fail "парсер как CLI"
+URI_UDP443="${URI1/flow=xtls-rprx-vision/flow=xtls-rprx-vision-udp443}"
+bash "$repo/lib/vless_parse.sh" check "$URI_UDP443" | jq -e '.flow == "xtls-rprx-vision-udp443"' >/dev/null \
+    || fail "парсер отбросил Vision UDP/443"
 
 # Служебная команда таймера применяет конфиг сразу, без повторной отсрочки.
 _engine_calls=0

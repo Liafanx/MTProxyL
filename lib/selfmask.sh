@@ -2381,6 +2381,37 @@ _selfmask_setup_renewal() {
     fi
 }
 
+_selfmask_verify_public_listener() {
+    local _domain="${SELFMASK_DOMAIN:-}" _port="${PROXY_PORT:-443}" _result _http _error _addr
+    local -a _options=()
+    [ -n "$_domain" ] || return 1
+    if [ "${MTPROXYL_MODE:-manager}" = reanimator ]; then
+        _port="${DETECTED_PORT:-$_port}"
+    elif web_is_only_mode 2>/dev/null; then
+        _port=$(web_public_port) || return 1
+    fi
+    if [ "${SELFMASK_CERT_MODE:-letsencrypt}" = selfsigned ]; then
+        _addr=$(_availability_server_ip) || {
+            log_warn "Не удалось определить IP для проверки входа Selfmask"
+            return 1
+        }
+        _options=(--insecure --resolve "${_domain}:${_port}:${_addr}")
+    fi
+    if _result=$(curl -s --noproxy '*' --connect-timeout 4 --max-time 10 -o /dev/null \
+        -w '%{http_code} %{errormsg}' "${_options[@]}" "https://${_domain}:${_port}/"); then
+        _http=${_result%% *}
+        case "$_http" in
+            200|3[0-9][0-9]|403|404)
+                log_success "Вход прокси ${_domain}:${_port} отвечает (HTTP ${_http})"
+                return 0 ;;
+        esac
+    fi
+    _http=${_result%% *}
+    _error=${_result#* }
+    log_warn "Запрос через вход прокси ${_domain}:${_port} не прошёл (HTTP ${_http:-000})${_error:+: ${_error}}"
+    return 1
+}
+
 selfmask_verify() {
     echo ""
     draw_header "ПРОВЕРКА SELFMASK"
@@ -2426,7 +2457,7 @@ selfmask_verify() {
 
     local _http_code=""
     if [ -n "${SELFMASK_DOMAIN:-}" ]; then
-        _http_code=$(curl -sk -o /dev/null -w "%{http_code}" \
+        _http_code=$(curl -sk --noproxy '*' --connect-timeout 4 --max-time 10 -o /dev/null -w "%{http_code}" \
             --resolve "${SELFMASK_DOMAIN}:${SELFMASK_NGINX_BACKEND_PORT}:127.0.0.1" \
             "https://${SELFMASK_DOMAIN}:${SELFMASK_NGINX_BACKEND_PORT}/" 2>/dev/null || true)
     fi
@@ -2434,25 +2465,27 @@ selfmask_verify() {
     if [ "$_http_code" = "200" ] || [ "$_http_code" = "403" ] || [ "$_http_code" = "404" ]; then
         log_success "Заглушка $(front_title) отвечает (HTTP ${_http_code})"
     else
-        log_warn "Заглушка $(front_title) не отвечает как ожидалось (HTTP ${_http_code:-?})"
+        log_warn "Локальная заглушка $(front_title) не отвечает как ожидалось (HTTP ${_http_code:-?})"
+        _ok=false
     fi
+    _selfmask_verify_public_listener || _ok=false
 
     if [ -n "${SELFMASK_DOMAIN:-}" ] && [ -n "$_verify_openssl" ]; then
         local _pq_out _pq_line
-        _pq_out=$("$_verify_openssl" s_client \
+        _pq_out=$(timeout 8 "$_verify_openssl" s_client \
             -tls1_3 \
             -groups X25519MLKEM768 \
             -connect "127.0.0.1:${SELFMASK_NGINX_BACKEND_PORT}" \
             -servername "${SELFMASK_DOMAIN}" </dev/null 2>&1 || true)
 
-        _pq_line=$(echo "$_pq_out" | grep -iE "Server Temp Key|X25519MLKEM768|Negotiated group|group" | head -1 || true)
+        _pq_line=$(grep -im1 -E '^(Server Temp Key|Peer Temp Key|Negotiated( TLS1\.3)? group):.*X25519MLKEM768' <<< "$_pq_out" || true)
 
-        if echo "$_pq_out" | grep -q "X25519MLKEM768"; then
+        if [ -n "$_pq_line" ]; then
             log_success "PQ handshake активен"
             [ -n "$_pq_line" ] && log_info "${_pq_line}"
         else
             log_warn "PQ handshake не подтверждён"
-            [ -n "$_pq_line" ] && log_warn "${_pq_line}"
+            _ok=false
         fi
     fi   
 
@@ -2496,6 +2529,7 @@ selfmask_verify() {
     fi
 
     selfmask_show_requirements
+    "$_ok"
 }
 
 _selfmask_web_decoy_notice() {

@@ -18,6 +18,7 @@ egress_label() {
         warp)  echo "маршрут через WARP" ;;
         donor) echo "туннель до донора" ;;
         awg)   echo "выход через свой AWG" ;;
+        vless) echo "выход через VLESS" ;;
     esac
 }
 
@@ -69,27 +70,35 @@ egress_take_over() {
 
 # Новый выход не поднялся — возвращаем выключенные.
 egress_restore() {
-    local _o _list="${_EGRESS_REPLACED:-}"
+    local _o _list="${_EGRESS_REPLACED:-}" _rc=0
     _EGRESS_REPLACED=""
     [ -n "$_list" ] || return 0
     for _o in $_list; do
         log_info "Возвращаем $(egress_label "$_o")..."
-        case "$_o" in
-            warp)  ( export MTPROXYL_ASSUME_YES=1; handle_warp_command on ) ;;
-            donor) ( export MTPROXYL_ASSUME_YES=1; donor_enable --yes ) ;;
-            awg)   ( export MTPROXYL_ASSUME_YES=1; handle_awg_command on --yes ) ;;
-        esac >/dev/null 2>&1 || log_warn "Не удалось вернуть $(egress_label "$_o") — включите вручную: mtproxyl ${_o} on"
+        if ! case "$_o" in
+            warp)  ( export MTPROXYL_ASSUME_YES=1; handle_warp_command on --allow-disable-me --allow-disable-default-upstreams ) ;;
+            donor) ( export MTPROXYL_ASSUME_YES=1; donor_enable --yes --allow-disable-default-upstreams ) ;;
+            awg)   ( export MTPROXYL_ASSUME_YES=1; handle_awg_command on --yes --allow-disable-me ) ;;
+        esac >/dev/null 2>&1; then
+            log_warn "Не удалось вернуть $(egress_label "$_o") — включите вручную: mtproxyl ${_o} on"
+            _rc=1
+        fi
     done
     load_settings
     declare -F load_upstreams >/dev/null && load_upstreams
-    return 0
+    return "$_rc"
 }
 
 # Через что сейчас идёт Telegram. ok: true/false, null — давно не проверяли.
 egress_status_json() {
     local _via="direct" _name="" _ip="" _ok="null" _err="" _since=0 _now _extra=""
     _now=$(date +%s)
-    if awg_is_enabled 2>/dev/null; then
+    if [ "${VLESS_ENABLED:-false}" = true ]; then
+        _via="vless"
+        if ! systemctl is-active --quiet "$VLESS_UNIT"; then
+            _ok=false; _err="служба Xray не запущена"
+        fi
+    elif awg_is_enabled 2>/dev/null; then
         awg_load
         _via="awg"; _name="$AWG_ACTIVE"; _ip="$AWG_EGRESS_IP"
         if [ -n "$AWG_FAIL_SINCE" ]; then
@@ -139,6 +148,7 @@ egress_status() {
         warp)   echo -e "  ${BOLD}Выход к Telegram:${NC} WARP${_name:+ (${_name})}" ;;
         donor)  echo -e "  ${BOLD}Выход к Telegram:${NC} донор ${_name}${_ip:+, адрес ${_ip}}" ;;
         awg)    echo -e "  ${BOLD}Выход к Telegram:${NC} свой AWG «${_name}»${_ip:+, адрес ${_ip}}" ;;
+        vless)  echo -e "  ${BOLD}Выход к Telegram:${NC} VLESS" ;;
     esac
     case "$_ok" in
         true)  echo -e "  ${BOLD}Состояние:${NC}        ${GREEN}работает${NC}" ;;

@@ -6,7 +6,9 @@ import { Label } from '@/components/ui/label';
 import { ErrorAlert } from '@/components/ErrorAlert';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { usePolling } from '@/hooks/usePolling';
-import { vlessApi, type VlessLink, type VlessTest } from '@/lib/api';
+import { useMtproxylOperation } from '@/hooks/useMtproxyl';
+import { OperationProgress } from '@/components/OperationProgress';
+import { vlessApi, type MtproxylOperation, type VlessLink, type VlessTest } from '@/lib/api';
 
 const typeLabel = (l: VlessLink) =>
   `${l.security || '?'}/${l.transport || '?'}${l.encryption && l.encryption !== 'none' ? ' +enc' : ''}`;
@@ -18,7 +20,11 @@ const typeLabel = (l: VlessLink) =>
  */
 export function VlessPage() {
   const { data, error, loading, refresh } = usePolling(() => vlessApi.status(), 10000);
-  const [busy, setBusy] = useState(false);
+  const [submitting, setBusy] = useState(false);
+  const { operation, start, dismiss, running } = useMtproxylOperation(refresh, ['vless:']);
+  const busy = submitting || running;
+  const conflict = operation?.name === 'vless:on' && operation.phase === 'failed' &&
+    /другой выход|Уже включён/i.test(operation.error ?? '');
   const [actionError, setActionError] = useState('');
   const [notice, setNotice] = useState('');
   const [uri, setUri] = useState('');
@@ -28,7 +34,6 @@ export function VlessPage() {
   const [selected, setSelected] = useState<string[]>([]);
   const [confirmSubOff, setConfirmSubOff] = useState(false);
   const [test, setTest] = useState<VlessTest | null>(null);
-  const [conflict, setConflict] = useState('');
   const [allowME, setAllowME] = useState(false);
   const [ua, setUA] = useState('');
 
@@ -43,7 +48,6 @@ export function VlessPage() {
     setBusy(true);
     setActionError('');
     setNotice('');
-    setConflict('');
     try {
       const res = await fn();
       if (ok || (res && 'output' in res && res.output)) setNotice(ok || String(res && 'output' in res ? res.output : ''));
@@ -52,12 +56,28 @@ export function VlessPage() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setActionError(msg);
-      if (/другой выход|Уже включён/i.test(msg)) setConflict(msg);
       return false;
     } finally {
       setBusy(false);
     }
   }, [refresh]);
+
+  const startChange = async (fn: () => Promise<MtproxylOperation>) => {
+    setBusy(true);
+    setActionError('');
+    setNotice('');
+    try {
+      start(await fn());
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setActionError(/^(Failed to fetch|NetworkError|Load failed)/i.test(message)
+        ? 'Связь с панелью прервалась. Проверьте состояние VLESS перед повтором.'
+        : message);
+      refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const doTest = async () => {
     setBusy(true);
@@ -134,7 +154,8 @@ export function VlessPage() {
         </p>
       </div>
 
-      {(error || actionError) && (
+      {operation && <OperationProgress operation={operation} onDismiss={dismiss} />}
+      {(actionError || (error && !running)) && (
         <ErrorAlert message={actionError || error?.message || ''} onRetry={refresh} />
       )}
       {conflict && (
@@ -143,7 +164,7 @@ export function VlessPage() {
           <Button
             variant="outline"
             disabled={busy}
-            onClick={() => void run(() => vlessApi.on(true, allowME), 'Прежний выход выключен, VLESS включён')}
+            onClick={() => void startChange(() => vlessApi.on(true, allowME))}
           >
             Выключить другие и включить VLESS
           </Button>
@@ -187,13 +208,13 @@ export function VlessPage() {
                 </label>
               )}
               <div className="flex flex-wrap gap-2">
-                <Button disabled={busy || data.enabled || !data.links.length} onClick={() => void run(() => vlessApi.on(false, allowME), 'VLESS включён')}>
+                <Button disabled={busy || data.enabled || !data.links.length} onClick={() => void startChange(() => vlessApi.on(false, allowME))}>
                   Включить
                 </Button>
-                <Button variant="outline" disabled={busy || !data.enabled} onClick={() => void run(() => vlessApi.off(), 'VLESS выключен')}>
+                <Button variant="outline" disabled={busy || !data.enabled} onClick={() => void startChange(vlessApi.off)}>
                   Выключить
                 </Button>
-                <Button variant="outline" disabled={busy || !data.enabled} onClick={() => void run(() => vlessApi.recover(), 'Маршрут переприменён')}>
+                <Button variant="outline" disabled={busy || !data.enabled} onClick={() => void startChange(vlessApi.recover)}>
                   Перезапустить
                 </Button>
               </div>

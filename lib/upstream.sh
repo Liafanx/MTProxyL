@@ -205,7 +205,7 @@ upstream_add() {
     UPSTREAM_IFACES+=("$iface"); UPSTREAM_ENABLED+=("true")
     UPSTREAM_SCOPES+=("$scopes")
 
-    save_upstreams
+    save_upstreams || return 1
     _upstream_restart_if_needed
     log_success "Upstream '${name}' добавлен (${type})"
     [ -n "$scopes" ] && _upstream_warn_no_default_route
@@ -239,7 +239,7 @@ upstream_remove() {
     UPSTREAM_IFACES=("${ni[@]}"); UPSTREAM_ENABLED=("${ne[@]}")
     UPSTREAM_SCOPES=("${ns[@]}")
 
-    save_upstreams
+    save_upstreams || return 1
     _upstream_restart_if_needed
     log_success "Upstream '${name}' удалён"
 }
@@ -310,7 +310,7 @@ upstream_toggle() {
             [ "${UPSTREAM_ENABLED[$idx]}" = "true" ] && UPSTREAM_ENABLED[$idx]="false" || UPSTREAM_ENABLED[$idx]="true" ;;
     esac
 
-    save_upstreams
+    save_upstreams || return 1
     _upstream_restart_if_needed
     log_success "Upstream '${name}': ${UPSTREAM_ENABLED[$idx]}"
     _upstream_warn_no_default_route

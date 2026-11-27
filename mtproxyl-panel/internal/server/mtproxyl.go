@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -856,34 +857,49 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		}
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: doc})
 	}))
+	startVless := func(w http.ResponseWriter, name string, action func(context.Context) (string, error)) {
+		accepted := make(chan struct{})
+		if !runner.Start("vless:"+name, func(ctx context.Context) (string, error) {
+			<-accepted
+			defer invalidateUsersCache()
+			return action(ctx)
+		}) {
+			writeError(w, http.StatusConflict, "operation_busy", "Другая операция MTProxyL уже выполняется")
+			return
+		}
+		defer close(accepted)
+		response, err := json.Marshal(jsonResponse{OK: true, Data: runner.Status()})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "invalid_operation_status", "Не удалось прочитать состояние операции")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", strconv.Itoa(len(response)))
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write(response)
+		_ = http.NewResponseController(w).Flush()
+	}
 	mux.Handle("POST /api/mtproxyl/vless/on", protected(func(w http.ResponseWriter, r *http.Request) {
-		if !guard(w) || busy(w) {
+		if !guard(w) {
 			return
 		}
 		var req struct {
 			Force   bool `json:"force"`
 			AllowME bool `json:"allow_disable_me"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		out, err := client.VlessOn(r.Context(), req.Force, req.AllowME)
-		if err != nil {
-			writeCLIError(w, "mtproxyl_error", err)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			writeError(w, http.StatusBadRequest, "invalid_request", "Некорректное тело запроса")
 			return
 		}
-		invalidateUsersCache()
-		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+		startVless(w, "on", func(ctx context.Context) (string, error) {
+			return client.VlessOn(ctx, req.Force, req.AllowME)
+		})
 	}))
 	mux.Handle("POST /api/mtproxyl/vless/off", protected(func(w http.ResponseWriter, r *http.Request) {
-		if !guard(w) || busy(w) {
+		if !guard(w) {
 			return
 		}
-		out, err := client.VlessOff(r.Context())
-		if err != nil {
-			writeCLIError(w, "mtproxyl_error", err)
-			return
-		}
-		invalidateUsersCache()
-		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+		startVless(w, "off", client.VlessOff)
 	}))
 	mux.Handle("GET /api/mtproxyl/vless/test", protected(func(w http.ResponseWriter, r *http.Request) {
 		if !guard(w) {
@@ -1026,15 +1042,10 @@ func (s *Server) registerMtproxylRoutes(mux *http.ServeMux, jwtSecret []byte) {
 		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
 	}))
 	mux.Handle("POST /api/mtproxyl/vless/recover", protected(func(w http.ResponseWriter, r *http.Request) {
-		if !guard(w) || busy(w) {
+		if !guard(w) {
 			return
 		}
-		out, err := client.VlessRecover(r.Context())
-		if err != nil {
-			writeCLIError(w, "mtproxyl_error", err)
-			return
-		}
-		writeJSON(w, http.StatusOK, jsonResponse{OK: true, Data: map[string]string{"output": out}})
+		startVless(w, "recover", client.VlessRecover)
 	}))
 
 	// ── Уникальные IP mtdd (seen/active, HyperLogLog) ───────────────────────

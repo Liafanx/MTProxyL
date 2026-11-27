@@ -53,14 +53,13 @@ func (c *Client) VlessOn(ctx context.Context, force, allowME bool) (string, erro
 	if allowME {
 		args = append(args, "--allow-disable-me")
 	}
-	args = append(args, "--defer-restart")
 	out, err := c.run(ctx, args...)
 	return stripANSI(out), err
 }
 
 // VlessOff removes the VLESS upstream and stops the service.
 func (c *Client) VlessOff(ctx context.Context) (string, error) {
-	out, err := c.run(ctx, "vless", "off", "--defer-restart")
+	out, err := c.run(ctx, "vless", "off")
 	return stripANSI(out), err
 }
 
@@ -172,6 +171,6 @@ func (c *Client) VlessRollback(ctx context.Context) (string, error) {
 
 // VlessRecover restarts the service and re-applies the route.
 func (c *Client) VlessRecover(ctx context.Context) (string, error) {
-	out, err := c.run(ctx, "vless", "recover", "--defer-restart")
+	out, err := c.run(ctx, "vless", "recover")
 	return stripANSI(out), err
 }

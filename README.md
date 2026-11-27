@@ -1647,7 +1647,7 @@ mtproxyl web json             # Статус в JSON
 ```bash
 mtproxyl selfmask status      # Статус (--json для машинного вывода)
 mtproxyl selfmask setup       # Настроить через мастер (интерактивно)
-mtproxyl selfmask verify      # Проверить
+mtproxyl selfmask verify      # Проверить локальный nginx и публичный HTTPS
 mtproxyl selfmask panel-cert  # Отдать сертификат веб-панели
 mtproxyl selfmask disable     # Отключить
 mtproxyl selfmask menu        # Открыть меню
@@ -3547,7 +3547,8 @@ MTProxyL его автоматически не ставит.
 движок ходит в него обычным upstream — как вариант C у WARP. Хост, SSH и другие
 службы не затрагиваются, правила nftables не нужны.
 
-Поддерживаются ссылки `vless://` с Reality, TLS и VLESS Encryption, `flow=xtls-rprx-vision`,
+Поддерживаются ссылки `vless://` с Reality, TLS и VLESS Encryption,
+`flow=xtls-rprx-vision` и `flow=xtls-rprx-vision-udp443`,
 транспортами `tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp` и `kcp`. Ядро —
 [Xray-core](https://github.com/XTLS/Xray-core), версия закреплена в MTProxyL и
 проверяется по SHA256; обновление и откат — отдельными командами. Разбор ссылок
@@ -3604,7 +3605,15 @@ HWID можно показать, пересоздать или отключит
 и ключи Reality. В списках, панели и `report` секреты не показываются, в бэкап
 и переезд файлы входят. Таймер `mtproxyl-vless-watch` раз в три минуты проверяет
 туннель: после двух сбоев перезапускает Xray, после четырёх — переключается на
-следующую ссылку. В панели — страница «Telegram через VLESS».
+следующую ссылку. На странице «Telegram через VLESS» переключение выхода и
+восстановление идут в фоне с отображением результата. Дашборд показывает VLESS
+как выбранный выход к Telegram и сообщает, если служба Xray остановлена.
+
+При включении сначала проверяются Telegram API и TCP до дата-центра через
+Xray. Если проверка не проходит, текущий выход продолжает работать. При ошибке
+после начала переключения MTProxyL восстанавливает upstream, экспертные настройки
+и прежний выход: прямой маршрут, WARP, донор или свой AWG. Если старый туннель
+сам не запускается, панель показывает ошибку восстановления.
 
 Ограничения: только Xray (Hysteria2, TUIC и Shadowsocks-выходы не
 поддерживаются), UDP через SOCKS не проксируется, а для VLESS без TLS/Reality
