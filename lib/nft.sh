@@ -69,6 +69,7 @@ ZAPRET2_LUA_DIR="${ZAPRET2_DIR}/lua"
 ZAPRET2_CONF="${ZAPRET2_ETC_DIR}/mtproto.conf"
 ZAPRET2_LUA="${ZAPRET2_LUA_DIR}/mtproto.lua"
 ZAPRET2_SERVICE="mtproxyl-zapret2.service"
+ZAPRET2_START_SCRIPT="/usr/local/sbin/mtproxyl-zapret2-start.sh"
 ZAPRET2_NFT_TABLE="MTProtoL"
 ZAPRET2_RELEASE="v1.0.7"
 ZAPRET2_RELEASE_SHA256="547a5dce3f4820721a425680ea3f7f3971b7e9c772b8c795dd2d623148da0928"
@@ -132,7 +133,7 @@ ZAPRET2_DEBUG="false"
 ZAPRET2_DEBUG_LOG="/var/log/mtproxyl-nfqws2.log"
 ZAPRET2_WIN_SYNACK="$ZAPRET2_DEFAULT_WIN_SYNACK"
 ZAPRET2_WIN_ACK="$ZAPRET2_DEFAULT_WIN_ACK"
-ZAPRET2_PROFILE="v1"
+ZAPRET2_PROFILE="v2"
 ZAPRET2_V2_WIN="$ZAPRET2_DEFAULT_V2_WIN"
 ZAPRET2_V2_LEN="$ZAPRET2_DEFAULT_V2_LEN"
 ZAPRET2_UID="$ZAPRET2_DEFAULT_UID"
@@ -267,8 +268,9 @@ EOF
 }
 
 load_nft_settings() {
+    ZAPRET2_PROFILE=v2
     [ -f "$NFT_CONF" ] || return 0
-    local _have_ios_detect="false"
+    local _have_ios_detect="false" _have_zapret2_profile="false"
     while IFS= read -r _line; do
         [[ "$_line" =~ ^[[:space:]]*# ]] && continue
         [[ "$_line" =~ ^[[:space:]]*$ ]] && continue
@@ -293,13 +295,19 @@ load_nft_settings() {
                 ZAPRET2_APPLIED|ZAPRET2_SERVICE_ENABLED|\
                 ZAPRET2_OUT_RANGE|ZAPRET2_IN_RANGE|ZAPRET2_SPLIT_LEN|\
                 ZAPRET2_WIN_SYNACK|ZAPRET2_WIN_ACK|ZAPRET2_EXTRA_PORTS|\
-                ZAPRET2_PROFILE|ZAPRET2_V2_WIN|ZAPRET2_V2_LEN|\
+                ZAPRET2_V2_WIN|ZAPRET2_V2_LEN|\
                 ZAPRET2_PORT|ZAPRET2_FILTER_IP_ENABLED|ZAPRET2_FILTER_IP|\
                 ZAPRET2_EXCLUDE_IFACES|\
                 ZAPRET2_QNUM|ZAPRET2_FWMARK|ZAPRET2_DEBUG|ZAPRET2_ORIG_TW_REUSE|\
                 ZAPRET2_UID|ZAPRET2_GID|ZAPRET2_HOOK|ZAPRET2_INSTANCES|ZAPRET2_QUEUE_LIMIT)
                     printf -v "$_key" '%s' "$_val"
                     [ "$_key" = "NFT_IOS_DETECT" ] && _have_ios_detect="true"
+                    ;;
+                ZAPRET2_PROFILE)
+                    if [[ "$_val" == v1 || "$_val" == v2 ]]; then
+                        ZAPRET2_PROFILE="$_val"
+                        _have_zapret2_profile=true
+                    fi
                     ;;
                 NFT_EXTRA_*_PORT)
                     local _idx="${_key#NFT_EXTRA_}"; _idx="${_idx%_PORT}"
@@ -316,6 +324,7 @@ load_nft_settings() {
             esac
         fi
     done < "$NFT_CONF"
+    if [ "$_have_zapret2_profile" = false ] && [ "$ZAPRET2_APPLIED" = true ]; then ZAPRET2_PROFILE=v1; fi
     [[ "$NFT_EXTRA_COUNT" =~ ^[0-9]+$ ]] || NFT_EXTRA_COUNT=0
     # Совместимость со старыми конфигами без NFT_MODE
     [ "$NFT_MODE" != "classic" ] && [ "$NFT_MODE" != "smart" ] && NFT_MODE="classic"
@@ -1883,6 +1892,11 @@ local function get_wscale(options)
     return math.min(data and data:byte(1) or 0, 14)
 end
 
+local function ack_window(shift)
+    local unit = 2 ^ shift
+    return math.max(math.floor(win / unit + 0.5), math.floor(len / unit) + 1)
+end
+
 function lets_resend(ctx, desync)
     local dis = desync.dis
     local tcp = dis.tcp
@@ -1896,9 +1910,9 @@ function lets_resend(ctx, desync)
         if bitand(flags, TH_SYN + TH_ACK) == TH_SYN + TH_ACK then
             state.ack0 = tcp.th_ack
             state.broken_upto = 0
-            state.win_ack = math.ceil(win / 2 ^ get_wscale(tcp.options))
+            state.win_ack = ack_window(get_wscale(tcp.options))
             -- На SYN+ACK масштаб объявляется, а поле окна передаётся в байтах.
-            wsize_rewrite(dis, {wsize = win})
+            wsize_rewrite(dis, {wsize = math.min(win, tcp.th_win)})
             return VERDICT_MODIFY
         end
         if not state.ack0 or bitand(flags, TH_ACK) == 0 then return VERDICT_PASS end
@@ -1906,7 +1920,7 @@ function lets_resend(ctx, desync)
             instance_cutoff(ctx, nil)
             return VERDICT_PASS
         end
-        wsize_rewrite(dis, {wsize = state.win_ack})
+        wsize_rewrite(dis, {wsize = math.min(state.win_ack, tcp.th_win)})
         return VERDICT_MODIFY
     end
 
@@ -1951,7 +1965,7 @@ _zapret2_validate_profile_lua() {
 zapret2_set_profile() (
     local _profile="$1" _win="$2" _len="$3"
     local _reload=false _stage="" _running=false _out="$ZAPRET2_OUT_RANGE" _in="$ZAPRET2_IN_RANGE"
-    local _file _name _updated=true _restore_failed=false
+    local _file _name _updated=true _restore_failed=false _update_nft=false
     local -a _changed=()
     if [ "$_profile" = v2 ]; then
         zapret2_validate_v2 "$_win" "$_len" || { log_error "Допустимо 1 ≤ len < win ≤ 1400"; return 1; }
@@ -1960,6 +1974,10 @@ zapret2_set_profile() (
     if [ "$_profile" != "$ZAPRET2_PROFILE" ] ||
         { [ "$_profile" = v2 ] && { [ "$_win" != "$ZAPRET2_V2_WIN" ] || [ "$_len" != "$ZAPRET2_V2_LEN" ]; }; }; then
         _reload=true
+    fi
+    if [ "$ZAPRET2_APPLIED" = true ] && ! zapret2_nft_profile_current "$_profile"; then
+        _reload=true
+        _update_nft=true
     fi
     ZAPRET2_PROFILE="$_profile" ZAPRET2_V2_WIN="$_win" ZAPRET2_V2_LEN="$_len"
 
@@ -1989,6 +2007,10 @@ zapret2_set_profile() (
             log_error "Проверка нового профиля Zapret2 не прошла"
             return 1
         fi
+        if [ "$_update_nft" = true ]; then
+            zapret2_write_nft_script "$_stage/next-start.sh" && bash -n "$_stage/next-start.sh" &&
+                cp -p "$ZAPRET2_START_SCRIPT" "$_stage/prev-start.sh" || return 1
+        fi
         cp -p "$ZAPRET2_LUA" "$_stage/previous.lua" || return 1
         systemctl is-active --quiet "$ZAPRET2_SERVICE" && _running=true
         mv -f "$_stage/next.lua" "$ZAPRET2_LUA" || return 1
@@ -1997,6 +2019,10 @@ zapret2_set_profile() (
     for _file in "${_changed[@]}"; do
         if ! cat "$_stage/next-${_file##*/}" > "$_file"; then _updated=false; break; fi
     done
+    if [ "$_updated" = true ] && [ "$_update_nft" = true ] &&
+        ! zapret2_replace_start_script "$_stage/next-start.sh"; then
+        _updated=false
+    fi
     if [ "$_updated" = true ] && { [ "$_running" = false ] ||
         { systemctl restart "$ZAPRET2_SERVICE" && sleep 1 && systemctl is-active --quiet "$ZAPRET2_SERVICE"; }; } &&
         save_nft_settings; then
@@ -2009,6 +2035,9 @@ zapret2_set_profile() (
         for _file in "${_changed[@]}"; do
             cat "$_stage/prev-${_file##*/}" > "$_file" || _restore_failed=true
         done
+        if [ "$_update_nft" = true ]; then
+            zapret2_replace_start_script "$_stage/prev-start.sh" || _restore_failed=true
+        fi
         if [ "$_restore_failed" = true ]; then
             trap - EXIT
             log_error "Не удалось восстановить файлы Zapret2. Копии: $_stage"
@@ -2068,8 +2097,21 @@ zapret2_start_exec_lines() {
     echo 'exit $(( rc ? rc : 1 ))'
 }
 
-zapret2_write_service() {
-    local _nft_script="/usr/local/sbin/mtproxyl-zapret2-start.sh"
+zapret2_nft_profile_current() {
+    [ -s "$ZAPRET2_START_SCRIPT" ] || return 1
+    grep -qxF "PROFILE=$1" "$ZAPRET2_START_SCRIPT" && return 0
+    [ "$1" = v1 ] && ! grep -q '^PROFILE=' "$ZAPRET2_START_SCRIPT"
+}
+
+zapret2_replace_start_script() {
+    local _tmp; _tmp=$(mktemp "${ZAPRET2_START_SCRIPT}.XXXXXX") || return 1
+    if install -m 755 "$1" "$_tmp" && mv -f "$_tmp" "$ZAPRET2_START_SCRIPT"; then return 0; fi
+    rm -f "$_tmp"
+    return 1
+}
+
+zapret2_write_nft_script() {
+    local _nft_script="$1"
     local _ct_mark="0x00040000"
     local _combined_mark
     printf -v _combined_mark '0x%08x' "$(( ZAPRET2_FWMARK | _ct_mark ))"
@@ -2086,7 +2128,7 @@ zapret2_write_service() {
         _z2_sa='${Z2_SET:+ip saddr $Z2_SET }'; _z2_da='${Z2_SET:+ip daddr $Z2_SET }'
     fi
 
-    cat > "$_nft_script" << NFTSTART
+    cat > "$_nft_script" << NFTSTART || return 1
 #!/bin/bash
 set -e
 ${_z2_dyn}
@@ -2095,6 +2137,7 @@ TABLE="${ZAPRET2_NFT_TABLE}"
 FWMARK="${ZAPRET2_FWMARK}"
 PORT="$(zapret2_nft_port_spec)"
 QNUM="$(zapret2_queue_spec)"
+PROFILE=${ZAPRET2_PROFILE}
 CT_MARK="${_ct_mark}"
 COMBINED_MARK="${_combined_mark}"
 # Мимо очереди — только пакеты с данными: FIN/SYN/RST нужны самому nfqws2,
@@ -2104,7 +2147,7 @@ BYPASS_MATCH="${ZAPRET2_BYPASS_MATCH}"
 LIMIT_MATCH="$(zapret2_limit_match)"
 IS_BRIDGE="${_is_bridge}"
 IS_PRECISE="${_is_precise}"
-CONTAINER="${DETECTED_CONTAINER}"
+CONTAINER="${DETECTED_CONTAINER:-}"
 # Адрес сервера в правилах: очередь берёт трафик только нашего прокси.
 # Пусто — фильтра по IP нет.
 SADDR="${_z2_sa}"
@@ -2130,11 +2173,12 @@ nft delete table ip "\$TABLE" 2>/dev/null || true
 nft add table ip "\$TABLE"
 
 nft "add chain ip \$TABLE predefrag { type filter hook output priority -401; policy accept; }"
-nft "add rule ip \$TABLE predefrag meta mark \$COMBINED_MARK counter accept"
+if [ "\$PROFILE" = v1 ]; then
+    nft "add rule ip \$TABLE predefrag meta mark \$COMBINED_MARK counter accept"
+    nft "add chain ip \$TABLE output { type route hook output priority mangle; policy accept; }"
+    nft "add rule ip \$TABLE output meta mark and \$COMBINED_MARK == \$COMBINED_MARK ct mark set \$CT_MARK counter accept"
+fi
 nft "add rule ip \$TABLE predefrag meta mark and \$FWMARK != 0x00000000 counter notrack"
-
-nft "add chain ip \$TABLE output { type route hook output priority mangle; policy accept; }"
-nft "add rule ip \$TABLE output meta mark and \$COMBINED_MARK == \$COMBINED_MARK ct mark set \$CT_MARK counter accept"
 
 if [ "\$IS_BRIDGE" = "true" ]; then
     # Docker bridge: трафик до контейнера идёт через forward.
@@ -2165,21 +2209,21 @@ if [ "\$IS_BRIDGE" = "true" ]; then
     nft "add rule ip \$TABLE forward ct state invalid counter drop"
     iface_accept forward iifname
     iface_accept forward oifname
-    nft "add rule ip \$TABLE forward \$BYPASS_MATCH ct mark \$CT_MARK counter accept"
+    [ "\$PROFILE" != v1 ] || nft "add rule ip \$TABLE forward \$BYPASS_MATCH ct mark \$CT_MARK counter accept"
     [ -z "\$LIMIT_MATCH" ] || nft "add rule ip \$TABLE forward \$LIMIT_MATCH counter accept"
     nft "add rule ip \$TABLE forward \${DADDR_MATCH}meta mark and \$FWMARK == 0x00000000 tcp dport \$PORT counter queue num \$QNUM bypass"
     nft "add rule ip \$TABLE forward \${SADDR_MATCH}meta mark and \$FWMARK == 0x00000000 tcp sport \$PORT counter queue num \$QNUM bypass"
 else
     nft "add chain ip \$TABLE postrouting { type filter hook postrouting priority srcnat + 1; policy accept; }"
     iface_accept postrouting oifname
-    nft "add rule ip \$TABLE postrouting \$BYPASS_MATCH ct mark \$CT_MARK counter accept"
+    [ "\$PROFILE" != v1 ] || nft "add rule ip \$TABLE postrouting \$BYPASS_MATCH ct mark \$CT_MARK counter accept"
     [ -z "\$LIMIT_MATCH" ] || nft "add rule ip \$TABLE postrouting \$LIMIT_MATCH counter accept"
     nft "add rule ip \$TABLE postrouting meta mark and \$FWMARK == 0x00000000 \${SADDR}tcp sport \$PORT counter queue num \$QNUM bypass"
 
     nft "add chain ip \$TABLE prerouting { type filter hook prerouting priority mangle; policy accept; }"
     nft "add rule ip \$TABLE prerouting ct state invalid counter drop"
     iface_accept prerouting iifname
-    nft "add rule ip \$TABLE prerouting \$BYPASS_MATCH ct mark \$CT_MARK counter accept"
+    [ "\$PROFILE" != v1 ] || nft "add rule ip \$TABLE prerouting \$BYPASS_MATCH ct mark \$CT_MARK counter accept"
     [ -z "\$LIMIT_MATCH" ] || nft "add rule ip \$TABLE prerouting \$LIMIT_MATCH counter accept"
     nft "add rule ip \$TABLE prerouting meta mark and \$FWMARK == 0x00000000 \${DADDR}tcp dport \$PORT counter queue num \$QNUM bypass"
 fi
@@ -2192,12 +2236,17 @@ echo "MTProxyL: NFT table \$TABLE applied (ports=\$PORT qnum=\$QNUM bridge=\$IS_
 $(zapret2_start_exec_lines)
 NFTSTART
     chmod +x "$_nft_script"
+}
+
+zapret2_write_service() {
+    local _nft_script="$ZAPRET2_START_SCRIPT"
+    zapret2_write_nft_script "$_nft_script" || return 1
 
     # В bridge-режиме стартовый скрипт опрашивает docker inspect —
     # значит служба должна подниматься после docker.
     local _unit_after="network-online.target nftables.service"
     local _unit_wants="network-online.target"
-    if [ "$_is_bridge" = "true" ]; then
+    if zapret2_is_bridge_target; then
         _unit_after="${_unit_after} docker.service"
         _unit_wants="${_unit_wants} docker.service"
     fi
@@ -2501,11 +2550,12 @@ _zapret2_apply_nft_now() {
     nft add table ip "$_table"
 
     nft "add chain ip $_table predefrag { type filter hook output priority -401; policy accept; }"
-    nft "add rule ip $_table predefrag meta mark ${_combined_mark} counter accept"
+    if [ "$ZAPRET2_PROFILE" = v1 ]; then
+        nft "add rule ip $_table predefrag meta mark ${_combined_mark} counter accept"
+        nft "add chain ip $_table output { type route hook output priority mangle; policy accept; }"
+        nft "add rule ip $_table output meta mark and ${_combined_mark} == ${_combined_mark} ct mark set ${_ct_mark} counter accept"
+    fi
     nft "add rule ip $_table predefrag meta mark and $_fwmark != 0x00000000 counter notrack"
-
-    nft "add chain ip $_table output { type route hook output priority mangle; policy accept; }"
-    nft "add rule ip $_table output meta mark and ${_combined_mark} == ${_combined_mark} ct mark set ${_ct_mark} counter accept"
 
     if zapret2_is_bridge_target; then
         # Docker bridge: пакеты до контейнера проходят forward, а не
@@ -2530,7 +2580,7 @@ _zapret2_apply_nft_now() {
         nft "add rule ip $_table forward ct state invalid counter drop"
         _zapret2_iface_accept "$_table" forward iifname
         _zapret2_iface_accept "$_table" forward oifname
-        nft "add rule ip $_table forward ${ZAPRET2_BYPASS_MATCH} ct mark ${_ct_mark} counter accept"
+        [ "$ZAPRET2_PROFILE" != v1 ] || nft "add rule ip $_table forward ${ZAPRET2_BYPASS_MATCH} ct mark ${_ct_mark} counter accept"
         [ -z "$(zapret2_limit_match)" ] || nft "add rule ip $_table forward $(zapret2_limit_match) counter accept"
         nft "add rule ip $_table forward ${_daddr_match}meta mark and $_fwmark == 0x00000000 tcp dport ${_port} counter queue num $(zapret2_queue_spec) bypass"
         nft "add rule ip $_table forward ${_saddr_match}meta mark and $_fwmark == 0x00000000 tcp sport ${_port} counter queue num $(zapret2_queue_spec) bypass"
@@ -2548,14 +2598,14 @@ _zapret2_apply_nft_now() {
 
     nft "add chain ip $_table postrouting { type filter hook postrouting priority srcnat + 1; policy accept; }"
     _zapret2_iface_accept "$_table" postrouting oifname
-    nft "add rule ip $_table postrouting ${ZAPRET2_BYPASS_MATCH} ct mark ${_ct_mark} counter accept"
+    [ "$ZAPRET2_PROFILE" != v1 ] || nft "add rule ip $_table postrouting ${ZAPRET2_BYPASS_MATCH} ct mark ${_ct_mark} counter accept"
     [ -z "$(zapret2_limit_match)" ] || nft "add rule ip $_table postrouting $(zapret2_limit_match) counter accept"
     nft "add rule ip $_table postrouting meta mark and $_fwmark == 0x00000000 ${_sa}tcp sport ${_port} counter queue num $(zapret2_queue_spec) bypass"
 
     nft "add chain ip $_table prerouting { type filter hook prerouting priority mangle; policy accept; }"
     nft "add rule ip $_table prerouting ct state invalid counter drop"
     _zapret2_iface_accept "$_table" prerouting iifname
-    nft "add rule ip $_table prerouting ${ZAPRET2_BYPASS_MATCH} ct mark ${_ct_mark} counter accept"
+    [ "$ZAPRET2_PROFILE" != v1 ] || nft "add rule ip $_table prerouting ${ZAPRET2_BYPASS_MATCH} ct mark ${_ct_mark} counter accept"
     [ -z "$(zapret2_limit_match)" ] || nft "add rule ip $_table prerouting $(zapret2_limit_match) counter accept"
     nft "add rule ip $_table prerouting meta mark and $_fwmark == 0x00000000 ${_da}tcp dport ${_port} counter queue num $(zapret2_queue_spec) bypass"
 
@@ -2650,6 +2700,11 @@ zapret2_start_existing() {
         _zapret2_restore_limiter "$_restore_limiter" "$_restore_limiter_service"
         return 1
     }
+    if ! zapret2_nft_profile_current "$ZAPRET2_PROFILE" &&
+        ! zapret2_write_nft_script "$ZAPRET2_START_SCRIPT"; then
+        _zapret2_restore_limiter "$_restore_limiter" "$_restore_limiter_service"
+        return 1
+    fi
     zapret2_apply_nft || {
         _zapret2_restore_limiter "$_restore_limiter" "$_restore_limiter_service"
         return 1
@@ -2761,10 +2816,13 @@ zapret2_refresh_if_needed() {
     if [ -x "$ZAPRET2_BIN" ]; then
         zapret2_download_bundle "" upgrade || return 1
     fi
+    if ! zapret2_nft_profile_current "$ZAPRET2_PROFILE"; then
+        zapret2_set_profile "$ZAPRET2_PROFILE" "$ZAPRET2_V2_WIN" "$ZAPRET2_V2_LEN" || return 1
+    fi
     systemctl is-active "$ZAPRET2_SERVICE" &>/dev/null || return 0
     zapret2_conntrack_acct
     zapret2_refresh_lua || return 1
-    local _script="/usr/local/sbin/mtproxyl-zapret2-start.sh"
+    local _script="$ZAPRET2_START_SCRIPT"
     grep -qxF "QNUM=\"$(zapret2_queue_spec)\"" "$_script" 2>/dev/null \
         && grep -qxF "LIMIT_MATCH=\"$(zapret2_limit_match)\"" "$_script" 2>/dev/null && return 0
     log_info "Zapret2: экземпляров nfqws2 — $(zapret2_instance_count), очереди $(zapret2_queue_spec)"
@@ -2968,7 +3026,7 @@ zapret2_check_wscale() {
 
     local _wscale=0
     local _shifted="$_buf_size"
-    while [ "$_shifted" -gt 65535 ]; do
+    while [ "$_shifted" -gt 65535 ] && [ "$_wscale" -lt 14 ]; do
         _wscale=$((_wscale + 1))
         _shifted=$((_buf_size >> _wscale))
     done
@@ -2995,7 +3053,13 @@ zapret2_check_wscale() {
     echo -e "  Рассчитанный wscale:      ${_wscale}"
     echo -e "  2^wscale (гранулярность): ${_scale} байт"
     if [ "$ZAPRET2_PROFILE" = v2 ]; then
+        zapret2_validate_v2 "$ZAPRET2_V2_WIN" "$ZAPRET2_V2_LEN" ||
+            { log_error "Допустимо 1 ≤ len < win ≤ 1400"; return 1; }
+        local _raw=$(((ZAPRET2_V2_WIN + _scale / 2) / _scale))
+        local _min_raw=$(( ZAPRET2_V2_LEN / _scale + 1 ))
+        [ "$_raw" -ge "$_min_raw" ] || _raw="$_min_raw"
         echo -e "  Zapret2 v2: окно SYN+ACK = ${ZAPRET2_V2_WIN} байт"
+        echo -e "  Оценка поля ACK:          ${_raw} → окно до $((_raw * _scale)) байт"
         echo -e "  Окно в ACK рассчитывается по wscale из SYN+ACK для каждого соединения"
         return 0
     fi

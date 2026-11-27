@@ -101,7 +101,7 @@ install_args_help() {
     --dc-restart-cooldown N    охлаждение после перезапуска, минут (по умолчанию 5)
 
   Обход блокировок
-    --zapret2 yes|no           Zapret2 MTProto fix (по умолчанию yes)
+    --zapret2 yes|no           Zapret2 MTProto fix v2 при первой установке (по умолчанию yes)
     --syn-limiter meko|classic|off
                                NFT SYN limiter, если Zapret2 не ставится
     --limiter-action icmp|reject|drop

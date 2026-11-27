@@ -6,6 +6,17 @@ log_info() { :; }; log_warn() { :; }; log_error() { :; }; log_success() { :; }
 INSTALL_DIR=/opt/mtproxyl
 set +u; source "$ROOT/lib/nft.sh"; set -u
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+NFT_CONF="$tmp/nft-rules.conf"
+load_nft_settings
+[ "$ZAPRET2_PROFILE" = v2 ]
+printf "ZAPRET2_APPLIED='true'\n" > "$NFT_CONF"
+load_nft_settings
+[ "$ZAPRET2_PROFILE" = v1 ]
+printf "ZAPRET2_PROFILE='v2'\n" >> "$NFT_CONF"
+load_nft_settings
+[ "$ZAPRET2_PROFILE" = v2 ]
+
+ZAPRET2_PROFILE=v1
 ZAPRET2_LUA="$tmp/mtproto.lua"
 restarts=0
 systemctl() { [ "$1" = restart ] && restarts=$((restarts + 1)); return 0; }
@@ -63,11 +74,13 @@ end
 dofile(arg[1])
 local state = {}
 local initial = 4294967200
-local function packet(outgoing, flags, offset, data, options)
+local function packet(outgoing, flags, offset, data, options, original_window)
     local seq = (initial + offset) % 4294967296
     local p = {
         outgoing = outgoing, track = {lua_state = state}, arg = {},
-        dis = {payload = data or "", tcp = {th_seq = seq, th_ack = seq, th_flags = flags, options = options}}
+        dis = {payload = data or "", tcp = {
+            th_seq = seq, th_ack = seq, th_flags = flags, options = options, th_win = original_window or 65535
+        }}
     }
     local verdict = lets_resend({}, p)
     assert(p.arg.badsum == nil)
@@ -98,10 +111,14 @@ state = {}
 assert(packet(true, TH_SYN + TH_ACK, 0) == VERDICT_MODIFY)
 assert(packet(true, TH_ACK, 256) == VERDICT_MODIFY and window.wsize == 768)
 
-state = {}
-local larger_scale = {{kind = TCP_KIND_SCALE, data = string.char(9)}}
-assert(packet(true, TH_SYN + TH_ACK, 0, "", larger_scale) == VERDICT_MODIFY and window.wsize == 768)
-assert(packet(true, TH_ACK, 256) == VERDICT_MODIFY and window.wsize == 2)
+local expected = {768, 384, 192, 96, 48, 24, 12, 6, 3, 2, 1, 1, 1, 1, 1}
+for shift = 0, 14 do
+    state = {}
+    local options = {{kind = TCP_KIND_SCALE, data = string.char(shift)}}
+    assert(packet(true, TH_SYN + TH_ACK, 0, "", options) == VERDICT_MODIFY and window.wsize == 768)
+    assert(packet(true, TH_ACK, 256) == VERDICT_MODIFY and window.wsize == expected[shift + 1])
+    assert(packet(true, TH_ACK, 256, "", nil, 0) == VERDICT_MODIFY and window.wsize == 0)
+end
 LUA
 fi
 
@@ -109,11 +126,16 @@ ZAPRET2_PROFILE=v1
 ZAPRET2_APPLIED=true
 ZAPRET2_LUA_DIR="$tmp"
 ZAPRET2_CONF="$tmp/mtproto.conf"
+ZAPRET2_START_SCRIPT="$tmp/zapret2-start.sh"
+DETECTED_CONTAINER="" PROXY_PORT=443
+zapret2_nft_port_spec() { echo 443; }
 ZAPRET2_OUT_RANGE=p4 ZAPRET2_IN_RANGE=p5
 zapret2_write_instance_conf 0 443
 zapret2_write_instance_conf 1 443
 cp "$ZAPRET2_LUA" "$tmp/original.lua"
 cp "$ZAPRET2_CONF" "$tmp/original.conf"
+zapret2_write_nft_script "$ZAPRET2_START_SCRIPT"
+cp "$ZAPRET2_START_SCRIPT" "$tmp/original-start.sh"
 ZAPRET2_BIN=check_conf
 check_conf() {
     grep -qxF -- '--dry-run' "${1#@}" || return 1
@@ -131,6 +153,7 @@ if zapret2_set_profile v2 768 256; then echo "перезапуск должен 
 [ ! -e "$tmp/profile" ]
 cmp -s "$tmp/original.lua" "$ZAPRET2_LUA"
 cmp -s "$tmp/original.conf" "$ZAPRET2_CONF"
+cmp -s "$tmp/original-start.sh" "$ZAPRET2_START_SCRIPT"
 grep -qxF -- '--in-range=p5' "$tmp/mtproto-1.conf"
 
 systemctl() { return 0; }
@@ -138,6 +161,7 @@ zapret2_set_profile v2 768 256
 grep -qxF v2 "$tmp/profile"
 cmp -s "$tmp/v2.lua" "$ZAPRET2_LUA"
 grep -qxF -- '--in-range=a' "$tmp/mtproto-1.conf"
+grep -qxF 'PROFILE=v2' "$ZAPRET2_START_SCRIPT"
 
 ZAPRET2_PROFILE=v2
 zapret2_set_profile v2 420 140
@@ -145,5 +169,6 @@ grep -qxF 'local win, len, release_at = 420, 140, 1400' "$ZAPRET2_LUA"
 zapret2_set_profile v1 420 140
 cmp -s "$tmp/original.lua" "$ZAPRET2_LUA"
 cmp -s "$tmp/original.conf" "$ZAPRET2_CONF"
+grep -qxF 'PROFILE=v1' "$ZAPRET2_START_SCRIPT"
 grep -qxF -- '--in-range=p5' "$tmp/mtproto-1.conf"
 echo OK

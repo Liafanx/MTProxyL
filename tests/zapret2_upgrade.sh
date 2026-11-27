@@ -110,6 +110,9 @@ grep -q "$ZAPRET2_RELEASE" < <(tail -1 "$restarts")
 
 old_bundle
 active=false
+ZAPRET2_PROFILE=v1
+ZAPRET2_START_SCRIPT="$tmp/start.sh"
+printf '#!/bin/bash\n' > "$ZAPRET2_START_SCRIPT"
 zapret2_refresh_if_needed
 [[ "$(wc -l < "$restarts")" -eq 3 && "$(wc -l < "$downloads")" -eq 3 ]]
 [[ "$(sha256sum "$ZAPRET2_LUA" "$ZAPRET2_CONF" "${ZAPRET2_CONF%.conf}-1.conf")" = "$before_custom" ]]

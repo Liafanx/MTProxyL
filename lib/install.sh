@@ -704,22 +704,22 @@ offer_tgbot_install() {
 
 # ── Общий блок фиксов (NFT/Zapret2/MEKO) — manager и reanimator ──
 run_fix_arsenal_wizard() {
+    load_nft_settings 2>/dev/null || true
     # Zapret2 MTProto fix
     echo ""
     echo -e "  ${DIM}────────────────────────────────────────${NC}"
     echo ""
-    echo -e "  ${BRIGHT_CYAN}${BOLD}Zapret2 MTProto fix${NC}"
+    echo -e "  ${BRIGHT_CYAN}${BOLD}Zapret2 MTProto fix ${ZAPRET2_PROFILE}${NC}"
     echo ""
     echo -e "  ${DIM}Серверный обход MTProto прокси на уровне TCP-пакетов.${NC}"
     echo -e "  ${DIM}Метод: disorder + badsum + TCP window control.${NC}"
     echo -e "  ${DIM}Работает на сервере — клиент ничего не устанавливает.${NC}"
     echo -e "  ${DIM}При установке заменяет SYN limiter.${NC}"
     echo ""
-    echo -en "  ${BOLD}Установить Zapret2 MTProto fix? [Y/n]:${NC} "
+    echo -en "  ${BOLD}Установить Zapret2 MTProto fix ${ZAPRET2_PROFILE}? [Y/n]:${NC} "
     local _yn_zapret2; _fix_read _yn_zapret2 "${_FIX_ANS_ZAPRET2-}"
     local _zapret2_installed="false"
     if [[ ! "$_yn_zapret2" =~ ^[nN] ]]; then
-        load_nft_settings 2>/dev/null || true
         zapret2_download_bundle
         if [ $? -eq 0 ]; then
             # Проверяем занятость NFQUEUE
@@ -750,7 +750,7 @@ run_fix_arsenal_wizard() {
                 ZAPRET2_SERVICE_ENABLED="true"
                 save_nft_settings
                 _zapret2_installed="true"
-                log_success "Zapret2 MTProto fix установлен и запущен"
+                log_success "Zapret2 MTProto fix ${ZAPRET2_PROFILE} установлен и запущен"
                 zapret2_check_wscale "false"
             else
                 log_error "zapret2 не запустился"

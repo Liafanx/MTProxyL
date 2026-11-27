@@ -36,10 +36,12 @@ nft delete table inet "$NFT_TABLE"
 ZAPRET2_BIN=/usr/bin/true
 ZAPRET2_ETC_DIR="$test_dir/zapret2"
 ZAPRET2_CONF="$ZAPRET2_ETC_DIR/mtproto.conf"
+ZAPRET2_START_SCRIPT="$test_dir/zapret2-start.sh"
 NFT_ENABLED=false
 zapret2_apply_nft() { printf '%s\n' "$(zapret2_main_port)" > "$test_dir/zapret-port"; }
 zapret2_start
 zapret2_start_existing
+grep -qx 'PROFILE=v2' "$ZAPRET2_START_SCRIPT"
 grep -qx 8443 "$test_dir/zapret-port"
 grep -q -- '--filter-tcp=8443\|--filter-tcp 8443' "$ZAPRET2_CONF"
 grep -qx "restart $ZAPRET2_SERVICE" "$test_dir/systemctl"
